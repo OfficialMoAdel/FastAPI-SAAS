@@ -739,11 +739,23 @@ class TestA2CachedAuthInfoFields:
         mock_result.unique.return_value.scalar_one_or_none.return_value = mock_user
         mock_db.execute = AsyncMock(return_value=mock_result)
 
-        # Call the method that should include A2 fields
-        from unittest.mock import patch
+        # Call the method that should include A2 fields.
+        # The tenant filter now lives in the tenant_scope seam; set the
+        # context (the seam's actual read point) instead of patching the
+        # old per-module get_current_tenant call site.
+        import uuid as _uuid
 
-        with patch("src.app.modules.users.crud.get_current_tenant", return_value=MagicMock(id=1)):
+        from src.app.core.tenancy.context import TenantContext, clear_tenant_context, set_current_tenant
+
+        set_current_tenant(
+            TenantContext(
+                tenant_id=_uuid.uuid4(), tenant_slug="t", tenant_name="T", is_active=True
+            )
+        )
+        try:
             result = await crud.get_user_with_tier_eager(db=mock_db, username="testuser")
+        finally:
+            clear_tenant_context()
 
         # A2 Assertions: These fields MUST be present
         assert result is not None, "Result should not be None"
@@ -785,11 +797,18 @@ class TestA2CachedAuthInfoFields:
         mock_result = MagicMock()
         mock_result.unique.return_value.scalar_one_or_none.return_value = mock_user
         mock_db.execute = AsyncMock(return_value=mock_result)
+        # Same seam fix: set the tenant context, not the old patch target.
+        import uuid as _uuid
 
-        from unittest.mock import patch
+        from src.app.core.tenancy.context import TenantContext, clear_tenant_context, set_current_tenant
 
-        with patch("src.app.modules.users.crud.get_current_tenant", return_value=MagicMock(id=1)):
+        set_current_tenant(
+            TenantContext(
+                tenant_id=_uuid.uuid4(), tenant_slug="t", tenant_name="T", is_active=True
+            )
+        )
+        try:
             result = await crud.get_user_with_tier_eager(db=mock_db, email="deleted@example.com")
-
-        # A2 Security: is_deleted=True must propagate
+        finally:
+            clear_tenant_context()
         assert result["is_deleted"] is True, "A2 SECURITY: is_deleted=True must propagate"

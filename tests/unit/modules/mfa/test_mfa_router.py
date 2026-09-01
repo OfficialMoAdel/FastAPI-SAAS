@@ -16,9 +16,14 @@ from src.app.core.exceptions.http_exceptions import RateLimitException
 
 @pytest.fixture
 def client_with_rate_limit(get_test_app) -> Generator[TestClient, None, None]:
-    """Client fixture with rate limiting enabled for MFA tests."""
-    from src.app.api.deps import get_current_user
-    from src.app.core.db.database import async_get_db
+    """Client fixture with rate limiting enabled for MFA tests.
+
+    Uses the ctx seam: overrides ``get_request_context`` with a real
+    ``RequestContext`` (db is unused by these tests — service calls are
+    class-level patched; the pre-conversion fixture likewise injected
+    ``async_get_db -> None``).
+    """
+    from src.app.api.deps import RequestContext, get_request_context
 
     app = get_test_app
 
@@ -37,17 +42,8 @@ def client_with_rate_limit(get_test_app) -> Generator[TestClient, None, None]:
     )
     fake_superuser.__getitem__ = lambda self, key: getattr(self, key)
 
-    async def mock_get_current_user():
-        return fake_superuser
-
-    app.dependency_overrides[async_get_db] = lambda: None
-    app.dependency_overrides[get_current_user] = mock_get_current_user
-
-    async def override_get_db():
-        from tests.conftest import TestingSessionLocal
-
-        async with TestingSessionLocal() as session:
-            yield session
+    fake_ctx = RequestContext(user=fake_superuser, tenant=fake_tenant, db=Mock())
+    app.dependency_overrides[get_request_context] = lambda: fake_ctx
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
@@ -58,7 +54,6 @@ def client_with_rate_limit(get_test_app) -> Generator[TestClient, None, None]:
             new_callable=AsyncMock,
             return_value=fake_tenant,
         ),
-        patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
     ):
         with TestClient(app) as _client:
             yield _client

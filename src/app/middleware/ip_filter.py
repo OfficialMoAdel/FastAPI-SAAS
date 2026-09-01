@@ -18,7 +18,6 @@ logger = get_logger(__name__)
 # P2-7: use the shared common set; ip_filter has no extra exemptions of
 # its own (health/metrics are already in COMMON_EXEMPT_PATHS).
 from src.app.core.middleware_exempt import COMMON_EXEMPT_PATHS
-from src.app.core.middleware_exempt import is_path_exempt as _shared_is_path_exempt
 
 _IP_FILTER_EXTRA_EXEMPT: frozenset[str] = frozenset()
 EXEMPT_PATHS: frozenset[str] = COMMON_EXEMPT_PATHS | _IP_FILTER_EXTRA_EXEMPT  # backward-compat re-export

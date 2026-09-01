@@ -83,6 +83,27 @@ from src.app.modules.notifications.service import NotificationService
 await NotificationService.send_welcome_email(user.email)
 ```
 
+### Redis Acquisition (the ONE seam)
+✅ DO: Acquire the Redis client through the provider or DI — never globals or direct construction
+```python
+# In a service (call-time; observes test patches of utils.cache.client):
+from src.app.core.redis_provider import get_redis
+redis_client = get_redis()
+
+# In a router (FastAPI dependency):
+from src.app.core.utils.cache import async_get_redis
+redis: Annotated[Redis, Depends(async_get_redis)]
+
+# Cache-key semantics only (no client needed):
+from src.app.core.cache.client import cache_client
+await cache_client.set(cache_client.tenant_key("feature:flag", tenant_id), "on", ttl=30)
+```
+
+❌ DON'T: `from redis.asyncio import Redis` to *construct* a client, or read
+`utils.cache.client` directly (two modules were migrated off this; the
+provider is the single owner of the Redis lifecycle, incl. the pool).
+Importing the `Redis` *type* for annotations is fine.
+
 ### CRUD Pattern
 ✅ DO: Use FastCRUD with minimal wrapper (handled by `BaseService`)
 ```python
@@ -107,23 +128,33 @@ async def get_user(self, id: int) -> UserRead:
 ```
 
 ### Error Handling Pattern
-✅ DO: Use standardized exceptions
+✅ DO: Raise the plain domain exceptions from `_base` — HTTP mapping is central
 ```python
-# src/app/core/exceptions/http_exceptions.py
-from fastapi import HTTPException
+# src/app/modules/_base/exceptions.py — PLAIN Exception subclasses (NOT HTTPException)
+class DuplicateError(Exception): ...
+class ModelNotFoundError(Exception): ...
+class ForbiddenError(Exception): ...
+class ServiceUnavailableError(Exception): ...
 
-class DuplicateError(HTTPException):
-    def __init__(self, detail: str = "Duplicate value found"):
-        super().__init__(status_code=409, detail=detail)
-
-class ModelNotFoundError(HTTPException):
-    def __init__(self, detail: str = "Resource not found"):
-        super().__init__(status_code=404, detail=detail)
-
-# In service
+# In service — raise the domain error, never an HTTP status:
+from src.app.modules._base.exceptions import DuplicateError
 if email_exists:
-    raise DuplicateError("Email is already registered")
+    raise DuplicateError("email", values.email)
 ```
+
+The HTTP translation lives in ONE place: `src/app/core/errors.py` registers
+FastAPI exception handlers (`duplicate_error_handler`, `model_not_found_handler`,
+...) that map each domain exception to a JSONResponse with its status code.
+Services stay HTTP-free; routers don't catch anything.
+
+`core/exceptions/http_exceptions.py` is a SEPARATE tree (FastCRUD-derived
+HTTPException subclasses like `DuplicateValueException`) used by modules that
+raise HTTP-shaped errors directly (e.g. sso, billing routers). When adding a
+new module: prefer the `_base` plain exceptions + let the handlers translate.
+
+❌ DON'T: claim `_base/exceptions` are HTTPException-based (they are not), or
+hand-roll `HTTPException(409, ...)` in a service — that bypasses the central
+mapping and the error-code contract.
 
 ## Touch Points / Key Files
 

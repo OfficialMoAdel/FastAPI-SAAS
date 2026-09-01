@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_user
+from src.app.api.deps import RequestContextDep
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.security import oauth2_scheme
@@ -15,7 +15,6 @@ from src.app.core.security.login_helpers import get_refresh_cookie
 from src.app.core.security.session_manager import SessionManager
 from src.app.core.utils.cache import async_get_redis
 from src.app.core.utils.rate_limit import rate_limiter
-from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.auth.schemas import (
     EmailVerificationConfirm,
     EmailVerificationRequest,
@@ -145,17 +144,16 @@ async def logout(
 )
 async def change_password(
     request: Request,
-    db: Annotated[AsyncSession, Depends(async_get_db)],
-    current_user: Annotated[Any, Depends(get_current_user)],
+    ctx: RequestContextDep,
     body: PasswordChangeRequest,
     auth_service: Annotated[AuthService, Depends(_get_auth_service)],
 ) -> PasswordChangeResponse:
     """Change current user's password."""
     result = await auth_service.change_password(
-        user_id=get_user_attr(current_user, "id"),
+        user_id=ctx.user_id,
         current_password=body.current_password,
         new_password=body.new_password,
-        db=db,
+        db=ctx.db,
     )
     return PasswordChangeResponse(**result)
 
@@ -208,12 +206,12 @@ async def verify_email(
 
 @router.get("/sessions", response_model=SessionListResponse, responses={401: {"description": "Unauthorized"}})
 async def list_sessions(
-    current_user: Annotated[Any, Depends(get_current_user)],
+    ctx: RequestContextDep,
     redis: Annotated[Redis, Depends(async_get_redis)],
 ) -> SessionListResponse:
     """List all active sessions for current user."""
     session_manager = SessionManager(redis)
-    sessions = await session_manager.get_active_sessions(user_id=get_user_attr(current_user, "id"))
+    sessions = await session_manager.get_active_sessions(user_id=ctx.user_id)
 
     from datetime import datetime
 
@@ -262,7 +260,7 @@ async def list_sessions(
         session_infos.append(
             SessionInfo(
                 id=s.get("session_id", ""),
-                user_id=get_user_attr(current_user, "id"),
+                user_id=ctx.user_id,
                 created_at=created_at_ts,
                 last_accessed_at=last_accessed_ts,
                 ip_address=ip_address,
@@ -275,10 +273,10 @@ async def list_sessions(
 
 @router.get("/sessions/count", response_model=SessionCountResponse, responses={401: {"description": "Unauthorized"}})
 async def count_sessions(
-    current_user: Annotated[Any, Depends(get_current_user)],
+    ctx: RequestContextDep,
     redis: Annotated[Redis, Depends(async_get_redis)],
 ) -> SessionCountResponse:
     """Count active sessions for current user."""
     session_manager = SessionManager(redis)
-    count = await session_manager.count_active_sessions(user_id=get_user_attr(current_user, "id"))
+    count = await session_manager.count_active_sessions(user_id=ctx.user_id)
     return SessionCountResponse(count=count)

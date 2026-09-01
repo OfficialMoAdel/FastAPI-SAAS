@@ -206,6 +206,28 @@ def get_current_tenant() -> Tenant:
 ❌ DON'T: Access tenant context without middleware setup
 ❌ DON'T: Forget to clear context in finally block
 
+### Tenant-Scoped Queries (the ONE seam)
+✅ DO: Build every tenant-scoped query through `tenant_scope()` / `scoped_query()`
+```python
+from src.app.core.db.tenant_crud import scoped_query, tenant_scope
+
+# Plain tenant-scoped select (request path — context wins, fail-closed without one):
+stmt = scoped_query(User).where(User.is_active == True)
+
+# Criterion form — composes onto your own select / update / count:
+stmt = select(User).options(joinedload(User.tier)).where(User.id == uid)
+stmt = stmt.where(tenant_scope(User))
+
+# Explicit tenant (worker path — context var unset, service holds its own tenant_id):
+stmt = scoped_query(Role, self.tenant_id).where(Role.id == role_id)
+```
+
+❌ DON'T: Hand-roll `select(M).where(M.tenant_id == tid)` in services —
+that re-implements the invariant per call site and drifts (see
+`inject_tenant_filter` history: M-4 override, B1 sentinel, B6 flag-leak).
+The context-vs-argument precedence, NO_TENANT rejection, and the explicit
+`allow_unscoped` escape hatch live in `tenant_scope()` — one place.
+
 ## Touch Points / Key Files
 
 ### Configuration

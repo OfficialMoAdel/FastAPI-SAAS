@@ -103,17 +103,13 @@ async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
             # Use a background task to avoid blocking the current transaction
             import asyncio
 
-            from src.app.core.events import event_bus
+            from src.app.modules.audit_logs.trail import audit
             task = asyncio.create_task(
-                event_bus.publish(
-                    "audit.log",
-                    {
-                        "action": "system.rls_bypass",
-                        "resource_type": "system",
-                        "resource_id": "rls_context",
-                        "details": {"reason": reason},
-                        # System tenant or null tenant will be handled by the audit log service
-                    },
+                audit(
+                    action="system.rls_bypass",
+                    entity_type="system",
+                    entity_id="rls_context",
+                    details={"reason": reason},
                 )
             )
             _background_tasks.add(task)

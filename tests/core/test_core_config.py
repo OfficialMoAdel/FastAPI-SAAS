@@ -7,9 +7,8 @@ from pydantic import SecretStr
 from redis.asyncio import ConnectionPool
 
 from src.app.core import setup
-from src.app.core.cache import manager as redis_factory
-from src.app.core.cache.manager import cache_manager
 from src.app.core.config import CryptSettings, R1UnifiedSettings
+from src.app.core.redis_provider import close_redis_pool, get_redis_pool
 
 # ==================== Config Defaults ====================
 
@@ -64,18 +63,18 @@ def mock_redis():
 async def test_redis_factory_singleton():
     """Verify that get_redis_pool returns the same instance."""
     # Reset factory state
-    await redis_factory.close_redis_pool()
+    await close_redis_pool()
 
-    pool1 = await redis_factory.get_redis_pool()
-    pool2 = await redis_factory.get_redis_pool()
+    pool1 = await get_redis_pool()
+    pool2 = await get_redis_pool()
 
     assert pool1 is pool2
     assert isinstance(pool1, ConnectionPool)
     # Check decode_responses is False (bytes mode) for ARQ compatibility
     assert pool1.connection_kwargs.get("decode_responses") is False
 
-    await redis_factory.close_redis_pool()
-    assert cache_manager._pool is None
+    await close_redis_pool()
+    assert getattr(get_redis_pool, "_pool", None) is None
 
 
 @pytest.mark.asyncio

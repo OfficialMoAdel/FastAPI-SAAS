@@ -1,10 +1,8 @@
-from typing import Any
-
 from fastapi import APIRouter, Depends, Request, Response
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_user
+from src.app.api.deps import RequestContextDep
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.utils.cache import async_get_redis
@@ -60,14 +58,13 @@ async def passkey_login_rate_limit(request: Request) -> None:
 @router.post("/register", response_model=PasskeyRegistrationOptionsResponse)
 async def register_begin(
     request: PasskeyRegistrationRequest,
-    current_user: dict[str, Any] = Depends(get_current_user),
-    db: AsyncSession = Depends(async_get_db),
+    ctx: RequestContextDep,
     redis: Redis = Depends(async_get_redis),
 ):
     """Start passkey registration process (generate challenge)."""
     options, registration_id = await passkey_service.generate_registration_challenge(
-        db=db,
-        user=current_user,
+        db=ctx.db,
+        user=ctx.user,
         device_type=request.device_type,
         redis=redis,
     )
@@ -77,14 +74,13 @@ async def register_begin(
 @router.post("/register/verify", response_model=PasskeyCredentialResponse)
 async def register_complete(
     request: PasskeyRegistrationVerifyRequest,
-    current_user: dict[str, Any] = Depends(get_current_user),
-    db: AsyncSession = Depends(async_get_db),
+    ctx: RequestContextDep,
     redis: Redis = Depends(async_get_redis),
 ):
     """Complete passkey registration (verify attestation)."""
     credential = await passkey_service.verify_registration(
-        db=db,
-        user=current_user,
+        db=ctx.db,
+        user=ctx.user,
         credential=request.credential,
         registration_id=request.registration_id,
         redis=redis,
@@ -94,21 +90,19 @@ async def register_complete(
 
 @router.get("/credentials", response_model=list[PasskeyCredentialResponse])
 async def list_credentials(
-    current_user: dict[str, Any] = Depends(get_current_user),
-    db: AsyncSession = Depends(async_get_db),
+    ctx: RequestContextDep,
 ):
     """List user's passkey credentials."""
-    return await passkey_service.list_credentials(db=db, user_id=current_user["id"])
+    return await passkey_service.list_credentials(db=ctx.db, user_id=ctx.user_id)
 
 
 @router.delete("/credentials/{credential_id}", status_code=204)
 async def delete_credential(
     credential_id: int,
-    current_user: dict[str, Any] = Depends(get_current_user),
-    db: AsyncSession = Depends(async_get_db),
+    ctx: RequestContextDep,
 ):
     """Delete a passkey credential."""
-    await passkey_service.delete_credential(db=db, user_id=current_user["id"], credential_id=credential_id)
+    await passkey_service.delete_credential(db=ctx.db, user_id=ctx.user_id, credential_id=credential_id)
 
 
 # ============================================================================

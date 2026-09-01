@@ -17,7 +17,7 @@ from src.app.core.worker.functions import (
 )
 from src.app.modules.magic_link.tasks import send_magic_link_email_task
 from src.app.modules.notifications.service import send_email_task
-from src.app.modules.webhooks.recovery import recover_stuck_deliveries
+from src.app.modules.webhooks.delivery import recover_stuck_deliveries
 
 REDIS_QUEUE_HOST = settings.REDIS_QUEUE_HOST
 REDIS_QUEUE_PORT = settings.REDIS_QUEUE_PORT
@@ -46,6 +46,8 @@ class WorkerSettings:
         send_email_task,  # FIXED: Was missing - handles email notifications
         send_magic_link_email_task,
         cleanup_leaked_webhook_lock,  # B8: was enqueued but never defined/registered
+        cleanup_expired_tokens_task,
+        recover_stuck_deliveries,
     ]
     # Consume both the default queue and the low-priority event queue.
     # Without this, EventPriority.LOW events enqueued to

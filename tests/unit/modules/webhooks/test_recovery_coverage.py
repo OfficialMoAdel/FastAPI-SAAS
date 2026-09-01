@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.app.modules.webhooks.recovery import recover_stuck_deliveries
+from src.app.modules.webhooks.delivery import recover_stuck_deliveries
 
 
 async def test_recover_no_redis_returns_zero() -> None:
@@ -24,8 +24,8 @@ async def test_recover_no_stuck_deliveries() -> None:
 
     ctx = {"redis": redis}
     with (
-        patch("src.app.modules.webhooks.recovery.get_db_context") as mock_ctx,
-        patch("src.app.modules.webhooks.recovery.bypass_rls") as mock_bypass,
+        patch("src.app.modules.webhooks.delivery.get_db_context") as mock_ctx,
+        patch("src.app.modules.webhooks.delivery.bypass_rls") as mock_bypass,
     ):
         cm = AsyncMock()
         cm.__aenter__.return_value = db
@@ -48,8 +48,8 @@ async def test_recover_reenqueues_stuck_deliveries() -> None:
 
     ctx = {"redis": redis}
     with (
-        patch("src.app.modules.webhooks.recovery.get_db_context") as mock_ctx,
-        patch("src.app.modules.webhooks.recovery.bypass_rls") as mock_bypass,
+        patch("src.app.modules.webhooks.delivery.get_db_context") as mock_ctx,
+        patch("src.app.modules.webhooks.delivery.bypass_rls") as mock_bypass,
     ):
         cm = AsyncMock()
         cm.__aenter__.return_value = db

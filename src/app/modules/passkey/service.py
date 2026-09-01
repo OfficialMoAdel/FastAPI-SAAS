@@ -6,13 +6,12 @@ Handles:
 - Authentication challenge generation
 - Authentication assertion verification
 - Credential management
-- Limit enforcement
 """
 
 import asyncio
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +34,7 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
+from src.app.api.deps.auth import AuthenticatedUser
 from src.app.core.config import EnvironmentOption, settings
 from src.app.core.exceptions.http_exceptions import BadRequestException, NotFoundException
 from src.app.core.json_utils import json_dumps, json_loads
@@ -74,7 +74,7 @@ class PasskeyService:
     async def generate_registration_challenge(
         self,
         db: AsyncSession,
-        user: dict[str, Any],
+        user: dict[str, Any] | AuthenticatedUser,
         device_type: str,
         redis: Redis | None = None,
     ) -> tuple[dict[str, Any], str]:
@@ -135,7 +135,7 @@ class PasskeyService:
     async def verify_registration(
         self,
         db: AsyncSession,
-        user: dict[str, Any],
+        user: dict[str, Any] | AuthenticatedUser,
         credential: dict[str, Any],
         registration_id: str,
         redis: Redis | None = None,
@@ -363,6 +363,7 @@ class PasskeyService:
 
         # S4 FIX: Check MFA before issuing tokens (mirrors auth login flow)
         from src.app.modules.mfa.service import get_mfa_service
+
         mfa_service = get_mfa_service()
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], db)
 
@@ -530,14 +531,20 @@ class PasskeyService:
 
     async def _store_credential(self, db: AsyncSession, cred_in: PasskeyCredentialCreate) -> dict[str, Any]:
         """Store new credential in database."""
-        result = await crud_passkey_credentials.create(db=db, object=cred_in)
-        # Return as dict for API response
+        result: dict[str, Any] | None = cast(
+            dict[str, Any] | None, await crud_passkey_credentials.create(db=db, object=cred_in)
+        )
+        # FastCRUD.create returns None when no schema_to_select per its
+        # overload; here INSERT ... RETURNING always yields the row, so
+        # None is a contract violation — fail loudly.
+        if result is None:
+            raise RuntimeError("PasskeyCredential insert returned no row")
         return {
-            "id": result.id,
-            "device_type": result.device_type,
-            "created_at": result.created_at,
-            "last_used_at": result.last_used_at,
-            "transports": result.transports,
+            "id": result["id"],
+            "device_type": result["device_type"],
+            "created_at": result["created_at"],
+            "last_used_at": result.get("last_used_at"),
+            "transports": result.get("transports"),
         }
 
     def _get_origin(self) -> str:

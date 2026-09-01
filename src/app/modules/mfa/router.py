@@ -13,7 +13,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_user
+from src.app.api.deps import RequestContextDep
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException, UnauthorizedException
@@ -21,7 +21,6 @@ from src.app.core.redis_provider import get_redis
 from src.app.core.security import get_mfa_pending_token_manager
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.rate_limit import rate_limiter
-from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.mfa.schemas import (
     MFABackupCodesResponse,
@@ -82,8 +81,7 @@ async def check_mfa_rate_limit(
 
 @router.post("/setup", response_model=MFASetupResponse)
 async def setup_mfa(
-    current_user: Annotated[Any, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     service: Annotated[MFAService, Depends(get_mfa_service)],
 ) -> MFASetupResponse:
     """Generate TOTP secret for MFA setup.
@@ -96,8 +94,8 @@ async def setup_mfa(
         MFASetupResponse with secret and provisioning URI.
     """
     result = await service.generate_totp_secret(
-        user_id=get_user_attr(current_user, "id"),
-        db=db,
+        user_id=ctx.user_id,
+        db=ctx.db,
     )
     return MFASetupResponse(**result)
 
@@ -105,8 +103,7 @@ async def setup_mfa(
 @router.post("/enable", response_model=dict[str, Any])
 async def enable_mfa(
     request: MFAEnableRequest,
-    current_user: Annotated[Any, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     service: Annotated[MFAService, Depends(get_mfa_service)],
 ) -> dict[str, Any]:
     """Enable MFA for the current user.
@@ -124,17 +121,16 @@ async def enable_mfa(
         BadRequestException: If MFA already enabled or token is invalid.
     """
     return await service.enable_mfa(
-        user_id=get_user_attr(current_user, "id"),
+        user_id=ctx.user_id,
         request=request,
-        db=db,
+        db=ctx.db,
     )
 
 
 @router.post("/verify", response_model=MFAVerifyResponse)
 async def verify_mfa(
     request: MFAVerifyRequest,
-    current_user: Annotated[Any, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     service: Annotated[MFAService, Depends(get_mfa_service)],
     fastapi_request: Request,
 ) -> MFAVerifyResponse:
@@ -154,12 +150,12 @@ async def verify_mfa(
         UnauthorizedException: If token is invalid or MFA not enabled.
     """
     # Check rate limit
-    await check_mfa_rate_limit(fastapi_request, identifier=str(get_user_attr(current_user, "id")))
+    await check_mfa_rate_limit(fastapi_request, identifier=str(ctx.user_id))
 
     result = await service.verify_totp_token(
-        user_id=get_user_attr(current_user, "id"),
+        user_id=ctx.user_id,
         request=request,
-        db=db,
+        db=ctx.db,
     )
     return MFAVerifyResponse(**result)
 
@@ -167,8 +163,7 @@ async def verify_mfa(
 @router.post("/disable", response_model=dict[str, str])
 async def disable_mfa(
     request: MFADisableRequest,
-    current_user: Annotated[Any, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     service: Annotated[MFAService, Depends(get_mfa_service)],
 ) -> dict[str, str]:
     """Disable MFA for the current user.
@@ -186,18 +181,17 @@ async def disable_mfa(
         UnauthorizedException: If verification fails.
     """
     return await service.disable_mfa(
-        user_id=get_user_attr(current_user, "id"),
+        user_id=ctx.user_id,
         password=request.password,
         totp_token=request.totp_token,
         backup_code=request.backup_code,
-        db=db,
+        db=ctx.db,
     )
 
 
 @router.get("/status", response_model=MFAStatusResponse)
 async def get_mfa_status(
-    current_user: Annotated[Any, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     service: Annotated[MFAService, Depends(get_mfa_service)],
 ) -> MFAStatusResponse:
     """Get MFA status for the current user.
@@ -209,8 +203,8 @@ async def get_mfa_status(
         MFAStatusResponse with MFA status information.
     """
     result = await service.get_mfa_status(
-        user_id=get_user_attr(current_user, "id"),
-        db=db,
+        user_id=ctx.user_id,
+        db=ctx.db,
     )
     return MFAStatusResponse(**result)
 
@@ -218,8 +212,7 @@ async def get_mfa_status(
 @router.post("/backup-codes", response_model=MFABackupCodesResponse)
 async def regenerate_backup_codes(
     request: MFADisableRequest,  # Reuse disable request schema (password + optional totp)
-    current_user: Annotated[Any, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     service: Annotated[MFAService, Depends(get_mfa_service)],
 ) -> MFABackupCodesResponse:
     """Generate new backup codes.
@@ -239,11 +232,11 @@ async def regenerate_backup_codes(
         UnauthorizedException: If verification fails.
     """
     result = await service.regenerate_backup_codes(
-        user_id=get_user_attr(current_user, "id"),
+        user_id=ctx.user_id,
         password=request.password,
         totp_token=request.totp_token,
         backup_code=request.backup_code,
-        db=db,
+        db=ctx.db,
     )
     return MFABackupCodesResponse(**result)
 

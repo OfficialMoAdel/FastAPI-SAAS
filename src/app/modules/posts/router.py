@@ -1,12 +1,12 @@
 """Post API router - HTTP handlers delegating to service layer."""
 
-from typing import Annotated, Any
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastcrud import PaginatedListResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import AuthenticatedUser, get_current_superuser, get_current_user
+from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.core.db.database import async_get_db
 from src.app.core.schemas import MessageResponse
 from src.app.core.utils.cache import cache
@@ -33,15 +33,15 @@ async def write_post(
     request: Request,
     username: str,
     post: PostCreate,
-    current_user: Annotated[AuthenticatedUser | Any, Depends(get_current_user)],
+    ctx: RequestContextDep,
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, Any]:
     """Create a new post."""
-    if get_user_attr(current_user, "username") != username:
+    if get_user_attr(ctx.user, "username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()
-    return await service.create_post(post, current_user)
+    return await service.create_post(post, ctx.user)
 
 
 @router.get("/by-user/{username}", response_model=PaginatedListResponse[PostRead])
@@ -51,23 +51,22 @@ async def write_post(
     expiration=60,
     user_scoped=True,
     # P4: register every cached list page under this pattern so PATCH/DELETE
-    # can invalidate via the O(1) pattern-index instead of SCAN.
     invalidation_patterns=["user_posts:{username}:*"],
 )
 async def read_posts(
     request: Request,
     username: str,
-    current_user: Annotated[AuthenticatedUser | Any, Depends(get_current_user)],
+    ctx: RequestContextDep,
     service: PostService = Depends(_get_post_service),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(10, ge=1, le=100, description="Page size"),
 ) -> Any:
     """Get paginated list of posts for a user."""
-    if get_user_attr(current_user, "username") != username:
+    if get_user_attr(ctx.user, "username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()
-    return await service.get_posts(get_user_attr(current_user, "id"), page, per_page)
+    return await service.get_posts(get_user_attr(ctx.user, "id"), page, per_page)
 
 
 @router.get("/by-user/{username}/{id}", response_model=PostRead)
@@ -76,15 +75,15 @@ async def read_post(
     request: Request,
     username: str,
     id: int,
-    current_user: Annotated[AuthenticatedUser | Any, Depends(get_current_user)],
+    ctx: RequestContextDep,
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, Any]:
     """Get a single post by ID."""
-    if get_user_attr(current_user, "username") != username:
+    if get_user_attr(ctx.user, "username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()
-    return await service.get_post(id, get_user_attr(current_user, "id"))
+    return await service.get_post(id, get_user_attr(ctx.user, "id"))
 
 
 @router.patch("/by-user/{username}/{id}", response_model=MessageResponse)
@@ -99,15 +98,15 @@ async def patch_post(
     username: str,
     id: int,
     values: PostUpdate,
-    current_user: Annotated[AuthenticatedUser | Any, Depends(get_current_user)],
+    ctx: RequestContextDep,
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, str]:
     """Update a post."""
-    if get_user_attr(current_user, "username") != username:
+    if get_user_attr(ctx.user, "username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()
-    return await service.update_post(id, values, current_user)
+    return await service.update_post(id, values, ctx.user)
 
 
 @router.delete("/by-user/{username}/{id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -121,15 +120,15 @@ async def erase_post(
     request: Request,
     username: str,
     id: int,
-    current_user: Annotated[AuthenticatedUser | Any, Depends(get_current_user)],
+    ctx: RequestContextDep,
     service: PostService = Depends(_get_post_service),
 ) -> Response:
     """Soft delete a post."""
-    if get_user_attr(current_user, "username") != username:
+    if get_user_attr(ctx.user, "username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()
-    await service.delete_post(id, current_user)
+    await service.delete_post(id, ctx.user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

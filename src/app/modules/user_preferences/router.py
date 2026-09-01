@@ -5,13 +5,9 @@ Task: T097 [US10] Add PATCH /user/me/image endpoint
 Task: T098 [US10] Add DELETE /user/me/image endpoint
 """
 
-from typing import Any
-
 from fastapi import APIRouter, Depends, File, UploadFile, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_user
-from src.app.core.db.database import async_get_db
+from src.app.api.deps import RequestContextDep
 from src.app.modules.user_preferences.schemas import (
     ImageUploadResponse,
     UserPreferencesResponse,
@@ -24,8 +20,7 @@ router = APIRouter(prefix="/user/me", tags=["user"])
 
 @router.get("/preferences", response_model=UserPreferencesResponse)
 async def get_preferences(
-    current_user: dict[str, Any] = Depends(get_current_user),
-    db: AsyncSession = Depends(async_get_db),
+    ctx: RequestContextDep,
     service: PreferencesService = Depends(get_preferences_service),
 ) -> UserPreferencesResponse:
     """Get current user's preferences.
@@ -34,8 +29,8 @@ async def get_preferences(
     Creates a preferences record if one doesn't exist.
     """
     result = await service.get_preferences(
-        db=db,
-        user_id=current_user["id"],
+        db=ctx.db,
+        user_id=ctx.user_id,
     )
     return UserPreferencesResponse(**result)
 
@@ -43,8 +38,7 @@ async def get_preferences(
 @router.patch("/preferences", response_model=UserPreferencesResponse)
 async def update_preferences(
     updates: UserPreferencesUpdate,
-    current_user: dict[str, Any] = Depends(get_current_user),
-    db: AsyncSession = Depends(async_get_db),
+    ctx: RequestContextDep,
     service: PreferencesService = Depends(get_preferences_service),
 ) -> UserPreferencesResponse:
     """Update current user's preferences.
@@ -52,8 +46,8 @@ async def update_preferences(
     Only provided fields are updated; others remain unchanged.
     """
     result = await service.update_preferences(
-        db=db,
-        user_id=current_user["id"],
+        db=ctx.db,
+        user_id=ctx.user_id,
         updates=updates,
     )
     return UserPreferencesResponse(**result)
@@ -61,9 +55,8 @@ async def update_preferences(
 
 @router.patch("/image", response_model=ImageUploadResponse)
 async def upload_profile_image(
+    ctx: RequestContextDep,
     file: UploadFile = File(...),
-    current_user: dict[str, Any] = Depends(get_current_user),
-    db: AsyncSession = Depends(async_get_db),
     service: PreferencesService = Depends(get_preferences_service),
 ):
     """Upload profile image.
@@ -72,8 +65,8 @@ async def upload_profile_image(
     Returns the new image URL.
     """
     result = await service.upload_profile_image(
-        db=db,
-        user_id=current_user["id"],
+        db=ctx.db,
+        user_id=ctx.user_id,
         file=file,
     )
     return ImageUploadResponse(**result)
@@ -81,8 +74,7 @@ async def upload_profile_image(
 
 @router.delete("/image", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_profile_image(
-    current_user: dict[str, Any] = Depends(get_current_user),
-    db: AsyncSession = Depends(async_get_db),
+    ctx: RequestContextDep,
     service: PreferencesService = Depends(get_preferences_service),
 ):
     """Delete profile image.
@@ -90,6 +82,6 @@ async def delete_profile_image(
     Removes image from storage and clears user profile URL.
     """
     await service.delete_profile_image(
-        db=db,
-        user_id=current_user["id"],
+        db=ctx.db,
+        user_id=ctx.user_id,
     )

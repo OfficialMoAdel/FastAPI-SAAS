@@ -18,11 +18,15 @@ from src.app.core.events import EventPriority, event_bus
 from src.app.core.exceptions.http_exceptions import BadRequestException, UnauthorizedException
 from src.app.core.security import get_password_hash, verify_password
 from src.app.core.security.tokens import hash_token
+from src.app.modules.audit_logs import audit
 from src.app.modules.auth.models import PasswordResetToken, generate_reset_token
 from src.app.modules.users.service import UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
 
 logger = get_logger(__name__)
+# Re-exported for test backward compatibility
+# (TODO: REMOVE once tests/unit/modules/auth no longer patch this module attribute)
+event_bus = event_bus
 
 
 class PasswordLifecycleService:
@@ -81,16 +85,13 @@ class PasswordLifecycleService:
         await self.delete_user_token_cache(user)
         # SECURITY FIX: Add audit log for password change (H-13)
         try:
-            await event_bus.publish(
-                "audit.log",
-                {
-                    "action": "auth.password_changed",
-                    "entity_type": "user",
-                    "entity_id": str(user_id),
-                    "tenant_id": str(user.get("tenant_id", "0")),
-                    "user_id": user_id,
-                    "details": {"message": "User password was changed"},
-                },
+            await audit(
+                action="auth.password_changed",
+                entity_type="user",
+                entity_id=user_id,
+                tenant_id=user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None),
+                user_id=user_id,
+                details={"message": "User password was changed"},
                 priority=EventPriority.NORMAL,
             )
         except Exception as e:

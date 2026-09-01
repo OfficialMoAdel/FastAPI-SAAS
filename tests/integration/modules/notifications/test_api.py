@@ -18,7 +18,12 @@ from src.app.modules.users.models import User
 
 @pytest.fixture(autouse=True)
 def mock_current_user(tenant):
-    """Mock the current user dependency for all tests in this module."""
+    """Mock the current user dependency for all tests in this module.
+
+    The ctx seam composes ``get_current_user``, so this override flows into
+    ``get_request_context`` naturally; tenant comes from the middleware
+    contextvar and db from conftest's ``async_get_db`` override.
+    """
     mock_user = User(
         email="test@example.com",
         name="Test User",

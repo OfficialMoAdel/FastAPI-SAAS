@@ -6,13 +6,12 @@ intended for use by webhook consumers to validate incoming webhook payloads.
 
 import hashlib
 import hmac
-import json
-import time
 
 from fastapi import HTTPException, status
 
 from src.app.core.config import settings
 from src.app.core.security.url_validator import SSRFProtectionError, validate_webhook_url
+from src.app.modules.webhooks.signer import canonical_bytes_from_raw, is_timestamp_fresh
 
 
 async def validate_url_ssrf(url: str) -> None:
@@ -72,16 +71,14 @@ def verify_webhook_signature(
     # bare `sha256=<hex over payload>` format is still accepted for old
     # consumers, but its replay protection relies solely on the header
     # timestamp freshness check below.
-    if abs(time.time() - timestamp) > tolerance:
+    # Freshness + canonicalization are signer-owned primitives (candidate 5):
+    # ONE implementation of the replay window and the canonical-bytes
+    # contract shared by producer (signer.sign_payload) and this consumer
+    # verifier.
+    if not is_timestamp_fresh(timestamp, tolerance):
         return False
 
-    # Recreate canonical payload bytes (same normalization as the sender)
-    try:
-        payload_dict = json.loads(payload)
-        payload_bytes = json.dumps(payload_dict, sort_keys=True).encode("utf-8")
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        # If payload is not valid JSON, use raw bytes
-        payload_bytes = payload
+    payload_bytes = canonical_bytes_from_raw(payload)
 
     def _hmac_hex(data: bytes) -> str:
         return hmac.new(secret.encode("utf-8"), data, hashlib.sha256).hexdigest()
@@ -107,7 +104,7 @@ def verify_webhook_signature(
     # Scheme 1 (preferred): timestamp-bound signature
     signed_digests = [d for fmt, d in candidates if fmt == "signed"]
     if signed_digests and signed_ts is not None:
-        if abs(time.time() - signed_ts) > tolerance:
+        if not is_timestamp_fresh(signed_ts, tolerance):
             return False
         expected_signed = _hmac_hex(f"{signed_ts}.".encode() + payload_bytes)
         for digest in signed_digests:

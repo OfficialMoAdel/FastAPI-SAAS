@@ -46,6 +46,19 @@ def mock_user():
     return user
 
 
+def _make_ctx(mock_db, mock_tenant, mock_user):
+    from unittest.mock import MagicMock
+    ctx = MagicMock()
+    ctx.db = mock_db
+    ctx.tenant = mock_tenant
+    ctx.tenant_id = mock_tenant.id
+    ctx.user = mock_user
+    ctx.user_id = mock_user.get("id") if isinstance(mock_user, dict) else getattr(mock_user, "id", 1)
+    ctx.require_tenant = MagicMock(return_value=mock_tenant)
+    ctx.require_ownership = MagicMock()
+    return ctx
+
+
 @pytest.mark.asyncio
 async def test_list_webhook_endpoints(mock_db, mock_tenant, mock_user):
     mock_endpoint = MagicMock()
@@ -70,9 +83,7 @@ async def test_list_webhook_endpoints(mock_db, mock_tenant, mock_user):
         event_type="user.created",
         page=1,
         per_page=10,
-        db=mock_db,
-        current_tenant=mock_tenant,
-        current_user=mock_user,
+        ctx=_make_ctx(mock_db, mock_tenant, mock_user),
     )
 
     assert result["total"] == 1
@@ -100,7 +111,7 @@ async def test_create_webhook_endpoint(mock_service_cls, mock_db, mock_tenant, m
 
     request = WebhookEndpointCreate(url="https://example.com/webhook", event_type="user.created")
     result = await create_webhook_endpoint(
-        request=request, db=mock_db, current_tenant=mock_tenant, current_user=mock_user
+        request=request, ctx=_make_ctx(mock_db, mock_tenant, mock_user)
     )
 
     assert result.url == "https://example.com/webhook"
@@ -135,9 +146,7 @@ async def test_list_webhook_deliveries_route(mock_db, mock_tenant, mock_user):
         end_date=None,
         page=1,
         per_page=10,
-        db=mock_db,
-        current_tenant=mock_tenant,
-        current_user=mock_user,
+        ctx=_make_ctx(mock_db, mock_tenant, mock_user),
     )
 
     assert result["total"] == 1
@@ -160,7 +169,7 @@ async def test_get_webhook_endpoint(mock_db, mock_tenant, mock_user):
     mock_db.execute.return_value = mock_result
 
     result = await get_webhook_endpoint(
-        endpoint_id=endpoint_id, db=mock_db, current_tenant=mock_tenant, current_user=mock_user
+        endpoint_id=endpoint_id, ctx=_make_ctx(mock_db, mock_tenant, mock_user)
     )
 
     assert result.id == endpoint_id
@@ -173,7 +182,7 @@ async def test_get_webhook_endpoint_not_found(mock_db, mock_tenant, mock_user):
     mock_db.execute.return_value = mock_result
 
     with pytest.raises(HTTPException) as exc:
-        await get_webhook_endpoint(endpoint_id=uuid4(), db=mock_db, current_tenant=mock_tenant, current_user=mock_user)
+        await get_webhook_endpoint(endpoint_id=uuid4(), ctx=_make_ctx(mock_db, mock_tenant, mock_user))
     assert exc.value.status_code == 404
 
 
@@ -194,7 +203,7 @@ async def test_update_webhook_endpoint(mock_db, mock_tenant, mock_user):
 
     request = WebhookEndpointUpdate(is_active=False)
     await update_webhook_endpoint(
-        endpoint_id=endpoint_id, request=request, db=mock_db, current_tenant=mock_tenant, current_user=mock_user
+        endpoint_id=endpoint_id, request=request, ctx=_make_ctx(mock_db, mock_tenant, mock_user)
     )
 
     assert mock_endpoint.is_active is False
@@ -212,7 +221,7 @@ async def test_delete_webhook_endpoint(mock_db, mock_tenant, mock_user):
     mock_db.execute.return_value = mock_result
 
     await delete_webhook_endpoint(
-        endpoint_id=endpoint_id, db=mock_db, current_tenant=mock_tenant, current_user=mock_user
+        endpoint_id=endpoint_id, ctx=_make_ctx(mock_db, mock_tenant, mock_user)
     )
 
     mock_db.delete.assert_called_once_with(mock_endpoint)
@@ -237,7 +246,7 @@ async def test_get_webhook_delivery(mock_db, mock_tenant, mock_user):
     mock_db.execute.return_value = mock_result
 
     result = await get_webhook_delivery(
-        delivery_id=delivery_id, db=mock_db, current_tenant=mock_tenant, current_user=mock_user
+        delivery_id=delivery_id, ctx=_make_ctx(mock_db, mock_tenant, mock_user)
     )
 
     assert result.id == delivery_id
@@ -267,7 +276,7 @@ async def test_retry_webhook_delivery(mock_service_cls, mock_db, mock_tenant, mo
     mock_service_cls.return_value = mock_service
 
     result = await retry_webhook_delivery(
-        delivery_id=delivery_id, db=mock_db, current_tenant=mock_tenant, current_user=mock_user
+        delivery_id=delivery_id, ctx=_make_ctx(mock_db, mock_tenant, mock_user)
     )
 
     mock_service.retry_delivery.assert_called_once_with(delivery_id)
@@ -285,7 +294,7 @@ async def test_retry_webhook_delivery_not_failed(mock_db, mock_tenant, mock_user
 
     with pytest.raises(HTTPException) as exc:
         await retry_webhook_delivery(
-            delivery_id=uuid4(), db=mock_db, current_tenant=mock_tenant, current_user=mock_user
+            delivery_id=uuid4(), ctx=_make_ctx(mock_db, mock_tenant, mock_user)
         )
     assert exc.value.status_code == 400
 
@@ -315,6 +324,7 @@ async def test_test_webhook_endpoint(mock_service_cls, mock_rate_limiter, mock_d
     mock_db.execute.side_effect = [mock_rate_limit_result, mock_endpoint_result]
 
     mock_service = MagicMock()
+    mock_service.check_test_rate_limit = AsyncMock(return_value=None)
     mock_service.get_endpoint_by_id = AsyncMock(return_value=mock_endpoint)
     mock_delivery = MagicMock()
     mock_delivery.id = uuid4()
@@ -331,7 +341,7 @@ async def test_test_webhook_endpoint(mock_service_cls, mock_rate_limiter, mock_d
     request = WebhookTestRequest(event_type="test.event", payload={"test": True})
 
     result = await route_test_webhook_endpoint(
-        endpoint_id=endpoint_id, request=request, db=mock_db, current_tenant=mock_tenant, current_user=mock_user_dict
+        endpoint_id=endpoint_id, request=request, ctx=_make_ctx(mock_db, mock_tenant, mock_user_dict)
     )
 
     assert result.event_type == "test.event"
@@ -352,7 +362,7 @@ async def test_get_signing_secret(mock_service_cls, mock_db, mock_tenant, mock_u
     mock_service_cls.return_value = mock_service
 
     result = await get_signing_secret(
-        endpoint_id=endpoint_id, db=mock_db, current_tenant=mock_tenant, current_user=mock_user
+        endpoint_id=endpoint_id, ctx=_make_ctx(mock_db, mock_tenant, mock_user)
     )
 
     # S-5: the endpoint masks the secret instead of returning plaintext.
@@ -379,7 +389,7 @@ async def test_rotate_signing_secret(mock_service_cls, mock_db, mock_tenant, moc
 
     request = SigningSecretRotateRequest(grace_period_seconds=300)
     result = await rotate_signing_secret(
-        endpoint_id=endpoint_id, request=request, db=mock_db, current_tenant=mock_tenant, current_user=mock_user
+        endpoint_id=endpoint_id, request=request, ctx=_make_ctx(mock_db, mock_tenant, mock_user)
     )
 
     assert result.new_signing_secret == "new-secret"

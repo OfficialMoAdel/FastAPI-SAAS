@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_user
+from src.app.api.deps import RequestContextDep
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
@@ -330,12 +330,11 @@ async def add_product_pricing(
 
 @router.get("/subscriptions/me", response_model=list[UserSubscriptionRead])
 async def get_my_subscriptions(
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
 ) -> list[UserSubscriptionRead]:
     """Get current user's subscriptions."""
-    service = get_user_subscription_service(db)
-    result = await service.get_user_subscriptions(current_user["id"])
+    service = get_user_subscription_service(ctx.db)
+    result = await service.get_user_subscriptions(ctx.user_id)
     data: list[Any] = result.get("data", [])
     return data
 
@@ -343,12 +342,11 @@ async def get_my_subscriptions(
 @router.post("/subscriptions/{subscription_id}/cancel", response_model=UserSubscriptionRead)
 async def cancel_subscription(
     subscription_id: int,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
 ) -> Any:
     """Cancel a subscription at period end (ownership enforced in service)."""
-    service = get_user_subscription_service(db)
-    return await service.cancel_subscription_for_user(subscription_id, user_id=current_user["id"])
+    service = get_user_subscription_service(ctx.db)
+    return await service.cancel_subscription_for_user(subscription_id, user_id=ctx.user_id)
 
 
 # =============================================================================
@@ -359,12 +357,11 @@ async def cancel_subscription(
 @router.post("/checkout", response_model=CheckoutSession)
 async def create_checkout_session(
     data: CheckoutCreate,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
 ) -> CheckoutSession:
     """Create a Stripe checkout session."""
-    service = get_checkout_service(db)
-    return await service.create_session(user_id=current_user["id"], user_email=current_user["email"], data=data)
+    service = get_checkout_service(ctx.db)
+    return await service.create_session(user_id=ctx.user_id, user_email=ctx.user["email"], data=data)
 
 
 class PortalSessionRequest(BaseModel):
@@ -378,34 +375,29 @@ class PortalSessionRequest(BaseModel):
 )
 async def create_portal_session(
     body: PortalSessionRequest,
-    db: Annotated[AsyncSession, Depends(async_get_db)],
-    current_user: Annotated[dict, Depends(get_current_user)],
+    ctx: RequestContextDep,
 ) -> PortalResponse:
     """Create a Stripe Customer Portal session."""
-    service = get_checkout_service(db)
+    service = get_checkout_service(ctx.db)
     url = await service.create_portal_session(return_url=str(body.return_url))
     return PortalResponse(url=url)
 
 
 @router.get("/records", response_model=BillingRecordList)
 async def list_billing_records(
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     pagination: Annotated[PaginationParams, Depends(get_pagination_params)],
     status: str | None = Query(None, description="Filter by status (succeeded, failed, pending, refunded)"),
 ) -> Any:
     """List billing records for the current user.
 
     Args:
-        current_user: Authenticated user
-        db: Database session
+        ctx: Request context (authenticated user, tenant, DB session)
         pagination: Standardized pagination params (R1-10)
         status: Optional filter by status (succeeded, failed, pending, refunded)
     """
-    service = get_billing_record_service(db)
-    result = await service.get_user_records(
-        current_user["id"], page=pagination.page, limit=pagination.limit, status=status
-    )
+    service = get_billing_record_service(ctx.db)
+    result = await service.get_user_records(ctx.user_id, page=pagination.page, limit=pagination.limit, status=status)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
     return build_paginated_response(items=data, total=total, page=pagination.page, per_page=pagination.per_page)
@@ -414,9 +406,8 @@ async def list_billing_records(
 @router.get("/records/{record_id}", response_model=BillingRecordRead)
 async def get_billing_record(
     record_id: int,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
 ) -> Any:
     """Get a billing record by ID (ownership enforced in service)."""
-    service = get_billing_record_service(db)
-    return await service.get_record_for_user(record_id, user_id=current_user["id"])
+    service = get_billing_record_service(ctx.db)
+    return await service.get_record_for_user(record_id, user_id=ctx.user_id)

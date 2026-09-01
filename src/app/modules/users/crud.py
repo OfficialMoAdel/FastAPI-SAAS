@@ -4,8 +4,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from src.app.core.db.tenant_crud import TenantAwareCRUD
-from src.app.core.tenancy.context import get_current_tenant
+from src.app.core.db.tenant_crud import TenantAwareCRUD, tenant_scope
+from src.app.core.tenancy.context import (
+    get_current_tenant,  # noqa: F401 — re-exported for legacy callers of this module
+)
 from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreateInternal, UserDelete, UserRead, UserUpdate, UserUpdateInternal
 
@@ -32,32 +34,21 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
         if not id and not username and not email:
             return None
 
-        tenant = get_current_tenant()
-
-        # Build WHERE clause based on lookup type - case-insensitive.
-        # P6: compare against the pre-lowered parameter (not func.lower(param))
-        # so the planner can use the functional indexes
-        # idx_users_tenant_lower_email / idx_users_lower_username (migration 13).
+        # Lookup clause built first (case-insensitive on the pre-lowered
+        # parameter so the planner can use the functional indexes).
         if id is not None:
             lookup_clause = User.id == id
         elif username is not None:
-            # Branch narrows username to str for mypy.
             lookup_clause = func.lower(User.username) == username.lower()
         else:
             email_val = email or ""
             lookup_clause = func.lower(User.email) == email_val.lower()
 
-        # Build base statement
+        # Tenant filter comes from the ONE seam: tenant_scope resolves the
+        # context itself and is fail-closed without one (usernames/emails
+        # are only unique per-tenant — no global lookup without a tenant).
         stmt = select(User).options(joinedload(User.tier)).where(lookup_clause, User.is_deleted.is_(False))
-
-        # Add tenant filter only if tenant context exists
-        if tenant is not None:
-            # SECURITY FIX: Ensure exact tenant mapping even through joins/eager loading.
-            stmt = stmt.where(User.tenant_id == tenant.id)
-        else:
-            # SECURITY FIX: Do not allow global lookup without a tenant context
-            # since usernames/emails are only unique per-tenant.
-            raise RuntimeError("Tenant context is required for user lookup to prevent cross-tenant data exposure")
+        stmt = stmt.where(tenant_scope(User))
 
         result = await db.execute(stmt)
         user = result.unique().scalar_one_or_none()

@@ -12,6 +12,7 @@ them on startup/shutdown, and reads them at call time so ``mock.patch`` of
 those names in the ~46 test files keeps working unchanged. New code should
 not read the globals directly — call the functions here.
 """
+from typing import cast
 
 from arq.connections import ArqRedis
 from redis.asyncio import ConnectionPool, Redis
@@ -26,12 +27,31 @@ __all__ = ["get_arq", "get_redis", "get_redis_pool", "require_redis", "set_clien
 async def get_redis_pool() -> ConnectionPool:
     """Create (or return) the shared raw Redis connection pool.
 
-    Delegates to CacheManager, which owns pool configuration
-    (URL, max connections, timeouts) and instance caching.
+    Pool ownership lives here — the provider is the single owner of the
+    Redis lifecycle (clients + pool). The former CacheManager shim
+    (core/cache/manager.py, zero module callers beyond this delegation)
+    was deleted; this is the same pool-config logic, relocated.
     """
-    from src.app.core.cache.manager import cache_manager
+    from src.app.core.config import settings
 
-    return await cache_manager.get_pool()
+    if not hasattr(get_redis_pool, "_pool") or get_redis_pool._pool is None:  # type: ignore[attr-defined]
+        get_redis_pool._pool = ConnectionPool.from_url(  # type: ignore[attr-defined]
+            settings.REDIS_CACHE_URL,
+            max_connections=settings.redis_cache.REDIS_CACHE_MAX_CONNECTIONS,
+            socket_timeout=settings.redis_cache.REDIS_CACHE_SOCKET_TIMEOUT,
+            socket_connect_timeout=settings.redis_cache.REDIS_CACHE_SOCKET_CONNECT_TIMEOUT,
+            retry_on_timeout=True,
+            decode_responses=False,
+        )
+    return cast(ConnectionPool, get_redis_pool._pool)  # type: ignore[attr-defined]
+
+
+async def close_redis_pool() -> None:
+    """Close the shared pool (lifespan teardown path)."""
+    pool = getattr(get_redis_pool, "_pool", None)
+    if pool is not None:
+        await pool.disconnect()
+        get_redis_pool._pool = None  # type: ignore[attr-defined]
 
 
 def get_redis() -> Redis | None:

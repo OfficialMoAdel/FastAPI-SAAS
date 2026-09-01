@@ -4,7 +4,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.db.tenant_crud import TenantAwareCRUD
+from src.app.core.db.tenant_crud import TenantAwareCRUD, scoped_query, tenant_scope
 from src.app.modules.sso.models import UserSSOConnection
 from src.app.modules.sso.schemas import (
     UserSSOConnectionCreate,
@@ -33,8 +33,13 @@ class CRUDUserSSOConnection(
         provider_user_id: str | None = None,
         user_id: int | None = None,
     ) -> UserSSOConnection | None:
-        """Get SSO connection by various criteria."""
-        query = select(self.model)
+        """Get SSO connection by various criteria.
+
+        The tenant filter goes through the seam: the active context wins
+        over the explicit ``tenant_id`` argument (mismatch logged, never
+        honored); without context the explicit argument is the scope.
+        """
+        query = scoped_query(self.model, tenant_id)
 
         if id is not None:
             query = query.where(self.model.id == id)
@@ -44,8 +49,6 @@ class CRUDUserSSOConnection(
             query = query.where(self.model.provider_user_id == provider_user_id)
         if user_id is not None:
             query = query.where(self.model.user_id == user_id)
-        if tenant_id is not None:
-            query = query.where(self.model.tenant_id == tenant_id)
 
         result = await db.execute(query)
         return result.scalar_one_or_none()
@@ -58,11 +61,13 @@ class CRUDUserSSOConnection(
         *,
         tenant_id: UUID,
     ) -> UserSSOConnection | None:
-        """Global lookup for SSO login by unique provider ID."""
-        query = select(self.model).where(
+        """Global lookup for SSO login by unique provider ID.
+
+        Scoped via the seam (explicit tenant_id — SSO callback path).
+        """
+        query = scoped_query(self.model, tenant_id).where(
             self.model.provider == provider,
             self.model.provider_user_id == provider_user_id,
-            self.model.tenant_id == tenant_id
         )
         result = await db.execute(query)
         return result.scalar_one_or_none()
@@ -75,7 +80,10 @@ class CRUDUserSSOConnection(
         *,
         tenant_id: UUID,
     ) -> bool:
-        """Check if SSO connection exists for user and provider."""
+        """Check if SSO connection exists for user and provider.
+
+        Scoped via the seam.
+        """
         query = (
             select(func.count())
             .select_from(self.model)
@@ -84,7 +92,7 @@ class CRUDUserSSOConnection(
                 self.model.provider == provider,
             )
         )
-        query = query.where(self.model.tenant_id == tenant_id)
+        query = query.where(tenant_scope(self.model, tenant_id))
 
         result = await db.execute(query)
         count = result.scalar()
@@ -106,7 +114,7 @@ class CRUDUserSSOConnection(
         if user_id is not None:
             query = query.where(self.model.user_id == user_id)
 
-        query = query.where(self.model.tenant_id == tenant_id)
+        query = query.where(tenant_scope(self.model, tenant_id))
 
         result = await db.execute(query)
         return result.scalar() or 0

@@ -15,11 +15,15 @@ Usage:
 
 import uuid
 from typing import Any, Generic, TypeVar, cast
+from uuid import UUID
 
 from fastcrud import FastCRUD
 from pydantic import BaseModel
+from sqlalchemy import select, true
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import ColumnElement, Select
 
+from src.app.core.exceptions.http_exceptions import TenantContextError  # noqa: F401 — re-exported; runtime raises
 from src.app.core.resilience.db_circuit_breaker import db_circuit_guard
 from src.app.core.tenancy.context import get_current_tenant
 
@@ -30,6 +34,115 @@ UpdateSchemaInternalType = TypeVar("UpdateSchemaInternalType", bound=BaseModel)
 DeleteSchemaType = TypeVar("DeleteSchemaType", bound=BaseModel)
 SelectSchemaType = TypeVar("SelectSchemaType", bound=BaseModel)
 
+def _resolve_tenant_id_from_context() -> UUID | None:
+    """Resolve the current tenant_id from context, canonicalized to UUID.
+
+    Shared security core for the tenant-seam functions. Returns the
+    context tenant's id or None when no tenant is active (incl. the
+    NO_TENANT sentinel, which is falsy).
+    """
+    tenant = get_current_tenant()
+    if not tenant:
+        return None
+    tenant_id = tenant.id
+    if isinstance(tenant_id, str):
+        try:
+            tenant_id = uuid.UUID(tenant_id)
+        except (ValueError, TypeError) as e:
+            from src.app.core.logger import get_logger
+
+            get_logger(__name__).error("invalid_tenant_uuid_in_context", tenant_id=tenant_id, exc_info=e)
+            raise ValueError(f"Invalid tenant UUID in context: {tenant_id}") from e
+    return tenant_id
+
+
+def tenant_scope(
+    model: Any,
+    tenant_id: str | UUID | None = None,
+    *,
+    allow_unscoped: bool = False,
+) -> ColumnElement[bool]:
+    """Return the tenant-isolation criterion for ``model``.
+
+    This is the ONE interface for the tenant-filter invariant
+    (architecture-review candidate 1). Every hand-rolled
+    ``M.tenant_id == tid`` across services composes onto this function;
+    the invariant — context wins over the caller's argument, missing
+    context rejected unless explicitly escaped — lives here instead of
+    being re-implemented per call site.
+
+    Security semantics mirror :meth:`TenantAwareCRUD.inject_tenant_filter`:
+
+    - If a tenant context is active, it ALWAYS wins over ``tenant_id``;
+      a mismatching caller argument is logged as a blocked override
+      (M-4: callers cannot bypass tenant isolation by passing a value).
+    - If no context is active, a caller-supplied ``tenant_id`` may be used
+      — the caller takes responsibility for scoping (worker paths and
+      services that hold an explicit tenant use this). Passed through
+      verbatim: canonicalizing here would crash callers whose tenant_id
+      is not a UUID-typed value.
+    - Neither context nor argument present: raises ``TenantContextError``
+      unless ``allow_unscoped=True`` (the explicit, logged escape hatch,
+      which returns None so the caller adds no filter).
+
+    Args:
+        model: SQLAlchemy model class with a ``tenant_id`` column.
+        tenant_id: Optional explicit tenant scope. Ignored (with a
+            warning) when a context tenant is active.
+        allow_unscoped: Explicit escape hatch for documented system
+            contexts (RLS bypass, recovery crons). Logged when used.
+
+    Returns:
+        The ``model.tenant_id == <resolved>`` criterion. Under the escape
+        hatch, a ``true()`` tautology — no tenant filter, and safe to chain
+        into ``.where(...)`` unconditionally.
+
+    Raises:
+        TenantContextError: No tenant in context, no ``tenant_id``
+            argument, and no escape hatch.
+    """
+    from src.app.core.logger import get_logger
+
+    context_id = _resolve_tenant_id_from_context()
+    if context_id is not None:
+        if tenant_id is not None and str(tenant_id) != str(context_id):
+            get_logger(__name__).warning(
+                "tenant_id_override_blocked",
+                requested=str(tenant_id),
+                context=str(context_id),
+            )
+        return cast(ColumnElement[bool], model.tenant_id == context_id)
+
+    if tenant_id is not None:
+        return cast(ColumnElement[bool], model.tenant_id == tenant_id)
+
+    if allow_unscoped:
+        get_logger(__name__).warning("tenant_context_missing_allowed_via_flag", model=getattr(model, "__name__", model))
+        # true() — not None: a caller chaining .where(tenant_scope(...)) without
+        # a None-check gets an explicit tautology (no filter) rather than
+        # SQLAlchemy's WHERE-NULL object, which matches zero rows.
+        return true()
+
+    get_logger(__name__).error("tenant_context_missing_rejected", model=getattr(model, "__name__", model))
+    raise TenantContextError(
+        f"Tenant-scoped query on {getattr(model, '__name__', model)} without active tenant context"
+    )
+
+
+def scoped_query(
+    model: type,
+    tenant_id: str | UUID | None = None,
+    *,
+    allow_unscoped: bool = False,
+) -> Select:
+    """Return a tenant-scoped ``Select`` for ``model``.
+
+    Sugar over :func:`tenant_scope` for plain selects: the criterion is
+    resolved by the same rule and applied. Callers needing joins, eager
+    loads, or aggregates on a shared ``select(...)`` should use
+    ``tenant_scope`` directly and ``.where(criterion)`` it themselves.
+    """
+    return select(model).where(tenant_scope(model, tenant_id, allow_unscoped=allow_unscoped))
 
 class TenantAwareCRUD(
     FastCRUD[
@@ -79,23 +192,15 @@ class TenantAwareCRUD(
         `tenant is not None` check let it through and scoped queries to
         UUID(int=0), silently matching 0 rows for reads/updates while Stripe
         received a 200. Truthiness now rejects both None and the sentinel.
-        """
-        tenant = get_current_tenant()
-        # B6-LEAK FIX: consume the escape hatch UNCONDITIONALLY. Previously it
-        # was only popped in the no-context branch, so when tenant context WAS
-        # present the flag stayed in kwargs and reached FastCRUD, whose column
-        # introspection rejected it (ValueError: Invalid column '_allow_unscoped').
-        allow_unscoped = kwargs.pop("_allow_unscoped", False) is True
-        if tenant:
-            tenant_id = tenant.id
-            if isinstance(tenant_id, str):
-                try:
-                    tenant_id = uuid.UUID(tenant_id)
-                except (ValueError, TypeError) as e:
-                    from src.app.core.logger import get_logger
 
-                    get_logger(__name__).error("invalid_tenant_uuid_in_context", tenant_id=tenant_id, exc_info=e)
-                    raise ValueError(f"Invalid tenant UUID in context: {tenant_id}") from e
+        B6-LEAK FIX: consume the escape hatch UNCONDITIONALLY. Previously it
+        was only popped in the no-context branch, so when tenant context WAS
+        present the flag stayed in kwargs and reached FastCRUD, whose column
+        introspection rejected it (ValueError: Invalid column '_allow_unscoped').
+        """
+        tenant_id = _resolve_tenant_id_from_context()
+        allow_unscoped = kwargs.pop("_allow_unscoped", False) is True
+        if tenant_id is not None:
             if "tenant_id" in kwargs and kwargs["tenant_id"] != tenant_id:
                 from src.app.core.logger import get_logger
 
@@ -106,7 +211,6 @@ class TenantAwareCRUD(
                 )
             return {"tenant_id": tenant_id, **{k: v for k, v in kwargs.items() if k != "tenant_id"}}
         else:
-            from src.app.core.exceptions.http_exceptions import TenantContextError
             from src.app.core.logger import get_logger
 
             _m = getattr(self, "model", None)

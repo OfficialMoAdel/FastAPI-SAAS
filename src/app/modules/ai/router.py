@@ -1,12 +1,12 @@
 """AI Features router - HTTP handlers for AI chat operations."""
 
-from typing import Annotated, Any
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_user
+from src.app.api.deps import RequestContextDep
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps
 from src.app.modules.ai.factory import AIProviderFactory
@@ -47,24 +47,22 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 @router.post("/sessions", response_model=ChatSessionRead, status_code=status.HTTP_201_CREATED)
 async def create_chat_session(
     data: ChatSessionCreate,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
 ) -> Any:
     """Create a new chat session."""
-    service = get_chat_session_service(db)
-    return await service.create_session(current_user["id"], data)
+    service = get_chat_session_service(ctx.db)
+    return await service.create_session(ctx.user_id, data)
 
 
 @router.get("/sessions", response_model=ChatSessionList)
 async def list_chat_sessions(
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
 ) -> Any:
     """List chat sessions for the current user."""
-    service = get_chat_session_service(db)
-    result = await service.get_user_sessions(current_user["id"], page=page, limit=per_page)
+    service = get_chat_session_service(ctx.db)
+    result = await service.get_user_sessions(ctx.user_id, page=page, limit=per_page)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
     return {
@@ -80,14 +78,13 @@ async def list_chat_sessions(
 @router.get("/sessions/{session_id}", response_model=ChatSessionReadWithMessages)
 async def get_chat_session(
     session_id: int,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
 ) -> Any:
     """Get a chat session with its messages."""
-    session_service = get_chat_session_service(db)
-    message_service = get_chat_message_service(db)
+    session_service = get_chat_session_service(ctx.db)
+    message_service = get_chat_message_service(ctx.db)
 
-    session = await session_service.get_session(session_id, current_user["id"])
+    session = await session_service.get_session(session_id, ctx.user_id)
     messages_result = await message_service.get_session_messages(session_id, limit=100)
     messages = messages_result.get("data", [])
 
@@ -98,23 +95,21 @@ async def get_chat_session(
 async def update_chat_session(
     session_id: int,
     data: ChatSessionUpdate,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
 ) -> Any:
     """Update a chat session."""
-    service = get_chat_session_service(db)
-    return await service.update_session(session_id, current_user["id"], data)
+    service = get_chat_session_service(ctx.db)
+    return await service.update_session(session_id, ctx.user_id, data)
 
 
 @router.delete("/sessions/{session_id}", response_model=dict)
 async def delete_chat_session(
     session_id: int,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: AsyncSession = Depends(async_get_db),
+    ctx: RequestContextDep,
 ) -> Any:
     """Delete a chat session."""
-    service = get_chat_session_service(db)
-    return await service.delete_session(session_id, current_user["id"])
+    service = get_chat_session_service(ctx.db)
+    return await service.delete_session(session_id, ctx.user_id)
 
 
 # =============================================================================
@@ -125,17 +120,16 @@ async def delete_chat_session(
 @router.get("/sessions/{session_id}/messages", response_model=ChatMessageList)
 async def list_session_messages(
     session_id: int,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=100, description="Items per page"),
 ) -> Any:
     """List messages in a chat session."""
     # First verify session ownership
-    session_service = get_chat_session_service(db)
-    await session_service.get_session(session_id, current_user["id"])
+    session_service = get_chat_session_service(ctx.db)
+    await session_service.get_session(session_id, ctx.user_id)
 
-    message_service = get_chat_message_service(db)
+    message_service = get_chat_message_service(ctx.db)
     result = await message_service.get_session_messages(session_id, page=page, limit=per_page)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
@@ -156,28 +150,26 @@ async def list_session_messages(
 
 @router.get("/settings", response_model=AISettingsRead)
 async def get_ai_settings(
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
 ) -> Any:
     """Get AI settings for the current user."""
-    service = get_ai_settings_service(db)
-    return await service.get_or_create_settings(current_user["id"])
+    service = get_ai_settings_service(ctx.db)
+    return await service.get_or_create_settings(ctx.user_id)
 
 
 @router.patch("/settings", response_model=AISettingsRead)
 async def update_ai_settings(
     data: AISettingsUpdate,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
 ) -> Any:
     """Update AI settings for the current user."""
-    service = get_ai_settings_service(db)
-    return await service.update_settings(current_user["id"], data)
+    service = get_ai_settings_service(ctx.db)
+    return await service.update_settings(ctx.user_id, data)
 
 
 @router.get("/models", response_model=AIModelsListResponse)
 async def list_available_models(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    ctx: RequestContextDep,
 ) -> Any:
     """List available AI models.
 
@@ -195,6 +187,11 @@ async def list_available_models(
 # =============================================================================
 # CHAT COMPLETION ENDPOINTS
 # =============================================================================
+# NOTE: RateLimitedUser carries the rate-limit side effect (Redis INCR +
+# X-RateLimit headers via check_rate_limit_dependency). Replacing it with
+# plain RequestContextDep would silently drop the limiter — keep the
+# dedicated dep here and extract a ctx-aware limiter in a follow-up if
+# the 60 req/min policy needs to be shared with other modules.
 
 
 @router.post(
@@ -209,7 +206,7 @@ async def chat_completion(
     session_id: int,
     request: ChatCompletionRequest,
     current_user: RateLimitedUser,
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    db: AsyncSession = Depends(async_get_db),
 ) -> Any:
     """Send a message and get an AI response.
 
@@ -242,7 +239,7 @@ async def chat_completion_stream(
     session_id: int,
     request: ChatCompletionRequest,
     current_user: RateLimitedUser,
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    db: AsyncSession = Depends(async_get_db),
 ) -> StreamingResponse:
     """Send a message and stream the AI response.
 

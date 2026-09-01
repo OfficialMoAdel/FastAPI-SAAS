@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from src.app.api.deps import get_current_user, rate_limiter_dependency
+from src.app.api.deps import RequestContextDep, rate_limiter_dependency
 from src.app.core.logger import get_logger
 from src.app.modules.tasks.schemas import Job, TaskCreate, TaskStatus
 from src.app.modules.tasks.service import QueueUnavailableError, task_service
@@ -10,8 +10,6 @@ from src.app.modules.tasks.service import QueueUnavailableError, task_service
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
-
-from src.app.api.deps import AuthenticatedUser
 
 
 @router.post(
@@ -22,7 +20,7 @@ from src.app.api.deps import AuthenticatedUser
 )
 async def create_task(
     body: TaskCreate,
-    current_user: AuthenticatedUser = Depends(get_current_user),
+    ctx: RequestContextDep,
 ) -> Job:
     """Create a new background task.
 
@@ -37,7 +35,7 @@ async def create_task(
         A dictionary containing the ID of the created task.
     """
     try:
-        result = await task_service.create_task(body.message, tenant_id=str(current_user.tenant_id))
+        result = await task_service.create_task(body.message, tenant_id=str(ctx.tenant_id))
         return Job(**result)
     except QueueUnavailableError:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Queue is not available")
@@ -45,14 +43,14 @@ async def create_task(
         logger.error("Task creation failed", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An internal error occurred while creating the task"
+            detail="An internal error occurred while creating the task",
         )
 
 
 @router.get("/task/{task_id}", response_model=TaskStatus)
 async def get_task(
     task_id: str,
-    current_user: AuthenticatedUser = Depends(get_current_user),
+    ctx: RequestContextDep,
 ) -> TaskStatus:
     """Get information about a specific background task.
 
@@ -72,7 +70,7 @@ async def get_task(
         404 if task not found.
     """
     try:
-        result = await task_service.get_task(task_id, tenant_id=str(current_user.tenant_id))
+        result = await task_service.get_task(task_id, tenant_id=str(ctx.tenant_id))
         if result is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
         return TaskStatus(**result)

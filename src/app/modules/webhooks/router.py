@@ -5,13 +5,9 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_user, tenant_dependency
-from src.app.core.db.database import async_get_db
+from src.app.api.deps import RequestContextDep
 from src.app.core.rbac import Permission, requires_permission
-from src.app.modules.tenants.models import Tenant
 from src.app.modules.webhooks.models import WebhookDeliveryStatus
 from src.app.modules.webhooks.schemas import (
     SigningSecretRotateRequest,
@@ -40,20 +36,18 @@ _WEBHOOK_TEST_RATE_LIMIT_PATH = "/api/v1/webhooks/{endpoint_id}/test"
     dependencies=[Depends(requires_permission(Permission.WEBHOOKS_READ))],
 )
 async def list_webhook_endpoints(
+    ctx: RequestContextDep,
     is_active: bool | None = Query(None, description="Filter by active status"),
     event_type: str | None = Query(None, description="Filter by event type"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(100, ge=1, le=1000, description="Page size"),
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """List all webhook endpoints for the current tenant."""
     from src.app.modules.webhooks.service import WebhookService
 
-    service = WebhookService(db)
+    service = WebhookService(ctx.db)
     endpoints, total = await service.get_endpoints(
-        tenant_id=current_tenant.id,
+        tenant_id=ctx.tenant_id,
         is_active=is_active,
         event_type=event_type,
         page=page,
@@ -77,10 +71,8 @@ async def list_webhook_endpoints(
     dependencies=[Depends(requires_permission(Permission.WEBHOOKS_CREATE))],
 )
 async def create_webhook_endpoint(
+    ctx: RequestContextDep,
     request: WebhookEndpointCreate,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """
     Create a new webhook endpoint.
@@ -88,10 +80,10 @@ async def create_webhook_endpoint(
     The secret will be generated automatically if not provided.
     Use this secret to verify webhook signatures on your endpoint.
     """
-    service = WebhookService(db)
+    service = WebhookService(ctx.db)
 
     endpoint = await service.create_endpoint(
-        tenant_id=current_tenant.id,
+        tenant_id=ctx.tenant_id,
         url=str(request.url),
         event_type=request.event_type,
         secret=request.secret,
@@ -120,6 +112,7 @@ async def create_webhook_endpoint(
     dependencies=[Depends(requires_permission(Permission.WEBHOOKS_READ))],
 )
 async def list_webhook_deliveries_route(
+    ctx: RequestContextDep,
     endpoint_id: UUID | None = Query(None, description="Filter by endpoint ID"),
     delivery_status: WebhookDeliveryStatus | None = Query(None, alias="status", description="Filter by status"),
     event_type: str | None = Query(None, description="Filter by event type"),
@@ -127,9 +120,6 @@ async def list_webhook_deliveries_route(
     end_date: datetime | None = Query(None, description="Filter to date"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(100, ge=1, le=1000, description="Page size"),
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """
     List webhook delivery history.
@@ -138,9 +128,9 @@ async def list_webhook_deliveries_route(
     """
     from src.app.modules.webhooks.service import WebhookService
 
-    service = WebhookService(db)
+    service = WebhookService(ctx.db)
     deliveries, total = await service.get_deliveries(
-        tenant_id=current_tenant.id,
+        tenant_id=ctx.tenant_id,
         endpoint_id=endpoint_id,
         delivery_status=delivery_status,
         event_type=event_type,
@@ -166,17 +156,15 @@ async def list_webhook_deliveries_route(
     dependencies=[Depends(requires_permission(Permission.WEBHOOKS_READ))],
 )
 async def get_webhook_endpoint(
+    ctx: RequestContextDep,
     endpoint_id: UUID,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """Get a single webhook endpoint by ID."""
-    service = WebhookService(db)
+    service = WebhookService(ctx.db)
 
     endpoint = await service.get_endpoint_by_id(
         endpoint_id=endpoint_id,
-        tenant_id=current_tenant.id,
+        tenant_id=ctx.tenant_id,
     )
     if not endpoint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
@@ -191,18 +179,16 @@ async def get_webhook_endpoint(
     dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
 )
 async def update_webhook_endpoint(
+    ctx: RequestContextDep,
     endpoint_id: UUID,
     request: WebhookEndpointUpdate,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """Update a webhook endpoint."""
-    service = WebhookService(db)
+    service = WebhookService(ctx.db)
 
     endpoint = await service.get_endpoint_by_id(
         endpoint_id=endpoint_id,
-        tenant_id=current_tenant.id,
+        tenant_id=ctx.tenant_id,
     )
 
     if not endpoint:
@@ -219,17 +205,15 @@ async def update_webhook_endpoint(
     dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
 )
 async def delete_webhook_endpoint(
+    ctx: RequestContextDep,
     endpoint_id: UUID,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: dict[str, Any] = Depends(get_current_user),
 ) -> None:
     """Delete a webhook endpoint."""
-    service = WebhookService(db)
+    service = WebhookService(ctx.db)
 
     endpoint = await service.get_endpoint_by_id(
         endpoint_id=endpoint_id,
-        tenant_id=current_tenant.id,
+        tenant_id=ctx.tenant_id,
     )
 
     if not endpoint:
@@ -244,17 +228,15 @@ async def delete_webhook_endpoint(
     dependencies=[Depends(requires_permission(Permission.WEBHOOKS_READ))],
 )
 async def get_webhook_delivery(
+    ctx: RequestContextDep,
     delivery_id: UUID,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """Get details of a specific webhook delivery attempt."""
-    service = WebhookService(db)
+    service = WebhookService(ctx.db)
 
     delivery = await service.get_delivery_by_id(
         delivery_id=delivery_id,
-        tenant_id=current_tenant.id,
+        tenant_id=ctx.tenant_id,
     )
 
     if not delivery:
@@ -269,21 +251,19 @@ async def get_webhook_delivery(
     dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
 )
 async def retry_webhook_delivery(
+    ctx: RequestContextDep,
     delivery_id: UUID,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """
     Manually retry a failed webhook delivery.
 
     Only failed deliveries can be retried.
     """
-    service = WebhookService(db)
+    service = WebhookService(ctx.db)
 
     delivery = await service.get_delivery_by_id(
         delivery_id=delivery_id,
-        tenant_id=current_tenant.id,
+        tenant_id=ctx.tenant_id,
     )
 
     if not delivery:
@@ -295,7 +275,7 @@ async def retry_webhook_delivery(
     # Reset status and enqueue for retry
     await service.retry_delivery(delivery.id)
 
-    await db.refresh(delivery)
+    await ctx.db.refresh(delivery)
     return delivery
 
 
@@ -305,55 +285,23 @@ async def retry_webhook_delivery(
     dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
 )
 async def test_webhook_endpoint(
+    ctx: RequestContextDep,
     endpoint_id: UUID,
     request: WebhookTestRequest,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """
     Test a webhook endpoint by sending a simulated event.
 
     This simulated event is recorded as a regular delivery attempt.
     """
-    # Rate limiting for test endpoint
-
-    from src.app.core.utils.path_utils import sanitize_path
-    from src.app.core.utils.rate_limit import rate_limiter
-    from src.app.modules.rate_limits.models import RateLimit
-
-    # Query the database directly for the tenant's rate limit for this endpoint
-    tier_id = current_user.get("tier_id")
-    if tier_id is None and isinstance(current_user.get("tier"), dict):
-        tier_id = current_user["tier"].get("id")
-
-    rate_limit_path = sanitize_path(_WEBHOOK_TEST_RATE_LIMIT_PATH)
-    stmt = select(RateLimit).where(
-        RateLimit.tier_id == tier_id,
-        RateLimit.path == rate_limit_path,
-    )
-    rate_limit_result = await db.execute(stmt)
-    rate_limit_config = rate_limit_result.scalar_one_or_none()
-
-    # Fallback to defaults if tenant hasn't configured a specific limit
-    limit = rate_limit_config.limit if rate_limit_config else 10
-    period = rate_limit_config.period if rate_limit_config else 60
-
-    # Rate limit check happens BEFORE endpoint lookup intentionally.
-    # This prevents timing-based endpoint enumeration attacks, though it
-    # means 404s still consume rate limit quota.
-    is_limited, _ = await rate_limiter.check_rate_limit(f"webhook:test:{current_tenant.id}", limit, period)
-    if is_limited:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Rate limit exceeded: {limit} tests per {period} seconds",
-        )
-
-    service = WebhookService(db)
+    # Rate limiting (service-owned; check precedes endpoint lookup to
+    # prevent timing-based enumeration — 404s still consume quota).
+    service = WebhookService(ctx.db)
+    await service.check_test_rate_limit(ctx.tenant_id, ctx.user)
 
     endpoint = await service.get_endpoint_by_id(
         endpoint_id=endpoint_id,
-        tenant_id=current_tenant.id,
+        tenant_id=ctx.tenant_id,
     )
 
     if not endpoint:
@@ -374,10 +322,8 @@ async def test_webhook_endpoint(
     dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
 )
 async def get_signing_secret(
+    ctx: RequestContextDep,
     endpoint_id: UUID,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """Get signing-secret METADATA for a webhook endpoint (admin only).
 
@@ -387,10 +333,10 @@ async def get_signing_secret(
     responses. This endpoint now returns a masked preview so admins can
     confirm WHICH secret is configured, plus rotation guidance.
     """
-    service = WebhookService(db)
+    service = WebhookService(ctx.db)
     result = await service.get_signing_secret(
         endpoint_id=endpoint_id,
-        tenant_id=current_tenant.id,
+        tenant_id=ctx.tenant_id,
     )
 
     if not result["signing_secret"]:
@@ -416,11 +362,9 @@ async def get_signing_secret(
     dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
 )
 async def rotate_signing_secret(
+    ctx: RequestContextDep,
     endpoint_id: UUID,
     request: SigningSecretRotateRequest,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """Rotate the signing secret for a webhook endpoint.
 
@@ -440,10 +384,10 @@ async def rotate_signing_secret(
     SigningSecretRotateResponse
         New signing secret and rotation timestamp
     """
-    service = WebhookService(db)
+    service = WebhookService(ctx.db)
     result = await service.rotate_signing_secret(
         endpoint_id=endpoint_id,
-        tenant_id=current_tenant.id,
+        tenant_id=ctx.tenant_id,
         grace_period_seconds=request.grace_period_seconds,
     )
 

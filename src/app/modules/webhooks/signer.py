@@ -85,3 +85,33 @@ def verify_signature(
     exp_v1 = expected.split("v1=", 1)[1]
     return any(hmac.compare_digest(exp_v1, c) for c in v1_sigs)
 
+
+def is_timestamp_fresh(timestamp: int, max_age_seconds: int = DEFAULT_SIGNATURE_MAX_AGE_SECONDS) -> bool:
+    """True when ``timestamp`` is within the replay tolerance of now.
+
+    The freshness window is a signing PRIMITIVE (candidate 5): both the
+    producer-side verifier (:func:`verify_signature`) and the consumer-side
+    dual-scheme verifier (utils.verify_webhook_signature) use this ONE
+    implementation — a replay-window bug fixed here fixes both.
+    """
+    import time
+
+    return abs(time.time() - timestamp) <= max_age_seconds
+
+
+def canonical_bytes_from_raw(payload: bytes) -> bytes:
+    """Canonical bytes from raw request-body bytes.
+
+    Re-parses the raw body and re-serializes with ``sort_keys=True`` — the
+    same normalization :func:`canonical_payload_bytes` applies to a dict —
+    so a consumer verifying stored/transmitted JSON reproduces the exact
+    bytes the sender signed. Non-JSON bodies pass through verbatim.
+    """
+    import json
+
+    try:
+        payload_dict = json.loads(payload)
+        return json.dumps(payload_dict, sort_keys=True).encode("utf-8")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return payload
+

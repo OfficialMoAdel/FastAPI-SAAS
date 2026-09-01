@@ -158,14 +158,17 @@ async def cleanup_leaked_webhook_lock(ctx: Worker, event_id: str) -> str:
 async def startup(ctx: Worker) -> None:
     """Initialize the worker-process runtime.
 
-    K2 FIX: the web lifespan performs this wiring (main.py), but the worker
-    process runs its own interpreter and previously started with:
-      - cache.client = None  -> flush_audit_logs_task returned 0 forever,
-        cleanup_expired_tokens_task was a no-op
-      - event_bus with no handlers / no ARQ queue -> publishes inside jobs
-        (e.g. RLS-bypass audit events) were silently dropped
-      - session_manager without a Redis client
+    First order of business: every job name the web process enqueues must
+    be registered here (B8 bug class guard). A missing registration is a
+    hard failure — the job would never run.
     """
+    missing = assert_all_jobs_registered()
+    if missing:
+        raise RuntimeError(
+            f"Worker misconfigured: jobs enqueued by the web process are not registered: {missing}. "
+            "Add them to WorkerSettings.functions (core/worker/settings.py)."
+        )
+
     from src.app.core.config import settings
     from src.app.core.redis_provider import get_redis_pool, set_clients
 
@@ -224,3 +227,47 @@ async def shutdown(ctx: Worker) -> None:
     except Exception as e:  # noqa: BLE001 - teardown must not mask exit
         logger.warning("Worker redis shutdown failed", error=str(e))
     logger.info("Worker end")
+
+
+# Job names the web process enqueues at RUNTIME via enqueue_job (verified
+# by test_enqueued_names_cover_the_known_enqueue_sites). Cron-scheduled
+# tasks are deliberately NOT listed — they are registered via cron_jobs and
+# never enqueued. The worker must have every listed name registered in
+# WorkerSettings.functions; the startup assertion makes a miss a hard
+# failure instead of the B8 bug class (enqueued but never defined).
+ENQUEUED_JOB_NAMES: frozenset[str] = frozenset(
+    {
+        "process_event_handler",
+        "deliver_webhook_task",
+        "cleanup_leaked_webhook_lock",
+        "send_magic_link_email_task",
+        "send_email_task",
+        "sample_background_task",
+    }
+)
+
+
+def assert_all_jobs_registered(functions: list[Any] | dict[str, Any] | None = None) -> list[str]:
+    """Verify every runtime-enqueued job name is registered on the worker.
+
+    Returns the sorted list of missing names (empty = healthy). Called from
+    worker startup; also directly testable without a live worker.
+    Accepts either ARQ's function-object list (names via ``__name__``) or
+    a pre-built name->function mapping.
+    """
+    if functions is None:
+        from src.app.core.worker.settings import WorkerSettings
+
+        functions = list(WorkerSettings.functions)
+    if isinstance(functions, dict):
+        registered = set(functions)
+    else:
+        registered = {getattr(fn, "__name__", str(fn)) for fn in functions}
+    missing = sorted(ENQUEUED_JOB_NAMES - registered)
+    if missing:
+        logger.error(
+            "enqueued_jobs_missing_from_worker_registration",
+            missing=missing,
+            hint="Add the task function to WorkerSettings.functions in core/worker/settings.py",
+        )
+    return missing

@@ -21,8 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.core.config import settings
+from src.app.core.events import EventPriority
 from src.app.core.exceptions.http_exceptions import BadRequestException, UnauthorizedException
 from src.app.core.redis_provider import get_redis
+from src.app.modules.audit_logs import audit
 from src.app.modules.mfa.crud import crud_mfa_methods
 from src.app.modules.mfa.models import MFAMethod
 from src.app.modules.mfa.schemas import (
@@ -82,26 +84,21 @@ class MFAService:
 
         # Audit log: MFA setup initiated
         try:
-            from src.app.core.events import EventPriority, event_bus
             from src.app.modules.users.crud import crud_users
 
             user = await crud_users.get(db=db, id=user_id)
-            if user:
-                await event_bus.publish(
-                    "audit.log",
-                    {
-                        "action": MFA_ACTION_SETUP,
-                        "entity_type": "mfa",
-                        "entity_id": None,
-                        "tenant_id": str(user.get("tenant_id", "")),
-                        "user_id": str(user_id),
-                        "details": {"method": "totp", "status": "initiated"},
-                    },
-                    priority=EventPriority.NORMAL,
-                )
+            tenant_id = user.get("tenant_id") if user else None
+            await audit(
+                action=MFA_ACTION_SETUP,
+                entity_type="mfa",
+                entity_id=None,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                details={"method": "totp", "status": "initiated"},
+                priority=EventPriority.NORMAL,
+            )
         except Exception as e:
             logger.debug("Audit logging failed (non-critical): %s", e)
-
         # Store secret temporarily in redis (Expires in 10 minutes)
         setup_token = str(uuid.uuid4())
         client = get_redis()
@@ -193,26 +190,21 @@ class MFAService:
 
         # Audit log: MFA enabled
         try:
-            from src.app.core.events import EventPriority, event_bus
             from src.app.modules.users.crud import crud_users
 
             user = await crud_users.get(db=db, id=user_id)
-            if user:
-                await event_bus.publish(
-                    "audit.log",
-                    {
-                        "action": MFA_ACTION_ENABLE,
-                        "entity_type": "mfa",
-                        "entity_id": str(mfa_method.id),
-                        "tenant_id": str(user.get("tenant_id", "")),
-                        "user_id": str(user_id),
-                        "details": {"method": "totp", "backup_codes_count": len(backup_codes)},
-                    },
-                    priority=EventPriority.CRITICAL,
-                )
+            tenant_id = user.get("tenant_id") if user else None
+            await audit(
+                action=MFA_ACTION_ENABLE,
+                entity_type="mfa",
+                entity_id=mfa_method.id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                details={"method": "totp", "backup_codes_count": len(backup_codes)},
+                priority=EventPriority.CRITICAL,
+            )
         except Exception as e:
             logger.debug("Audit logging failed (non-critical): %s", e)
-
         return {
             "message": "MFA enabled successfully",
             "backup_codes": backup_codes,
@@ -328,26 +320,21 @@ class MFAService:
 
                 # Audit log: MFA verification success
                 try:
-                    from src.app.core.events import EventPriority, event_bus
                     from src.app.modules.users.crud import crud_users
 
                     user = await crud_users.get(db=db, id=user_id)
-                    if user:
-                        await event_bus.publish(
-                            "audit.log",
-                            {
-                                "action": MFA_ACTION_VERIFY_SUCCESS,
-                                "entity_type": "mfa",
-                                "entity_id": str(mfa_method_dict["id"]),
-                                "tenant_id": str(user.get("tenant_id", "")),
-                                "user_id": str(user_id),
-                                "details": {"method": "totp"},
-                            },
-                            priority=EventPriority.NORMAL,
-                        )
+                    tenant_id = user.get("tenant_id") if user else None
+                    await audit(
+                        action=MFA_ACTION_VERIFY_SUCCESS,
+                        entity_type="mfa",
+                        entity_id=mfa_method_dict["id"],
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        details={"method": "totp"},
+                        priority=EventPriority.NORMAL,
+                    )
                 except Exception as e:
                     logger.debug("Audit logging failed (non-critical): %s", e)
-
                 return {
                     "valid": True,
                     "message": "Verification successful",
@@ -356,26 +343,21 @@ class MFAService:
 
         # Audit log: MFA verification failed
         try:
-            from src.app.core.events import EventPriority, event_bus
             from src.app.modules.users.crud import crud_users
 
             user = await crud_users.get(db=db, id=user_id)
-            if user:
-                await event_bus.publish(
-                    "audit.log",
-                    {
-                        "action": MFA_ACTION_VERIFY_FAILED,
-                        "entity_type": "mfa",
-                        "entity_id": str(mfa_method_dict["id"]),
-                        "tenant_id": str(user.get("tenant_id", "")),
-                        "user_id": str(user_id),
-                        "details": {"method": "totp" if request.totp_token else "backup_code"},
-                    },
-                    priority=EventPriority.NORMAL,
-                )
+            tenant_id = user.get("tenant_id") if user else None
+            await audit(
+                action=MFA_ACTION_VERIFY_FAILED,
+                entity_type="mfa",
+                entity_id=mfa_method_dict["id"],
+                tenant_id=tenant_id,
+                user_id=user_id,
+                details={"method": "totp" if request.totp_token else "backup_code"},
+                priority=EventPriority.NORMAL,
+            )
         except Exception as e:
             logger.debug("Audit logging failed (non-critical): %s", e)
-
         raise UnauthorizedException("Invalid MFA token")
 
     async def _verify_backup_code(
@@ -469,23 +451,19 @@ class MFAService:
 
             # Audit log: Backup code used
             try:
-                from src.app.core.events import EventPriority, event_bus
                 from src.app.modules.users.crud import crud_users
 
                 user = await crud_users.get(db=db, id=user_id)
-                if user:
-                    await event_bus.publish(
-                        "audit.log",
-                        {
-                            "action": MFA_ACTION_BACKUP_CODE_USED,
-                            "entity_type": "mfa",
-                            "entity_id": str(mfa_method.id),
-                            "tenant_id": str(user.get("tenant_id", "")),
-                            "user_id": str(user_id),
-                            "details": {"backup_codes_remaining": remaining},
-                        },
-                        priority=EventPriority.CRITICAL,
-                    )
+                tenant_id = user.get("tenant_id") if user else None
+                await audit(
+                    action=MFA_ACTION_BACKUP_CODE_USED,
+                    entity_type="mfa",
+                    entity_id=mfa_method.id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    details={"backup_codes_remaining": remaining},
+                    priority=EventPriority.CRITICAL,
+                )
             except Exception as e:
                 logger.debug("Audit logging failed (non-critical): %s", e)
 
@@ -552,18 +530,14 @@ class MFAService:
 
         # Audit log: MFA disabled
         try:
-            from src.app.core.events import EventPriority, event_bus
-
-            await event_bus.publish(
-                "audit.log",
-                {
-                    "action": MFA_ACTION_DISABLE,
-                    "entity_type": "mfa",
-                    "entity_id": str(mfa_method_dict["id"]),
-                    "tenant_id": str(user.get("tenant_id", "")),
-                    "user_id": str(user_id),
-                    "details": {"method": "totp"},
-                },
+            tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+            await audit(
+                action=MFA_ACTION_DISABLE,
+                entity_type="mfa",
+                entity_id=mfa_method_dict["id"],
+                tenant_id=tenant_id,
+                user_id=user_id,
+                details={"method": "totp"},
                 priority=EventPriority.CRITICAL,
             )
         except Exception as e:
@@ -686,18 +660,14 @@ class MFAService:
 
         # Audit log: Backup codes regenerated
         try:
-            from src.app.core.events import EventPriority, event_bus
-
-            await event_bus.publish(
-                "audit.log",
-                {
-                    "action": MFA_ACTION_BACKUP_CODES_REGENERATED,
-                    "entity_type": "mfa",
-                    "entity_id": str(mfa_method_dict["id"]),
-                    "tenant_id": str(user.get("tenant_id", "")),
-                    "user_id": str(user_id),
-                    "details": {"backup_codes_count": len(backup_codes)},
-                },
+            tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+            await audit(
+                action=MFA_ACTION_BACKUP_CODES_REGENERATED,
+                entity_type="mfa",
+                entity_id=mfa_method_dict["id"],
+                tenant_id=tenant_id,
+                user_id=user_id,
+                details={"backup_codes_count": len(backup_codes)},
                 priority=EventPriority.NORMAL,
             )
         except Exception as e:

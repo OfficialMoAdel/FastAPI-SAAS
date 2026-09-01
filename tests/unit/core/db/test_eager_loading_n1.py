@@ -82,7 +82,9 @@ class TestEagerLoadingN1Elimination:
             print(f"  SQL: {s[:120]}")
 
         assert log.count <= 6, (
-            f"Expected <= 6 queries with eager loading (2 in isolation, 6 with full-suite tenant fallback), got {log.count}. Query types: {dict(log.query_types)}"
+            f"Expected <= 6 queries with eager loading "
+            f"(2 in isolation, 6 with full-suite tenant fallback), got {log.count}. "
+            f"Query types: {dict(log.query_types)}"
         )
 
     @pytest.mark.asyncio

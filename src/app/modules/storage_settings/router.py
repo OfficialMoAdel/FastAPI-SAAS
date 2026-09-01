@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from src.app.api.deps import tenant_dependency
+from src.app.api.deps import RequestContextDep
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.modules.storage_settings.schemas import (
@@ -22,7 +22,6 @@ from src.app.modules.storage_settings.service import (
     StorageSettingsService,
     get_storage_settings_service,
 )
-from src.app.modules.tenants import Tenant
 
 router = APIRouter(prefix="/storage", tags=["storage"])
 
@@ -33,7 +32,7 @@ router = APIRouter(prefix="/storage", tags=["storage"])
     dependencies=[Depends(requires_permission(Permission.MANAGE_STORAGE_SETTINGS))],
 )
 async def get_storage_settings(
-    tenant: Tenant = Depends(tenant_dependency),
+    ctx: RequestContextDep,
     service: StorageSettingsService = Depends(get_storage_settings_service),
 ) -> StorageSettingsRead:
     """Get storage settings for the current tenant.
@@ -47,7 +46,8 @@ async def get_storage_settings(
         404: If storage settings not configured.
         403: If user lacks MANAGE_STORAGE_SETTINGS permission.
     """
-    storage_settings = await service.get_settings(tenant.id)
+    tenant = ctx.require_tenant()
+    storage_settings = await service.get_settings(tenant.tenant_id)
     if not storage_settings:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -65,7 +65,7 @@ async def get_storage_settings(
 )
 async def create_storage_settings(
     data: StorageSettingsCreate,
-    tenant: Tenant = Depends(tenant_dependency),
+    ctx: RequestContextDep,
     service: StorageSettingsService = Depends(get_storage_settings_service),
 ) -> StorageSettingsRead:
     """Create storage settings for the current tenant.
@@ -83,8 +83,9 @@ async def create_storage_settings(
         403: If user lacks MANAGE_STORAGE_SETTINGS permission.
         409: If settings already exist for this tenant.
     """
+    tenant = ctx.require_tenant()
     # Check if settings already exist
-    existing = await service.get_settings(tenant.id)
+    existing = await service.get_settings(tenant.tenant_id)
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -92,7 +93,7 @@ async def create_storage_settings(
         )
 
     try:
-        storage_settings = await service.create_settings(tenant.id, data)
+        storage_settings = await service.create_settings(tenant.tenant_id, data)
         return service.to_read_schema(storage_settings)
 
     except InvalidCredentialsError:
@@ -116,7 +117,7 @@ async def create_storage_settings(
 )
 async def update_storage_settings(
     data: StorageSettingsUpdate,
-    tenant: Tenant = Depends(tenant_dependency),
+    ctx: RequestContextDep,
     service: StorageSettingsService = Depends(get_storage_settings_service),
 ) -> StorageSettingsRead:
     """Update storage settings for the current tenant.
@@ -134,8 +135,9 @@ async def update_storage_settings(
         403: If user lacks MANAGE_STORAGE_SETTINGS permission.
         404: If storage settings not configured.
     """
+    tenant = ctx.require_tenant()
     try:
-        storage_settings = await service.update_settings(tenant.id, data)
+        storage_settings = await service.update_settings(tenant.tenant_id, data)
         return service.to_read_schema(storage_settings)
 
     except StorageNotConfiguredError:

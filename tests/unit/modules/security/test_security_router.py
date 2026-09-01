@@ -245,15 +245,14 @@ async def test_get_ip_violation_stats_none() -> None:
 
 @pytest.mark.asyncio
 async def test_passkey_routes() -> None:
-    current_user = {"id": 1}
     mock_db = AsyncMock()
+    mock_ctx = type("Ctx", (), {"db": mock_db, "user_id": 1, "user": {"id": 1}})()
     with (
         patch("src.app.modules.security.router.passkey_service.list_credentials", new_callable=AsyncMock) as mock_list,
         patch("src.app.modules.security.router.passkey_service.delete_credential", new_callable=AsyncMock),
     ):
         mock_list.return_value = []
-        res = await list_passkeys(current_user, mock_db)
+        res = await list_passkeys(mock_ctx)
         assert res == []
 
-        res_del = await delete_passkey(123, current_user, mock_db)
-        assert res_del.message == "Passkey deleted successfully"
+        await delete_passkey(123, mock_ctx)

@@ -12,13 +12,13 @@ from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 
 from src.app.api.deps import get_current_superuser
-from src.app.core.cache.manager import close_redis_pool, get_redis_pool
 from src.app.core.config import (
     EnvironmentOption,
     Settings,
 )
 from src.app.core.db.database import Base, get_async_engine
 from src.app.core.logger import get_logger
+from src.app.core.redis_provider import close_redis_pool, get_redis_pool
 from src.app.core.utils import cache, queue
 
 logger = get_logger(__name__)

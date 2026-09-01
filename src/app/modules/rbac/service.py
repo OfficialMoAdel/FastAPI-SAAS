@@ -7,7 +7,7 @@ Performance Optimization (R2-HYBRID MED-2):
 """
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 from uuid import UUID
 
 import structlog
@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
+from src.app.core.db.tenant_crud import scoped_query, tenant_scope
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.monitoring.r1_unified_metrics import record_rbac_cache_hit, record_rbac_cache_miss
 from src.app.core.rbac.dependencies import (
@@ -75,22 +76,24 @@ class RoleService:
 
     async def get_roles(self, skip: int = 0, limit: int = 100) -> Sequence[Role]:
         """Get all roles for the current tenant."""
-        stmt = select(Role).where(Role.tenant_id == self.tenant_id).offset(skip).limit(limit).order_by(Role.id)
+        stmt = (
+            scoped_query(Role, self.tenant_id).offset(skip).limit(limit).order_by(Role.id)
+        )
         result = await self.db.execute(stmt)
         return result.scalars().all()
 
     async def get_role(self, role_id: int) -> Role:
         """Get a role by ID within the current tenant."""
-        stmt = select(Role).where(and_(Role.id == role_id, Role.tenant_id == self.tenant_id))
+        stmt = scoped_query(Role, self.tenant_id).where(Role.id == role_id)
         result = await self.db.execute(stmt)
-        role = result.scalar_one_or_none()
+        role = cast("Role | None", result.scalar_one_or_none())
         if not role:
             raise ModelNotFoundError("Role", role_id)
         return role
 
     async def get_role_by_name(self, name: str) -> Role | None:
         """Get a role by name within the current tenant."""
-        stmt = select(Role).where(and_(Role.name == name, Role.tenant_id == self.tenant_id))
+        stmt = scoped_query(Role, self.tenant_id).where(Role.name == name)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -146,14 +149,10 @@ class RoleService:
 
         if role.is_system:
             raise ForbiddenError("System roles cannot be deleted", reason="system_role")
-
-        # BUG FIX: Find all users that have this role BEFORE deleting,
-        # so we can invalidate their permission caches after deletion.
         affected_users_stmt = select(UserRole.user_id).where(
-            and_(
-                UserRole.role_id == role_id,
-                UserRole.tenant_id == self.tenant_id,
-            )
+            UserRole.role_id == role_id,
+        ).where(
+            tenant_scope(UserRole, self.tenant_id)
         )
         affected_users_result = await self.db.execute(affected_users_stmt)
         affected_user_ids = list(affected_users_result.scalars().all())
@@ -182,13 +181,13 @@ class RoleService:
             # Project rows BEFORE the bump so the batch can write old+1 == new DB value.
             users_stmt = select(
                 User.id, User.email, User.username, User.tenant_id, User.token_version
-            ).where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
+            ).where(User.id.in_(affected_user_ids)).where(tenant_scope(User, self.tenant_id))
             users_result = await self.db.execute(users_stmt)
             users_records = list(users_result.all())
 
             await self.db.execute(
                 sa_update(User)
-                .where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
+                .where(User.id.in_(affected_user_ids)).where(tenant_scope(User, self.tenant_id))
                 .values(token_version=User.token_version + 1)
             )
 
@@ -506,7 +505,9 @@ class RoleService:
 
         # Invalidate user permission caches and bump token_version for affected users
         affected_users_stmt = select(UserRole.user_id).where(
-            and_(UserRole.role_id == role_id, UserRole.tenant_id == self.tenant_id)
+            UserRole.role_id == role_id,
+        ).where(
+            tenant_scope(UserRole, self.tenant_id)
         )
         affected_users_result = await self.db.execute(affected_users_stmt)
         affected_user_ids = list(affected_users_result.scalars().all())
@@ -522,13 +523,13 @@ class RoleService:
             # batch in ONE Redis pipeline instead of 2 round-trips per user.
             users_stmt = select(
                 User.id, User.email, User.username, User.tenant_id, User.token_version
-            ).where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
+            ).where(User.id.in_(affected_user_ids)).where(tenant_scope(User, self.tenant_id))
             users_result = await self.db.execute(users_stmt)
             users_records = users_result.all()
 
             await self.db.execute(
                 sa_update(User)
-                .where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
+                .where(User.id.in_(affected_user_ids)).where(tenant_scope(User, self.tenant_id))
                 .values(token_version=User.token_version + 1)
             )
             await self.db.commit()
@@ -573,7 +574,9 @@ class RoleService:
 
             # Invalidate user permission caches and bump token_version for affected users
             affected_users_stmt = select(UserRole.user_id).where(
-                and_(UserRole.role_id == role_id, UserRole.tenant_id == self.tenant_id)
+                UserRole.role_id == role_id,
+            ).where(
+                tenant_scope(UserRole, self.tenant_id)
             )
             affected_users_result = await self.db.execute(affected_users_stmt)
             affected_user_ids = list(affected_users_result.scalars().all())
@@ -589,13 +592,13 @@ class RoleService:
                 # batch in ONE Redis pipeline instead of 2 round-trips per user.
                 users_stmt = select(
                     User.id, User.email, User.username, User.tenant_id, User.token_version
-                ).where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
+                ).where(User.id.in_(affected_user_ids)).where(tenant_scope(User, self.tenant_id))
                 users_result = await self.db.execute(users_stmt)
                 users_records = users_result.all()
 
                 await self.db.execute(
                     sa_update(User)
-                    .where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
+                    .where(User.id.in_(affected_user_ids)).where(tenant_scope(User, self.tenant_id))
                     .values(token_version=User.token_version + 1)
                 )
                 await self.db.commit()
@@ -619,20 +622,16 @@ class RoleService:
 
         # Verify user belongs to the same tenant (P1 fix: tenant isolation)
         from src.app.modules.users.models import User
-
-        user_stmt = select(User).where(and_(User.id == user_id, User.tenant_id == self.tenant_id))
+        user_stmt = scoped_query(User, self.tenant_id).where(User.id == user_id)
         user_result = await self.db.execute(user_stmt)
         user_record = user_result.scalar_one_or_none()
         if not user_record:
             raise ModelNotFoundError("User", user_id)
 
         # Check if already assigned
-        stmt = select(UserRole).where(
-            and_(
-                UserRole.user_id == user_id,
-                UserRole.tenant_id == self.tenant_id,
-                UserRole.role_id == role_id,
-            )
+        stmt = (
+            scoped_query(UserRole, self.tenant_id)
+            .where(UserRole.user_id == user_id, UserRole.role_id == role_id)
         )
         result = await self.db.execute(stmt)
         if result.scalar_one_or_none():
@@ -678,18 +677,15 @@ class RoleService:
         # Verify user belongs to the same tenant (P1 fix: tenant isolation)
         from src.app.modules.users.models import User
 
-        user_stmt = select(User).where(and_(User.id == user_id, User.tenant_id == self.tenant_id))
+        user_stmt = scoped_query(User, self.tenant_id).where(User.id == user_id)
         user_result = await self.db.execute(user_stmt)
         user_record = user_result.scalar_one_or_none()
         if not user_record:
             raise ModelNotFoundError("User", user_id)
 
-        stmt = select(UserRole).where(
-            and_(
-                UserRole.user_id == user_id,
-                UserRole.tenant_id == self.tenant_id,
-                UserRole.role_id == role_id,
-            )
+        stmt = (
+            scoped_query(UserRole, self.tenant_id)
+            .where(UserRole.user_id == user_id, UserRole.role_id == role_id)
         )
         result = await self.db.execute(stmt)
         user_role = result.scalar_one_or_none()
@@ -719,12 +715,8 @@ class RoleService:
         stmt = (
             select(Role)
             .join(UserRole, UserRole.role_id == Role.id)
-            .where(
-                and_(
-                    UserRole.user_id == user_id,
-                    UserRole.tenant_id == self.tenant_id,
-                )
-            )
+            .where(UserRole.user_id == user_id)
+            .where(tenant_scope(UserRole, self.tenant_id))
         )
         result = await self.db.execute(stmt)
         return result.scalars().all()

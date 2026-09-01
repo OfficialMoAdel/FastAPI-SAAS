@@ -1,11 +1,18 @@
-"""User API router - HTTP handlers delegating to service layer."""
+"""User API router - HTTP handlers delegating to service layer.
 
-from typing import Annotated, Any
+RequestContext pattern (ADR-0001): every endpoint takes ``ctx:
+RequestContextDep`` — one argument bundling the authenticated user, tenant
+context, and request-scoped DB session. Ownership/IDOR checks go through
+``ctx.require_ownership()`` (the single ownership seam) instead of inline
+username/tenant comparisons.
+"""
+
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_superuser, get_current_user
+from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.core.db.database import async_get_db
 from src.app.core.pagination import PaginationParams, get_pagination_params
 from src.app.core.rbac.dependencies import requires_permission
@@ -63,14 +70,15 @@ async def read_users(
 @router.get("/me", response_model=UserReadPublic)
 async def read_users_me(
     request: Request,
-    current_user: Annotated[dict | Any, Depends(get_current_user)],
+    ctx: RequestContextDep,
     service: UserService = Depends(_get_user_service),
 ) -> Any:
     """Get current authenticated user profile.
 
-    `get_current_user` returns auth-oriented payload; fetch full user profile
+    `ctx.user` returns auth-oriented payload; fetch full user profile
     to satisfy `UserRead` response contract.
     """
+    current_user = ctx.user
     # Normalize current_user to dict (supports both dict and ORM/attr objects)
     if isinstance(current_user, dict):
         user_id = current_user.get("id")
@@ -107,7 +115,7 @@ async def read_users_me(
 async def read_user(
     request: Request,
     user_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    ctx: RequestContextDep,
     service: UserService = Depends(_get_user_service),
 ) -> Any:
     """Get user by ID or username (authenticated users only).
@@ -124,21 +132,17 @@ async def read_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # SECURITY FIX: Ensure tenant context is available and matches user
-    from src.app.core.tenancy.context import get_current_tenant
-
-    tenant = get_current_tenant()
-    if not tenant:
-        raise HTTPException(status_code=400, detail="Tenant context required")
-
+    # SECURITY: tenant isolation — a cross-tenant user is indistinguishable
+    # from a nonexistent one (404, not 403). ctx.require_tenant() enforces
+    # that this is a tenant-bound path.
+    ctx.require_tenant()
     user_tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
-    if str(user_tenant_id) != str(tenant.id):
+    if str(user_tenant_id) != str(ctx.tenant_id):
         raise HTTPException(status_code=404, detail="User not found")
 
-    # SECURITY FIX: IDOR check - ensure user can only read their own profile (or is superuser)
-    db_username = user.get("username") if isinstance(user, dict) else user.username
-    if db_username != current_user["username"] and not current_user.get("is_superuser"):
-        raise HTTPException(status_code=403, detail="Forbidden: You can only view your own profile")
+    # SECURITY: IDOR via the single ownership seam (superuser bypass included).
+    target_user_id = user.get("id") if isinstance(user, dict) else user.id
+    ctx.require_ownership(target_user_id)
 
     return user
 
@@ -148,14 +152,14 @@ async def patch_user(
     request: Request,
     values: UserUpdate,
     user_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    ctx: RequestContextDep,
     service: UserService = Depends(_get_user_service),
 ) -> Any:
     """Update a user (partial update).
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
-    result = await service.update(user_id, values, current_user)
+    result = await service.update(user_id, values, ctx.user)
     return UserUpdateResponse(message=result.get("message", "User updated successfully"))
 
 
@@ -164,14 +168,14 @@ async def put_user(
     request: Request,
     values: UserUpdate,
     user_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    ctx: RequestContextDep,
     service: UserService = Depends(_get_user_service),
 ) -> Any:
     """Update a user (full update, alias for PATCH).
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
-    result = await service.update(user_id, values, current_user)
+    result = await service.update(user_id, values, ctx.user)
     return UserUpdateResponse(message=result.get("message", "User updated successfully"))
 
 
@@ -179,7 +183,7 @@ async def put_user(
 async def erase_user(
     request: Request,
     user_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    ctx: RequestContextDep,
     service: UserService = Depends(_get_user_service),
     token: str = Depends(oauth2_scheme),
 ) -> Any:
@@ -187,7 +191,7 @@ async def erase_user(
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
-    result = await service.delete(user_id, current_user, token)
+    result = await service.delete(user_id, ctx.user, token)
     return UserDeleteResponse(message=result.get("message", "User deleted successfully"))
 
 
@@ -222,20 +226,21 @@ async def read_user_rate_limits(
 async def read_user_tier(
     request: Request,
     user_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    ctx: RequestContextDep,
     service: UserService = Depends(_get_user_service),
 ) -> Any:
     """Get user's tier information (authenticated users only).
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
-    # SECURITY FIX: IDOR check - ensure user can only view their own tier (or is superuser)
-    if (
-        user_id != current_user["username"]
-        and str(user_id) != str(current_user.get("id"))
-        and not current_user.get("is_superuser")
-    ):
-        raise HTTPException(status_code=403, detail="Forbidden: You can only view your own tier")
+    # SECURITY: IDOR via the single ownership seam — the path may carry an
+    # int id or a username; check both against the principal.
+    from src.app.core.utils.user_utils import get_user_attr
+
+    principal_id = str(ctx.user_id)
+    principal_username = str(get_user_attr(ctx.user, "username"))
+    if str(user_id) != principal_id and str(user_id) != principal_username:
+        ctx.require_ownership(user_id)
 
     result = await service.get_with_tier(user_id)
     if result is None:

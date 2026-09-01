@@ -1668,8 +1668,8 @@ def mock_redis(request):
         patch("src.app.core.utils.cache.client", new=fake_redis),
         patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=fake_redis),
         patch("src.app.core.utils.queue.pool", new=fake_redis),
-        patch("src.app.core.cache.manager.get_redis_pool", new=AsyncMock(return_value=fake_redis)),
-        patch("src.app.core.cache.manager.close_redis_pool", new=AsyncMock()),
+        patch("src.app.core.redis_provider.get_redis_pool", new=AsyncMock(return_value=fake_redis)),
+        patch("src.app.core.redis_provider.close_redis_pool", new=AsyncMock()),
     ):
         # Keep session manager bound to the same Redis backend used by this test
         session_manager.set_redis_client(fake_redis)
@@ -1703,7 +1703,7 @@ async def init_real_redis_async(request):
     # Initialize real Redis client
     import redis.asyncio as redis
 
-    from src.app.core.cache import manager as redis_factory
+    from src.app.core import redis_provider as redis_factory
     from src.app.core.security.session_manager import session_manager
     from src.app.core.utils import cache
     from src.app.core.utils.gcra_rate_limit import GCRARateLimiter
@@ -1715,7 +1715,7 @@ async def init_real_redis_async(request):
     # Also reset GCRA rate limiter which caches script SHAs per connection
     cache.client = None
     cache.pool = None
-    redis_factory.cache_manager._pool = None
+    redis_factory.get_redis_pool._pool = None  # type: ignore[attr-defined]
     session_manager.set_redis_client(None)
 
     # Reset GCRA rate limiter to force fresh initialization
@@ -1754,7 +1754,7 @@ async def init_real_redis_async(request):
     # (the event loop may be closing and we can't operate on closed loops)
     cache.client = None
     cache.pool = None
-    redis_factory.cache_manager._pool = None
+    redis_factory.get_redis_pool._pool = None  # type: ignore[attr-defined]
     gcra_module.gcra_rate_limiter = None
     session_manager.set_redis_client(None)
 

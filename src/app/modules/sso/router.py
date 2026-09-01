@@ -8,11 +8,10 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Res
 from fastapi.responses import ORJSONResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_user
+from src.app.api.deps import RequestContextDep
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_loads
-from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules.auth.router import check_auth_rate_limit
 from src.app.modules.auth.schemas import AuthTokenResponse
 from src.app.modules.sso.crud import crud_user_sso_connections
@@ -281,22 +280,20 @@ async def handle_post_callback(
 async def connect_provider(
     request: Request,
     provider: SSOProvider,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     sso_service: Annotated[SSOService, Depends(get_sso_service)],
     redirect_uri: Annotated[str | None, Query] = None,
 ) -> RedirectResponse:
     """Connect SSO provider to existing authenticated account."""
     _validate_redirect_uri(redirect_uri)
 
-    tenant = get_current_tenant()
-    tenant_id = tenant.id if tenant else None
-    if tenant_id is None:
+    tenant_id = ctx.tenant_id
+    if not ctx.has_tenant:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant context not set")
 
     existing_connection = await crud_user_sso_connections.exists_for_user(
-        db=db,
-        user_id=current_user["id"],
+        db=ctx.db,
+        user_id=ctx.user_id,
         provider=provider.value,
         tenant_id=tenant_id,
     )
@@ -310,9 +307,9 @@ async def connect_provider(
         provider=provider,
         redirect_uri=redirect_uri,
         request=request,
-        db=db,
+        db=ctx.db,
         connect_mode=True,
-        user_id=current_user["id"],
+        user_id=ctx.user_id,
     )
 
     response = RedirectResponse(url=auth_url)
@@ -331,19 +328,17 @@ async def connect_provider(
 async def disconnect_provider(
     request: Request,
     provider: SSOProvider,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     sso_service: Annotated[SSOService, Depends(get_sso_service)],
 ) -> dict[str, str]:
     """Disconnect SSO provider from account."""
-    tenant = get_current_tenant()
-    tenant_id = tenant.id if tenant else None
-    if tenant_id is None:
+    tenant_id = ctx.tenant_id
+    if not ctx.has_tenant:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant context not set")
 
     await sso_service.disconnect_provider(
-        db=db,
-        user_id=current_user["id"],
+        db=ctx.db,
+        user_id=ctx.user_id,
         provider=provider.value,
         tenant_id=tenant_id,
     )

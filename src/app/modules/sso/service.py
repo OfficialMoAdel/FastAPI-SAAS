@@ -6,6 +6,7 @@ from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
+from src.app.core.events import EventPriority
 from src.app.core.exceptions.http_exceptions import (
     BadRequestException,
     NotFoundException,
@@ -14,6 +15,7 @@ from src.app.core.exceptions.http_exceptions import (
 from src.app.core.logger import get_logger
 from src.app.core.security.tokens import get_sso_state_manager
 from src.app.core.tenancy.context import get_current_tenant, set_current_tenant
+from src.app.modules.audit_logs import audit
 from src.app.modules.auth.schemas import AuthTokenResponse
 from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.sso.crud import crud_user_sso_connections
@@ -412,37 +414,33 @@ class SSOService:
 
             # Audit log SSO login success
             try:
-                from src.app.core.events import EventPriority, event_bus
-                # BUG FIX: Removed redundant `logger = get_logger(__name__)` that
-                # shadowed the module-level logger within this try block.
+                user_id_val = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
+                tenant_id_val = (
+                    found_user_data.tenant_id
+                    if hasattr(found_user_data, "tenant_id")
+                    else found_user_data.get("tenant_id")
+                )
+                email_val = found_user_data.email if hasattr(found_user_data, "email") else found_user_data.get("email")
+                username_val = (
+                    found_user_data.username
+                    if hasattr(found_user_data, "username")
+                    else found_user_data.get("username")
+                )
 
-                await event_bus.publish(
-                    "audit.log",
-                    {
-                        "action": "auth.sso_login",
-                        "entity_type": "user",
-                        "entity_id": str(
-                            found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
-                        ),
-                        "tenant_id": str(
-                            found_user_data.tenant_id
-                            if hasattr(found_user_data, "tenant_id")
-                            else found_user_data["tenant_id"]
-                        ),
-                        "user_id": str(found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]),
-                        "details": {
-                            "provider": provider,
-                            "email": found_user_data.email
-                            if hasattr(found_user_data, "email")
-                            else found_user_data["email"],
-                            "username": found_user_data.username
-                            if hasattr(found_user_data, "username")
-                            else found_user_data["username"],
-                            "success": True,
-                        },
-                        "ip_address": get_client_ip(request),
-                        "user_agent": request.headers.get("user-agent"),
+                await audit(
+                    action="auth.sso_login",
+                    entity_type="user",
+                    entity_id=user_id_val,
+                    tenant_id=tenant_id_val,
+                    user_id=user_id_val,
+                    details={
+                        "provider": provider,
+                        "email": email_val,
+                        "username": username_val,
+                        "success": True,
                     },
+                    ip_address=get_client_ip(request),
+                    user_agent=request.headers.get("user-agent"),
                     priority=EventPriority.NORMAL,
                 )
             except Exception as e:

@@ -19,11 +19,9 @@ Admin Endpoints:
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_superuser, get_current_user
+from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.core.config import settings
-from src.app.core.db.database import async_get_db
 from src.app.core.security.auto_ban import (
     ban_ip,
     get_all_banned_ips,
@@ -62,30 +60,29 @@ router = APIRouter(prefix="/security", tags=["security"])
 
 @router.get("/passkeys", response_model=list[PasskeyCredentialResponse])
 async def list_passkeys(
-    current_user: dict[str, Any] = Depends(get_current_user),
-    db: AsyncSession = Depends(async_get_db),
+    ctx: RequestContextDep,
 ):
     """List user's passkey credentials.
 
     This is a convenience endpoint that wraps /auth/passkey/credentials
     for backward compatibility with the old backend.
     """
-    return await passkey_service.list_credentials(db=db, user_id=current_user["id"])
+    return await passkey_service.list_credentials(db=ctx.db, user_id=ctx.user_id)
 
 
 @router.delete("/passkeys/{passkey_id}", response_model=PasskeyDeleteResponse)
 async def delete_passkey(
     passkey_id: int,
-    current_user: dict[str, Any] = Depends(get_current_user),
-    db: AsyncSession = Depends(async_get_db),
+    ctx: RequestContextDep,
 ):
     """Delete a passkey credential.
 
     This is a convenience endpoint that wraps /auth/passkey/credentials/{credential_id}
     for backward compatibility with the old backend.
     """
-    await passkey_service.delete_credential(db=db, user_id=current_user["id"], credential_id=passkey_id)
+    await passkey_service.delete_credential(db=ctx.db, user_id=ctx.user_id, credential_id=passkey_id)
     return PasskeyDeleteResponse(message="Passkey deleted successfully")
+
 
 
 # ============================================================================
@@ -315,7 +312,6 @@ async def update_ip_filter_config(
     **Note**: This endpoint updates the in-memory settings only.
     For persistent configuration, modify environment variables.
     """
-    from typing import Any
 
     from src.app.core.utils.config_store import update_runtime_config
     updates: dict[str, Any] = {}
@@ -388,7 +384,6 @@ async def update_auto_ban_config(
     - `AUTO_BAN_DURATION` - Ban duration in seconds
     - `AUTO_BAN_ESCALATION` - Enable duration escalation
     """
-    from typing import Any
 
     from src.app.core.utils.config_store import update_runtime_config
     updates: dict[str, Any] = {}

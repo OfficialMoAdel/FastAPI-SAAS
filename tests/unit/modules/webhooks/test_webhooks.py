@@ -88,10 +88,12 @@ async def test_trigger_webhooks_bulk_insert_concurrency(webhook_service, mock_db
 
     # Mock internal helpers
     webhook_service._generate_signature = MagicMock(return_value="sha256=sig")
-    webhook_service._enqueue_delivery = AsyncMock()
 
-    # Mock decrypt to work
-    with patch("src.app.modules.webhooks.service.decrypt_data", return_value="secret"):
+    # Mock decrypt and the delivery-module enqueue (what trigger calls)
+    with (
+        patch("src.app.modules.webhooks.service.decrypt_data", return_value="secret"),
+        patch("src.app.modules.webhooks.delivery.enqueue", new_callable=AsyncMock) as mock_enqueue,
+    ):
         # Mock DB execute to return "created" deliveries with IDs
         # We need to simulate the RETURNING clause result
         mock_result = MagicMock()
@@ -116,9 +118,8 @@ async def test_trigger_webhooks_bulk_insert_concurrency(webhook_service, mock_db
 
         # 3. Should have called db.commit ONCE
         mock_db.commit.assert_called_once()
-
-        # 4. Should have enqueued 3 jobs
-        assert webhook_service._enqueue_delivery.call_count == 3
+        # 4. Should have enqueued 3 jobs (via the delivery module)
+        assert mock_enqueue.call_count == 3
 
         # 5. Should return the 3 deliveries
         assert len(deliveries) == 3
@@ -203,9 +204,9 @@ async def test_trigger_webhooks_enqueues_job(service, mock_db):
     mock_endpoint_result.scalars.return_value.all.return_value = [mock_endpoint]
     mock_db.execute.return_value = mock_endpoint_result
 
-    # Mock _enqueue_delivery and decrypt_data to verify it's called
+    # Mock the delivery-module enqueue (what trigger actually calls) and decrypt
     with (
-        patch.object(service, "_enqueue_delivery", new_callable=AsyncMock) as mock_enqueue,
+        patch("src.app.modules.webhooks.delivery.enqueue", new_callable=AsyncMock) as mock_enqueue,
         patch("src.app.modules.webhooks.service.decrypt_data", return_value="decrypted_secret"),
     ):
         await service.trigger_webhooks(tenant_id, event_type, payload)
@@ -225,7 +226,12 @@ async def test_enqueue_delivery_uses_arq(service):
     with patch("src.app.core.utils.queue.pool", mock_pool):
         await service._enqueue_delivery(delivery_id)
 
-        mock_pool.enqueue_job.assert_called_once_with("deliver_webhook_task", delivery_id)
+        # orjson worker path: ids pass as str (UUID → str is a no-op decode
+        # in the worker; the job NAME is the wire contract).
+        mock_pool.enqueue_job.assert_called_once()
+        args = mock_pool.enqueue_job.call_args[0]
+        assert args[0] == "deliver_webhook_task"
+        assert args[1] == str(delivery_id)
 
 
 @pytest.mark.asyncio

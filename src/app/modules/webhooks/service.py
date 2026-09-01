@@ -10,27 +10,25 @@ This module provides:
 import asyncio
 import hashlib
 import hmac
-import inspect
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from src.app.core.events import event_bus
 from src.app.core.logger import get_logger
 from src.app.core.security.encryption import decrypt_data, encrypt_data
-from src.app.core.security.url_validator import SSRFProtectionError, validate_webhook_url
 from src.app.modules._base import ModelNotFoundError
-from src.app.modules.webhooks.http_client import get_webhook_http_client
+from src.app.modules.webhooks import delivery as delivery_module
 from src.app.modules.webhooks.models import (
     WebhookDelivery,
     WebhookDeliveryStatus,
     WebhookEndpoint,
 )
-from src.app.modules.webhooks.signer import canonical_payload_bytes, sign_payload
+
+if TYPE_CHECKING:
+    from src.app.api.deps.auth import AuthenticatedUser
 
 logger = get_logger(__name__)
 
@@ -56,24 +54,6 @@ def _glob_match(text: str, pattern: str) -> bool:
                 del _FN_REGEX_CACHE[old_key]
         _FN_REGEX_CACHE[pattern] = pat
     return bool(pat.match(text))
-
-
-async def _release_delivery_lock(redis_client: Any, lock_key: str, lock_held: bool, delivery_id: UUID) -> None:
-    """Release the webhook delivery lock, logging failures (R1-17).
-
-    A failed delete is not swallowed silently: the lock carries a 60s TTL, so
-    the worst case is a delayed redelivery, but operators should see the error.
-    """
-    if not (lock_held and redis_client is not None):
-        return
-    try:
-        await redis_client.delete(lock_key)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "webhook_delivery_lock_release_failed",
-            delivery_id=str(delivery_id),
-            error=str(exc),
-        )
 
 
 # Retry schedule in seconds: 1m, 5m, 15m, 30m, 1h (5 retries over 1 hour)
@@ -395,7 +375,7 @@ class WebhookService:
         # FIX: Log exceptions instead of silently swallowing them
         if deliveries:
             enqueue_results = await asyncio.gather(
-                *(self._enqueue_delivery(d.id, tenant_id=d.tenant_id) for d in deliveries),
+                *(delivery_module.enqueue(d.id, tenant_id=d.tenant_id) for d in deliveries),
                 return_exceptions=True,
             )
             # Log any exceptions that occurred during enqueue
@@ -485,6 +465,46 @@ class WebhookService:
         logger.info("Triggered webhook delivery for endpoint", delivery_id=delivery.id, endpoint_id=endpoint.id)
         return delivery
 
+    async def check_test_rate_limit(self, tenant_id: UUID, current_user: "dict[str, Any] | AuthenticatedUser") -> None:
+        """Enforce the per-tier rate limit for endpoint test calls.
+
+        Raises HTTPException 429 when exceeded. Moved out of the router
+        (architecture candidate 8): the tier-policy lookup + fallback
+        defaults + limiter call are service logic, not presentation.
+
+        The check happens BEFORE endpoint lookup intentionally — it
+        prevents timing-based endpoint enumeration (404s still consume
+        quota).
+        """
+        from fastapi import HTTPException, status
+
+        from src.app.core.utils.path_utils import sanitize_path
+        from src.app.core.utils.rate_limit import rate_limiter
+        from src.app.modules.rate_limits.models import RateLimit
+
+        tier_id = current_user.get("tier_id")
+        if tier_id is None and isinstance(current_user.get("tier"), dict):
+            tier_id = current_user["tier"].get("id")
+
+        rate_limit_path = sanitize_path("/api/v1/webhooks/{endpoint_id}/test")
+        stmt = select(RateLimit).where(
+            RateLimit.tier_id == tier_id,
+            RateLimit.path == rate_limit_path,
+        )
+        rate_limit_result = await self.db.execute(stmt)
+        rate_limit_config = rate_limit_result.scalar_one_or_none()
+
+        # Fallback to defaults if tenant hasn't configured a specific limit
+        limit = rate_limit_config.limit if rate_limit_config else 10
+        period = rate_limit_config.period if rate_limit_config else 60
+
+        is_limited, _ = await rate_limiter.check_rate_limit(f"webhook:test:{tenant_id}", limit, period)
+        if is_limited:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Rate limit exceeded: {limit} tests per {period} seconds",
+            )
+
     def _generate_signature(self, payload: dict[str, Any], secret: str) -> str:
         """Generate HMAC-SHA256 signature for webhook payload.
 
@@ -508,341 +528,18 @@ class WebhookService:
 
         return f"sha256={signature}"
 
+    # ------------------------------------------------------------------
+    # Delivery lifecycles live in webhooks/delivery.py (enqueue/deliver/
+    # recover). These thin delegates keep the historical service surface.
+    # ------------------------------------------------------------------
+
+    async def deliver_webhook(self, delivery_id: UUID) -> WebhookDelivery:
+        """Deliver a webhook (delegates to the delivery module's retry loop)."""
+        return await delivery_module.deliver(self.db, delivery_id)
+
     async def _enqueue_delivery(self, delivery_id: UUID, defer_by: int = 0, tenant_id: UUID | None = None) -> None:
-        """Enqueue webhook delivery task.
-
-        Args:
-            delivery_id: ID of the delivery record.
-            defer_by: Seconds to defer the job.
-            tenant_id: Tenant ID passed as job arg to avoid a DB lookup in the worker.
-        """
-        from src.app.core.utils.queue import pool
-
-        if pool:
-            # Pass tenant_id as a job arg so the worker can skip the "lookup" DB session
-            args = [delivery_id, str(tenant_id)] if tenant_id else [delivery_id]
-            if defer_by > 0:
-                enqueue_result = pool.enqueue_job("deliver_webhook_task", *args, _defer_by=defer_by)
-            else:
-                enqueue_result = pool.enqueue_job("deliver_webhook_task", *args)
-
-            if inspect.isawaitable(enqueue_result):
-                await enqueue_result
-            else:
-                logger.warning(
-                    "webhook_queue_enqueue_non_awaitable",
-                    delivery_id=str(delivery_id),
-                    result_type=type(enqueue_result).__name__,
-                )
-            logger.debug("Enqueued delivery task for", delivery_id=delivery_id)
-        else:
-            logger.warning("Redis queue pool not initialized. Cannot enqueue delivery", delivery_id=delivery_id)
-
-    async def deliver_webhook(self, delivery_id: UUID) -> WebhookDelivery:  # noqa: C901
-        """Deliver a webhook (called by background task).
-
-        Implements retry logic with exponential backoff and circuit breaker protection.
-
-        CRITICAL: Uses content= instead of json= to prevent httpx double serialization.
-        The payload is serialized ONCE with sort_keys=True to match the HMAC signature.
-        """
-
-        # P2.17 FIX: serialize delivery by id to prevent double delivery when the
-        # same delivery_id is enqueued twice (e.g. a retry scheduled while the
-        # original is still in flight). A short-lived Redis lock ensures only one
-        # worker performs the HTTP call; others skip and return the current state.
-        from src.app.core.redis_provider import get_redis
-        from src.app.core.utils.circuit_breaker import CircuitBreakerOpen, webhook_circuit
-
-        _redis = get_redis()
-        _lock_key = f"webhook:deliver_lock:{delivery_id}"
-        _lock_held = False
-        if _redis is not None:
-            _lock_held = bool(await _redis.set(_lock_key, "1", nx=True, ex=60))
-            if not _lock_held:
-                logger.info("Webhook delivery already in progress, skipping", delivery_id=delivery_id)
-                existing = await self.db.get(WebhookDelivery, delivery_id)
-                if not existing:
-                    raise ModelNotFoundError("WebhookDelivery", delivery_id)
-                return existing
-
-        # Get delivery record with endpoint eagerly loaded (fixes N+1 query)
-        stmt = (
-            select(WebhookDelivery)
-            .options(selectinload(WebhookDelivery.webhook_endpoint))
-            .where(WebhookDelivery.id == delivery_id)
-        )
-        result = await self.db.execute(stmt)
-        delivery = result.unique().scalar_one_or_none()
-        if not delivery:
-            await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
-            raise ModelNotFoundError("WebhookDelivery", delivery_id)
-
-        # Access eagerly loaded endpoint
-        endpoint = delivery.webhook_endpoint
-        if not endpoint:
-            raise ModelNotFoundError("WebhookEndpoint", delivery.webhook_endpoint_id)
-
-        # Check circuit breaker before attempting delivery
-        if not webhook_circuit.is_closed:
-            import time
-
-            current_time = time.time()
-            # Clamp at 0: a breaker opened without a recorded _last_failure_time
-            # (or clock adjustments) otherwise yields a hugely negative window,
-            # scheduling next_retry_at in the past.
-            recovery_time = max(
-                0.0, webhook_circuit.recovery_timeout - (current_time - webhook_circuit._last_failure_time)
-            )
-            logger.warning(
-                "Circuit breaker open for webhooks, skipping delivery %s | recovery_in=%.1fs",
-                delivery_id,
-                recovery_time,
-            )
-            # W4 FIX: a circuit-open skip is NOT a delivery attempt. Previously
-            # attempt_count was incremented here, so ~6 consecutive open ticks
-            # exhausted WEBHOOK_RETRY_DELAYS and pushed the delivery to
-            # permanent FAILED with zero HTTP attempts ever made. Now we only
-            # defer until the breaker recovers, keeping the retry budget intact.
-            recovery_delay = max(1, int(recovery_time))
-            delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=recovery_delay)
-            delivery.response_body = f"Circuit breaker open. Skipped. Recovery in {recovery_time:.1f}s"
-            await self.db.commit()
-            await self.db.refresh(delivery)
-            try:
-                from src.app.core.utils.background_task import create_safe_task
-
-                create_safe_task(
-                    self._enqueue_delivery(delivery_id, defer_by=recovery_delay, tenant_id=delivery.tenant_id)
-                )
-            except RuntimeError:
-                logger.warning("webhook_circuit_skip_reenqueue_failed", delivery_id=str(delivery_id))
-            await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
-            return delivery
-
-        # W1+W2+S-4 FIX: serialize and sign AT SEND TIME, per attempt.
-        #
-        # Previously the signature was computed at trigger time over a
-        # pre-persistence dict while transmitted bytes were re-serialized after
-        # a JSONB round-trip - any value/type normalization silently broke
-        # consumer-side HMAC. The timestamp header came from delivery.created_at,
-        # so retries older than the 300s replay tolerance were always rejected.
-        #
-        # Now: one serialization of stored payload, signed with a fresh timestamp
-        # (Stripe-style `t=...,v1=...`), so sign/send share identical bytes and
-        # retries carry a valid stamp.
-        import time as _time
-
-        send_timestamp = int(_time.time())
-        # R3-01: canonical bytes owned by signer; reused for HTTP content so
-        # transmitted bytes == signed bytes (json.dumps sort_keys contract).
-        payload_bytes = canonical_payload_bytes(delivery.payload)
-        signature_header = sign_payload(delivery.payload, decrypt_data(endpoint.secret), send_timestamp)
-        if (
-            endpoint.old_signing_secret
-            and endpoint.old_secret_expires_at
-            and isinstance(endpoint.old_secret_expires_at, datetime)
-        ):
-            expires_at = endpoint.old_secret_expires_at
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=UTC)
-            if expires_at > datetime.now(UTC):
-                try:
-                    # P0-5: Stripe rotation format is ONE timestamp with
-                    # multiple signatures: t=<ts>,v1=<active>,v1=<old>.
-                    # Appending a full second `t=...,v1=...` pair produced
-                    # `t=A,v1=X,t=A,v1=Y`, which third-party Stripe-compatible
-                    # verifiers reject. The in-repo verifier accepts both
-                    # forms (it collects every v1= segment).
-                    old_digest = sign_payload(
-                        delivery.payload, decrypt_data(endpoint.old_signing_secret), send_timestamp
-                    )
-                    signature_header = f"{signature_header},{old_digest.split('v1=', 1)[1]}"
-                except Exception as old_sig_err:
-                    logger.error(
-                        "webhook_old_signing_secret_decryption_failed",
-                        endpoint_id=str(endpoint.id),
-                        error=old_sig_err,
-                    )
-
-        # Prepare request headers
-        headers = {
-            "Content-Type": "application/json",
-            "X-Webhook-Signature": signature_header,
-            "X-Webhook-Event": delivery.event_type,
-            "X-Webhook-ID": str(delivery.id),
-            "X-Webhook-Timestamp": str(send_timestamp),
-        }
-
-        # Validate URL for SSRF protection before making request.
-        # W8 FIX: the HTTPS scheme check is always enforced; the
-        # WEBHOOK_ALLOW_INTERNAL_URLS kill switch only relaxes the
-        # private-IP/hostname checks, it no longer disables validation.
-        try:
-            from src.app.core.config import settings
-
-            validated_ip = await validate_webhook_url(
-                endpoint.url,
-                allow_internal=settings.app.WEBHOOK_ALLOW_INTERNAL_URLS,
-            )  # noqa: E501 - pinned IP, use extensions to prevent DNS rebinding
-        except SSRFProtectionError as e:
-            logger.error(
-                "webhook_ssrf_blocked",
-                delivery_id=str(delivery_id),
-                endpoint_url=endpoint.url,
-                error=str(e),
-            )
-
-            from src.app.core.events import EventPriority
-
-            await event_bus.publish(
-                "audit.log",
-                {
-                    "action": "webhook.ssrf_blocked",
-                    "tenant_id": str(endpoint.tenant_id),
-                    "entity_type": "webhook_delivery",
-                    "entity_id": str(delivery_id),
-                    "details": {"endpoint_url": endpoint.url, "error": str(e)},
-                },
-                priority=EventPriority.NORMAL,
-            )
-
-            delivery.status = WebhookDeliveryStatus.FAILED
-            delivery.response_body = f"SSRF protection: {e}"
-            await self.db.commit()
-            await self.db.refresh(delivery)
-            await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
-            return delivery
-
-        # Extract data needed for HTTP call before releasing DB connection
-        endpoint_url = endpoint.url
-
-        # Release DB connection before making HTTP call to avoid holding
-        # connection during network I/O (can take 100ms-30s)
-        await self.db.commit()
-
-        # Attempt delivery with circuit breaker tracking (DB connection released)
-        response = None
-        http_error: Exception | None = None
-        circuit_error: Exception | None = None
-
-        try:
-            client = await get_webhook_http_client()
-            # CRIT-2 FIX: Use content= with pre-serialized bytes instead of json=
-            # This ensures the transmitted bytes match what was signed in _generate_signature
-            response = await client.post(
-                endpoint_url,
-                content=payload_bytes,
-                headers=headers,
-                extensions={"resolved_ip": validated_ip},
-            )
-        except CircuitBreakerOpen as e:
-            circuit_error = e
-        except Exception as e:
-            http_error = e
-
-        # Re-fetch delivery to re-attach to session after HTTP call
-        delivery = await self.db.get(WebhookDelivery, delivery_id)
-        if not delivery:
-            raise ModelNotFoundError("WebhookDelivery", delivery_id)
-
-        # Process HTTP result
-        if response is not None:
-            delivery.attempt_count += 1
-            delivery.response_status = response.status_code
-            delivery.response_body = response.text[:10000]  # Limit to 10KB
-
-            if 200 <= response.status_code < 300:  # HTTP success range
-                # Success - record with circuit breaker
-                await webhook_circuit.record_success()
-                delivery.status = WebhookDeliveryStatus.DELIVERED
-                # Note: delivered_at tracked via updated_at timestamp
-                logger.info(
-                    "Webhook delivered successfully: (attempt )",
-                    delivery_id=delivery_id,
-                    attempt_count=delivery.attempt_count,
-                )
-            else:
-                # HTTP error - record failure and retry if attempts remain
-                await webhook_circuit.record_failure(Exception(f"HTTP {response.status_code}"))
-
-                # SECURITY FIX: Do not retry non-transient 4xx errors (e.g. 400, 422)
-                if 400 <= response.status_code < 500 and response.status_code not in (408, 429):
-                    delivery.status = WebhookDeliveryStatus.FAILED
-                    logger.error(
-                        "Webhook failed with permanent 4xx error, skipping retries",
-                        delivery_id=delivery_id,
-                        status_code=response.status_code,
-                    )
-                else:
-                    await self._handle_delivery_failure(delivery)
-
-        elif circuit_error is not None:
-            # Circuit opened during delivery attempt
-            logger.warning("Webhook circuit breaker opened: %s", circuit_error)
-            delivery.attempt_count += 1
-            delivery.response_body = str(circuit_error)[:1000]
-            await self._handle_delivery_failure(delivery, override_delay=getattr(circuit_error, "recovery_in", None))
-
-        elif http_error is not None:
-            # Network/timeout error - record failure and retry
-            logger.error("Webhook delivery failed", delivery_id=delivery_id, http_error=http_error)
-            await webhook_circuit.record_failure(http_error)
-            delivery.attempt_count += 1
-            delivery.response_body = str(http_error)[:1000]
-            await self._handle_delivery_failure(delivery)
-
-        await self.db.commit()
-        await self.db.refresh(delivery)
-        await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
-        return delivery
-
-    async def _handle_delivery_failure(self, delivery: WebhookDelivery, override_delay: float | None = None) -> None:
-        """Handle failed delivery with retry logic."""
-        attempt_idx = delivery.attempt_count - 1
-        if attempt_idx >= 0 and attempt_idx < len(WEBHOOK_RETRY_DELAYS):
-            # Schedule retry
-            retry_delay = int(override_delay if override_delay is not None else WEBHOOK_RETRY_DELAYS[attempt_idx])
-            delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=retry_delay)
-            delivery.status = WebhookDeliveryStatus.PENDING
-
-            # Enqueue retry task. Delay is large enough that commit will finish first.
-            # Avoid SQLAlchemy event.listen to prevent memory leak accumulation on rollback.
-            delivery_id = delivery.id
-            import asyncio
-
-            try:
-                from src.app.core.utils.background_task import create_safe_task
-
-                create_safe_task(
-                    self._enqueue_delivery(delivery_id, defer_by=retry_delay, tenant_id=delivery.tenant_id)
-                )
-            except RuntimeError:
-                try:
-                    loop = asyncio.get_event_loop()
-                    asyncio.run_coroutine_threadsafe(
-                        self._enqueue_delivery(delivery_id, defer_by=retry_delay, tenant_id=delivery.tenant_id),
-                        loop,
-                    )
-                except Exception as loop_err:
-                    logger.error(
-                        "webhook_retry_enqueue_failed",
-                        delivery_id=str(delivery_id),
-                        error=str(loop_err),
-                    )
-
-            logger.warning(
-                f"Webhook delivery failed, will retry in {retry_delay}s: "
-                f"{delivery.id} (attempt {delivery.attempt_count})"
-            )
-        else:
-            # Max retries exhausted
-            delivery.status = WebhookDeliveryStatus.FAILED
-            logger.error(
-                "Webhook delivery failed permanently after attempts:",
-                attempt_count=delivery.attempt_count,
-                id=delivery.id,
-            )
+        """Enqueue webhook delivery task (delegates to the delivery module)."""
+        await delivery_module.enqueue(delivery_id, defer_by=defer_by, tenant_id=tenant_id)
 
     async def verify_signature(self, payload: dict[str, Any], signature: str, secret: str) -> bool:
         """Verify webhook signature.
@@ -1101,9 +798,7 @@ async def webhook_event_adapter(data: dict[str, Any]) -> None:
     # payload. An explicit allowlist per event type would be stricter — this
     # denylist is the safe incremental fix.
     external_payload = {
-        k: v
-        for k, v in data.items()
-        if k not in ("_event_meta", "tenant_id", "tenant") and not k.startswith("_")
+        k: v for k, v in data.items() if k not in ("_event_meta", "tenant_id", "tenant") and not k.startswith("_")
     }
     if tenant_id:
         await handle_webhook_trigger_event(

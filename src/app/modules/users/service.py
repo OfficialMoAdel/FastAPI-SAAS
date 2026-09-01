@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from sqlalchemy import or_, select
@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from src.app.core.events import EventPriority, event_bus
-from src.app.core.events.envelope import typed_event_bus
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
@@ -21,13 +20,16 @@ from src.app.core.redis_provider import get_redis
 from src.app.core.security import blacklist_token, get_password_hash
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
+from src.app.modules.audit_logs import audit
 from src.app.modules.tiers.models import Tier
 from src.app.modules.tiers.service import TierService
 from src.app.modules.users.crud import CRUDUser, crud_users
-from src.app.modules.users.events import UserCreated, UserCreatedPayload
 from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
 from src.app.modules.users.session_invalidation import InvalidationReason, should_bump_token_version
+
+if TYPE_CHECKING:
+    from src.app.api.deps.auth import AuthenticatedUser
 
 logger = get_logger(__name__)
 
@@ -354,8 +356,7 @@ class UserService:
         """
         if reason is not None and bump_token_version != should_bump_token_version(reason):
             raise ValueError(
-                f"bump_token_version={bump_token_version} does not match "
-                f"should_bump_token_version(reason={reason!r})."
+                f"bump_token_version={bump_token_version} does not match should_bump_token_version(reason={reason!r})."
             )
         client = get_redis()
         if client is None or not users:
@@ -491,17 +492,12 @@ class UserService:
 
             # SECURITY FIX: Ensure event is published ONLY after successful commit
             # Capture result data before commit since it may expire after session flush
-            # R2-01: typed event — payload validated at construction; wire
-            # dict (model_dump) is byte-identical to the legacy hand-built one.
-            user_created_event = UserCreated(
-                payload=UserCreatedPayload(
-                    user_id=result.id,
-                    email=result.email,
-                    username=result.username,
-                    tenant_id=str(result.tenant_id),
-                )
-            )
-
+            user_event_payload = {
+                "user_id": result.id,
+                "email": result.email,
+                "username": result.username,
+                "tenant_id": str(result.tenant_id),
+            }
             # Now explicitly commit the transaction so the event fires
             await self.db.commit()
 
@@ -530,7 +526,9 @@ class UserService:
             # Fire-and-forget task to publish the event safely from async context
             from src.app.core.utils.background_task import create_safe_task
 
-            task = create_safe_task(typed_event_bus.publish_event(user_created_event))
+            task = create_safe_task(
+                event_bus.publish("user.created", user_event_payload, priority=EventPriority.NORMAL)
+            )
             task.add_done_callback(_log_task_error)
 
         except IntegrityError as e:
@@ -679,7 +677,7 @@ class UserService:
         self,
         username: str,
         values: UserUpdate,
-        current_user: dict[str, Any],
+        current_user: dict[str, Any] | AuthenticatedUser,
     ) -> dict[str, str]:
         """Update a user with ownership validation.
 
@@ -779,13 +777,12 @@ class UserService:
         if db_user is not None:
             # PROFILE_EDIT-class change: hash upgrade without plaintext
             # rotation must NOT force every active session to re-auth.
-            await self._invalidate_user_cache(
-                db_user, bump_token_version=False, reason=InvalidationReason.PROFILE_EDIT
-            )
+            await self._invalidate_user_cache(db_user, bump_token_version=False, reason=InvalidationReason.PROFILE_EDIT)
+
     async def delete(
         self,
         username: str,
-        current_user: dict[str, Any],
+        current_user: dict[str, Any] | AuthenticatedUser,
         token: str,
     ) -> dict[str, str]:
         """Soft delete a user with ownership validation.
@@ -858,18 +855,15 @@ class UserService:
 
         # SECURITY FIX: Add audit log for user deletion (Issue 15)
         try:
-            await event_bus.publish(
-                "audit.log",
-                {
-                    "action": "user.deleted",
-                    "entity_type": "user",
-                    "entity_id": str(user_id_val),
-                    "tenant_id": str(user_tenant_id) if user_tenant_id else "0",
-                    "user_id": str(current_user["id"]),
-                    "details": {
-                        "username": username,
-                        "deleted_by": current_user["username"],
-                    },
+            await audit(
+                action="user.deleted",
+                entity_type="user",
+                entity_id=user_id_val,
+                tenant_id=user_tenant_id,
+                user_id=current_user["id"],
+                details={
+                    "username": username,
+                    "deleted_by": current_user["username"],
                 },
                 priority=EventPriority.NORMAL,
             )

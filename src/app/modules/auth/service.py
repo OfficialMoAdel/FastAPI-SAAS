@@ -25,6 +25,7 @@ from src.app.core.security import (
 )
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.core.utils.ip_utils import get_client_ip
+from src.app.modules.audit_logs import audit
 from src.app.modules.auth.services.email_verification import EmailVerificationService
 from src.app.modules.auth.services.lockout import LoginLockoutPolicy
 from src.app.modules.auth.services.passwords import PasswordLifecycleService
@@ -32,6 +33,11 @@ from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.users.service import UserService
 
 logger = get_logger(__name__)
+__all__ = ["AuthService", "get_auth_service"]
+# Re-exported for test backward compatibility
+# (TODO: REMOVE once tests/unit/modules/auth no longer patch these module attributes)
+event_bus = event_bus
+get_current_tenant = get_current_tenant
 
 
 def get_auth_service() -> "AuthService":
@@ -111,27 +117,19 @@ class AuthService:
     ) -> None:
         """Publish audit log for login attempt."""
         try:
-            if not tenant_id:
-                tenant = get_current_tenant()
-                if tenant:
-                    tenant_id = tenant.id
-
-            await event_bus.publish(
-                "audit.log",
-                {
-                    "action": "auth.login",
-                    "entity_type": "user",
-                    "entity_id": str(user_id) if user_id else None,
-                    "tenant_id": str(tenant_id) if tenant_id else "0",  # 0 or system tenant if unknown
-                    "user_id": str(user_id) if user_id else None,
-                    "details": {
-                        "username": username,
-                        "success": success,
-                        "reason": reason,
-                    },
-                    "ip_address": get_client_ip(request),
-                    "user_agent": request.headers.get("user-agent"),
+            await audit(
+                action="auth.login",
+                entity_type="user",
+                entity_id=user_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                details={
+                    "username": username,
+                    "success": success,
+                    "reason": reason,
                 },
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
                 priority=EventPriority.NORMAL,
             )
         except Exception as e:
@@ -491,28 +489,21 @@ class AuthService:
             # Audit log logout — reuse db_user from session invalidation (saves 1 DB query)
             try:
                 username = user_data.username_or_email if user_data else "unknown"
-                user_id_val = None
-                tenant_id_val = "0"
+                user_id_val = db_user["id"] if db_user else None
+                tenant_id_val = db_user.get("tenant_id") if db_user else None
 
-                if db_user:
-                    user_id_val = str(db_user["id"])
-                    tenant_id_val = str(db_user.get("tenant_id", "0"))
-
-                await event_bus.publish(
-                    "audit.log",
-                    {
-                        "action": "auth.logout",
-                        "entity_type": "user",
-                        "entity_id": user_id_val,
-                        "tenant_id": tenant_id_val,
-                        "user_id": user_id_val,
-                        "details": {
-                            "username": username,
-                            "success": True,
-                        },
-                        "ip_address": get_client_ip(request),
-                        "user_agent": request.headers.get("user-agent"),
+                await audit(
+                    action="auth.logout",
+                    entity_type="user",
+                    entity_id=user_id_val,
+                    tenant_id=tenant_id_val,
+                    user_id=user_id_val,
+                    details={
+                        "username": username,
+                        "success": True,
                     },
+                    ip_address=get_client_ip(request),
+                    user_agent=request.headers.get("user-agent"),
                     priority=EventPriority.NORMAL,
                 )
             except Exception as e:

@@ -1,16 +1,14 @@
 """API Keys router - HTTP endpoints for API key management."""
 
 from typing import Annotated, Any
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_user
+from src.app.api.deps import RequestContextDep
 from src.app.core.db.database import async_get_db
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
-from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules.api_keys.schemas import (
     APIKeyCreate,
     APIKeyList,
@@ -36,21 +34,10 @@ async def _get_api_key_service(db: Annotated[AsyncSession, Depends(async_get_db)
 APIKeyServiceDep = Annotated[APIKeyService, Depends(_get_api_key_service)]
 
 
-def _get_tenant_id() -> UUID:
-    """Get current tenant ID from context."""
-    context = get_current_tenant()
-    if context is None:
-        from fastapi import HTTPException, status
-
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant context not set")
-    return context.id
-
-
 @router.post("", response_model=APIKeyResponse, status_code=status.HTTP_201_CREATED)
 async def create_api_key(
+    ctx: RequestContextDep,
     body: APIKeyCreate,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    tenant_id: Annotated[UUID, Depends(_get_tenant_id)],
     service: APIKeyServiceDep,
 ) -> APIKeyResponse:
     """Create a new API key.
@@ -60,15 +47,14 @@ async def create_api_key(
     """
     return await service.create_api_key(
         api_key_data=body,
-        user_id=current_user["id"],
-        tenant_id=tenant_id,
+        user_id=ctx.user_id,
+        tenant_id=ctx.tenant_id,
     )
 
 
 @router.get("", response_model=APIKeyList)
 async def list_api_keys(
-    current_user: Annotated[dict, Depends(get_current_user)],
-    tenant_id: Annotated[UUID, Depends(_get_tenant_id)],
+    ctx: RequestContextDep,
     service: APIKeyServiceDep,
     page: int = Query(1, ge=1),
     per_page: int = Query(10, ge=1, le=100),
@@ -78,8 +64,8 @@ async def list_api_keys(
     Returns key metadata only - the actual keys are never returned after creation.
     """
     result = await service.list_api_keys(
-        user_id=current_user["id"],
-        tenant_id=tenant_id,
+        user_id=ctx.user_id,
+        tenant_id=ctx.tenant_id,
         page=page,
         items_per_page=per_page,
     )
@@ -98,8 +84,7 @@ async def list_api_keys(
 @router.delete("/{key_id}", response_model=APIKeyRevokeResponse)
 async def revoke_api_key(
     key_id: int,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    tenant_id: Annotated[UUID, Depends(_get_tenant_id)],
+    ctx: RequestContextDep,
     service: APIKeyServiceDep,
 ) -> APIKeyRevokeResponse:
     """Revoke an API key.
@@ -108,8 +93,8 @@ async def revoke_api_key(
     """
     result = await service.revoke_api_key(
         key_id=key_id,
-        user_id=current_user["id"],
-        tenant_id=tenant_id,
+        user_id=ctx.user_id,
+        tenant_id=ctx.tenant_id,
     )
     return APIKeyRevokeResponse(message=result["message"])
 
@@ -117,8 +102,7 @@ async def revoke_api_key(
 @router.post("/{key_id}/rotate", response_model=APIKeyRotateResponse)
 async def rotate_api_key(
     key_id: int,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    tenant_id: Annotated[UUID, Depends(_get_tenant_id)],
+    ctx: RequestContextDep,
     service: APIKeyServiceDep,
     grace_period_days: int = 7,
 ) -> APIKeyRotateResponse:
@@ -145,8 +129,8 @@ async def rotate_api_key(
     """
     result = await service.rotate_api_key(
         key_id=key_id,
-        user_id=current_user["id"],
-        tenant_id=tenant_id,
+        user_id=ctx.user_id,
+        tenant_id=ctx.tenant_id,
         grace_period_days=grace_period_days,
     )
     return APIKeyRotateResponse(

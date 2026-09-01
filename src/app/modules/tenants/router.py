@@ -4,13 +4,12 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_superuser, get_current_user
-from src.app.core.db.database import async_get_db
+from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
+from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.tenants.schemas import TenantCreate, TenantList, TenantResponse, TenantUpdate
 from src.app.modules.tenants.service import TenantService, get_tenant_service
 
@@ -18,23 +17,26 @@ router = APIRouter(prefix="/tenants", tags=["tenants"])
 
 
 async def _get_tenant_service(
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
 ) -> TenantService:
     """Dependency factory for TenantService."""
-    return get_tenant_service(db)
+    return get_tenant_service(ctx.db)
 
 
-@router.get("", response_model=TenantList)
+TenantServiceDep = Annotated[TenantService, Depends(_get_tenant_service)]
+
+
+@router.get("", response_model=TenantList, dependencies=[Depends(get_current_superuser)])
 async def list_tenants(
-    service: Annotated[TenantService, Depends(_get_tenant_service)],
-    _current_user: Annotated[dict, Depends(get_current_superuser)],
+    service: TenantServiceDep,
+    ctx: RequestContextDep,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=10, ge=1, le=100),
     is_active: bool | None = Query(default=None),
 ) -> dict[str, Any]:
     """List all tenants with pagination.
 
-    Requires authentication. Returns paginated list of tenants.
+    Requires superuser. Returns paginated list of tenants.
     """
     tenants_data = await service.list_tenants(
         page=page,
@@ -53,15 +55,20 @@ async def list_tenants(
     }
 
 
-@router.post("", response_model=TenantResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=TenantResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(get_current_superuser)],
+)
 async def create_tenant(
     tenant: TenantCreate,
-    service: Annotated[TenantService, Depends(_get_tenant_service)],
-    _current_user: Annotated[dict, Depends(get_current_superuser)],
+    service: TenantServiceDep,
+    ctx: RequestContextDep,
 ) -> dict[str, Any]:
     """Create a new tenant.
 
-    Requires authentication. Slug must be unique.
+    Requires superuser. Slug must be unique.
     Returns 409 if slug already exists.
     """
     return await service.create_tenant(tenant)
@@ -70,14 +77,15 @@ async def create_tenant(
 @router.get("/{tenant_id}", response_model=TenantResponse)
 async def get_tenant(
     tenant_id: UUID,
-    service: Annotated[TenantService, Depends(_get_tenant_service)],
-    _current_user: Annotated[dict, Depends(get_current_user)],
+    service: TenantServiceDep,
+    ctx: RequestContextDep,
 ) -> dict[str, Any]:
     """Get a tenant by ID.
 
     Requires authentication. Returns 404 if not found.
     """
-    if not _current_user.get("is_superuser") and str(_current_user.get("tenant_id")) != str(tenant_id):
+    user_tenant_id = get_user_attr(ctx.user, "tenant_id")
+    if not ctx.is_superuser and str(user_tenant_id) != str(tenant_id):
         raise ForbiddenException(detail="You do not have permission to access this tenant.")
 
     return await service.get_tenant(tenant_id)
@@ -91,42 +99,51 @@ async def get_tenant(
 async def update_tenant(
     tenant_id: UUID,
     values: TenantUpdate,
-    service: Annotated[TenantService, Depends(_get_tenant_service)],
-    _current_user: Annotated[dict, Depends(get_current_user)],
+    service: TenantServiceDep,
+    ctx: RequestContextDep,
 ) -> dict[str, Any]:
     """Update a tenant.
 
     Requires TENANT_UPDATE permission. Returns 404 if not found.
     Can update name and is_active status.
     """
-    if not _current_user.get("is_superuser") and str(_current_user.get("tenant_id")) != str(tenant_id):
+    user_tenant_id = get_user_attr(ctx.user, "tenant_id")
+    if not ctx.is_superuser and str(user_tenant_id) != str(tenant_id):
         raise ForbiddenException(detail="You do not have permission to update this tenant.")
 
     return await service.update_tenant(tenant_id, values)
 
 
-@router.post("/{tenant_id}/deactivate", response_model=TenantResponse)
+@router.post(
+    "/{tenant_id}/deactivate",
+    response_model=TenantResponse,
+    dependencies=[Depends(get_current_superuser)],
+)
 async def deactivate_tenant(
     tenant_id: UUID,
-    service: Annotated[TenantService, Depends(_get_tenant_service)],
-    _current_user: Annotated[dict, Depends(get_current_superuser)],
+    service: TenantServiceDep,
+    ctx: RequestContextDep,
 ) -> dict[str, Any]:
     """Deactivate a tenant.
 
-    Requires authentication. Returns 404 if not found.
+    Requires superuser. Returns 404 if not found.
     Deactivated tenants will be rejected by the middleware.
     """
     return await service.deactivate_tenant(tenant_id)
 
 
-@router.post("/{tenant_id}/reactivate", response_model=TenantResponse)
+@router.post(
+    "/{tenant_id}/reactivate",
+    response_model=TenantResponse,
+    dependencies=[Depends(get_current_superuser)],
+)
 async def reactivate_tenant(
     tenant_id: UUID,
-    service: Annotated[TenantService, Depends(_get_tenant_service)],
-    _current_user: Annotated[dict, Depends(get_current_superuser)],
+    service: TenantServiceDep,
+    ctx: RequestContextDep,
 ) -> dict[str, Any]:
     """Reactivate a deactivated tenant.
 
-    Requires authentication. Returns 404 if not found.
+    Requires superuser. Returns 404 if not found.
     """
     return await service.reactivate_tenant(tenant_id)

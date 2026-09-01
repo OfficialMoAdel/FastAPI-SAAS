@@ -16,8 +16,8 @@ from src.app.core.config import settings
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.redis_provider import get_redis
-from src.app.core.utils.r1_error_handling import with_retry
 from src.app.core.utils.rate_limit import rate_limiter
+from src.app.core.utils.retry import with_retry
 from src.app.modules.notifications.email_provider import EmailMessage, SMTPProvider
 from src.app.modules.notifications.models import EmailTemplateOverride, Notification, NotificationStatus
 

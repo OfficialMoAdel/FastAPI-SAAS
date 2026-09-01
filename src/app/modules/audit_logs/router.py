@@ -11,10 +11,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_user, tenant_dependency
-from src.app.core.db.database import async_get_db
+from src.app.api.deps import RequestContextDep
 from src.app.core.json_utils import json_dumps
 from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
 from src.app.core.rbac import Permission, requires_permission
@@ -25,8 +23,6 @@ from src.app.modules.audit_logs.schemas import (
     ExportCountResponse,
 )
 from src.app.modules.audit_logs.service import EXPORT_MAX_RECORDS, AuditLogService, _AuditFilter, _compose_filters
-from src.app.modules.tenants.models import Tenant
-from src.app.modules.users.models import User
 
 router = APIRouter(prefix="/audit-logs", tags=["audit-logs"])
 
@@ -37,15 +33,13 @@ router = APIRouter(prefix="/audit-logs", tags=["audit-logs"])
     dependencies=[Depends(requires_permission(Permission.AUDIT_LOGS_VIEW_ONLY))],
 )
 async def list_audit_logs(
+    ctx: RequestContextDep,
     action: str | None = Query(None, description="Filter by action"),
     user_id: int | None = Query(None, description="Filter by user ID"),
     entity_type: str | None = Query(None, description="Filter by entity type"),
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
     pagination: PaginationParams = Depends(get_pagination_params),
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: User = Depends(get_current_user),
 ) -> Any:
     """
     List audit logs for the current tenant.
@@ -59,13 +53,13 @@ async def list_audit_logs(
     Returns paginated results with total count.
     """
     # Get database objects via service
-    audit_service = AuditLogService(db)
+    audit_service = AuditLogService(ctx.db)
 
     # R1-04: page + total in a single query (COUNT(*) OVER window) instead of
     # two sequential round-trips. R1-10: pagination via the shared dependency
     # so per_page is capped at MAX_PER_PAGE (was le=1000, bypassing the guard).
     logs, total = await audit_service.query_logs_with_total(
-        tenant_id=current_tenant.id,
+        tenant_id=ctx.tenant_id,
         user_id=user_id,
         action=action,
         entity_type=entity_type,
@@ -84,9 +78,7 @@ async def list_audit_logs(
     dependencies=[Depends(requires_permission(Permission.AUDIT_LOGS_VIEW_ONLY))],
 )
 async def list_available_actions(
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: User = Depends(get_current_user),
+    ctx: RequestContextDep,
 ) -> Any:
     """
     Get list of all unique action types for the current tenant.
@@ -94,8 +86,8 @@ async def list_available_actions(
     Useful for filtering UI.
     """
     # A13: logic moved to service layer
-    service = AuditLogService(db)
-    return await service.list_actions(current_tenant.id)
+    service = AuditLogService(ctx.db)
+    return await service.list_actions(ctx.tenant_id)
 
 
 # ============================================================================
@@ -109,14 +101,12 @@ async def list_available_actions(
     dependencies=[Depends(requires_permission(Permission.AUDIT_LOGS_DOWNLOAD))],
 )
 async def get_export_count(
+    ctx: RequestContextDep,
     action: str | None = Query(None, description="Filter by action"),
     user_id: int | None = Query(None, description="Filter by user ID"),
     entity_type: str | None = Query(None, description="Filter by entity type"),
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: User = Depends(get_current_user),
 ) -> Any:
     """
     Get count of records that would be exported.
@@ -124,9 +114,9 @@ async def get_export_count(
     Use this before export to check if date filtering is needed.
     """
     # A13: filter composition + counting moved to service layer
-    service = AuditLogService(db)
+    service = AuditLogService(ctx.db)
     f = _AuditFilter(action=action, user_id=user_id, entity_type=entity_type, start_date=start_date, end_date=end_date)
-    count = await service.export_count(current_tenant.id, f)
+    count = await service.export_count(ctx.tenant_id, f)
 
     return ExportCountResponse(
         count=count,
@@ -151,15 +141,13 @@ async def get_export_count(
     dependencies=[Depends(requires_permission(Permission.AUDIT_LOGS_DOWNLOAD))],
 )
 async def export_audit_logs(
+    ctx: RequestContextDep,
     format: str = Query("csv", pattern="^(csv|json|jsonl)$", description="Export format"),
     action: str | None = Query(None, description="Filter by action"),
     user_id: int | None = Query(None, description="Filter by user ID"),
     entity_type: str | None = Query(None, description="Filter by entity type"),
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: User = Depends(get_current_user),
 ) -> Any:
     """
     Export audit logs as CSV, JSON, or JSONL.
@@ -167,12 +155,16 @@ async def export_audit_logs(
     Maximum 100,000 records per export. Use date filtering for larger datasets.
     Requires AUDIT_LOGS_DOWNLOAD permission.
     """
+    db = ctx.db
+    tenant_id = ctx.tenant_id
+    user_id = ctx.user_id
+
     # A13: filter composition + counting moved to service layer
     service = AuditLogService(db)
     f = _AuditFilter(action=action, user_id=user_id, entity_type=entity_type, start_date=start_date, end_date=end_date)
 
-    stmt = _compose_filters(select(AuditLog), current_tenant.id, f)
-    count = await service.export_count(current_tenant.id, f)
+    stmt = _compose_filters(select(AuditLog), tenant_id, f)
+    count = await service.export_count(tenant_id, f)
 
     if count > EXPORT_MAX_RECORDS:
         raise HTTPException(
@@ -187,8 +179,8 @@ async def export_audit_logs(
     # Log the export event
     audit_service = AuditLogService(db)
     await audit_service.create_log(
-        tenant_id=current_tenant.id,
-        user_id=current_user.id,
+        tenant_id=tenant_id,
+        user_id=user_id,
         action="audit_logs.export",
         entity_type="audit_log",
         entity_id=None,
@@ -320,9 +312,7 @@ async def export_audit_logs(
 )
 async def get_audit_log(
     log_id: UUID,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(tenant_dependency),
-    current_user: User = Depends(get_current_user),
+    ctx: RequestContextDep,
 ) -> Any:
     """
     Get a single audit log entry by ID.
@@ -331,9 +321,9 @@ async def get_audit_log(
     """
     query = select(AuditLog).where(
         AuditLog.id == log_id,
-        AuditLog.tenant_id == current_tenant.id,
+        AuditLog.tenant_id == ctx.tenant_id,
     )
-    result = await db.execute(query)
+    result = await ctx.db.execute(query)
     log = result.scalar_one_or_none()
 
     if not log:

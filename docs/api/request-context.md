@@ -74,10 +74,21 @@ Rules:
 
 ## Status
 
-- ✅ Migrated: `src/app/modules/files/router.py` (reference implementation).
-- ⏳ Remaining routers keep working unchanged via the original dependencies;
-  migrate opportunistically module-by-module (users, security, ai, posts,
-  webhooks next).
+- ✅ Migrated (2025-09-01): all 19 module routers now use `RequestContextDep`:
+  `files` (reference), `users` (7 endpoints), `security` (2 passkey endpoints;
+  14 admin `get_current_superuser` guards preserved per “keep both” decision),
+  `ai` (9/11 — 2 `RateLimitedUser` streaming endpoints kept with dedicated
+  limiter), `posts` (5/6 — admin `erase_db_post` kept superuser guard),
+  `webhooks` (11/11), `audit_logs` (5), `api_keys` (4), `auth` (3),
+  `billing` (6), `dashboard` (1), `feature_flags` (5), `mfa` (6),
+  `notifications` (6), `passkey` (4), `sso` (2), `sso_settings` (5),
+  `storage_settings` (3), `tasks` (2), `tenants` (6), `user_preferences` (4).
+  Zero direct `Depends(get_current_user)` / `Depends(tenant_dependency)` /
+  `Depends(async_get_db)` remain in any module router (verified via
+  `grep -rn`); remaining `async_get_db` uses are only inside `_get_*_service`
+  factories where allowed. Unauthenticated / public routes (login, register,
+  SSO callbacks, health) intentionally keep `async_get_db` and do not take
+  `RequestContextDep`.
 
 ## Tests
 

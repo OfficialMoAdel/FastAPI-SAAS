@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
-from src.app.core.utils.r1_error_handling import with_retry
+from src.app.core.utils.retry import with_retry
 from src.app.modules._base.exceptions import StripeError
 from src.app.modules.billing.crud import crud_stripe_settings
 

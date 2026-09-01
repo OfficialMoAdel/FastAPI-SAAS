@@ -4,13 +4,9 @@ Dashboard Router
 Provides dashboard metrics and analytics endpoints.
 """
 
-from typing import Any
+from fastapi import APIRouter, Query
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from src.app.api.deps import get_current_user
-from src.app.core.db.database import async_get_db
+from src.app.api.deps import RequestContextDep
 from src.app.modules.dashboard.schemas import (
     DashboardMetricsResponse,
     TimeRange,
@@ -22,12 +18,11 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 @router.get("", response_model=DashboardMetricsResponse)
 async def get_dashboard_metrics(
+    ctx: RequestContextDep,
     time_range: TimeRange = Query(
         default=TimeRange.MONTH,
         description="Time range for metrics (today, week, month, quarter, year, all)",
     ),
-    current_user: dict[str, Any] = Depends(get_current_user),
-    db: AsyncSession = Depends(async_get_db),
 ):
     """Get dashboard metrics for a time range.
 
@@ -46,5 +41,5 @@ async def get_dashboard_metrics(
 
     **Requires:** Authentication (admin or user with dashboard access)
     """
-    tenant_id = str(current_user.get("tenant_id"))
-    return await dashboard_service.get_metrics(db=db, tenant_id=tenant_id, time_range=time_range)
+    tenant_id = str(ctx.tenant_id)
+    return await dashboard_service.get_metrics(db=ctx.db, tenant_id=tenant_id, time_range=time_range)
