@@ -15,8 +15,6 @@ Usage:
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -290,10 +288,6 @@ def record_rbac_cache_miss() -> None:
     get_r1_metrics().inc_counter("r1_rbac_cache_misses_total")
 
 
-def record_rbac_query_latency(latency_seconds: float) -> None:
-    """Record RBAC query latency."""
-    get_r1_metrics().observe_histogram("r1_rbac_query_latency_seconds", latency_seconds)
-
 
 def update_dlq_size(size: int, max_size: int = 10000) -> None:
     """Update DLQ size gauge.
@@ -306,17 +300,6 @@ def update_dlq_size(size: int, max_size: int = 10000) -> None:
     metrics.set_gauge("r1_dlq_size", float(size))
     metrics.set_gauge("r1_dlq_size_pct", (size / max_size) * 100 if max_size > 0 else 0)
 
-
-def record_dlq_push(was_trimmed: bool = False) -> None:
-    """Record a DLQ push operation.
-
-    Args:
-        was_trimmed: Whether the push triggered a trim
-    """
-    metrics = get_r1_metrics()
-    metrics.inc_counter("r1_dlq_pushes_total")
-    if was_trimmed:
-        metrics.inc_counter("r1_dlq_trims_total")
 
 
 def record_passkey_query(latency_seconds: float) -> None:
@@ -355,17 +338,6 @@ def record_circuit_breaker_transition(to_state: str) -> None:
     update_circuit_breaker_state(to_state)
 
 
-def record_lua_script_execution(used_fallback: bool = False) -> None:
-    """Record a Lua script execution.
-
-    Args:
-        used_fallback: Whether fallback (EVAL vs EVALSHA) was used
-    """
-    metrics = get_r1_metrics()
-    metrics.inc_counter("r1_lua_script_executions_total")
-    if used_fallback:
-        metrics.inc_counter("r1_lua_script_fallbacks_total")
-
 
 def record_fail_open(operation: str) -> None:
     """Record a fail-open security event.
@@ -379,19 +351,3 @@ def record_fail_open(operation: str) -> None:
     # For now, relying on logs for details
 
 
-@contextmanager
-def measure_latency(
-    record_fn: Callable[[float], None],
-) -> Generator[None, None, None]:
-    """Context manager for measuring operation latency.
-
-    Usage:
-        with measure_latency(lambda t: record_xfetch_latency(t, is_hit=True)):
-            result = await cache.get(key)
-    """
-    start = time.perf_counter()
-    try:
-        yield
-    finally:
-        latency = time.perf_counter() - start
-        record_fn(latency)

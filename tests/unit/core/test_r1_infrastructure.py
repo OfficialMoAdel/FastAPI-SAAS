@@ -9,7 +9,6 @@ Tests the following components:
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -17,8 +16,6 @@ import pytest
 from src.app.core.monitoring import (
     R1UnifiedMetrics,
     get_r1_metrics,
-    measure_latency,
-    record_dlq_push,
     record_event_idempotency,
     record_rbac_cache_hit,
     record_rbac_cache_miss,
@@ -34,16 +31,9 @@ from src.app.core.utils.lua_manager import (
     get_lua_manager,
     reset_lua_manager,
 )
-from src.app.core.utils.r1_error_handling import (
-    CacheError,
-    DLQError,
-    ErrorTracker,
+from src.app.core.utils.retry import (
     LuaScriptError,
     R1OptimizationError,
-    RBACError,
-    SessionError,
-    fallback_on_error,
-    safe_get,
     with_fallback,
     with_fallback_sync,
     with_retry,
@@ -259,14 +249,10 @@ class TestR1UnifiedMetrics:
     def test_dlq_metrics(self) -> None:
         """Test DLQ metrics."""
         update_dlq_size(500, max_size=1000)
-        record_dlq_push(was_trimmed=True)
 
         metrics = get_r1_metrics()
         assert metrics.get_gauge("r1_dlq_size") == 500
         assert metrics.get_gauge("r1_dlq_size_pct") == 50.0
-        assert metrics.get_counter("r1_dlq_pushes_total") == 1
-        assert metrics.get_counter("r1_dlq_trims_total") == 1
-
     def test_export_prometheus(self) -> None:
         """Test Prometheus export format."""
         metrics = R1UnifiedMetrics()
@@ -287,20 +273,6 @@ class TestR1UnifiedMetrics:
 
         assert metrics.get_counter("r1_event_idempotency_checks_total") == 0
 
-    @pytest.mark.asyncio
-    async def test_measure_latency_context_manager(self) -> None:
-        """Test measure_latency context manager."""
-        recorded_latency = None
-
-        def record(t: float) -> None:
-            nonlocal recorded_latency
-            recorded_latency = t
-
-        with measure_latency(record):
-            await asyncio.sleep(0.01)
-
-        assert recorded_latency is not None
-        assert recorded_latency >= 0.01
 
 
 # =============================================================================
@@ -324,25 +296,6 @@ class TestExceptionHierarchy:
         assert error.script_name == "my_script"
         assert isinstance(error, R1OptimizationError)
 
-    def test_cache_error(self) -> None:
-        """Test CacheError."""
-        error = CacheError("cache miss", "user:123")
-        assert error.cache_key == "user:123"
-
-    def test_session_error(self) -> None:
-        """Test SessionError."""
-        error = SessionError("session expired", "sess_abc")
-        assert error.session_id == "sess_abc"
-
-    def test_rbac_error(self) -> None:
-        """Test RBACError."""
-        error = RBACError("permission denied", 42)
-        assert error.user_id == 42
-
-    def test_dlq_error(self) -> None:
-        """Test DLQError."""
-        error = DLQError("queue full", "evt_123")
-        assert error.event_id == "evt_123"
 
 
 class TestWithFallback:
@@ -444,110 +397,4 @@ class TestWithRetry:
             await with_retry(operation, max_attempts=2, delay_seconds=0.01)
 
 
-class TestErrorTracker:
-    """Tests for ErrorTracker."""
 
-    def test_initial_state(self) -> None:
-        """Test initial tracker state."""
-        tracker = ErrorTracker("test", window_size=10)
-        assert tracker.error_rate == 0.0
-        assert tracker.success_rate == 1.0
-
-    def test_record_success(self) -> None:
-        """Test recording successes."""
-        tracker = ErrorTracker("test", window_size=10)
-        tracker.record_success()
-        tracker.record_success()
-
-        assert tracker.error_rate == 0.0
-
-    def test_record_error(self) -> None:
-        """Test recording errors."""
-        tracker = ErrorTracker("test", window_size=10)
-        tracker.record_success()
-        tracker.record_error()
-
-        assert tracker.error_rate == 0.5
-
-    def test_window_sliding(self) -> None:
-        """Test that window slides correctly."""
-        tracker = ErrorTracker("test", window_size=3)
-
-        # Fill window with successes
-        tracker.record_success()
-        tracker.record_success()
-        tracker.record_success()
-        assert tracker.error_rate == 0.0
-
-        # Add errors, oldest success should drop
-        tracker.record_error()
-        tracker.record_error()
-        tracker.record_error()
-
-        # All 3 in window are now errors
-        assert tracker.error_rate == 1.0
-
-    def test_get_stats(self) -> None:
-        """Test statistics retrieval."""
-        tracker = ErrorTracker("test_op", window_size=10)
-        tracker.record_success()
-        tracker.record_error()
-
-        stats = tracker.get_stats()
-        assert stats["optimization"] == "test_op"
-        assert stats["window_size"] == 10
-        assert stats["current_window"] == 2
-        assert stats["error_rate"] == 0.5
-
-
-class TestFallbackDecorator:
-    """Tests for fallback_on_error decorator."""
-
-    @pytest.mark.asyncio
-    async def test_returns_fallback_on_error(self) -> None:
-        """Test decorator returns fallback on specified exception."""
-
-        @fallback_on_error(fallback_value=[], exceptions=(CacheError,))
-        async def get_items() -> list[str]:
-            raise CacheError("cache down")
-
-        result = await get_items()
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_raises_on_unhandled_exception(self) -> None:
-        """Test decorator doesn't catch unhandled exceptions."""
-
-        @fallback_on_error(fallback_value=[], exceptions=(CacheError,))
-        async def get_items() -> list[str]:
-            raise ValueError("different error")
-
-        with pytest.raises(ValueError):
-            await get_items()
-
-
-class TestSafeGet:
-    """Tests for safe_get utility."""
-
-    def test_key_exists(self) -> None:
-        """Test getting existing key."""
-        data = {"name": "test", "count": 42}
-        assert safe_get(data, "name", "default") == "test"
-        assert safe_get(data, "count", 0) == 42
-
-    def test_key_missing(self) -> None:
-        """Test default for missing key."""
-        data = {"name": "test"}
-        assert safe_get(data, "missing", "default") == "default"
-
-    def test_type_checking(self) -> None:
-        """Test type validation."""
-        data = {"count": "not_a_number"}
-        result = safe_get(data, "count", 0, expected_type=int)
-        assert result == 0  # Returns default because type mismatch
-
-    def test_type_match(self) -> None:
-        """Test value returned when type matches."""
-        data = {"count": 42}
-        result = safe_get(data, "count", 0, expected_type=int)
-        assert result == 42

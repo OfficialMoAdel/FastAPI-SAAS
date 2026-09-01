@@ -19,9 +19,7 @@ router = APIRouter(prefix="/{{ module_name }}s", tags=["{{ module_name }}s"])
     Depends(lambda db=Depends(async_get_db): get_{{ module_name }}_service(db))
 ]
 
-# Note: To enforce fine-grained authorization on endpoints, use require_policy:
-# from ...core.rbac import require_policy, OwnershipPolicy, RBACPolicy
-# @router.get("/{id}", dependencies=[Depends(require_policy(OwnershipPolicy(owner_field="user_id", model={{ ModelName }})))])
+
 
 
 @router.post("", response_model={{ ModelName }}Read, status_code=status.HTTP_201_CREATED)

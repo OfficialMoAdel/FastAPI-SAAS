@@ -16,6 +16,7 @@ import pytest
 from fastapi import HTTPException
 
 from src.app.core.rbac.dependencies import (
+    PERMISSIONS_CACHE_TTL,
     _get_bitmask_cache_key,
     get_user_permissions,
     has_permission_cached,
@@ -23,7 +24,6 @@ from src.app.core.rbac.dependencies import (
     requires_permission,
 )
 from src.app.core.rbac.permissions import Permission
-from src.app.core.rbac.utils import PERMISSIONS_CACHE_TTL
 
 
 def _acm(pipe):
