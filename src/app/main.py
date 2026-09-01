@@ -229,13 +229,12 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:  # no
         except Exception as e:
             logger.error("Failed to shutdown bcrypt thread pool", error=str(e))
 
-        # M-3: cancel the tenant L1 invalidation listener (leaked pubsub task).
-        # No try/except needed: stop_l1_invalidation_listener is fully
-        # self-guarded (catches CancelledError/Exception internally).
+        # Cancel the L1 invalidation listeners (leaked pubsub tasks).
+        from src.app.core.security.auto_ban import stop_ban_l1_invalidation_listener
         from src.app.middleware.tenant import stop_l1_invalidation_listener
 
+        stop_ban_l1_invalidation_listener()
         await stop_l1_invalidation_listener()
-
 
 app = create_application(
     router=get_router(),

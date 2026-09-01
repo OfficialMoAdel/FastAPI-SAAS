@@ -221,11 +221,7 @@ async def chat_completion(
     except ChatCompletionError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "detail": e.message,
-                "error_code": e.error_code,
-                "model": e.model,
-            },
+            detail=e.message,
         ) from e
 
 

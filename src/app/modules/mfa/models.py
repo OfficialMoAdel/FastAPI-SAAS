@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -34,6 +34,10 @@ class MFAMethod(Base):
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, init=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, init=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), insert_default=func.now(), init=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "type", name="uq_mfa_methods_user_type"),
+    )
 
     # Relationships (init=False)
     user: Mapped["User"] = relationship(back_populates="mfa_methods", init=False, lazy="selectin")

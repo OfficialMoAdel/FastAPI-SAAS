@@ -230,6 +230,8 @@ def validate_jwt_length(token: str, max_length: int = 4096) -> bool:
     if not token:
         return False
     return len(token) <= max_length
+
+
 async def decode_verified_token(
     token: str,
     *,

@@ -98,9 +98,11 @@ class BaseService(Generic[T]):
             # Robust check: inspect actual table columns, not hasattr (which can be
             # spoofed by descriptors / __getattr__ and caused false tenant-scoping).
             try:
-                is_tenant_scoped = "tenant_id" in getattr(getattr(model, "__table__", None), "c", {})  # type: ignore[union-attr]
+                table = getattr(model, "__table__", None)
+                cols = getattr(table, "c", {}) if table is not None else {}
+                is_tenant_scoped = "tenant_id" in cols
             except Exception:
-                is_tenant_scoped = False
+                is_tenant_scoped = True  # P0-1: fail-closed: default to tenant-scoped if introspection fails
             if is_tenant_scoped:
                 crud = _CRUD_CACHE.setdefault(model, TenantAwareCRUD(model))  # type: ignore[arg-type]
             else:
@@ -173,16 +175,7 @@ class BaseService(Generic[T]):
                 from src.app.core.db.tenant_crud import TenantAwareCRUD
 
                 if isinstance(self.crud, TenantAwareCRUD):
-                    try:
-                        kwargs = self.crud.inject_tenant_filter(kwargs)
-                    except Exception as e:
-                        from src.app.core.exceptions.http_exceptions import TenantContextError
-
-                        if isinstance(e, TenantContextError):
-                            kwargs = self.crud.inject_tenant_filter({**kwargs, "_allow_unscoped": True})
-                        else:
-                            raise
-
+                    kwargs = self.crud.inject_tenant_filter(kwargs)
                 # M3: hasattr silently dropped typos (was if hasattr)
                 for key, value in kwargs.items():
                     if not hasattr(self.model, key):
@@ -213,28 +206,13 @@ class BaseService(Generic[T]):
                 # Remove duplicate objects if they are duplicated due to joins and relationships handling
                 return list(result.scalars().unique().all())
             else:
-                try:
-                    result = await self.crud.get_multi(
-                        db=self.db,
-                        offset=offset,
-                        limit=per_page,
-                        return_total_count=False,
-                        **kwargs,
-                    )
-                except Exception as e:
-                    from src.app.core.exceptions.http_exceptions import TenantContextError
-
-                    if isinstance(e, TenantContextError):
-                        result = await self.crud.get_multi(
-                            db=self.db,
-                            offset=offset,
-                            limit=per_page,
-                            return_total_count=False,
-                            _allow_unscoped=True,
-                            **kwargs,
-                        )
-                    else:
-                        raise
+                result = await self.crud.get_multi(
+                    db=self.db,
+                    offset=offset,
+                    limit=per_page,
+                    return_total_count=False,
+                    **kwargs,
+                )
                 if isinstance(result, dict):
                     return cast(list[T], result.get("data", []))
                 return cast(list[T], result)

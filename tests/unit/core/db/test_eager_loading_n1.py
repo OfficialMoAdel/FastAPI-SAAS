@@ -9,10 +9,27 @@ assert that the correct number of queries are executed.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
+from src.app.core.tenancy.context import TenantContext, clear_tenant_context, set_current_tenant
 from src.app.modules._base.service import BaseService
 from src.app.modules.users.models import User
+
+
+@pytest.fixture(autouse=True)
+def _setup_tenant_context():
+    """Provide active tenant context for tenant-scoped User model tests."""
+    tenant = TenantContext(
+        tenant_id=uuid.uuid4(),
+        tenant_slug="test-tenant",
+        tenant_name="Test Tenant",
+        is_active=True,
+    )
+    set_current_tenant(tenant)
+    yield
+    clear_tenant_context()
 
 
 class TestEagerLoadingN1Elimination:

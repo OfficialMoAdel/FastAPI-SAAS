@@ -129,6 +129,8 @@ class AuditLog(Base):
             "created_at",
             postgresql_ops={"created_at": "DESC"},
         ),
+        # Query by tenant and action type (e.g. list_actions, action filtering)
+        Index("idx_audit_tenant_action", "tenant_id", "action"),
         # Query by entity
         Index("idx_audit_entity", "entity_type", "entity_id"),
         # Query by action type

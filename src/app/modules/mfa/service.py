@@ -17,6 +17,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
@@ -183,9 +184,12 @@ class MFAService:
         mfa_method.backup_codes = backup_codes_hashed
 
         db.add(mfa_method)
-        await db.commit()
-        await db.refresh(mfa_method)
-
+        try:
+            await db.commit()
+            await db.refresh(mfa_method)
+        except IntegrityError as exc:
+            await db.rollback()
+            raise BadRequestException("MFA is already enabled for this user") from exc
         logger.info("mfa_enabled", user_id=user_id, method="totp")
 
         # Audit log: MFA enabled

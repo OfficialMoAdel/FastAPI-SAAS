@@ -80,6 +80,14 @@ class AuditLogService:
         )
         return sorted(result.scalars().all())
 
+    async def get_log(self, log_id: UUID, tenant_id: UUID) -> AuditLog | None:
+        """Get a single audit log entry by ID scoped to tenant."""
+        stmt = select(AuditLog).where(
+            AuditLog.id == log_id,
+            tenant_scope(AuditLog, tenant_id),
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
     async def export_count(self, tenant_id, f: _AuditFilter) -> int:
         """A13: count of rows matching the export filter."""
         stmt = _compose_filters(select(func.count()).select_from(AuditLog), tenant_id, f)

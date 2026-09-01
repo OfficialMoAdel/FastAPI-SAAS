@@ -76,11 +76,10 @@ def _start_l1_invalidation_listener() -> None:
     """Start (once per event loop) a background subscriber applying invalidations."""
     global _l1_invalidation_task
     redis_client = get_redis()
-    if redis_client is None:
+    if redis_client is None or not hasattr(redis_client, "pubsub"):
         return
     if _l1_invalidation_task is not None and not _l1_invalidation_task.done():
         return
-
     async def _listen() -> None:
         pubsub = redis_client.pubsub()
         try:
@@ -150,7 +149,7 @@ from src.app.core.middleware_exempt import is_path_exempt as _shared_is_path_exe
 _TENANT_EXTRA_EXEMPT: frozenset[str] = frozenset({"/api/v1/app_configuration"})
 TENANT_EXEMPT_PATHS: frozenset[str] = COMMON_EXEMPT_PATHS | _TENANT_EXTRA_EXEMPT
 
-TENANT_EXEMPT_PREFIXES: tuple[str, ...] = ("/api/v1/tenants",)
+TENANT_EXEMPT_PREFIXES: tuple[str, ...] = ("/api/v1/tenants", "/api/v1/account/sso")
 
 TENANT_HEADER = "X-Tenant-ID"
 
@@ -185,18 +184,19 @@ class TenantMiddleware(BaseHTTPMiddleware):
         request = Request(scope, receive=receive)
         path = request.url.path
 
-        # --- Exempt paths / OPTIONS: no tenant required -------------------
-        if is_path_exempt(path) or request.method == "OPTIONS":
-            set_current_tenant(NO_TENANT)
-            try:
-                await self.app(scope, receive, send)
-            finally:
-                clear_tenant_context()
-            return
-
-        # PERFORMANCE: Check for missing header BEFORE acquiring a DB connection.
+        # Check for tenant header
         tenant_slug = request.headers.get(TENANT_HEADER)
         if not tenant_slug or not tenant_slug.strip():
+            # If no header provided and path is exempt (or OPTIONS): allow with NO_TENANT
+            if is_path_exempt(path) or request.method == "OPTIONS":
+                set_current_tenant(NO_TENANT)
+                try:
+                    await self.app(scope, receive, send)
+                finally:
+                    clear_tenant_context()
+                return
+
+            # Non-exempt path without header -> 400 Missing required header
             logger.warning("Tenant resolution failed: missing_header | path=%s", path)
             from src.app.core.errors import ErrorCode, create_error_response
 
@@ -213,10 +213,19 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
         # R1-UNIFIED: connections are NOT held for the whole request; RLS
         # variables are re-applied by the pool checkout listener.
-        _start_l1_invalidation_listener()
         tenant = await self._get_tenant_by_slug(tenant_slug)
 
         if tenant is None:
+            # On exempt paths (e.g. /health, /api/v1/tenants, /docs), if tenant slug is not found,
+            # allow the exempt path to proceed with NO_TENANT rather than blocking probes or bootstrapping.
+            if is_path_exempt(path) or request.method == "OPTIONS":
+                set_current_tenant(NO_TENANT)
+                try:
+                    await self.app(scope, receive, send)
+                finally:
+                    clear_tenant_context()
+                return
+
             logger.warning("Tenant resolution failed: invalid_slug | slug=%s", tenant_slug)
             from src.app.core.errors import ErrorCode, create_error_response
 

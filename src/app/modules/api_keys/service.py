@@ -527,7 +527,7 @@ class APIKeyService(BaseService[APIKey]):
         #   - New key: valid immediately (valid_from=None)
         #   - Old key: expires_at = min(now + grace_period, original_expires_at)  (auto-expires after grace window)
         grace_expires_at = datetime.now(UTC) + timedelta(days=grace_period_days)
-        if api_key_expires_at and api_key_expires_at < grace_expires_at:
+        if api_key_expires_at and isinstance(api_key_expires_at, datetime) and api_key_expires_at < grace_expires_at:
             grace_expires_at = api_key_expires_at
 
         # Generate the new key

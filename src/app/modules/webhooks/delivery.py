@@ -264,7 +264,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID) -> WebhookDelivery:  # no
                 old_digest = sign_payload(
                     delivery.payload, decrypt_data(endpoint.old_signing_secret), send_timestamp
                 )
-                signature_header = f"{signature_header},{old_digest.split('v1=', 1)[1]}"
+                signature_header = f"{signature_header},v1={old_digest.split('v1=', 1)[1]}"
             except Exception as old_sig_err:
                 logger.error(
                     "webhook_old_signing_secret_decryption_failed",

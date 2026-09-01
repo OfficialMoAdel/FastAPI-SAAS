@@ -89,7 +89,6 @@ class IPFilterMiddleware:
             if path.startswith(p + "/"):
                 return True
         return False
-
     async def __call__(self, scope, receive, send):
         """Process request through IP filter."""
         if scope["type"] != "http":

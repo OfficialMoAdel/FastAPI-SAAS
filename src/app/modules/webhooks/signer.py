@@ -76,9 +76,9 @@ def verify_signature(
         # Non-numeric t= — malformed header, not a crypto failure.
         return False
 
-    # P0-1: freshness window. Rejects t=0 and any timestamp further than
-    # max_age_seconds from now (covers both replay and clock-skewed futures).
-    if abs(time.time() - ts) > max_age_seconds:
+    # P1-4: Asymmetric freshness window. Rejects future timestamps beyond
+    # 60s clock skew allowance, and rejects past timestamps older than max_age_seconds.
+    if not is_timestamp_fresh(ts, max_age_seconds=max_age_seconds):
         return False
 
     expected = sign_payload(payload, secret, ts)
@@ -86,18 +86,22 @@ def verify_signature(
     return any(hmac.compare_digest(exp_v1, c) for c in v1_sigs)
 
 
-def is_timestamp_fresh(timestamp: int, max_age_seconds: int = DEFAULT_SIGNATURE_MAX_AGE_SECONDS) -> bool:
+def is_timestamp_fresh(
+    timestamp: int,
+    max_age_seconds: int = DEFAULT_SIGNATURE_MAX_AGE_SECONDS,
+    future_skew_seconds: int = 300,
+) -> bool:
     """True when ``timestamp`` is within the replay tolerance of now.
 
-    The freshness window is a signing PRIMITIVE (candidate 5): both the
-    producer-side verifier (:func:`verify_signature`) and the consumer-side
-    dual-scheme verifier (utils.verify_webhook_signature) use this ONE
-    implementation — a replay-window bug fixed here fixes both.
+    The freshness window is a signing PRIMITIVE: rejects timestamps
+    further in the future than ``future_skew_seconds`` (300s) and older
+    than ``max_age_seconds`` (300s).
     """
-    import time
 
-    return abs(time.time() - timestamp) <= max_age_seconds
-
+    now = time.time()
+    if timestamp > now + future_skew_seconds:
+        return False
+    return (now - timestamp) <= max_age_seconds
 
 def canonical_bytes_from_raw(payload: bytes) -> bytes:
     """Canonical bytes from raw request-body bytes.

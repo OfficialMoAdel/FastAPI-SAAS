@@ -174,8 +174,8 @@ class EnvironmentValidator:
                     with ThreadPoolExecutor(max_workers=1) as _pool:
                         try:
                             response = _pool.submit(
-                                lambda: httpx.get(f"{ollama_base_url}/api/tags", timeout=5.0)
-                            ).result(timeout=5.5)
+                                lambda: httpx.get(f"{ollama_base_url}/api/tags", timeout=2.0)
+                            ).result(timeout=2.5)
                         except Exception:
                             response = None
                             is_reachable = False

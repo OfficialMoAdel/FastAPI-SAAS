@@ -70,7 +70,7 @@ def _start_ban_l1_invalidation_listener() -> None:
     """Start (once per event loop) a background subscriber applying ban invalidations."""
     global _ban_l1_invalidation_task
     redis_client = get_redis()
-    if redis_client is None:
+    if redis_client is None or not hasattr(redis_client, "pubsub"):
         return
     if _ban_l1_invalidation_task is not None and not _ban_l1_invalidation_task.done():
         return
@@ -374,10 +374,9 @@ async def unban_ip(client_ip: str) -> bool:
     try:
         result = await redis_client.delete(ban_key)
 
-        # R1-01: evict the negative cache so the unban is reflected on the
-        # next lookup instead of waiting out the 5s TTL.
+        # Evict the local in-process cache and broadcast invalidation to all workers
         _ban_negative_cache.pop(_ban_cache_key(client_ip), None)
-
+        await _publish_ban_l1_invalidation(client_ip)
         if result > 0:
             logger.info("IP unbanned | ip=%s", client_ip)
 

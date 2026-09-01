@@ -5,12 +5,10 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
 
 from src.app.api.deps import RequestContextDep
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
-from src.app.modules.notifications.models import Notification
 from src.app.modules.notifications.schemas import (
     EmailTemplateOverrideCreate,
     EmailTemplateOverrideResponse,
@@ -179,13 +177,12 @@ async def get_notification(
     ctx: RequestContextDep,
 ) -> Any:
     """Get a single notification by ID."""
-    query = select(Notification).where(
-        Notification.id == notification_id,
-        Notification.tenant_id == ctx.tenant_id,
-        Notification.user_id == ctx.user_id,
+    service = NotificationService(ctx.db)
+    notification = await service.get_notification(
+        notification_id=notification_id,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
     )
-    result = await ctx.db.execute(query)
-    notification = result.scalar_one_or_none()
 
     if not notification:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")

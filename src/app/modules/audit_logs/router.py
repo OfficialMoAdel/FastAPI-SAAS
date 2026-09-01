@@ -319,13 +319,8 @@ async def get_audit_log(
 
     Enforces tenant isolation - only returns logs for current tenant.
     """
-    query = select(AuditLog).where(
-        AuditLog.id == log_id,
-        AuditLog.tenant_id == ctx.tenant_id,
-    )
-    result = await ctx.db.execute(query)
-    log = result.scalar_one_or_none()
-
+    service = AuditLogService(ctx.db)
+    log = await service.get_log(log_id=log_id, tenant_id=ctx.tenant_id)
     if not log:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audit log not found")
 

@@ -184,11 +184,8 @@ class AuthService:
         normalized_username = username.lower().strip()
 
         # SECURITY FIX: Check lockout BEFORE authentication to prevent CPU exhaustion (DoS)
-        # This records the attempt tentatively. If login succeeds, we clear it.
         lockout = LoginLockoutPolicy()
-        result = await lockout.check_and_increment(redis, normalized_username)
-
-        if result == -1:
+        if await lockout.is_locked(redis, normalized_username):
             # Fetch user to get tenant and user ID for audit log
             user_service = UserService(db)
             if "@" in normalized_username:
@@ -210,9 +207,9 @@ class AuthService:
         user = await self.authenticate_user(username_or_email=normalized_username, password=password, db=db)
 
         if not user:
+            await lockout.record_failed_attempt(redis, normalized_username)
             await self._publish_login_audit(request, username, False, reason="invalid_credentials")
             raise UnauthorizedException("Wrong username, email or password.")
-
         if not user.get("is_active", False):
             await self._publish_login_audit(request, username, False, reason="account_inactive")
             raise UnauthorizedException("User account is no longer active.")

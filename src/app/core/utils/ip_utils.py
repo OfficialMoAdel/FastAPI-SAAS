@@ -70,7 +70,9 @@ def is_trusted_proxy(ip_str: str) -> bool:
         return False
 
     if ip_str == "testclient":
-        return True
+        from src.app.core.config.environment import EnvironmentOption
+
+        return bool(settings.ENVIRONMENT != EnvironmentOption.PRODUCTION)
 
     if ip_str in TRUSTED_PROXY_IPS:
         return True

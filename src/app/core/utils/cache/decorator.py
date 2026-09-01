@@ -408,8 +408,16 @@ def cache(  # noqa: C901
                     return Response(content=cached_data, media_type="application/json")
 
 
-            result = await func(request, *args, **kwargs)
-
+            try:
+                result = await func(request, *args, **kwargs)
+            except Exception:
+                refresh_lock_key = getattr(request.state, "cache_refresh_lock_key", None)
+                if refresh_lock_key and client is not None:
+                    try:
+                        await client.delete(refresh_lock_key)
+                    except Exception:
+                        pass
+                raise
             if request.method == "GET":
                 # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder
                 serialized_data = _state.json_dumps(result)

@@ -329,6 +329,21 @@ class NotificationService:
         result = await self.db.execute(query)
         return total, list(result.scalars().all())
 
+    async def get_notification(
+        self,
+        notification_id: UUID,
+        tenant_id: UUID,
+        user_id: int | None = None,
+    ) -> Notification | None:
+        """Get a single notification by ID scoped to tenant and user."""
+        query = select(Notification).where(
+            Notification.id == notification_id,
+            Notification.tenant_id == tenant_id,
+        )
+        if user_id is not None:
+            query = query.where(Notification.user_id == user_id)
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()
     async def should_send_notification(
         self,
         user_id: int,

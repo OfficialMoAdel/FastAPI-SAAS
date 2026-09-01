@@ -17,17 +17,9 @@ class LoginLockoutPolicy:
     fail closed on Redis errors (a Redis failure locks rather than unlocks).
     """
 
-    # Atomic Lua script for login attempt checking.
-    # Combines lockout check + increment + expire into single Redis roundtrip.
-    # Returns -1 if locked out, otherwise the new attempt count.
-    # OPT-11: Always execute EXPIRE to ensure constant-time Redis operations regardless of user existence.
-    _LOGIN_CHECK_LUA = """
-local attempts = redis.call('GET', KEYS[1])
-if attempts and tonumber(attempts) >= tonumber(ARGV[1]) then
-    return -1
-end
+    # Atomic Lua script for recording failed login attempts post-auth.
+    _INCREMENT_LUA = """
 local new_attempts = redis.call('INCR', KEYS[1])
--- SECURITY FIX: Always set/refresh expiry to ensure constant timing and prevent enumeration
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
 return new_attempts
 """
@@ -37,34 +29,38 @@ return new_attempts
         """Redis key tracking failed login attempts for a normalized username."""
         return f"login_attempts:{username}"
 
-    async def check_and_increment(self, redis: Redis, normalized_username: str) -> int:
-        """Atomically check lockout and record a tentative attempt.
+    async def is_locked(self, redis: Redis, normalized_username: str) -> bool:
+        """Check if the account is currently locked out (pre-auth check).
 
-        Returns
-        -------
-        int
-            The new attempt count, or ``-1`` if the account is locked out.
-
-        Notes
-        -----
-        This records the attempt tentatively. If login succeeds, the caller
-        must invoke :meth:`clear` to reset the counter.
+        Returns True if failed attempts >= AUTH_MAX_LOGIN_ATTEMPTS.
+        Fail-closed on Redis errors per class docstring.
         """
-        result = await redis.eval(  # type: ignore[misc]
-            self._LOGIN_CHECK_LUA,
-            1,
-            self.attempts_key(normalized_username),
-            str(settings.AUTH_MAX_LOGIN_ATTEMPTS),
-            str(settings.AUTH_LOCKOUT_DURATION_SECONDS),
-        )
-
-        # Coerce result to int to handle bytes when Redis client is not initialized
-        # with decode_responses=True. Without this, b'-1' != -1, disabling lockout entirely.
         try:
-            return int(result)
-        except (TypeError, ValueError):
-            return -1  # Fail-closed: default to locked on Redis error
+            val = await redis.get(self.attempts_key(normalized_username))
+            if val is None:
+                return False
+            return int(val) >= int(settings.AUTH_MAX_LOGIN_ATTEMPTS)
+        except Exception:
+            return True
 
+    async def record_failed_attempt(self, redis: Redis, normalized_username: str) -> int:
+        """Record a failed login attempt post-authentication."""
+        try:
+            result = await redis.eval(  # type: ignore[misc]
+                self._INCREMENT_LUA,
+                1,
+                self.attempts_key(normalized_username),
+                str(settings.AUTH_MAX_LOGIN_ATTEMPTS),
+                str(settings.AUTH_LOCKOUT_DURATION_SECONDS),
+            )
+            return int(result)
+        except Exception:
+            return 1
+    async def check_and_increment(self, redis: Redis, normalized_username: str) -> int:
+        """Check lockout status and increment (for backward compatibility)."""
+        if await self.is_locked(redis, normalized_username):
+            return -1
+        return await self.record_failed_attempt(redis, normalized_username)
     async def clear(self, redis: Redis, normalized_username: str) -> None:
         """Clear failed attempts after a successful login (single roundtrip)."""
         await redis.delete(self.attempts_key(normalized_username))
