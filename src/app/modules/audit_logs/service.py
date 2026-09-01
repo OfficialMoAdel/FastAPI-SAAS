@@ -14,10 +14,13 @@ from sqlalchemy.orm import joinedload
 from structlog import get_logger
 
 from src.app.core.db.database import get_db_context
-from src.app.core.events import EventPriority, event_bus
+from src.app.core.db.tenant_crud import tenant_scope
+from src.app.core.events import EventPriority
 from src.app.core.utils import cache as redis_cache
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.audit_logs.models import AuditLog
+from src.app.modules.audit_logs.schemas import AuditLogEventData
+from src.app.modules.audit_logs.trail import SYSTEM_TENANT_ID, audit
 
 if TYPE_CHECKING:
     pass
@@ -37,7 +40,7 @@ class _AuditFilter(NamedTuple):
 
 def _compose_filters(stmt, tenant_id, f: _AuditFilter):
     """A13: single source of truth for audit-log list/export filters."""
-    stmt = stmt.where(AuditLog.tenant_id == tenant_id)
+    stmt = stmt.where(tenant_scope(AuditLog, tenant_id))
     if f.action:
         stmt = stmt.where(AuditLog.action == f.action)
     if f.user_id:
@@ -72,7 +75,9 @@ class AuditLogService:
 
     async def list_actions(self, tenant_id) -> list[str]:
         """A13: unique action types for a tenant (was inline in router)."""
-        result = await self.db.execute(select(AuditLog.action).where(AuditLog.tenant_id == tenant_id).distinct())
+        result = await self.db.execute(
+            select(AuditLog.action).where(tenant_scope(AuditLog, tenant_id)).distinct()
+        )
         return sorted(result.scalars().all())
 
     async def export_count(self, tenant_id, f: _AuditFilter) -> int:
@@ -171,7 +176,7 @@ class AuditLogService:
             .options(
                 joinedload(AuditLog.user),  # type: ignore[arg-type]
             )
-            .where(AuditLog.tenant_id == tenant_id)
+            .where(tenant_scope(AuditLog, tenant_id))
         )
 
         if user_id:
@@ -219,7 +224,7 @@ class AuditLogService:
             .options(
                 joinedload(AuditLog.user),  # type: ignore[arg-type]
             )
-            .where(AuditLog.tenant_id == tenant_id)
+            .where(tenant_scope(AuditLog, tenant_id))
         )
 
         if user_id:
@@ -249,7 +254,7 @@ class AuditLogService:
         # Out-of-range page: window function yields no rows, so total is
         # unavailable. Fall back to a cheap COUNT so pagination metadata stays
         # truthful (total must reflect the filtered set even when the page is empty).
-        count_query = select(func.count()).select_from(AuditLog).where(AuditLog.tenant_id == tenant_id)
+        count_query = select(func.count()).select_from(AuditLog).where(tenant_scope(AuditLog, tenant_id))
         if user_id:
             count_query = count_query.where(AuditLog.user_id == user_id)
         if action:
@@ -325,16 +330,30 @@ async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None =
         log_data: Log data
         db: Optional DB session. If None, creates a new one.
     """
+    tenant_id_val = SYSTEM_TENANT_ID
+    if log_data.get("tenant_id"):
+        try:
+            tenant_id_val = UUID(str(log_data["tenant_id"]))
+        except (ValueError, TypeError):
+            tenant_id_val = SYSTEM_TENANT_ID
+
+    user_id_val = None
+    if log_data.get("user_id"):
+        try:
+            user_id_val = int(log_data["user_id"])
+        except (ValueError, TypeError):
+            user_id_val = None
+
     if db:
         # Use provided session
         try:
             service = AuditLogService(db)
             await service.create_log(
-                tenant_id=UUID(log_data["tenant_id"]),
+                tenant_id=tenant_id_val,
                 action=log_data["action"],
                 entity_type=log_data.get("entity_type"),
-                entity_id=log_data.get("entity_id"),
-                user_id=int(log_data["user_id"]) if log_data.get("user_id") else None,
+                entity_id=str(log_data["entity_id"]) if log_data.get("entity_id") is not None else None,
+                user_id=user_id_val,
                 details=log_data.get("details", {}),
                 ip_address=log_data.get("ip_address"),
                 user_agent=log_data.get("user_agent"),
@@ -350,18 +369,17 @@ async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None =
         try:
             service = AuditLogService(db)
             await service.create_log(
-                tenant_id=UUID(log_data["tenant_id"]),
+                tenant_id=tenant_id_val,
                 action=log_data["action"],
                 entity_type=log_data.get("entity_type"),
-                entity_id=log_data.get("entity_id"),
-                user_id=int(log_data["user_id"]) if log_data.get("user_id") else None,
+                entity_id=str(log_data["entity_id"]) if log_data.get("entity_id") is not None else None,
+                user_id=user_id_val,
                 details=log_data.get("details", {}),
                 ip_address=log_data.get("ip_address"),
                 user_agent=log_data.get("user_agent"),
             )
         except Exception as e:
             logger.error("audit_log_direct_insert_failed", error=str(e))
-
 
 async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: AsyncSession | None = None) -> int:
     """Flush buffered audit logs to database in batch.
@@ -405,12 +423,26 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     for raw_data in logs_data:
         try:
             data = orjson.loads(raw_data)
+            tenant_id_val = SYSTEM_TENANT_ID
+            if data.get("tenant_id"):
+                try:
+                    tenant_id_val = UUID(str(data["tenant_id"]))
+                except (ValueError, TypeError):
+                    tenant_id_val = SYSTEM_TENANT_ID
+
+            user_id_val = None
+            if data.get("user_id"):
+                try:
+                    user_id_val = int(data["user_id"])
+                except (ValueError, TypeError):
+                    user_id_val = None
+
             log_dict = {
-                "tenant_id": UUID(data["tenant_id"]),
+                "tenant_id": tenant_id_val,
                 "action": data["action"],
                 "entity_type": data.get("entity_type"),
-                "entity_id": data.get("entity_id"),
-                "user_id": int(data["user_id"]) if data.get("user_id") else None,
+                "entity_id": str(data["entity_id"]) if data.get("entity_id") is not None else None,
+                "user_id": user_id_val,
                 "details": data.get("details", {}),
                 "ip_address": data.get("ip_address"),
                 "user_agent": data.get("user_agent"),
@@ -493,17 +525,41 @@ async def handle_audit_log_event(data: dict[str, Any]) -> None:
     Args:
         data: Event payload containing audit log details
     """
-    log_data = {
-        "tenant_id": data["tenant_id"],
-        "action": data["action"],
-        "entity_type": data.get("entity_type"),
-        "entity_id": str(data["entity_id"]) if data.get("entity_id") else None,
-        "user_id": data.get("user_id"),
-        "details": data.get("details", {}),
-        "ip_address": data.get("ip_address"),
-        "user_agent": data.get("user_agent"),
-        "created_at": datetime.now(UTC).isoformat(),
-    }
+    try:
+        validated = AuditLogEventData.model_validate(data)
+        log_data = {
+            "tenant_id": str(validated.tenant_id),
+            "action": validated.action,
+            "entity_type": validated.entity_type,
+            "entity_id": validated.entity_id,
+            "user_id": validated.user_id,
+            "details": validated.details,
+            "ip_address": validated.ip_address,
+            "user_agent": validated.user_agent,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+    except Exception as parse_err:
+        logger.warning("audit_log_schema_validation_failed", error=str(parse_err), raw_data=str(data)[:200])
+        tenant_val = data.get("tenant_id")
+        try:
+            tenant_uuid = str(UUID(str(tenant_val))) if tenant_val and str(tenant_val) != "0" else str(SYSTEM_TENANT_ID)
+        except (ValueError, TypeError):
+            tenant_uuid = str(SYSTEM_TENANT_ID)
+
+        entity_type = data.get("entity_type") or data.get("resource_type")
+        entity_id_val = data.get("entity_id") if data.get("entity_id") is not None else data.get("resource_id")
+
+        log_data = {
+            "tenant_id": tenant_uuid,
+            "action": data.get("action", "unknown"),
+            "entity_type": entity_type,
+            "entity_id": str(entity_id_val) if entity_id_val is not None else None,
+            "user_id": str(data["user_id"]) if data.get("user_id") is not None else None,
+            "details": data.get("details", {}),
+            "ip_address": data.get("ip_address"),
+            "user_agent": data.get("user_agent"),
+            "created_at": datetime.now(UTC).isoformat(),
+        }
 
     try:
         await buffer_audit_log(log_data)
@@ -519,7 +575,6 @@ async def handle_audit_log_event(data: dict[str, Any]) -> None:
                 await _direct_insert_log(log_data, db)
         except Exception as fallback_error:
             logger.critical("audit_log_event_fallback_failed", error=str(fallback_error))
-
 
 def audit_action(action: str, entity_type: str) -> Callable:
     """Decorator to automatically audit actions.
@@ -591,37 +646,26 @@ def audit_action(action: str, entity_type: str) -> Callable:
                     pass
 
             # Publish audit event with error handling
-            if tenant_id:
+            async def _publish_audit_event() -> None:
+                await audit(
+                    action=action,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    details={"result_id": str(getattr(result, "id", ""))},
+                    priority=EventPriority.NORMAL,
+                )
+            try:
+                from src.app.core.utils.background_task import create_safe_task
 
-                async def _publish_audit_event() -> None:
-                    """Publish audit event with error handling."""
-                    try:
-                        await event_bus.publish(
-                            "audit.log",
-                            {
-                                "action": action,
-                                "entity_type": entity_type,
-                                "entity_id": str(entity_id) if entity_id else None,
-                                "tenant_id": str(tenant_id),
-                                "user_id": str(user_id) if user_id else None,
-                                "ip_address": ip_address,
-                                "user_agent": user_agent,
-                                "details": {"result_id": str(getattr(result, "id", ""))},
-                            },
-                            priority=EventPriority.NORMAL,
-                        )
-                    except Exception as e:
-                        logger.error("audit_publish_failed", error=str(e), action=action)
-
-                try:
-                    from src.app.core.utils.background_task import create_safe_task
-
-                    create_safe_task(_publish_audit_event())
-                except RuntimeError:
-                    # No running event loop (e.g., called from sync context in tests).
-                    # Run the coroutine directly as a best-effort fallback.
-                    await _publish_audit_event()
-
+                create_safe_task(_publish_audit_event())
+            except RuntimeError:
+                # No running event loop (e.g., called from sync context in tests).
+                # Run the coroutine directly as a best-effort fallback.
+                await _publish_audit_event()
             return result
 
         return wrapper

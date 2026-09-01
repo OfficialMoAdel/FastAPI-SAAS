@@ -205,9 +205,7 @@ class TestAuditActionDecorator:
             result.id = uuid4()
             return result
 
-        with patch("src.app.modules.audit_logs.service.event_bus") as mock_bus:
-            mock_bus.publish = AsyncMock()
-
+        with patch("src.app.modules.audit_logs.service.audit", new_callable=AsyncMock) as mock_audit:
             result = await sample_function(tenant_id=1, user_id=1)
 
             # Give the task a moment to be created (fire-and-forget)
@@ -215,5 +213,6 @@ class TestAuditActionDecorator:
 
             await asyncio.sleep(0.01)
 
-            # Decorator creates task but event_bus.publish should be called
+            # Decorator creates background task; audit() should be called
             assert result is not None
+            assert mock_audit.called

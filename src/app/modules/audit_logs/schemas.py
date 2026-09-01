@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.app.modules._base import BaseCreate, BaseList, BaseReadUUID
 
@@ -98,15 +98,51 @@ class AuditLogEventData(BaseModel):
     action: str
     entity_type: str | None = None
     entity_id: str | None = None
+    resource_type: str | None = None
+    resource_id: str | None = None
     details: dict[str, Any] = Field(default_factory=dict)
     ip_address: str | None = None
     user_agent: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_aliases_and_types(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Normalize resource_type -> entity_type
+            if data.get("entity_type") is None and data.get("resource_type") is not None:
+                data["entity_type"] = str(data["resource_type"])
+            elif data.get("entity_type") is not None:
+                data["entity_type"] = str(data["entity_type"])
+
+            if data.get("resource_type") is not None:
+                data["resource_type"] = str(data["resource_type"])
+
+            # Normalize resource_id -> entity_id
+            if data.get("entity_id") is None and data.get("resource_id") is not None:
+                data["entity_id"] = str(data["resource_id"])
+            elif data.get("entity_id") is not None:
+                data["entity_id"] = str(data["entity_id"])
+
+            if data.get("resource_id") is not None:
+                data["resource_id"] = str(data["resource_id"])
+
+            # Normalize user_id to string if present
+            if data.get("user_id") is not None:
+                data["user_id"] = str(data["user_id"])
+        return data
 
     @field_validator("tenant_id", mode="before")
     @classmethod
     def validate_tenant_id(cls, v: Any) -> UUID:
         if isinstance(v, UUID):
             return v
+        if v is None or v == "" or v == "0" or v == 0:
+            return UUID(int=0)
         if isinstance(v, str):
-            return UUID(v)
-        raise ValueError(f"tenant_id must be UUID or str, got {type(v).__name__}")
+            try:
+                return UUID(v)
+            except ValueError:
+                return UUID(int=0)
+        if isinstance(v, int):
+            return UUID(int=v)
+        raise ValueError(f"tenant_id must be UUID, str, or int, got {type(v).__name__}")

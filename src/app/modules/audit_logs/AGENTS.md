@@ -22,11 +22,12 @@ uv run ruff check src/app/modules/audit_logs/
 ### Module Structure
 ```
 src/app/modules/audit_logs/
-├── __init__.py           # Module exports
+├── __init__.py           # Module exports (exports audit, SYSTEM_TENANT_ID, AuditLogService)
+├── trail.py              # Canonical typed audit() interface with auto-tenant & sanitizer
 ├── router.py             # FastAPI routes for log queries
-├── service.py            # AuditLogService for log creation
+├── service.py            # AuditLogService for querying and buffering
 ├── models.py             # AuditLog model (immutable)
-├── schemas.py            # Pydantic schemas
+├── schemas.py            # Pydantic schemas (AuditLogEventData, etc.)
 └── AGENTS.md             # This file
 ```
 
@@ -209,13 +210,20 @@ rg -n "class AuditLog" src/app/modules/audit_logs/
 ❌ DON'T: Add UPDATE/DELETE operations to AuditLog model
 
 ### Performance
-✅ DO: Use event bus for non-blocking audit logging
+✅ DO: Use the canonical `audit()` interface for typed, non-blocking audit logging
 ```python
-# Async logging via event bus
-await event_bus.publish("audit.created", {...}, priority=EventPriority.HIGH)
+from src.app.modules.audit_logs import audit
+
+# Typed, sanitized audit logging
+await audit(
+    action="user.created",
+    entity_type="user",
+    entity_id=user.id,
+    details={"username": user.username},
+)
 ```
 
-❌ DON'T: Block requests with synchronous audit logging
+❌ DON'T: Hand-build raw `event_bus.publish("audit.log", {...})` dicts
 
 ### Tenant Isolation
 ✅ DO: Always filter by `tenant_id`
