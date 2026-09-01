@@ -12,7 +12,7 @@ from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
 from src.app.core.logger import get_logger
-from src.app.core.utils.r1_error_handling import LuaScriptError
+from src.app.core.utils.retry import LuaScriptError
 
 logger = get_logger(__name__)
 

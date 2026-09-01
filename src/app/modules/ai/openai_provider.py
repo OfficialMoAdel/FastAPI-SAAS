@@ -7,22 +7,18 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from httpx import AsyncClient, HTTPStatusError, RequestError
+from httpx import AsyncClient
 
 from src.app.core.logger import get_logger
-
-try:
-    from jsonschema import validate
-except ImportError:
-    validate = None
-
 from src.app.modules.ai.providers import (
     AIProvider,
-    AIProviderError,
     AITokenUsage,
     ChatCompletionResponse,
     EmbeddingResponse,
+    validate,
 )
+
+__all__ = ["OpenAIProvider", "validate"]
 
 logger = get_logger(__name__)
 
@@ -138,22 +134,8 @@ class OpenAIProvider(AIProvider):
             response.raise_for_status()
             data = response.json()
             return self._parse_chat_response(data)
-        except HTTPStatusError as e:
-            error_msg = e.response.json().get("error", {}).get("message", str(e))
-            logger.error("OpenAI API error:", error_msg=error_msg)
-            raise AIProviderError(
-                f"OpenAI API error: {error_msg}",
-                error_code=str(e.response.status_code),
-                provider=self.provider_name,
-            ) from e
-        except RequestError as e:
-            logger.error("OpenAI request error", error=e)
-            raise AIProviderError(
-                f"OpenAI request error: {e}",
-                error_code="request_error",
-                provider=self.provider_name,
-            ) from e
-
+        except Exception as e:
+            raise self._map_error(e) from e
     async def generate_text_stream(
         self,
         prompt: str,
@@ -221,92 +203,8 @@ class OpenAIProvider(AIProvider):
                                 yield content
                         except json.JSONDecodeError:
                             continue
-        except HTTPStatusError as e:
-            error_msg = e.response.json().get("error", {}).get("message", str(e))
-            logger.error("OpenAI streaming error:", error_msg=error_msg)
-            raise AIProviderError(
-                f"OpenAI streaming error: {error_msg}",
-                error_code=str(e.response.status_code),
-                provider=self.provider_name,
-            ) from e
-        except RequestError as e:
-            logger.error("OpenAI request error", error=e)
-            raise AIProviderError(
-                f"OpenAI request error: {e}",
-                error_code="request_error",
-                provider=self.provider_name,
-            ) from e
-
-    async def generate_json(
-        self,
-        prompt: str,
-        model: str,
-        schema: dict[str, Any] | None = None,
-        temperature: float = 0.3,
-        max_tokens: int | None = None,
-        system_prompt: str | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Generate structured JSON output.
-
-        Args:
-            prompt: The user prompt
-            model: Model name
-            schema: Optional JSON schema for validation
-            temperature: Sampling temperature (lower is better for JSON)
-            max_tokens: Maximum tokens to generate
-            system_prompt: Optional system prompt
-            **kwargs: Additional OpenAI-specific parameters
-
-        Returns:
-            Parsed JSON as dictionary
-
-        Raises:
-            AIProviderError: If generation or JSON parsing fails
-        """
-        # Add JSON formatting instructions
-        json_system = (
-            system_prompt or ""
-        ) + "\n\nYou must respond with valid JSON only. Do not include any other text."
-        if schema:
-            json_system += f"\n\nJSON Schema:\n{json.dumps(schema, indent=2)}"
-
-        response = await self.generate_text(
-            prompt=prompt,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            system_prompt=json_system,
-            **kwargs,
-        )
-
-        try:
-            # Extract JSON from response (handle markdown code blocks)
-            content = response.content.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-
-            parsed: dict[str, Any] = json.loads(content.strip())
-
-            # Validate against schema if provided
-            if schema:
-                if validate:
-                    validate(instance=parsed, schema=schema)
-                else:
-                    logger.warning("jsonschema not installed, skipping schema validation")
-
-            return parsed
-        except json.JSONDecodeError as e:
-            logger.error("Failed to parse JSON from OpenAI response:", content=response.content)
-            raise AIProviderError(
-                f"Failed to parse JSON: {e}",
-                error_code="json_parse_error",
-                provider=self.provider_name,
-            ) from e
+        except Exception as e:
+            raise self._map_error(e) from e
 
     async def embed_text(
         self,
@@ -347,25 +245,11 @@ class OpenAIProvider(AIProvider):
                 model=data.get("model", ""),
                 token_count=usage.get("total_tokens"),
             )
-        except HTTPStatusError as e:
-            error_msg = e.response.json().get("error", {}).get("message", str(e))
-            logger.error("OpenAI embedding error:", error_msg=error_msg)
-            raise AIProviderError(
-                f"OpenAI embedding error: {error_msg}",
-                error_code=str(e.response.status_code),
-                provider=self.provider_name,
-            ) from e
-        except RequestError as e:
-            logger.error("OpenAI request error", error=e)
-            raise AIProviderError(
-                f"OpenAI request error: {e}",
-                error_code="request_error",
-                provider=self.provider_name,
-            ) from e
+        except Exception as e:
+            raise self._map_error(e) from e
 
     async def list_models(self) -> list[str]:
         """List available models for this provider.
-
         Returns:
             List of model names
 
@@ -380,21 +264,8 @@ class OpenAIProvider(AIProvider):
 
             models = [m.get("id") for m in data.get("data", [])]
             return models
-        except HTTPStatusError as e:
-            logger.error("OpenAI list models error", error=e)
-            raise AIProviderError(
-                f"Failed to list models: {e}",
-                error_code=str(e.response.status_code),
-                provider=self.provider_name,
-            ) from e
-        except RequestError as e:
-            logger.error("OpenAI request error", error=e)
-            raise AIProviderError(
-                f"OpenAI request error: {e}",
-                error_code="request_error",
-                provider=self.provider_name,
-            ) from e
-
+        except Exception as e:
+            raise self._map_error(e) from e
     async def health_check(self) -> bool:
         """Check if the provider is accessible.
 

@@ -4,11 +4,18 @@ Defines the abstract interface that all AI providers must implement,
 allowing easy swapping between OpenAI, Anthropic, Ollama, and other providers.
 """
 
+import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from httpx import HTTPStatusError, RequestError
 from pydantic import BaseModel
+
+try:
+    from jsonschema import validate
+except ImportError:
+    validate = None
 
 from src.app.core.logger import get_logger
 
@@ -128,7 +135,112 @@ class AIProvider(ABC):
         """
         pass
 
-    @abstractmethod
+    def _map_error(self, error: Exception, operation: str = "") -> AIProviderError:
+        """Centralized error mapping for AI provider errors.
+
+        Maps httpx HTTPStatusError, RequestError, and general exceptions to
+        appropriate AIProviderError instances with proper error codes and provider context.
+        """
+        if isinstance(error, AIProviderError):
+            if not error.provider:
+                error.provider = self.provider_name
+            return error
+
+        name = self.provider_name.lower()
+        if name == "openai":
+            provider_title = "OpenAI"
+        elif name == "anthropic":
+            provider_title = "Anthropic"
+        elif name == "ollama":
+            provider_title = "Ollama"
+        else:
+            provider_title = self.provider_name.capitalize()
+
+        if isinstance(error, HTTPStatusError):
+            try:
+                err_data = error.response.json()
+                if isinstance(err_data, dict):
+                    err_val = err_data.get("error")
+                    if isinstance(err_val, dict):
+                        error_msg = err_val.get("message", str(error))
+                    elif isinstance(err_val, str):
+                        error_msg = err_val
+                    else:
+                        error_msg = str(err_data.get("detail", error))
+                else:
+                    error_msg = str(err_data)
+            except Exception:
+                error_msg = str(error)
+
+            status_code = str(error.response.status_code)
+            logger.error(f"{provider_title} API error:", error_msg=error_msg)
+            return AIProviderError(
+                f"{provider_title} API error: {error_msg}",
+                error_code=status_code,
+                provider=self.provider_name,
+            )
+
+        if isinstance(error, RequestError):
+            logger.error(f"{provider_title} request error", error=error)
+            return AIProviderError(
+                f"{provider_title} request error: {error}",
+                error_code="request_error",
+                provider=self.provider_name,
+            )
+
+        logger.error(f"{provider_title} error", error=error)
+        return AIProviderError(
+            f"{provider_title} error: {error}",
+            error_code="provider_error",
+            provider=self.provider_name,
+        )
+
+    def _extract_json(self, content: str, schema: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Extract and validate JSON from model output text.
+
+        Handles markdown code block stripping and jsonschema validation.
+        """
+        stripped = content.strip()
+        if stripped.startswith("```json"):
+            stripped = stripped[7:]
+        if stripped.startswith("```"):
+            stripped = stripped[3:]
+        if stripped.endswith("```"):
+            stripped = stripped[:-3]
+        try:
+            parsed: dict[str, Any] = json.loads(stripped.strip())
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"Failed to parse JSON from {self.provider_name} response:", content=content)
+            raise AIProviderError(
+                f"Failed to parse JSON: {e}",
+                error_code="json_parse_error",
+                provider=self.provider_name,
+            ) from e
+
+        if schema:
+            import sys
+
+            mod = sys.modules.get(self.__class__.__module__)
+            val_fn = getattr(mod, "validate", None) if mod else None
+            if val_fn is None:
+                val_fn = validate
+
+            if val_fn is not None:
+                try:
+                    val_fn(instance=parsed, schema=schema)
+                except AIProviderError:
+                    raise
+                except Exception as val_err:
+                    logger.error("JSON schema validation failed", error=str(val_err))
+                    raise AIProviderError(
+                        f"JSON schema validation failed: {val_err}",
+                        error_code="json_validation_error",
+                        provider=self.provider_name,
+                    ) from val_err
+            else:
+                logger.warning("jsonschema not installed, skipping schema validation")
+
+        return parsed
     async def generate_json(
         self,
         prompt: str,
@@ -139,7 +251,7 @@ class AIProvider(ABC):
         system_prompt: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Generate structured JSON output.
+        """Generate structured JSON output using default template method.
 
         Args:
             prompt: The user prompt
@@ -156,8 +268,22 @@ class AIProvider(ABC):
         Raises:
             AIProviderError: If generation or JSON parsing fails
         """
-        pass
+        json_system = (
+            system_prompt or ""
+        ) + "\n\nYou must respond with valid JSON only. Do not include any other text."
+        if schema:
+            json_system += f"\n\nJSON Schema:\n{json.dumps(schema, indent=2)}"
 
+        response = await self.generate_text(
+            prompt=prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_prompt=json_system,
+            **kwargs,
+        )
+
+        return self._extract_json(response.content, schema=schema)
     @abstractmethod
     async def embed_text(
         self,

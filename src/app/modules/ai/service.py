@@ -487,7 +487,7 @@ class ChatCompletionService:
         await self.db.commit()
 
         # Phase2: Call LLM (connection released, no DB hold during inference)
-        from src.app.core.utils.r1_error_handling import with_fallback, with_retry
+        from src.app.core.utils.retry import with_fallback, with_retry
 
         _last_err: list[Exception] = []
 

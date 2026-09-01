@@ -486,7 +486,7 @@ async def test_embed_text_empty_data(provider):
         # This test reveals the provider doesn't handle empty data gracefully
         # Current behavior: raises IndexError
         # Expected behavior: should return empty embedding or raise AIProviderError
-        with pytest.raises(IndexError):
+        with pytest.raises((IndexError, AIProviderError)):
             await provider.embed_text("Test", "text-embedding-ada-002")
 
 

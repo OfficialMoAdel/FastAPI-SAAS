@@ -6,17 +6,19 @@ Implements the AIProvider interface for Ollama's local models.
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from httpx import AsyncClient, HTTPStatusError, Limits, RequestError
+from httpx import AsyncClient, Limits
 
 from src.app.core.json_utils import json_loads
 from src.app.core.logger import get_logger
 from src.app.modules.ai.providers import (
     AIProvider,
-    AIProviderError,
     AITokenUsage,
     ChatCompletionResponse,
     EmbeddingResponse,
+    validate,
 )
+
+__all__ = ["OllamaProvider", "validate"]
 
 logger = get_logger(__name__)
 
@@ -26,7 +28,6 @@ class OllamaProvider(AIProvider):
 
     Supports local LLM models via Ollama API.
     """
-
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
@@ -140,20 +141,8 @@ class OllamaProvider(AIProvider):
             response.raise_for_status()
             data = response.json()
             return self._parse_chat_response(data)
-        except HTTPStatusError as e:
-            logger.error("Ollama API error", error=e)
-            raise AIProviderError(
-                f"Ollama API error: {e}",
-                error_code=str(e.response.status_code),
-                provider=self.provider_name,
-            ) from e
-        except RequestError as e:
-            logger.error("Ollama request error", error=e)
-            raise AIProviderError(
-                f"Ollama request error: {e}",
-                error_code="request_error",
-                provider=self.provider_name,
-            ) from e
+        except Exception as e:
+            raise self._map_error(e) from e
 
     async def generate_text_stream(
         self,
@@ -221,92 +210,8 @@ class OllamaProvider(AIProvider):
                     except ValueError:
                         # orjson.JSONDecodeError subclasses ValueError
                         continue
-        except HTTPStatusError as e:
-            logger.error("Ollama streaming error", error=e)
-            raise AIProviderError(
-                f"Ollama streaming error: {e}",
-                error_code=str(e.response.status_code),
-                provider=self.provider_name,
-            ) from e
-        except RequestError as e:
-            logger.error("Ollama request error", error=e)
-            raise AIProviderError(
-                f"Ollama request error: {e}",
-                error_code="request_error",
-                provider=self.provider_name,
-            ) from e
-
-    async def generate_json(
-        self,
-        prompt: str,
-        model: str,
-        schema: dict[str, Any] | None = None,
-        temperature: float = 0.3,
-        max_tokens: int | None = None,
-        system_prompt: str | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Generate structured JSON output.
-
-        Args:
-            prompt: The user prompt
-            model: Model name
-            schema: Optional JSON schema for validation
-            temperature: Sampling temperature (lower is better for JSON)
-            max_tokens: Maximum tokens to generate
-            system_prompt: Optional system prompt
-            **kwargs: Additional Ollama-specific parameters
-
-        Returns:
-            Parsed JSON as dictionary
-
-        Raises:
-            AIProviderError: If generation or JSON parsing fails
-        """
-        import json
-
-        json_system = (
-            system_prompt or ""
-        ) + "\n\nYou must respond with valid JSON only. Do not include any other text."
-        if schema:
-            json_system += f"\n\nJSON Schema:\n{json.dumps(schema, indent=2)}"
-
-        response = await self.generate_text(
-            prompt=prompt,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            system_prompt=json_system,
-            **kwargs,
-        )
-
-        try:
-            content = response.content.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-
-            parsed: dict[str, Any] = json.loads(content.strip())
-
-            if schema:
-                from jsonschema import validate
-
-                validate(instance=parsed, schema=schema)
-
-            return parsed
-        except json.JSONDecodeError as e:
-            logger.error("Failed to parse JSON from Ollama response:", content=response.content)
-            raise AIProviderError(
-                f"Failed to parse JSON: {e}",
-                error_code="json_parse_error",
-                provider=self.provider_name,
-            ) from e
-        except ImportError:
-            logger.warning("jsonschema not installed, skipping schema validation")
-            return parsed
+        except Exception as e:
+            raise self._map_error(e) from e
 
     async def embed_text(
         self,
@@ -344,21 +249,8 @@ class OllamaProvider(AIProvider):
                 model=data.get("model", ""),
                 token_count=None,
             )
-        except HTTPStatusError as e:
-            logger.error("Ollama embedding error", error=e)
-            raise AIProviderError(
-                f"Ollama embedding error: {e}",
-                error_code=str(e.response.status_code),
-                provider=self.provider_name,
-            ) from e
-        except RequestError as e:
-            logger.error("Ollama request error", error=e)
-            raise AIProviderError(
-                f"Ollama request error: {e}",
-                error_code="request_error",
-                provider=self.provider_name,
-            ) from e
-
+        except Exception as e:
+            raise self._map_error(e) from e
     async def list_models(self) -> list[str]:
         """List available models for this provider.
 
@@ -376,21 +268,8 @@ class OllamaProvider(AIProvider):
 
             models = [m.get("name") for m in data.get("models", [])]
             return models
-        except HTTPStatusError as e:
-            logger.error("Ollama list models error", error=e)
-            raise AIProviderError(
-                f"Failed to list models: {e}",
-                error_code=str(e.response.status_code),
-                provider=self.provider_name,
-            ) from e
-        except RequestError as e:
-            logger.error("Ollama request error", error=e)
-            raise AIProviderError(
-                f"Ollama request error: {e}",
-                error_code="request_error",
-                provider=self.provider_name,
-            ) from e
-
+        except Exception as e:
+            raise self._map_error(e) from e
     async def health_check(self) -> bool:
         """Check if the provider is accessible.
 
