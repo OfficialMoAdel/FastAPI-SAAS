@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.app.core.security.rate_limit_cache import (
+    _POLICY_INVALIDATION_CHANNEL,
     POLICY_KEY_PREFIX,
     _tier_policy_l1,
     get_tier_policy,
@@ -103,7 +104,11 @@ async def test_warm_policy_cache_exception(mock_redis) -> None:
 async def test_invalidate_tier_policy_success(mock_redis) -> None:
     result = await invalidate_tier_policy(1)
     assert result is True
-    mock_redis.delete.assert_called_once_with(f"{POLICY_KEY_PREFIX}1")
+    mock_redis.pipeline.assert_called_once_with(transaction=False)
+    pipe = mock_redis.pipeline.return_value.__aenter__.return_value
+    pipe.delete.assert_called_once_with(f"{POLICY_KEY_PREFIX}1")
+    pipe.publish.assert_called_once_with(_POLICY_INVALIDATION_CHANNEL, "1")
+    pipe.execute.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -115,6 +120,7 @@ async def test_invalidate_tier_policy_no_redis() -> None:
 
 @pytest.mark.asyncio
 async def test_invalidate_tier_policy_exception(mock_redis) -> None:
-    mock_redis.delete.side_effect = Exception("Redis delete error")
+    pipe = mock_redis.pipeline.return_value.__aenter__.return_value
+    pipe.execute.side_effect = Exception("Redis pipeline error")
     result = await invalidate_tier_policy(1)
     assert result is False

@@ -24,6 +24,8 @@ def _fake_settings():
     s = MagicMock()
     s.DEFAULT_RATE_LIMIT_LIMIT = 50
     s.DEFAULT_RATE_LIMIT_PERIOD = 30
+    s.rate_limit.DEFAULT_RATE_LIMIT_LIMIT = 50
+    s.rate_limit.DEFAULT_RATE_LIMIT_PERIOD = 30
     return s
 
 

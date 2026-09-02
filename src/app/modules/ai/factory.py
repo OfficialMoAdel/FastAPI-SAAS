@@ -158,7 +158,7 @@ class AIProviderFactory:
             if resolved_base_url:
                 provider_config["base_url"] = resolved_base_url
         elif provider_name == "ollama":
-            provider_config["base_url"] = base_url or settings.OLLAMA_BASE_URL
+            provider_config["base_url"] = base_url or settings.ai.OLLAMA_BASE_URL
 
         provider_instance = provider_class(**provider_config)
         assert isinstance(provider_instance, AIProvider)

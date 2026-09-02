@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.db.tenant_crud import tenant_scope
 from src.app.modules.audit_logs.models import AuditLog
 from src.app.modules.billing.models import BillingRecord, SubscriptionPlan, UserSubscription
 from src.app.modules.dashboard.schemas import (
@@ -49,7 +50,7 @@ class DashboardService:
             start_date = end_date - timedelta(days=365)
         else:  # ALL
             # Query for actual minimum date in database for this tenant
-            query = select(func.min(User.created_at)).where(User.tenant_id == tenant_id)
+            query = select(func.min(User.created_at)).where(tenant_scope(User, tenant_id))
             result = await db.execute(query)
             min_date = result.scalar()
             start_date = min_date if min_date else end_date - timedelta(days=365)
@@ -83,7 +84,7 @@ class DashboardService:
         total_sub = (
             select(func.count(User.id))
             .where(
-                User.tenant_id == tenant_id,
+                tenant_scope(User, tenant_id),
                 User.is_deleted.is_(False),
             )
             .scalar_subquery()
@@ -93,7 +94,7 @@ class DashboardService:
         new_sub = (
             select(func.count(User.id))
             .where(
-                User.tenant_id == tenant_id,
+                tenant_scope(User, tenant_id),
                 User.created_at >= start_date,
                 User.created_at <= end_date,
                 User.is_deleted.is_(False),
@@ -105,7 +106,7 @@ class DashboardService:
         active_sub = (
             select(func.count(func.distinct(AuditLog.user_id)))
             .where(
-                AuditLog.tenant_id == tenant_id,
+                tenant_scope(AuditLog, tenant_id),
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
                 AuditLog.action == "login",
@@ -117,13 +118,12 @@ class DashboardService:
         deleted_sub = (
             select(func.count(User.id))
             .where(
-                User.tenant_id == tenant_id,
+                tenant_scope(User, tenant_id),
                 User.deleted_at >= start_date,
                 User.deleted_at <= end_date,
             )
             .scalar_subquery()
         )
-
         # Execute combined query
         query = select(total_sub, new_sub, active_sub, deleted_sub)
         result = await db.execute(query)
@@ -157,20 +157,19 @@ class DashboardService:
         total_rev_sub = (
             select(func.sum(BillingRecord.amount_cents))
             .where(
-                BillingRecord.tenant_id == tenant_id,
+                tenant_scope(BillingRecord, tenant_id),
                 BillingRecord.created_at >= start_date,
                 BillingRecord.created_at <= end_date,
                 BillingRecord.status == "succeeded",
             )
             .scalar_subquery()
         )
-
         # Recurring Revenue (Monthly * 12 + Yearly) approximated for MRR/ARR
         # For simplicity, we'll sum active subscriptions price if we had joining to plans
         # Since this is a dashboard simple value, we will query active subscriptions count
         subs_count_sub = (
             select(func.count(UserSubscription.id))
-            .where(UserSubscription.tenant_id == tenant_id, UserSubscription.status == "active")
+            .where(tenant_scope(UserSubscription, tenant_id), UserSubscription.status == "active")
             .scalar_subquery()
         )
 
@@ -187,10 +186,9 @@ class DashboardService:
             )
             .select_from(UserSubscription)
             .join(SubscriptionPlan, UserSubscription.subscription_plan_id == SubscriptionPlan.id)
-            .where(UserSubscription.tenant_id == tenant_id, UserSubscription.status == "active")
+            .where(tenant_scope(UserSubscription, tenant_id), UserSubscription.status == "active")
             .scalar_subquery()
         )
-
         query = select(total_rev_sub, subs_count_sub, mrr_sub)
         result = await db.execute(query)
         row = result.one()
@@ -228,7 +226,7 @@ class DashboardService:
         logins_sub = (
             select(func.count(AuditLog.id))
             .where(
-                AuditLog.tenant_id == tenant_id,
+                tenant_scope(AuditLog, tenant_id),
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
                 AuditLog.action == "login",
@@ -240,7 +238,7 @@ class DashboardService:
         api_calls_sub = (
             select(func.count(AuditLog.id))
             .where(
-                AuditLog.tenant_id == tenant_id,
+                tenant_scope(AuditLog, tenant_id),
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
             )
@@ -251,7 +249,7 @@ class DashboardService:
         failed_auth_sub = (
             select(func.count(AuditLog.id))
             .where(
-                AuditLog.tenant_id == tenant_id,
+                tenant_scope(AuditLog, tenant_id),
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
                 AuditLog.action.in_(["login_failed", "authentication_failed"]),
@@ -263,14 +261,13 @@ class DashboardService:
         webhook_sub = (
             select(func.count(AuditLog.id))
             .where(
-                AuditLog.tenant_id == tenant_id,
+                tenant_scope(AuditLog, tenant_id),
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
                 AuditLog.action.like("%webhook%"),
             )
             .scalar_subquery()
         )
-
         # Execute combined query
         query = select(logins_sub, api_calls_sub, failed_auth_sub, webhook_sub)
         result = await db.execute(query)

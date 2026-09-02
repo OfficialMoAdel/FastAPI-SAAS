@@ -134,8 +134,8 @@ async def test_s3_storage_streaming():
 async def test_s3_storage_legacy():
     """Verify S3Storage.upload uses put_object when feature flag is disabled."""
     with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
+        mock_settings.performance.FEATURE_STREAMING_UPLOADS = False
         mock_settings.FEATURE_STREAMING_UPLOADS = False
-
         mock_client = MagicMock()
         mock_client.put_object = MagicMock()
 

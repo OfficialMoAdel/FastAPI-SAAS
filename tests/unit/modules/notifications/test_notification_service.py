@@ -195,13 +195,11 @@ async def test_mark_failed(service, mock_db):
 
 @pytest.mark.asyncio
 async def test_get_notifications(service, mock_db):
+    notif1 = make_mock_notification()
+    notif2 = make_mock_notification()
     mock_result = MagicMock()
-    mock_result.scalar_one.return_value = 5
-    mock_result_list = MagicMock()
-    mock_result_list.scalars().all.return_value = [make_mock_notification(), make_mock_notification()]
-
-    mock_db.execute = AsyncMock(side_effect=[mock_result, mock_result_list])
-
+    mock_result.unique.return_value.all.return_value = [(notif1, 5), (notif2, 5)]
+    mock_db.execute.return_value = mock_result
     total, items = await service.get_notifications(uuid4())
     assert total == 5
     assert len(items) == 2

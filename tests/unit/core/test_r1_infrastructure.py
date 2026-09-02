@@ -147,11 +147,38 @@ class TestLuaScriptManager:
         mock_redis.evalsha.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_execute_noscript_fallback(self) -> None:
-        """Test NOSCRIPT error triggers EVAL fallback."""
+    async def test_execute_noscript_reloads_and_evalsha(self) -> None:
+        """Test NOSCRIPT error triggers SCRIPT LOAD and EVALSHA retry."""
+        manager = LuaScriptManager()
+        mock_redis = AsyncMock()
+        # First evalsha raises NOSCRIPT, second evalsha (after script_load) returns result
+        mock_redis.evalsha = AsyncMock(
+            side_effect=[
+                Exception("NOSCRIPT No matching script"),
+                "reloaded_result",
+            ]
+        )
+        mock_redis.script_load = AsyncMock(return_value="fake_sha")
+
+        result = await manager.execute(
+            mock_redis,
+            "idempotency_check",
+            keys=["key1"],
+            args=["300", "1"],
+        )
+
+        assert result == "reloaded_result"
+        mock_redis.script_load.assert_called_once()
+        assert mock_redis.evalsha.call_count == 2
+        assert manager.get_script("idempotency_check").loaded is True
+
+    @pytest.mark.asyncio
+    async def test_execute_noscript_fallback_when_load_fails(self) -> None:
+        """Test NOSCRIPT error falls back to EVAL when SCRIPT LOAD fails."""
         manager = LuaScriptManager()
         mock_redis = AsyncMock()
         mock_redis.evalsha = AsyncMock(side_effect=Exception("NOSCRIPT No matching script"))
+        mock_redis.script_load = AsyncMock(side_effect=Exception("SCRIPT LOAD failed"))
         mock_redis.eval = AsyncMock(return_value="fallback_result")
 
         result = await manager.execute(
@@ -162,8 +189,42 @@ class TestLuaScriptManager:
         )
 
         assert result == "fallback_result"
+        mock_redis.script_load.assert_called_once()
         mock_redis.eval.assert_called_once()
+        assert manager.get_script("idempotency_check").loaded is False
 
+    @pytest.mark.asyncio
+    async def test_execute_flush_recovery_flow(self) -> None:
+        """Test recovery cycle: flush causes NOSCRIPT -> reloaded -> subsequent calls use EVALSHA."""
+        manager = LuaScriptManager()
+        mock_redis = AsyncMock()
+
+        # Preload scripts initially
+        mock_redis.script_load = AsyncMock(return_value="fake_sha")
+        await manager.preload_scripts(mock_redis)
+        assert manager.get_script("idempotency_check").loaded is True
+
+        # Simulate Redis flush: next evalsha raises NOSCRIPT, reload succeeds, next evalsha succeeds
+        mock_redis.evalsha = AsyncMock(
+            side_effect=[
+                Exception("NOSCRIPT No matching script. Please use EVAL."),
+                "call1_result",
+                "call2_result",
+            ]
+        )
+
+        # Call 1 after flush
+        res1 = await manager.execute(mock_redis, "idempotency_check", keys=["k1"], args=["1"])
+        assert res1 == "call1_result"
+        assert manager.get_script("idempotency_check").loaded is True
+
+        # Call 2 should use EVALSHA directly (no exception raised on call 3 of side_effect)
+        res2 = await manager.execute(mock_redis, "idempotency_check", keys=["k1"], args=["1"])
+        assert res2 == "call2_result"
+        assert manager.get_script("idempotency_check").loaded is True
+        # Total evalsha calls: 1 (failed) + 1 (reloaded call 1) + 1 (call 2) = 3
+        assert mock_redis.evalsha.call_count == 3
+        mock_redis.eval.assert_not_called()
     def test_singleton(self) -> None:
         """Test singleton pattern."""
         manager1 = get_lua_manager()

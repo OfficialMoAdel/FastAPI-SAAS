@@ -17,6 +17,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.db.tenant_crud import tenant_scope
+from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.security.encryption import decrypt_data, encrypt_data
 from src.app.modules._base import ModelNotFoundError
@@ -54,6 +56,43 @@ def _glob_match(text: str, pattern: str) -> bool:
                 del _FN_REGEX_CACHE[old_key]
         _FN_REGEX_CACHE[pattern] = pat
     return bool(pat.match(text))
+
+
+def _serialize_endpoint(ep: WebhookEndpoint) -> dict[str, Any]:
+    secret_hex = None
+    secret = getattr(ep, "secret", None)
+    if secret:
+        secret_hex = secret.hex() if isinstance(secret, bytes | bytearray) else str(secret)
+    old_expires = getattr(ep, "old_secret_expires_at", None)
+    return {
+        "id": str(ep.id),
+        "tenant_id": str(ep.tenant_id),
+        "url": str(ep.url),
+        "event_type": ep.event_type,
+        "secret": secret_hex,
+        "signing_secret": getattr(ep, "signing_secret", None),
+        "is_active": getattr(ep, "is_active", True),
+        "old_signing_secret": getattr(ep, "old_signing_secret", None),
+        "old_secret_expires_at": old_expires.isoformat() if old_expires else None,
+        "description": getattr(ep, "description", None),
+    }
+
+
+def _deserialize_endpoint(data: dict[str, Any]) -> WebhookEndpoint:
+    ep = WebhookEndpoint(
+        tenant_id=UUID(data["tenant_id"]),
+        url=data["url"],
+        event_type=data["event_type"],
+        secret=data["secret"],
+        signing_secret=data.get("signing_secret"),
+        is_active=data.get("is_active", True),
+    )
+    ep.id = UUID(data["id"])
+    if data.get("old_signing_secret"):
+        ep.old_signing_secret = data["old_signing_secret"]
+    if data.get("old_secret_expires_at"):
+        ep.old_secret_expires_at = datetime.fromisoformat(data["old_secret_expires_at"])
+    return ep
 
 
 # Retry schedule in seconds: 1m, 5m, 15m, 30m, 1h (5 retries over 1 hour)
@@ -117,9 +156,7 @@ class WebhookService:
 
         self.db.add(endpoint)
         await self.db.commit()
-        await self.db.refresh(endpoint)
-
-        # C2 FIX: Attach plaintext secrets as transient attributes for the creation response
+        await self._invalidate_endpoints_cache(tenant_id)
         setattr(endpoint, "_plaintext_secret", actual_secret)
         setattr(endpoint, "_plaintext_signing_secret", actual_signing_secret)
 
@@ -137,34 +174,41 @@ class WebhookService:
         """Get paginated webhook endpoints for a tenant."""
         from sqlalchemy import func, select
 
-        query = select(WebhookEndpoint).where(WebhookEndpoint.tenant_id == tenant_id)
+        total_col = func.count().over().label("total")
+        query = select(WebhookEndpoint, total_col).where(tenant_scope(WebhookEndpoint, tenant_id))
 
         if is_active is not None:
             query = query.where(WebhookEndpoint.is_active == is_active)
         if event_type:
             query = query.where(WebhookEndpoint.event_type == event_type)
 
-        query = query.order_by(WebhookEndpoint.created_at.desc())
-
-        # Get total count
-        count_query = select(func.count()).select_from(query.subquery())
-        total_result = await self.db.execute(count_query)
-        total = total_result.scalar_one()
-
-        # Apply pagination
         offset = (page - 1) * per_page
-        query = query.limit(per_page).offset(offset)
+        query = query.order_by(WebhookEndpoint.created_at.desc()).limit(per_page).offset(offset)
 
         result = await self.db.execute(query)
-        endpoints = list(result.scalars().all())
+        rows = result.unique().all()
+        if rows:
+            total = int(rows[0][1])
+            endpoints = [row[0] for row in rows]
+            return endpoints, total
 
-        return endpoints, total
+        if offset == 0:
+            return [], 0
+
+        # Out-of-range page fallback
+        count_query = select(func.count()).select_from(WebhookEndpoint).where(tenant_scope(WebhookEndpoint, tenant_id))
+        if is_active is not None:
+            count_query = count_query.where(WebhookEndpoint.is_active == is_active)
+        if event_type:
+            count_query = count_query.where(WebhookEndpoint.event_type == event_type)
+        total_result = await self.db.execute(count_query)
+        return [], total_result.scalar_one()
 
     async def get_endpoint_by_id(self, endpoint_id: UUID, tenant_id: UUID) -> WebhookEndpoint | None:
         """Get a webhook endpoint by ID and tenant ID."""
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.id == endpoint_id,
-            WebhookEndpoint.tenant_id == tenant_id,
+            tenant_scope(WebhookEndpoint, tenant_id),
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
@@ -188,13 +232,15 @@ class WebhookService:
             setattr(endpoint, field, value)
 
         await self.db.commit()
-        await self.db.refresh(endpoint)
+        await self._invalidate_endpoints_cache(endpoint.tenant_id)
         return endpoint
 
     async def delete_endpoint(self, endpoint: WebhookEndpoint) -> None:
         """Delete a webhook endpoint."""
+        tenant_id = endpoint.tenant_id
         await self.db.delete(endpoint)
         await self.db.commit()
+        await self._invalidate_endpoints_cache(tenant_id)
 
     async def get_delivery_by_id(self, delivery_id: UUID, tenant_id: UUID) -> WebhookDelivery | None:
         """Get a delivery by ID for a specific tenant."""
@@ -203,7 +249,7 @@ class WebhookService:
             .join(WebhookEndpoint)
             .where(
                 WebhookDelivery.id == delivery_id,
-                WebhookEndpoint.tenant_id == tenant_id,
+                tenant_scope(WebhookEndpoint, tenant_id),
             )
         )
         return result.scalar_one_or_none()
@@ -222,7 +268,8 @@ class WebhookService:
         """Get paginated webhook deliveries for a tenant."""
         from sqlalchemy import func, select
 
-        query = select(WebhookDelivery).where(WebhookDelivery.tenant_id == tenant_id)
+        total_col = func.count().over().label("total")
+        query = select(WebhookDelivery, total_col).where(tenant_scope(WebhookDelivery, tenant_id))
 
         if endpoint_id:
             query = query.where(WebhookDelivery.webhook_endpoint_id == endpoint_id)
@@ -235,38 +282,74 @@ class WebhookService:
         if end_date:
             query = query.where(WebhookDelivery.created_at <= end_date)
 
-        query = query.order_by(WebhookDelivery.created_at.desc())
-
-        # Get total count
-        count_query = select(func.count()).select_from(query.subquery())
-        total_result = await self.db.execute(count_query)
-        total = total_result.scalar_one()
-
-        # Apply pagination
         offset = (page - 1) * per_page
-        query = query.limit(per_page).offset(offset)
+        query = query.order_by(WebhookDelivery.created_at.desc()).limit(per_page).offset(offset)
 
         result = await self.db.execute(query)
-        deliveries = list(result.scalars().all())
+        rows = result.unique().all()
+        if rows:
+            total = int(rows[0][1])
+            deliveries = [row[0] for row in rows]
+            return deliveries, total
 
-        return deliveries, total
+        if offset == 0:
+            return [], 0
+
+        # Out-of-range page fallback
+        count_query = select(func.count()).select_from(WebhookDelivery).where(tenant_scope(WebhookDelivery, tenant_id))
+        if endpoint_id:
+            count_query = count_query.where(WebhookDelivery.webhook_endpoint_id == endpoint_id)
+        if delivery_status:
+            count_query = count_query.where(WebhookDelivery.status == delivery_status)
+        if event_type:
+            count_query = count_query.where(WebhookDelivery.event_type == event_type)
+        if start_date:
+            count_query = count_query.where(WebhookDelivery.created_at >= start_date)
+        if end_date:
+            count_query = count_query.where(WebhookDelivery.created_at <= end_date)
+        total_result = await self.db.execute(count_query)
+        return [], total_result.scalar_one()
+
+    async def _invalidate_endpoints_cache(self, tenant_id: UUID | str) -> None:
+        """Invalidate active endpoints Redis cache for a tenant (P2-4)."""
+        from src.app.core.redis_provider import get_redis
+
+        redis_client = get_redis()
+        if redis_client is None:
+            return
+        try:
+            index_key = f"webhook:tenant_endpoints:{tenant_id}"
+            keys_to_delete = await redis_client.smembers(index_key)  # type: ignore[misc]
+            keys_list = [k.decode("utf-8") if isinstance(k, bytes) else k for k in (keys_to_delete or set())]
+            keys_list.append(index_key)
+            async with redis_client.pipeline(transaction=False) as pipe:
+                for k in keys_list:
+                    pipe.delete(k)
+                await pipe.execute()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to invalidate webhook endpoints cache", tenant_id=str(tenant_id), error=str(e))
 
     async def get_active_endpoints(self, tenant_id: UUID, event_type: str) -> list[WebhookEndpoint]:
-        """Get active endpoints for an event type with glob matching support.
+        """Get active endpoints for an event type with glob matching support and Redis caching (P2-4)."""
+        from src.app.core.redis_provider import get_redis
 
-        R1-05: previously loaded EVERY active endpoint for the tenant and
-        glob-filtered in Python. The endpoint's ``event_type`` is either an
-        exact event name or a glob pattern (``user.*``). Exact matches and
-        wildcard candidates are now selected in SQL; only wildcard patterns
-        (a small minority) are evaluated with fnmatch in Python, which remains
-        the authoritative matcher so glob semantics are unchanged.
-        """
+        redis_client = get_redis()
+        cache_key = f"webhook:active_endpoints:{tenant_id}:{event_type}"
+        index_key = f"webhook:tenant_endpoints:{tenant_id}"
+
+        if redis_client is not None:
+            try:
+                cached = await redis_client.get(cache_key)
+                if cached is not None:
+                    raw_list = json_loads(cached)
+                    endpoints = [_deserialize_endpoint(item) for item in raw_list]
+                    return endpoints
+            except Exception as e:
+                logger.warning("Failed to read active endpoints from Redis cache", error=str(e))
+
         stmt = select(WebhookEndpoint).where(
-            WebhookEndpoint.tenant_id == tenant_id,
+            tenant_scope(WebhookEndpoint, tenant_id),
             WebhookEndpoint.is_active.is_(True),
-            # Exact match, or a pattern that could contain a glob wildcard.
-            # Endpoints with a literal, non-matching event_type are excluded
-            # here instead of being fetched and discarded in Python.
             or_(
                 WebhookEndpoint.event_type == event_type,
                 WebhookEndpoint.event_type.like("%*%"),
@@ -276,8 +359,20 @@ class WebhookService:
         )
         result = await self.db.execute(stmt)
         candidates = list(result.scalars().all())
+        matching = [ep for ep in candidates if ep.event_type == event_type or _glob_match(event_type, ep.event_type)]
 
-        return [ep for ep in candidates if ep.event_type == event_type or _glob_match(event_type, ep.event_type)]
+        if redis_client is not None:
+            try:
+                serialized = json_dumps([_serialize_endpoint(ep) for ep in matching], as_str=True)
+                async with redis_client.pipeline(transaction=False) as pipe:
+                    pipe.setex(cache_key, 300, serialized)
+                    pipe.sadd(index_key, cache_key)
+                    pipe.expire(index_key, 600)
+                    await pipe.execute()
+            except Exception as e:
+                logger.warning("Failed to cache active webhook endpoints in Redis", error=str(e))
+
+        return matching
 
     async def trigger_webhooks(
         self,
@@ -458,8 +553,6 @@ class WebhookService:
 
         self.db.add(delivery)
         await self.db.commit()
-        await self.db.refresh(delivery)
-
         await self._enqueue_delivery(delivery.id, tenant_id=delivery.tenant_id)
 
         logger.info("Triggered webhook delivery for endpoint", delivery_id=delivery.id, endpoint_id=endpoint.id)
@@ -533,9 +626,9 @@ class WebhookService:
     # recover). These thin delegates keep the historical service surface.
     # ------------------------------------------------------------------
 
-    async def deliver_webhook(self, delivery_id: UUID) -> WebhookDelivery:
+    async def deliver_webhook(self, delivery_id: UUID, endpoint: WebhookEndpoint | None = None) -> WebhookDelivery:
         """Deliver a webhook (delegates to the delivery module's retry loop)."""
-        return await delivery_module.deliver(self.db, delivery_id)
+        return await delivery_module.deliver(self.db, delivery_id, endpoint=endpoint)
 
     async def _enqueue_delivery(self, delivery_id: UUID, defer_by: int = 0, tenant_id: UUID | None = None) -> None:
         """Enqueue webhook delivery task (delegates to the delivery module)."""
@@ -560,8 +653,6 @@ class WebhookService:
         delivery.next_retry_at = None
 
         await self.db.commit()
-        await self.db.refresh(delivery)
-
         await self._enqueue_delivery(delivery.id)
         return delivery
 
@@ -575,7 +666,7 @@ class WebhookService:
         stmt = (
             select(WebhookDelivery)
             .join(WebhookEndpoint)
-            .where(WebhookEndpoint.tenant_id == tenant_id)
+            .where(tenant_scope(WebhookEndpoint, tenant_id))
             .order_by(WebhookDelivery.created_at.desc())
             .limit(limit)
             .offset(offset)
@@ -610,7 +701,7 @@ class WebhookService:
         """
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.id == endpoint_id,
-            WebhookEndpoint.tenant_id == tenant_id,
+            tenant_scope(WebhookEndpoint, tenant_id),
         )
         result = await self.db.execute(stmt)
         endpoint = result.scalar_one_or_none()
@@ -686,7 +777,7 @@ class WebhookService:
 
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.id == endpoint_id,
-            WebhookEndpoint.tenant_id == tenant_id,
+            tenant_scope(WebhookEndpoint, tenant_id),
         )
         result = await self.db.execute(stmt)
         endpoint = result.scalar_one_or_none()
@@ -710,8 +801,7 @@ class WebhookService:
         endpoint.signing_secret = encrypt_data(new_secret)
 
         await self.db.commit()
-        await self.db.refresh(endpoint)
-
+        await self._invalidate_endpoints_cache(endpoint.tenant_id)
         return {
             "webhook_endpoint_id": endpoint.id,
             "new_signing_secret": new_secret,

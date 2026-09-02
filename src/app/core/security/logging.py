@@ -4,13 +4,13 @@ Provides standardized structured logging for all security events across
 the application to enable consistent monitoring, alerting, and forensic analysis.
 """
 
-import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+from src.app.core.json_utils import json_dumps
 from src.app.core.logger import get_logger
 
 
@@ -121,7 +121,7 @@ class SecurityEvent:
         Returns:
             JSON string representation of the security event
         """
-        return json.dumps(self.to_dict(), default=str)
+        return json_dumps(self.to_dict(), default=str, as_str=True)
 
 
 # Security event logger instance
@@ -167,7 +167,7 @@ def log_security_event(
     }
 
     # Log as JSON string for structured logging compatibility
-    security_logger.log(level, json.dumps(log_data, default=str))
+    security_logger.log(level, json_dumps(log_data, default=str, as_str=True))
 
 
 def create_security_event(

@@ -684,11 +684,14 @@ class EventBus:
 
         if self._redis_client:
             try:
-                if settings.DLQ_USE_BOUNDED_SIZE:
+                r1 = getattr(settings, "r1_unified", settings)
+                dlq_bounded = getattr(r1, "DLQ_USE_BOUNDED_SIZE", getattr(settings, "DLQ_USE_BOUNDED_SIZE", True))
+                if dlq_bounded:
                     # P3-1 Optimized: Pipeline with LTRIM for bounded size
-                    max_size = settings.DLQ_MAX_SIZE
-                    alert_threshold = settings.DLQ_ALERT_THRESHOLD_PCT
-
+                    max_size = int(getattr(r1, "DLQ_MAX_SIZE", getattr(settings, "DLQ_MAX_SIZE", 10000)))
+                    alert_threshold = float(
+                        getattr(r1, "DLQ_ALERT_THRESHOLD_PCT", getattr(settings, "DLQ_ALERT_THRESHOLD_PCT", 80))
+                    )
                     async with self._redis_client.pipeline(transaction=True) as pipe:
                         pipe.lpush(self.DLQ_REDIS_KEY, _pkg.json_dumps(dlq_entry, as_str=True))
                         pipe.ltrim(self.DLQ_REDIS_KEY, 0, max_size - 1)  # Keep newest entries

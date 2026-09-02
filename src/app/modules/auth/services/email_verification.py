@@ -58,7 +58,7 @@ class EmailVerificationService:
             await db.commit()
             await db.refresh(token_model)
 
-            verification_link = f"{settings.FRONTEND_URL}/verify-email?token={raw_token}"
+            verification_link = f"{settings.app.FRONTEND_URL}/verify-email?token={raw_token}"
 
             # BUG FIX: Use NotificationService for correctly shaped events
             from src.app.modules.notifications.service import NotificationService

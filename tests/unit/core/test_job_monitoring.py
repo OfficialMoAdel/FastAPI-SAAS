@@ -269,11 +269,12 @@ async def test_record_job_failure(service, mock_redis_client):
     dlq_key = "arq:dlq"
     assert dlq_key in mock_redis_client.lists
     assert len(mock_redis_client.lists[dlq_key]) == 1
-
     item = mock_redis_client.lists[dlq_key][0]
-    assert '"job_id": "job1"' in item
-    assert '"function": "my_func"' in item
-    assert '"error": "ValueError"' in item
+    import json
+    data = json.loads(item)
+    assert data["job_id"] == "job1"
+    assert data["function"] == "my_func"
+    assert data["error"] == "ValueError"
 
 
 @pytest.mark.asyncio

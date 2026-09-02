@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings as app_settings
 from src.app.core.db.database import async_get_db
+from src.app.core.db.tenant_crud import tenant_scope
 from src.app.modules.files.models import File
 from src.app.modules.files.schemas import FileUpdate
 from src.app.modules.storage.metrics import storage_metrics
@@ -195,9 +196,7 @@ class FileService:
             self.db.add(file_record)
 
             # Atomically increment quota counters and strictly enforce hard limit (P0 optimization)
-            await self._increment_quota_counters(
-                tenant_id, size_bytes, max_file_count, storage_quota_bytes
-            )
+            await self._increment_quota_counters(tenant_id, size_bytes, max_file_count, storage_quota_bytes)
 
             await self.db.commit()
             await self.db.refresh(file_record)
@@ -255,11 +254,10 @@ class FileService:
         """
         query = select(File).where(
             File.id == file_id,
-            File.tenant_id == tenant_id,
+            tenant_scope(File, tenant_id),
         )
         if user_id is not None:
             query = query.where(File.user_id == user_id)
-
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
@@ -295,7 +293,7 @@ class FileService:
         from src.app.modules.files.schemas import FileRead
 
         # Build query with SQLAlchemy
-        query = select(File).where(File.tenant_id == tenant_id)
+        query = select(File).where(tenant_scope(File, tenant_id))
 
         if user_id:
             query = query.where(File.user_id == user_id)
@@ -428,7 +426,7 @@ class FileService:
             raise Exception(f"Failed to delete file from storage: {e}")
 
         # Execute an explicit targeted DELETE statement and check the rowcount.
-        stmt = delete(File).where(File.id == file_id, File.tenant_id == tenant_id)
+        stmt = delete(File).where(File.id == file_id, tenant_scope(File, tenant_id))
         if user_id is not None:
             stmt = stmt.where(File.user_id == user_id)
         result = await self.db.execute(stmt)
@@ -507,14 +505,13 @@ class FileService:
         stmt = (
             update(File)
             .where(
-                File.tenant_id == tenant_id,
+                tenant_scope(File, tenant_id),
                 File.user_id == from_user_id,
             )
             .values(user_id=to_user_id)
         )
         result = await self.db.execute(stmt)
         await self.db.commit()
-
         count = result.rowcount
         logger.info("Transferred files from to", count=count, from_user_id=from_user_id, to_user_id=to_user_id)
         return count
@@ -619,7 +616,7 @@ class FileService:
 
         Deprecated: Use _get_quota_stats instead.
         """
-        result = await self.db.execute(select(func.count()).where(File.tenant_id == tenant_id))
+        result = await self.db.execute(select(func.count()).where(tenant_scope(File, tenant_id)))
         return result.scalar() or 0
 
     async def _get_total_size(self, tenant_id: UUID) -> int:
@@ -628,7 +625,7 @@ class FileService:
         Deprecated: Use _get_quota_stats instead.
         """
         result = await self.db.execute(
-            select(func.coalesce(func.sum(File.size_bytes), 0)).where(File.tenant_id == tenant_id)
+            select(func.coalesce(func.sum(File.size_bytes), 0)).where(tenant_scope(File, tenant_id))
         )
         return result.scalar() or 0
 

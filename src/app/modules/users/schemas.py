@@ -165,7 +165,7 @@ class UserCreate(UserBase, BaseCreate):
         SECURITY FIX: Prevents users from registering reserved system usernames
         that could be used for phishing or confusion attacks.
         """
-        if v.lower() in settings.RESERVED_USERNAMES:
+        if v.lower() in settings.app.RESERVED_USERNAMES:
             raise ValueError(f"Username '{v}' is reserved and cannot be used")
         return v
 
@@ -212,7 +212,7 @@ class UserUpdate(BaseUpdate):
         """Prevent updating to a reserved username."""
         if v is None:
             return v
-        if v.lower() in settings.RESERVED_USERNAMES:
+        if v.lower() in settings.app.RESERVED_USERNAMES:
             raise ValueError(f"Username '{v}' is reserved.")
         return v
 

@@ -267,7 +267,7 @@ async def ban_ip(
 
     Args:
         client_ip: Client IP address to ban
-        duration: Ban duration in seconds (uses settings.AUTO_BAN_DURATION if None)
+        duration: Ban duration in seconds (uses settings.security.AUTO_BAN_DURATION if None)
         reason: Ban reason for logging
 
     Returns:
@@ -278,7 +278,7 @@ async def ban_ip(
         logger.warning("Redis unavailable - cannot ban IP %s", client_ip)
         return False
 
-    if not settings.AUTO_BAN_ENABLED:
+    if not settings.security.AUTO_BAN_ENABLED:
         logger.debug("Auto-ban disabled - skipping ban for %s", client_ip)
         return False
 
@@ -286,8 +286,8 @@ async def ban_ip(
     ban_info = await get_ban_info(client_ip, include_count=True)
 
     # Calculate duration with escalation if enabled
-    base_duration = duration or settings.AUTO_BAN_DURATION
-    if settings.AUTO_BAN_ESCALATION and ban_info.ban_count > 0:
+    base_duration = duration or settings.security.AUTO_BAN_DURATION
+    if settings.security.AUTO_BAN_ESCALATION and ban_info.ban_count > 0:
         # Double duration for each previous ban, safely capped to prevent Redis TTL overflow
         # and Python memory issues from massive exponents. Max cap 1 year (31536000 seconds).
         capped_ban_count = min(ban_info.ban_count, 30)
@@ -304,10 +304,21 @@ async def ban_ip(
 
     ban_key = BAN_KEY_PREFIX.format(ip=client_ip)
     count_key = BAN_COUNT_KEY_PREFIX.format(ip=client_ip)
+    violations_key = VIOLATIONS_KEY_PREFIX.format(ip=client_ip)
 
     try:
-        # Set ban with TTL (Use NX to prevent concurrent requests from incrementing ban_count multiple times)
-        is_new_ban = await redis_client.set(ban_key, reason, ex=actual_duration, nx=True)
+        from src.app.core.utils.lua_manager import get_lua_manager
+
+        # P3-1: Atomic Lua ban (SETNX + INCR + EXPIRE + DEL in 1 RTT)
+        res = await get_lua_manager().execute(
+            redis_client,
+            "auto_ban_ip",
+            keys=[ban_key, count_key, violations_key],
+            args=[reason, str(actual_duration), "2592000"],
+        )
+        is_new_ban = bool(int(res[0])) if isinstance(res, list | tuple) and len(res) >= 2 else False
+        new_ban_count = int(res[1]) if isinstance(res, list | tuple) and len(res) >= 2 else (ban_info.ban_count + 1)
+
         if not is_new_ban:
             logger.debug("IP %s already banned by concurrent request", client_ip)
             return False
@@ -318,14 +329,6 @@ async def ban_ip(
         # P1-6: cross-worker fan-out (best-effort — never fail the unban
         # on a publish error).
         await _publish_ban_l1_invalidation(client_ip)
-        # H4: add 30d TTL to ban_count to bound memory (was indefinite -> OOM).
-        # Keep escalating within 30d, then naturally decay — avoids unbounded key growth.
-        ban_count = await redis_client.incr(count_key)
-        if ban_count == 1:
-            await redis_client.expire(count_key, 2592000)  # 30d
-
-        # Reset violations counter
-        await reset_violations(client_ip)
 
         # Log security event
         event = create_security_event(
@@ -335,8 +338,8 @@ async def ban_ip(
             reason=reason,
             extra={
                 "ban_duration": actual_duration,
-                "ban_count": ban_info.ban_count + 1,
-                "escalated": settings.AUTO_BAN_ESCALATION and ban_info.ban_count > 0,
+                "ban_count": new_ban_count,
+                "escalated": settings.security.AUTO_BAN_ESCALATION and ban_info.ban_count > 0,
             },
         )
         log_security_event(event)
@@ -346,11 +349,10 @@ async def ban_ip(
             client_ip,
             actual_duration,
             reason,
-            ban_info.ban_count + 1,
+            new_ban_count,
         )
 
         return True
-
     except Exception as e:
         logger.error("Failed to ban IP %s: %s", client_ip, e)
         return False
@@ -421,18 +423,18 @@ async def check_and_auto_ban(client_ip: str) -> tuple[bool, int]:
     Returns:
         Tuple of (was_banned, violation_count)
     """
-    if not settings.AUTO_BAN_ENABLED:
+    if not settings.security.AUTO_BAN_ENABLED:
         return False, 0
 
     # Increment violations
     violations = await increment_violations(client_ip)
 
     # Check if threshold exceeded
-    if violations >= settings.AUTO_BAN_THRESHOLD:
-        banned = await ban_ip(
-            client_ip,
-            reason=f"Auto-ban: {violations} rate limit violations exceeded threshold of {settings.AUTO_BAN_THRESHOLD}",
+    if violations >= settings.security.AUTO_BAN_THRESHOLD:
+        ban_reason = (
+            f"Auto-ban: {violations} rate limit violations exceeded threshold of {settings.security.AUTO_BAN_THRESHOLD}"
         )
+        banned = await ban_ip(client_ip, reason=ban_reason)
         return banned, violations
 
     return False, violations

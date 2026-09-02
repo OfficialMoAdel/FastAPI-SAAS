@@ -103,7 +103,7 @@ class JobMonitoringService:
         if not client:
             return
 
-        import json
+        from src.app.core.json_utils import json_dumps
 
         async with client.pipeline() as pipe:
             key = f"{JOB_STATS_PREFIX}{function_name}"
@@ -111,8 +111,9 @@ class JobMonitoringService:
             pipe.hincrby(key, "failed", 1)
 
             # Add to Dead Letter Queue (use JSON to safely handle pipes/newlines in errors)
-            dlq_entry = json.dumps(
-                {"job_id": job_id, "function": function_name, "error": error, "timestamp": time.time()}
+            dlq_entry = json_dumps(
+                {"job_id": job_id, "function": function_name, "error": error, "timestamp": time.time()},
+                as_str=True,
             )
             pipe.lpush(DLQ_KEY, dlq_entry)
             # Trim DLQ to prevent infinite growth (e.g., keep last 1000)
@@ -181,7 +182,6 @@ class JobMonitoringService:
         if not client:
             return []
 
-        import json
 
         # LRANGE is 0-based inclusive
         items = await client.lrange(DLQ_KEY, offset, offset + limit - 1)  # type: ignore[misc]
@@ -191,8 +191,10 @@ class JobMonitoringService:
             item_str = item.decode("utf-8") if isinstance(item, bytes) else item
             try:
                 if item_str.startswith("{"):
+                    from src.app.core.json_utils import json_loads
+
                     # New JSON format
-                    data = json.loads(item_str)
+                    data = json_loads(item_str)
                     data["timestamp_iso"] = datetime.fromtimestamp(data["timestamp"], tz=UTC).isoformat()
                     parsed_items.append(data)
                 else:

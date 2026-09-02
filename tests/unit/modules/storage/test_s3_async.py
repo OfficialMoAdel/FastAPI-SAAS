@@ -24,7 +24,7 @@ class TestS3AsyncUpload:
         storage = S3Storage(s3_client=mock_client, bucket="test-bucket")
 
         with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-            mock_settings.FEATURE_STREAMING_UPLOADS = False  # Use legacy path to avoid botocore import
+            mock_settings.performance.FEATURE_STREAMING_UPLOADS = False  # Use legacy path to avoid botocore import
 
             with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
                 mock_to_thread.return_value = None

@@ -1,7 +1,6 @@
 """Database-specific circuit breaker with fallback strategies."""
 
 import asyncio
-import json
 import random
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -18,6 +17,7 @@ from sqlalchemy.exc import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
 from src.app.core.resilience.registry import ServiceType, create_circuit_breaker
@@ -141,7 +141,7 @@ async def execute_query_with_circuit_breaker(
                 if cached:
                     logger.info("Using cached data", cache_key=cache_key)
                     # Assume simple JSON serialization for fallback data
-                    return list(json.loads(cached))
+                    return list(json_loads(cached))
             except Exception as cache_error:
                 logger.error("Cache retrieval failed:", cache_error=cache_error)
 
@@ -191,7 +191,7 @@ async def execute_query_with_circuit_breaker(
             try:
                 # Handle datetime/decimal serialization if needed (simplified here)
                 # Using strings for non-serializable types for fallback purposes
-                await client.setex(cache_key, cache_ttl, json.dumps(rows, default=str))
+                await client.setex(cache_key, cache_ttl, json_dumps(rows, default=str, as_str=True))
             except Exception as cache_error:
                 logger.warning("Failed to cache result:", cache_error=cache_error)
 
@@ -211,7 +211,7 @@ async def execute_query_with_circuit_breaker(
                 cached = await client.get(cache_key)
                 if cached:
                     logger.info("Using cached data after failure", cache_key=cache_key)
-                    return list(json.loads(cached))
+                    return list(json_loads(cached))
             except Exception as cache_error:
                 logger.debug("Circuit breaker cache fallback failed: %s", cache_error)
 

@@ -27,7 +27,7 @@ _POLICY_INVALIDATION_CHANNEL = "rate_limit_policy:invalidate"
 _policy_invalidation_task: asyncio.Task | None = None
 
 
-def _start_policy_invalidation_listener() -> None:
+def start_policy_invalidation_listener() -> None:
     """Start (once per event loop) a subscriber applying L1 invalidations."""
     global _policy_invalidation_task
     redis_client = get_redis()
@@ -37,6 +37,8 @@ def _start_policy_invalidation_listener() -> None:
         return
 
     async def _listen() -> None:
+        if not hasattr(redis_client, "pubsub"):
+            return
         pubsub = redis_client.pubsub()
         try:
             await pubsub.subscribe(_POLICY_INVALIDATION_CHANNEL)
@@ -57,6 +59,20 @@ def _start_policy_invalidation_listener() -> None:
 
     _policy_invalidation_task = asyncio.create_task(_listen())
 
+
+_start_policy_invalidation_listener = start_policy_invalidation_listener
+
+
+async def stop_policy_invalidation_listener() -> None:
+    """Stop the policy invalidation subscriber task on shutdown."""
+    global _policy_invalidation_task
+    if _policy_invalidation_task is not None and not _policy_invalidation_task.done():
+        _policy_invalidation_task.cancel()
+        try:
+            await _policy_invalidation_task
+        except asyncio.CancelledError:
+            pass
+        _policy_invalidation_task = None
 
 async def _publish_policy_invalidation(tier_id: int) -> None:
     redis_client = get_redis()
@@ -83,10 +99,8 @@ async def get_tier_policy(tier_id: int) -> list[dict[str, Any]] | None:
         List of policy dicts, or None if not cached
     """
     # L1: In-memory check first (avoids Redis RT)
-    _start_policy_invalidation_listener()
     if tier_id in _tier_policy_l1:
         return _tier_policy_l1[tier_id]
-
     redis_client = get_redis()
     if redis_client is None:
         _tier_policy_l1[tier_id] = None
@@ -140,9 +154,9 @@ async def warm_policy_cache(tier_policies: dict[int, list[dict[str, Any]]]) -> i
 
 
 async def invalidate_tier_policy(tier_id: int) -> bool:
-    """Invalidate cached policy for a tier.
+    """Invalidate cached policy for a tier in single round-trip (P2-2 Optimization).
 
-    Call this when tier rate limits are updated.
+    Pipelines key deletion and L1 invalidation publish into 1 network execution.
 
     Args:
         tier_id: The tier ID to invalidate
@@ -157,9 +171,10 @@ async def invalidate_tier_policy(tier_id: int) -> bool:
 
     try:
         key = f"{POLICY_KEY_PREFIX}{tier_id}"
-        await redis_client.delete(key)
-        # INFO-R11 FIX: fan out so other workers drop their L1 entry too.
-        await _publish_policy_invalidation(tier_id)
+        async with redis_client.pipeline(transaction=False) as pipe:
+            pipe.delete(key)
+            pipe.publish(_POLICY_INVALIDATION_CHANNEL, str(tier_id))
+            await pipe.execute()
         return True
     except Exception as e:
         logger.warning("Failed to invalidate tier policy", error=e)

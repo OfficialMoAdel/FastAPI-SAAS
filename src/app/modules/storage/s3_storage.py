@@ -120,7 +120,7 @@ class S3Storage(StorageProvider):
         """
         path = self._validate_s3_key(path)
         try:
-            if settings.FEATURE_STREAMING_UPLOADS:
+            if settings.performance.FEATURE_STREAMING_UPLOADS:
                 # Streaming upload with multipart support
                 # Reset file position to 0 (required for Starlette UploadFile wrapping SpooledTemporaryFile)
                 if hasattr(file, "seek"):

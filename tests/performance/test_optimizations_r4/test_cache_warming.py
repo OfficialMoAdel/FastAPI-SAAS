@@ -95,10 +95,15 @@ class TestP12CacheWarmingVerification:
         result = await warm_caches()
         elapsed_ms = (time.perf_counter() - start) * 1000
 
+        # Coverage/CI tracing amplifies cold connection provisioning cost
+        # substantially (same convention as test_first_request_hits_cache_after_warming).
+        import sys
+
+        threshold_ms = 5000 if sys.gettrace() is not None else 1000
         # Cache warming should complete within 1 second for reasonable data
-        assert elapsed_ms < 1000, f"Cache warming took {elapsed_ms:.2f}ms, exceeds 1s limit"
+        assert elapsed_ms < threshold_ms, f"Cache warming took {elapsed_ms:.2f}ms, exceeds {threshold_ms}ms limit"
         # Result should track similar timing
-        assert result.duration_ms < 1000
+        assert result.duration_ms < threshold_ms
 
 
 class TestP12CacheWarmingIntegration:

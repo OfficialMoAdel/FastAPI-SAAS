@@ -62,7 +62,7 @@ class SecurityHeadersMiddleware:
         self.frame_options = frame_options
 
         # Only enable HSTS in production (requires HTTPS)
-        self.is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
+        self.is_production = settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":

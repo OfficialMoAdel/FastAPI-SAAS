@@ -6,6 +6,15 @@ from jinja2 import TemplateNotFound
 from src.app.core.utils.templates import email_templates_service
 
 
+class MockEmailSettings:
+    def __init__(self, directory: str):
+        self.EMAIL_TEMPLATES_DIR = directory
+
+class MockSettings:
+    def __init__(self, directory: str):
+        self.email = MockEmailSettings(directory)
+        self.EMAIL_TEMPLATES_DIR = directory
+
 @pytest.fixture
 def mock_session_maker():
     mock_maker = MagicMock()
@@ -81,10 +90,7 @@ async def test_render_template_override_error_fallback(mock_session_maker, tmp_p
     p = d / "test_template.html"
     p.write_text("<title>Fallback Subject</title><p>Fallback Content {{ name }}</p>", encoding="utf-8")
 
-    class MockSettings:
-        EMAIL_TEMPLATES_DIR = str(d)
-
-    monkeypatch.setattr("src.app.core.utils.templates.settings", MockSettings())
+    monkeypatch.setattr("src.app.core.utils.templates.settings", MockSettings(str(d)))
 
     subject, html = await email_templates_service.render_template("tenant-123", "test_template", {"name": "World"})
 
@@ -104,10 +110,7 @@ async def test_render_template_default_success(mock_session_maker, tmp_path, mon
     p = d / "test_template.html"
     p.write_text("<title>Default {{ name }}</title><p>Default Content</p>", encoding="utf-8")
 
-    class MockSettings:
-        EMAIL_TEMPLATES_DIR = str(d)
-
-    monkeypatch.setattr("src.app.core.utils.templates.settings", MockSettings())
+    monkeypatch.setattr("src.app.core.utils.templates.settings", MockSettings(str(d)))
 
     subject, html = await email_templates_service.render_template("tenant-123", "test_template", {"name": "World"})
 
@@ -125,10 +128,7 @@ async def test_render_template_not_found(mock_session_maker, tmp_path, monkeypat
     d.mkdir()
     # Don't create the file
 
-    class MockSettings:
-        EMAIL_TEMPLATES_DIR = str(d)
-
-    monkeypatch.setattr("src.app.core.utils.templates.settings", MockSettings())
+    monkeypatch.setattr("src.app.core.utils.templates.settings", MockSettings(str(d)))
 
     with pytest.raises(TemplateNotFound):
         await email_templates_service.render_template("tenant-123", "test_template", {"name": "World"})
@@ -146,10 +146,7 @@ async def test_render_template_default_error(mock_session_maker, tmp_path, monke
     p = d / "test_template.html"
     p.write_text("<title>Default</title><p>Default Content {{ unclosed </p>", encoding="utf-8")
 
-    class MockSettings:
-        EMAIL_TEMPLATES_DIR = str(d)
-
-    monkeypatch.setattr("src.app.core.utils.templates.settings", MockSettings())
+    monkeypatch.setattr("src.app.core.utils.templates.settings", MockSettings(str(d)))
 
     from jinja2.exceptions import TemplateSyntaxError
 

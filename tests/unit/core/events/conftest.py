@@ -131,18 +131,36 @@ def mock_settings():
     """
     from unittest.mock import MagicMock
 
-    settings = MagicMock()
-    settings.PASSKEY_USE_COLUMN_SELECT = True
-    settings.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
-    settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
-    settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
-    settings.RBAC_USE_REDIS_CACHE = True
-    settings.RBAC_CACHE_TTL_SECONDS = 3600
-    settings.DLQ_USE_BOUNDED_SIZE = True
-    settings.DLQ_MAX_SIZE = 10000
-    settings.DLQ_ALERT_THRESHOLD_PCT = 80
-    settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
-    settings.IDEMPOTENCY_TTL_SECONDS = 300
-    settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
-    settings.EVENT_HANDLER_TIMEOUT_SECONDS = 30
+    class MockComponent(MagicMock):
+        pass
+
+    r1_mock = MockComponent()
+    r1_mock.PASSKEY_USE_COLUMN_SELECT = True
+    r1_mock.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+    r1_mock.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
+    r1_mock.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
+    r1_mock.RBAC_USE_REDIS_CACHE = True
+    r1_mock.RBAC_CACHE_TTL_SECONDS = 3600
+    r1_mock.DLQ_MAX_SIZE = 10000
+    r1_mock.DLQ_ALERT_THRESHOLD_PCT = 80
+    r1_mock.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+    r1_mock.IDEMPOTENCY_TTL_SECONDS = 300
+    r1_mock.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
+    r1_mock.EVENT_HANDLER_TIMEOUT_SECONDS = 30
+    class MockSettingsProxy:
+        def __init__(self, r1):
+            self.r1_unified = r1
+
+        def __getattr__(self, name):
+            if hasattr(self.r1_unified, name):
+                return getattr(self.r1_unified, name)
+            return getattr(self.r1_unified, name)
+
+        def __setattr__(self, name, value):
+            if name == "r1_unified":
+                object.__setattr__(self, name, value)
+            else:
+                setattr(self.r1_unified, name, value)
+
+    settings = MockSettingsProxy(r1_mock)
     return settings

@@ -54,7 +54,7 @@ class AppConfigurationService:
         return AppConfigurationResponse(
             app_name=getattr(settings, "APP_NAME", "FastAPI SaaS"),
             app_version=getattr(settings, "APP_VERSION", "1.0.0"),
-            environment=settings.ENVIRONMENT,
+            environment=settings.env.ENVIRONMENT,
             theme=theme,
             features=features,
             api=api,

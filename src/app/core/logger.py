@@ -25,7 +25,7 @@ if not os.path.exists(LOG_DIR):
 LOG_FILE_PATH = os.path.join(LOG_DIR, "app.log")
 
 # Determine if we're in production
-IS_PRODUCTION = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
+IS_PRODUCTION = settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION
 
 
 def get_log_level() -> int:
@@ -60,7 +60,7 @@ def setup_logging() -> None:
     # DropEvent from foreign_pre_chain, so stdlib records must never reach the
     # sampler — they keep full sanitization, no sampling.
     structlog_processors = shared_processors + [
-        make_sampling_processor(settings.LOG_SAMPLING_RATE),
+        make_sampling_processor(settings.performance.LOG_SAMPLING_RATE),
         SanitizingProcessor(),  # Sanitize sensitive data before rendering
     ]
 

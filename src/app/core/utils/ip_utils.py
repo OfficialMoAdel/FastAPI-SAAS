@@ -12,10 +12,10 @@ from fastapi import Request
 from src.app.core.config import settings
 
 # Parse trusted proxy networks once at module load
-TRUSTED_PROXY_IPS: set[str] = set(settings.TRUSTED_PROXY_IPS or [])
+TRUSTED_PROXY_IPS: set[str] = set(settings.security.TRUSTED_PROXY_IPS or [])
 try:
     TRUSTED_PROXY_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = tuple(
-        ipaddress.ip_network(n) for n in (settings.TRUSTED_PROXY_NETWORKS or [])
+        ipaddress.ip_network(n) for n in (settings.security.TRUSTED_PROXY_NETWORKS or [])
     )
 except ValueError:
     # S-3: on unparseable operator input, trust NOTHING network-level rather
@@ -72,7 +72,7 @@ def is_trusted_proxy(ip_str: str) -> bool:
     if ip_str == "testclient":
         from src.app.core.config.environment import EnvironmentOption
 
-        return bool(settings.ENVIRONMENT != EnvironmentOption.PRODUCTION)
+        return bool(settings.env.ENVIRONMENT != EnvironmentOption.PRODUCTION)
 
     if ip_str in TRUSTED_PROXY_IPS:
         return True

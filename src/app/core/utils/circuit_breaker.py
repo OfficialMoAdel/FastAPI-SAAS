@@ -115,7 +115,7 @@ class CircuitBreaker:
                     from src.app.core.config import settings
                     from src.app.core.monitoring.r1_unified_metrics import record_circuit_breaker_transition
 
-                    if settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
+                    if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
                         record_circuit_breaker_transition("closed")
             elif self.state == CircuitState.CLOSED and self._failure_count:
                 # W3 FIX: a success in CLOSED proves the dependency is healthy.
@@ -147,7 +147,7 @@ class CircuitBreaker:
                     str(error),
                 )
                 # Record state transition for monitoring
-                if settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
+                if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
                     record_circuit_breaker_transition("open")
             elif self._failure_count >= self.failure_threshold:
                 self._open()
@@ -158,7 +158,7 @@ class CircuitBreaker:
                     str(error),
                 )
                 # Record state transition for monitoring
-                if settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
+                if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
                     record_circuit_breaker_transition("open")
 
     def _open(self) -> None:
@@ -263,7 +263,7 @@ def circuit_breaker(
             state = breaker.state  # Fast path: no lock
 
             # P4-1 Optimization: Double-check pattern for TOCTOU race prevention
-            if settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
+            if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
                 # Optimized path with double-check pattern
                 if state == CircuitState.OPEN:
                     async with breaker._get_lock():

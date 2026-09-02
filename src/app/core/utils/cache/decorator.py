@@ -202,6 +202,7 @@ def _build_cache_key(
         base_key = f"user:{user_id}:{base_key}"
     return _state.build_tenant_key(base_key, tenant_id)
 
+
 async def _try_get_cached(
     client: Any,
     cache_key: str,
@@ -223,10 +224,8 @@ async def _try_get_cached(
             keys=[cache_key],
             args=[],
         )
-        cached_data = result[0]
+        cached_data: bytes | str | None = result[0]
         remaining_ttl = int(result[1]) if result[1] is not None else -2
-        if cached_data is not None and isinstance(cached_data, bytes):
-            cached_data = cached_data.decode("utf-8")
     except Exception:
         cached_data = await client.get(cache_key)
         remaining_ttl = await client.ttl(cache_key) if cached_data else -2
@@ -245,33 +244,42 @@ async def _try_get_cached(
                     request.state.cache_refresh_lock_key = lock_key
                     return None  # cache miss — let the handler refresh
 
-    # H2 FIX: re-apply route response_model on cache hit so exclude/alias are not bypassed
-    try:
-        route = request.scope.get("route")  # type: ignore[attr-defined]
-        response_model = getattr(route, "response_model", None) if route else None
-        if response_model is not None:
+    # H2: When response_model is defined on route, ensure response schema filters are respected
+    route = request.scope.get("route") if hasattr(request, "scope") and request.scope else None
+    response_model = getattr(route, "response_model", None) if route else None
+    if response_model is not None:
+        try:
+            # orjson.loads natively accepts bytes without decode('utf-8')
             raw = _state.json_loads(cached_data)
             if hasattr(response_model, "model_validate"):
-                validated = response_model.model_validate(raw)
-                filtered = validated.model_dump(mode="json", by_alias=True)
+                if isinstance(raw, list):
+                    filtered = [
+                        response_model.model_validate(item).model_dump(mode="json", by_alias=True) for item in raw
+                    ]
+                else:
+                    validated = response_model.model_validate(raw)
+                    filtered = validated.model_dump(mode="json", by_alias=True)
             elif hasattr(response_model, "parse_obj"):
-                validated = response_model.parse_obj(raw)
-                filtered = validated.dict(by_alias=True)
+                if isinstance(raw, list):
+                    filtered = [response_model.parse_obj(item).dict(by_alias=True) for item in raw]
+                else:
+                    validated = response_model.parse_obj(raw)
+                    filtered = validated.dict(by_alias=True)
             else:
                 filtered = None
             if filtered is not None:
-                cached_data = _state.json_dumps(filtered, as_str=True)
-    except Exception as e:
-        # Never return an unfiltered cached payload on validation failure:
-        # fall through to a fresh handler call (treat as cache miss).
-        _state.stampede_logger.warning(
-            "Cached response re-validation failed; forcing fresh handler call",
-            error=str(e),
-            cache_key=cache_key,
-        )
-        return None
+                cached_data = _state.json_dumps(filtered)
+        except Exception as e:
+            # Never return an unfiltered cached payload on validation failure:
+            # fall through to a fresh handler call (treat as cache miss).
+            _state.stampede_logger.warning(
+                "Cached response re-validation failed; forcing fresh handler call",
+                error=str(e),
+                cache_key=cache_key,
+            )
+            return None
 
-    return cached_data  # type: ignore[no-any-return]
+    return cached_data
 
 
 def cache(  # noqa: C901
@@ -407,7 +415,6 @@ def cache(  # noqa: C901
                     # P6: Skip re-parse - return raw JSON bytes directly
                     return Response(content=cached_data, media_type="application/json")
 
-
             try:
                 result = await func(request, *args, **kwargs)
             except Exception:
@@ -419,10 +426,32 @@ def cache(  # noqa: C901
                         pass
                 raise
             if request.method == "GET":
-                # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder
-                serialized_data = _state.json_dumps(result)
+                # Filter against route response_model at write time if present
+                to_serialize = result
+                route = request.scope.get("route") if hasattr(request, "scope") and request.scope else None
+                response_model = getattr(route, "response_model", None) if route else None
+                if response_model is not None:
+                    try:
+                        if hasattr(response_model, "model_validate"):
+                            if isinstance(result, list):
+                                to_serialize = [
+                                    response_model.model_validate(item).model_dump(mode="json", by_alias=True)
+                                    for item in result
+                                ]
+                            else:
+                                to_serialize = response_model.model_validate(result).model_dump(
+                                    mode="json", by_alias=True
+                                )
+                        elif hasattr(response_model, "parse_obj"):
+                            if isinstance(result, list):
+                                to_serialize = [response_model.parse_obj(item).dict(by_alias=True) for item in result]
+                            else:
+                                to_serialize = response_model.parse_obj(result).dict(by_alias=True)
+                    except Exception:
+                        to_serialize = result
 
-                # Use pipeline for atomic set + index registration
+                # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder
+                serialized_data = _state.json_dumps(to_serialize)
                 async with client.pipeline(transaction=False) as pipe:
                     pipe.setex(cache_key, expiration, serialized_data)
 

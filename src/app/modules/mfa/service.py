@@ -77,8 +77,8 @@ class MFAService:
         # Create provisioning URI for QR code
         totp = pyotp.TOTP(secret, interval=TOTP_INTERVAL, digits=TOTP_DIGITS)
         provisioning_uri = totp.provisioning_uri(
-            name=f"user_{user_id}@{settings.APP_NAME}",
-            issuer_name=settings.APP_NAME,
+            name=f"user_{user_id}@{settings.app.APP_NAME}",
+            issuer_name=settings.app.APP_NAME,
         )
 
         logger.info("mfa_setup_initiated", user_id=user_id)
@@ -710,13 +710,13 @@ class MFAService:
         import hmac
 
         # SECURITY FIX (M-6): Fail fast when ENCRYPTION_KEY is not set, consistent with core encryption.
-        if not settings.ENCRYPTION_KEY:
+        if not settings.crypt.ENCRYPTION_KEY:
             raise ValueError(
                 "ENCRYPTION_KEY must be set for MFA operations. "
                 'Generate with: python -c "from cryptography.fernet import '
                 'Fernet; print(Fernet.generate_key().decode())"'
             )
-        base_key = settings.ENCRYPTION_KEY.get_secret_value()
+        base_key = settings.crypt.ENCRYPTION_KEY.get_secret_value()
         salt = f"{base_key}_{user_id}".encode()
         return hmac.new(salt, code.encode(), hashlib.sha256).hexdigest()
 
@@ -739,8 +739,8 @@ class MFAService:
 
         # Use a consistent salt derived from ENCRYPTION_SALT or fallback
         salt_str = (
-            settings.ENCRYPTION_SALT.get_secret_value()
-            if settings.ENCRYPTION_SALT
+            settings.crypt.ENCRYPTION_SALT.get_secret_value()
+            if settings.crypt.ENCRYPTION_SALT
             else settings.SECRET_KEY.get_secret_value()
         )
         salt = salt_str.encode()[:16]
@@ -751,13 +751,13 @@ class MFAService:
             iterations=480000,  # OWASP recommended minimum
         )
         # SECURITY FIX (M-6): Fail fast when ENCRYPTION_KEY is not set.
-        if not settings.ENCRYPTION_KEY:
+        if not settings.crypt.ENCRYPTION_KEY:
             raise ValueError(
                 "ENCRYPTION_KEY must be set for MFA encryption. "
                 'Generate with: python -c "from cryptography.fernet import '
                 'Fernet; print(Fernet.generate_key().decode())"'
             )
-        base_key = settings.ENCRYPTION_KEY.get_secret_value()
+        base_key = settings.crypt.ENCRYPTION_KEY.get_secret_value()
         secret = base_key.encode()
         key = base64.urlsafe_b64encode(kdf.derive(secret))
         MFAService._fernet_instance = Fernet(key)

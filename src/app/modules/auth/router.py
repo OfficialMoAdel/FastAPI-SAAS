@@ -223,13 +223,13 @@ async def list_sessions(
 
         # Parse JSON format if possible, otherwise fallback to legacy delimited format
         try:
-            import json
+            from src.app.core.json_utils import json_loads
 
-            device_info = json.loads(device_info_raw)
+            device_info = json_loads(device_info_raw)
             if isinstance(device_info, dict):
                 user_agent = device_info.get("user_agent")
                 ip_address = device_info.get("ip")
-        except (json.JSONDecodeError, TypeError):
+        except Exception:
             # Fallback for legacy sessions
             if " | IP: " in device_info_raw:
                 user_agent, ip_address = device_info_raw.split(" | IP: ", 1)

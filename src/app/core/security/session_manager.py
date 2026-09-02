@@ -132,7 +132,7 @@ class SessionManager:
                         cast(str, json_dumps(new_session, as_str=True)),
                         str(timestamp),
                         str(self.SESSION_TTL_SECONDS),
-                        str(settings.SESSION_MAX_EVICTION_BATCH_SIZE),
+                        str(settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE),
                     ],
                 ),
             )

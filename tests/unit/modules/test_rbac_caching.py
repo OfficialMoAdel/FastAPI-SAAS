@@ -50,8 +50,8 @@ class TestRBACPermissionsCaching:
         mock_redis.get.return_value = cached_data
 
         with patch("src.app.modules.rbac.service.settings") as mock_settings:
-            mock_settings.RBAC_USE_REDIS_CACHE = True
-            mock_settings.RBAC_CACHE_TTL_SECONDS = 3600
+            mock_settings.r1_unified.RBAC_USE_REDIS_CACHE = True
+            mock_settings.r1_unified.RBAC_CACHE_TTL_SECONDS = 3600
 
             # C1 FIX: set_committed_value populates `id` on the real instrumented
             # Permission class, so the old mock-factory patch is unnecessary and
@@ -100,8 +100,8 @@ class TestRBACPermissionsCaching:
         mock_db.execute.side_effect = [mock_result_role, mock_result_perms]
 
         with patch("src.app.modules.rbac.service.settings") as mock_settings:
-            mock_settings.RBAC_USE_REDIS_CACHE = True
-            mock_settings.RBAC_CACHE_TTL_SECONDS = 3600
+            mock_settings.r1_unified.RBAC_USE_REDIS_CACHE = True
+            mock_settings.r1_unified.RBAC_CACHE_TTL_SECONDS = 3600
 
             service = RoleService(db=mock_db, tenant_id=1, redis_client=mock_redis)
 
@@ -136,7 +136,7 @@ class TestRBACPermissionsCaching:
         mock_db.execute.side_effect = [mock_result_role, mock_result_perms]
 
         with patch("src.app.modules.rbac.service.settings") as mock_settings:
-            mock_settings.RBAC_USE_REDIS_CACHE = False
+            mock_settings.r1_unified.RBAC_USE_REDIS_CACHE = False
 
             service = RoleService(db=mock_db, tenant_id=1, redis_client=mock_redis)
 
@@ -172,8 +172,8 @@ class TestRBACPermissionsCaching:
         mock_db.execute.side_effect = [mock_result_role, mock_result_perms]
 
         with patch("src.app.modules.rbac.service.settings") as mock_settings:
-            mock_settings.RBAC_USE_REDIS_CACHE = True
-            mock_settings.RBAC_CACHE_TTL_SECONDS = 3600
+            mock_settings.r1_unified.RBAC_USE_REDIS_CACHE = True
+            mock_settings.r1_unified.RBAC_CACHE_TTL_SECONDS = 3600
 
             service = RoleService(db=mock_db, tenant_id=1, redis_client=mock_redis)
 
@@ -233,7 +233,7 @@ class TestRBACCacheInvalidation:
         mock_db.execute.side_effect = [mock_result_role, mock_result_perm, mock_result_exists, mock_result_affected]
 
         with patch("src.app.modules.rbac.service.settings") as mock_settings:
-            mock_settings.RBAC_USE_REDIS_CACHE = True
+            mock_settings.r1_unified.RBAC_USE_REDIS_CACHE = True
 
             service = RoleService(db=mock_db, tenant_id=1, redis_client=mock_redis)
 
@@ -277,7 +277,7 @@ class TestRBACCacheInvalidation:
         mock_db.execute.side_effect = [mock_result_role, mock_result_perm, mock_result_role_perm, mock_result_affected]
 
         with patch("src.app.modules.rbac.service.settings") as mock_settings:
-            mock_settings.RBAC_USE_REDIS_CACHE = True
+            mock_settings.r1_unified.RBAC_USE_REDIS_CACHE = True
 
             service = RoleService(db=mock_db, tenant_id=1, redis_client=mock_redis)
 

@@ -18,7 +18,7 @@ def _sync_hash_password(password: str) -> str:
     """Sync wrapper for password hashing (for admin panel)."""
     hashed: bytes = bcrypt.hashpw(
         password.encode(),
-        bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS),
+        bcrypt.gensalt(rounds=settings.crypt.BCRYPT_ROUNDS),
     )
     return hashed.decode()
 

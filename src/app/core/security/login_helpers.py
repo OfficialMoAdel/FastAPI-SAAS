@@ -1,6 +1,5 @@
 """Shared helpers for post-authentication actions across auth modules."""
 
-import json
 from typing import Any
 
 import redis
@@ -8,6 +7,7 @@ from fastapi import Request, Response
 from structlog import get_logger
 
 from src.app.core.config import EnvironmentOption, settings
+from src.app.core.json_utils import json_dumps
 from src.app.core.security.jwt_utils import (
     decode_jwt_token,
     extract_claim_unverified,
@@ -32,7 +32,7 @@ LEGACY_REFRESH_COOKIE_NAME = "refresh_token"
 
 def _refresh_cookie_name() -> str:
     """Return the refresh cookie name for the current environment."""
-    if settings.ENVIRONMENT == EnvironmentOption.LOCAL:
+    if settings.env.ENVIRONMENT == EnvironmentOption.LOCAL:
         return LEGACY_REFRESH_COOKIE_NAME
     return "__Host-refresh_token"
 
@@ -49,7 +49,7 @@ def get_refresh_cookie(request: Request) -> str | None:
 
 def clear_refresh_cookies(response: Response) -> None:
     """Delete both current and legacy refresh cookie names."""
-    is_local = settings.ENVIRONMENT == EnvironmentOption.LOCAL
+    is_local = settings.env.ENVIRONMENT == EnvironmentOption.LOCAL
     # __Host- cookies require Secure + Path=/ + no Domain — browsers reject
     # a deletion Set-Cookie without Secure, so mirror set_refresh_cookie attrs.
     response.delete_cookie(key=_refresh_cookie_name(), secure=not is_local, samesite="strict", httponly=True)  # type: ignore[call-arg]
@@ -68,8 +68,8 @@ def set_refresh_cookie(response: Response, refresh_token: str) -> None:
         response: FastAPI response object.
         refresh_token: The refresh token to set in the cookie.
     """
-    max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
-    is_local = settings.ENVIRONMENT == EnvironmentOption.LOCAL
+    max_age = settings.crypt.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    is_local = settings.env.ENVIRONMENT == EnvironmentOption.LOCAL
 
     response.set_cookie(
         key=_refresh_cookie_name(),
@@ -128,7 +128,7 @@ async def register_login_session(
             "user_agent": user_agent,
             "ip": client_ip,
         }
-        device_info_str = json.dumps(device_info_data)
+        device_info_str = json_dumps(device_info_data, as_str=True)
 
         result = await global_session_manager.register_session(
             user_id=user_id,

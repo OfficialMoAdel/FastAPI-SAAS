@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.core.config import settings
+from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.redis_provider import get_redis
@@ -74,7 +75,7 @@ class NotificationService:
         override = None
         if tenant_id:
             query = select(EmailTemplateOverride).where(
-                EmailTemplateOverride.tenant_id == tenant_id,
+                tenant_scope(EmailTemplateOverride, tenant_id),
                 EmailTemplateOverride.template_name == template_name,
             )
             result = await self.db.execute(query)
@@ -302,32 +303,47 @@ class NotificationService:
         """
         from sqlalchemy import func
 
-        query = select(Notification).where(Notification.tenant_id == tenant_id)
+        total_col = func.count().over().label("total")
+        query = select(Notification, total_col).where(Notification.tenant_id == tenant_id)
 
-        if user_id:
-            query = query.where(Notification.user_id == user_id)
+        enum_status = None
         if status:
             try:
                 enum_status = NotificationStatus(status)
                 query = query.where(Notification.status == enum_status)
             except ValueError:
                 return 0, []
+        if user_id:
+            query = query.where(Notification.user_id == user_id)
         if start_date:
             query = query.where(Notification.created_at >= start_date)
         if end_date:
             query = query.where(Notification.created_at <= end_date)
 
-        query = query.order_by(Notification.created_at.desc())
-
-        # Get total count
-        count_query = select(func.count()).select_from(query.subquery())
-        total_result = await self.db.execute(count_query)
-        total = total_result.scalar_one()
-
-        query = query.limit(limit).offset(offset)
+        query = query.order_by(Notification.created_at.desc()).limit(limit).offset(offset)
 
         result = await self.db.execute(query)
-        return total, list(result.scalars().all())
+        rows = result.unique().all()
+        if rows:
+            total = int(rows[0][1])
+            notifications = [row[0] for row in rows]
+            return total, notifications
+
+        if offset == 0:
+            return 0, []
+
+        # Out-of-range page fallback
+        count_query = select(func.count()).select_from(Notification).where(Notification.tenant_id == tenant_id)
+        if user_id:
+            count_query = count_query.where(Notification.user_id == user_id)
+        if enum_status is not None:
+            count_query = count_query.where(Notification.status == enum_status)
+        if start_date:
+            count_query = count_query.where(Notification.created_at >= start_date)
+        if end_date:
+            count_query = count_query.where(Notification.created_at <= end_date)
+        total_result = await self.db.execute(count_query)
+        return total_result.scalar_one(), []
 
     async def get_notification(
         self,
@@ -338,7 +354,7 @@ class NotificationService:
         """Get a single notification by ID scoped to tenant and user."""
         query = select(Notification).where(
             Notification.id == notification_id,
-            Notification.tenant_id == tenant_id,
+            tenant_scope(Notification, tenant_id),
         )
         if user_id is not None:
             query = query.where(Notification.user_id == user_id)
@@ -432,8 +448,7 @@ class NotificationService:
         """List all email template overrides for a tenant"""
         query = (
             select(EmailTemplateOverride)
-            .where(EmailTemplateOverride.tenant_id == tenant_id)
-            .limit(limit)
+            .where(tenant_scope(EmailTemplateOverride, tenant_id))
             .offset(offset)
         )
         result = await self.db.execute(query)
@@ -444,7 +459,7 @@ class NotificationService:
     ) -> EmailTemplateOverride:
         """Create or update an email template override"""
         query = select(EmailTemplateOverride).where(
-            EmailTemplateOverride.tenant_id == tenant_id,
+            tenant_scope(EmailTemplateOverride, tenant_id),
             EmailTemplateOverride.template_name == template_name,
         )
         result = await self.db.execute(query)
@@ -489,7 +504,7 @@ class NotificationService:
     async def delete_template_override(self, tenant_id: UUID, template_name: str) -> bool:
         """Delete an email template override returns True if deleted, False if not found"""
         query = select(EmailTemplateOverride).where(
-            EmailTemplateOverride.tenant_id == tenant_id,
+            tenant_scope(EmailTemplateOverride, tenant_id),
             EmailTemplateOverride.template_name == template_name,
         )
         result = await self.db.execute(query)
@@ -543,12 +558,12 @@ async def send_email_task(
 
             # Create SMTP provider and message
             provider = SMTPProvider(
-                host=settings.SMTP_HOST,
-                port=settings.SMTP_PORT,
-                username=settings.SMTP_USER,
-                password=settings.SMTP_PASSWORD,
-                use_tls=settings.SMTP_USE_TLS,
-                from_email=settings.EMAIL_FROM_ADDRESS,
+                host=settings.email.SMTP_HOST,
+                port=settings.email.SMTP_PORT,
+                username=settings.email.SMTP_USER,
+                password=settings.email.SMTP_PASSWORD,
+                use_tls=settings.email.SMTP_USE_TLS,
+                from_email=settings.email.EMAIL_FROM_ADDRESS,
             )
             message = EmailMessage(
                 to_email=to_email,

@@ -1462,7 +1462,6 @@ class FakeRedis:
         except Exception:
             pass
 
-
         # --- Token blacklist script ---
         # KEYS[1]=negative_key, KEYS[2]=blacklist_key, ARGV[1]=token, ARGV[2]=now, ARGV[3]=ttl
         if numkeys == 2 and len(keys_and_args) >= 5:
@@ -1493,6 +1492,23 @@ class FakeRedis:
 
         # Extract primary key for remaining patterns
         primary_key = keys_and_args[0] if keys_and_args else "default_key"
+
+        # --- Auto-ban IP script (P3-1: atomic SETNX + INCR + EXPIRE + DEL) ---
+        # KEYS[1]=ban_key (security:ban:{ip}), KEYS[2]=count_key, KEYS[3]=violations_key
+        # ARGV[1]=reason, ARGV[2]=ban_duration, ARGV[3]=count_ttl
+        # Returns [is_new_ban (0/1), new_ban_count]
+        if numkeys == 3 and primary_key.startswith("security:ban:"):
+            ban_key = keys_and_args[0]
+            count_key = keys_and_args[1]
+            violations_key = keys_and_args[2]
+            reason = keys_and_args[3] if len(keys_and_args) > 3 else ""
+            if ban_key in self.store:
+                return [0, 0]  # Already banned (NX would fail)
+            self.store[ban_key] = reason
+            count = int(self.store.get(count_key, 0) or 0) + 1
+            self.store[count_key] = str(count)
+            self.store.pop(violations_key, None)
+            return [1, count]
 
         # --- GCRA Rate Limit Script ---
         # Called with 1 key and 4 ARGV: now_ms, emission_interval_ms, limit, period_ms

@@ -39,7 +39,7 @@ return new_attempts
             val = await redis.get(self.attempts_key(normalized_username))
             if val is None:
                 return False
-            return int(val) >= int(settings.AUTH_MAX_LOGIN_ATTEMPTS)
+            return int(val) >= int(settings.auth.AUTH_MAX_LOGIN_ATTEMPTS)
         except Exception:
             return True
 
@@ -50,8 +50,8 @@ return new_attempts
                 self._INCREMENT_LUA,
                 1,
                 self.attempts_key(normalized_username),
-                str(settings.AUTH_MAX_LOGIN_ATTEMPTS),
-                str(settings.AUTH_LOCKOUT_DURATION_SECONDS),
+                str(settings.auth.AUTH_MAX_LOGIN_ATTEMPTS),
+                str(settings.auth.AUTH_LOCKOUT_DURATION_SECONDS),
             )
             return int(result)
         except Exception:

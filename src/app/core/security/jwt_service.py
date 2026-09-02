@@ -50,7 +50,7 @@ def _get_signing_key() -> str:
     from src.app.core.security.jwt_utils import _is_symmetric_algorithm
 
     if not _is_symmetric_algorithm():
-        return str(settings.JWT_PRIVATE_KEY.get_secret_value())  # type: ignore[union-attr]
+        return str(settings.crypt.JWT_PRIVATE_KEY.get_secret_value())  # type: ignore[union-attr]
     return str(settings.SECRET_KEY.get_secret_value())
 
 
@@ -63,7 +63,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login", auto_erro
 api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 # Export settings constants for module-level access
-ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.crypt.ACCESS_TOKEN_EXPIRE_MINUTES
 MFA_PENDING_EXPIRY_SECONDS = settings.auth.MFA_PENDING_EXPIRY_SECONDS
 
 
@@ -91,7 +91,7 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(UTC) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(UTC) + timedelta(minutes=settings.crypt.ACCESS_TOKEN_EXPIRE_MINUTES)
 
     # SECURITY FIX: Add JTI (JWT ID) for precise blacklist tracking
     # SECURITY FIX: Include token_version for session invalidation on password change
@@ -114,7 +114,7 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
         to_encode["sid"] = str(uuid4())
 
     # Use _jwt_encode to inline symmetric algorithms or offload asymmetric algorithms
-    encoded_jwt: str = await _jwt_encode(to_encode, _get_signing_key(), settings.ALGORITHM)
+    encoded_jwt: str = await _jwt_encode(to_encode, _get_signing_key(), settings.crypt.ALGORITHM)
     return encoded_jwt
 
 
@@ -128,7 +128,7 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(UTC) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        expire = datetime.now(UTC) + timedelta(days=settings.crypt.REFRESH_TOKEN_EXPIRE_DAYS)
 
     # A2: honor caller-provided sid/absolute_exp/iat (rotation carries them
     # forward); only mint fresh values for a brand-new session.
@@ -137,7 +137,8 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
     if "sid" not in to_encode:
         to_encode["sid"] = str(uuid4())
     if "absolute_exp" not in to_encode:
-        to_encode["absolute_exp"] = (datetime.now(UTC) + timedelta(days=settings.MAX_SESSION_DURATION_DAYS)).timestamp()
+        absolute_exp_dt = datetime.now(UTC) + timedelta(days=settings.crypt.MAX_SESSION_DURATION_DAYS)
+        to_encode["absolute_exp"] = absolute_exp_dt.timestamp()
     if "iat" not in to_encode:
         to_encode["iat"] = datetime.now(UTC).timestamp()
     to_encode.update(
@@ -151,7 +152,7 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
         }
     )
 
-    encoded_jwt: str = await _jwt_encode(to_encode, _get_signing_key(), settings.ALGORITHM)
+    encoded_jwt: str = await _jwt_encode(to_encode, _get_signing_key(), settings.crypt.ALGORITHM)
     return encoded_jwt
 
 
@@ -207,9 +208,7 @@ async def _check_db_fallback(jti: str | None, token: str, db: AsyncSession) -> b
         return None
 
 
-async def _load_token_version(
-    cache_key: str, username_or_email: str, redis_client: Any
-) -> int | None:
+async def _load_token_version(cache_key: str, username_or_email: str, redis_client: Any) -> int | None:
     """P6: one DB lookup for the user's token_version; backfills Redis (nx).
 
     Returns the stored token_version, or None when the user does not exist.
@@ -262,8 +261,7 @@ async def is_token_revoked(token: str, jti: str | None, db: AsyncSession) -> boo
         return False
     # Redis unavailable — fall back to the DB (authoritative).
     _jwt_logger.warning(
-        "Redis unavailable for token blacklist check, falling back to DB. "
-        "Restore Redis ASAP for optimal security."
+        "Redis unavailable for token blacklist check, falling back to DB. Restore Redis ASAP for optimal security."
     )
     db_result = await _check_db_fallback(jti, token, db)
     # Fail closed: an error (None) or a hit (True) both mean revoked.
@@ -323,9 +321,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
             async with _token_version_lock:
                 task = _in_flight_token_version.get(cache_key)
                 if task is None:
-                    task = asyncio.create_task(
-                        _load_token_version(cache_key, username_or_email, redis_client)
-                    )
+                    task = asyncio.create_task(_load_token_version(cache_key, username_or_email, redis_client))
                     _in_flight_token_version[cache_key] = task
             try:
                 db_version = await task
@@ -516,5 +512,5 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
 def get_mfa_pending_token_manager(redis: Redis) -> PendingTokenStore:
     """Get PendingTokenStore configured for MFA pending tokens."""
     return PendingTokenStore(
-        redis=redis, prefix="mfa_pending", ttl_seconds=settings.MFA_PENDING_EXPIRY_SECONDS, use_hash=True
+        redis=redis, prefix="mfa_pending", ttl_seconds=settings.auth.MFA_PENDING_EXPIRY_SECONDS, use_hash=True
     )

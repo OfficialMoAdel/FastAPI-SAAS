@@ -22,8 +22,8 @@ from src.app.core.config import settings
 # L2: Centralized pagination constants
 # Default: 20 items per page (balances UX and performance)
 # Max: 100 items per page (prevents excessive memory/DB load)
-DEFAULT_PER_PAGE: int = settings.PAGINATION_DEFAULT_PER_PAGE
-MAX_PER_PAGE: int = settings.PAGINATION_MAX_PER_PAGE
+DEFAULT_PER_PAGE: int = settings.app.PAGINATION_DEFAULT_PER_PAGE
+MAX_PER_PAGE: int = settings.app.PAGINATION_MAX_PER_PAGE
 
 
 # R1-02: deep OFFSET scans are O(offset) in PostgreSQL — the DB must read and

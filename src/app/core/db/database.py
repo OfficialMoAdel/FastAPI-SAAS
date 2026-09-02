@@ -51,7 +51,7 @@ def receive_before_update(mapper: Any, connection: Any, target: Any) -> None:
 
 def get_database_url() -> str:
     """Get the database URL dynamically to support test patching."""
-    return f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_URI}"
+    return f"{settings.postgres.POSTGRES_ASYNC_PREFIX}{settings.postgres.POSTGRES_URI}"
 
 
 # P1-1: lock for the check-then-act race on first engine / session
@@ -83,11 +83,11 @@ def _create_engine() -> AsyncEngine:
             get_database_url(),
             echo=False,
             future=True,
-            pool_size=settings.DB_POOL_SIZE,
-            max_overflow=settings.DB_MAX_OVERFLOW,
+            pool_size=settings.postgres.DB_POOL_SIZE,
+            max_overflow=settings.postgres.DB_MAX_OVERFLOW,
             pool_pre_ping=True,
             pool_recycle=3600,
-            pool_timeout=settings.DB_POOL_TIMEOUT,
+            pool_timeout=settings.postgres.DB_POOL_TIMEOUT,
             # P1-1: Configure asyncpg statement cache for better performance
             connect_args={
                 "statement_cache_size": getattr(settings, "DB_STATEMENT_CACHE_SIZE", 100),
@@ -96,12 +96,12 @@ def _create_engine() -> AsyncEngine:
         )
 
     # Setup query profiler in development mode
-    if settings.QUERY_PROFILER_ENABLED and is_profiler_enabled(settings.ENVIRONMENT.value):
+    if settings.query_profiler.QUERY_PROFILER_ENABLED and is_profiler_enabled(settings.env.ENVIRONMENT.value):
         setup_query_profiler(
             engine,
-            slow_query_threshold_ms=settings.QUERY_PROFILER_SLOW_THRESHOLD_MS,
-            n_plus_1_threshold=settings.QUERY_PROFILER_N_PLUS_1_THRESHOLD,
-            detailed_logs=settings.QUERY_PROFILER_DETAILED_LOGS,
+            slow_query_threshold_ms=settings.query_profiler.QUERY_PROFILER_SLOW_THRESHOLD_MS,
+            n_plus_1_threshold=settings.query_profiler.QUERY_PROFILER_N_PLUS_1_THRESHOLD,
+            detailed_logs=settings.query_profiler.QUERY_PROFILER_DETAILED_LOGS,
         )
 
     # Register RLS event listener

@@ -145,7 +145,11 @@ async def get_with_stampede_protection(
                     )
                     # Refresh in background, return stale data
                     # Pass lock_key to cleanup after refresh
-                    # Track task to prevent GC while running
+                    # P3-7: Defensive cleanup of completed background tasks if set grows
+                    if len(_state._background_tasks) > 1024:
+                        done_tasks = {t for t in _state._background_tasks if t.done()}
+                        _state._background_tasks.difference_update(done_tasks)
+
                     task = _state.asyncio.create_task(
                         _refresh_cache_with_lock(key, fetch_func, ttl, lock_key, lock_token)
                     )

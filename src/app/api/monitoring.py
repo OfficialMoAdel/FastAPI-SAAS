@@ -54,8 +54,8 @@ async def check_database() -> dict[str, str | float | bool]:
     payload: dict[str, str | float | bool] = {
         "status": result.status,
         "latency_ms": round(result.latency_ms, 2) if result.latency_ms is not None else 0,
-        "pool_size": settings.DB_POOL_SIZE,
-        "max_overflow": settings.DB_MAX_OVERFLOW,
+        "pool_size": settings.postgres.DB_POOL_SIZE,
+        "max_overflow": settings.postgres.DB_MAX_OVERFLOW,
     }
     if result.error:
         payload["error"] = result.error
@@ -93,8 +93,8 @@ async def check_worker_queue() -> dict[str, str | float | bool]:
         return {
             "status": "healthy",
             "queue_size": queue_size,
-            "workers": settings.ARQ_WORKERS,
-            "max_jobs": settings.ARQ_MAX_JOBS,
+            "workers": settings.arq.ARQ_WORKERS,
+            "max_jobs": settings.arq.ARQ_MAX_JOBS,
         }
     except Exception as e:
         return {"status": "unhealthy", "error": str(e), "queue_size": 0}

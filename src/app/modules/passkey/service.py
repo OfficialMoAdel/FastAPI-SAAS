@@ -54,18 +54,18 @@ AUTH_CHALLENGE_TTL = 300  # 5 minutes for authentication challenges
 
 def _get_rp_id() -> str:
     """Get the relying party ID based on environment."""
-    if settings.ENVIRONMENT == EnvironmentOption.LOCAL:
+    if settings.env.ENVIRONMENT == EnvironmentOption.LOCAL:
         return "localhost"
     # Extract domain from FRONTEND_URL (e.g., https://example.com -> example.com)
     from urllib.parse import urlparse
 
-    parsed = urlparse(settings.FRONTEND_URL)
+    parsed = urlparse(settings.app.FRONTEND_URL)
     # M9: rp_id must be a bare hostname — WebAuthn never includes a port in
     # the RP ID, so netloc (which carries :port) breaks non-default ports.
     return parsed.hostname or "localhost"
 
 
-RP_NAME = settings.APP_NAME
+RP_NAME = settings.app.APP_NAME
 
 
 class PasskeyService:
@@ -428,7 +428,7 @@ class PasskeyService:
         # P2-6: Use configurable concurrency limit from settings
         from src.app.core.config import settings
 
-        concurrency_limit = settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT
+        concurrency_limit = settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT
         semaphore = asyncio.Semaphore(concurrency_limit)
 
         async def decrypt_one(cred_id: bytes, transports: Any | None) -> PublicKeyCredentialDescriptor | None:
@@ -474,12 +474,12 @@ class PasskeyService:
         # P3-2 Optimization: Column-specific SELECT for credential_id only
 
         creds_to_decrypt: list[tuple[bytes, list[str] | None]]
-        if settings.PASSKEY_USE_COLUMN_SELECT:
+        if settings.r1_unified.PASSKEY_USE_COLUMN_SELECT:
             stmt = (
                 select(PasskeyCredential.credential_id)
                 .where(PasskeyCredential.user_id == user_id)
                 .order_by(PasskeyCredential.created_at.desc())
-                .limit(settings.PASSKEY_MAX_CREDENTIALS_PER_USER)
+                .limit(settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER)
             )
             result = await db.execute(stmt)
             # Format: list of (id, None)
@@ -487,8 +487,8 @@ class PasskeyService:
         else:
             # Fallback path
             creds = await crud_passkey_credentials.get_by_user(db=db, user_id=user_id)
-            if len(creds) > settings.PASSKEY_MAX_CREDENTIALS_PER_USER:
-                creds = creds[: settings.PASSKEY_MAX_CREDENTIALS_PER_USER]
+            if len(creds) > settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER:
+                creds = creds[: settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER]
 
             # Format: list of (id, transports)
             creds_to_decrypt = [(c.credential_id, c.transports if c.transports else None) for c in creds]
@@ -551,7 +551,7 @@ class PasskeyService:
         """Get expected origin based on configured frontend URL."""
         import urllib.parse
 
-        parsed = urllib.parse.urlparse(str(settings.FRONTEND_URL))
+        parsed = urllib.parse.urlparse(str(settings.app.FRONTEND_URL))
         return f"{parsed.scheme}://{parsed.netloc}"
 
     async def _count_user_passkeys(self, db: AsyncSession, user_id: int) -> int:
@@ -583,12 +583,12 @@ class PasskeyService:
 
         # P3-2 Optimization: Column-specific SELECT for credential_id and transports only
 
-        if settings.PASSKEY_USE_COLUMN_SELECT:
+        if settings.r1_unified.PASSKEY_USE_COLUMN_SELECT:
             stmt = (
                 select(PasskeyCredential.credential_id, PasskeyCredential.transports)
                 .where(PasskeyCredential.user_id == user_id)
                 .order_by(PasskeyCredential.created_at.desc())
-                .limit(settings.PASSKEY_MAX_CREDENTIALS_PER_USER)
+                .limit(settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER)
             )
             result = await db.execute(stmt)
             # Format: list of (id, transports)
@@ -596,8 +596,8 @@ class PasskeyService:
         else:
             # Fallback path
             creds = await crud_passkey_credentials.get_by_user(db=db, user_id=user_id)
-            if len(creds) > settings.PASSKEY_MAX_CREDENTIALS_PER_USER:
-                creds = creds[: settings.PASSKEY_MAX_CREDENTIALS_PER_USER]
+            if len(creds) > settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER:
+                creds = creds[: settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER]
 
             # Format: list of (id, transports)
             creds_to_decrypt = [(c.credential_id, c.transports if c.transports else None) for c in creds]

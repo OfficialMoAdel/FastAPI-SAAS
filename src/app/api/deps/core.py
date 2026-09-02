@@ -31,8 +31,8 @@ async def rate_limiter_dependency(
     if hasattr(request.app.state, "initialization_complete"):
         await request.app.state.initialization_complete.wait()
 
-    DEFAULT_LIMIT = settings.DEFAULT_RATE_LIMIT_LIMIT
-    DEFAULT_PERIOD = settings.DEFAULT_RATE_LIMIT_PERIOD
+    DEFAULT_LIMIT = settings.rate_limit.DEFAULT_RATE_LIMIT_LIMIT
+    DEFAULT_PERIOD = settings.rate_limit.DEFAULT_RATE_LIMIT_PERIOD
 
     path = sanitize_path(request.url.path)
     if user:

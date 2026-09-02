@@ -131,10 +131,10 @@ class TestS3Storage:
         file_obj = BytesIO(file_content)
 
         # Disable streaming uploads so the legacy path (which computes size from the
-        # spooled temp file) is exercised. patch_setting cannot reach the delegated
-        # FEATURE_STREAMING_UPLOADS flag, so patch the module-level settings directly.
+        # spooled temp file) is exercised. Production reads the delegated flag via
+        # settings.performance.FEATURE_STREAMING_UPLOADS, so patch it there.
         with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-            mock_settings.FEATURE_STREAMING_UPLOADS = False
+            mock_settings.performance.FEATURE_STREAMING_UPLOADS = False
             result = await storage.upload(file=file_obj, path="uploads/test.txt", mime_type="text/plain")
 
         assert result.success is True
@@ -317,5 +317,3 @@ class TestStorageModuleExports:
         import src.app.modules.storage as storage_pkg
 
         assert not hasattr(storage_pkg, "get_storage")
-
-

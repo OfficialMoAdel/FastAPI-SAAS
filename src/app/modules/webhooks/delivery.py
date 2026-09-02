@@ -40,7 +40,7 @@ from src.app.core.security.url_validator import SSRFProtectionError, validate_we
 from src.app.modules._base import ModelNotFoundError
 from src.app.modules.audit_logs import audit
 from src.app.modules.webhooks.http_client import get_webhook_http_client
-from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus
+from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint
 from src.app.modules.webhooks.signer import canonical_payload_bytes, sign_payload
 
 if TYPE_CHECKING:
@@ -149,7 +149,7 @@ def _spawn_enqueue(delivery_id: UUID, defer_by: int, tenant_id: UUID | None) -> 
 # ---------------------------------------------------------------------------
 
 
-async def deliver(db: AsyncSession, delivery_id: UUID) -> WebhookDelivery:  # noqa: C901
+async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint | None = None) -> WebhookDelivery:  # noqa: C901
     """Deliver a webhook (called by background task).
 
     Implements retry logic with exponential backoff and circuit breaker protection.
@@ -177,23 +177,27 @@ async def deliver(db: AsyncSession, delivery_id: UUID) -> WebhookDelivery:  # no
                 raise ModelNotFoundError("WebhookDelivery", delivery_id)
             return existing
 
-    # Get delivery record with endpoint eagerly loaded (fixes N+1 query)
-    stmt = (
-        select(WebhookDelivery)
-        .options(selectinload(WebhookDelivery.webhook_endpoint))
-        .where(WebhookDelivery.id == delivery_id)
-    )
+    # Get delivery record (skips selectinload if endpoint is already pre-resolved)
+    if endpoint is None:
+        stmt = (
+            select(WebhookDelivery)
+            .options(selectinload(WebhookDelivery.webhook_endpoint))
+            .where(WebhookDelivery.id == delivery_id)
+        )
+    else:
+        stmt = select(WebhookDelivery).where(WebhookDelivery.id == delivery_id)
+
     result = await db.execute(stmt)
     delivery = result.unique().scalar_one_or_none()
     if not delivery:
         await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
         raise ModelNotFoundError("WebhookDelivery", delivery_id)
 
-    # Access eagerly loaded endpoint
-    endpoint = delivery.webhook_endpoint
+    # Access pre-resolved or eagerly loaded endpoint
+    if endpoint is None:
+        endpoint = delivery.webhook_endpoint
     if not endpoint:
         raise ModelNotFoundError("WebhookEndpoint", delivery.webhook_endpoint_id)
-
     # Check circuit breaker before attempting delivery
     if not webhook_circuit.is_closed:
         import time
@@ -202,9 +206,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID) -> WebhookDelivery:  # no
         # Clamp at 0: a breaker opened without a recorded _last_failure_time
         # (or clock adjustments) otherwise yields a hugely negative window,
         # scheduling next_retry_at in the past.
-        recovery_time = max(
-            0.0, webhook_circuit.recovery_timeout - (current_time - webhook_circuit._last_failure_time)
-        )
+        recovery_time = max(0.0, webhook_circuit.recovery_timeout - (current_time - webhook_circuit._last_failure_time))
         logger.warning(
             "Circuit breaker open for webhooks, skipping delivery %s | recovery_in=%.1fs",
             delivery_id,
@@ -219,7 +221,6 @@ async def deliver(db: AsyncSession, delivery_id: UUID) -> WebhookDelivery:  # no
         delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=recovery_delay)
         delivery.response_body = f"Circuit breaker open. Skipped. Recovery in {recovery_time:.1f}s"
         await db.commit()
-        await db.refresh(delivery)
         try:
             _spawn_enqueue(delivery_id, recovery_delay, delivery.tenant_id)
         except RuntimeError:
@@ -261,9 +262,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID) -> WebhookDelivery:  # no
                 # `t=A,v1=X,t=A,v1=Y`, which third-party Stripe-compatible
                 # verifiers reject. The in-repo verifier accepts both
                 # forms (it collects every v1= segment).
-                old_digest = sign_payload(
-                    delivery.payload, decrypt_data(endpoint.old_signing_secret), send_timestamp
-                )
+                old_digest = sign_payload(delivery.payload, decrypt_data(endpoint.old_signing_secret), send_timestamp)
                 signature_header = f"{signature_header},v1={old_digest.split('v1=', 1)[1]}"
             except Exception as old_sig_err:
                 logger.error(
@@ -310,7 +309,6 @@ async def deliver(db: AsyncSession, delivery_id: UUID) -> WebhookDelivery:  # no
         delivery.status = WebhookDeliveryStatus.FAILED
         delivery.response_body = f"SSRF protection: {e}"
         await db.commit()
-        await db.refresh(delivery)
         await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
         return delivery
 
@@ -393,7 +391,6 @@ async def deliver(db: AsyncSession, delivery_id: UUID) -> WebhookDelivery:  # no
         await _handle_failure(db, delivery)
 
     await db.commit()
-    await db.refresh(delivery)
     await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
     return delivery
 
@@ -419,8 +416,7 @@ async def _handle_failure(db: Any, delivery: WebhookDelivery, override_delay: fl
         _spawn_enqueue(delivery_id, retry_delay, delivery.tenant_id)
 
         logger.warning(
-            f"Webhook delivery failed, will retry in {retry_delay}s: "
-            f"{delivery.id} (attempt {delivery.attempt_count})"
+            f"Webhook delivery failed, will retry in {retry_delay}s: {delivery.id} (attempt {delivery.attempt_count})"
         )
     else:
         # Max retries exhausted

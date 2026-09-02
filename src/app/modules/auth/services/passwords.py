@@ -198,7 +198,7 @@ class PasswordLifecycleService:
 
             logger.info("Password reset token created", user_id=user["id"], token_id=reset_token.id)
 
-            reset_link = f"{settings.FRONTEND_URL}/reset-password?token={raw_token}"
+            reset_link = f"{settings.app.FRONTEND_URL}/reset-password?token={raw_token}"
             # BUG FIX: Previously published directly to "notification.send" with keys
             # `template_name` and `context`. The only subscriber requires `notification_id`,
             # `subject`, and `html_content` (pre-rendered). The mismatched payload caused the

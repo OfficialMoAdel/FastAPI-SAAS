@@ -80,7 +80,7 @@ class StripeGateway:
             if record and record.get("encrypted_secret_key"):
                 api_key = CredentialEncryption().decrypt_column(record["encrypted_secret_key"])
         if not api_key:
-            secret_key_obj = settings.STRIPE_SECRET_KEY
+            secret_key_obj = settings.billing.STRIPE_SECRET_KEY
             if secret_key_obj is not None:
                 val = (
                     secret_key_obj.get_secret_value()

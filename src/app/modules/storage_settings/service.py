@@ -73,7 +73,9 @@ class StorageSettingsService:
         Returns:
             StorageSettings or None if not configured.
         """
-        result = await self.db.execute(select(StorageSettings).where(StorageSettings.tenant_id == tenant_id))
+        from src.app.core.db.tenant_crud import tenant_scope
+
+        result = await self.db.execute(select(StorageSettings).where(tenant_scope(StorageSettings, tenant_id)))
         return result.scalar_one_or_none()
 
     async def get_settings_or_raise(self, tenant_id: UUID) -> StorageSettings:

@@ -37,12 +37,12 @@ class OllamaProvider(AIProvider):
 
         Args:
             base_url: Ollama API base URL (default: http://localhost:11434)
-            timeout: Request timeout in seconds (default: settings.OLLAMA_TIMEOUT)
+            timeout: Request timeout in seconds (default: settings.ai.OLLAMA_TIMEOUT)
         """
         from src.app.core.config import settings
 
         self.base_url = base_url.rstrip("/")
-        self.timeout = timeout if timeout is not None else settings.OLLAMA_TIMEOUT
+        self.timeout = timeout if timeout is not None else settings.ai.OLLAMA_TIMEOUT
         self._client: AsyncClient | None = None
 
     @property
@@ -63,9 +63,9 @@ class OllamaProvider(AIProvider):
                 base_url=self.base_url,
                 timeout=self.timeout,
                 limits=Limits(
-                    max_connections=settings.OLLAMA_MAX_CONNECTIONS,
-                    max_keepalive_connections=settings.OLLAMA_MAX_KEEPALIVE,
-                    keepalive_expiry=settings.OLLAMA_KEEPALIVE_EXPIRY,
+                    max_connections=settings.ai.OLLAMA_MAX_CONNECTIONS,
+                    max_keepalive_connections=settings.ai.OLLAMA_MAX_KEEPALIVE,
+                    keepalive_expiry=settings.ai.OLLAMA_KEEPALIVE_EXPIRY,
                 ),
             )
         return self._client

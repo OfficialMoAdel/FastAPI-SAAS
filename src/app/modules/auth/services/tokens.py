@@ -29,7 +29,7 @@ class IssuedSession:
 
     @property
     def expires_in(self) -> int:
-        return int(settings.ACCESS_TOKEN_EXPIRE_MINUTES) * 60
+        return int(settings.crypt.ACCESS_TOKEN_EXPIRE_MINUTES) * 60
 
 
 # Device-info label used when a login flow has no Request available
@@ -76,7 +76,7 @@ class TokenIssuer:
         # A3: mint ONE stable sid per session up front so access and refresh
         # tokens share it (each creator only fills it in when absent).
         token_data.setdefault("sid", str(uuid4()))
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token_expires = timedelta(minutes=settings.crypt.ACCESS_TOKEN_EXPIRE_MINUTES)
         return await asyncio.gather(
             create_access_token(data=token_data, expires_delta=access_token_expires),
             create_refresh_token(data=token_data),
@@ -108,7 +108,7 @@ class TokenIssuer:
             for key in ("sid", "absolute_exp", "iat")
             if old_refresh_payload.get(key) is not None
         }
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token_expires = timedelta(minutes=settings.crypt.ACCESS_TOKEN_EXPIRE_MINUTES)
         return await asyncio.gather(
             create_access_token(data={**token_data, **carried}, expires_delta=access_token_expires),
             create_refresh_token(data={**token_data, **carried}),

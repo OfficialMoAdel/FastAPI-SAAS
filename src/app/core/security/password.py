@@ -28,7 +28,7 @@ def _get_bcrypt_executor() -> ThreadPoolExecutor:
     global _bcrypt_executor
     if _bcrypt_executor is None:
         _bcrypt_executor = ThreadPoolExecutor(
-            max_workers=settings.BCRYPT_THREAD_POOL_SIZE, thread_name_prefix="bcrypt_auth"
+            max_workers=settings.crypt.BCRYPT_THREAD_POOL_SIZE, thread_name_prefix="bcrypt_auth"
         )
     return _bcrypt_executor
 
@@ -53,7 +53,7 @@ def needs_rehash(hashed_password: str) -> bool:
     """Check whether a stored hash uses the configured bcrypt cost (A7 FIX).
 
     Parses the cost factor from a modular-crypt-format bcrypt hash
-    (``$2b$<rounds>$...``) and compares it against ``settings.BCRYPT_ROUNDS``.
+    (``$2b$<rounds>$...``) and compares it against ``settings.crypt.BCRYPT_ROUNDS``.
     Callers can use this to transparently rehash on successful login when the
     configured cost has been raised.
 
@@ -63,7 +63,7 @@ def needs_rehash(hashed_password: str) -> bool:
         rounds = int(hashed_password.split("$")[2])
     except (IndexError, ValueError):
         return False
-    return rounds != int(settings.BCRYPT_ROUNDS)
+    return rounds != int(settings.crypt.BCRYPT_ROUNDS)
 
 
 async def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -102,6 +102,6 @@ async def get_password_hash(password: str) -> str:
         _get_bcrypt_executor(),
         bcrypt.hashpw,
         _normalize_secret(password),
-        bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS),
+        bcrypt.gensalt(rounds=settings.crypt.BCRYPT_ROUNDS),
     )
     return hashed.decode()

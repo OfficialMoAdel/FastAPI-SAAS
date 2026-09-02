@@ -34,6 +34,7 @@ UpdateSchemaInternalType = TypeVar("UpdateSchemaInternalType", bound=BaseModel)
 DeleteSchemaType = TypeVar("DeleteSchemaType", bound=BaseModel)
 SelectSchemaType = TypeVar("SelectSchemaType", bound=BaseModel)
 
+
 def _resolve_tenant_id_from_context() -> UUID | None:
     """Resolve the current tenant_id from context, canonicalized to UUID.
 
@@ -58,7 +59,7 @@ def _resolve_tenant_id_from_context() -> UUID | None:
 
 def tenant_scope(
     model: Any,
-    tenant_id: str | UUID | None = None,
+    tenant_id: int | str | UUID | None = None,
     *,
     allow_unscoped: bool = False,
 ) -> ColumnElement[bool]:
@@ -143,6 +144,7 @@ def scoped_query(
     ``tenant_scope`` directly and ``.where(criterion)`` it themselves.
     """
     return select(model).where(tenant_scope(model, tenant_id, allow_unscoped=allow_unscoped))
+
 
 class TenantAwareCRUD(
     FastCRUD[

@@ -37,13 +37,13 @@ def _get_state_cookie_kwargs(provider: str | None = None) -> dict:
         }
     return {
         "httponly": True,
-        "secure": settings.SESSION_SECURE_COOKIES,
+        "secure": settings.admin.SESSION_SECURE_COOKIES,
         "samesite": "lax",
     }
 
 
 def _get_clear_cookie_str() -> str:
-    secure_flag = "Secure; " if settings.SESSION_SECURE_COOKIES else ""
+    secure_flag = "Secure; " if settings.admin.SESSION_SECURE_COOKIES else ""
     return f'sso_state=""; Max-Age=0; Path=/; HttpOnly; {secure_flag}SameSite=Lax'
 
 
@@ -87,7 +87,7 @@ def _validate_redirect_uri(uri: str | None) -> None:
             detail="Invalid redirect URI.",
         )
     # Allow relative paths or URLs matching the frontend domain
-    if uri == settings.FRONTEND_URL or uri.startswith(settings.FRONTEND_URL + "/"):
+    if uri == settings.app.FRONTEND_URL or uri.startswith(settings.app.FRONTEND_URL + "/"):
         return
 
     raise HTTPException(
@@ -318,7 +318,7 @@ async def connect_provider(
         state,
         max_age=600,  # 10 minutes to match Redis TTL
         httponly=True,
-        secure=settings.SESSION_SECURE_COOKIES,
+        secure=settings.admin.SESSION_SECURE_COOKIES,
         samesite="lax",
     )
     return response

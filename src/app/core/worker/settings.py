@@ -19,8 +19,8 @@ from src.app.modules.magic_link.tasks import send_magic_link_email_task
 from src.app.modules.notifications.service import send_email_task
 from src.app.modules.webhooks.delivery import recover_stuck_deliveries
 
-REDIS_QUEUE_HOST = settings.REDIS_QUEUE_HOST
-REDIS_QUEUE_PORT = settings.REDIS_QUEUE_PORT
+REDIS_QUEUE_HOST = settings.redis_queue.REDIS_QUEUE_HOST
+REDIS_QUEUE_PORT = settings.redis_queue.REDIS_QUEUE_PORT
 
 
 class WorkerSettings:
@@ -54,9 +54,13 @@ class WorkerSettings:
     # f"{default_queue_name}_low_priority" (see events/bus.py) were never consumed.
     queues = [default_queue_name, f"{default_queue_name}_low_priority"]
     redis_settings = RedisSettings(
-        host=settings.REDIS_QUEUE_HOST,
-        port=settings.REDIS_QUEUE_PORT,
-        password=settings.REDIS_QUEUE_PASSWORD.get_secret_value() if settings.REDIS_QUEUE_PASSWORD else None,
+        host=settings.redis_queue.REDIS_QUEUE_HOST,
+        port=settings.redis_queue.REDIS_QUEUE_PORT,
+        password=(
+            settings.redis_queue.REDIS_QUEUE_PASSWORD.get_secret_value()
+            if settings.redis_queue.REDIS_QUEUE_PASSWORD
+            else None
+        ),
     )
     on_startup = startup
     on_shutdown = shutdown
@@ -81,11 +85,11 @@ class WorkerSettings:
     # keep_result: 1 hour retention prevents memory leak
     # max_tries: Retry failed jobs 3 times (exponential backoff: 10s, 60s, 360s)
     # queue_max_len: Backpressure to prevent memory issues
-    max_jobs = settings.ARQ_MAX_JOBS
-    job_timeout = settings.ARQ_JOB_TIMEOUT
-    keep_result = settings.ARQ_KEEP_RESULT
-    max_tries = settings.ARQ_MAX_TRIES
-    queue_max_len = settings.ARQ_QUEUE_MAX_SIZE
+    max_jobs = settings.arq.ARQ_MAX_JOBS
+    job_timeout = settings.arq.ARQ_JOB_TIMEOUT
+    keep_result = settings.arq.ARQ_KEEP_RESULT
+    max_tries = settings.arq.ARQ_MAX_TRIES
+    queue_max_len = settings.arq.ARQ_QUEUE_MAX_SIZE
 
     # Use orjson for job serialization (faster, safer than pickle)
     job_serializer = staticmethod(lambda obj: json_dumps(obj))

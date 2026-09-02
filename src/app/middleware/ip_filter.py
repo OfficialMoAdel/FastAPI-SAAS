@@ -45,13 +45,13 @@ _BAD_BOT_REGEX: re.Pattern[str] | None = None
 def _get_bad_bot_regex() -> re.Pattern[str] | None:
     """Get compiled bad bot regex, rebuilding if settings changed."""
     global _BAD_BOT_REGEX
-    if not settings.BAD_BOT_USER_AGENTS:
+    if not settings.security.BAD_BOT_USER_AGENTS:
         return None
     if _BAD_BOT_REGEX is None:
-        _escaped_bots = [re.escape(bot) for bot in settings.BAD_BOT_USER_AGENTS]
+        _escaped_bots = [re.escape(bot) for bot in settings.security.BAD_BOT_USER_AGENTS]
         _BAD_BOT_REGEX = re.compile("|".join(_escaped_bots), re.IGNORECASE)
         return _BAD_BOT_REGEX
-    pattern = "|".join([re.escape(bot) for bot in settings.BAD_BOT_USER_AGENTS])
+    pattern = "|".join([re.escape(bot) for bot in settings.security.BAD_BOT_USER_AGENTS])
     if _BAD_BOT_REGEX.pattern != pattern:
         _BAD_BOT_REGEX = re.compile(pattern, re.IGNORECASE)
     return _BAD_BOT_REGEX
@@ -111,7 +111,7 @@ class IPFilterMiddleware:
         request.state.client_ip = client_ip
 
         # BAD BOT FILTERING: Check User-Agent for known malicious scanners
-        if settings.BAD_BOT_FILTER_ENABLED:
+        if settings.security.BAD_BOT_FILTER_ENABLED:
             bad_bot_regex = _get_bad_bot_regex()
             if bad_bot_regex:
                 user_agent = request.headers.get("user-agent", "")
@@ -143,10 +143,10 @@ class IPFilterMiddleware:
                     return await response(scope, receive, send)
 
         # Check blacklist and whitelist in a single Redis pipeline
-        if settings.IP_BLACKLIST_ENABLED or settings.IP_WHITELIST_ENABLED:
+        if settings.security.IP_BLACKLIST_ENABLED or settings.security.IP_WHITELIST_ENABLED:
             is_blacklisted, is_whitelisted = await self._filter_service.check_ip_status(client_ip)
 
-            if settings.IP_BLACKLIST_ENABLED and is_blacklisted:
+            if settings.security.IP_BLACKLIST_ENABLED and is_blacklisted:
                 event = create_security_event(
                     event_type=SecurityEventType.IP_BLOCKED,
                     client_ip=client_ip,
@@ -165,7 +165,7 @@ class IPFilterMiddleware:
                 )
                 return await response(scope, receive, send)
 
-            if settings.IP_WHITELIST_ENABLED and is_whitelisted:
+            if settings.security.IP_WHITELIST_ENABLED and is_whitelisted:
                 # Log whitelisted access for audit trail
                 event = create_security_event(
                     event_type=SecurityEventType.IP_WHITELISTED,

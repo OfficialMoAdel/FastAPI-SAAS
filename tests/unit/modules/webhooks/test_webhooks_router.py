@@ -69,15 +69,9 @@ async def test_list_webhook_endpoints(mock_db, mock_tenant, mock_user):
     mock_endpoint.is_active = True
     mock_endpoint.created_at = datetime.now(UTC)
 
-    mock_total_result = MagicMock()
-    mock_total_result.scalar_one.return_value = 1
-
-    mock_items_result = MagicMock()
-    mock_items_result.scalars.return_value.all.return_value = [mock_endpoint]
-
-    # db.execute is called twice: once for count, once for items
-    mock_db.execute.side_effect = [mock_total_result, mock_items_result]
-
+    mock_result = MagicMock()
+    mock_result.unique.return_value.all.return_value = [(mock_endpoint, 1)]
+    mock_db.execute.return_value = mock_result
     result = await list_webhook_endpoints(
         is_active=True,
         event_type="user.created",
@@ -130,14 +124,9 @@ async def test_list_webhook_deliveries_route(mock_db, mock_tenant, mock_user):
     mock_delivery.response_body = "OK"
     mock_delivery.created_at = datetime.now(UTC)
 
-    mock_total_result = MagicMock()
-    mock_total_result.scalar_one.return_value = 1
-
-    mock_items_result = MagicMock()
-    mock_items_result.scalars.return_value.all.return_value = [mock_delivery]
-
-    mock_db.execute.side_effect = [mock_total_result, mock_items_result]
-
+    mock_result = MagicMock()
+    mock_result.unique.return_value.all.return_value = [(mock_delivery, 1)]
+    mock_db.execute.return_value = mock_result
     result = await list_webhook_deliveries_route(
         endpoint_id=None,
         delivery_status=None,
@@ -208,8 +197,6 @@ async def test_update_webhook_endpoint(mock_db, mock_tenant, mock_user):
 
     assert mock_endpoint.is_active is False
     mock_db.commit.assert_called_once()
-    mock_db.refresh.assert_called_once_with(mock_endpoint)
-
 
 @pytest.mark.asyncio
 async def test_delete_webhook_endpoint(mock_db, mock_tenant, mock_user):

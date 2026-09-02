@@ -67,16 +67,16 @@ class TestDLQBoundedSize:
     def mock_r1_settings_enabled(self) -> MagicMock:
         """Create mock R1 settings with bounded DLQ enabled."""
         settings_mock = MagicMock()
-        settings_mock.DLQ_USE_BOUNDED_SIZE = True
-        settings_mock.DLQ_MAX_SIZE = 10000
-        settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
+        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = True
+        settings_mock.r1_unified.DLQ_MAX_SIZE = 10000
+        settings_mock.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
         return settings_mock
 
     @pytest.fixture
     def mock_r1_settings_disabled(self) -> MagicMock:
         """Create mock R1 settings with bounded DLQ disabled."""
         settings_mock = MagicMock()
-        settings_mock.DLQ_USE_BOUNDED_SIZE = False
+        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = False
         return settings_mock
 
     @pytest.mark.asyncio
@@ -184,10 +184,9 @@ class TestDLQBoundedSize:
         mock_redis.pipeline = MagicMock(return_value=pipe)
 
         settings_mock = MagicMock()
-        settings_mock.DLQ_USE_BOUNDED_SIZE = True
-        settings_mock.DLQ_MAX_SIZE = 10000
-        settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
-
+        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = True
+        settings_mock.r1_unified.DLQ_MAX_SIZE = 10000
+        settings_mock.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
         with patch("src.app.core.config.settings", settings_mock):
             with patch("src.app.core.monitoring.update_dlq_size"):
                 with patch("src.app.core.events.logger") as mock_logger:
@@ -207,10 +206,9 @@ class TestDLQBoundedSize:
     async def test_ltrim_caps_at_max_size(self, event_bus: Any, mock_redis: AsyncMock) -> None:
         """Test that LTRIM is called with correct max size index."""
         settings_mock = MagicMock()
-        settings_mock.DLQ_USE_BOUNDED_SIZE = True
-        settings_mock.DLQ_MAX_SIZE = 5000
-        settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
-
+        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = True
+        settings_mock.r1_unified.DLQ_MAX_SIZE = 5000
+        settings_mock.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
         with patch("src.app.core.config.settings", settings_mock):
             with patch("src.app.core.monitoring.update_dlq_size"):
                 await event_bus.add_to_dlq(
@@ -252,10 +250,10 @@ class TestDLQFeatureFlagToggle:
 
         bus = EventBus()
         bus._redis_client = mock_redis
-
         settings_mock = MagicMock()
-        settings_mock.DLQ_USE_BOUNDED_SIZE = True
-        settings_mock.DLQ_MAX_SIZE = 10000
+        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = True
+        settings_mock.r1_unified.DLQ_MAX_SIZE = 10000
+        settings_mock.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
         settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
 
         with patch("src.app.core.config.settings", settings_mock):
@@ -274,8 +272,7 @@ class TestDLQFeatureFlagToggle:
         bus._redis_client = mock_redis
 
         settings_mock = MagicMock()
-        settings_mock.DLQ_USE_BOUNDED_SIZE = False
-
+        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = False
         with patch("src.app.core.config.settings", settings_mock):
             with patch("src.app.core.monitoring.update_dlq_size"):
                 await bus.add_to_dlq("event", "handler", {}, "error", 1)

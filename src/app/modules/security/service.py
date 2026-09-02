@@ -3,13 +3,13 @@
 Provides Redis-based storage and management for IP whitelist and blacklist.
 """
 
-import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
 from src.app.core.config import settings
+from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.utils import cache
 
 
@@ -72,14 +72,14 @@ class IPFilterService:
             if ttl_seconds > 0:
                 async with get_redis_client() as client:
                     if client:
-                        await client.setex(key, ttl_seconds, json.dumps(data))
+                        await client.setex(key, ttl_seconds, json_dumps(data, as_str=True))
             else:
                 # Expiration is in the past, don't add
                 return False
         else:
             async with get_redis_client() as client:
                 if client:
-                    await client.set(key, json.dumps(data))
+                    await client.set(key, json_dumps(data, as_str=True))
 
         return True
 
@@ -130,14 +130,14 @@ class IPFilterService:
             if ttl_seconds > 0:
                 async with get_redis_client() as client:
                     if client:
-                        await client.setex(key, ttl_seconds, json.dumps(data))
+                        await client.setex(key, ttl_seconds, json_dumps(data, as_str=True))
             else:
                 # Expiration is in the past, don't add
                 return False
         else:
             async with get_redis_client() as client:
                 if client:
-                    await client.set(key, json.dumps(data))
+                    await client.set(key, json_dumps(data, as_str=True))
 
         return True
 
@@ -166,7 +166,7 @@ class IPFilterService:
         Returns:
             True if IP is whitelisted
         """
-        if not settings.IP_WHITELIST_ENABLED:
+        if not settings.security.IP_WHITELIST_ENABLED:
             return False
 
         key = f"{self.WHITELIST_PREFIX}{ip_address}"
@@ -185,7 +185,7 @@ class IPFilterService:
         Returns:
             True if IP is blacklisted
         """
-        if not settings.IP_BLACKLIST_ENABLED:
+        if not settings.security.IP_BLACKLIST_ENABLED:
             return False
 
         key = f"{self.BLACKLIST_PREFIX}{ip_address}"
@@ -201,7 +201,7 @@ class IPFilterService:
         Returns:
             tuple[bool, bool]: (is_blacklisted, is_whitelisted)
         """
-        if not settings.IP_BLACKLIST_ENABLED and not settings.IP_WHITELIST_ENABLED:
+        if not settings.security.IP_BLACKLIST_ENABLED and not settings.security.IP_WHITELIST_ENABLED:
             return False, False
 
         black_key = f"{self.BLACKLIST_PREFIX}{ip_address}"
@@ -210,9 +210,9 @@ class IPFilterService:
         async with get_redis_client() as client:
             if client:
                 async with client.pipeline() as pipe:
-                    if settings.IP_BLACKLIST_ENABLED:
+                    if settings.security.IP_BLACKLIST_ENABLED:
                         pipe.exists(black_key)
-                    if settings.IP_WHITELIST_ENABLED:
+                    if settings.security.IP_WHITELIST_ENABLED:
                         pipe.exists(white_key)
 
                     results = await pipe.execute()
@@ -221,12 +221,12 @@ class IPFilterService:
                     is_blacklisted = False
                     is_whitelisted = False
 
-                    if settings.IP_BLACKLIST_ENABLED:
+                    if settings.security.IP_BLACKLIST_ENABLED:
                         if results and idx < len(results):
                             is_blacklisted = bool(results[idx] > 0)
                         idx += 1
 
-                    if settings.IP_WHITELIST_ENABLED:
+                    if settings.security.IP_WHITELIST_ENABLED:
                         if results and idx < len(results):
                             is_whitelisted = bool(results[idx] > 0)
 
@@ -268,7 +268,7 @@ class IPFilterService:
                     data = results[i]
                     ttl = results[i + 1]
                     if data:
-                        entry = json.loads(data)
+                        entry = json_loads(data)
                         if ttl > 0:
                             entry["expires_at"] = datetime.now(UTC).timestamp() + ttl
                         entries.append(entry)
@@ -309,7 +309,7 @@ class IPFilterService:
                     data = results[i]
                     ttl = results[i + 1]
                     if data:
-                        entry = json.loads(data)
+                        entry = json_loads(data)
                         if ttl > 0:
                             entry["expires_at"] = datetime.now(UTC).timestamp() + ttl
                         entries.append(entry)

@@ -40,8 +40,10 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_audit_logs_user_id"), ondelete="SET NULL"),
     )
     op.create_index("idx_audit_tenant_created", "audit_logs", ["tenant_id", "created_at"])
+    op.create_index("idx_audit_tenant_action", "audit_logs", ["tenant_id", "action"])
     op.create_index("idx_audit_user", "audit_logs", ["user_id"])
     op.create_index("idx_audit_action", "audit_logs", ["action"])
+    op.create_index("idx_audit_action_created", "audit_logs", ["action", "created_at"])
     op.create_index("idx_audit_entity", "audit_logs", ["entity_type", "entity_id"])
     op.execute("CREATE INDEX idx_audit_details_gin ON audit_logs USING GIN (details)")
 
@@ -102,6 +104,12 @@ def upgrade() -> None:
     op.create_index("idx_notification_tenant_created", "notifications", ["tenant_id", "created_at"])
     op.create_index("idx_notification_status", "notifications", ["status"])
     op.create_index("idx_notification_tenant_status", "notifications", ["tenant_id", "status"])
+    op.create_index(
+        "idx_notification_status_created",
+        "notifications",
+        ["status", "created_at"],
+        postgresql_where=sa.text("status = 'failed'"),
+    )
 
     # ===== EMAIL_TEMPLATE_OVERRIDES =====
     op.create_table(
@@ -148,6 +156,11 @@ def upgrade() -> None:
     )
     op.create_index("idx_webhook_endpoint_tenant", "webhook_endpoints", ["tenant_id"])
     op.create_index("idx_webhook_endpoint_active", "webhook_endpoints", ["tenant_id", "is_active"])
+    op.create_index(
+        "idx_webhook_endpoint_tenant_event",
+        "webhook_endpoints",
+        ["tenant_id", "event_type", "is_active"],
+    )
 
     # ===== WEBHOOK_DELIVERIES =====
     op.create_table(
@@ -184,6 +197,29 @@ def upgrade() -> None:
     op.create_index("idx_delivery_status", "webhook_deliveries", ["status"])
     op.create_index("idx_delivery_created", "webhook_deliveries", ["created_at"])
     op.create_index("idx_delivery_next_retry", "webhook_deliveries", ["next_retry_at"])
+    op.create_index(
+        "idx_delivery_tenant_status_created",
+        "webhook_deliveries",
+        ["tenant_id", "status", "created_at"],
+        postgresql_ops={"created_at": "DESC"},
+    )
+    op.create_index(
+        "idx_webhook_delivery_retry",
+        "webhook_deliveries",
+        ["status", "next_retry_at"],
+        postgresql_where=sa.text("status = 'pending' AND next_retry_at IS NOT NULL"),
+    )
+    op.create_index(
+        "idx_webhook_delivery_endpoint_status",
+        "webhook_deliveries",
+        ["webhook_endpoint_id", "status"],
+    )
+    op.create_index(
+        "idx_webhook_delivery_created",
+        "webhook_deliveries",
+        ["created_at"],
+        postgresql_ops={"created_at": "DESC"},
+    )
 
 
 def downgrade() -> None:

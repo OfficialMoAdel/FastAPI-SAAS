@@ -8,6 +8,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,7 @@ DEFAULT_TIMEOUT = 30.0
 # Cache TTLs (in seconds)
 TENANT_CACHE_TTL = 3600  # 1 hour
 TIER_CACHE_TTL = 3600  # 1 hour
+
 
 @dataclass
 class CacheWarmingResult:
@@ -61,20 +63,35 @@ class CacheWarmer:
 
     async def warm_all(
         self,
-        session: AsyncSession,
+        session: AsyncSession | None = None,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> CacheWarmingResult:
-        """Warm all registered caches."""
+        """Warm all registered caches.
+
+        A single AsyncSession cannot serve concurrent operations, so when a
+        caller-provided session is given the warmers run sequentially on it.
+        When no session is provided, warmers run concurrently (P3-5
+        Optimization), each with its own session.
+        """
         start_time = time.time()
         result = CacheWarmingResult()
         errors: list[str] = []
 
         logger.info("[START] Cache warming started at | warmers=", start_time=start_time, val=len(self._warmers))
 
-        for name, warmer_fn in self._warmers.items():
+        async def _run_single_warmer(
+            name: str, warmer_fn: Any, warmer_session: AsyncSession | None
+        ) -> tuple[str, int | None, str | None]:
             warmer_start = time.time()
             try:
-                cached_count: int = await asyncio.wait_for(warmer_fn(session), timeout=timeout)
+                if warmer_session is not None:
+                    cached_count = await asyncio.wait_for(warmer_fn(warmer_session), timeout=timeout)
+                else:
+                    from src.app.core.db.database import async_session_maker
+
+                    async with async_session_maker() as owned_session:
+                        cached_count = await asyncio.wait_for(warmer_fn(owned_session), timeout=timeout)
+
                 warmer_duration = time.time() - warmer_start
                 logger.info(
                     "[SUCCESS] Warmer=%s | items=%d | duration=%.2fs",
@@ -82,11 +99,7 @@ class CacheWarmer:
                     cached_count,
                     warmer_duration,
                 )
-
-                if name == "tenant":
-                    result.tenants_cached = cached_count
-                elif name == "tier":
-                    result.tiers_cached = cached_count
+                return name, cached_count, None
 
             except TimeoutError:
                 warmer_duration = time.time() - warmer_start
@@ -97,7 +110,7 @@ class CacheWarmer:
                     warmer_duration,
                     error_msg,
                 )
-                errors.append(error_msg)
+                return name, None, error_msg
             except Exception as e:
                 warmer_duration = time.time() - warmer_start
                 error_msg = f"{name}: {str(e)}"
@@ -108,7 +121,24 @@ class CacheWarmer:
                     error_msg,
                     exc_info=True,
                 )
-                errors.append(error_msg)
+                return name, None, error_msg
+
+        # Run warmers sequentially on the caller's session (an AsyncSession must
+        # not be shared across concurrent operations), or concurrently with
+        # per-warmer sessions when none was provided.
+        if session is not None:
+            outcomes = [await _run_single_warmer(name, fn, session) for name, fn in self._warmers.items()]
+        else:
+            outcomes = await asyncio.gather(*(_run_single_warmer(name, fn, None) for name, fn in self._warmers.items()))
+
+        for name, count, err in outcomes:
+            if err is not None:
+                errors.append(err)
+            elif count is not None:
+                if name == "tenant":
+                    result.tenants_cached = count
+                elif name == "tier":
+                    result.tiers_cached = count
 
         result.errors = errors if errors else None
         total_duration = time.time() - start_time
@@ -195,6 +225,7 @@ warmer = CacheWarmer()
 
 
 # Specific warming functions
+
 
 @warmer.register("tenant")
 async def warm_tenant_cache(session: AsyncSession) -> int:
@@ -299,6 +330,7 @@ async def warm_caches() -> CacheWarmingResult:
         error_msg = f"Cache warming failed: {e}"
         logger.error("Cache warming failed", error=str(e))
         return CacheWarmingResult(errors=[error_msg])
+
 
 __all__ = [
     "CacheWarmer",

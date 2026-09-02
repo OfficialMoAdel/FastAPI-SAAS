@@ -355,10 +355,12 @@ class ProductService(BaseService[Product]):
         if tenant is None:
             raise ModelNotFoundError("Product", product_id)
 
+        from src.app.core.db.tenant_crud import tenant_scope
+
         stmt = (
             select(Product)
             .options(selectinload(Product.pricing_tiers))
-            .where(Product.id == product_id, Product.tenant_id == tenant.id)
+            .where(Product.id == product_id, tenant_scope(Product, tenant.id))
         )
         result = await self.db.execute(stmt)
         product = result.scalar_one_or_none()

@@ -464,11 +464,9 @@ class UserService:
             or_(User.email == user.email, User.username == user.username), User.is_deleted.is_(False)
         )
 
-        # Explicitly filter by tenant_id if available (redundant with RLS but critical for SQLite tests)
-        # Uses cached tenant from single fetch above
-        if tenant:
-            stmt = stmt.where(User.tenant_id == tenant.id)
+        from src.app.core.db.tenant_crud import tenant_scope
 
+        stmt = stmt.where(tenant_scope(User, tenant.id if tenant else None, allow_unscoped=True))
         existing_user = await self.db.scalar(stmt)
 
         if existing_user:
@@ -1008,7 +1006,7 @@ class UserService:
 
         tier_svc = TierService(self.db)
         try:
-            free_tier = await tier_svc.get_tier(settings.DEFAULT_FREE_TIER_NAME)
+            free_tier = await tier_svc.get_tier(settings.billing.DEFAULT_FREE_TIER_NAME)
         except ModelNotFoundError:
             logger.warning("Free tier not configured; skipping downgrade", user_id=user_id)
             return None
@@ -1082,10 +1080,11 @@ class UserService:
             )
         # SECURITY FIX: Filter by tenant to prevent cross-tenant data exposure.
         # Without this, a superuser could query any user across all tenants by username.
-        tenant = get_current_tenant()
-        if tenant:
-            stmt = stmt.where(User.tenant_id == tenant.id)
+        from src.app.core.db.tenant_crud import tenant_scope
+        from src.app.core.tenancy.context import get_current_tenant
 
+        tenant = get_current_tenant()
+        stmt = stmt.where(tenant_scope(User, tenant.id if tenant else None, allow_unscoped=True))
         result = await self.db.execute(stmt)
         db_user = result.unique().scalar_one_or_none()
 

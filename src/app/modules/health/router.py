@@ -27,8 +27,8 @@ async def health() -> JSONResponse:
     http_status = status.HTTP_200_OK
     response = {
         "status": STATUS_HEALTHY,
-        "environment": settings.ENVIRONMENT.value,
-        "version": settings.APP_VERSION,
+        "environment": settings.env.ENVIRONMENT.value,
+        "version": settings.app.APP_VERSION,
         "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
     }
 
@@ -71,8 +71,8 @@ async def ready(
 
     response = {
         "status": overall_status,
-        "environment": settings.ENVIRONMENT.value,
-        "version": settings.APP_VERSION,
+        "environment": settings.env.ENVIRONMENT.value,
+        "version": settings.app.APP_VERSION,
         "app": STATUS_HEALTHY,
         "database": database_result.status,
         "redis": redis_result.status,

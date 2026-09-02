@@ -51,7 +51,7 @@ def mock_redis():
     # By default, mock execute to return what incr would return
     pipeline_mock.execute.return_value = [1]
     redis.pipeline = MagicMock(return_value=pipeline_mock)
-
+    redis.evalsha = AsyncMock(return_value=[1, 1])
     # increment_violations prefers the atomic EVAL (Lua) path. Force the
     # pipeline fallback branch so pipeline-based assertions are deterministic.
     redis.eval = AsyncMock(side_effect=NotImplementedError("EVAL not supported by test mock"))
@@ -221,11 +221,8 @@ class TestBanIP:
             patch("src.app.core.security.auto_ban.log_security_event"),
         ):
             result = await ban_ip(sample_ip)
-
         assert result is True
-        mock_redis.set.assert_called_once()
-        mock_redis.incr.assert_called_once()
-
+        mock_redis.evalsha.assert_called_once()
     @pytest.mark.asyncio
     async def test_ban_ip_disabled(self, mock_redis, sample_ip):
         """Test ban when auto-ban is disabled."""
@@ -266,9 +263,7 @@ class TestBanIP:
 
         assert result is True
         # Duration should be 3600 * 2^2 = 14400 (4 hours)
-        call_args = mock_redis.set.call_args
-        assert call_args.kwargs["ex"] == 14400
-
+        assert mock_redis.evalsha.call_args[0][6] == "14400"
     @pytest.mark.asyncio
     async def test_ban_ip_custom_duration(self, mock_redis, sample_ip):
         """Test ban with custom duration."""
@@ -280,12 +275,9 @@ class TestBanIP:
             patch_setting("AUTO_BAN_ESCALATION", False),
         ):
             result = await ban_ip(sample_ip, duration=7200, reason="Custom reason")
-
         assert result is True
-        call_args = mock_redis.set.call_args
-        assert call_args.kwargs["ex"] == 7200
-        assert call_args.args[1] == "Custom reason"
-
+        assert mock_redis.evalsha.call_args[0][6] == "7200"
+        assert mock_redis.evalsha.call_args[0][5] == "Custom reason"
     @pytest.mark.asyncio
     async def test_ban_ip_escalation_disabled(self, mock_redis, sample_ip):
         """Test that escalation respects settings."""
@@ -301,9 +293,7 @@ class TestBanIP:
 
         assert result is True
         # Duration should remain 3600 (no escalation)
-        call_args = mock_redis.set.call_args
-        assert call_args.kwargs["ex"] == 3600
-
+        assert mock_redis.evalsha.call_args[0][6] == "3600"
 
 class TestUnbanIP:
     """Test IP unbanning functionality."""
@@ -574,16 +564,17 @@ class TestIntegrationScenarios:
             mock_redis.set = AsyncMock(return_value=True)
             mock_redis.incr = AsyncMock(return_value=1)  # ban_count
             await ban_ip(sample_ip)
-            assert mock_redis.set.call_args.kwargs["ex"] == 3600
+            # args passed to evalsha: sha, numkeys, key1, key2, key3, reason, duration, count_ttl
+            assert mock_redis.evalsha.call_args[0][6] == "3600"
 
             # Second ban - 2x escalation (7200 seconds) - ban_count = 1
             mock_redis.get.side_effect = [None, b"1"]  # Not banned, count = 1
-            mock_redis.incr = AsyncMock(return_value=2)
+            mock_redis.evalsha = AsyncMock(return_value=[1, 2])
             await ban_ip(sample_ip)
-            assert mock_redis.set.call_args.kwargs["ex"] == 7200
+            assert mock_redis.evalsha.call_args[0][6] == "7200"
 
             # Third ban - 4x escalation (14400 seconds) - ban_count = 2
             mock_redis.get.side_effect = [None, b"2"]  # Not banned, count = 2
-            mock_redis.incr = AsyncMock(return_value=3)
+            mock_redis.evalsha = AsyncMock(return_value=[1, 3])
             await ban_ip(sample_ip)
-            assert mock_redis.set.call_args.kwargs["ex"] == 14400
+            assert mock_redis.evalsha.call_args[0][6] == "14400"

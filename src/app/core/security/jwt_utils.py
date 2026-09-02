@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Union, cast
+from typing import TYPE_CHECKING, Any, Union
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey
@@ -56,7 +56,7 @@ logger = get_logger(__name__)
 
 # JWT_AUDIENCE must be explicitly configured in production.
 # Falling back to a generic default in production is a misconfiguration risk.
-_raw_audience = settings.JWT_AUDIENCE
+_raw_audience = settings.crypt.JWT_AUDIENCE
 if not _raw_audience:
     _env = settings.env.ENVIRONMENT.value
     if str(_env).lower() in ("production", "staging"):
@@ -78,12 +78,12 @@ REQUEST_STATE_KEY: str = "jwt_payload"
 def _get_algorithm() -> str:
     """Get the JWT algorithm.
 
-    Single source of truth for algorithm selection: ``settings.ALGORITHM``
+    Single source of truth for algorithm selection: ``settings.crypt.ALGORITHM``
     (validated at startup by CryptSettings). The key-presence heuristic this
     function once used disagreed with jwt_service's settings-driven check,
     giving the two decode engines different security postures.
     """
-    return settings.ALGORITHM
+    return settings.crypt.ALGORITHM
 
 
 def _is_symmetric_algorithm() -> bool:
@@ -101,11 +101,11 @@ def _get_verification_key() -> str:
         For RS256, prefer _get_parsed_verification_key() which returns
         a pre-parsed key object for better performance.
     """
-    if settings.JWT_PRIVATE_KEY or settings.JWT_PUBLIC_KEY:
+    if settings.crypt.JWT_PRIVATE_KEY or settings.crypt.JWT_PUBLIC_KEY:
         # RS256: Use public key for verification
-        return str(settings.JWT_PUBLIC_KEY or "")
+        return str(settings.crypt.JWT_PUBLIC_KEY or "")
     # HS256: Use symmetric secret
-    return cast(str, settings.SECRET_KEY.get_secret_value())
+    return settings.SECRET_KEY.get_secret_value()
 
 
 @lru_cache(maxsize=1)
@@ -132,9 +132,9 @@ def _get_parsed_verification_key() -> JWTPublicKey | str:
         - Private key never cached
         - lru_cache(maxsize=1) = singleton per process
     """
-    if settings.JWT_PRIVATE_KEY or settings.JWT_PUBLIC_KEY:
+    if settings.crypt.JWT_PRIVATE_KEY or settings.crypt.JWT_PUBLIC_KEY:
         # RS256: Pre-parse public key
-        key_pem = settings.JWT_PUBLIC_KEY or ""
+        key_pem = settings.crypt.JWT_PUBLIC_KEY or ""
         if key_pem:
             parsed_key = load_pem_public_key(key_pem.encode())
             # Cast to JWTPublicKey for type safety (PyJWT supports these types)
@@ -246,7 +246,7 @@ async def decode_verified_token(
     - Signature validation (pre-parsed key)
     - Expiration check
     - Audience validation (JWT_AUDIENCE)
-    - Issuer validation (settings.JWT_ISSUER) unless ``verify_issuer=False``
+    - Issuer validation (settings.crypt.JWT_ISSUER) unless ``verify_issuer=False``
 
     It does NOT check token blacklist, user existence, or token type —
     those are policy concerns owned by callers.

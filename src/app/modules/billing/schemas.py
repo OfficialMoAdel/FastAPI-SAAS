@@ -342,7 +342,7 @@ class CheckoutCreate(BaseCreate):
 
     @model_validator(mode="after")
     def validate_urls(self) -> "CheckoutCreate":
-        frontend_url = settings.FRONTEND_URL.rstrip("/") if settings.FRONTEND_URL else ""
+        frontend_url = settings.app.FRONTEND_URL.rstrip("/") if settings.app.FRONTEND_URL else ""
         if not frontend_url:
             raise ValueError("FRONTEND_URL must be configured to validate checkout URLs")
 

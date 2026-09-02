@@ -320,32 +320,27 @@ async def migrate_tenant_cache_index(tenant_id: int | str | None = None) -> dict
             break
 
         cursor, keys = await client.scan(cursor, match=pattern, count=100)
-        for key in keys:
-            # Extract tenant_id from key (format: tenant:123:prefix:...)
-            parts = key.split(":", 2)
-            if len(parts) >= 2:
-                tid = parts[1]
-                tenants_seen.add(tid)
-                index_key = f"tenant_index:{tid}"
+        if keys:
+            pipe = client.pipeline(transaction=False)
+            if hasattr(pipe, "__aenter__"):
+                pipe = await pipe.__aenter__()
+            for key in keys:
+                # Extract tenant_id from key (format: tenant:123:prefix:...)
+                parts = key.split(":", 2)
+                if len(parts) >= 2:
+                    tid = parts[1]
+                    tenants_seen.add(tid)
+                    index_key = f"tenant_index:{tid}"
 
-                # Add to global index
-                # Also determine prefix and add to sharded index
-                # key format: tenant:{id}:{prefix}:...
-                # parts from split above are [tenant, id, rest]
-                # rest is "prefix:..."
+                    rest = parts[2]
+                    rest_parts = rest.split(":", 1)
+                    prefix = rest_parts[0]
 
-                # We need to split rest to get prefix
-                rest = parts[2]
-                rest_parts = rest.split(":", 1)
-                prefix = rest_parts[0]
-
-                async with client.pipeline(transaction=False) as pipe:
                     pipe.sadd(index_key, key)
                     pipe.sadd(f"tenant_index:{tid}:{prefix}", key)
-                    await pipe.execute()
-
-                keys_indexed += 1
-
+                    keys_indexed += 1
+            if hasattr(pipe, "execute"):
+                await pipe.execute()
         if cursor == 0:
             break
 

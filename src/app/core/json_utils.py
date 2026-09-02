@@ -18,7 +18,7 @@ Usage:
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal, overload
 from uuid import UUID
 
 import orjson
@@ -63,31 +63,49 @@ def orjson_dumps_default(obj: Any) -> Any:
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
-def json_dumps(obj: Any, *, as_str: bool = False) -> bytes | str:
+@overload
+def json_dumps(
+    obj: Any,
+    *,
+    as_str: Literal[True],
+    default: Any | None = ...,
+    option: int | None = ...,
+) -> str: ...
+
+
+@overload
+def json_dumps(
+    obj: Any,
+    *,
+    as_str: Literal[False] = ...,
+    default: Any | None = ...,
+    option: int | None = ...,
+) -> bytes: ...
+
+
+def json_dumps(
+    obj: Any,
+    *,
+    as_str: bool = False,
+    default: Any | None = None,
+    option: int | None = None,
+) -> bytes | str:
     """Serialize object to JSON bytes or string using orjson.
 
-    Parameters
-    ----------
-    obj : Any
-        Object to serialize
-    as_str : bool, optional
-        If True, return UTF-8 string instead of bytes, by default False
+    Args:
+        obj: The object to serialize
+        as_str: If True, returns str instead of bytes
+        default: Optional fallback serializer callable (defaults to orjson_dumps_default)
+        option: Optional orjson options bitmask (defaults to OPT_UTC_Z when None)
 
-    Returns
-    -------
-    bytes | str
-        JSON bytes (default) or string if as_str=True
-
-    Examples
-    --------
-    >>> json_dumps({"id": UUID("..."), "amount": Decimal("10.5")})
-    b'{"id":"...","amount":10.5}'
+    Returns:
+        bytes (default) or str (if as_str=True)
     """
-    result = orjson.dumps(
-        obj,
-        default=orjson_dumps_default,
-        option=orjson.OPT_SERIALIZE_NUMPY | orjson.OPT_UTC_Z,
-    )
+    default_fn = default or orjson_dumps_default
+    if option is not None:
+        result = orjson.dumps(obj, default=default_fn, option=option)
+    else:
+        result = orjson.dumps(obj, default=default_fn, option=orjson.OPT_UTC_Z)
     return result.decode("utf-8") if as_str else result
 
 

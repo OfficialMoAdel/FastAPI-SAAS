@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
     pass
+from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.logger import get_logger
 from src.app.core.rbac.bitmask import PermissionBitmask
@@ -54,7 +55,7 @@ async def get_user_permissions(
         .join(UserRole, UserRole.role_id == Role.id)
         .where(
             UserRole.user_id == user_id,
-            UserRole.tenant_id == tenant_id,
+            tenant_scope(UserRole, tenant_id),
         )
         .limit(1000)  # Safety bound
     )
@@ -208,7 +209,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
                 # production both fall back to the "unknown" placeholder so a
                 # non-production-but-real environment never gets a spoofed
                 # identity (previously `!= "production"` let staging through).
-                is_local = settings.ENVIRONMENT == "local"
+                is_local = settings.env.ENVIRONMENT == "local"
                 if "email" not in user_data:
                     user_data["email"] = "mocked@example.com" if is_local else "unknown@example.com"
                 if "username" not in user_data:
@@ -284,8 +285,13 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
             )
             return
 
-        # Check permission using O(1) bitmask
-        has_perm = await has_permission_cached(user_id, tenant_id, permission_slug, db)
+        # Check permission using O(1) bitmask (uses pre-fetched bitmask from request.state if available)
+        cached_tuple = getattr(request.state, "cached_permissions_bitmask", None) if request is not None else None
+        if cached_tuple is not None and cached_tuple[0] == user_id and str(cached_tuple[1]) == str(tenant_id):
+            mask = cached_tuple[2]
+            has_perm = PermissionBitmask.has_permission(mask, permission_slug)
+        else:
+            has_perm = await has_permission_cached(user_id, tenant_id, permission_slug, db)
 
         # Raise if permission denied
         if not has_perm:

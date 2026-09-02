@@ -287,6 +287,14 @@ class WebhookDelivery(Base, UUIDMixin):
             "created_at",
             postgresql_ops={"created_at": "DESC"},
         ),
+        # Query deliveries by tenant, status, and time (list deliveries filtering/ordering)
+        Index(
+            "idx_delivery_tenant_status_created",
+            "tenant_id",
+            "status",
+            "created_at",
+            postgresql_ops={"created_at": "DESC"},
+        ),
     )
 
     def __repr__(self) -> str:

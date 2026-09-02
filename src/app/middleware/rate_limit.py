@@ -30,9 +30,9 @@ from src.app.core.utils.rate_limit import rate_limiter
 logger = get_logger(__name__)
 
 # Tier-based rate limits configuration (from settings)
-TIER_RATE_LIMITS = settings.TIER_RATE_LIMITS
-DEFAULT_AUTHENTICATED_LIMIT = settings.DEFAULT_AUTHENTICATED_LIMIT
-DEFAULT_ANONYMOUS_LIMIT = settings.DEFAULT_ANONYMOUS_LIMIT
+TIER_RATE_LIMITS = settings.rate_limit.TIER_RATE_LIMITS
+DEFAULT_AUTHENTICATED_LIMIT = settings.rate_limit.DEFAULT_AUTHENTICATED_LIMIT
+DEFAULT_ANONYMOUS_LIMIT = settings.rate_limit.DEFAULT_ANONYMOUS_LIMIT
 
 
 class RateLimitMiddleware:
@@ -58,7 +58,7 @@ class RateLimitMiddleware:
         client_ip = getattr(request.state, "client_ip", None) or get_client_ip(request)
 
         # SECURITY: Check if IP is banned before processing
-        if settings.AUTO_BAN_ENABLED:
+        if settings.security.AUTO_BAN_ENABLED:
             ban_info = await get_ban_info(client_ip)
             if ban_info.is_banned:
                 logger.warning(
@@ -106,7 +106,7 @@ class RateLimitMiddleware:
             return
 
         # Check if IP is whitelisted and should bypass rate limiting
-        if settings.IP_WHITELIST_BYPASS_RATE_LIMIT:
+        if settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT:
             if hasattr(request.state, "ip_whitelisted"):
                 is_whitelisted = request.state.ip_whitelisted
             else:
@@ -152,7 +152,7 @@ class RateLimitMiddleware:
             logger.warning("Rate limit exceeded | key=%s | limit=%s | period=%s", key, limit, period)
 
             # AUTO-BAN: Track violations and ban repeat offenders
-            if settings.AUTO_BAN_ENABLED and client_ip:
+            if settings.security.AUTO_BAN_ENABLED and client_ip:
                 try:
                     was_banned, violation_count = await check_and_auto_ban(client_ip)
                 except Exception as auto_ban_err:
@@ -170,7 +170,7 @@ class RateLimitMiddleware:
                         "Auto-ban triggered | ip=%s | violations=%d | threshold=%d",
                         client_ip,
                         violation_count,
-                        settings.AUTO_BAN_THRESHOLD,
+                        settings.security.AUTO_BAN_THRESHOLD,
                     )
                     # Return 403 Forbidden instead of 429 to indicate ban.
                     headers["X-Banned"] = "true"
@@ -302,9 +302,14 @@ class RateLimitMiddleware:
         if limit is None or period is None:
             # Fallback to settings tier config
             resolved_tier = str(tier_name).lower() if tier_name else "anonymous"  # H5 FIX: coerce int tier_name
-            limit_config = settings.TIER_RATE_LIMITS.get(resolved_tier)
+            limit_config = settings.rate_limit.TIER_RATE_LIMITS.get(resolved_tier)
             if limit_config is None:
-                limit_config = settings.DEFAULT_AUTHENTICATED_LIMIT if user_id else settings.DEFAULT_ANONYMOUS_LIMIT
+                default_limit = (
+                    settings.rate_limit.DEFAULT_AUTHENTICATED_LIMIT
+                    if user_id
+                    else settings.rate_limit.DEFAULT_ANONYMOUS_LIMIT
+                )
+                limit_config = default_limit
 
             limit, period = limit_config
 

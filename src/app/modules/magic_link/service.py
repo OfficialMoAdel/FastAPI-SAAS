@@ -286,7 +286,7 @@ class MagicLinkService:
             return LoginMFAResponse(
                 mfa_required=True,
                 mfa_token=mfa_token,
-                expires_in=int(settings.MFA_PENDING_EXPIRY_SECONDS),
+                expires_in=int(settings.auth.MFA_PENDING_EXPIRY_SECONDS),
                 message="MFA verification required",
             )
 
@@ -350,7 +350,7 @@ class MagicLinkService:
 
         # Build magic link URL. URL-encode the token to guard against any special
         # characters in future token formats and prevent URL truncation or injection.
-        magic_link_url = f"{settings.FRONTEND_URL}/auth/magic-link?token={quote(token, safe='')}"
+        magic_link_url = f"{settings.app.FRONTEND_URL}/auth/magic-link?token={quote(token, safe='')}"
 
         # Enqueue via ARQ if available
         arq = get_arq()

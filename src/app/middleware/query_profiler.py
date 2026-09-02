@@ -116,7 +116,7 @@ class QueryProfilerMiddleware:
         self._engine: Engine | None = None
 
     def _check_enabled(self) -> bool:
-        if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
+        if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
             return False
         enabled = settings.query_profiler.QUERY_PROFILER_ENABLED
         if enabled is not None:

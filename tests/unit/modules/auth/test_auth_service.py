@@ -428,9 +428,8 @@ class TestAuthServiceEmailFlows:
             mock_user_service.crud = MagicMock()
             mock_user_service.crud.get = AsyncMock(return_value=mock_user)
             mock_get_service.return_value = mock_user_service
-
+            mock_settings.app.FRONTEND_URL = "http://test-frontend"
             mock_settings.FRONTEND_URL = "http://test-frontend"
-
             # Mock the session.add and commit behavior
             mock_db.add = MagicMock()
             mock_db.commit = AsyncMock()

@@ -8,15 +8,13 @@ from jinja2 import Template, TemplateNotFound
 from sqlalchemy import select
 
 from src.app.core.config import settings
+from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.logger import get_logger
 from src.app.modules.notifications.models import EmailTemplateOverride
 
 logger = get_logger(__name__)
-
-# OPT-12: Pre-compile regex patterns at module level
 _TITLE_PATTERN = re.compile(r"<title>(.*?)</title>", re.DOTALL)
 _TITLE_STRIP_PATTERN = re.compile(r"<title>.*?</title>", re.DOTALL)
-
 
 class EmailTemplatesService:
     """Service for rendering email templates."""
@@ -32,7 +30,7 @@ class EmailTemplatesService:
         async with self._session_maker() as session:
             result = await session.execute(
                 select(EmailTemplateOverride).where(
-                    EmailTemplateOverride.tenant_id == tenant_id,  # type: ignore[arg-type]
+                    tenant_scope(EmailTemplateOverride, tenant_id),
                     EmailTemplateOverride.template_name == template_name,
                 )
             )
@@ -87,7 +85,7 @@ class EmailTemplatesService:
         # Load default template
         try:
             html_content = (
-                Path(settings.EMAIL_TEMPLATES_DIR).joinpath(f"{template_name}.html").read_text(encoding="utf-8")
+                Path(settings.email.EMAIL_TEMPLATES_DIR).joinpath(f"{template_name}.html").read_text(encoding="utf-8")
             )
 
         except FileNotFoundError:

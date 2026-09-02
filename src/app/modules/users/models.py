@@ -85,13 +85,13 @@ class User(Base, kw_only=True):
     tier_id: Mapped[int | None] = mapped_column(ForeignKey("tier.id"), index=True, default=None, init=False)
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(back_populates="users", init=False, lazy="selectin")
+    tenant: Mapped["Tenant"] = relationship(back_populates="users", init=False, lazy="noload")
     roles: Mapped[list["Role"]] = relationship(
         secondary="user_roles",
         back_populates="users",
         init=False,
         viewonly=True,
-        lazy="selectin",
+        lazy="noload",
     )
     notifications: Mapped[list["Notification"]] = relationship(
         back_populates="user", init=False, cascade="all, delete-orphan", lazy="noload"
@@ -116,12 +116,12 @@ class User(Base, kw_only=True):
         back_populates="user", init=False, cascade="all, delete-orphan", lazy="noload"
     )
     ai_settings: Mapped["AISettings | None"] = relationship(
-        back_populates="user", uselist=False, init=False, cascade="all, delete-orphan", lazy="selectin"
+        back_populates="user", uselist=False, init=False, cascade="all, delete-orphan", lazy="noload"
     )
     ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(
         back_populates="user", init=False, cascade="all, delete-orphan", lazy="noload"
     )
-    tier: Mapped["Tier | None"] = relationship(init=False, lazy="selectin")
+    tier: Mapped["Tier | None"] = relationship(init=False, lazy="noload")
     audit_logs: Mapped[list["AuditLog"]] = relationship(
         back_populates="user", init=False, cascade="all, delete-orphan", lazy="noload"
     )

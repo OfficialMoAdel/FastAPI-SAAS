@@ -81,7 +81,9 @@ async def stripe_webhook(
             detail="Missing Stripe-Signature header",
         )
 
-    webhook_secret = settings.STRIPE_WEBHOOK_SECRET.get_secret_value() if settings.STRIPE_WEBHOOK_SECRET else None
+    webhook_secret = (
+        settings.billing.STRIPE_WEBHOOK_SECRET.get_secret_value() if settings.billing.STRIPE_WEBHOOK_SECRET else None
+    )
     if not webhook_secret:
         logger.error("STRIPE_WEBHOOK_SECRET is not set in configuration")
         raise HTTPException(

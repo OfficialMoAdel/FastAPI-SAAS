@@ -302,6 +302,99 @@ class LuaScriptManager:
             end
             return val
         """,
+        # P1-1: Composite Auth Prefetch (Blacklist + Session + RBAC Bitmask in 1 RTT)
+        "composite_auth_prefetch": """
+            -- KEYS[1]: negative blacklist cache key (e.g. token:verified:{hash})
+            -- KEYS[2]: blacklist zset key (e.g. token:blacklist)
+            -- KEYS[3]: session hash key (e.g. session:data:{user_id})
+            -- KEYS[4]: rbac bitmask key (e.g. perms:bitmask:{tenant}:{user}:{version})
+            -- ARGV[1]: blacklist member (e.g. jti:{jti} or token)
+            -- ARGV[2]: now (epoch timestamp in seconds)
+            -- ARGV[3]: negative cache TTL (seconds)
+            -- ARGV[4]: session_id (e.g. sid or jti)
+            -- ARGV[5]: check_bitmask flag ("1" or "0")
+            -- Returns: {err (0/1), is_blacklisted (0/1/-1), session_valid (0/1/-1), bitmask (string/false)}
+
+            local err = 0
+            local function safe_call(...)
+                local ok, res = pcall(redis.call, ...)
+                if not ok then
+                    err = 1
+                    return nil
+                end
+                return res
+            end
+
+            local is_blacklisted = -1
+            if ARGV[1] ~= '' and KEYS[2] ~= '' then
+                local exists_neg = (KEYS[1] ~= '') and safe_call('EXISTS', KEYS[1])
+                if exists_neg == 1 then
+                    is_blacklisted = 0
+                elseif err == 0 then
+                    local score = safe_call('ZSCORE', KEYS[2], ARGV[1])
+                    if err == 0 then
+                        if not score then
+                            if KEYS[1] ~= '' then
+                                safe_call('SETEX', KEYS[1], ARGV[3], '1')
+                            end
+                            is_blacklisted = 0
+                        elseif tonumber(score) < tonumber(ARGV[2]) then
+                            safe_call('ZREM', KEYS[2], ARGV[1])
+                            if KEYS[1] ~= '' then
+                                safe_call('SETEX', KEYS[1], ARGV[3], '1')
+                            end
+                            is_blacklisted = 0
+                        else
+                            is_blacklisted = 1
+                        end
+                    end
+                end
+            end
+
+            local session_valid = -1
+            if ARGV[4] ~= '' and KEYS[3] ~= '' and err == 0 then
+                local s_res = safe_call('HEXISTS', KEYS[3], ARGV[4])
+                if err == 0 and s_res ~= nil then
+                    session_valid = s_res
+                end
+            end
+
+            local bitmask = false
+            if ARGV[5] == '1' and KEYS[4] ~= '' and err == 0 then
+                local b_res = safe_call('GET', KEYS[4])
+                if err == 0 and b_res ~= nil then
+                    bitmask = b_res
+                end
+            end
+
+            return {err, is_blacklisted, session_valid, bitmask}
+        """,
+        # P3-1: Auto-Ban IP (Atomic SETNX + INCR + EXPIRE + DEL in 1 RTT)
+        "auto_ban_ip": """
+            -- KEYS[1]: ban_key (rate_limit:ban:{ip})
+            -- KEYS[2]: count_key (rate_limit:ban_count:{ip})
+            -- KEYS[3]: violations_key (rate_limit:violations:{ip})
+            -- ARGV[1]: reason
+            -- ARGV[2]: ban_duration (seconds)
+            -- ARGV[3]: count_ttl (seconds)
+            -- Returns: {is_new_ban (0/1), new_ban_count}
+
+            local set_res = redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2]), 'NX')
+            if not set_res then
+                return {0, 0}
+            end
+
+            local ban_count = redis.call('INCR', KEYS[2])
+            if ban_count == 1 then
+                redis.call('EXPIRE', KEYS[2], tonumber(ARGV[3]))
+            end
+
+            if KEYS[3] and KEYS[3] ~= '' then
+                redis.call('DEL', KEYS[3])
+            end
+
+            return {1, ban_count}
+        """,
     }
 
     def __init__(self) -> None:
@@ -427,6 +520,7 @@ class LuaScriptManager:
                 *keys,
                 *args,
             )
+            script.loaded = True
             return result
 
         except Exception as e:
@@ -437,23 +531,42 @@ class LuaScriptManager:
                 isinstance(e, NoScriptError) or "NOSCRIPT" in str(e).upper() or "NO MATCHING SCRIPT" in str(e).upper()
             )
 
-            # Handle NOSCRIPT error - script not in Redis cache
+            # Handle NOSCRIPT error - script not in Redis cache; reload via SCRIPT LOAD
             if is_noscript:
-                logger.debug("Script '' not cached, falling back to EVAL", script_name=script_name)
+                logger.debug("Script not cached in Redis, reloading via SCRIPT LOAD", script_name=script_name)
                 try:
-                    result = await redis.eval(  # type: ignore[misc]
-                        script.source,
+                    loaded_sha = await redis.script_load(script.source)  # type: ignore[misc]
+                    if loaded_sha != script.sha1:
+                        logger.warning(
+                            "Script SHA1 mismatch on reload; keeping locally computed SHA",
+                            name=script_name,
+                            expected=script.sha1[:8],
+                            got=str(loaded_sha)[:8],
+                        )
+                    script.loaded = True
+                    return await redis.evalsha(  # type: ignore[misc]
+                        script.sha1,
                         len(keys),
                         *keys,
                         *args,
                     )
-                    # Mark as needing reload
-                    script.loaded = False
-                    return result
-
-                except Exception as eval_error:
-                    raise LuaScriptError(f"EVAL fallback failed for '{script_name}': {eval_error}") from eval_error
-
+                except Exception as load_err:
+                    logger.warning(
+                        "SCRIPT LOAD / EVALSHA reload failed, falling back to EVAL",
+                        script_name=script_name,
+                        error=str(load_err),
+                    )
+                    try:
+                        result = await redis.eval(  # type: ignore[misc]
+                            script.source,
+                            len(keys),
+                            *keys,
+                            *args,
+                        )
+                        script.loaded = False
+                        return result
+                    except Exception as eval_error:
+                        raise LuaScriptError(f"EVAL fallback failed for '{script_name}': {eval_error}") from eval_error
             # Other Redis errors
             raise LuaScriptError(f"Script '{script_name}' execution failed: {e}") from e
 

@@ -37,6 +37,21 @@ def upgrade() -> None:
     op.create_index("ix_tenants_slug", "tenants", ["slug"], unique=True)
     op.create_index("idx_tenants_slug_lower", "tenants", [sa.text("lower(slug)")])
 
+    # Seed system tenant (id: 00000000-0000-0000-0000-000000000000) for system-level audit logs and RLS bypass
+    op.execute(
+        """
+        INSERT INTO tenants (id, name, slug, is_active, created_at, updated_at)
+        VALUES (
+            '00000000-0000-0000-0000-000000000000'::UUID,
+            'System',
+            'system',
+            true,
+            now(),
+            now()
+        )
+        ON CONFLICT (id) DO NOTHING;
+        """
+    )
     # ===== TIER =====
     op.create_table(
         "tier",

@@ -36,7 +36,7 @@ async def get_redis_pool() -> ConnectionPool:
 
     if not hasattr(get_redis_pool, "_pool") or get_redis_pool._pool is None:  # type: ignore[attr-defined]
         get_redis_pool._pool = ConnectionPool.from_url(  # type: ignore[attr-defined]
-            settings.REDIS_CACHE_URL,
+            settings.redis_cache.REDIS_CACHE_URL,
             max_connections=settings.redis_cache.REDIS_CACHE_MAX_CONNECTIONS,
             socket_timeout=settings.redis_cache.REDIS_CACHE_SOCKET_TIMEOUT,
             socket_connect_timeout=settings.redis_cache.REDIS_CACHE_SOCKET_CONNECT_TIMEOUT,

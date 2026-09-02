@@ -172,7 +172,7 @@ async def startup(ctx: Worker) -> None:
     from src.app.core.config import settings
     from src.app.core.redis_provider import get_redis_pool, set_clients
 
-    if settings.REDIS_CACHE_ENABLED or settings.REDIS_QUEUE_ENABLED:
+    if settings.redis_cache.REDIS_CACHE_ENABLED or settings.redis_queue.REDIS_QUEUE_ENABLED:
         pool = await get_redis_pool()
         # decode_responses=True matches the web-side cache client contract.
         import redis.asyncio as aioredis
@@ -185,7 +185,7 @@ async def startup(ctx: Worker) -> None:
         from src.app.core.events import event_bus
 
         event_bus.set_redis_client(redis_client)
-        if settings.ARQ_ENABLED:
+        if settings.arq.ARQ_ENABLED:
             from arq.connections import ArqRedis
 
             from src.app.core.json_utils import json_dumps, json_loads

@@ -18,28 +18,39 @@ async def test_get_db_session_yields_session():
 
 def _patch_settings(enabled=True, redis_enabled=False, **overrides):
     settings = MagicMock()
-    settings.CRUD_ADMIN_ENABLED = enabled
-    settings.CRUD_ADMIN_REDIS_ENABLED = redis_enabled
-    settings.CRUD_ADMIN_REDIS_HOST = "localhost"
-    settings.CRUD_ADMIN_REDIS_PORT = 6379
-    settings.CRUD_ADMIN_REDIS_DB = 0
-    settings.CRUD_ADMIN_REDIS_PASSWORD = None
-    settings.CRUD_ADMIN_MOUNT_PATH = "/admin"
-    settings.CRUD_ADMIN_ALLOWED_IPS_LIST = []
-    settings.CRUD_ADMIN_ALLOWED_NETWORKS_LIST = []
-    settings.CRUD_ADMIN_MAX_SESSIONS = 5
-    settings.CRUD_ADMIN_SESSION_TIMEOUT = 60
-    settings.CRUD_ADMIN_TRACK_EVENTS = False
-    settings.CRUD_ADMIN_TRACK_SESSIONS = False
-    settings.SECRET_KEY = MagicMock()
-    settings.SECRET_KEY.get_secret_value.return_value = "secret"
-    settings.SESSION_SECURE_COOKIES = True
-    settings.ENVIRONMENT = EnvironmentOption.LOCAL
-    settings.ADMIN_USERNAME = "admin"
-    settings.ADMIN_PASSWORD = MagicMock()
-    settings.ADMIN_PASSWORD.get_secret_value.return_value = "pw"
+    settings.admin = MagicMock()
+    settings.first_user = MagicMock()
+    settings.env = MagicMock()
+    settings.crypt = MagicMock()
+
+    settings.admin.CRUD_ADMIN_ENABLED = enabled
+    settings.admin.CRUD_ADMIN_REDIS_ENABLED = redis_enabled
+    settings.admin.CRUD_ADMIN_REDIS_HOST = "localhost"
+    settings.admin.CRUD_ADMIN_REDIS_PORT = 6379
+    settings.admin.CRUD_ADMIN_REDIS_DB = 0
+    settings.admin.CRUD_ADMIN_REDIS_PASSWORD = None
+    settings.admin.CRUD_ADMIN_MOUNT_PATH = "/admin"
+    settings.admin.CRUD_ADMIN_ALLOWED_IPS_LIST = []
+    settings.admin.CRUD_ADMIN_ALLOWED_NETWORKS_LIST = []
+    settings.admin.CRUD_ADMIN_MAX_SESSIONS = 5
+    settings.admin.CRUD_ADMIN_SESSION_TIMEOUT = 60
+    settings.admin.CRUD_ADMIN_TRACK_EVENTS = False
+    settings.admin.CRUD_ADMIN_TRACK_SESSIONS = False
+    settings.admin.SESSION_SECURE_COOKIES = True
+
+    settings.crypt.SECRET_KEY = MagicMock()
+    settings.crypt.SECRET_KEY.get_secret_value.return_value = "secret"
+    settings.env.ENVIRONMENT = EnvironmentOption.LOCAL
+    settings.first_user.ADMIN_USERNAME = "admin"
+    settings.first_user.ADMIN_PASSWORD = MagicMock()
+    settings.first_user.ADMIN_PASSWORD.get_secret_value.return_value = "pw"
+
     for key, value in overrides.items():
         setattr(settings, key, value)
+        setattr(settings.admin, key, value)
+        setattr(settings.first_user, key, value)
+        setattr(settings.crypt, key, value)
+        setattr(settings.env, key, value)
     return settings
 
 
@@ -117,6 +128,7 @@ def test_create_admin_no_initial_admin_when_username_empty():
 
 def test_create_admin_no_initial_admin_when_password_empty():
     settings = _patch_settings(enabled=True)
+    settings.first_user.ADMIN_PASSWORD.get_secret_value.return_value = ""
     settings.ADMIN_PASSWORD.get_secret_value.return_value = ""
     with (
         patch.object(admin_init, "settings", settings),

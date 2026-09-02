@@ -108,7 +108,7 @@ class CheckoutService:
             # Allow relative URLs or URLs matching FRONTEND_URL
             is_relative = return_url.startswith("/") and not return_url.startswith("//")
 
-            frontend_url = settings.FRONTEND_URL.rstrip("/") if settings.FRONTEND_URL else ""
+            frontend_url = settings.app.FRONTEND_URL.rstrip("/") if settings.app.FRONTEND_URL else ""
             is_allowed_origin = False
 
             if frontend_url:

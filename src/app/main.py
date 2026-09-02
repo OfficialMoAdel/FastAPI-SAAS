@@ -52,7 +52,7 @@ async def _warm_token_blacklist_cache() -> None:
                 logger.info("Token blacklist cache warmed", count=count)
     except (RedisError, SQLAlchemyError) as e:
         logger.error("Failed to warm token blacklist cache", error=str(e))
-        if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
+        if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
             raise
         logger.warning("Continuing with cold blacklist cache (non-production)")
 
@@ -98,10 +98,10 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:  # no
     from src.app.core.env_validator import EnvironmentValidator
 
     if not EnvironmentValidator.validate_and_log():
-        if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
+        if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
             raise RuntimeError("Environment validation failed - refusing to start in production")
 
-    default_lifespan = lifespan_factory(settings, create_tables_on_start=settings.CREATE_TABLES_ON_STARTUP)
+    default_lifespan = lifespan_factory(settings, create_tables_on_start=settings.app.CREATE_TABLES_ON_STARTUP)
 
     async with default_lifespan(app):
         from src.app.core.db.database import get_async_engine
@@ -123,7 +123,7 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:  # no
             # Initialize ARQ queue so NORMAL/LOW events dispatch asynchronously
             # Without this, all events fall back to synchronous in-process execution
             # Task 26: Only initialize if ARQ_ENABLED is True
-            if settings.ARQ_ENABLED:
+            if settings.arq.ARQ_ENABLED:
                 try:
                     from src.app.core.utils.queue import pool as arq_queue
 
@@ -159,13 +159,15 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:  # no
                 logger.info("Lua scripts preloaded", count=len(loaded_scripts))
             except RedisError as e:
                 logger.error("Failed to preload Lua scripts", error=str(e))
-                if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
+                if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
                     raise
-            # P1-6: start the cross-worker ban L1 invalidation listener
-            # alongside the existing tenant L1 listener.
+            # P1-6 / P2-2: start cross-worker L1 invalidation listeners
+            # (auto-ban, rate limit tier policy, and tenant L1 listeners)
             from src.app.core.security.auto_ban import _start_ban_l1_invalidation_listener
+            from src.app.core.security.rate_limit_cache import start_policy_invalidation_listener
 
             _start_ban_l1_invalidation_listener()
+            start_policy_invalidation_listener()
         # Warm application caches
         logger.info("Loading security runtime config...")
         from src.app.core.utils.config_store import get_runtime_config
@@ -173,19 +175,19 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:  # no
         config = await get_runtime_config()
         if config:
             if "IP_WHITELIST_ENABLED" in config:
-                settings.IP_WHITELIST_ENABLED = config["IP_WHITELIST_ENABLED"]
+                settings.security.IP_WHITELIST_ENABLED = config["IP_WHITELIST_ENABLED"]
             if "IP_BLACKLIST_ENABLED" in config:
-                settings.IP_BLACKLIST_ENABLED = config["IP_BLACKLIST_ENABLED"]
+                settings.security.IP_BLACKLIST_ENABLED = config["IP_BLACKLIST_ENABLED"]
             if "IP_WHITELIST_BYPASS_RATE_LIMIT" in config:
-                settings.IP_WHITELIST_BYPASS_RATE_LIMIT = config["IP_WHITELIST_BYPASS_RATE_LIMIT"]
+                settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT = config["IP_WHITELIST_BYPASS_RATE_LIMIT"]
             if "AUTO_BAN_ENABLED" in config:
-                settings.AUTO_BAN_ENABLED = config["AUTO_BAN_ENABLED"]
+                settings.security.AUTO_BAN_ENABLED = config["AUTO_BAN_ENABLED"]
             if "AUTO_BAN_THRESHOLD" in config:
-                settings.AUTO_BAN_THRESHOLD = config["AUTO_BAN_THRESHOLD"]
+                settings.security.AUTO_BAN_THRESHOLD = config["AUTO_BAN_THRESHOLD"]
             if "AUTO_BAN_DURATION" in config:
-                settings.AUTO_BAN_DURATION = config["AUTO_BAN_DURATION"]
+                settings.security.AUTO_BAN_DURATION = config["AUTO_BAN_DURATION"]
             if "AUTO_BAN_ESCALATION" in config:
-                settings.AUTO_BAN_ESCALATION = config["AUTO_BAN_ESCALATION"]
+                settings.security.AUTO_BAN_ESCALATION = config["AUTO_BAN_ESCALATION"]
             logger.info("Security runtime config loaded from Redis")
 
         logger.info("Starting application cache warming...")
@@ -231,10 +233,12 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:  # no
 
         # Cancel the L1 invalidation listeners (leaked pubsub tasks).
         from src.app.core.security.auto_ban import stop_ban_l1_invalidation_listener
+        from src.app.core.security.rate_limit_cache import stop_policy_invalidation_listener
         from src.app.middleware.tenant import stop_l1_invalidation_listener
 
         stop_ban_l1_invalidation_listener()
         await stop_l1_invalidation_listener()
+        await stop_policy_invalidation_listener()
 
 app = create_application(
     router=get_router(),
@@ -274,7 +278,7 @@ app.add_middleware(RateLimitMiddleware)  # User/tier-based rate limiting
 app.add_middleware(TenantMiddleware)  # Tenant context for multi-tenant features
 app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
 app.add_middleware(
-    RequestBodyLimitMiddleware, max_body_size=settings.MAX_BODY_SIZE
+    RequestBodyLimitMiddleware, max_body_size=settings.app.MAX_BODY_SIZE
 )  # Configurable limit (runs AFTER AttackDetection in LIFO)
 app.add_middleware(IPFilterMiddleware)  # Block unwanted IPs, sets ip_whitelisted state
 app.add_middleware(QueryProfilerMiddleware)  # Dev-mode query profiling (disabled in production)
