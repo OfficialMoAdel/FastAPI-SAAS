@@ -64,11 +64,11 @@ The security module follows the **Facade Pattern**:
 ### Dependencies
 
 ```python
-from src.app.modules.passkey.schemas import (
+from src.app.modules.auth.schemas import (
     PasskeyCredentialResponse,
     PasskeyDeleteResponse,
 )
-from src.app.modules.passkey.service import passkey_service
+from src.app.modules.auth.services.passkey import passkey_service
 ```
 
 ## Implementation Notes
@@ -163,8 +163,7 @@ If the frontend is updated to use `/auth/passkey/*` directly, this module can be
 
 ## Related Modules
 
-- **Passkey Module:** `src/app/modules/passkey/` - Core passkey functionality
-- **Auth Module:** `src/app/modules/auth/` - Main authentication endpoints
+- **Auth Module (Passkeys & Identity):** `src/app/modules/auth/` - Passkey credentials and authentication
 - **Users Module:** `src/app/modules/users/` - User management
 
 ## API Versioning

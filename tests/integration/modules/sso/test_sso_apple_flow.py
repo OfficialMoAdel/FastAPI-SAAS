@@ -18,7 +18,7 @@ import jwt
 import pytest
 from httpx import AsyncClient
 
-from src.app.modules.sso.service import get_sso_service
+from src.app.modules.auth.services.sso import get_sso_service
 
 
 def _create_mock_sso_service():

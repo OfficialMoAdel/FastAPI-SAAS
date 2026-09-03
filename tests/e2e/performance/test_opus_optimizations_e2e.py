@@ -38,7 +38,7 @@ class TestFullAuthFlowWithOptimizations:
         """Verify passkey lookup uses O(log n) hash index (P1-2)."""
         import inspect
 
-        from src.app.modules.passkey import service
+        from src.app.modules.auth.services import passkey as service
 
         source = inspect.getsource(service)
 

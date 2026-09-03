@@ -15,6 +15,10 @@ done in this increment.
 
 from typing import Any
 
+from dotenv import load_dotenv
+
+# Load .env into os.environ before child BaseSettings classes instantiate
+load_dotenv()
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

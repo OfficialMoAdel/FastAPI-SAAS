@@ -70,16 +70,23 @@ async def logout(response: Response, access_token: str = Depends(oauth2_scheme))
 
 ```
 src/app/modules/auth/
-├── __init__.py           # Exports auth_service
-├── router.py             # /auth endpoints (login, logout, refresh)
-├── service.py            # AuthService class
-└── schemas.py            # Token response schemas
+├── __init__.py           # Unified lazy exports (AuthService, SSOService, PasskeyService, etc.)
+├── router.py             # Root router assembling auth, sso, passkey, magic-link, mfa
+├── service.py            # AuthService (core login/register/logout/refresh)
+├── models.py             # Consolidated models (tokens, sso, passkeys, magic link, mfa)
+├── schemas.py            # Consolidated DTOs across all auth mechanisms
+├── crud.py               # Database CRUD for auth entities
+├── errors.py             # Domain exceptions (AuthError, MagicLinkError, etc.)
+├── rate_limit.py         # check_auth_rate_limit dependency
+├── routers/              # Sub-routers (sso, sso_settings, passkey, magic_link, mfa)
+├── services/             # Subservices (passwords, tokens, lockout, sso, passkey, magic_link, mfa)
+└── providers/            # OAuth provider adapters (google, github, microsoft, apple, base)
 ```
 
 ## Touch Points
 
 - **Auth service**: `modules/auth/service.py::AuthService`
-- **Token creation**: `src.app.core.security::create_access_token`
+- **Token issuance**: `modules/auth/services/tokens.py::TokenIssuer`
 - **User auth**: `src.app.core.security::authenticate_user`
 - **Token blacklist**: `src.app.core.db.crud_token_blacklist`
 

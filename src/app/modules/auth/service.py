@@ -33,7 +33,7 @@ from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.users.service import UserService
 
 logger = get_logger(__name__)
-__all__ = ["AuthService", "get_auth_service"]
+__all__ = ["AuthService", "AuthGateway", "get_auth_service", "get_auth"]
 # Re-exported for test backward compatibility
 # (TODO: REMOVE once tests/unit/modules/auth no longer patch these module attributes)
 event_bus = event_bus
@@ -49,6 +49,8 @@ def get_auth_service() -> "AuthService":
         New AuthService instance.
     """
     return AuthService()
+
+
 
 
 class AuthService:
@@ -218,7 +220,7 @@ class AuthService:
         await lockout.clear(redis, normalized_username)
 
         # Check if MFA is enabled for this user
-        from src.app.modules.mfa.service import get_mfa_service
+        from src.app.modules.auth.services.mfa import get_mfa_service
 
         mfa_service = get_mfa_service()
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], db)
@@ -570,3 +572,6 @@ class AuthService:
     ) -> dict[str, str]:
         """Verify email using verification token (delegates to EmailVerificationService)."""
         return await EmailVerificationService().verify_email(token, db)
+
+get_auth = get_auth_service
+AuthGateway = AuthService

@@ -197,17 +197,19 @@ from src.app.modules.audit_logs.models import AuditLog  # noqa: F401
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 # This is critical - SQLAlchemy needs all models imported before create_all()
 # 1. Independent / Leaf models (or close to leaf)
-from src.app.modules.auth.models import EmailVerificationToken, PasswordResetToken  # noqa: F401
-from src.app.modules.files.models import File  # noqa: F401
-from src.app.modules.magic_link.models import MagicLink  # noqa: F401
-from src.app.modules.mfa.models import MFAMethod  # noqa: F401
-from src.app.modules.passkey.models import PasskeyCredential  # noqa: F401
+from src.app.modules.auth.models import (  # noqa: F401
+    EmailVerificationToken,
+    MagicLink,
+    MFAMethod,
+    PasskeyCredential,
+    PasswordResetToken,
+    SSOSettings,
+    UserSSOConnection,
+)
 from src.app.modules.posts.models import Post  # noqa: F401
 from src.app.modules.rate_limits.models import RateLimit  # noqa: F401
 from src.app.modules.rbac.models import Role, RolePermission, UserRole  # noqa: F401
-from src.app.modules.sso.models import UserSSOConnection  # noqa: F401
-from src.app.modules.sso_settings.models import SSOSettings  # noqa: F401
-from src.app.modules.storage_settings.models import StorageSettings  # noqa: F401
+from src.app.modules.storage.models import File, StorageSettings  # noqa: F401
 
 # 3. Models that depend on User/Others (Root)
 from src.app.modules.tenants.models import Tenant  # noqa: F401
@@ -599,7 +601,7 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
         ),
         # Mock MFA rate limit check
         patch(
-            "src.app.modules.mfa.router.check_mfa_rate_limit",
+            "src.app.modules.auth.routers.mfa.check_mfa_rate_limit",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -713,7 +715,7 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
         ),
         # Mock MFA rate limit check
         patch(
-            "src.app.modules.mfa.router.check_mfa_rate_limit",
+            "src.app.modules.auth.routers.mfa.check_mfa_rate_limit",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -909,7 +911,7 @@ async def full_mock_context(get_test_app):
         ),
         # Mock MFA rate limit check
         patch(
-            "src.app.modules.mfa.router.check_mfa_rate_limit",
+            "src.app.modules.auth.routers.mfa.check_mfa_rate_limit",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -958,7 +960,7 @@ async def unauthenticated_mock_context(get_test_app):
         ),
         # Mock MFA rate limit check
         patch(
-            "src.app.modules.mfa.router.check_mfa_rate_limit",
+            "src.app.modules.auth.routers.mfa.check_mfa_rate_limit",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -1936,7 +1938,7 @@ def mock_sso_settings():
 
     def _mock_sso_settings(provider: str, enabled: bool = True):
         patcher = patch(
-            "src.app.modules.sso_settings.service.sso_settings_service.get_decrypted_settings",
+            "src.app.modules.auth.services.sso_settings.sso_settings_service.get_decrypted_settings",
             new_callable=AsyncMock,
         )
         mock = patcher.start()
@@ -1990,7 +1992,10 @@ def mock_apple_oauth():
         mock_provider.get_user_info.return_value = mock_user_info
 
         # Patch the factory method in service
-        patcher = patch("src.app.modules.sso.service.SSOService._get_provider_instance", return_value=mock_provider)
+        patcher = patch(
+            "src.app.modules.auth.services.sso.SSOService._get_provider_instance",
+            return_value=mock_provider,
+        )
         patcher.start()
         patches.append(patcher)
 

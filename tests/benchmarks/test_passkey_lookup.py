@@ -60,7 +60,7 @@ class TestPasskeyLookupAlgorithm:
         """Verify passkey service uses credential_id_hash for filtering."""
         import inspect
 
-        from src.app.modules.passkey import service
+        from src.app.modules.auth.services import passkey as service
 
         source = inspect.getsource(service)
 
@@ -79,7 +79,7 @@ class TestPasskeyLookupAlgorithm:
         """
         import inspect
 
-        from src.app.modules.passkey import service
+        from src.app.modules.auth.services import passkey as service
 
         source = inspect.getsource(service)
 
@@ -199,7 +199,7 @@ class TestPasskeyHashCollisionHandling:
         """Verify credential_id is verified after hash lookup (defense in depth)."""
         import inspect
 
-        from src.app.modules.passkey import service
+        from src.app.modules.auth.services import passkey as service
 
         source = inspect.getsource(service)
 

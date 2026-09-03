@@ -79,15 +79,21 @@ def _serialize_endpoint(ep: WebhookEndpoint) -> dict[str, Any]:
 
 
 def _deserialize_endpoint(data: dict[str, Any]) -> WebhookEndpoint:
+    secret_val = data.get("secret")
+    if isinstance(secret_val, bytes):
+        secret_str = secret_val.decode("utf-8", errors="replace")
+    elif secret_val is not None:
+        secret_str = str(secret_val)
+    else:
+        secret_str = ""
     ep = WebhookEndpoint(
         tenant_id=UUID(data["tenant_id"]),
         url=data["url"],
         event_type=data["event_type"],
-        secret=data["secret"],
+        secret=secret_str,
         signing_secret=data.get("signing_secret"),
         is_active=data.get("is_active", True),
     )
-    ep.id = UUID(data["id"])
     if data.get("old_signing_secret"):
         ep.old_signing_secret = data["old_signing_secret"]
     if data.get("old_secret_expires_at"):

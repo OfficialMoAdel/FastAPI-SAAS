@@ -24,7 +24,7 @@ def test_passkey_login_flow(
     """
     from uuid import UUID
 
-    from src.app.modules.passkey.service import passkey_service
+    from src.app.modules.auth.services.passkey import passkey_service
 
     # =========================================================================
     # Step 1: Register a passkey first (prerequisite for login)
@@ -179,7 +179,7 @@ def test_passkey_login_expired_challenge(
     regular_user_token_headers: dict[str, str],
 ):
     """Test that expired/missing challenge returns error."""
-    from src.app.modules.passkey.service import passkey_service
+    from src.app.modules.auth.services.passkey import passkey_service
 
     with patch.object(passkey_service, "_get_stored_auth_challenge") as mock_challenge:
         mock_challenge.return_value = None  # No challenge found
@@ -210,7 +210,7 @@ def test_passkey_login_replay_attack_prevention(
     regular_user_token_headers: dict[str, str],
 ):
     """Test that replay attacks (counter not increasing) are rejected."""
-    from src.app.modules.passkey.service import passkey_service
+    from src.app.modules.auth.services.passkey import passkey_service
 
     with patch.object(passkey_service, "_get_stored_auth_challenge") as mock_challenge:
         mock_challenge.return_value = b"test-challenge"

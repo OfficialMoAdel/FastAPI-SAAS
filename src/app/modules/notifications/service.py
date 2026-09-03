@@ -449,6 +449,7 @@ class NotificationService:
         query = (
             select(EmailTemplateOverride)
             .where(tenant_scope(EmailTemplateOverride, tenant_id))
+            .limit(limit)
             .offset(offset)
         )
         result = await self.db.execute(query)

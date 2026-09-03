@@ -25,11 +25,11 @@ if TYPE_CHECKING:
     from src.app.modules.ai.models import AIChatSession, AISettings, AITokenUsage
     from src.app.modules.api_keys.models import APIKey
     from src.app.modules.audit_logs.models import AuditLog
+    from src.app.modules.auth.models import MFAMethod
     from src.app.modules.billing.models import BillingRecord, UserSubscription
-    from src.app.modules.files.models import File
-    from src.app.modules.mfa.models import MFAMethod
     from src.app.modules.notifications.models import Notification
     from src.app.modules.rbac.models import Role
+    from src.app.modules.storage.models import File
     from src.app.modules.tenants.models import Tenant
     from src.app.modules.tiers.models import Tier
 

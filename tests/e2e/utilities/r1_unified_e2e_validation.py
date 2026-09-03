@@ -441,7 +441,7 @@ class R1UnifiedE2EValidator:
 
         try:
             from src.app.core.config import R1UnifiedSettings
-            from src.app.modules.passkey.service import PasskeyService
+            from src.app.modules.auth.services.passkey import PasskeyService
 
             # Check feature flags
             r1_settings = R1UnifiedSettings()

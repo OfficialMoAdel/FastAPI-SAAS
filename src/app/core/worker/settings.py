@@ -1,3 +1,7 @@
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from arq.connections import RedisSettings
 from arq.constants import default_queue_name
 from arq.cron import cron
@@ -15,7 +19,7 @@ from src.app.core.worker.functions import (
     shutdown,
     startup,
 )
-from src.app.modules.magic_link.tasks import send_magic_link_email_task
+from src.app.modules.auth.tasks import send_magic_link_email_task
 from src.app.modules.notifications.service import send_email_task
 from src.app.modules.webhooks.delivery import recover_stuck_deliveries
 

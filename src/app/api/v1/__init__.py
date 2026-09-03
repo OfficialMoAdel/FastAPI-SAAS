@@ -9,7 +9,14 @@ def get_v1_router() -> APIRouter:
     from src.app.modules.api_keys.router import router as api_keys_router
     from src.app.modules.app_configuration.router import router as app_configuration_router
     from src.app.modules.audit_logs.router import router as audit_logs_router
-    from src.app.modules.auth.router import router as auth_router
+    from src.app.modules.auth.router import (
+        auth_router,
+        magic_link_router,
+        mfa_router,
+        passkey_router,
+        sso_router,
+        sso_settings_router,
+    )
     from src.app.modules.billing.router import router as billing_router
     from src.app.modules.billing.routes.checkouts import router as checkouts_router
     from src.app.modules.billing.routes.invoices import router as invoices_router
@@ -17,20 +24,14 @@ def get_v1_router() -> APIRouter:
     from src.app.modules.billing.routes.products import router as products_router
     from src.app.modules.dashboard.router import router as dashboard_router
     from src.app.modules.feature_flags.router import router as feature_flags_router
-    from src.app.modules.files.router import router as files_router
     from src.app.modules.health.router import router as health_router
-    from src.app.modules.magic_link.router import router as magic_link_router
-    from src.app.modules.mfa.router import router as mfa_router
     from src.app.modules.notifications.router import router as notifications_router
-    from src.app.modules.passkey.router import router as passkey_router
     from src.app.modules.posts.router import router as posts_router
     from src.app.modules.rate_limits.router import router as rate_limits_router
     from src.app.modules.rbac.permissions_router import router as permissions_router
     from src.app.modules.rbac.router import router as rbac_router
     from src.app.modules.security.router import router as security_router
-    from src.app.modules.sso.router import router as sso_router
-    from src.app.modules.sso_settings.router import router as sso_settings_router
-    from src.app.modules.storage_settings.router import router as storage_settings_router
+    from src.app.modules.storage.router import files_router, storage_settings_router
     from src.app.modules.tasks.router import router as tasks_router
     from src.app.modules.tenants.router import router as tenants_router
     from src.app.modules.tiers.router import router as tiers_router

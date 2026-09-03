@@ -43,7 +43,7 @@ class TestMagicLinkSendEndpoint:
     async def test_send_magic_link_returns_200_on_success(self, async_client):
         """Verify successful request returns 200."""
         with patch(
-            "src.app.modules.magic_link.service.MagicLinkService.send_magic_link",
+            "src.app.modules.auth.services.magic_link.MagicLinkService.send_magic_link",
             new_callable=AsyncMock,
         ) as mock_send:
             mock_send.return_value = Mock(
@@ -61,7 +61,7 @@ class TestMagicLinkSendEndpoint:
     async def test_send_magic_link_response_format(self, async_client):
         """Verify response matches MagicLinkSendResponse schema."""
         with patch(
-            "src.app.modules.magic_link.service.MagicLinkService.send_magic_link",
+            "src.app.modules.auth.services.magic_link.MagicLinkService.send_magic_link",
             new_callable=AsyncMock,
         ) as mock_send:
             mock_send.return_value = Mock(
@@ -109,7 +109,7 @@ class TestMagicLinkVerifyEndpoint:
     async def test_verify_magic_link_returns_auth_tokens(self, async_client):
         """Verify successful verification returns AuthTokenResponse."""
         with patch(
-            "src.app.modules.magic_link.service.MagicLinkService.verify_magic_link",
+            "src.app.modules.auth.services.magic_link.MagicLinkService.verify_magic_link",
             new_callable=AsyncMock,
         ) as mock_verify:
             mock_verify.return_value = Mock(
@@ -133,10 +133,10 @@ class TestMagicLinkVerifyEndpoint:
 
     async def test_verify_magic_link_invalid_token_returns_400(self, async_client):
         """Verify invalid token returns 400 Bad Request."""
-        from src.app.modules.magic_link.exceptions import InvalidMagicLinkError
+        from src.app.modules.auth.errors import InvalidMagicLinkError
 
         with patch(
-            "src.app.modules.magic_link.service.MagicLinkService.verify_magic_link",
+            "src.app.modules.auth.services.magic_link.MagicLinkService.verify_magic_link",
             new_callable=AsyncMock,
             side_effect=InvalidMagicLinkError("Invalid or expired token"),
         ):
@@ -149,10 +149,10 @@ class TestMagicLinkVerifyEndpoint:
 
     async def test_verify_magic_link_used_token_returns_410(self, async_client):
         """Verify already-used token returns 410 Gone."""
-        from src.app.modules.magic_link.exceptions import MagicLinkAlreadyUsedError
+        from src.app.modules.auth.errors import MagicLinkAlreadyUsedError
 
         with patch(
-            "src.app.modules.magic_link.service.MagicLinkService.verify_magic_link",
+            "src.app.modules.auth.services.magic_link.MagicLinkService.verify_magic_link",
             new_callable=AsyncMock,
             side_effect=MagicLinkAlreadyUsedError("Token already used"),
         ):
@@ -169,10 +169,10 @@ class TestMagicLinkErrorResponses:
 
     async def test_error_response_format(self, async_client):
         """Verify error responses match ErrorResponse schema."""
-        from src.app.modules.magic_link.exceptions import InvalidMagicLinkError
+        from src.app.modules.auth.errors import InvalidMagicLinkError
 
         with patch(
-            "src.app.modules.magic_link.service.MagicLinkService.verify_magic_link",
+            "src.app.modules.auth.services.magic_link.MagicLinkService.verify_magic_link",
             new_callable=AsyncMock,
             side_effect=InvalidMagicLinkError("Invalid token"),
         ):

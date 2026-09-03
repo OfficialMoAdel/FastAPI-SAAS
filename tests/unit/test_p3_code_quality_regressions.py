@@ -9,9 +9,8 @@ from fastapi import HTTPException
 from src.app.modules.ai.router import chat_completion
 from src.app.modules.ai.service import ChatCompletionError
 from src.app.modules.audit_logs.service import AuditLogService
+from src.app.modules.auth.crud import crud_passkey_credentials, crud_user_sso_connections
 from src.app.modules.notifications.service import NotificationService
-from src.app.modules.passkey.crud import crud_passkey_credentials
-from src.app.modules.sso.crud import crud_user_sso_connections
 
 
 class TestP3CodeQualityRegressions:

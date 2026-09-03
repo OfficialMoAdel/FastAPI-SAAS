@@ -214,7 +214,7 @@ def lifespan_factory(
             await close_redis_pool()
 
             # Close SSO HTTP client pool
-            from src.app.modules.sso.http_client import close_sso_http_client
+            from src.app.modules.auth.http_client import close_sso_http_client
 
             await close_sso_http_client()
 

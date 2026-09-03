@@ -20,7 +20,7 @@ import pytest
 from fastapi import status
 
 from src.app.main import app
-from src.app.modules.sso.service import get_sso_service
+from src.app.modules.auth.services.sso import get_sso_service
 
 
 def _create_mock_sso_service(**method_returns):
@@ -145,7 +145,7 @@ class TestGoogleSSOE2EFlow:
 
         # Here we do NOT mock process_callback because we want to test that process_callback calling validate_state
         # fails. So we patch get_sso_state_manager which is used inside process_callback.
-        with patch("src.app.modules.sso.service.get_sso_state_manager", return_value=mock_state_manager):
+        with patch("src.app.modules.auth.services.sso.get_sso_state_manager", return_value=mock_state_manager):
             response = client.get(
                 "/api/v1/account/sso/google/callback?code=test_code&state=invalid_state",
                 headers=auth_headers,
@@ -159,7 +159,7 @@ class TestGoogleSSOE2EFlow:
         mock_state_manager = Mock()
         mock_state_manager.validate_state = AsyncMock(return_value={"tenant_id": str(uuid4()), "provider": "google"})
 
-        with patch("src.app.modules.sso.service.get_sso_state_manager", return_value=mock_state_manager):
+        with patch("src.app.modules.auth.services.sso.get_sso_state_manager", return_value=mock_state_manager):
             response = client.get(
                 "/api/v1/account/sso/google/callback?state=test_state",
                 headers=auth_headers,
@@ -179,7 +179,7 @@ class TestGoogleSSOE2EFlow:
             }
         )
 
-        with patch("src.app.modules.sso.service.get_sso_state_manager", return_value=mock_state_manager):
+        with patch("src.app.modules.auth.services.sso.get_sso_state_manager", return_value=mock_state_manager):
             response = client.get(
                 "/api/v1/account/sso/unknown_provider/callback?code=test_code&state=test_state",
                 headers=auth_headers,

@@ -55,8 +55,6 @@ async def init_test_db():
         WebhookDelivery,
         WebhookEndpoint,
     )
-
-    # from app.modules.files.models import File  # noqa: F401
     from app.modules.ai.models import (  # noqa: F401
         AIChatMessage,
         AIChatSession,
@@ -71,8 +69,6 @@ async def init_test_db():
         UserSubscription,
     )
 
-    # Import additional models not in the central module
-    from app.modules.sso_settings.models import SSOSettings  # noqa: F401
 
     print("Creating tables in database...")
     print(f"Engine URL: {async_engine.url}")

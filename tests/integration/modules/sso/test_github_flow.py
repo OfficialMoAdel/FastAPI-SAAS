@@ -28,7 +28,7 @@ class TestGitHubSSOEndpoints:
         mock_manager.validate_state = AsyncMock(return_value=None)
 
         # Patch at the service module level
-        import src.app.modules.sso.service as sso_service_module
+        import src.app.modules.auth.services.sso as sso_service_module
 
         original_get_manager = sso_service_module.get_sso_state_manager
         sso_service_module.get_sso_state_manager = lambda redis: mock_manager
@@ -58,7 +58,7 @@ class TestGitHubSSOEndpoints:
         mock_manager = Mock()
         mock_manager.validate_state = AsyncMock(return_value=None)
 
-        import src.app.modules.sso.service as sso_service_module
+        import src.app.modules.auth.services.sso as sso_service_module
 
         original_get_manager = sso_service_module.get_sso_state_manager
         sso_service_module.get_sso_state_manager = lambda redis: mock_manager
@@ -84,7 +84,7 @@ class TestGitHubSSOEndpoints:
         mock_manager = Mock()
         mock_manager.validate_state = AsyncMock(return_value=None)
 
-        import src.app.modules.sso.service as sso_service_module
+        import src.app.modules.auth.services.sso as sso_service_module
 
         original_get_manager = sso_service_module.get_sso_state_manager
         sso_service_module.get_sso_state_manager = lambda redis: mock_manager

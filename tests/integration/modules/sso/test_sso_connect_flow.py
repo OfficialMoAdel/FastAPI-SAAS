@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from starlette.testclient import TestClient
 
 from src.app.main import app
-from src.app.modules.sso.service import get_sso_service
+from src.app.modules.auth.services.sso import get_sso_service
 
 # Test tenant header for middleware
 TEST_TENANT_HEADER = {"X-Tenant-ID": "1"}
@@ -53,7 +53,7 @@ class TestSSOConnectFlowIntegration:
             get_authorization_url=("https://accounts.google.com/o/oauth2/auth?state=test-state", "test-state")
         )
         with patch(
-            "src.app.modules.sso.router.crud_user_sso_connections.exists",
+            "src.app.modules.auth.routers.sso.crud_user_sso_connections.exists",
             new_callable=AsyncMock,
             return_value=False,
         ):
@@ -75,7 +75,7 @@ class TestSSOConnectFlowIntegration:
             get_authorization_url=("https://accounts.google.com/o/oauth2/auth?state=test-state", "test-state")
         )
         with patch(
-            "src.app.modules.sso.router.crud_user_sso_connections.exists",
+            "src.app.modules.auth.routers.sso.crud_user_sso_connections.exists",
             new_callable=AsyncMock,
             return_value=False,
         ):
@@ -97,7 +97,7 @@ class TestSSOConnectFlowIntegration:
         """Verify connect rejects if provider is already connected."""
         # Mock exists_for_user to return True (connection exists)
         with patch(
-            "src.app.modules.sso.router.crud_user_sso_connections.exists_for_user",
+            "src.app.modules.auth.routers.sso.crud_user_sso_connections.exists_for_user",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -112,7 +112,7 @@ class TestSSOConnectFlowIntegration:
     def test_connect_rejects_disabled_provider(self, client: TestClient):
         """Verify connect rejects if provider is disabled."""
         with patch(
-            "src.app.modules.sso_settings.service.sso_settings_service.get_decrypted_settings",
+            "src.app.modules.auth.services.sso_settings.sso_settings_service.get_decrypted_settings",
             new_callable=AsyncMock,
         ) as mock_settings:
             mock_settings.return_value = {
@@ -122,7 +122,7 @@ class TestSSOConnectFlowIntegration:
             }
 
             with patch(
-                "src.app.modules.sso.router.crud_user_sso_connections.exists",
+                "src.app.modules.auth.routers.sso.crud_user_sso_connections.exists",
                 new_callable=AsyncMock,
                 return_value=False,
             ):

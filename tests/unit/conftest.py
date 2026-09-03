@@ -36,13 +36,12 @@ import src.app.core.db.database  # noqa: F401
 import src.app.modules.ai.models  # noqa: F401
 import src.app.modules.api_keys.models  # noqa: F401
 import src.app.modules.audit_logs.models  # noqa: F401
+import src.app.modules.auth.models  # noqa: F401
 import src.app.modules.billing.models  # noqa: F401
 import src.app.modules.feature_flags.models  # noqa: F401
-import src.app.modules.files.models  # noqa: F401
-import src.app.modules.mfa.models  # noqa: F401
 import src.app.modules.notifications.models  # noqa: F401  ← fixes Tenant.notifications
 import src.app.modules.rbac.models  # noqa: F401
-import src.app.modules.storage_settings.models  # noqa: F401
+import src.app.modules.storage.models  # noqa: F401
 import src.app.modules.tenants.models  # noqa: F401
 import src.app.modules.tiers.models  # noqa: F401
 import src.app.modules.users.models  # noqa: F401

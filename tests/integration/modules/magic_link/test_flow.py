@@ -47,15 +47,15 @@ class TestMagicLinkE2EFlow:
         # Step 1: Request magic link
         with (
             patch(
-                "src.app.modules.magic_link.service.MagicLinkService._get_user_by_email",
+                "src.app.modules.auth.services.magic_link.MagicLinkService._get_user_by_email",
                 new_callable=AsyncMock,
             ) as mock_get_user,
             patch(
-                "src.app.modules.magic_link.service.MagicLinkService._queue_magic_link_email",
+                "src.app.modules.auth.services.magic_link.MagicLinkService._queue_magic_link_email",
                 new_callable=AsyncMock,
             ),
             patch(
-                "src.app.modules.magic_link.service.MagicLinkService._get_magic_link_manager",
+                "src.app.modules.auth.services.magic_link.MagicLinkService._get_magic_link_manager",
             ) as mock_manager,
             patch(
                 "src.app.core.security.tokens.TokenGenerator.generate_magic_link_token",
@@ -85,14 +85,14 @@ class TestMagicLinkE2EFlow:
         # Step 2: Verify the magic link token
         with (
             patch(
-                "src.app.modules.magic_link.service.MagicLinkService._get_user_by_email",
+                "src.app.modules.auth.services.magic_link.MagicLinkService._get_user_by_email",
                 new_callable=AsyncMock,
             ) as mock_get_user,
             patch(
-                "src.app.modules.magic_link.service.MagicLinkService._get_magic_link_manager",
+                "src.app.modules.auth.services.magic_link.MagicLinkService._get_magic_link_manager",
             ) as mock_manager,
             patch(
-                "src.app.modules.magic_link.service.MagicLinkService._create_auth_tokens",
+                "src.app.modules.auth.services.magic_link.MagicLinkService._create_auth_tokens",
                 new_callable=AsyncMock,
             ) as mock_create_tokens,
         ):
@@ -131,7 +131,7 @@ class TestMagicLinkE2EFlow:
     async def test_magic_link_flow_nonexistent_user(self, client, auth_headers):
         """Test flow with nonexistent user (should not reveal user existence)."""
         with patch(
-            "src.app.modules.magic_link.service.MagicLinkService._get_user_by_email",
+            "src.app.modules.auth.services.magic_link.MagicLinkService._get_user_by_email",
             new_callable=AsyncMock,
             return_value=None,  # User doesn't exist
         ):
@@ -149,10 +149,10 @@ class TestMagicLinkE2EFlow:
     @pytest.mark.asyncio
     async def test_magic_link_flow_expired_token(self, client, test_user_data, auth_headers):
         """Test flow with expired token."""
-        from src.app.modules.magic_link.exceptions import InvalidMagicLinkError
+        from src.app.modules.auth.errors import InvalidMagicLinkError
 
         with patch(
-            "src.app.modules.magic_link.service.MagicLinkService.verify_magic_link",
+            "src.app.modules.auth.services.magic_link.MagicLinkService.verify_magic_link",
             new_callable=AsyncMock,
             side_effect=InvalidMagicLinkError("Token expired or invalid"),
         ):
@@ -167,10 +167,10 @@ class TestMagicLinkE2EFlow:
     @pytest.mark.asyncio
     async def test_magic_link_flow_reused_token(self, client, test_user_data, auth_headers):
         """Test flow with already-used token."""
-        from src.app.modules.magic_link.exceptions import MagicLinkAlreadyUsedError
+        from src.app.modules.auth.errors import MagicLinkAlreadyUsedError
 
         with patch(
-            "src.app.modules.magic_link.service.MagicLinkService.verify_magic_link",
+            "src.app.modules.auth.services.magic_link.MagicLinkService.verify_magic_link",
             new_callable=AsyncMock,
             side_effect=MagicLinkAlreadyUsedError("Token already used"),
         ):

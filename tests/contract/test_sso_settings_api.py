@@ -79,7 +79,7 @@ class TestSSOSettingsCreateContract:
     ):
         """Verify 201 and correct response schema on success."""
         # Clean up any existing settings first
-        from src.app.modules.sso_settings.crud import crud_sso_settings
+        from src.app.modules.auth.crud import crud_sso_settings
 
         existing = await crud_sso_settings.get(db=db_session, provider="test_provider")
         if existing:

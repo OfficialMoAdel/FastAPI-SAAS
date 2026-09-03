@@ -93,8 +93,8 @@ async def execute_composite_auth_prefetch(
             args=args,
         )
 
-        # Parse Lua return: {err (0/1), is_blacklisted (0/1/-1), session_valid (0/1/-1), bitmask (str/false)}
-        if not isinstance(raw_result, list | tuple) or len(raw_result) < 4:
+        # Parse Lua return: {err (0/1), is_blacklisted (0/1/-1), session_valid (0/1/-1), bitmask (str/false/'')}
+        if not isinstance(raw_result, list | tuple) or len(raw_result) < 3:
             return None, None, None
 
         err_flag = raw_result[0]
@@ -118,8 +118,8 @@ async def execute_composite_auth_prefetch(
         if raw_session in (0, 1, "0", "1"):
             session_valid = bool(int(raw_session))
 
-        # 3. Bitmask (cached integer string, or false/nil if not cached)
-        raw_bitmask = raw_result[3]
+        # 3. Bitmask (cached integer string, or false/nil/empty if not cached)
+        raw_bitmask = raw_result[3] if len(raw_result) >= 4 else None
         if raw_bitmask not in (False, None, b"", ""):
             try:
                 bitmask_str = raw_bitmask.decode() if isinstance(raw_bitmask, bytes) else str(raw_bitmask)

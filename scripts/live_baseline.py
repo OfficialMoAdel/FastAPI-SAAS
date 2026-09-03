@@ -46,15 +46,14 @@ def _import_all_models() -> None:
     for mod in (
         "src.app.modules.tenants.models",
         "src.app.modules.users.models",
-        "src.app.modules.files.models",
-        "src.app.modules.mfa.models",
+        "src.app.modules.auth.models",
+        "src.app.modules.storage.models",
         "src.app.modules.notifications.models",
         "src.app.modules.rbac.models",
         "src.app.modules.posts.models",
         "src.app.modules.tiers.models",
         "src.app.modules.billing.models",
         "src.app.modules.audit_logs.models",
-        "src.app.modules.storage_settings.models",
     ):
         try:
             importlib.import_module(mod)
@@ -340,7 +339,7 @@ async def n1_upload_txn_split(engine, redis_client) -> None:
 
     from src.app.core.config import settings as app_settings
     from src.app.core.tenancy.context import TenantContext, set_current_tenant
-    from src.app.modules.files.service import FileService
+    from src.app.modules.storage.service import FileService
 
     conn = await asyncpg.connect(
         host=os.environ["POSTGRES_SERVER"],

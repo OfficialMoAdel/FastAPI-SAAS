@@ -10,10 +10,10 @@ from sqlalchemy.exc import IntegrityError
 from src.app.core.exceptions.http_exceptions import BadRequestException
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules.api_keys.service import APIKeyService
+from src.app.modules.auth.models import MFAMethod
+from src.app.modules.auth.schemas import MFAEnableRequest
 from src.app.modules.auth.services.lockout import LoginLockoutPolicy
-from src.app.modules.mfa.models import MFAMethod
-from src.app.modules.mfa.schemas import MFAEnableRequest
-from src.app.modules.mfa.service import MFAService
+from src.app.modules.auth.services.mfa import MFAService
 from src.app.modules.webhooks.signer import is_timestamp_fresh
 
 
@@ -51,8 +51,8 @@ class TestP1HighPriorityRegressions:
         mock_db = AsyncMock()
         mock_db.commit.side_effect = IntegrityError("duplicate key", params={}, orig=Exception("unique constraint"))
 
-        with patch("src.app.modules.mfa.service.crud_mfa_methods.get", return_value=None), \
-             patch("src.app.modules.mfa.service.get_redis") as mock_get_redis, \
+        with patch("src.app.modules.auth.services.mfa.crud_mfa_methods.get", return_value=None), \
+             patch("src.app.modules.auth.services.mfa.get_redis") as mock_get_redis, \
              patch("pyotp.TOTP.verify", return_value=True), \
              patch.object(service, "_encrypt_secret", return_value="enc_secret"), \
              patch.object(service, "_generate_backup_codes", return_value=["c1", "c2"]), \

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.modules.passkey.service import PasskeyService
+from src.app.modules.auth.services.passkey import PasskeyService
 
 
 @pytest.mark.asyncio
@@ -227,7 +227,7 @@ async def test_feature_flag_toggles_behavior(mock_db_session):
     mock_settings_disabled.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
     mock_settings_disabled.r1_unified = mock_settings_disabled
     # Mock CRUD method for fallback path
-    with patch("src.app.modules.passkey.service.crud_passkey_credentials") as mock_crud:
+    with patch("src.app.modules.auth.services.passkey.crud_passkey_credentials") as mock_crud:
         mock_crud.get_by_user = AsyncMock(return_value=[])
 
         with patch("src.app.core.config.settings", mock_settings_disabled):

@@ -179,7 +179,7 @@ class TestLogin:
                 with patch.object(auth_service, "_publish_login_audit", new_callable=AsyncMock):
                     mock_mfa_svc = MagicMock()
                     mock_mfa_svc.is_mfa_enabled = AsyncMock(return_value=False)
-                    with patch("src.app.modules.mfa.service.get_mfa_service", return_value=mock_mfa_svc):
+                    with patch("src.app.modules.auth.services.mfa.get_mfa_service", return_value=mock_mfa_svc):
                         # Should handle the bytes coercion and proceed
                         from fastapi import HTTPException
 
@@ -211,7 +211,7 @@ class TestLogin:
             with patch.object(auth_service, "_publish_login_audit", new_callable=AsyncMock):
                 mock_mfa_svc = MagicMock()
                 mock_mfa_svc.is_mfa_enabled = AsyncMock(return_value=False)
-                with patch("src.app.modules.mfa.service.get_mfa_service", return_value=mock_mfa_svc):
+                with patch("src.app.modules.auth.services.mfa.get_mfa_service", return_value=mock_mfa_svc):
                     with pytest.raises(Exception) as exc_info:
                         await auth_service.login(
                             "inactiveuser", "password", mock_response, mock_request, mock_db, mock_redis
@@ -243,7 +243,7 @@ class TestLogin:
             with patch.object(auth_service, "_publish_login_audit", new_callable=AsyncMock):
                 mock_mfa_instance = MagicMock()
                 mock_mfa_instance.is_mfa_enabled = AsyncMock(return_value=True)
-                with patch("src.app.modules.mfa.service.get_mfa_service", return_value=mock_mfa_instance):
+                with patch("src.app.modules.auth.services.mfa.get_mfa_service", return_value=mock_mfa_instance):
                     with patch(
                         "src.app.modules.auth.service.get_mfa_pending_token_manager"
                     ) as mock_token_manager_factory:

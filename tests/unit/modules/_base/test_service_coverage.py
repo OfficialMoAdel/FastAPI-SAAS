@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 from src.app.modules._base.service import BaseService, get_base_service
-from src.app.modules.passkey.models import PasskeyCredential
+from src.app.modules.auth.models import PasskeyCredential
 
 
 def _make_service() -> tuple[BaseService[PasskeyCredential], AsyncMock]:

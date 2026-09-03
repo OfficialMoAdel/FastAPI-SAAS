@@ -121,14 +121,14 @@ def _get_key_from_settings() -> bytes:
 
 def _get_previous_key_from_settings() -> bytes | None:
     """Get previous key from settings for rotation support."""
-    prev_key_str = getattr(settings, "ENCRYPTION_KEY_PREVIOUS", None)
+    prev_key_str = getattr(settings, "ENCRYPTION_KEY_OLD", None) or getattr(settings, "ENCRYPTION_KEY_PREVIOUS", None)
     if prev_key_str and hasattr(prev_key_str, "get_secret_value"):
         prev_key_value = prev_key_str.get_secret_value()
         if prev_key_value:
             try:
                 return prev_key_value.encode() if isinstance(prev_key_value, str) else prev_key_value
             except Exception as e:
-                logger.warning("Invalid ENCRYPTION_KEY_PREVIOUS format", error=e)
+                logger.warning("Invalid ENCRYPTION_KEY_OLD format", error=e)
     return None
 
 

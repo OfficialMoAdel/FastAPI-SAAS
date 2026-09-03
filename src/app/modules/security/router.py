@@ -28,11 +28,11 @@ from src.app.core.security.auto_ban import (
     get_violation_stats,
     unban_ip,
 )
-from src.app.modules.passkey.schemas import (
+from src.app.modules.auth.schemas import (
     PasskeyCredentialResponse,
     PasskeyDeleteResponse,
 )
-from src.app.modules.passkey.service import passkey_service
+from src.app.modules.auth.services.passkey import passkey_service
 from src.app.modules.security.schemas import (
     AutoBanConfig,
     AutoBanConfigUpdate,

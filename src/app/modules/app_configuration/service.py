@@ -22,13 +22,8 @@ class AppConfigurationService:
         Returns configuration data that the frontend needs to initialize,
         including theme settings, feature flags, and API details.
         """
-        # Build theme configuration
-        theme = ThemeConfig(
-            primary_color=getattr(settings, "THEME_PRIMARY_COLOR", "#3B82F6"),
-            secondary_color=getattr(settings, "THEME_SECONDARY_COLOR", "#10B981"),
-            dark_mode_enabled=getattr(settings, "THEME_DARK_MODE_ENABLED", True),
-            default_theme=getattr(settings, "THEME_DEFAULT", "light"),
-        )
+        # Build theme configuration with schema defaults
+        theme = ThemeConfig()
 
         # Build features configuration
         features = FeaturesConfig(
@@ -52,13 +47,17 @@ class AppConfigurationService:
 
         # Return full configuration
         return AppConfigurationResponse(
-            app_name=getattr(settings, "APP_NAME", "FastAPI SaaS"),
-            app_version=getattr(settings, "APP_VERSION", "1.0.0"),
-            environment=settings.env.ENVIRONMENT,
+            app_name=getattr(settings.app, "APP_NAME", "FastAPI SaaS"),
+            app_version=getattr(settings.app, "APP_VERSION", "1.0.0") or "1.0.0",
+            environment=(
+                settings.env.ENVIRONMENT.value
+                if hasattr(settings.env.ENVIRONMENT, "value")
+                else str(settings.env.ENVIRONMENT)
+            ),
             theme=theme,
             features=features,
             api=api,
-            maintenance_mode=getattr(settings, "MAINTENANCE_MODE", False),
+            maintenance_mode=False,
         )
 
 

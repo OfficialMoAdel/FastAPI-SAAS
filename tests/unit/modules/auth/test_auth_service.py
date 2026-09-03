@@ -162,7 +162,7 @@ class TestAuthServiceLockout:
             patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
             patch("src.app.modules.auth.services.tokens.create_access_token", new_callable=AsyncMock) as mock_access,
             patch("src.app.modules.auth.services.tokens.create_refresh_token", new_callable=AsyncMock) as mock_refresh,
-            patch("src.app.modules.mfa.service.get_mfa_service", return_value=mock_mfa_service),
+            patch("src.app.modules.auth.services.mfa.get_mfa_service", return_value=mock_mfa_service),
             # S-4: session registration is orthogonal to lockout logic; it now
             # fails closed without Redis, so mock it out in this unit test.
             # Patch at the tokens.py lookup site (module-level import there).

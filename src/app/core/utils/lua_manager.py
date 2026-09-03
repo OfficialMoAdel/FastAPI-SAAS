@@ -85,7 +85,7 @@ class LuaScriptManager:
             -- Returns: [value, ttl] or [nil, -2] if not exists
             local value = redis.call('GET', KEYS[1])
             if value == false then
-                return {false, -2}
+                return {'', -2}
             end
             local ttl = redis.call('TTL', KEYS[1])
             return {value, ttl}
@@ -359,10 +359,10 @@ class LuaScriptManager:
                 end
             end
 
-            local bitmask = false
+            local bitmask = ''
             if ARGV[5] == '1' and KEYS[4] ~= '' and err == 0 then
                 local b_res = safe_call('GET', KEYS[4])
-                if err == 0 and b_res ~= nil then
+                if err == 0 and b_res ~= nil and b_res ~= false then
                     bitmask = b_res
                 end
             end

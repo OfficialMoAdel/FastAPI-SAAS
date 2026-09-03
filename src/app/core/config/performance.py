@@ -116,7 +116,7 @@ class QueryProfilerSettings(BaseSettings):
     - Inefficient database access patterns
     """
 
-    model_config = SettingsConfigDict(env_prefix="QUERY_PROFILER_")
+    model_config = SettingsConfigDict(env_prefix="")
 
     QUERY_PROFILER_ENABLED: bool = Field(
         default=True,

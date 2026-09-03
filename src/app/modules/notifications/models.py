@@ -91,7 +91,7 @@ class Notification(Base, UUIDMixin):
 
     # Delivery Status
     status: Mapped[NotificationStatus] = mapped_column(
-        Enum(NotificationStatus, native_enum=False, length=20),
+        Enum(NotificationStatus, native_enum=False, length=20, values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=NotificationStatus.PENDING,
         index=True,

@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, Mock
 from fastapi import status
 
 from src.app.main import app
-from src.app.modules.sso.service import get_sso_service
+from src.app.modules.auth.services.sso import get_sso_service
 
 
 def _create_mock_sso_service(**method_returns):

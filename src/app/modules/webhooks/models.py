@@ -206,7 +206,7 @@ class WebhookDelivery(Base, UUIDMixin):
 
     # Delivery Status
     status: Mapped[WebhookDeliveryStatus] = mapped_column(
-        Enum(WebhookDeliveryStatus, native_enum=False, length=20),
+        Enum(WebhookDeliveryStatus, native_enum=False, length=20, values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=WebhookDeliveryStatus.PENDING,
         index=True,

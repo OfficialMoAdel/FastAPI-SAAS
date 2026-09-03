@@ -18,7 +18,7 @@ async def cleanup_test_providers(db_session):
     """Cleanup test providers after each test."""
     yield
 
-    from src.app.modules.sso_settings.crud import crud_sso_settings
+    from src.app.modules.auth.crud import crud_sso_settings
 
     test_providers = [
         "integration_test_google",
@@ -146,7 +146,7 @@ class TestSSOSettingsEncryptionIntegration:
             pytest.skip(f"Could not create settings: {create_response.text}")
 
         # Query database directly to verify encryption
-        from src.app.modules.sso_settings.crud import crud_sso_settings
+        from src.app.modules.auth.crud import crud_sso_settings
 
         db_settings = await crud_sso_settings.get(db=db_session, provider=provider)
 
@@ -179,8 +179,8 @@ class TestSSOSettingsEncryptionIntegration:
         cleanup_test_providers,
     ):
         """Verify service correctly decrypts settings when retrieved."""
-        from src.app.modules.sso_settings.schemas import SSOSettingsCreate
-        from src.app.modules.sso_settings.service import sso_settings_service
+        from src.app.modules.auth.schemas import SSOSettingsCreate
+        from src.app.modules.auth.services.sso_settings import sso_settings_service
 
         provider = "integration_test_update"
         original_client_id = "decryption_test_client_id"

@@ -9,12 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep
 from src.app.core.db.database import async_get_db
-from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.security import oauth2_scheme
 from src.app.core.security.login_helpers import get_refresh_cookie
 from src.app.core.security.session_manager import SessionManager
 from src.app.core.utils.cache import async_get_redis
-from src.app.core.utils.rate_limit import rate_limiter
 from src.app.modules.auth.schemas import (
     EmailVerificationConfirm,
     EmailVerificationRequest,
@@ -50,24 +48,7 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserSer
 
 router = APIRouter(prefix="/account", tags=["account"])
 
-# SECURITY: Specific rate limits for authentication endpoints (per IP)
-# Prevents large-scale automated brute-force attempts.
-AUTH_RATE_LIMIT = 5  # attempts
-AUTH_RATE_PERIOD = 60  # 1 minute
-
-
-async def check_auth_rate_limit(request: Request) -> None:
-    """Rate limit sensitive auth endpoints by client IP."""
-    # Get client IP securely, handling proxies
-    from src.app.core.utils.ip_utils import get_client_ip
-
-    client_ip = get_client_ip(request)
-
-    key = f"auth_ip:{client_ip}"
-    is_limited, _ = await rate_limiter.check_rate_limit(key, limit=AUTH_RATE_LIMIT, period=AUTH_RATE_PERIOD)
-
-    if is_limited:
-        raise RateLimitException(f"Too many authentication attempts. Please try again in {AUTH_RATE_PERIOD} seconds.")
+from src.app.modules.auth.rate_limit import check_auth_rate_limit
 
 
 @router.post(
@@ -280,3 +261,21 @@ async def count_sessions(
     session_manager = SessionManager(redis)
     count = await session_manager.count_active_sessions(user_id=ctx.user_id)
     return SessionCountResponse(count=count)
+
+from src.app.modules.auth.routers.magic_link import router as magic_link_router
+from src.app.modules.auth.routers.mfa import router as mfa_router
+from src.app.modules.auth.routers.passkey import router as passkey_router
+from src.app.modules.auth.routers.sso import router as sso_router
+from src.app.modules.auth.routers.sso_settings import router as sso_settings_router
+
+auth_router = router
+
+__all__ = [
+    "router",
+    "auth_router",
+    "magic_link_router",
+    "mfa_router",
+    "passkey_router",
+    "sso_router",
+    "sso_settings_router",
+]

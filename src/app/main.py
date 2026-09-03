@@ -1,5 +1,9 @@
 """FastAPI SaaS application entry point."""
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager

@@ -249,7 +249,7 @@ async def _enforce_session_valid(
 
 
 def _enforce_tenant_match(
-    request: Request,
+    _request: Request | None,
     user: dict[str, Any],
     current_tenant: Any,
 ) -> None:
