@@ -1,1 +1,0 @@
-# Storage Settings Module Tests

@@ -6,9 +6,10 @@ Endpoints require appropriate FILES_* permissions.
 
 from __future__ import annotations
 
+import asyncio
 import mimetypes
+import os
 from typing import Any
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
@@ -16,7 +17,14 @@ from fastapi.responses import Response, StreamingResponse
 from src.app.api.deps import RequestContextDep
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
-from src.app.modules.files.schemas import (
+from src.app.modules.storage.errors import (
+    FileEntityNotFoundError,
+    FileTypeNotAllowedError,
+    QuotaExceededError,
+    StorageBackendError,
+    StorageNotConfiguredError,
+)
+from src.app.modules.storage.schemas import (
     FileList,
     FileRead,
     FileUpdate,
@@ -24,16 +32,10 @@ from src.app.modules.files.schemas import (
     QuotaResponse,
     SignedUrlResponse,
 )
-from src.app.modules.files.service import (
-    FileEntityNotFoundError as FileServiceNotFoundError,
+from src.app.modules.storage.service import (
+    StorageService,
+    get_storage,
 )
-from src.app.modules.files.service import (
-    FileService,
-    FileTypeNotAllowedError,
-    QuotaExceededError,
-    get_file_service,
-)
-from src.app.modules.storage_settings import StorageNotConfiguredError
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -47,29 +49,9 @@ router = APIRouter(prefix="/files", tags=["files"])
 async def upload_file(
     ctx: RequestContextDep,
     file: UploadFile = File(..., description="File to upload"),
-    service: FileService = Depends(get_file_service),
+    service: StorageService = Depends(get_storage),
 ) -> Any:
-    """Upload a file to tenant storage.
-
-    Validates file type and size against tenant settings.
-    Enforces quota limits.
-
-    Args:
-        file: File to upload.
-
-    Returns:
-        FileUploadResponse: Uploaded file metadata.
-
-    Raises:
-        400: If storage not configured or file invalid.
-        413: If file exceeds size limit.
-        507: If quota exceeded.
-    """
-    import asyncio
-    import os
-
-    # SECURITY FIX: Do not rely on file.size which may be spoofed via Content-Length.
-    # Always determine size by seeking to the end of the actual spooled file.
+    """Upload a file to tenant storage using streaming (file.size probe via seek/tell)."""
     await asyncio.to_thread(file.file.seek, 0, os.SEEK_END)
     size_bytes = await asyncio.to_thread(file.file.tell)
     await asyncio.to_thread(file.file.seek, 0, os.SEEK_SET)
@@ -90,11 +72,13 @@ async def upload_file(
 
         return FileUploadResponse(
             id=result.id,
+            filename=result.original_name,
             original_name=result.original_name,
             storage_path=result.storage_path,
             mime_type=result.mime_type,
             size_bytes=result.size_bytes,
             is_public=result.is_public,
+            uploaded_at=result.created_at,
             created_at=result.created_at,
         )
 
@@ -103,17 +87,20 @@ async def upload_file(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Storage not configured for this tenant.",
         )
-
     except FileTypeNotAllowedError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="File type not allowed.",
         )
-
     except QuotaExceededError:
         raise HTTPException(
             status_code=status.HTTP_507_INSUFFICIENT_STORAGE,
             detail="Storage quota exceeded.",
+        )
+    except StorageBackendError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Storage provider error during file upload.",
         )
 
 
@@ -128,17 +115,10 @@ async def list_files(
     mime_type: str | None = Query(None, description="Filter by MIME type"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=100, description="Page size"),
-    service: FileService = Depends(get_file_service),
+    service: StorageService = Depends(get_storage),
 ) -> Any:
-    """List files for the current tenant.
-
-    Supports pagination and filtering.
-
-    Returns:
-        FileList: Paginated file list.
-    """
+    """List files for the current tenant."""
     offset = (page - 1) * per_page
-
     files_data = await service.list_files(
         tenant_id=ctx.tenant_id,
         user_id=user_id,
@@ -147,11 +127,11 @@ async def list_files(
         offset=offset,
     )
 
-    data = files_data.get("data", [])
-    total = files_data.get("total_count", 0)
+    items = files_data.get("items", [])
+    total = files_data.get("total", 0)
 
     return {
-        "items": data,
+        "items": items,
         "total": total,
         "page": page,
         "per_page": per_page,
@@ -163,27 +143,16 @@ async def list_files(
 @router.get("/quota", response_model=QuotaResponse, dependencies=[Depends(requires_permission(Permission.FILES_READ))])
 async def get_quota(
     ctx: RequestContextDep,
-    service: FileService = Depends(get_file_service),
+    service: StorageService = Depends(get_storage),
 ) -> Any:
-    """Get active storage quota and usage.
-
-    Returns:
-        dict: Quota usage, limit, and remaining bytes.
-    """
-    from src.app.modules.storage_settings.service import StorageSettingsService
-
-    settings_service = StorageSettingsService(service.db)
-    settings = await settings_service.get_settings_or_raise(ctx.tenant_id)
-
-    count, used = await service._get_quota_stats(ctx.tenant_id)
-    limit = settings.storage_quota_bytes
-    remaining = max(0, limit - used)
-
-    return QuotaResponse(
-        used=used,
-        limit=limit,
-        remaining=remaining,
-    )
+    """Get active storage quota and usage."""
+    try:
+        return await service.get_usage(ctx.tenant_id)
+    except StorageNotConfiguredError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Storage not configured for this tenant.",
+        )
 
 
 @router.get(
@@ -194,39 +163,21 @@ async def get_quota(
 async def download_file(
     file_id: int,
     ctx: RequestContextDep,
-    service: FileService = Depends(get_file_service),
+    service: StorageService = Depends(get_storage),
 ) -> Any:
-    """Download a file.
-
-    Returns the file as a streaming response.
-
-    Args:
-        file_id: File ID to download.
-
-    Returns:
-        StreamingResponse: File content.
-
-    Raises:
-        404: If file not found.
-    """
+    """Download a file via streaming response."""
     try:
-        file = await service.get_file_or_raise(ctx.tenant_id, file_id, user_id=ctx.user_id)
-
-        # SECURITY FIX: RFC 5987 content-disposition
-        filename_encoded = quote(file.original_name)
-        return StreamingResponse(
-            service.download_file(ctx.tenant_id, file_id, user_id=ctx.user_id),
-            media_type=file.mime_type,
-            headers={
-                "Content-Disposition": f"attachment; filename*=UTF-8''{filename_encoded}",
-                "Content-Length": str(file.size_bytes),
-            },
-        )
-
-    except FileServiceNotFoundError:
+        download = await service.download(ctx.tenant_id, file_id, user_id=ctx.user_id)
+        return download.to_response()
+    except FileEntityNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
+        )
+    except StorageNotConfiguredError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Storage not configured for this tenant.",
         )
 
 
@@ -238,24 +189,13 @@ async def download_file(
 async def get_file_info(
     file_id: int,
     ctx: RequestContextDep,
-    service: FileService = Depends(get_file_service),
+    service: StorageService = Depends(get_storage),
 ) -> Any:
-    """Get file metadata without downloading.
-
-    Args:
-        file_id: File ID.
-
-    Returns:
-        FileRead: File metadata.
-
-    Raises:
-        404: If file not found.
-    """
+    """Get file metadata without downloading."""
     try:
         file = await service.get_file_or_raise(ctx.tenant_id, file_id, user_id=ctx.user_id)
-        return file
-
-    except FileServiceNotFoundError:
+        return FileRead.model_validate(file, from_attributes=True)
+    except FileEntityNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
@@ -271,27 +211,19 @@ async def get_signed_url(
     ctx: RequestContextDep,
     file_id: int,
     expires_in: int = Query(3600, ge=60, le=86400, description="Expiration in seconds"),
-    service: FileService = Depends(get_file_service),
+    service: StorageService = Depends(get_storage),
 ) -> Any:
-    """Get a signed URL for file access.
-
-    The URL is valid for the specified duration.
-
-    Args:
-        file_id: File ID.
-        expires_in: URL expiration in seconds (default: 1 hour).
-
-    Returns:
-        SignedUrlResponse: Signed URL and expiration.
-
-    Raises:
-        404: If file not found.
-    """
+    """Get a signed URL for file access."""
     try:
-        url = await service.get_signed_url(ctx.tenant_id, file_id, expires_in, user_id=ctx.user_id)
-        return SignedUrlResponse(url=url, expires_in=expires_in)
+        url = await service.get_presigned_url(ctx.tenant_id, file_id, expires_in, user_id=ctx.user_id)
+        from datetime import UTC, datetime, timedelta
 
-    except FileServiceNotFoundError:
+        return SignedUrlResponse(
+            url=url,
+            expires_in=expires_in,
+            expires_at=datetime.now(UTC) + timedelta(seconds=expires_in),
+        )
+    except FileEntityNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
@@ -307,25 +239,13 @@ async def update_file(
     file_id: int,
     data: FileUpdate,
     ctx: RequestContextDep,
-    service: FileService = Depends(get_file_service),
+    service: StorageService = Depends(get_storage),
 ) -> Any:
-    """Update file metadata.
-
-    Args:
-        file_id: File ID.
-        data: Fields to update.
-
-    Returns:
-        FileRead: Updated file metadata.
-
-    Raises:
-        404: If file not found.
-    """
+    """Update file metadata."""
     try:
         file = await service.update_file(ctx.tenant_id, file_id, data, user_id=ctx.user_id)
-        return file
-
-    except FileServiceNotFoundError:
+        return FileRead.model_validate(file, from_attributes=True)
+    except FileEntityNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
@@ -341,27 +261,23 @@ async def update_file(
 async def delete_file(
     file_id: int,
     ctx: RequestContextDep,
-    service: FileService = Depends(get_file_service),
+    service: StorageService = Depends(get_storage),
 ) -> Response:
-    """Delete a file.
-
-    Removes the file from storage and database.
-
-    Args:
-        file_id: File ID to delete.
-
-    Raises:
-        404: If file not found.
-    """
+    """Delete a file."""
     try:
         await service.delete_file(ctx.tenant_id, file_id, user_id=ctx.user_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    except FileServiceNotFoundError:
+    except FileEntityNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
         )
+    except StorageBackendError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Storage provider error during file deletion.",
+        )
+
 
 
 __all__ = ["router"]

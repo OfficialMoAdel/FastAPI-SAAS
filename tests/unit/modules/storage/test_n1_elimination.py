@@ -9,10 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.modules.storage_settings.service import (
+from src.app.modules.storage import (
+    StorageAdminService,
     StorageNotConfiguredError,
-    StorageSettingsService,
 )
+
+StorageSettingsService = StorageAdminService
 
 
 @pytest.fixture

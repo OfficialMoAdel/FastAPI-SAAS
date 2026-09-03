@@ -5,8 +5,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.modules.files.schemas import FileUpdate
-from src.app.modules.files.service import (
+from src.app.modules.storage.schemas import FileUpdate
+from src.app.modules.storage.service import (
     FileEntityNotFoundError,
     FileService,
     FileTypeNotAllowedError,

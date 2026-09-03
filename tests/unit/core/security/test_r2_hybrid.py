@@ -277,7 +277,7 @@ class TestFileMIMEIndex:
 
     def test_index_defined_in_model(self):
         """Verify composite index is defined in File model."""
-        from src.app.modules.files.models import File
+        from src.app.modules.storage.models import File
 
         # Check __table_args__ contains the index
         table_args = File.__table_args__
@@ -287,7 +287,7 @@ class TestFileMIMEIndex:
 
     def test_index_columns_correct(self):
         """Verify index has correct column order (tenant_id, mime_type)."""
-        from src.app.modules.files.models import File
+        from src.app.modules.storage.models import File
 
         table_args = File.__table_args__
         mime_index = None

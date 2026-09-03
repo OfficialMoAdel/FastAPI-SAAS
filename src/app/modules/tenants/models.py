@@ -18,9 +18,8 @@ if TYPE_CHECKING:
     from src.app.modules.audit_logs.models import AuditLog
     from src.app.modules.billing.models import Product, StripeSettings, SubscriptionPlan
     from src.app.modules.feature_flags.models import FeatureFlagOverride
-    from src.app.modules.files.models import File
     from src.app.modules.notifications.models import EmailTemplateOverride, Notification
-    from src.app.modules.storage_settings.models import StorageSettings
+    from src.app.modules.storage.models import File, StorageSettings
     from src.app.modules.users.models import User
     from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint
 
@@ -112,9 +111,8 @@ def _ensure_related_models_registered() -> None:
         "src.app.modules.audit_logs.models",
         "src.app.modules.billing.models",
         "src.app.modules.feature_flags.models",
-        "src.app.modules.files.models",
+        "src.app.modules.storage.models",
         "src.app.modules.notifications.models",
-        "src.app.modules.storage_settings.models",
         "src.app.modules.users.models",
         "src.app.modules.webhooks.models",
     ]:

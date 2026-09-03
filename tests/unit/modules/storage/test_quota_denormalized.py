@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.modules.files.service import FileService
+from src.app.modules.storage.service import FileService
 from src.app.modules.tenants.models import Tenant
 
 

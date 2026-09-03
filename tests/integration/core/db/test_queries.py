@@ -291,7 +291,7 @@ class TestStorageSettingsN1:
     @pytest.mark.asyncio
     async def test_missing_settings_raises_error(self):
         """Verify missing settings raises StorageNotConfiguredError."""
-        from src.app.modules.storage_settings.service import StorageNotConfiguredError
+        from src.app.modules.storage.errors import StorageNotConfiguredError
 
         # The service should raise, not fall back to N+1 queries
         assert StorageNotConfiguredError is not None

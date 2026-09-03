@@ -190,7 +190,7 @@ class TestFileIndexE2E:
         """E2E: Verify MIME type composite index is defined in model."""
         log_section("File MIME Type Index")
 
-        from src.app.modules.files.models import File
+        from src.app.modules.storage.models import File
 
         table_args = File.__table_args__
         indices = [idx for idx in table_args if hasattr(idx, "name")]

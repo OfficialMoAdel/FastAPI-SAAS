@@ -4,7 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.app.modules.storage_settings.router import router as storage_router
+from src.app.modules.storage.settings_router import router as storage_router
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ def test_route_count():
 
 def test_response_models():
     """Test that endpoints have correct response models."""
-    from src.app.modules.storage_settings.schemas import StorageSettingsRead
+    from src.app.modules.storage.schemas import StorageSettingsRead
 
     # Find routes and check response models
     for route in storage_router.routes:

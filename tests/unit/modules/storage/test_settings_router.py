@@ -8,11 +8,24 @@ from fastapi import HTTPException, status
 
 from src.app.api.deps.request_context import RequestContext
 from src.app.core.tenancy.context import TenantContext
-from src.app.modules.storage_settings import router as ss_router
-from src.app.modules.storage_settings.service import (
+from src.app.modules.storage.errors import (
     InvalidCredentialsError,
     StorageNotConfiguredError,
 )
+from src.app.modules.storage.settings_router import (
+    create_storage_settings,
+    get_storage_settings,
+    update_storage_settings,
+)
+
+
+class _RouterShim:
+    get_storage_settings = staticmethod(get_storage_settings)
+    create_storage_settings = staticmethod(create_storage_settings)
+    update_storage_settings = staticmethod(update_storage_settings)
+
+
+ss_router = _RouterShim()
 
 
 def _make_ctx(tenant_id=None):

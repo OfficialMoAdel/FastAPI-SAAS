@@ -20,7 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules._base import ModelNotFoundError, ValidationError
-from src.app.modules.storage_settings.service import StorageSettingsService
+from src.app.modules.storage.service import StorageAdminService
+
+StorageSettingsService = StorageAdminService
 from src.app.modules.user_preferences.crud import crud_user_preferences
 from src.app.modules.user_preferences.models import DEFAULT_PREFERENCES
 from src.app.modules.user_preferences.schemas import UserPreferencesUpdate

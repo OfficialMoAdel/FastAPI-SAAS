@@ -233,7 +233,7 @@ def test_file_upload_memory_fix_cannot_rollback() -> None:
     """
     import inspect
 
-    from src.app.modules.files.router import upload_file
+    from src.app.modules.storage.files_router import upload_file
 
     source = inspect.getsource(upload_file)
 

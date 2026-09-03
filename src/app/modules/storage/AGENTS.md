@@ -74,17 +74,18 @@ def get_storage(provider: str, settings: StorageSettingsRead) -> StorageProvider
 - Automatic retry on transient errors
 
 ### Path Structure
-- Files stored with tenant/user scoping: `{tenant_id}/{user_id}/{filename}`
+- Files stored with tenant scoping: `tenants/{tenant_id}/files/{uuid}.{ext}`
 - Prevents path traversal via key validation
 - Supports folder-like structure via `/` separator
 
 ## Touch Points / Key Files
 
-- Interface: `src/app/modules/storage/__init__.py` - StorageProvider, factory
-- S3 impl: `src/app/modules/storage/s3_storage.py` - S3Storage implementation
-- Azure impl: `src/app/modules/storage/azure_storage.py` - AzureStorage implementation (if exists)
-- Settings: `src/app/modules/storage_settings/` - Provider configuration
-
+- Interface: `src/app/modules/storage/__init__.py` - Storage, StorageAdmin, StorageProvider
+- Service: `src/app/modules/storage/service.py` - StorageService, StorageAdminService, StoredObject, Download
+- Models: `src/app/modules/storage/models.py` - File, StorageSettings, StorageProviderType
+- Schemas: `src/app/modules/storage/schemas.py` - FileRead, FileUploadResponse, StorageSettingsRead, etc.
+- Routers: `src/app/modules/storage/files_router.py` (/files), `settings_router.py` (/storage)
+- Providers: `s3_storage.py`, `azure_storage.py`, `local_storage.py`
 ## JIT Index Hints
 
 - Find provider implementations: `rg -n "class.*Storage" src/app/modules/storage/`
@@ -94,8 +95,8 @@ def get_storage(provider: str, settings: StorageSettingsRead) -> StorageProvider
 
 ## Common Gotchas
 
-- No database models - pure interface layer
-- Provider settings come from storage_settings module
+- File and StorageSettings models are owned here
+- Multi-tenant: credentials encrypted per tenant, files isolated by tenant_id
 - Always validate keys to prevent path traversal
 - S3 credentials should use IAM roles when possible
 - Upload failures should rollback database transaction

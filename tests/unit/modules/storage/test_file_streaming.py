@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.modules.storage_settings.schemas import (
+from src.app.modules.storage.schemas import (
     LocalCredentials,
     StorageProviderType,
     StorageSettingsCreate,
 )
-from src.app.modules.storage_settings.service import StorageSettingsService
+from src.app.modules.storage.service import StorageSettingsService
 
 # ============================================================================
 # UNIT TESTS - File Streaming
@@ -39,7 +39,7 @@ class TestFileStreaming:
     @pytest.mark.asyncio
     async def test_file_router_streaming_pattern(self) -> None:
         """Verify file router uses streaming read pattern."""
-        from src.app.modules.files.router import router
+        from src.app.modules.storage.files_router import router
 
         # Check that the router exists and has upload endpoint
         routes = [r.path for r in router.routes]
@@ -47,7 +47,7 @@ class TestFileStreaming:
 
     def test_file_service_exists(self) -> None:
         """Verify file service module exists."""
-        from src.app.modules.files import service
+        from src.app.modules.storage import service
 
         assert service is not None
 
