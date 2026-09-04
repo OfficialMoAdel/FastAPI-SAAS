@@ -63,16 +63,14 @@ TIER_HIERARCHY = {
 ```
 
 ## Module Structure
-
 ```
 src/app/modules/tiers/
-├── __init__.py           # Exports TierService, TierName
-├── router.py             # /tiers endpoints
-├── service.py            # TierService class (BaseService flyweight CRUD)
-├── models.py             # Tier model, TierName enum
-└── schemas.py            # Pydantic schemas
+├── __init__.py           # Re-exports Tier, TierService, schemas
+├── router.py             # /tiers endpoints (delegates to RateLimitService)
+├── service.py            # TierService (delegates to RateLimitService)
+├── models.py             # Re-exports Tier model from rate_limits.models
+└── schemas.py            # Re-exports Tier schemas from rate_limits.schemas
 ```
-
 ## Touch Points
 
 - **Tier service**: `modules/tiers/service.py::TierService`

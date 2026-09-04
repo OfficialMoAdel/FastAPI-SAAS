@@ -12,17 +12,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
-from src.app.core.config import settings
 from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.redis_provider import get_redis
 from src.app.core.utils.rate_limit import rate_limiter
 from src.app.core.utils.retry import with_retry
-from src.app.modules.notifications.email_provider import EmailMessage, SMTPProvider
+from src.app.modules.notifications.email_provider import EmailMessage, SMTPProvider, get_email_provider  # noqa: F401
 from src.app.modules.notifications.models import EmailTemplateOverride, Notification, NotificationStatus
 
 logger = get_logger(__name__)
+
+AUTH_CRITICAL_TEMPLATES: frozenset[str] = frozenset(
+    {
+        "email_verification",
+        "magic_link",
+        "password_reset",
+    }
+)
 
 # Initialize Jinja2 environment
 TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates" / "email"
@@ -177,8 +184,8 @@ class NotificationService:
         -------
             Notification record, or None if skipped by user preferences
         """
-        # Check user preferences if user_id is provided
-        if user_id:
+        # Check user preferences if user_id is provided (auth-critical bypasses quiet hours)
+        if user_id and template_name not in AUTH_CRITICAL_TEMPLATES:
             should_send = await self.should_send_notification(user_id, template_name)
             if not should_send:
                 logger.info(
@@ -556,16 +563,7 @@ async def send_email_task(
         # Fix: wrap ALL DB operations (create, SMTP send, mark) inside the context.
         async def _run_with_context() -> None:
             service = NotificationService(db)
-
-            # Create SMTP provider and message
-            provider = SMTPProvider(
-                host=settings.email.SMTP_HOST,
-                port=settings.email.SMTP_PORT,
-                username=settings.email.SMTP_USER,
-                password=settings.email.SMTP_PASSWORD,
-                use_tls=settings.email.SMTP_USE_TLS,
-                from_email=settings.email.EMAIL_FROM_ADDRESS,
-            )
+            provider = get_email_provider()
             message = EmailMessage(
                 to_email=to_email,
                 subject=subject,
@@ -577,8 +575,8 @@ async def send_email_task(
                 async def _send_with_check() -> bool:
                     result = await provider.send_email(message)
                     if not result:
-                        raise RuntimeError(f"SMTPProvider failed to send email to {to_email}")
-                    return result
+                        raise RuntimeError(f"EmailProvider failed to send email to {to_email}")
+                    return bool(result)
 
                 await with_retry(
                     fn=_send_with_check,
@@ -678,7 +676,6 @@ async def handle_notification_send_event(data: dict[str, Any]) -> None:
         # BUG FIX: Mark notification as FAILED so it doesn't stay stuck in PENDING
         await _mark_notification_failed(notification_id, tenant_id, "ARQ queue not available")
 
-
 async def _mark_notification_failed(notification_id: str | None, tenant_id: str | None, reason: str) -> None:
     """Mark a notification as failed in the database."""
     if not notification_id:
@@ -702,8 +699,12 @@ async def _mark_notification_failed(notification_id: str | None, tenant_id: str 
         logger.error("failed_to_mark_notification_failed", notification_id=notification_id, error=str(e))
 
 
+
 async def handle_notification_request_event(data: dict[str, Any]) -> None:
-    """Handle request to generate and send an email notification.
+    """Handle request to generate and send an email notification via outbox.
+
+    Eliminates redundant event hops by creating the outbox record (Notification)
+    and directly enqueuing the delivery task.
 
     Args:
         data: Event payload with request details:
@@ -713,6 +714,8 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
             - tenant_id: Optional tenant ID
             - user_id: Optional user ID
     """
+    from src.app.core.utils.queue import pool as arq_pool
+
     to_email = data.get("to_email")
     template_name = data.get("template_name")
 
@@ -721,18 +724,25 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
         return
 
     tenant_id_str = data.get("tenant_id")
-    from uuid import UUID
-
-    tenant_id = UUID(tenant_id_str) if tenant_id_str else None
+    tenant_id: UUID | None = None
+    if tenant_id_str:
+        try:
+            tenant_id = UUID(str(tenant_id_str))
+        except (ValueError, TypeError) as e:
+            logger.warning(
+                "invalid_tenant_id_in_notification_request",
+                tenant_id=tenant_id_str,
+                error=str(e),
+            )
+            return
+    user_id = data.get("user_id")
+    context = data.get("context", {})
 
     try:
         from src.app.core.db.database import local_session
         from src.app.core.db.rls import rls_context
 
         async with local_session() as db:
-            # Only scope RLS by tenant when a tenant is actually present.
-            # Passing an empty string would set app.current_tenant_id='' and
-            # silently mis-scope the insert under RLS.
             if tenant_id:
                 ctx: Any = rls_context(db, str(tenant_id))
             else:
@@ -742,12 +752,132 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
 
             async with ctx:
                 service = NotificationService(db)
-                await service.send_email(
-                    tenant_id=tenant_id,
-                    to_email=to_email,
-                    template_name=template_name,
-                    context=data.get("context", {}),
-                    user_id=data.get("user_id"),
+
+                # Check user preferences if user_id is provided (auth-critical bypasses quiet hours)
+                if user_id and template_name not in AUTH_CRITICAL_TEMPLATES:
+                    should_send = await service.should_send_notification(user_id, template_name)
+                    if not should_send:
+                        logger.info(
+                            "notification_skipped_by_user_preferences",
+                            user_id=user_id,
+                            template_name=template_name,
+                        )
+                        return
+
+                # Rate limiting check (T105)
+                from src.app.modules._base.exceptions import RateLimitExceededError
+
+                rate_limit_key_min = f"notif:min:{tenant_id}" if tenant_id else f"notif:min:global:{to_email}"
+                rate_limit_key_hour = f"notif:hour:{tenant_id}" if tenant_id else f"notif:hour:global:{to_email}"
+                (is_limited_min, _), (is_limited_hour, _) = await asyncio.gather(
+                    rate_limiter.check_rate_limit(rate_limit_key_min, 100, 60),
+                    rate_limiter.check_rate_limit(rate_limit_key_hour, 1000, 3600),
                 )
+                if is_limited_min or is_limited_hour:
+                    limit_reason = "100 emails per minute" if is_limited_min else "1000 emails per hour"
+                    logger.warning(
+                        "notification_rate_limit_exceeded",
+                        tenant_id=str(tenant_id),
+                        reason=limit_reason,
+                    )
+                    # Create FAILED outbox record so there is an audit trace
+                    notification = Notification(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        template_name=template_name,
+                        to_email=to_email,
+                        subject=f"Rate limited: {template_name}",
+                        status=NotificationStatus.FAILED,
+                    )
+                    notification.error_message = f"Rate limit exceeded: {limit_reason}"
+                    db.add(notification)
+                    await db.commit()
+                    raise RateLimitExceededError(f"Rate limit exceeded: {limit_reason}")
+                # Render template
+                subject, html_content = await service.render_template(tenant_id, template_name, context)
+
+                # Create outbox record (status PENDING)
+                notification = Notification(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    template_name=template_name,
+                    to_email=to_email,
+                    subject=subject,
+                    status=NotificationStatus.PENDING,
+                )
+                db.add(notification)
+                await db.commit()
+                await db.refresh(notification)
+
+                # Direct enqueue to ARQ worker (retiring redundant notification.send event hop)
+                if arq_pool:
+                    try:
+                        await arq_pool.enqueue_job(
+                            "send_email_task",
+                            str(notification.id),
+                            to_email,
+                            subject,
+                            html_content,
+                            str(tenant_id) if tenant_id else None,
+                        )
+                        logger.info(
+                            "email_queued",
+                            notification_id=str(notification.id),
+                            to_email=to_email,
+                            template=template_name,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "failed_to_enqueue_email_task",
+                            notification_id=str(notification.id),
+                            error=str(e),
+                        )
+                        notification.status = NotificationStatus.FAILED
+                        notification.error_message = f"Enqueue error: {e}"
+                        await db.commit()
+                else:
+                    logger.warning(
+                        "arq_queue_not_available",
+                        notification_id=str(notification.id),
+                        to_email=to_email,
+                    )
+                    notification.status = NotificationStatus.FAILED
+                    notification.error_message = "ARQ queue not available"
+                    await db.commit()
+
     except Exception as e:
-        logger.error("failed_to_process_notification_request", error=str(e))
+        logger.error("failed_to_process_notification_request", error=str(e), exc_info=True)
+        raise
+
+async def request_notification(
+    to_email: str,
+    template_name: str,
+    context: dict[str, Any] | None = None,
+    tenant_id: UUID | str | None = None,
+    user_id: int | None = None,
+    priority: EventPriority = EventPriority.NORMAL,
+) -> None:
+    """Standardized entrypoint to dispatch a notification via the event bus.
+
+    Decouples callers from direct NotificationService construction and
+    database/SMTP operations, routing through the transactional outbox seam.
+
+    Args:
+        to_email: Recipient email address
+        template_name: Template name (e.g. 'email_verification', 'password_reset', 'magic_link')
+        context: Template rendering context variables
+        tenant_id: Optional tenant UUID or string
+        user_id: Optional user ID for user preferences / audit
+        priority: Event priority (default NORMAL)
+    """
+
+    from src.app.core.events import EventPriority, event_bus
+
+    payload: dict[str, Any] = {
+        "to_email": to_email,
+        "template_name": template_name,
+        "context": context or {},
+        "tenant_id": str(tenant_id) if tenant_id else None,
+        "user_id": user_id,
+    }
+    await event_bus.publish("notification.request", payload, priority=priority or EventPriority.NORMAL)

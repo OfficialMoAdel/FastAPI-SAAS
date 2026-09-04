@@ -87,3 +87,7 @@ class AuthSettings(BaseSettings):
         default="fail_closed",
         description="Session-registration failure mode: 'fail_open' (allow login) or 'fail_closed' (block login)",
     )
+    MFA_LOCKOUT_FAIL_CLOSED: bool = Field(
+        default=True,
+        description="Whether MFA lockout check fails closed (blocks authentication) during Redis outage",
+    )

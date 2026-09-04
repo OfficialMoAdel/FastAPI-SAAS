@@ -129,7 +129,7 @@ class PreferencesService:
             # No updates provided, just return current preferences
             return await self.get_preferences(db=db, user_id=user_id)
 
-        logger.debug("Updating preferences for user :", user_id=user_id, update_dict=update_dict)
+        logger.debug("Updating preferences for user :", user_id=user_id, updated_keys=list(update_dict.keys()))
 
         # Update preferences
 
@@ -261,7 +261,7 @@ class PreferencesService:
         # Update user.profile_image_url
         await crud_users.update(db=db, object={"profile_image_url": image_url}, id=user_id)
 
-        return {"image_url": image_url}
+        return {"image_url": image_url, "message": "Profile image uploaded successfully"}
 
     async def delete_profile_image(
         self,
@@ -314,7 +314,15 @@ class PreferencesService:
                     error=str(e),
                     path=old_path,
                 )
-
+        else:
+            # Conservative path: fail soft on unrecognized URL formats to preserve the audit
+            # trail and prevent orphaning storage objects without a verified key.
+            logger.warning(
+                "Unexpected profile image URL format; skipping storage deletion to preserve audit trail",
+                user_id=user_id,
+                url=old_url,
+            )
+            return
         # Update User record to nullify image_url
         await crud_users.update(
             db=db,

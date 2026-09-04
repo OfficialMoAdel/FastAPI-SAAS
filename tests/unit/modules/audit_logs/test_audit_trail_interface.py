@@ -64,6 +64,16 @@ class TestAuditTrailInterface:
 
         assert _coerce_user_id(DummyUser()) == "456"
 
+    def test_audit_log_event_data_rejects_malformed_tenant_uuid(self) -> None:
+        """AuditLogEventData raises ValueError when tenant_id is an invalid UUID string."""
+        with pytest.raises(ValueError, match="Invalid UUID string for tenant_id"):
+            AuditLogEventData(
+                action="test.action",
+                entity_type="user",
+                entity_id=1,
+                tenant_id="not-a-valid-uuid",
+            )
+
     @pytest.mark.asyncio
     async def test_audit_publishes_valid_event(self) -> None:
         """Verify audit() publishes validated payload to event_bus."""

@@ -105,7 +105,7 @@ class MFAService:
         client = get_redis()
         if client is not None:
             try:
-                await client.setex(f"mfa_setup:{setup_token}", 600, secret)
+                await client.setex(f"mfa_setup:{setup_token}", 600, f"{user_id}:{secret}")
             except Exception as e:
                 logger.error("Redis failed during MFA setup: %s", e)
                 from src.app.modules._base.exceptions import ServiceUnavailableError
@@ -156,8 +156,13 @@ class MFAService:
         if not totp_secret_bytes:
             raise BadRequestException("Setup token expired or invalid. Please restart MFA setup.")
 
-        totp_secret = totp_secret_bytes.decode("utf-8") if isinstance(totp_secret_bytes, bytes) else totp_secret_bytes
-
+        raw_val = totp_secret_bytes.decode("utf-8") if isinstance(totp_secret_bytes, bytes) else str(totp_secret_bytes)
+        if ":" in raw_val:
+            bound_uid_str, totp_secret = raw_val.split(":", 1)
+            if bound_uid_str != str(user_id):
+                raise BadRequestException("Setup token does not belong to the current user")
+        else:
+            totp_secret = raw_val
         # Verify the provided TOTP token
         totp = pyotp.TOTP(totp_secret, interval=TOTP_INTERVAL, digits=TOTP_DIGITS)
         if not totp.verify(request.totp_token, valid_window=TOTP_SKEW):
@@ -274,6 +279,8 @@ class MFAService:
         user_id: int,
         request: MFAVerifyRequest,
         db: AsyncSession,
+        *,
+        prevent_replay: bool = False,
     ) -> dict[str, Any]:
         """Verify a TOTP token for a user.
 
@@ -312,6 +319,15 @@ class MFAService:
             # Verify TOTP token
             totp = pyotp.TOTP(secret, interval=TOTP_INTERVAL, digits=TOTP_DIGITS)
             if totp.verify(request.totp_token, valid_window=TOTP_SKEW):
+                # Single-use replay protection for login authentication (A2-04)
+                if prevent_replay:
+                    client = get_redis()
+                    if client is not None:
+                        used_key = f"mfa_used:{user_id}:{request.totp_token}"
+                        is_fresh = await client.set(used_key, "1", nx=True, ex=30)
+                        if not is_fresh:
+                            raise BadRequestException("TOTP token has already been used. Please wait for a new code.")
+
                 # Update last_used_at - fetch model instance
                 mfa_method = await db.get(MFAMethod, mfa_method_dict["id"])
                 if mfa_method:

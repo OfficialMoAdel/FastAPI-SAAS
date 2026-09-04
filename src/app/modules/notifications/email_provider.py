@@ -181,3 +181,91 @@ class SMTPProvider(EmailProvider):
                 failed += 1
 
         return {"success": success, "failed": failed}
+
+
+class InMemoryEmailProvider(EmailProvider):
+    """In-memory email provider fake for hermetic testing and verification."""
+
+    def __init__(self) -> None:
+        """Initialize in-memory email store."""
+        self.sent_messages: list[EmailMessage] = []
+        self.should_fail: bool = False
+        self.failure_exception: Exception | None = None
+
+    async def send_email(self, message: EmailMessage) -> bool:
+        """Record message in memory or simulate failure."""
+        if self.should_fail:
+            if self.failure_exception:
+                raise self.failure_exception
+            return False
+
+        self.sent_messages.append(message)
+        return True
+
+    async def send_bulk_emails(self, messages: list[EmailMessage]) -> dict:
+        """Record multiple messages in memory."""
+        success = 0
+        failed = 0
+        for message in messages:
+            if await self.send_email(message):
+                success += 1
+            else:
+                failed += 1
+        return {"success": success, "failed": failed}
+
+    def clear(self) -> None:
+        """Clear recorded messages and reset failure simulation flags."""
+        self.sent_messages.clear()
+        self.should_fail = False
+        self.failure_exception = None
+
+    @property
+    def count(self) -> int:
+        """Number of messages sent."""
+        return len(self.sent_messages)
+
+    @property
+    def last_message(self) -> EmailMessage | None:
+        """Most recently sent message."""
+        return self.sent_messages[-1] if self.sent_messages else None
+
+    def find_by_recipient(self, to_email: str) -> list[EmailMessage]:
+        """Find sent messages by recipient email."""
+        return [m for m in self.sent_messages if m.to_email == to_email]
+
+
+_active_email_provider: EmailProvider | None = None
+
+
+def get_email_provider() -> EmailProvider:
+    """Get the active EmailProvider seam.
+
+    Returns the explicitly configured provider if set.
+    Otherwise resolves the default SMTPProvider from configuration.
+    """
+    global _active_email_provider
+    if _active_email_provider is not None:
+        return _active_email_provider
+
+    from src.app.core.config import settings
+
+    return SMTPProvider(
+        host=settings.email.SMTP_HOST,
+        port=settings.email.SMTP_PORT,
+        username=settings.email.SMTP_USER,
+        password=settings.email.SMTP_PASSWORD,
+        use_tls=settings.email.SMTP_USE_TLS,
+        from_email=settings.email.EMAIL_FROM_ADDRESS,
+        from_name=settings.email.EMAIL_FROM_NAME,
+    )
+
+def set_email_provider(provider: EmailProvider | None) -> None:
+    """Set the active EmailProvider seam (e.g. InMemoryEmailProvider for tests)."""
+    global _active_email_provider
+    _active_email_provider = provider
+
+
+def reset_email_provider() -> None:
+    """Reset the active EmailProvider seam to default."""
+    global _active_email_provider
+    _active_email_provider = None

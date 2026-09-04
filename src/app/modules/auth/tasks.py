@@ -14,18 +14,15 @@ async def send_magic_link_email_task(
     magic_link_url: str,
     user_id: int,
 ) -> str:
-    """Send magic link email via notification service."""
-    from src.app.core.db.database import async_session_maker
-    from src.app.modules.notifications.service import NotificationService
+    """Send magic link email via notification request event outbox seam."""
+    from src.app.modules.notifications.service import request_notification
 
-    async with async_session_maker() as db:
-        service = NotificationService(db)
-        await service.send_email(
-            tenant_id=None,
-            to_email=email,
-            template_name="magic_link",
-            context={"magic_link_url": magic_link_url},
-            user_id=user_id,
-        )
-    logger.info("magic_link_email_sent", user_id=user_id, email=email)
+    await request_notification(
+        to_email=email,
+        template_name="magic_link",
+        context={"magic_link_url": magic_link_url},
+        tenant_id=None,
+        user_id=user_id,
+    )
+    logger.info("magic_link_email_requested", user_id=user_id, email=email)
     return f"Magic link email sent to {email}"

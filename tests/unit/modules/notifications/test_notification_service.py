@@ -298,25 +298,27 @@ async def test_create_template_override(mock_redis, service, mock_db):
 
 @pytest.mark.asyncio
 @patch("src.app.core.db.database.async_session_maker")
-@patch("src.app.modules.notifications.service.SMTPProvider")
-async def test_send_email_task(mock_smtp_cls, mock_session_maker):
+async def test_send_email_task(mock_session_maker):
+    from src.app.modules.notifications.email_provider import reset_email_provider, set_email_provider
+
     mock_db = AsyncMock()
-    # async with async_session_maker() as db -> return mock_db
     mock_session_maker.return_value.__aenter__.return_value = mock_db
 
     mock_provider = AsyncMock()
     mock_provider.send_email.return_value = True
-    mock_smtp_cls.return_value = mock_provider
+    set_email_provider(mock_provider)
 
-    with patch("src.app.modules.notifications.service.NotificationService") as mock_srv_cls:
-        mock_srv = AsyncMock()
-        mock_srv_cls.return_value = mock_srv
+    try:
+        with patch("src.app.modules.notifications.service.NotificationService") as mock_srv_cls:
+            mock_srv = AsyncMock()
+            mock_srv_cls.return_value = mock_srv
 
-        await send_email_task({}, "eb000000-0000-0000-0000-000000000000", "test@test.com", "subj", "<html>")
+            await send_email_task({}, "eb000000-0000-0000-0000-000000000000", "test@test.com", "subj", "<html>")
 
-        mock_provider.send_email.assert_awaited_once()
-        mock_srv.mark_sent.assert_awaited_once()
-
+            mock_provider.send_email.assert_awaited_once()
+            mock_srv.mark_sent.assert_awaited_once()
+    finally:
+        reset_email_provider()
 
 @pytest.mark.asyncio
 @patch("src.app.core.utils.queue.pool")

@@ -317,6 +317,7 @@ async def complete_mfa_login(
         user_id=user_id,
         request=verify_request,
         db=db,
+        prevent_replay=True,
     )
 
     if not verify_result.get("valid"):

@@ -55,19 +55,17 @@ X-RateLimit-Reset: 3600
 
 ```
 src/app/modules/rate_limits/
-├── __init__.py           # Exports RateLimitService
-├── router.py             # /rate_limits endpoints
-├── models.py             # RateLimit model
-├── schemas.py            # Pydantic schemas
-└── service.py            # RateLimitService (BaseService flyweight CRUD)
-```
+├── __init__.py           # Exports RateLimit and Tier models
+├── router.py             # /tiers/{tier_name}/rate-limits endpoints
+├── models.py             # RateLimit and Tier models
+├── schemas.py            # RateLimit and Tier schemas
+└── service.py            # RateLimitService (absorbs tier CRUD and rate limits)
 
 ## Touch Points
 
-- **CRUD operations**: `modules/rate_limits/service.py::RateLimitService` (via `self.crud`)
-- **Models**: `modules/rate_limits/models.py::RateLimit`
-- **Tier integration**: `modules/tiers/` for limit lookup
-- **Middleware**: `src/app/middleware/rate_limit.py`
+- **CRUD operations**: `modules/rate_limits/service.py::RateLimitService` (rate limits & tiers)
+- **Models**: `modules/rate_limits/models.py::{RateLimit, Tier}`
+- **Tier integration**: Deep module owning tier definitions and rate limit rules
 
 ## JIT Index Hints
 

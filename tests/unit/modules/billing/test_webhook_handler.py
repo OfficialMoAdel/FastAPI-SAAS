@@ -123,9 +123,20 @@ class AsyncContextManagerMock:
 async def test_handle_checkout_session_completed(
     mock_retrieve, mock_crud, mock_tenant_context, mock_plan_get, mock_stripe_event, mock_db
 ):  # noqa: E501
-    # B6: the handler validates plan/tenant ownership before minting; the
-    # fixture's metadata tenant must match the mocked plan row.
+    # B6/B2-06: the handler validates plan/tenant and user/tenant ownership before minting;
+    # resolve user 1's tenant from DB so metadata matches the seeded user.
     from uuid import UUID as _UUID
+
+    from sqlalchemy import select
+
+    from src.app.core.db.database import async_session_maker
+    from src.app.modules.users.models import User
+
+    async with async_session_maker() as s:
+        u_res = await s.execute(select(User.tenant_id).where(User.id == 1))
+        real_t = u_res.scalar_one_or_none()
+    if real_t:
+        mock_stripe_event["data"]["object"]["metadata"]["tenant_id"] = str(real_t)
 
     event_tenant_id = _UUID(mock_stripe_event["data"]["object"]["metadata"]["tenant_id"])
     mock_plan_get.return_value = {"id": 2, "tenant_id": event_tenant_id}

@@ -68,10 +68,12 @@ class TestPasskeyServiceChallengeGeneration:
             ) as mock_can_create:
                 mock_can_create.return_value = True
 
+                mock_redis = AsyncMock()
                 result, registration_id = await service.generate_registration_challenge(
                     db=mock_db,
                     user=mock_user,
                     device_type="Test Device",
+                    redis=mock_redis,
                 )
 
                 # Should return dict with WebAuthn options (now returns (options, registration_id))
@@ -124,13 +126,14 @@ class TestPasskeyServiceChallengeGeneration:
             ) as mock_can_create:
                 mock_can_create.return_value = True
 
+                mock_redis = AsyncMock()
                 with patch.object(service, "_store_challenge", new_callable=AsyncMock):
                     result = await service.generate_registration_challenge(
                         db=mock_db,
                         user=mock_user,
                         device_type="Test Device",
+                        redis=mock_redis,
                     )
-
                     # Should include user info in options
                     assert result is not None
 
@@ -156,13 +159,14 @@ class TestPasskeyServiceChallengeGeneration:
             ) as mock_can_create:
                 mock_can_create.return_value = True
 
+                mock_redis = AsyncMock()
                 with patch.object(service, "_store_challenge", new_callable=AsyncMock):
                     await service.generate_registration_challenge(
                         db=mock_db,
                         user=mock_user,
                         device_type="Test Device",
+                        redis=mock_redis,
                     )
-
                     # Should have excluded existing credentials
                     mock_creds.assert_called_once()
 
@@ -213,14 +217,15 @@ class TestPasskeyServiceMaxLimit:
             with patch.object(service, "_get_existing_credentials", new_callable=AsyncMock) as mock_creds:
                 mock_creds.return_value = []
 
+                mock_redis = AsyncMock()
                 with patch.object(service, "_store_challenge", new_callable=AsyncMock):
                     # Should not raise
                     result = await service.generate_registration_challenge(
                         db=mock_db,
                         user=mock_user,
                         device_type="Test Device",
+                        redis=mock_redis,
                     )
-
                     assert result is not None
 
 
@@ -488,9 +493,10 @@ class TestPasskeyServiceAuthentication:
 
         with patch.object(service, "_get_credentials_for_email", new_callable=AsyncMock) as mock_get_creds:
             mock_get_creds.return_value = [mock_cred_desc]
-
-            result = await service.generate_authentication_challenge(db=mock_db, email="test@example.com")
-
+            mock_redis = AsyncMock()
+            result = await service.generate_authentication_challenge(
+                db=mock_db, redis=mock_redis, email="test@example.com"
+            )
             # Should have generated options with allowCredentials
             assert result is not None
             mock_get_creds.assert_called_once_with(mock_db, "test@example.com")
@@ -528,11 +534,11 @@ class TestPasskeyServiceAuthentication:
                                     with patch("src.app.modules.auth.services.mfa.get_mfa_service") as mock_mfa:
                                         mock_mfa.return_value.is_mfa_enabled = AsyncMock(return_value=False)
                                         result = await service.verify_authentication(
-                                        db=mock_db,
-                                        redis=mock_redis,
-                                        credential=mock_cred_payload,
-                                        challenge_id="test-challenge-id",
-                                    )
+                                            db=mock_db,
+                                            redis=mock_redis,
+                                            credential=mock_cred_payload,
+                                            challenge_id="test-challenge-id",
+                                        )
 
                                     assert result["access_token"] == "token"
                                     mock_update.assert_called_once()

@@ -7,7 +7,7 @@ namespace so runtime mutation and test patches keep working.
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID
 
 import stripe
@@ -104,6 +104,23 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                     plan_tenant_id=str(plan_row.get("tenant_id")) if plan_row else None,
                 )
                 raise ValueError(f"Plan {plan_id} is not available to tenant {tenant_id}")
+            # B2-06 FIX: validate that the user belongs to this tenant before minting subscription
+            from src.app.modules.users.models import User
+
+            async with _pkg.job_bypass_context("Checkout user/tenant membership check") as user_db:
+                user_res = await user_db.execute(
+                    select(User.tenant_id).where(User.id == user_id, User.is_deleted.is_(False))
+                )
+                user_tenant = user_res.scalar_one_or_none()
+            if user_tenant != tenant_id:
+                _pkg.logger.error(
+                    "Checkout user/tenant membership mismatch — rejecting subscription creation",
+                    session_id=session["id"],
+                    user_id=user_id,
+                    claimed_tenant_id=str(tenant_id),
+                    actual_user_tenant=str(user_tenant),
+                )
+                raise ValueError(f"User {user_id} does not belong to tenant {tenant_id}")
 
             # Create user subscription with tenant_id in the object
             subscription_data = UserSubscriptionCreateInternal(
@@ -255,14 +272,28 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
         # Map Stripe status to our status
         new_status: SubscriptionStatus = map_stripe_status(subscription["status"])  # type: ignore
 
+        # S2-02 FIX: Validate lifecycle transition to prevent resurrecting canceled/expired subscriptions
+        from src.app.modules.billing.lifecycle import is_valid_transition
+
+        effective_status = new_status
+        current_status = getattr(db_subscription, "status", None)
+        if isinstance(current_status, str):
+            if current_status != new_status and not is_valid_transition(current_status, new_status):
+                _pkg.logger.info(
+                    "Skipping invalid subscription transition (out-of-order webhook)",
+                    stripe_subscription_id=stripe_subscription_id,
+                    current_status=current_status,
+                    target_status=str(new_status),
+                )
+                effective_status = cast(SubscriptionStatus, current_status)
+
         # Update subscription
         update_data = UserSubscriptionUpdate(
-            status=new_status,
+            status=effective_status,
             current_period_start=datetime.fromtimestamp(subscription["current_period_start"], UTC),
             current_period_end=datetime.fromtimestamp(subscription["current_period_end"], UTC),
             cancel_at_period_end=subscription.get("cancel_at_period_end", False),
         )
-
         if subscription.get("canceled_at"):
             update_data.canceled_at = datetime.fromtimestamp(subscription["canceled_at"], UTC)
 

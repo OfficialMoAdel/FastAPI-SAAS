@@ -46,8 +46,8 @@ async def _is_event_processed(event_id: str) -> bool:
             # sessions returning arbitrary truthy objects.
             return bool(row) and getattr(row, "event_id", None) == event_id
     except Exception as e:
-        _pkg.logger.error("Processed-marker DB check failed", event_id=event_id, error=str(e))
-        return False  # fail open into the normal lock path
+        _pkg.logger.error("Processed-marker DB check failed - failing closed", event_id=event_id, error=str(e))
+        raise RuntimeError(f"Failed to verify webhook event idempotency for {event_id}: {e}") from e
 
 
 async def _try_acquire_event_lock(event_id: str) -> bool:

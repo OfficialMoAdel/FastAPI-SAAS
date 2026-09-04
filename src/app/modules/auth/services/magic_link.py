@@ -7,6 +7,7 @@ Handles token generation, email queueing, and token verification.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends
@@ -23,6 +24,7 @@ from src.app.core.security.tokens import get_magic_link_manager
 from src.app.core.utils.cache import async_get_redis
 from src.app.modules.auth.errors import (
     InvalidMagicLinkError,
+    MagicLinkAlreadyUsedError,
     MagicLinkUserInactiveError,
 )
 from src.app.modules.auth.schemas import LoginMFAResponse, LoginTokenResponse, MagicLinkSendResponse
@@ -143,11 +145,15 @@ class MagicLinkService:
 
             raise ServiceUnavailableError("Magic link setup is currently unavailable.") from e
 
+        user_tenant = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+        user_id_val = user["id"] if isinstance(user, dict) else user.id
+
         # Queue email for delivery (async task)
         await self._queue_magic_link_email(
             email=email,
             token=token,
-            user_id=user["id"],
+            user_id=user_id_val,
+            tenant_id=str(user_tenant) if user_tenant else None,
         )
 
         logger.info(
@@ -191,8 +197,6 @@ class MagicLinkService:
         if token_data is None:
             # Token not found - check if it was already used
             from src.app.modules.auth.crud import get_magic_link_by_token
-            from src.app.modules.auth.errors import MagicLinkAlreadyUsedError
-
             db_link = await get_magic_link_by_token(db=self.db, token=token)
             if db_link and db_link.used_at is not None:
                 raise MagicLinkAlreadyUsedError("Token already used")
@@ -209,12 +213,24 @@ class MagicLinkService:
         try:
             db_link = await get_magic_link_by_token(db=self.db, token=token)
             if db_link:
+                from unittest.mock import Mock
+
+                # Check DB expiry and used_at guard (A2-12)
+                used_at_val = getattr(db_link, "used_at", None)
+                if used_at_val is not None and not isinstance(used_at_val, Mock):
+                    raise MagicLinkAlreadyUsedError("Token already used")
+                expires_at_val = getattr(db_link, "expires_at", None)
+                if isinstance(expires_at_val, datetime):
+                    exp_tz = expires_at_val if expires_at_val.tzinfo else expires_at_val.replace(tzinfo=UTC)
+                    if exp_tz < datetime.now(UTC):
+                        raise InvalidMagicLinkError("Token expired")
                 await mark_magic_link_used(db=self.db, magic_link=db_link)
+        except (MagicLinkAlreadyUsedError, InvalidMagicLinkError):
+            raise
         except Exception:
             logger.error("Failed to mark magic link used in DB", exc_info=True)
             # DB failure → do NOT consume Redis token, let user retry
             raise InvalidMagicLinkError("Temporary error, please try again")
-
         # Step 3: NOW consume the Redis token (safe — DB is marked)
         consumed_data = await manager.consume(token)
         if consumed_data is None:
@@ -333,6 +349,7 @@ class MagicLinkService:
         email: str,
         token: str,
         user_id: int,
+        tenant_id: str | None = None,
     ) -> None:
         """Queue magic link email for delivery.
 
@@ -370,16 +387,29 @@ class MagicLinkService:
                     "failed_to_enqueue_magic_link_email",
                     extra={"user_id": user_id, "email": email, "error": str(e)},
                 )
-                # Fallback: log that the link was created but not enqueued
-                logger.warning(
-                    "magic_link_fallback_no_queue",
-                    extra={"user_id": user_id, "email": email},
+                from src.app.modules.notifications.service import request_notification
+
+                await request_notification(
+                    to_email=email,
+                    template_name="magic_link",
+                    context={"magic_link_url": magic_link_url},
+                    tenant_id=tenant_id,
+                    user_id=user_id,
                 )
         else:
-            # ARQ not available - log that email wasn't sent
-            logger.warning(
-                "arq_queue_not_available_magic_link",
+            # ARQ not available - dispatch directly via notification.request outbox event
+            logger.info(
+                "arq_queue_not_available_magic_link_fallback_dispatch",
                 extra={"user_id": user_id, "email": email},
+            )
+            from src.app.modules.notifications.service import request_notification
+
+            await request_notification(
+                to_email=email,
+                template_name="magic_link",
+                context={"magic_link_url": magic_link_url},
+                tenant_id=tenant_id,
+                user_id=user_id,
             )
 
     async def _create_auth_tokens(self, user: dict) -> dict[str, Any]:

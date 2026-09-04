@@ -57,13 +57,12 @@ async def send_notification(..., background_tasks: BackgroundTasks):
 
 ```
 src/app/modules/notifications/
-├── __init__.py           # Exports NotificationService
+├── __init__.py           # Exports NotificationService, email providers, and request_notification
 ├── router.py             # /notifications endpoints
-├── service.py            # NotificationService class
+├── service.py            # NotificationService and outbox event dispatch
+├── email_provider.py     # EmailProvider, SMTPProvider, InMemoryEmailProvider seam
 ├── models.py             # Notification, EmailTemplateOverride
-├── schemas.py            # Pydantic schemas
-└── crud.py               # FastCRUD operations
-```
+└── schemas.py            # Pydantic schemas
 
 ## Touch Points
 

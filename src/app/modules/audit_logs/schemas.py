@@ -141,8 +141,8 @@ class AuditLogEventData(BaseModel):
         if isinstance(v, str):
             try:
                 return UUID(v)
-            except ValueError:
-                return UUID(int=0)
+            except ValueError as e:
+                raise ValueError(f"Invalid UUID string for tenant_id: {v!r}") from e
         if isinstance(v, int):
             return UUID(int=v)
         raise ValueError(f"tenant_id must be UUID, str, or int, got {type(v).__name__}")

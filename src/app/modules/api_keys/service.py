@@ -23,7 +23,8 @@ from src.app.modules.api_keys.models import APIKey
 from src.app.modules.api_keys.schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
 from src.app.modules.audit_logs import audit
 
-__all__ = ["APIKeyService"]
+MAX_GRACE_PERIOD_DAYS: int = 90
+__all__ = ["APIKeyService", "MAX_GRACE_PERIOD_DAYS"]
 # Re-exported for test backward compatibility
 # (TODO: REMOVE once tests/unit/modules/api_keys no longer patch this module attribute)
 event_bus = event_bus
@@ -500,7 +501,12 @@ class APIKeyService(BaseService[APIKey]):
         from sqlalchemy import select
 
         # Get the existing key
-        old_key_stmt = select(APIKey).where(APIKey.id == key_id)
+        # Scope lookup to tenant and user to eliminate existence oracle (K-R1-01)
+        old_key_stmt = select(APIKey).where(
+            APIKey.id == key_id,
+            tenant_scope(APIKey, tenant_id),
+            APIKey.user_id == user_id,
+        )
         old_key_result = await self.db.execute(old_key_stmt)
         old_key = old_key_result.scalar_one_or_none()
         if inspect.isawaitable(old_key):
@@ -526,7 +532,8 @@ class APIKeyService(BaseService[APIKey]):
         # Correct behaviour:
         #   - New key: valid immediately (valid_from=None)
         #   - Old key: expires_at = min(now + grace_period, original_expires_at)  (auto-expires after grace window)
-        grace_expires_at = datetime.now(UTC) + timedelta(days=grace_period_days)
+        capped_grace_days = min(max(0, grace_period_days), MAX_GRACE_PERIOD_DAYS)
+        grace_expires_at = datetime.now(UTC) + timedelta(days=capped_grace_days)
         if api_key_expires_at and isinstance(api_key_expires_at, datetime) and api_key_expires_at < grace_expires_at:
             grace_expires_at = api_key_expires_at
 
@@ -534,8 +541,13 @@ class APIKeyService(BaseService[APIKey]):
         full_key, prefix, hashed_key = self._generate_key()
 
         # Create new key record — valid immediately (no valid_from restriction)
+        import re
+
+        # Prevent unbounded name growth on repeated rotations (K-R1-02)
+        base_name = re.sub(r" \(Rotated.*\)$", "", api_key_name)
+        new_name = f"{base_name[:80]} (Rotated)"
         new_key_record = APIKey(
-            name=f"{api_key_name} (Rotated)",
+            name=new_name,
             key_prefix=prefix,
             hashed_key=hashed_key,
             user_id=user_id,

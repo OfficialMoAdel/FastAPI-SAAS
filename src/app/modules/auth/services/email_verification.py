@@ -7,7 +7,6 @@ including timing equalization to prevent account enumeration.
 
 import asyncio
 import random
-from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,29 +49,36 @@ class EmailVerificationService:
             user = None
 
         if user and not is_email_verified:
+            from uuid import UUID
+
+            user_id = user["id"] if isinstance(user, dict) else user.id
+            user_tenant = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+            user_name = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
+
+            tenant_id_val: UUID = user_tenant if isinstance(user_tenant, UUID) else UUID(str(user_tenant))
+
             raw_token = generate_verification_token()
             hashed_token = hash_token(raw_token)
             # Create verification token
-            token_model = EmailVerificationToken(user_id=user["id"], token=hashed_token, tenant_id=user["tenant_id"])
+            token_model = EmailVerificationToken(user_id=user_id, token=hashed_token, tenant_id=tenant_id_val)
             db.add(token_model)
             await db.commit()
             await db.refresh(token_model)
 
             verification_link = f"{settings.app.FRONTEND_URL}/verify-email?token={raw_token}"
 
-            # BUG FIX: Use NotificationService for correctly shaped events
-            from src.app.modules.notifications.service import NotificationService
+            # Standardized notification dispatch via event bus outbox seam
+            from src.app.modules.notifications.service import request_notification
 
-            notification_service = NotificationService(db)
-            await notification_service.send_email(
-                tenant_id=UUID(str(user["tenant_id"])) if user.get("tenant_id") else None,
+            await request_notification(
                 to_email=email,
                 template_name="email_verification",
                 context={
-                    "username": user["username"],
+                    "username": user_name,
                     "verification_link": verification_link,
                 },
-                user_id=user["id"],
+                tenant_id=user_tenant,
+                user_id=user_id,
             )
         else:
             # SECURITY FIX: Equalize timing for enumeration prevention

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.core.db.database import async_get_db
+from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.schemas import MessageResponse
 from src.app.core.utils.cache import cache
 from src.app.core.utils.user_utils import get_user_attr
@@ -22,11 +23,15 @@ from src.app.modules.posts.service import PostService, get_post_service
 # guard reference it) even though it must equal the authenticated user.
 router = APIRouter(prefix="/posts", tags=["posts"])
 
+def _require_post_owner(username: str, ctx: RequestContextDep) -> None:
+    """Enforce that the authenticated user matches the path's username."""
+    if get_user_attr(ctx.user, "username") != username:
+        raise ForbiddenException()
+
 
 async def _get_post_service(db: AsyncSession = Depends(async_get_db)) -> PostService:
     """Dependency for PostService injection."""
     return get_post_service(db)
-
 
 @router.post("/by-user/{username}", response_model=PostRead, status_code=status.HTTP_201_CREATED)
 async def write_post(
@@ -37,10 +42,7 @@ async def write_post(
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, Any]:
     """Create a new post."""
-    if get_user_attr(ctx.user, "username") != username:
-        from src.app.core.exceptions.http_exceptions import ForbiddenException
-
-        raise ForbiddenException()
+    _require_post_owner(username, ctx)
     return await service.create_post(post, ctx.user)
 
 
@@ -62,10 +64,7 @@ async def read_posts(
     per_page: int = Query(10, ge=1, le=100, description="Page size"),
 ) -> Any:
     """Get paginated list of posts for a user."""
-    if get_user_attr(ctx.user, "username") != username:
-        from src.app.core.exceptions.http_exceptions import ForbiddenException
-
-        raise ForbiddenException()
+    _require_post_owner(username, ctx)
     return await service.get_posts(get_user_attr(ctx.user, "id"), page, per_page)
 
 
@@ -79,10 +78,7 @@ async def read_post(
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, Any]:
     """Get a single post by ID."""
-    if get_user_attr(ctx.user, "username") != username:
-        from src.app.core.exceptions.http_exceptions import ForbiddenException
-
-        raise ForbiddenException()
+    _require_post_owner(username, ctx)
     return await service.get_post(id, get_user_attr(ctx.user, "id"))
 
 
@@ -102,10 +98,7 @@ async def patch_post(
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, str]:
     """Update a post."""
-    if get_user_attr(ctx.user, "username") != username:
-        from src.app.core.exceptions.http_exceptions import ForbiddenException
-
-        raise ForbiddenException()
+    _require_post_owner(username, ctx)
     return await service.update_post(id, values, ctx.user)
 
 
@@ -124,10 +117,7 @@ async def erase_post(
     service: PostService = Depends(_get_post_service),
 ) -> Response:
     """Soft delete a post."""
-    if get_user_attr(ctx.user, "username") != username:
-        from src.app.core.exceptions.http_exceptions import ForbiddenException
-
-        raise ForbiddenException()
+    _require_post_owner(username, ctx)
     await service.delete_post(id, ctx.user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

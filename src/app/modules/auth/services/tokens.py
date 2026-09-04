@@ -74,14 +74,14 @@ class TokenIssuer:
             ``(access_token, refresh_token)``
         """
         # A3: mint ONE stable sid per session up front so access and refresh
-        # tokens share it (each creator only fills it in when absent).
-        token_data.setdefault("sid", str(uuid4()))
+        # tokens share it (copy data to avoid mutating caller's dict).
+        data_copy = dict(token_data)
+        data_copy.setdefault("sid", str(uuid4()))
         access_token_expires = timedelta(minutes=settings.crypt.ACCESS_TOKEN_EXPIRE_MINUTES)
         return await asyncio.gather(
-            create_access_token(data=token_data, expires_delta=access_token_expires),
-            create_refresh_token(data=token_data),
+            create_access_token(data=data_copy, expires_delta=access_token_expires),
+            create_refresh_token(data=data_copy),
         )
-
     @staticmethod
     async def rotate_token_pair(
         token_data: dict[str, Any],
@@ -161,8 +161,11 @@ class TokenIssuer:
             subject=resolved_subject,
             user=user,
         )
+        # Protect core JWT claims from external extra_claims overwrite (A2-02)
+        RESERVED_CLAIMS = frozenset({"sub", "tenant_id", "tier_id", "tier_name", "token_version"})
         if extra_claims:
-            token_data.update(extra_claims)
+            safe_extra = {k: v for k, v in extra_claims.items() if k not in RESERVED_CLAIMS}
+            token_data.update(safe_extra)
 
         access_token, refresh_token = await TokenIssuer.create_token_pair(token_data)
 

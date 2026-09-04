@@ -21,8 +21,11 @@ from src.app.core.security import blacklist_token, get_password_hash
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules.audit_logs import audit
-from src.app.modules.tiers.models import Tier
-from src.app.modules.tiers.service import TierService
+from src.app.modules.rate_limits.models import Tier
+from src.app.modules.rate_limits.service import RateLimitService
+
+# TierService is absorbed into RateLimitService; alias retained for call-site & test-patch compatibility
+TierService = RateLimitService
 from src.app.modules.users.crud import CRUDUser, crud_users
 from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
@@ -48,23 +51,21 @@ def _user_cache_key(user_id: UUID | str) -> str:
     return f"{USER_CACHE_PREFIX}:{user_id}"
 
 
-def _require_tenant_id(tenant_id: int | str | None = None) -> str:
+def _require_tenant_id(tenant_id: int | str | None = None) -> str | None:
     """
-    Get current tenant ID or raise RuntimeError/HTTPException.
+    Get current tenant ID if available, without raising when called outside tenant context.
 
-    Tenant context is required for tenant-scoped cache keys to prevent
-    cross-tenant cache collisions. Use this for email/username lookups
-    which are only unique within a tenant.
+    Tenant context is used for tenant-scoped cache keys to prevent
+    cross-tenant cache collisions. When running in pre-auth or global context,
+    returns None to allow safe fallback.
     """
     if tenant_id is not None:
         return str(tenant_id)
 
     tenant = get_current_tenant()
-    if tenant is None:
-        # Check if we're in an HTTP request context by looking for Starlette/FastAPI context vars
-        # If not, raise RuntimeError instead of HTTPException so background jobs log properly.
-        raise RuntimeError("Internal server error: tenant context not available.")
-    return str(tenant.id)
+    if tenant is not None:
+        return str(tenant.id)
+    return None
 
 
 def _user_email_cache_key(email: str, tenant_id: int | str | None = None) -> str:
@@ -76,7 +77,9 @@ def _user_email_cache_key(email: str, tenant_id: int | str | None = None) -> str
     t_id = _require_tenant_id(tenant_id)
     # Normalize email to lowercase for consistent cache keys
     normalized_email = email.lower().strip()
-    return f"{USER_CACHE_PREFIX}:{t_id}:email:{normalized_email}"
+    if t_id:
+        return f"{USER_CACHE_PREFIX}:{t_id}:email:{normalized_email}"
+    return f"{USER_CACHE_PREFIX}:global:email:{normalized_email}"
 
 
 def _user_username_cache_key(username: str, tenant_id: int | str | None = None) -> str:
@@ -88,7 +91,9 @@ def _user_username_cache_key(username: str, tenant_id: int | str | None = None) 
     t_id = _require_tenant_id(tenant_id)
     # Normalize username to lowercase for consistent cache keys
     normalized_username = username.lower().strip()
-    return f"{USER_CACHE_PREFIX}:{t_id}:username:{normalized_username}"
+    if t_id:
+        return f"{USER_CACHE_PREFIX}:{t_id}:username:{normalized_username}"
+    return f"{USER_CACHE_PREFIX}:global:username:{normalized_username}"
 
 
 def _user_auth_cache_key(identifier: str, tenant_id: int | str | None = None) -> str:
@@ -100,7 +105,9 @@ def _user_auth_cache_key(identifier: str, tenant_id: int | str | None = None) ->
     """
     t_id = _require_tenant_id(tenant_id)
     normalized = identifier.lower().strip()
-    return f"{AUTH_INFO_CACHE_PREFIX}:{t_id}:{normalized}"
+    if t_id:
+        return f"{AUTH_INFO_CACHE_PREFIX}:{t_id}:{normalized}"
+    return f"{AUTH_INFO_CACHE_PREFIX}:global:{normalized}"
 
 
 class UserService:
@@ -707,18 +714,19 @@ class UserService:
 
         if db_user is None:
             raise ModelNotFoundError("User", username)
+        db_username = db_user["username"] if isinstance(db_user, dict) else db_user.username
+        db_email = db_user["email"] if isinstance(db_user, dict) else db_user.email
+        # SECURITY FIX: Cross-tenant check matching delete
+        from src.app.core.tenancy.context import get_current_tenant
 
-        if isinstance(db_user, dict):
-            db_username = db_user["username"]
-            db_email = db_user["email"]
-        else:
-            db_username = db_user.username
-            db_email = db_user.email
+        current_tenant = get_current_tenant()
+        user_tenant_id = db_user.get("tenant_id") if isinstance(db_user, dict) else getattr(db_user, "tenant_id", None)
+        if current_tenant is not None and user_tenant_id is not None and str(user_tenant_id) != str(current_tenant.id):
+            raise ModelNotFoundError("User", username)
 
         # Ownership check (superusers bypass)
         if db_username != current_user["username"] and not current_user.get("is_superuser"):
             raise ForbiddenException("You do not have permission to modify this user's email.")
-
         # Check for duplicate email if changing (exclude soft-deleted users)
         # R2-02: track the invalidation reason; the bump decision is derived
         # from the SessionInvalidator policy, not a bare bool.
@@ -957,10 +965,10 @@ class UserService:
 
         db_username = db_user.username if not isinstance(db_user, dict) else db_user["username"]
 
-        # Validate tier exists via registry
-        tier_svc = TierService(self.db)
+        # Validate tier exists via rate limits module
+        rate_limit_svc = TierService(self.db)
         try:
-            await tier_svc.get_tier_by_id(values.tier_id)
+            await rate_limit_svc.get_tier_by_id(values.tier_id)
         except ModelNotFoundError:
             raise ModelNotFoundError("Tier", values.tier_id)
 
@@ -1004,9 +1012,9 @@ class UserService:
         """
         from src.app.core.config import settings
 
-        tier_svc = TierService(self.db)
+        rate_limit_svc = TierService(self.db)
         try:
-            free_tier = await tier_svc.get_tier(settings.billing.DEFAULT_FREE_TIER_NAME)
+            free_tier = await rate_limit_svc.get_tier(settings.billing.DEFAULT_FREE_TIER_NAME)
         except ModelNotFoundError:
             logger.warning("Free tier not configured; skipping downgrade", user_id=user_id)
             return None

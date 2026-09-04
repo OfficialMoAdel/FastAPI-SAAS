@@ -249,5 +249,5 @@ class UserPreferencesDeleteInternal(BaseModel):
 class ImageUploadResponse(BaseModel):
     """Response schema for image upload endpoint."""
 
-    message: str
+    message: str = "Profile image uploaded successfully"
     image_url: str | None = None

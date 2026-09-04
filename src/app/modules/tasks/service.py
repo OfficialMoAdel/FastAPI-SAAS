@@ -24,6 +24,9 @@ class TaskService:
         request while the previous job still exists returns the SAME job id
         instead of failing (B7 FIX - previously raised ValueError -> HTTP 500).
         """
+        if not message or not message.strip():
+            raise ValueError("Task message cannot be empty")
+
         arq = get_arq()
         if arq is None:
             raise QueueUnavailableError("Queue is not available")
@@ -32,7 +35,6 @@ class TaskService:
 
         job_id_input = f"{tenant_id}:{message}".encode()
         deterministic_job_id = f"sample_task:{hashlib.sha256(job_id_input).hexdigest()}"
-
         job = await arq.enqueue_job(
             "sample_background_task",
             message,
@@ -70,8 +72,9 @@ class TaskService:
             If tenant_id is missing
         """
         if not tenant_id:
-            raise ValueError("tenant_id is required for task isolation")
+            from src.app.core.exceptions.http_exceptions import TenantContextError
 
+            raise TenantContextError("tenant_id is required for task isolation")
         arq = get_arq()
         if arq is None:
             raise QueueUnavailableError("Queue is not available")

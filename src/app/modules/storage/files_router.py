@@ -118,15 +118,22 @@ async def list_files(
     service: StorageService = Depends(get_storage),
 ) -> Any:
     """List files for the current tenant."""
+    effective_user_id = user_id
+    if not ctx.is_superuser:
+        if user_id is not None and user_id != ctx.user_id:
+            from src.app.core.exceptions.http_exceptions import ForbiddenException
+
+            raise ForbiddenException("Cannot list files of another user")
+        effective_user_id = ctx.user_id if user_id is None else user_id
+
     offset = (page - 1) * per_page
     files_data = await service.list_files(
         tenant_id=ctx.tenant_id,
-        user_id=user_id,
+        user_id=effective_user_id,
         mime_type=mime_type,
         limit=per_page,
         offset=offset,
     )
-
     items = files_data.get("items", [])
     total = files_data.get("total", 0)
 
@@ -200,7 +207,11 @@ async def get_file_info(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
         )
-
+    except StorageNotConfiguredError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Storage not configured for this tenant.",
+        )
 
 @router.get(
     "/{file_id}/url",
@@ -228,7 +239,11 @@ async def get_signed_url(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
         )
-
+    except StorageNotConfiguredError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Storage not configured for this tenant.",
+        )
 
 @router.patch(
     "/{file_id}",
@@ -250,7 +265,11 @@ async def update_file(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
         )
-
+    except StorageNotConfiguredError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Storage not configured for this tenant.",
+        )
 
 @router.delete(
     "/{file_id}",
@@ -271,6 +290,11 @@ async def delete_file(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
+        )
+    except StorageNotConfiguredError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Storage not configured for this tenant.",
         )
     except StorageBackendError:
         raise HTTPException(

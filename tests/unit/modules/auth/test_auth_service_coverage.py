@@ -130,11 +130,11 @@ class TestPublishLoginAudit:
     @pytest.mark.asyncio
     async def test_publish_audit_event_bus_failure(self, auth_service, mock_request):
         """Test audit log failure when event_bus.publish fails (lines 140-149)."""
-        with patch("src.app.modules.auth.service.event_bus.publish", side_effect=Exception("Redis connection failed")):
-            with patch("src.app.modules.auth.service.get_current_tenant", return_value=None):
+        with patch("src.app.modules.auth.service.audit", side_effect=Exception("Redis connection failed")):
+            with patch("src.app.core.tenancy.context.get_current_tenant", return_value=None):
                 with patch("src.app.modules.auth.service.settings") as mock_settings:
                     # Test fail_open mode (default)
-                    mock_settings.AUDIT_LOG_FAILURE_MODE = "fail_open"
+                    mock_settings.auth.AUDIT_LOG_FAILURE_MODE = "fail_open"
                     # Should not raise, just log
                     await auth_service._publish_login_audit(mock_request, "testuser", False, reason="test")
 
@@ -143,8 +143,8 @@ class TestPublishLoginAudit:
         """Test AUDIT_LOG_FAILURE_MODE='fail_closed' raises 503."""
         from src.app.modules._base.exceptions import ServiceUnavailableError
 
-        with patch("src.app.modules.auth.service.event_bus.publish", side_effect=Exception("Connection failed")):
-            with patch("src.app.modules.auth.service.get_current_tenant", return_value=None):
+        with patch("src.app.modules.auth.service.audit", side_effect=Exception("Connection failed")):
+            with patch("src.app.core.tenancy.context.get_current_tenant", return_value=None):
                 with patch("src.app.modules.auth.service.settings") as mock_settings:
                     mock_settings.auth.AUDIT_LOG_FAILURE_MODE = "fail_closed"
 
@@ -152,7 +152,6 @@ class TestPublishLoginAudit:
                         await auth_service._publish_login_audit(mock_request, "testuser", False, reason="test")
 
                     assert "Service temporarily unavailable" in str(exc_info.value)
-
 
 # ============================================================================
 # TEST: login method edge cases (lines 211-212, 228-229, 240-255)
@@ -477,7 +476,7 @@ class TestLogout:
             with patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify:
                 mock_verify.return_value = mock_user_data
 
-                with patch("src.app.modules.auth.service.event_bus.publish", side_effect=Exception("Audit failed")):
+                with patch("src.app.core.events.event_bus.publish", side_effect=Exception("Audit failed")):
                     # Should not raise even if audit fails
                     result = await auth_service.logout(
                         access_token="access_token",

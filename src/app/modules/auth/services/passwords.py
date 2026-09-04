@@ -203,20 +203,18 @@ class PasswordLifecycleService:
             # `template_name` and `context`. The only subscriber requires `notification_id`,
             # `subject`, and `html_content` (pre-rendered). The mismatched payload caused the
             # event to be silently dropped → password reset emails were NEVER sent.
-            # Fix: delegate to "notification.request" event which NotificationService listens to.
-            await event_bus.publish(
-                "notification.request",
-                {
-                    "tenant_id": str(user["tenant_id"]) if user.get("tenant_id") else None,
-                    "to_email": email,
-                    "template_name": "password_reset",
-                    "context": {
-                        "reset_link": reset_link,
-                        "username": user["username"],
-                    },
-                    "user_id": user["id"],
+            # Standardized notification dispatch via outbox seam
+            from src.app.modules.notifications.service import request_notification
+
+            await request_notification(
+                to_email=email,
+                template_name="password_reset",
+                context={
+                    "reset_link": reset_link,
+                    "username": user["username"],
                 },
-                priority=EventPriority.NORMAL,
+                tenant_id=str(user["tenant_id"]) if user.get("tenant_id") else None,
+                user_id=user["id"],
             )
         else:
             # SECURITY FIX: Equalize timing for enumeration prevention

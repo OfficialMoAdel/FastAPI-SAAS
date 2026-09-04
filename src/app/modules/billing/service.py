@@ -478,6 +478,7 @@ class PricingService(BaseService[Pricing]):
             product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
             if product is None:
                 raise ModelNotFoundError("Product", product_id)
+        limit = min(max(1, limit), 100)
         offset = (page - 1) * limit
         filters: dict[str, Any] = {}
         if product_id is not None:
@@ -532,8 +533,12 @@ class PricingService(BaseService[Pricing]):
         for key, value in update_data.items():
             setattr(pricing, key, value)
 
-        await self.db.commit()
-
+        try:
+            await self.db.commit()
+            await self.db.refresh(pricing)
+        except Exception:
+            await self.db.rollback()
+            raise
         return PricingRead.model_validate(pricing).model_dump()
 
 

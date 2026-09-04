@@ -10,7 +10,6 @@ import orjson
 from redis.exceptions import RedisError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
 from structlog import get_logger
 
 from src.app.core.db.database import get_db_context
@@ -178,14 +177,8 @@ class AuditLogService:
         -------
             List of audit log entries with eager-loaded user data
         """
-        # P2-5: Eager load user relationship to prevent N+1 queries
-        query = (
-            select(AuditLog)
-            .options(
-                joinedload(AuditLog.user),  # type: ignore[arg-type]
-            )
-            .where(tenant_scope(AuditLog, tenant_id))
-        )
+        # AuditLogRead does not project nested user fields; avoid unnecessary LEFT OUTER JOIN
+        query = select(AuditLog).where(tenant_scope(AuditLog, tenant_id))
 
         if user_id:
             query = query.where(AuditLog.user_id == user_id)
@@ -227,13 +220,7 @@ class AuditLogService:
         not safe, so the window function is the correct consolidation.
         """
         total_col = func.count().over().label("total")
-        query = (
-            select(AuditLog, total_col)
-            .options(
-                joinedload(AuditLog.user),  # type: ignore[arg-type]
-            )
-            .where(tenant_scope(AuditLog, tenant_id))
-        )
+        query = select(AuditLog, total_col).where(tenant_scope(AuditLog, tenant_id))
 
         if user_id:
             query = query.where(AuditLog.user_id == user_id)

@@ -254,9 +254,14 @@ class PostService(BaseService[Post]):
             If post not found
         """
         from src.app.core.tenancy.context import get_current_tenant
+
         tenant = get_current_tenant()
-        db_post = await self.crud.get(db=self.db, id=post_id, is_deleted=False, schema_to_select=PostRead)
-        if db_post is None or (tenant and str(db_post["tenant_id"]) != str(tenant.id)):
+        db_post = await self.crud.get(db=self.db, id=post_id, is_deleted=False)
+        if db_post is None:
+            raise ModelNotFoundError("Post", post_id)
+
+        post_tenant = db_post.get("tenant_id") if isinstance(db_post, dict) else getattr(db_post, "tenant_id", None)
+        if tenant is not None and post_tenant is not None and str(post_tenant) != str(tenant.id):
             raise ModelNotFoundError("Post", post_id)
 
         await self.crud.db_delete(db=self.db, id=post_id)

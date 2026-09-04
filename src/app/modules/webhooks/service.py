@@ -641,13 +641,13 @@ class WebhookService:
         await delivery_module.enqueue(delivery_id, defer_by=defer_by, tenant_id=tenant_id)
 
     async def verify_signature(self, payload: dict[str, Any], signature: str, secret: str) -> bool:
-        """Verify webhook signature.
+        """Verify webhook signature supporting multi-sig rotation grace periods.
 
         Used by webhook receivers to validate requests.
         """
         expected_signature = self._generate_signature(payload, secret)
-        return hmac.compare_digest(signature, expected_signature)
-
+        signatures = [s.strip() for s in signature.split(",") if s.strip()]
+        return any(hmac.compare_digest(sig, expected_signature) for sig in signatures)
     async def retry_delivery(self, delivery_id: UUID) -> WebhookDelivery:
         """Retry a failed delivery."""
         delivery = await self.db.get(WebhookDelivery, delivery_id)

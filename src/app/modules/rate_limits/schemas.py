@@ -1,9 +1,74 @@
+from datetime import datetime
 from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
 
+from src.app.core.schemas import TimestampSchema
 from src.app.core.utils.path_utils import sanitize_path as sanitize_path
 from src.app.modules._base.schemas import BaseCreate, BaseRead, BaseUpdate
+
+# ---------------------------------------------------------------------------
+# Tier Schemas (absorbed into rate_limits)
+# ---------------------------------------------------------------------------
+
+
+class TierBase(BaseModel):
+    """Base schema with common tier fields."""
+
+    name: Annotated[str, Field(examples=["free"])]
+
+
+class Tier(TimestampSchema, TierBase):
+    """Full tier schema with timestamps (for internal use)."""
+
+    pass
+
+
+class TierRead(BaseRead, TierBase):
+    """Schema for tier API responses.
+
+    Inherits id, created_at, updated_at from BaseRead.
+    """
+
+    pass
+
+
+class TierCreate(BaseCreate, TierBase):
+    """Schema for creating a new tier."""
+
+    pass
+
+
+class TierCreateInternal(TierCreate):
+    """Internal schema for tier creation with additional fields."""
+
+    pass
+
+
+class TierUpdate(BaseUpdate):
+    """Schema for updating an existing tier.
+
+    All fields optional for partial updates.
+    """
+
+    name: str | None = None
+
+
+class TierUpdateInternal(TierUpdate):
+    """Internal schema for tier updates with timestamp."""
+
+    updated_at: datetime
+
+
+class TierDelete(BaseModel):
+    """Schema for tier deletion confirmation."""
+
+    pass
+
+
+# ---------------------------------------------------------------------------
+# RateLimit Schemas
+# ---------------------------------------------------------------------------
 
 
 class RateLimitBase(BaseModel):
@@ -51,9 +116,6 @@ class RateLimitUpdate(BaseUpdate):
     @field_validator("path")
     def validate_and_sanitize_path(cls, v: str | None) -> str | None:
         return sanitize_path(v) if v is not None else None
-
-
-
 
 
 class RateLimitDelete(BaseModel):

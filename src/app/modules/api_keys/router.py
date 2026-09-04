@@ -16,7 +16,11 @@ from src.app.modules.api_keys.schemas import (
     APIKeyRevokeResponse,
     APIKeyRotateResponse,
 )
-from src.app.modules.api_keys.service import APIKeyService, get_api_key_service
+from src.app.modules.api_keys.service import (
+    MAX_GRACE_PERIOD_DAYS,
+    APIKeyService,
+    get_api_key_service,
+)
 
 router = APIRouter(
     prefix="/api-keys",
@@ -104,7 +108,12 @@ async def rotate_api_key(
     key_id: int,
     ctx: RequestContextDep,
     service: APIKeyServiceDep,
-    grace_period_days: int = 7,
+    grace_period_days: int = Query(
+        7,
+        ge=0,
+        le=MAX_GRACE_PERIOD_DAYS,
+        description="Grace period in days for the old key to remain active",
+    ),
 ) -> APIKeyRotateResponse:
     """Rotate an API key with grace period for zero-downtime rotation.
 

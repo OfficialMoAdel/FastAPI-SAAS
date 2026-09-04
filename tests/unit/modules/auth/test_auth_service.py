@@ -420,7 +420,7 @@ class TestAuthServiceEmailFlows:
 
         with (
             patch("src.app.modules.auth.services.passwords.UserService") as mock_get_service,
-            patch("src.app.modules.auth.services.passwords.event_bus.publish", new_callable=AsyncMock) as mock_publish,
+            patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock) as mock_publish,
             patch("src.app.modules.auth.services.passwords.PasswordResetToken") as mock_token_model,
             patch("src.app.modules.auth.services.passwords.settings") as mock_settings,
         ):
@@ -477,7 +477,7 @@ class TestAuthServiceEmailFlows:
             patch("src.app.modules.auth.services.email_verification.UserService") as mock_get_service,
             patch("src.app.modules.auth.services.email_verification.EmailVerificationToken") as mock_token_cls,
             patch("src.app.modules.auth.services.email_verification.settings") as mock_settings,
-            patch("src.app.modules.notifications.service.NotificationService") as mock_notification_cls,
+            patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock) as mock_publish,
         ):
             mock_user_service = MagicMock()
             mock_user_service.crud = MagicMock()
@@ -493,9 +493,6 @@ class TestAuthServiceEmailFlows:
             mock_db.add = MagicMock()
             mock_db.commit = AsyncMock()
             mock_db.refresh = AsyncMock()
-            mock_notification_instance = MagicMock()
-            mock_notification_instance.send_email = AsyncMock()
-            mock_notification_cls.return_value = mock_notification_instance
 
             await auth_service.send_verification_email("test@example.com", mock_db)
 
@@ -507,13 +504,13 @@ class TestAuthServiceEmailFlows:
             mock_db.add.assert_called_with(mock_token_instance)
             mock_db.commit.assert_called()
 
-            # Check notification was sent via NotificationService
-            mock_notification_instance.send_email.assert_awaited_once()
-            call_kwargs = mock_notification_instance.send_email.call_args[1]
-            assert call_kwargs["template_name"] == "email_verification"
-            assert call_kwargs["to_email"] == "test@example.com"
-            assert "verification_link" in call_kwargs["context"]
-
+            # Check notification request was published to event bus
+            mock_publish.assert_awaited_once()
+            call_args = mock_publish.call_args[0]
+            assert call_args[0] == "notification.request"
+            assert call_args[1]["template_name"] == "email_verification"
+            assert call_args[1]["to_email"] == "test@example.com"
+            assert "verification_link" in call_args[1]["context"]
     @pytest.mark.asyncio
     async def test_verify_email_validates_and_updates_user(self, auth_service, mock_db):
         """Test verification logic updates user and deletes token."""

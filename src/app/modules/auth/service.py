@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.core.config import settings
-from src.app.core.events import EventPriority, event_bus
+from src.app.core.events import EventPriority
 from src.app.core.exceptions.http_exceptions import UnauthorizedException
 from src.app.core.security import (
     TokenType,
@@ -23,7 +23,6 @@ from src.app.core.security import (
     verify_password,
     verify_token,
 )
-from src.app.core.tenancy.context import get_current_tenant
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.audit_logs import audit
 from src.app.modules.auth.services.email_verification import EmailVerificationService
@@ -34,10 +33,6 @@ from src.app.modules.users.service import UserService
 
 logger = get_logger(__name__)
 __all__ = ["AuthService", "AuthGateway", "get_auth_service", "get_auth"]
-# Re-exported for test backward compatibility
-# (TODO: REMOVE once tests/unit/modules/auth no longer patch these module attributes)
-event_bus = event_bus
-get_current_tenant = get_current_tenant
 
 
 def get_auth_service() -> "AuthService":
@@ -188,18 +183,9 @@ class AuthService:
         # SECURITY FIX: Check lockout BEFORE authentication to prevent CPU exhaustion (DoS)
         lockout = LoginLockoutPolicy()
         if await lockout.is_locked(redis, normalized_username):
-            # Fetch user to get tenant and user ID for audit log
-            user_service = UserService(db)
-            if "@" in normalized_username:
-                db_user = await user_service.get_user_auth_info(email=normalized_username)
-            else:
-                db_user = await user_service.get_user_auth_info(username=normalized_username)
-
-            tenant_id = db_user.get("tenant_id") if db_user else None
-            user_id = db_user.get("id") if db_user else None
-
+            # Avoid DB hit on locked path to prevent resource exhaustion (A-R1-03)
             await self._publish_login_audit(
-                request, username, False, user_id=user_id, tenant_id=tenant_id, reason="account_locked"
+                request, username, False, reason="account_locked"
             )
             raise UnauthorizedException("Wrong username, email or password.")
 

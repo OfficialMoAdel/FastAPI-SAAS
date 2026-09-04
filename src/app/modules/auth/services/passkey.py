@@ -125,9 +125,12 @@ class PasskeyService:
             exclude_credentials=existing_creds,
         )
 
-        # 4. Store challenge in Redis
-        if redis:
-            await self._store_challenge(redis, registration_id, options.challenge, device_type, user_id)
+        # 4. Store challenge in Redis (fail-closed if Redis unavailable)
+        if not redis:
+            from src.app.modules._base.exceptions import ServiceUnavailableError
+
+            raise ServiceUnavailableError("Passkey registration is temporarily unavailable.")
+        await self._store_challenge(redis, registration_id, options.challenge, device_type, user_id)
 
         result: dict[str, Any] = json_loads(options_to_json(options))
         return result, registration_id
@@ -279,10 +282,14 @@ class PasskeyService:
             allow_credentials=allowed_credentials if allowed_credentials else None,
         )
 
-        # 3. Store challenge in Redis with unique challenge_id
+        # 3. Store challenge in Redis with unique challenge_id (fail-closed if Redis unavailable)
+        if not redis:
+            from src.app.modules._base.exceptions import ServiceUnavailableError
+
+            raise ServiceUnavailableError("Passkey authentication is temporarily unavailable.")
+
         challenge_id = str(uuid.uuid4())
-        if redis:
-            await self._store_auth_challenge(redis, challenge_id, options.challenge)
+        await self._store_auth_challenge(redis, challenge_id, options.challenge)
 
         result: dict[str, Any] = json_loads(options_to_json(options))
         return result, challenge_id

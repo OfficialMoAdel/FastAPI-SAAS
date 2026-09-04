@@ -106,6 +106,7 @@ async def test_handle_webhook_event_checkout_completed():
     mock_stripe_sub.items.data = [mock_item]
 
     with (
+        patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=False),
         patch(
             "src.app.modules.billing.crud.crud_subscription_plans.get",
@@ -127,6 +128,13 @@ async def test_handle_webhook_event_checkout_completed():
             return_value=mock_stripe_sub,
         ),
     ):  # noqa: E501
+
+        # Mock bypass db session to return tenant_id for user membership check (B2-06)
+        mock_bypass_db = AsyncMock()
+        mock_bypass_res = MagicMock()
+        mock_bypass_res.scalar_one_or_none.return_value = tenant_id
+        mock_bypass_db.execute = AsyncMock(return_value=mock_bypass_res)
+        mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
 
         # Mock tenant db session
         mock_db = AsyncMock()
