@@ -11,7 +11,6 @@ from src.app.core.db.rls import (
     rls_context,
     set_rls_context,
     verify_rls_enabled,
-    with_tenant_context,
 )
 
 __all__ = [
@@ -22,7 +21,6 @@ __all__ = [
     "clear_rls_context",
     "rls_context",
     "bypass_rls",
-    "with_tenant_context",
     "get_current_tenant_id",
     "verify_rls_enabled",
     "list_rls_policies",

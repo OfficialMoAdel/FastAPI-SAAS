@@ -20,7 +20,6 @@ from src.app.modules.feature_flags.schemas import (
 )
 from src.app.modules.feature_flags.service import (
     FeatureFlagService,
-    feature_flags_service,  # Legacy compatibility
     get_feature_flag_service,
 )
 
@@ -41,7 +40,6 @@ __all__ = [
     # Service
     "FeatureFlagService",
     "get_feature_flag_service",
-    "feature_flags_service",  # Legacy
     # CRUD
     "CRUDFeatureFlag",
     "CRUDFeatureFlagOverride",

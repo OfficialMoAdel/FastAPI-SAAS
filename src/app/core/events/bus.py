@@ -4,14 +4,14 @@ import asyncio
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
 from datetime import UTC
-from typing import Any
+from typing import Any, cast
 
 from arq.connections import ArqRedis
 
 from src.app.core import events as _pkg
 from src.app.core.events.priority import EventPriority
 
-
+_UNSET = object()
 class EventBus:
     """Central event bus for decoupled module communication.
 
@@ -36,7 +36,7 @@ class EventBus:
         """Initialize event bus with handler registry."""
         self._handlers: dict[str, list[Callable[..., Coroutine[Any, Any, None]]]] = defaultdict(list)
         self._arq_queue: ArqRedis | None = None
-        self._redis_client = None  # Set via set_redis_client()
+        self._redis_client: Any = _UNSET
         self._registration_complete = False
         # P3-2: Semaphore to bound concurrent sync execution
         self._concurrency_semaphore = asyncio.Semaphore(_pkg.settings.EVENT_BUS_CONCURRENCY)
@@ -54,6 +54,15 @@ class EventBus:
         """
         self._redis_client = redis_client
         _pkg.logger.info("Event bus Redis client configured for DLQ persistence")
+
+    @property
+    def redis_client(self) -> Any:
+        """Call-time acquisition of Redis client from provider if not explicitly injected."""
+        if self._redis_client is not _UNSET:
+            return self._redis_client
+        from src.app.core.redis_provider import get_redis
+
+        return get_redis()
 
     def set_arq_queue(self, queue: Any) -> None:
         """Set ARQ queue for async event processing.
@@ -81,12 +90,13 @@ class EventBus:
             Next sequence number (starting from 1), 0 if Redis unavailable,
             or -1 on Redis error.
         """
-        if not self._redis_client:
+        client = self.redis_client
+        if not client:
             return 0  # No ordering guarantee without Redis
 
         seq_key = f"{self.SEQUENCE_KEY_PREFIX}{event_name}"
         try:
-            return await self._redis_client.incr(seq_key)
+            return cast(int, await client.incr(seq_key))
         except Exception as e:
             _pkg.logger.error(
                 "Failed to get sequence from Redis",
@@ -159,7 +169,8 @@ class EventBus:
         Note:
             Caller must ensure self._redis_client is not None before calling.
         """
-        if self._redis_client is None:
+        client = self.redis_client
+        if client is None:
             return False  # Can't check idempotency without Redis
 
         idempotency_key = f"{self.IDEMPOTENCY_KEY_PREFIX}{event_id}"
@@ -169,7 +180,7 @@ class EventBus:
             try:
                 lua_manager = _pkg.get_lua_manager()
                 result = await lua_manager.execute(
-                    self._redis_client,
+                    client,
                     "idempotency_check",
                     keys=[idempotency_key],
                     args=[str(self.IDEMPOTENCY_TTL_SECONDS), "1"],
@@ -190,7 +201,7 @@ class EventBus:
 
         # Original path (fallback)
         # Use SETNX to atomically check and set
-        is_new = await self._redis_client.set(
+        is_new = await client.set(
             idempotency_key,
             "1",
             nx=True,
@@ -235,7 +246,7 @@ class EventBus:
             attributes={"event_name": event_name, "priority": priority.value, "event_id": event_id or "none"},
         ):
             # Check for duplicate event if event_id provided
-            if event_id and self._redis_client:
+            if event_id and self.redis_client:
                 is_duplicate = await self._check_idempotency(event_id)
                 if is_duplicate:
                     _pkg.logger.info(
@@ -450,11 +461,9 @@ class EventBus:
                 assert self._arq_queue is not None, "ARQ queue should be set"
                 # SECURITY FIX: Unified queue naming with _publish_async_batch.
                 # Batch jobs prepend 'arq:queue' prefix; single jobs must match to avoid worker misses.
-                q_name = (
-                    _pkg.default_queue_name
-                    if priority == EventPriority.NORMAL
-                    else f"{_pkg.default_queue_name}_low_priority"
-                )
+                from src.app.core.events.arq_adapter import get_queue_name
+
+                q_name = get_queue_name(priority)
                 await self._arq_queue.enqueue_job(
                     "process_event_handler",
                     event_name,
@@ -581,39 +590,16 @@ class EventBus:
             await self._publish_sync(event_name, data, handlers, priority=priority)
             return
 
-        queue_name = "default" if priority == EventPriority.NORMAL else "low_priority"
-        queue_prefix = _pkg.default_queue_name if queue_name == "default" else f"{_pkg.default_queue_name}_{queue_name}"
+        from src.app.core.events.arq_adapter import enqueue_batch_jobs
 
         try:
-            # Prepare all jobs
-            async with self._arq_queue.pipeline() as pipe:
-                enqueue_time_ms = _pkg.timestamp_ms()
-
-                # Constants from arq
-                from uuid import uuid4
-
-                for handler in handlers:
-                    job_id = uuid4().hex
-                    job_key = _pkg.job_key_prefix + job_id
-
-                    # Serialize job
-                    job_data = _pkg.serialize_job(
-                        function_name="process_event_handler",
-                        args=(event_name, handler.__module__, handler.__name__, data),
-                        kwargs={},
-                        job_try=None,
-                        enqueue_time_ms=enqueue_time_ms,
-                        serializer=self._arq_queue.job_serializer,
-                    )
-
-                    # Add to pipeline: SETEX job_def, ZADD queue (24h expiration = 86400000 ms)
-                    expires_ms = 86400000
-
-                    pipe.psetex(job_key, expires_ms, job_data)
-                    pipe.zadd(queue_prefix, {job_id: enqueue_time_ms})
-
-                # Execute batch
-                await pipe.execute()
+            await enqueue_batch_jobs(
+                self._arq_queue,
+                event_name=event_name,
+                handlers=handlers,
+                data=data,
+                priority=priority,
+            )
             await _pkg.arq_circuit.record_success()
 
             _pkg.logger.debug(
@@ -682,7 +668,8 @@ class EventBus:
             "failed_at": datetime.now(UTC).isoformat(),
         }
 
-        if self._redis_client:
+        client = self.redis_client
+        if client:
             try:
                 r1 = getattr(settings, "r1_unified", settings)
                 dlq_bounded = getattr(r1, "DLQ_USE_BOUNDED_SIZE", getattr(settings, "DLQ_USE_BOUNDED_SIZE", True))
@@ -692,7 +679,7 @@ class EventBus:
                     alert_threshold = float(
                         getattr(r1, "DLQ_ALERT_THRESHOLD_PCT", getattr(settings, "DLQ_ALERT_THRESHOLD_PCT", 80))
                     )
-                    async with self._redis_client.pipeline(transaction=True) as pipe:
+                    async with client.pipeline(transaction=True) as pipe:
                         pipe.lpush(self.DLQ_REDIS_KEY, _pkg.json_dumps(dlq_entry, as_str=True))
                         pipe.ltrim(self.DLQ_REDIS_KEY, 0, max_size - 1)  # Keep newest entries
                         pipe.llen(self.DLQ_REDIS_KEY)
@@ -712,8 +699,8 @@ class EventBus:
                         )
                 else:
                     # Original path (fallback)
-                    await self._redis_client.lpush(self.DLQ_REDIS_KEY, _pkg.json_dumps(dlq_entry, as_str=True))
-                    dlq_size = await self._redis_client.llen(self.DLQ_REDIS_KEY)
+                    await client.lpush(self.DLQ_REDIS_KEY, _pkg.json_dumps(dlq_entry, as_str=True))
+                    dlq_size = await client.llen(self.DLQ_REDIS_KEY)
                     update_dlq_size(dlq_size)
             except Exception as e:
                 _pkg.logger.error("Failed to add to DLQ", error=str(e), event_name=event_name)
@@ -743,10 +730,11 @@ class EventBus:
         -------
             List of failed event entries
         """
-        if not self._redis_client:
+        client = self.redis_client
+        if not client:
             return []
 
-        entries = await self._redis_client.lrange(self.DLQ_REDIS_KEY, 0, limit - 1)
+        entries = await client.lrange(self.DLQ_REDIS_KEY, 0, limit - 1)
         return [_pkg.json_loads(entry) for entry in entries]
 
     async def get_dlq_size(self) -> int:
@@ -756,9 +744,10 @@ class EventBus:
         -------
             Number of DLQ entries
         """
-        if not self._redis_client:
+        client = self.redis_client
+        if not client:
             return 0
-        return await self._redis_client.llen(self.DLQ_REDIS_KEY)
+        return cast(int, await client.llen(self.DLQ_REDIS_KEY))
 
     async def retry_dlq_entry(self) -> dict | None:
         """Remove and return the oldest DLQ entry for retry (FIFO).
@@ -767,13 +756,14 @@ class EventBus:
         -------
             DLQ entry or None if queue is empty
         """
-        if not self._redis_client:
+        client = self.redis_client
+        if not client:
             return None
 
         # Use rpop (FIFO) to ensure we retry oldest entries
-        entry = await self._redis_client.rpop(self.DLQ_REDIS_KEY)
+        entry = await client.rpop(self.DLQ_REDIS_KEY)
         if entry:
-            return _pkg.json_loads(entry)
+            return cast("dict[Any, Any]", _pkg.json_loads(entry))
         return None
 
     async def clear_dlq(self) -> int:
@@ -783,12 +773,13 @@ class EventBus:
         -------
             Number of entries cleared
         """
-        if not self._redis_client:
+        client = self.redis_client
+        if not client:
             return 0
 
-        count = await self._redis_client.llen(self.DLQ_REDIS_KEY)
-        await self._redis_client.delete(self.DLQ_REDIS_KEY)
-        return count
+        count = await client.llen(self.DLQ_REDIS_KEY)
+        await client.delete(self.DLQ_REDIS_KEY)
+        return cast(int, count)
 
     def register_all_handlers(self) -> None:
         """Pre-register all event handlers during startup.

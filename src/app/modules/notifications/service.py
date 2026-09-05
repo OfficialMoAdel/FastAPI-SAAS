@@ -236,25 +236,43 @@ class NotificationService:
         await self.db.commit()
         await self.db.refresh(notification)
 
-        # Publish event for async delivery
-        await event_bus.publish(
-            "notification.send",
-            {
-                "notification_id": str(notification.id),
-                "to_email": to_email,
-                "subject": subject,
-                "html_content": html_content,
-                "tenant_id": str(tenant_id) if tenant_id else None,
-            },
-            priority=EventPriority.NORMAL,
-        )
+        # Direct enqueue to ARQ worker (Candidate 8: retiring redundant hop)
+        from src.app.core.utils.queue import pool as arq_pool
 
-        logger.info(
-            "email_queued",
-            notification_id=str(notification.id),
-            to_email=to_email,
-            template=template_name,
-        )
+        if arq_pool:
+            try:
+                await arq_pool.enqueue_job(
+                    "send_email_task",
+                    str(notification.id),
+                    to_email,
+                    subject,
+                    html_content,
+                    str(tenant_id) if tenant_id else None,
+                )
+                logger.info(
+                    "email_queued",
+                    notification_id=str(notification.id),
+                    to_email=to_email,
+                    template=template_name,
+                )
+            except Exception as e:
+                logger.error(
+                    "failed_to_enqueue_email_task",
+                    notification_id=str(notification.id),
+                    error=str(e),
+                )
+                notification.status = NotificationStatus.FAILED
+                notification.error_message = f"Enqueue error: {e}"
+                await self.db.commit()
+        else:
+            logger.warning(
+                "arq_queue_not_available",
+                notification_id=str(notification.id),
+                to_email=to_email,
+            )
+            notification.status = NotificationStatus.FAILED
+            notification.error_message = "ARQ queue not available"
+            await self.db.commit()
 
         return notification
 
@@ -871,7 +889,7 @@ async def request_notification(
         priority: Event priority (default NORMAL)
     """
 
-    from src.app.core.events import EventPriority, event_bus
+    from src.app.core.events import EventPriority
 
     payload: dict[str, Any] = {
         "to_email": to_email,

@@ -476,7 +476,7 @@ class TestLogout:
             with patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify:
                 mock_verify.return_value = mock_user_data
 
-                with patch("src.app.core.events.event_bus.publish", side_effect=Exception("Audit failed")):
+                with patch("src.app.modules.audit_logs.trail.event_bus.publish", side_effect=Exception("Audit failed")):
                     # Should not raise even if audit fails
                     result = await auth_service.logout(
                         access_token="access_token",

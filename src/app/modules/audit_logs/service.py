@@ -1,8 +1,6 @@
 """Audit logging service for tracking system actions."""
 
-from collections.abc import Callable
 from datetime import UTC, datetime
-from functools import wraps
 from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import UUID
 
@@ -14,12 +12,10 @@ from structlog import get_logger
 
 from src.app.core.db.database import get_db_context
 from src.app.core.db.tenant_crud import tenant_scope
-from src.app.core.events import EventPriority
 from src.app.core.utils import cache as redis_cache
-from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.audit_logs.models import AuditLog
 from src.app.modules.audit_logs.schemas import AuditLogEventData
-from src.app.modules.audit_logs.trail import SYSTEM_TENANT_ID, audit
+from src.app.modules.audit_logs.trail import SYSTEM_TENANT_ID
 
 if TYPE_CHECKING:
     pass
@@ -303,7 +299,8 @@ async def buffer_audit_log(log_data: dict[str, Any], db: AsyncSession | None = N
         log_data: Audit log data to buffer
         db: Optional DB session for fallback direct insert
     """
-    if redis_cache.client is None:
+    client = redis_cache.client
+    if client is None:
         logger.warning("audit_log_redis_unavailable", action="direct_insert")
         await _direct_insert_log(log_data, db)
         return
@@ -312,11 +309,10 @@ async def buffer_audit_log(log_data: dict[str, Any], db: AsyncSession | None = N
         # BUG FIX: Push new items to the right side (tail) of the buffer list.
         # This converts the batch processor's execution behavior to strict FIFO, securely
         # preventing older events from starving endlessly natively under LPUSH + LTRIM bounds.
-        await redis_cache.client.rpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))  # type: ignore[misc]
+        await client.rpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))  # type: ignore[misc]
     except RedisError as e:
         logger.warning("audit_log_buffer_failed", error=str(e), action="fallback_direct")
         await _direct_insert_log(log_data, db)
-
 
 async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None = None) -> None:
     """Fallback: directly insert audit log when Redis unavailable.
@@ -391,7 +387,8 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     Returns:
         Number of logs flushed
     """
-    if redis_cache.client is None:
+    client = redis_cache.client
+    if client is None:
         return 0
 
     if max_flush_per_run is None:
@@ -401,11 +398,10 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     flush_limit = min(AUDIT_LOG_BATCH_SIZE, max_flush_per_run)
 
     # Atomically read and trim the bounded buffer window in a single pipeline.
-    async with redis_cache.client.pipeline() as pipe:
+    async with client.pipeline() as pipe:
         pipe.lrange(AUDIT_LOG_BUFFER_KEY, 0, flush_limit - 1)
         pipe.ltrim(AUDIT_LOG_BUFFER_KEY, flush_limit, -1)
         results = await pipe.execute()
-
     logs_data = results[0] if results else []
     if not logs_data:
         return 0
@@ -478,7 +474,7 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     if not inserted:
         # Re-push failed entries back to Redis to prevent data loss
         try:
-            async with redis_cache.client.pipeline() as repush_pipe:
+            async with client.pipeline() as repush_pipe:
                 for entry_data in logs_data:
                     repush_pipe.rpush(AUDIT_LOG_BUFFER_KEY, entry_data)
                 await repush_pipe.execute()
@@ -499,7 +495,7 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     # BUG FIX: Previously compared against max_flush_per_run, so the warning would never
     # fire when AUDIT_LOG_BATCH_SIZE < max_flush_per_run.
     if len(log_dicts) >= flush_limit:
-        remaining: int = await redis_cache.client.llen(AUDIT_LOG_BUFFER_KEY)  # type: ignore[misc]
+        remaining: int = await client.llen(AUDIT_LOG_BUFFER_KEY)  # type: ignore[misc]
         logger.warning(
             "audit_log_flush_limit_reached",
             flushed=len(log_dicts),
@@ -571,98 +567,3 @@ async def handle_audit_log_event(data: dict[str, Any]) -> None:
         except Exception as fallback_error:
             logger.critical("audit_log_event_fallback_failed", error=str(fallback_error))
 
-def audit_action(action: str, entity_type: str) -> Callable:
-    """Decorator to automatically audit actions.
-
-    Args:
-        action: Action name (e.g., "post.created")
-        entity_type: Entity type (e.g., "post")
-
-    Returns
-    -------
-        Decorator function
-
-    Example:
-        @audit_action("post.created", "post")
-        async def create_post(db: AsyncSession, tenant_id: UUID, data: PostCreate):
-            post = Post(**data.model_dump(), tenant_id=tenant_id)
-            db.add(post)
-            await db.commit()
-            return post
-    """
-
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # Execute original function
-            result = await func(*args, **kwargs)
-
-            # Extract context from result and kwargs
-            tenant_id = kwargs.get("tenant_id") or getattr(result, "tenant_id", None)
-
-            # Resolve user_id dynamically from various object shapes
-            user_id = None
-            for key in ("current_user_id", "user_id"):
-                val = kwargs.get(key)
-                if val is not None:
-                    user_id = val
-                    break
-            if user_id is None:
-                for key in ("current_user", "user", "db_user"):
-                    val = kwargs.get(key)
-                    if isinstance(val, dict) and "id" in val:
-                        user_id = val["id"]
-                        break
-                    if val is not None and hasattr(val, "id"):
-                        user_id = val.id
-                        break
-            if user_id is None:
-                user_id = getattr(result, "user_id", None)
-
-            entity_id = getattr(result, "id", None)
-
-            # Extract request context if present
-            ip_address = None
-            user_agent = None
-            request = kwargs.get("request")
-            if request and hasattr(request, "client"):
-                ip_address = get_client_ip(request)
-                user_agent = request.headers.get("user-agent")
-
-            # Resolve tenant_id from context if missing
-            if not tenant_id:
-                try:
-                    from src.app.core.tenancy.context import get_current_tenant
-
-                    tenant = get_current_tenant()
-                    if tenant:
-                        tenant_id = tenant.id
-                except ImportError:
-                    pass
-
-            # Publish audit event with error handling
-            async def _publish_audit_event() -> None:
-                await audit(
-                    action=action,
-                    entity_type=entity_type,
-                    entity_id=entity_id,
-                    tenant_id=tenant_id,
-                    user_id=user_id,
-                    ip_address=ip_address,
-                    user_agent=user_agent,
-                    details={"result_id": str(getattr(result, "id", ""))},
-                    priority=EventPriority.NORMAL,
-                )
-            try:
-                from src.app.core.utils.background_task import create_safe_task
-
-                create_safe_task(_publish_audit_event())
-            except RuntimeError:
-                # No running event loop (e.g., called from sync context in tests).
-                # Run the coroutine directly as a best-effort fallback.
-                await _publish_audit_event()
-            return result
-
-        return wrapper
-
-    return decorator

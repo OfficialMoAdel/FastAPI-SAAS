@@ -5,6 +5,7 @@ Business logic for subscription plans, user subscriptions, and billing records.
 
 from datetime import UTC, datetime
 from typing import Any, cast
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,15 +64,43 @@ def _subscription_plan_to_dict(plan: SubscriptionPlan) -> dict[str, Any]:
 class SubscriptionPlanService(BaseService[SubscriptionPlan]):
     """Service for managing subscription plans."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None):
         super().__init__(SubscriptionPlan, db)
+        self.tenant_id = tenant_id
+
+    @property
+    def current_tenant_id(self) -> Any:
+        if self.tenant_id is not None:
+            return self.tenant_id
+        current_tenant = get_current_tenant()
+        return current_tenant.id if current_tenant is not None else None
+
+    def _resolve_tenant(self, entity_name: str = "SubscriptionPlan", entity_id: Any = None) -> Any:
+        """Resolve tenant with cross-tenant mismatch guard."""
+        from src.app.core.tenancy.context import get_current_tenant as _get_ctx
+
+        ctx = _get_ctx()
+        ctx_id = ctx.id if ctx is not None else None
+        if self.tenant_id is not None and ctx_id is not None and str(self.tenant_id) != str(ctx_id):
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        tid = self.tenant_id if self.tenant_id is not None else ctx_id
+        if tid is None:
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        return tid
+
+    def _require_tenant(self, entity_name: str = "SubscriptionPlan", entity_id: Any = None) -> Any:
+        tid = self.current_tenant_id
+        if tid is None:
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        return tid
 
     async def create_plan(self, data: SubscriptionPlanCreate) -> dict[str, Any]:
         """Create a new subscription plan."""
-        tenant = require_active_tenant()
+        require_active_tenant()
+        tid = self._resolve_tenant("SubscriptionPlan", "create")
 
         plan_data = data.model_dump()
-        plan_data["tenant_id"] = tenant.id
+        plan_data["tenant_id"] = tid
         create_obj = SubscriptionPlanCreateInternal(**plan_data)
         return cast(
             dict[str, Any],
@@ -84,24 +113,20 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
     async def get_plan(self, plan_id: int) -> dict[str, Any]:
         """Get a subscription plan by ID."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("SubscriptionPlan", plan_id)
+        tid = self._require_tenant("SubscriptionPlan", plan_id)
 
-        plan = await crud_subscription_plans.get(db=self.db, id=plan_id, tenant_id=tenant.id)
+        plan = await crud_subscription_plans.get(db=self.db, id=plan_id, tenant_id=tid)
         if plan is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
         return cast(dict[str, Any], plan)
 
     async def get_plans(self, page: int = 1, limit: int = 20, is_active: bool | None = None) -> dict[str, Any]:
-        """Get paginated subscription plans."""
+        """Get paginated subscription plans (global catalog — preserved behavior)."""
         offset = (page - 1) * limit
         filters: dict[str, Any] = {}
         if is_active is not None:
             filters["is_active"] = is_active
-
-        # T063: Sort by sort_order
         return cast(
             dict[str, Any],
             await crud_subscription_plans.get_multi(
@@ -119,15 +144,20 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
         P2-3: Uses session refresh instead of second DB roundtrip.
         """
-        # Fetch ORM object directly for in-place update
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("SubscriptionPlan", plan_id)
+        # Tenant-scoped ORM fetch: no unfiltered db.get oracle, str-safe compare
+        tid = self._resolve_tenant("SubscriptionPlan", plan_id)
 
-        plan = await self.db.get(SubscriptionPlan, plan_id)
-        if plan is None or plan.tenant_id != tenant.id:
-            raise ModelNotFoundError("SubscriptionPlan", plan_id)
+        from sqlalchemy import select as _select
 
+        from src.app.core.db.tenant_crud import tenant_scope as _tscope
+
+        stmt = _select(SubscriptionPlan).where(
+            SubscriptionPlan.id == plan_id, _tscope(SubscriptionPlan, tid)
+        )
+        result = await self.db.execute(stmt)
+        plan = result.scalar_one_or_none()
+        if plan is None:
+            raise ModelNotFoundError("SubscriptionPlan", plan_id)
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
 
@@ -142,14 +172,11 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
     async def delete_plan(self, plan_id: int) -> dict[str, str]:
         """Soft delete a subscription plan."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("SubscriptionPlan", plan_id)
+        tid = self._require_tenant("SubscriptionPlan", plan_id)
 
-        plan = await crud_subscription_plans.get(db=self.db, id=plan_id, tenant_id=tenant.id)
+        plan = await crud_subscription_plans.get(db=self.db, id=plan_id, tenant_id=tid)
         if plan is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
-
         await crud_subscription_plans.update(
             db=self.db,
             object={"is_active": False, "updated_at": datetime.now(UTC)},
@@ -160,19 +187,43 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
 class UserSubscriptionService(BaseService[UserSubscription]):
     """Service for managing user subscriptions."""
-
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None):
         super().__init__(UserSubscription, db)
+        self.tenant_id = tenant_id
+
+    @property
+    def current_tenant_id(self) -> Any:
+        if self.tenant_id is not None:
+            return self.tenant_id
+        current_tenant = get_current_tenant()
+        return current_tenant.id if current_tenant is not None else None
+
+    def _resolve_tenant(self, entity_name: str = "UserSubscription", entity_id: Any = None) -> Any:
+        """Resolve tenant with cross-tenant mismatch guard."""
+        from src.app.core.tenancy.context import get_current_tenant as _get_ctx
+
+        ctx = _get_ctx()
+        ctx_id = ctx.id if ctx is not None else None
+        if self.tenant_id is not None and ctx_id is not None and str(self.tenant_id) != str(ctx_id):
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        tid = self.tenant_id if self.tenant_id is not None else ctx_id
+        if tid is None:
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        return tid
+
+    def _require_tenant(self, entity_name: str = "UserSubscription", entity_id: Any = None) -> Any:
+        tid = self.current_tenant_id
+        if tid is None:
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        return tid
 
     async def create_subscription(self, user_id: int, data: UserSubscriptionCreate) -> dict[str, Any]:
         """Create a user subscription."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Tenant", "current")
+        tid = self._require_tenant("Tenant", "current")
 
-        logger.info("Creating subscription for user in tenant", user_id=user_id, id=tenant.id)
+        logger.info("Creating subscription for user in tenant", user_id=user_id, id=tid)
         sub_data = data.model_dump()
-        sub_data["tenant_id"] = tenant.id
+        sub_data["tenant_id"] = tid
         sub_data["user_id"] = user_id
         create_obj = UserSubscriptionCreateInternal(**sub_data)
         result = cast(
@@ -188,23 +239,19 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
     async def get_subscription(self, subscription_id: int) -> dict[str, Any]:
         """Get a subscription by ID."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("UserSubscription", subscription_id)
+        tid = self._require_tenant("UserSubscription", subscription_id)
 
-        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tenant.id)
+        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tid)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
-
         return cast(dict[str, Any], subscription)
 
     async def get_user_subscriptions(self, user_id: int) -> dict[str, Any]:
         """Get all subscriptions for a user."""
         filters: dict[str, Any] = {"user_id": user_id}
-        tenant = get_current_tenant()
-        if tenant:
-            filters["tenant_id"] = tenant.id
-
+        tid = self.current_tenant_id
+        if tid is not None:
+            filters["tenant_id"] = tid
         return cast(
             dict[str, Any],
             await crud_user_subscriptions.get_multi(
@@ -218,14 +265,11 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         self, subscription_id: int, data: UserSubscriptionUpdate, user_id: int | None = None
     ) -> dict[str, Any]:
         """Update a subscription."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("UserSubscription", subscription_id)
+        tid = self._require_tenant("UserSubscription", subscription_id)
 
-        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tenant.id)
+        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tid)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
-
         if (
             user_id is not None
             and (
@@ -269,11 +313,8 @@ class UserSubscriptionService(BaseService[UserSubscription]):
     async def cancel_subscription(self, subscription_id: int, user_id: int | None = None) -> dict[str, Any]:
         """Cancel a subscription at period end."""
         logger.info("Cancelling subscription", subscription_id=subscription_id)
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("UserSubscription", subscription_id)
-
-        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tenant.id)
+        tid = self._require_tenant("UserSubscription", subscription_id)
+        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tid)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 

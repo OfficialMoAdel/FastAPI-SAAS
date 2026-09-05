@@ -168,5 +168,95 @@ class TestInvalidateCacheReasonGuard:
             )
 
 
+
+class TestInvalidateUserSessions:
+    """Unified invalidate_user_sessions seam tests."""
+
+    @pytest.mark.asyncio
+    async def test_invalidate_user_sessions_bumps_and_calls_cache(self):
+        from unittest.mock import AsyncMock, patch
+
+        from src.app.modules.users.session_invalidation import invalidate_user_sessions
+
+        mock_db = AsyncMock()
+        user = _user(id=42, token_version=2)
+
+        patch_target = "src.app.modules.users.service.UserService._invalidate_user_cache"
+        with patch(patch_target, new_callable=AsyncMock) as mock_inv:
+            await invalidate_user_sessions(
+                mock_db,
+                user,
+                reason=InvalidationReason.CREDENTIAL_CHANGE,
+                commit=True,
+            )
+
+        # Verified: SQL update executed, committed, and cache invalidator called with bump=True
+        mock_db.execute.assert_awaited_once()
+        mock_db.commit.assert_awaited_once()
+        mock_inv.assert_awaited_once_with(
+            user,
+            bump_token_version=True,
+            reason=InvalidationReason.CREDENTIAL_CHANGE,
+            explicit_token_version=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_invalidate_user_sessions_profile_edit_no_bump(self):
+        from unittest.mock import AsyncMock, patch
+
+        from src.app.modules.users.session_invalidation import invalidate_user_sessions
+
+        mock_db = AsyncMock()
+        user = _user(id=42, token_version=2)
+
+        patch_target = "src.app.modules.users.service.UserService._invalidate_user_cache"
+        with patch(patch_target, new_callable=AsyncMock) as mock_inv:
+            await invalidate_user_sessions(
+                mock_db,
+                user,
+                reason=InvalidationReason.PROFILE_EDIT,
+                commit=False,
+            )
+
+        # No SQL bump executed on benign profile edit
+        mock_db.execute.assert_not_called()
+        mock_db.commit.assert_not_called()
+        mock_inv.assert_awaited_once_with(
+            user,
+            bump_token_version=False,
+            reason=InvalidationReason.PROFILE_EDIT,
+            explicit_token_version=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_invalidate_user_sessions_raw_ids_projection(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from src.app.modules.users.session_invalidation import invalidate_user_sessions
+
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.all.return_value = [
+            MagicMock(id=1, email="a@b.com", username="a", tenant_id="t1", token_version=0),
+            MagicMock(id=2, email="c@d.com", username="c", tenant_id="t1", token_version=0),
+        ]
+        mock_db.execute.side_effect = [mock_result, MagicMock()]
+
+        patch_target = "src.app.modules.users.service.UserService._invalidate_user_cache_batch"
+        with patch(patch_target, new_callable=AsyncMock) as mock_batch:
+            await invalidate_user_sessions(
+                mock_db,
+                [1, 2],
+                reason=InvalidationReason.CREDENTIAL_CHANGE,
+                tenant_id="t1",
+                commit=True,
+            )
+
+        # Projection select + sa_update were both executed
+        assert mock_db.execute.await_count == 2
+        mock_db.commit.assert_awaited_once()
+        mock_batch.assert_awaited_once()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

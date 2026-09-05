@@ -7,6 +7,8 @@ to the shared client at call time (observing test patches of
 ``utils.cache.client``, the same contract as ``redis_provider.get_redis``).
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from src.app.core.cache.client import RedisCacheAdapter, cache_client
@@ -122,6 +124,17 @@ class TestRedisAdapterDelegation:
     def test_singleton_exists(self):
         assert isinstance(cache_client, RedisCacheAdapter)
 
+    def test_client_property_delegates(self, _redis_mock):
+        assert cache_client.client is _redis_mock
+
+    @pytest.mark.asyncio
+    async def test_get_json_and_set_json(self, _redis_mock):
+        _redis_mock.get = AsyncMock(return_value='{"key": "value"}')
+        val = await cache_client.get_json("k")
+        assert val == {"key": "value"}
+
+        await cache_client.set_json("k", {"num": 123}, ttl=60)
+        _redis_mock.set.assert_awaited()
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

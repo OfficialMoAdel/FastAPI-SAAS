@@ -8,7 +8,7 @@ Tests cover:
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -187,32 +187,3 @@ class TestAuditLogServiceQueries:
 
         audit_service.db.execute.assert_called_once()
 
-
-class TestAuditActionDecorator:
-    """Tests for the @audit_action decorator."""
-
-    @pytest.mark.asyncio
-    async def test_decorator_creates_audit_event(self) -> None:
-        """Test that @audit_action decorator fires audit events."""
-        from unittest.mock import AsyncMock
-
-        from src.app.modules.audit_logs.service import audit_action
-
-        @audit_action("test.action", "test")
-        async def sample_function(tenant_id: int, user_id: int):
-            result = MagicMock()
-            result.tenant_id = tenant_id
-            result.id = uuid4()
-            return result
-
-        with patch("src.app.modules.audit_logs.service.audit", new_callable=AsyncMock) as mock_audit:
-            result = await sample_function(tenant_id=1, user_id=1)
-
-            # Give the task a moment to be created (fire-and-forget)
-            import asyncio
-
-            await asyncio.sleep(0.01)
-
-            # Decorator creates background task; audit() should be called
-            assert result is not None
-            assert mock_audit.called

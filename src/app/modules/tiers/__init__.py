@@ -1,6 +1,6 @@
 """Tiers module (absorbed into rate_limits, re-exported for backward compatibility)."""
 
-from src.app.modules.tiers.models import Tier
+from src.app.modules.rate_limits.models import Tier
 from src.app.modules.tiers.schemas import Tier as TierSchema
 from src.app.modules.tiers.schemas import (
     TierBase,

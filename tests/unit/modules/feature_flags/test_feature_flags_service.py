@@ -10,7 +10,7 @@ from src.app.modules.feature_flags.schemas import (
     FeatureFlagOverrideUpdate,
     FeatureFlagUpdate,
 )
-from src.app.modules.feature_flags.service import FeatureFlagService, _LegacyFeatureFlagsService, warm_feature_flags
+from src.app.modules.feature_flags.service import FeatureFlagService, warm_feature_flags
 
 
 @pytest.fixture
@@ -295,28 +295,6 @@ async def test_bulk_update_tenant_flags(mock_redis, mock_flag_mod, service, mock
     assert result.feature_flags["new"] is False
     assert result.feature_flags["old"] is False
     mock_db.commit.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_legacy_service(mock_db):
-    legacy = _LegacyFeatureFlagsService()
-    t_id = uuid4()
-
-    mock_flag = make_mock_flag(key="legacy_flag")
-
-    with patch(
-        "src.app.modules.feature_flags.service.FeatureFlagService.get_flag_by_key_or_none", new_callable=AsyncMock
-    ) as mock_get:
-        mock_get.return_value = mock_flag
-        result = await legacy.get_flag(mock_db, "legacy_flag", t_id)
-        assert result.id == 1
-
-    with patch(
-        "src.app.modules.feature_flags.service.FeatureFlagService.is_enabled", new_callable=AsyncMock
-    ) as mock_is_enabled:
-        mock_is_enabled.return_value = True
-        result = await legacy.is_feature_enabled(mock_db, "legacy_flag", 1, t_id)
-        assert result is True
 
 
 @pytest.mark.asyncio

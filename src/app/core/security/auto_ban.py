@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from cachetools import TTLCache
 
+from src.app.core.cache.invalidation_channel import InvalidationChannel
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
@@ -44,70 +45,30 @@ _ban_negative_cache: TTLCache[str, bool] = TTLCache(maxsize=10000, ttl=_BAN_NEGA
 # instead of serving stale "not banned" for up to _BAN_NEGATIVE_TTL (5s).
 # Mirrors the tenant L1 pattern at middleware/tenant.py:45-72.
 _BAN_L1_INVALIDATION_CHANNEL = "ban:l1_invalidate"
-_ban_l1_invalidation_task: asyncio.Task | None = None
 
 
 def invalidate_ban_negative_cache(client_ip: str | None = None) -> None:
     """Drop one (or all) entries from this process's ban negative cache."""
-    if client_ip is None:
+    if client_ip is None or client_ip == "*":
         _ban_negative_cache.clear()
     else:
         _ban_negative_cache.pop(_ban_cache_key(client_ip), None)
 
 
-async def _publish_ban_l1_invalidation(client_ip: str) -> None:
-    """Publish an L1 invalidation so other workers drop their cached entry."""
-    redis_client = get_redis()
-    if redis_client is None:
-        return
-    try:
-        await redis_client.publish(_BAN_L1_INVALIDATION_CHANNEL, client_ip)
-    except Exception as e:  # noqa: BLE001 - invalidation must never break requests
-        logger.warning("Failed to publish ban L1 invalidation: %s", e)
+
+_ban_invalidation_channel = InvalidationChannel(
+    channel=_BAN_L1_INVALIDATION_CHANNEL,
+    on_message=lambda ip: invalidate_ban_negative_cache(ip if ip != "*" else None),
+    logger_name="ban_l1",
+)
+
+_publish_ban_l1_invalidation = _ban_invalidation_channel.publish
+_start_ban_l1_invalidation_listener = _ban_invalidation_channel.start
 
 
-def _start_ban_l1_invalidation_listener() -> None:
-    """Start (once per event loop) a background subscriber applying ban invalidations."""
-    global _ban_l1_invalidation_task
-    redis_client = get_redis()
-    if redis_client is None or not hasattr(redis_client, "pubsub"):
-        return
-    if _ban_l1_invalidation_task is not None and not _ban_l1_invalidation_task.done():
-        return
-
-    async def _listen() -> None:
-        pubsub = redis_client.pubsub()
-        try:
-            await pubsub.subscribe(_BAN_L1_INVALIDATION_CHANNEL)
-            async for msg in pubsub.listen():
-                if not isinstance(msg, dict) or msg.get("type") != "message":
-                    continue
-                ip = msg.get("data")
-                if isinstance(ip, bytes):
-                    ip = ip.decode("utf-8", errors="ignore")
-                if ip:
-                    invalidate_ban_negative_cache(ip)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.warning("ban_l1_listener_error: %s", e)
-        finally:
-            try:
-                await pubsub.unsubscribe(_BAN_L1_INVALIDATION_CHANNEL)
-                await pubsub.close()
-            except Exception:
-                pass
-
-    _ban_l1_invalidation_task = asyncio.create_task(_listen())
-
-
-def stop_ban_l1_invalidation_listener() -> None:
-    """Cancel the background subscriber (idempotent)."""
-    global _ban_l1_invalidation_task
-    if _ban_l1_invalidation_task is not None and not _ban_l1_invalidation_task.done():
-        _ban_l1_invalidation_task.cancel()
-    _ban_l1_invalidation_task = None
-
+async def stop_ban_l1_invalidation_listener() -> None:
+    """Cancel the background subscriber (idempotent, awaitable)."""
+    await _ban_invalidation_channel.stop()
 
 def _ban_cache_key(client_ip: str) -> str:
     return f"ban:{client_ip}"

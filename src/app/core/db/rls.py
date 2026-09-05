@@ -11,7 +11,6 @@ SQLite Compatibility:
 
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from functools import wraps
 from typing import Any, TypeVar
 
 from sqlalchemy import text
@@ -398,43 +397,6 @@ async def bypass_rls(
             logger.warning("Failed to clear RLS bypass", error=str(e))
 
 
-def with_tenant_context(tenant_id: str, user_id: str | None = None) -> Callable[[F], F]:
-    """
-    Decorator for async functions that need RLS context.
-
-    Useful for ARQ background jobs and other async tasks.
-
-    Args:
-        tenant_id: Tenant UUID to set as current tenant
-        user_id: Optional user UUID to set as current user
-
-    Returns:
-        Decorated function with RLS context
-
-    Example:
-        @with_tenant_context(tenant_id="abc-123")
-        async def process_tenant_data(ctx):
-            # RLS context is automatically set
-            async with get_session() as session:
-                posts = await session.execute(select(Post))
-    """
-
-    def decorator(func: F) -> F:
-        @wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # Import here to avoid circular dependency
-            from src.app.core.db.database import get_db_context
-
-            # Get session and set RLS context using proper async context manager
-            async with get_db_context() as session:
-                async with rls_context(session, tenant_id, user_id):
-                    # Call the original function
-                    return await func(*args, **kwargs)
-
-        return wrapper  # type: ignore
-
-    return decorator
-
 
 async def get_current_tenant_id(connection: AsyncConnection) -> str | None:
     """
@@ -541,7 +503,6 @@ __all__ = [
     "clear_rls_context",
     "rls_context",
     "bypass_rls",
-    "with_tenant_context",
     "get_current_tenant_id",
     "verify_rls_enabled",
     "list_rls_policies",

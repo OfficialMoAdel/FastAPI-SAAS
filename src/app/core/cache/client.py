@@ -50,6 +50,18 @@ class CacheClient(Protocol):
         """Build a tenant-scoped key (prefixes tenant when present)."""
         ...  # pragma: no cover - Protocol
 
+    @property
+    def client(self) -> Any:
+        """Access the underlying Redis client when needed."""
+        ...  # pragma: no cover - Protocol
+
+    async def get_json(self, key: str) -> Any | None:
+        """Get and deserialize JSON value at ``key``, or None."""
+        ...  # pragma: no cover - Protocol
+
+    async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None:
+        """Serialize and set JSON value at ``key`` with optional TTL."""
+        ...  # pragma: no cover - Protocol
 
 class RedisCacheAdapter:
     """Adapter over the shared Redis client from ``redis_provider``.
@@ -99,6 +111,31 @@ class RedisCacheAdapter:
     def tenant_key(key: str, tenant_id: Any = None) -> str:
         return build_tenant_key(key, tenant_id)
 
+    @property
+    def client(self) -> Any:
+        from src.app.core.redis_provider import get_redis
+
+        return get_redis()
+
+    async def get_json(self, key: str) -> Any | None:
+        val = await self.get(key)
+        if val is None:
+            return None
+        from src.app.core.json_utils import json_loads
+
+        try:
+            return json_loads(val)
+        except Exception as e:
+            from src.app.core.logger import get_logger as _get_logger
+
+            _get_logger(__name__).debug("cache_json_decode_failed", key=key, error=str(e))
+            return None
+
+    async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None:
+        from src.app.core.json_utils import json_dumps
+
+        serialized = json_dumps(value, as_str=True)
+        await self.set(key, serialized, ttl=ttl)
 
 # Module-level singleton — the adapter is stateless (all delegation is
 # call-time resolved), matching the provider/dependency pattern.

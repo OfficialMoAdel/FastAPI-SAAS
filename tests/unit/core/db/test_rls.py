@@ -14,7 +14,6 @@ from src.app.core.db.rls import (
     rls_context,
     set_rls_context,
     verify_rls_enabled,
-    with_tenant_context,
 )
 
 
@@ -274,25 +273,3 @@ def test_restore_rls_context_error():
         mock_conn.invalidate.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_with_tenant_context():
-    @with_tenant_context(tenant_id="tenant-123", user_id="user-123")
-    async def sample_func(arg1, arg2):
-        return f"{arg1}-{arg2}"
-
-    mock_session = AsyncMock()
-    mock_ctx = AsyncMock()
-    mock_ctx.__aenter__.return_value = mock_session
-
-    with (
-        patch("src.app.core.db.database.get_db_context", return_value=mock_ctx),
-        patch("src.app.core.db.rls.rls_context") as mock_rls,
-    ):
-        mock_rls_ctx = AsyncMock()
-        mock_rls_ctx.__aenter__.return_value = mock_session
-        mock_rls.return_value = mock_rls_ctx
-
-        result = await sample_func("A", "B")
-
-        assert result == "A-B"
-        mock_rls.assert_called_once_with(mock_session, "tenant-123", "user-123")

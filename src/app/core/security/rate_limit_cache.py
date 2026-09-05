@@ -5,11 +5,11 @@ during request processing. Policies are loaded on app startup
 and can be refreshed when tiers are updated.
 """
 
-import asyncio
 from typing import Any
 
 from cachetools import TTLCache
 
+from src.app.core.cache.invalidation_channel import InvalidationChannel
 from src.app.core.config import settings
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
@@ -24,65 +24,29 @@ _tier_policy_l1: TTLCache[int, list[dict[str, Any]] | None] = TTLCache(maxsize=2
 # this channel so every process drops its in-memory entry immediately instead
 # of serving stale policies for up to 300s.
 _POLICY_INVALIDATION_CHANNEL = "rate_limit_policy:invalidate"
-_policy_invalidation_task: asyncio.Task | None = None
 
 
-def start_policy_invalidation_listener() -> None:
-    """Start (once per event loop) a subscriber applying L1 invalidations."""
-    global _policy_invalidation_task
-    redis_client = get_redis()
-    if redis_client is None:
-        return
-    if _policy_invalidation_task is not None and not _policy_invalidation_task.done():
-        return
-
-    async def _listen() -> None:
-        if not hasattr(redis_client, "pubsub"):
-            return
-        pubsub = redis_client.pubsub()
-        try:
-            await pubsub.subscribe(_POLICY_INVALIDATION_CHANNEL)
-            async for msg in pubsub.listen():
-                if not isinstance(msg, dict) or msg.get("type") != "message":
-                    continue
-                data = msg.get("data")
-                if isinstance(data, bytes):
-                    data = data.decode("utf-8", errors="ignore")
-                if data == "*":
-                    _tier_policy_l1.clear()
-                elif data and str(data).isdigit():
-                    _tier_policy_l1.pop(int(data), None)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Policy L1 invalidation listener exited", error=str(e))
-
-    _policy_invalidation_task = asyncio.create_task(_listen())
+def _on_policy_invalidation(data: str) -> None:
+    if data == "*":
+        _tier_policy_l1.clear()
+    elif data and str(data).isdigit():
+        _tier_policy_l1.pop(int(data), None)
 
 
-_start_policy_invalidation_listener = start_policy_invalidation_listener
 
+_policy_invalidation_channel = InvalidationChannel(
+    channel=_POLICY_INVALIDATION_CHANNEL,
+    on_message=_on_policy_invalidation,
+    logger_name="rate_limit_policy_l1",
+)
 
-async def stop_policy_invalidation_listener() -> None:
-    """Stop the policy invalidation subscriber task on shutdown."""
-    global _policy_invalidation_task
-    if _policy_invalidation_task is not None and not _policy_invalidation_task.done():
-        _policy_invalidation_task.cancel()
-        try:
-            await _policy_invalidation_task
-        except asyncio.CancelledError:
-            pass
-        _policy_invalidation_task = None
+start_policy_invalidation_listener = _policy_invalidation_channel.start
+_start_policy_invalidation_listener = _policy_invalidation_channel.start
+stop_policy_invalidation_listener = _policy_invalidation_channel.stop
+
 
 async def _publish_policy_invalidation(tier_id: int) -> None:
-    redis_client = get_redis()
-    if redis_client is None:
-        return
-    try:
-        await redis_client.publish(_POLICY_INVALIDATION_CHANNEL, str(tier_id))
-    except Exception as e:  # noqa: BLE001 - never break mutations on pubsub errors
-        logger.warning("Failed to publish policy invalidation", error=str(e))
-
+    await _policy_invalidation_channel.publish(str(tier_id))
 
 # Redis key patterns
 POLICY_KEY_PREFIX = "rate_limit:policy:tier:"

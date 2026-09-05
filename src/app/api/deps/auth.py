@@ -2,7 +2,6 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import Depends, Request
-from fastapi.params import Depends as DependsClass
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -268,66 +267,198 @@ def _enforce_tenant_match(
     raise ForbiddenException("User does not belong to the current tenant.")
 
 
+async def _resolve_optional_bearer_flow(
+    request: Request,
+    db: AsyncSession,
+    token: str,
+    cached_payload: dict[str, Any] | None,
+    current_tenant: Any,
+) -> AuthContext | None:
+    """Non-strict (optional auth) path: returns None on any verification failure."""
+    try:
+        token_data_opt: Any
+        if cached_payload:
+            jti = cached_payload.get("jti")
+            cached_blacklist = (
+                getattr(request.state, "is_token_blacklisted", None) if request is not None else None
+            )
+            if cached_blacklist is False:
+                pass
+            elif cached_blacklist is True or await _is_token_blacklisted_with_fallback(token, jti, db):
+                return None
+
+            token_type = cached_payload.get("token_type")
+            if token_type != TokenType.ACCESS:
+                return None
+
+            username_or_email = cached_payload.get("sub")
+            if not username_or_email:
+                return None
+            token_data_opt = cached_payload
+            payload_version = cached_payload.get("token_version", 0)
+        else:
+            try:
+                token_data_opt = await verify_token(token, TokenType.ACCESS, db)
+            except Exception as e:
+                logger.warning("optional_token_verify_failed_degrading_to_anonymous", error=str(e))
+                return None
+            if token_data_opt is None:
+                return None
+
+            username_or_email = token_data_opt.username_or_email
+            payload_version = getattr(token_data_opt, "token_version", 0) or 0
+
+        user_service = UserService(db)
+        if "@" in username_or_email:
+            user = await user_service.get_user_auth_info(email=username_or_email)
+        else:
+            user = await user_service.get_user_auth_info(username=username_or_email)
+
+        if not user or not user.get("is_active", False) or user.get("is_deleted", False):
+            return None
+
+        if payload_version != user.get("token_version", 0):
+            return None
+
+        # Parity with strict path: enforce session validity (revoked sid → None,
+        # never an authenticated context). Infra errors degrade to None (anonymous).
+        _uid: Any = user.get("id")
+        if _uid is None:
+            return None
+        if isinstance(token_data_opt, dict):
+            _sess_id = token_data_opt.get("sid") or token_data_opt.get("jti")
+            _jwt_exp = token_data_opt.get("exp")
+        else:
+            _sess_id = getattr(token_data_opt, "sid", None) or getattr(token_data_opt, "jti", None)
+            _jwt_exp = getattr(token_data_opt, "exp", None)
+        if _sess_id:
+            try:
+                from src.app.core.security.session_manager import session_manager as _sm
+
+                _sess_ok = await _sm.is_session_valid(
+                    user_id=_uid, session_id=_sess_id, jwt_exp=_jwt_exp
+                )
+            except Exception as _se:
+                logger.warning("optional_session_check_failed_degrading_to_anonymous", error=str(_se))
+                return None
+            if not _sess_ok:
+                return None
+
+        if current_tenant:
+            user_tid = str(user.get("tenant_id")) if user.get("tenant_id") is not None else None
+            curr_tid = str(getattr(current_tenant, "id", getattr(current_tenant, "tenant_id", None)))
+            if user_tid != curr_tid and not user.get("is_superuser", False):
+                return None
+
+        return await _create_auth_context(user, token_data_opt, current_tenant, db)
+    except Exception as e:
+        logger.warning("optional_auth_context_verify_failed_degrading_to_anonymous", error=str(e))
+        return None
+
+
+async def resolve_principal(
+    request: Request,
+    db: AsyncSession,
+    token: str | None = None,
+    api_key_user: AuthenticatedUser | None = None,
+    *,
+    strict: bool = True,
+    current_tenant: Any = None,
+) -> AuthContext | None:
+    """Unified engine to resolve and verify an authenticated principal.
+
+    This is the ONE resolve-principal seam (architecture candidate 2) unifying:
+    - required Bearer token auth (`get_auth_context`)
+    - optional Bearer token auth (`_verify_optional_bearer_token`)
+    - API key auth (`get_user_by_api_key`)
+    - optional auth dispatcher (`get_optional_auth_context`)
+
+    Parameters:
+        request: FastAPI/ASGI Request
+        db: Database session
+        token: Bearer token string (if known)
+        api_key_user: Pre-validated AuthenticatedUser from API key (if any)
+        strict: When True, raises on any invalid/revoked state. When False,
+                returns None (degrading to anonymous).
+        current_tenant: Tenant context (auto-resolved from context if omitted).
+    """
+    if current_tenant is None:
+        current_tenant = get_current_tenant()
+
+    # 1. API-Key flavor
+    has_api_key = "X-API-Key" in request.headers if request is not None else False
+    if has_api_key:
+        if api_key_user is None or not isinstance(api_key_user, AuthenticatedUser):
+            api_key = request.headers.get("X-API-Key") if request is not None else None
+            if api_key:
+                api_key_user = await get_user_by_api_key(api_key, db, request)
+        if api_key_user is None:
+            raise UnauthorizedException("Invalid API key.")
+        return await _create_auth_context(api_key_user, None, current_tenant, db)
+
+    # 2. Bearer Token extraction & length check
+    if token is None or not token:
+        token = await _resolve_bearer_token(request, token or "")
+    if not token:
+        if strict:
+            raise UnauthorizedException("User not authenticated.")
+        return None
+
+    _enforce_token_length(token)
+
+    # 3. Resolve token data (cached payload or verify_token)
+    cached_payload = get_cached_jwt_payload(request) if request is not None else None
+
+    if strict:
+        resolved = await (
+            _resolve_cached_token_data(request, cached_payload)
+            if cached_payload
+            else _resolve_verified_token_data(token, db)
+        )
+        if resolved is None:
+            raise UnauthorizedException("User not authenticated.")
+        token_data, username_or_email, payload_version, jti, jwt_exp, session_id = resolved
+
+        # 4. User loading & verification
+        user = await _load_user_for_token(db, username_or_email, payload_version)
+        user_id = user["id"]
+        user_tenant_id = user.get("tenant_id")
+
+        # 5. Composite auth-prefetch & revocation enforcement
+        from src.app.core.security.auth_prefetch import execute_composite_auth_prefetch
+
+        is_blacklisted, session_valid, bitmask = await execute_composite_auth_prefetch(
+            token=token,
+            jti=jti,
+            user_id=user_id,
+            session_id=session_id,
+            tenant_id=user_tenant_id,
+            check_bitmask=True,
+        )
+
+        cached_blacklist = getattr(request.state, "is_token_blacklisted", None) if request is not None else None
+        await _enforce_token_not_revoked(request, token, jti, cached_blacklist, is_blacklisted, db)
+        await _enforce_session_valid(session_id, session_valid, user_id, jwt_exp)
+
+        if bitmask is not None and request is not None and user_tenant_id is not None:
+            request.state.cached_permissions_bitmask = (user_id, str(user_tenant_id), bitmask)
+
+        # 6. Tenant isolation check
+        _enforce_tenant_match(request, user, current_tenant)
+
+        return await _create_auth_context(user, token_data, current_tenant, db)
+
+    else:
+        return await _resolve_optional_bearer_flow(request, db, token, cached_payload, current_tenant)
 async def get_auth_context(
     request: Request,
     db: AsyncSession = Depends(async_get_db),
     token: str = Depends(oauth2_scheme),
 ) -> AuthContext:
     """Get current authenticated user's context, cached per request by FastAPI."""
-    # H4 residual FIX: the manual app.dependency_overrides inspection was
-    # removed — it re-implemented (per request, in production) what FastAPI
-    # already does natively at the DI layer. Tests that need a synthetic
-    # context override get_auth_context itself (conftest does exactly this);
-    # no production code path needs to know about test overrides.
-    token = await _resolve_bearer_token(request, token)
-    _enforce_token_length(token)
-
-    cached_payload = get_cached_jwt_payload(request) if request is not None else None
-    resolved = await (
-        _resolve_cached_token_data(request, cached_payload)
-        if cached_payload
-        else _resolve_verified_token_data(token, db)
-    )
-    if resolved is None:
-        raise UnauthorizedException("User not authenticated.")
-    token_data, username_or_email, payload_version, jti, jwt_exp, session_id = resolved
-
-    user = await _load_user_for_token(db, username_or_email, payload_version)
-    user_id = user["id"]
-    user_tenant_id = user.get("tenant_id")
-
-    # P1-1: Composite Auth-Prefetch Architecture (Option C: Dep composite + Middleware probe integration)
-    # - If middleware probe already verified clean blacklist state (cached_blacklist is False),
-    #   composite prefetch collapses session check + RBAC bitmask prefetch into 1 single RTT.
-    # - If cached_blacklist is None (middleware skipped/errored), composite Lua evaluates all 3 legs atomically.
-    # - Tri-state handling: On Redis error (is_blacklisted is None), falls through to DB-backed
-    #   _is_token_blacklisted_with_fallback; session_valid=None falls back to is_session_valid (degraded accept).
-    from src.app.core.security.auth_prefetch import execute_composite_auth_prefetch
-
-    is_blacklisted, session_valid, bitmask = await execute_composite_auth_prefetch(
-        token=token,
-        jti=jti,
-        user_id=user_id,
-        session_id=session_id,
-        tenant_id=user_tenant_id,
-        check_bitmask=True,
-    )
-
-    # A1: Check if middleware already resolved a definite blacklist state
-    cached_blacklist = getattr(request.state, "is_token_blacklisted", None) if request is not None else None
-
-    await _enforce_token_not_revoked(request, token, jti, cached_blacklist, is_blacklisted, db)
-    await _enforce_session_valid(session_id, session_valid, user_id, jwt_exp)
-
-    # 3. Cache pre-fetched RBAC bitmask on request state for 0-RTT downstream checks
-    if bitmask is not None and request is not None and user_tenant_id is not None:
-        request.state.cached_permissions_bitmask = (user_id, str(user_tenant_id), bitmask)
-
-    current_tenant = get_current_tenant()
-    _enforce_tenant_match(request, user, current_tenant)
-
-    return await _create_auth_context(user, token_data, current_tenant, db)
-
+    ctx = await resolve_principal(request, db, token=token, strict=True)
+    assert ctx is not None
+    return ctx
 
 async def get_current_user(
     request: Request,
@@ -408,74 +539,16 @@ async def _verify_optional_bearer_token(
     token_value: str,
     db: AsyncSession,
     request: Request,
-    current_tenant: Any,
+    current_tenant: Any = None,
 ) -> AuthContext | None:
-    cached_payload = get_cached_jwt_payload(request) if request is not None else None
-    token_data: Any
-
-    if cached_payload:
-        jti = cached_payload.get("jti")
-        # A1: request.state.is_token_blacklisted is tri-state (True/False/None).
-        # Only a DEFINITE True/False from the middleware's Redis probe
-        # short-circuits; None (Redis down) or an absent attribute runs the
-        # DB fallback so revoked tokens are still caught during outages.
-        # (Previously this path used getattr(..., False), which treated a
-        # stored None as "not blacklisted" and skipped the DB fallback —
-        # a fail-open hole. Mirrors get_auth_context's fail-closed logic.)
-        cached_blacklist = getattr(request.state, "is_token_blacklisted", None)
-        if cached_blacklist is False:
-            pass  # Verified clean by the middleware probe; skip redundant checks.
-        elif cached_blacklist is True or await _is_token_blacklisted_with_fallback(token_value, jti, db):
-            return None
-
-        token_type = cached_payload.get("token_type")
-        if token_type != TokenType.ACCESS:
-            return None
-
-        username_or_email = cached_payload.get("sub")
-        if not username_or_email:
-            return None
-        token_data = cached_payload
-        payload_version = cached_payload.get("token_version", 0)
-    else:
-        try:
-            token_data = await verify_token(token_value, TokenType.ACCESS, db)
-        except Exception as e:  # noqa: BLE001
-            # R1-18: verify_token returns None for invalid tokens and only
-            # raises on infra errors (DB/Redis). This is the OPTIONAL auth
-            # path, so degrading to anonymous is correct — but it must not be
-            # silent, or an outage reads as "everyone is logged out".
-            logger.warning("optional_token_verify_failed_degrading_to_anonymous", error=str(e))
-            return None
-        if token_data is None:
-            return None
-
-        username_or_email = token_data.username_or_email
-        payload_version = getattr(token_data, "token_version", 0) or 0
-
-    user_service = UserService(db)
-    if "@" in username_or_email:
-        user = await user_service.get_user_auth_info(email=username_or_email)
-    else:
-        user = await user_service.get_user_auth_info(username=username_or_email)
-
-    if not user:
-        return None
-
-    if not user.get("is_active", False):
-        return None
-    if user.get("is_deleted", False):
-        return None
-
-    user_version = user.get("token_version", 0)
-    if payload_version != user_version:
-        return None
-
-    if current_tenant:
-        if str(user.get("tenant_id")) != str(current_tenant.id):
-            return None
-
-    return await _create_auth_context(user, token_data, current_tenant, db)
+    """Verify optional bearer token using the unified resolve_principal seam."""
+    return await resolve_principal(
+        request=request,
+        db=db,
+        token=token_value,
+        strict=False,
+        current_tenant=current_tenant,
+    )
 
 
 async def get_optional_auth_context(
@@ -484,43 +557,7 @@ async def get_optional_auth_context(
     api_key_user: AuthenticatedUser | None = Depends(get_user_by_api_key),
 ) -> AuthContext | None:
     """Get optional auth context from API key or token, validating credentials if provided."""
-    if api_key_user is None or hasattr(api_key_user, "dependency") or type(api_key_user).__name__ == "Depends":
-        api_key = request.headers.get("X-API-Key") if request is not None else None
-        if api_key:
-            api_key_user = await get_user_by_api_key(api_key, db, request)
-        else:
-            api_key_user = None
-
-    current_tenant = get_current_tenant()
-
-    has_api_key = "X-API-Key" in request.headers if request is not None else False
-    if has_api_key:
-        if api_key_user is None:
-            raise UnauthorizedException("Invalid API key.")
-        return await _create_auth_context(api_key_user, None, current_tenant, db)
-
-    auth_header = request.headers.get("Authorization") if request is not None else None
-    if not auth_header:
-        return None
-
-    token_type_val, _, token_value = auth_header.partition(" ")
-    if token_type_val.lower() != "bearer" or not token_value:
-        return None
-
-    # R4-02: length check at ingress (before blacklist/DB verify) -> 431
-    if len(token_value) > 4096:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=431, detail="Request header field too large")
-
-    try:
-        return await _verify_optional_bearer_token(token_value, db, request, current_tenant)
-    except Exception as e:  # noqa: BLE001
-        # R1-18: safety net for the OPTIONAL auth path. Degrading to anonymous
-        # is correct here, but log it so an outage is visible rather than
-        # silently reading as "everyone is logged out".
-        logger.warning("optional_auth_context_verify_failed_degrading_to_anonymous", error=str(e))
-        return None
+    return await resolve_principal(request, db, api_key_user=api_key_user, strict=False)
 
 
 async def get_optional_user(
@@ -530,12 +567,7 @@ async def get_optional_user(
     auth_context: Annotated[AuthContext | None, Depends(get_optional_auth_context)] = None,
 ) -> AuthenticatedUser | None:
     """Get optional user from Bearer token or API Key by consuming get_optional_auth_context."""
-    if (
-        auth_context is None
-        or isinstance(auth_context, DependsClass)
-        or hasattr(auth_context, "dependency")
-        or type(auth_context).__name__ == "Depends"
-    ):
+    if not isinstance(auth_context, AuthContext):
         auth_context = await get_optional_auth_context(request, db, api_key_user)
     if auth_context:
         return auth_context.user

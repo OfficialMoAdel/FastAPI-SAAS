@@ -8,7 +8,7 @@ from arq.cron import cron
 
 from src.app.core.config import settings
 from src.app.core.events import process_event_handler
-from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.events.arq_adapter import deserialize_job, serialize_job
 from src.app.core.worker.functions import (
     cleanup_expired_tokens_task,
     cleanup_leaked_webhook_lock,
@@ -95,6 +95,5 @@ class WorkerSettings:
     max_tries = settings.arq.ARQ_MAX_TRIES
     queue_max_len = settings.arq.ARQ_QUEUE_MAX_SIZE
 
-    # Use orjson for job serialization (faster, safer than pickle)
-    job_serializer = staticmethod(lambda obj: json_dumps(obj))
-    job_deserializer = staticmethod(lambda data: json_loads(data))
+    job_serializer = staticmethod(serialize_job)
+    job_deserializer = staticmethod(deserialize_job)

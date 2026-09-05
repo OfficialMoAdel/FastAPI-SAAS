@@ -16,6 +16,7 @@ from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
+from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules._base import BaseService, ModelNotFoundError
 from src.app.modules.feature_flags.crud import crud_feature_flag_overrides, crud_feature_flags
 from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
@@ -334,17 +335,13 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
             flag = await self.get_flag_by_key_or_none(feature_name)
             if flag:
-                flag_id = int(flag.id if not isinstance(flag, dict) else flag.get("id", 0))
-                flag_default = bool(
-                    flag.default_value if not isinstance(flag, dict) else flag.get("default_value", False)
-                )
+                flag_id = int(get_user_attr(flag, "id", 0))
+                flag_default = bool(get_user_attr(flag, "default_value", False))
 
                 override = await self.get_override(flag_id, tenant_id)
 
                 if override:
-                    custom_value = (
-                        override.custom_value if not isinstance(override, dict) else override.get("custom_value")
-                    )
+                    custom_value = get_user_attr(override, "custom_value")
                     if custom_value is not None:
                         if isinstance(custom_value, dict):
                             if "value" in custom_value:
@@ -392,14 +389,9 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         if not tenant:
             raise ModelNotFoundError("Tenant", tenant_id)
 
-        # Initialize feature_flags if None
         if tenant.feature_flags is None:
             tenant.feature_flags = {}
-
-        # Update the feature flag
         tenant.feature_flags[feature_name] = value
-
-        # Mark as modified for SQLAlchemy to detect change
         flag_modified(tenant, "feature_flags")
 
         await self.db.commit()
@@ -430,8 +422,6 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
         if tenant.feature_flags is None or flag_name not in tenant.feature_flags:
             raise ModelNotFoundError("FeatureFlag", flag_name)
-
-        # Remove flag
         del tenant.feature_flags[flag_name]
         flag_modified(tenant, "feature_flags")
 
@@ -461,11 +451,8 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         if not tenant:
             raise ModelNotFoundError("Tenant", tenant_id)
 
-        # Initialize feature_flags if None
         if tenant.feature_flags is None:
             tenant.feature_flags = {}
-
-        # Update all flags
         tenant.feature_flags.update(flags)
         flag_modified(tenant, "feature_flags")
 
@@ -519,37 +506,6 @@ def get_feature_flag_service(
     """
     return FeatureFlagService(db=db)
 
-
-# =============================================================================
-# Legacy Compatibility (Backward Compatible)
-# =============================================================================
-
-
-class _LegacyFeatureFlagsService:
-    """
-    Legacy wrapper for backward compatibility.
-
-    DEPRECATED: Use get_feature_flag_service() dependency injection instead.
-    """
-
-    def __init__(self) -> None:
-        self._service: FeatureFlagService | None = None
-
-    async def _get_service(self, db: AsyncSession) -> FeatureFlagService:
-        """Get or create service instance with db session."""
-        return FeatureFlagService(db=db)
-
-    async def get_flag(self, db: AsyncSession, name: str, tenant_id: UUID) -> FeatureFlag | None:
-        service = await self._get_service(db)
-        return await service.get_flag_by_key_or_none(name)
-
-    async def is_feature_enabled(self, db: AsyncSession, flag_name: str, user_id: int | None, tenant_id: UUID) -> bool:
-        service = await self._get_service(db)
-        return await service.is_enabled(UUID(str(tenant_id)), flag_name, default=False)
-
-
-# Legacy singleton for backward compatibility
-feature_flags_service = _LegacyFeatureFlagsService()
 
 
 # ============================================================================

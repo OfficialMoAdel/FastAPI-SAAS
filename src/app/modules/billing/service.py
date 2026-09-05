@@ -213,25 +213,47 @@ def _product_to_dict(product: Product, pricing_tiers: list[Pricing]) -> dict[str
 class StripeSettingsService(BaseService[StripeSettings]):
     """Service for managing tenant Stripe settings."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None):
         super().__init__(StripeSettings, db)
+        self.tenant_id = tenant_id
         self._encryption = CredentialEncryption()
 
+    @property
+    def current_tenant_id(self) -> Any:
+        if self.tenant_id is not None:
+            return self.tenant_id
+        current_tenant = get_current_tenant()
+        return current_tenant.id if current_tenant is not None else None
+
+    def _resolve_tenant(self, entity_name: str = "Billing", entity_id: Any = None) -> Any:
+        """Resolve tenant with cross-tenant mismatch guard (no silent or-write)."""
+        from src.app.core.tenancy.context import get_current_tenant as _get_ctx
+
+        ctx = _get_ctx()
+        ctx_id = ctx.id if ctx is not None else None
+        if self.tenant_id is not None and ctx_id is not None and str(self.tenant_id) != str(ctx_id):
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        tid = self.tenant_id if self.tenant_id is not None else ctx_id
+        if tid is None:
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        return tid
     async def get_settings(self) -> dict[str, Any] | None:
         """Get Stripe settings for the current tenant."""
-        tenant = get_current_tenant()
-        if tenant is None:
+        tid = self.current_tenant_id
+        if tid is None:
             return None
-        if not tenant.is_active:
+        current_tenant = get_current_tenant()
+        if current_tenant is not None and not current_tenant.is_active:
             raise TenantContextError("Tenant is not active")
-        result = await crud_stripe_settings.get(db=self.db, tenant_id=tenant.id)
+        result = await crud_stripe_settings.get(db=self.db, tenant_id=tid)
         return dict(result) if result else None
 
     async def update_settings(self, data: StripeSettingsUpdate) -> dict[str, Any]:
         """Update Stripe settings for the current tenant."""
-        tenant = require_active_tenant()
+        require_active_tenant()
+        tid = self._resolve_tenant("StripeSettings", "settings")
 
-        stripe_settings_record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant.id)
+        stripe_settings_record = await crud_stripe_settings.get(db=self.db, tenant_id=tid)
 
         update_data = data.model_dump(exclude_unset=True)
 
@@ -250,7 +272,7 @@ class StripeSettingsService(BaseService[StripeSettings]):
 
         if stripe_settings_record is None:
             # Create new settings
-            update_data["tenant_id"] = tenant.id
+            update_data["tenant_id"] = tid
             # Create object must be a Pydantic model for FastCRUD
             create_obj = StripeSettingsCreateInternal(**update_data)
             create_result = await crud_stripe_settings.create(
@@ -275,15 +297,43 @@ class StripeSettingsService(BaseService[StripeSettings]):
 class ProductService(BaseService[Product]):
     """Service for managing products."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None):
         super().__init__(Product, db)
+        self.tenant_id = tenant_id
+
+    @property
+    def current_tenant_id(self) -> Any:
+        if self.tenant_id is not None:
+            return self.tenant_id
+        current_tenant = get_current_tenant()
+        return current_tenant.id if current_tenant is not None else None
+
+    def _resolve_tenant(self, entity_name: str = "Product", entity_id: Any = None) -> Any:
+        """Resolve tenant with cross-tenant mismatch guard."""
+        from src.app.core.tenancy.context import get_current_tenant as _get_ctx
+
+        ctx = _get_ctx()
+        ctx_id = ctx.id if ctx is not None else None
+        if self.tenant_id is not None and ctx_id is not None and str(self.tenant_id) != str(ctx_id):
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        tid = self.tenant_id if self.tenant_id is not None else ctx_id
+        if tid is None:
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        return tid
+
+    def _require_tenant(self, entity_name: str = "Product", entity_id: Any = None) -> Any:
+        tid = self.current_tenant_id
+        if tid is None:
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        return tid
 
     async def create_product(self, data: ProductCreate) -> dict[str, Any]:
         """Create a new product."""
-        tenant = require_active_tenant()
+        require_active_tenant()
+        tid = self._resolve_tenant("Product", "create")
 
         product_data = data.model_dump()
-        product_data["tenant_id"] = tenant.id
+        product_data["tenant_id"] = tid
         create_obj = ProductCreateInternal(**product_data)
         return cast(
             dict[str, Any], await crud_products.create(db=self.db, object=create_obj, schema_to_select=ProductRead)
@@ -291,11 +341,9 @@ class ProductService(BaseService[Product]):
 
     async def get_product(self, product_id: int) -> dict[str, Any]:
         """Get a product by ID."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Product", product_id)
+        tid = self._require_tenant("Product", product_id)
 
-        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         if product is None:
             raise ModelNotFoundError("Product", product_id)
 
@@ -303,71 +351,61 @@ class ProductService(BaseService[Product]):
 
     async def get_products(self, page: int = 1, limit: int = 20, is_active: bool | None = None) -> dict[str, Any]:
         """Get paginated products (tenant-scoped)."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Product", "list")
+        tid = self._require_tenant("Product", "list")
         offset = (page - 1) * limit
         filters: dict[str, Any] = {}
         if is_active is not None:
             filters["is_active"] = is_active
         return await crud_products.get_multi(
-            db=self.db, offset=offset, limit=limit, schema_to_select=ProductRead, tenant_id=tenant.id, **filters
+            db=self.db, offset=offset, limit=limit, schema_to_select=ProductRead, tenant_id=tid, **filters
         )
 
     async def update_product(self, product_id: int, data: ProductUpdate) -> dict[str, Any]:
         """Update a product."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Product", product_id)
+        tid = self._require_tenant("Product", product_id)
 
-        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         if product is None:
             raise ModelNotFoundError("Product", product_id)
 
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
-        await crud_products.update(db=self.db, object=update_data, id=product_id, tenant_id=tenant.id)
-        result = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        await crud_products.update(db=self.db, object=update_data, id=product_id, tenant_id=tid)
+        result = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         return dict(result) if result else {}
 
     async def deactivate_product(self, product_id: int) -> dict[str, Any]:
         """Deactivate a product."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Product", product_id)
+        tid = self._require_tenant("Product", product_id)
 
-        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         if product is None:
             raise ModelNotFoundError("Product", product_id)
 
         update_data = {"is_active": False, "updated_at": datetime.now(UTC)}
-        await crud_products.update(db=self.db, object=update_data, id=product_id, tenant_id=tenant.id)
-        result = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        await crud_products.update(db=self.db, object=update_data, id=product_id, tenant_id=tid)
+        result = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         return dict(result) if result else {}
-
     async def get_product_with_pricing(self, product_id: int) -> dict[str, Any]:
         """Get a product by ID with its pricing tiers.
 
         Uses selectinload to fetch product and pricing in a single query,
         avoiding N+1 query issues.
         """
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Product", product_id)
+        tid = self._require_tenant("Product", product_id)
 
         from src.app.core.db.tenant_crud import tenant_scope
 
         stmt = (
             select(Product)
             .options(selectinload(Product.pricing_tiers))
-            .where(Product.id == product_id, tenant_scope(Product, tenant.id))
+            .where(Product.id == product_id, tenant_scope(Product, tid))
         )
         result = await self.db.execute(stmt)
         product = result.scalar_one_or_none()
 
         if product is None:
             raise ModelNotFoundError("Product", product_id)
-
         # P2-5: Always use optimized dict construction
         return _product_to_dict(product, product.pricing_tiers)
 
@@ -377,14 +415,11 @@ class ProductService(BaseService[Product]):
         data: PricingCreate,
     ) -> dict[str, Any]:
         """Add a pricing tier to a product."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Product", product_id)
+        tid = self._require_tenant("Product", product_id)
 
-        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         if product is None:
             raise ModelNotFoundError("Product", product_id)
-
         pricing_data = data.model_dump()
         pricing_data["product_id"] = product_id
         create_obj = PricingCreateInternal(**pricing_data)
@@ -396,19 +431,43 @@ class ProductService(BaseService[Product]):
 class PricingService(BaseService[Pricing]):
     """Service for managing pricing tiers."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None):
         super().__init__(Pricing, db)
+        self.tenant_id = tenant_id
+
+    @property
+    def current_tenant_id(self) -> Any:
+        if self.tenant_id is not None:
+            return self.tenant_id
+        current_tenant = get_current_tenant()
+        return current_tenant.id if current_tenant is not None else None
+
+    def _resolve_tenant(self, entity_name: str = "Pricing", entity_id: Any = None) -> Any:
+        """Resolve tenant with cross-tenant mismatch guard."""
+        from src.app.core.tenancy.context import get_current_tenant as _get_ctx
+
+        ctx = _get_ctx()
+        ctx_id = ctx.id if ctx is not None else None
+        if self.tenant_id is not None and ctx_id is not None and str(self.tenant_id) != str(ctx_id):
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        tid = self.tenant_id if self.tenant_id is not None else ctx_id
+        if tid is None:
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        return tid
+
+    def _require_tenant(self, entity_name: str = "Pricing", entity_id: Any = None) -> Any:
+        tid = self.current_tenant_id
+        if tid is None:
+            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+        return tid
 
     async def create_pricing(self, product_id: int, data: PricingCreate) -> dict[str, Any]:
         """Create a pricing tier for a product."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Product", product_id)
+        tid = self._require_tenant("Product", product_id)
 
-        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         if product is None:
             raise ModelNotFoundError("Product", product_id)
-
         pricing_data = data.model_dump()
         pricing_data["product_id"] = product_id
         create_obj = PricingCreateInternal(**pricing_data)
@@ -424,15 +483,12 @@ class PricingService(BaseService[Pricing]):
 
         # SECURITY FIX: Verify pricing's parent product belongs to current tenant.
         if pricing is not None:
-            tenant = get_current_tenant()
-            if tenant is None:
-                raise ModelNotFoundError("Pricing", pricing_id)
+            tid = self._require_tenant("Pricing", pricing_id)
             # FastCRUD might return dict or object
             prod_id = pricing.get("product_id") if isinstance(pricing, dict) else pricing.product_id
-            product = await crud_products.get(db=self.db, id=prod_id, tenant_id=tenant.id)
+            product = await crud_products.get(db=self.db, id=prod_id, tenant_id=tid)
             if product is None:
                 raise ModelNotFoundError("Pricing", pricing_id)
-
         return pricing
 
     async def get_product_pricing(
@@ -442,10 +498,8 @@ class PricingService(BaseService[Pricing]):
         limit: int | None = None,
     ) -> dict[str, Any]:
         """Get all pricing tiers for a product (tenant-scoped via parent product)."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Product", product_id)
-        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        tid = self._require_tenant("Product", product_id)
+        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         if product is None:
             raise ModelNotFoundError("Product", product_id)
         from src.app.core.pagination import MAX_PER_PAGE
@@ -468,17 +522,14 @@ class PricingService(BaseService[Pricing]):
         tenant_id: int | str | None = None,  # deprecated: ignored - tenant taken from context
     ) -> dict[str, Any]:
         """List prices with optional filtering (tenant-scoped)."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Pricing", "list")
-        if tenant_id is not None and str(tenant_id) != str(tenant.id):
+        tid = self._require_tenant("Pricing", "list")
+        if tenant_id is not None and str(tenant_id) != str(tid):
             from src.app.core.logger import get_logger as _get_logger
-            _get_logger(__name__).warning("tenant_id_override_blocked_in_list_prices", requested=str(tenant_id), context=str(tenant.id))  # noqa: E501
+            _get_logger(__name__).warning("tenant_id_override_blocked_in_list_prices", requested=str(tenant_id), context=str(tid))  # noqa: E501
         if product_id is not None:
-            product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+            product = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
             if product is None:
                 raise ModelNotFoundError("Product", product_id)
-        limit = min(max(1, limit), 100)
         offset = (page - 1) * limit
         filters: dict[str, Any] = {}
         if product_id is not None:
@@ -497,7 +548,7 @@ class PricingService(BaseService[Pricing]):
                 offset=offset,
                 limit=limit,
                 schema_to_select=PricingRead,
-                join_filters={"product": {"tenant_id": tenant.id}},
+                join_filters={"product": {"tenant_id": tid}},
                 join_model=Product,
                 **filters,
             )
@@ -518,14 +569,10 @@ class PricingService(BaseService[Pricing]):
         if pricing is None:
             raise ModelNotFoundError("Pricing", pricing_id)
 
-        # SECURITY FIX: Verify pricing's parent product belongs to current tenant.
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Pricing", pricing_id)
-        product = await crud_products.get(db=self.db, id=pricing.product_id, tenant_id=tenant.id)
+        tid = self._require_tenant("Pricing", pricing_id)
+        product = await crud_products.get(db=self.db, id=pricing.product_id, tenant_id=tid)
         if product is None:
             raise ModelNotFoundError("Pricing", pricing_id)
-
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
 

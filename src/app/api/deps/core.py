@@ -9,7 +9,6 @@ from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.logger import get_logger
-from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.path_utils import sanitize_path
 from src.app.core.utils.rate_limit import rate_limiter
 from src.app.core.utils.user_utils import get_user_attr
@@ -58,23 +57,10 @@ async def rate_limiter_dependency(
             logger.warning("User has no assigned tier. Applying default rate limit.", user_id=user_id)
             limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
     else:
-        # Try to extract email from request body for per-email rate limiting
-        email_hash = None
-        if request.method == "POST":
-            try:
-                body = await request.json()
-                if "email" in body:
-                    import hashlib
-                    email_hash = hashlib.sha256(body["email"].encode()).hexdigest()[:16]
-            except Exception:
-                pass
+        from src.app.core.security.rate_policy import resolve_anonymous_user_id
 
-        if email_hash:
-            user_id = f"email:{email_hash}"
-        else:
-            user_id = f"unknown:{get_client_ip(request)}"
+        user_id = await resolve_anonymous_user_id(request)
         limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
-
     is_limited = await rate_limiter.is_rate_limited(db=db, user_id=user_id, path=path, limit=limit, period=period)
     if is_limited:
         raise RateLimitException("Rate limit exceeded.")

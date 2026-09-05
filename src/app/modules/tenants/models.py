@@ -1,6 +1,6 @@
 import uuid as uuid_pkg
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -55,6 +55,34 @@ class Tenant(Base):
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None, nullable=True, onupdate=lambda: datetime.now(UTC)
     )
+
+    def set_feature_flag(self, name: str, value: Any) -> None:
+        """Set or update a single feature flag value."""
+        from sqlalchemy.orm.attributes import flag_modified
+
+        if self.feature_flags is None:
+            self.feature_flags = {}
+        self.feature_flags[name] = value
+        flag_modified(self, "feature_flags")
+
+    def remove_feature_flag(self, name: str) -> bool:
+        """Remove a feature flag value if present. Returns True if removed."""
+        from sqlalchemy.orm.attributes import flag_modified
+
+        if self.feature_flags is not None and name in self.feature_flags:
+            del self.feature_flags[name]
+            flag_modified(self, "feature_flags")
+            return True
+        return False
+
+    def update_feature_flags(self, flags: dict[str, Any]) -> None:
+        """Bulk update feature flags."""
+        from sqlalchemy.orm.attributes import flag_modified
+
+        if self.feature_flags is None:
+            self.feature_flags = {}
+        self.feature_flags.update(flags)
+        flag_modified(self, "feature_flags")
 
     # Relationships
     # NOTE ON LAZY LOADING STRATEGY:

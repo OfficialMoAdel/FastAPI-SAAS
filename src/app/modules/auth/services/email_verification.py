@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.config import settings
 from src.app.core.exceptions.http_exceptions import UnauthorizedException
 from src.app.core.security.tokens import hash_token
+from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.auth.models import EmailVerificationToken, generate_verification_token
 from src.app.modules.users.service import UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
@@ -37,12 +38,8 @@ class EmailVerificationService:
         user_service = UserService(db)
         user = await user_service.crud.get(db=db, email=email, is_deleted=False)
 
-        is_active = user.get("is_active", False) if isinstance(user, dict) else getattr(user, "is_active", False)
-        is_email_verified = (
-            user.get("is_email_verified", False)
-            if isinstance(user, dict)
-            else getattr(user, "is_email_verified", False)
-        )
+        is_active = bool(get_user_attr(user, "is_active", False))
+        is_email_verified = bool(get_user_attr(user, "is_email_verified", False))
 
         # If inactive and ALREADY verified, it means admin disabled the account. Do not send email.
         if user and not is_active and is_email_verified:
@@ -51,9 +48,9 @@ class EmailVerificationService:
         if user and not is_email_verified:
             from uuid import UUID
 
-            user_id = user["id"] if isinstance(user, dict) else user.id
-            user_tenant = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
-            user_name = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
+            user_id = get_user_attr(user, "id")
+            user_tenant = get_user_attr(user, "tenant_id")
+            user_name = get_user_attr(user, "username")
 
             tenant_id_val: UUID = user_tenant if isinstance(user_tenant, UUID) else UUID(str(user_tenant))
 
@@ -114,12 +111,8 @@ class EmailVerificationService:
 
         # BUG FIX: Reject verification for admin-disabled accounts.
         # But if they are inactive ONLY because they are unverified, we activate them here.
-        is_active = user.get("is_active", False) if isinstance(user, dict) else getattr(user, "is_active", False)
-        is_email_verified = (
-            user.get("is_email_verified", False)
-            if isinstance(user, dict)
-            else getattr(user, "is_email_verified", False)
-        )
+        is_active = bool(get_user_attr(user, "is_active", False))
+        is_email_verified = bool(get_user_attr(user, "is_email_verified", False))
         if not is_active and is_email_verified:
             # Already verified but inactive -> Admin disabled
             raise UnauthorizedException("This account is inactive. Please contact support.")
@@ -145,13 +138,8 @@ class EmailVerificationService:
         await db.delete(verification_token)
         await db.commit()
 
-        # Invalidate auth cache AFTER commit. Email verification is a
-        # CREDENTIAL_CHANGE (the verified email becomes the new identity
-        # factor for password resets / magic links); bump token_version so
-        # any session established with the unverified email loses access.
         user_service = UserService(db)
         await user_service._invalidate_user_cache(
             user, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
         )
-
         return {"message": "Email verified successfully."}

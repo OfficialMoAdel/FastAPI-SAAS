@@ -19,13 +19,14 @@ import asyncio
 import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, cast
+from typing import Any
 
 from cachetools import TTLCache
 from fastapi import Request, status
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from src.app.core.cache.invalidation_channel import InvalidationChannel
 from src.app.core.config import settings
 from src.app.core.db.database import local_session
 from src.app.core.json_utils import json_dumps, json_loads
@@ -46,83 +47,29 @@ _TENANT_LOCKS: dict[str, dict] = {}
 # publishes here so every web process drops its in-process TTLCache entry
 # immediately instead of serving stale is_active=True for up to ttl seconds.
 _L1_INVALIDATION_CHANNEL = "tenant:l1_invalidate"
-_l1_invalidation_task: asyncio.Task | None = None
-
-# P4: slug validation regex compiled once at import (was re-imported and
-# re-matched per request inside _get_tenant_by_slug).
-_SLUG_RE = re.compile(r"^[a-z0-9\-]+$")
 
 
 def invalidate_tenant_l1(slug: str | None = None) -> None:
     """Drop one (or all) entries from this process's L1 tenant cache."""
-    if slug is None:
+    if slug is None or slug == "*":
         _L1_TENANT_CACHE.clear()
     else:
         _L1_TENANT_CACHE.pop(slug, None)
 
 
-async def _publish_tenant_l1_invalidation(slug: str | None) -> None:
-    """Publish an L1 invalidation so other workers drop their cached entry."""
-    redis_client = get_redis()
-    if redis_client is None:
-        return
-    try:
-        await redis_client.publish(_L1_INVALIDATION_CHANNEL, slug or "*")
-    except Exception as e:  # noqa: BLE001 - invalidation must never break requests
-        logger.warning("Failed to publish tenant L1 invalidation: %s", e)
 
+_tenant_invalidation_channel = InvalidationChannel(
+    channel=_L1_INVALIDATION_CHANNEL,
+    on_message=lambda msg: invalidate_tenant_l1(None if msg == "*" else msg),
+    logger_name="tenant_l1",
+)
 
-def _start_l1_invalidation_listener() -> None:
-    """Start (once per event loop) a background subscriber applying invalidations."""
-    global _l1_invalidation_task
-    redis_client = get_redis()
-    if redis_client is None or not hasattr(redis_client, "pubsub"):
-        return
-    if _l1_invalidation_task is not None and not _l1_invalidation_task.done():
-        return
-    async def _listen() -> None:
-        pubsub = redis_client.pubsub()
-        try:
-            await pubsub.subscribe(_L1_INVALIDATION_CHANNEL)
-            async for msg in pubsub.listen():
-                if not isinstance(msg, dict) or msg.get("type") != "message":
-                    continue
-                slug = msg.get("data")
-                if isinstance(slug, bytes):
-                    slug = slug.decode("utf-8", errors="ignore")
-                invalidate_tenant_l1(None if slug == "*" else slug)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Tenant L1 invalidation listener exited: %s", e)
-        finally:
-            # M-3: release the subscription so the connection returns to the pool.
-            try:
-                await pubsub.unsubscribe(_L1_INVALIDATION_CHANNEL)
-                await pubsub.close()
-            except Exception:  # noqa: BLE001
-                pass
+_publish_tenant_l1_invalidation = _tenant_invalidation_channel.publish
+_start_l1_invalidation_listener = _tenant_invalidation_channel.start
+stop_l1_invalidation_listener = _tenant_invalidation_channel.stop
 
-    _l1_invalidation_task = asyncio.create_task(_listen())
-
-
-async def stop_l1_invalidation_listener() -> None:
-    """M-3: cancel the L1 invalidation listener on application shutdown.
-
-    Previously the task created in ``_start_l1_invalidation_listener`` was never
-    cancelled, leaking the pubsub subscription across shutdown.
-    """
-    global _l1_invalidation_task
-    if _l1_invalidation_task is None or _l1_invalidation_task.done():
-        _l1_invalidation_task = None
-        return
-    _l1_invalidation_task.cancel()
-    try:
-        await _l1_invalidation_task
-    except (asyncio.CancelledError, Exception):  # noqa: BLE001
-        pass
-    _l1_invalidation_task = None
-
+# P4: slug validation regex compiled once at import
+_SLUG_RE = re.compile(r"^[a-z0-9\-]+$")
 
 @asynccontextmanager
 async def _get_tenant_lock(slug: str) -> AsyncGenerator[asyncio.Lock, None]:
@@ -261,8 +208,8 @@ class TenantMiddleware(BaseHTTPMiddleware):
             except Exception as ctx_err:
                 logger.warning("Failed to clear tenant context: %s", ctx_err)
 
-    async def _get_tenant_by_slug(self, slug: str) -> Tenant | TenantContext | None:
-        """Look up tenant by slug with L1+L2 caching and DB fallback."""
+    async def _get_tenant_by_slug(self, slug: str) -> TenantContext | None:
+        """Look up tenant by slug with L1+L2 caching and DB fallback (returns TenantContext)."""
         if len(slug) > 64 or not _SLUG_RE.match(slug):
             return None
 
@@ -365,7 +312,9 @@ class TenantMiddleware(BaseHTTPMiddleware):
                         except Exception as e:
                             logger.warning("Tenant L2 cache write error: %s", e)
 
-                    return cast(Tenant | None, tenant)
+                    if tenant is None:
+                        return None
+                    return TenantContext.from_model(tenant)
 
     async def _get_tenant_from_cache_data(self, data: dict) -> TenantContext:
         """Reconstruct TenantContext from cached dict."""

@@ -28,6 +28,7 @@ from src.app.core.utils.lua_manager import get_lua_manager
 logger = get_logger(__name__)
 
 
+_UNSET = object()
 class SessionManager:
     """Manages user sessions for concurrent session limiting.
 
@@ -51,7 +52,7 @@ class SessionManager:
 
     _lua_script_sha: str | None = None
 
-    def __init__(self, redis_client: Any = None, max_sessions: int = DEFAULT_MAX_SESSIONS) -> None:
+    def __init__(self, redis_client: Any = _UNSET, max_sessions: int = DEFAULT_MAX_SESSIONS) -> None:
         """Initialize session manager.
 
         Args:
@@ -71,6 +72,14 @@ class SessionManager:
         self._redis_client = redis_client
         logger.info("Session manager Redis client configured")
 
+    @property
+    def redis_client(self) -> Any:
+        """Call-time acquisition of Redis client from provider if not explicitly injected."""
+        if self._redis_client is not _UNSET:
+            return self._redis_client
+        from src.app.core.redis_provider import get_redis
+
+        return get_redis()
     async def register_session(
         self,
         user_id: int | str,
@@ -97,10 +106,10 @@ class SessionManager:
         -------
             Dict with session info and any invalidated sessions
         """
-        if not self._redis_client:
+        client = self.redis_client
+        if not client:
             logger.warning("Redis not configured for session management")
             return {"registered": False, "reason": "redis_unavailable"}
-
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
         zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
@@ -123,7 +132,7 @@ class SessionManager:
             result = cast(
                 Any,
                 await get_lua_manager().execute(
-                    self._redis_client,
+                    client,
                     "session_register_with_eviction",
                     keys=[zset_key, hash_key],
                     args=[
@@ -194,7 +203,8 @@ class SessionManager:
         -------
             True if session is valid, False otherwise
         """
-        if not self._redis_client:
+        client = self.redis_client
+        if not client:
             from src.app.core.config import settings
             from src.app.core.monitoring.r1_unified_metrics import record_fail_open
 
@@ -245,7 +255,7 @@ class SessionManager:
 
         # O(1) lookup using Hash - HEXISTS (Hash is source of truth for existence)
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
-        exists: bool = await self._redis_client.hexists(hash_key, session_id)
+        exists: bool = await client.hexists(hash_key, session_id)
         return exists
 
     async def invalidate_session(self, user_id: int | str, session_id: str) -> bool:
@@ -259,19 +269,19 @@ class SessionManager:
         -------
             True if session was found and invalidated
         """
-        if not self._redis_client:
+        client = self.redis_client
+        if not client:
             return False
-
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
         zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
         # Check if session exists before deleting
-        exists = await self._redis_client.hexists(hash_key, session_id)
+        exists = await client.hexists(hash_key, session_id)
         if not exists:
             return False
 
         # Delete from both Hash and ZSET atomically - O(1) + O(log n)
-        async with self._redis_client.pipeline() as pipe:
+        async with client.pipeline() as pipe:
             pipe.hdel(hash_key, session_id)
             pipe.zrem(zset_key, session_id)
             await pipe.execute()
@@ -289,20 +299,20 @@ class SessionManager:
         -------
             Number of sessions invalidated
         """
-        if not self._redis_client:
+        client = self.redis_client
+        if not client:
             return 0
-
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
         zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
         # Get count before deletion - O(1) with HLEN
-        count: int = await self._redis_client.hlen(hash_key)
+        count: int = await client.hlen(hash_key)
 
         if count == 0:
             return 0
 
         # Delete both Hash and ZSET - O(1) with DEL
-        async with self._redis_client.pipeline() as pipe:
+        async with client.pipeline() as pipe:
             pipe.delete(hash_key)
             pipe.delete(zset_key)
             await pipe.execute()
@@ -324,13 +334,13 @@ class SessionManager:
         -------
             List of active session info dicts
         """
-        if not self._redis_client:
+        client = self.redis_client
+        if not client:
             return []
-
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
 
         # Get all sessions from hash - O(N) but only when explicitly requested
-        sessions_raw = await self._redis_client.hgetall(hash_key)
+        sessions_raw = await client.hgetall(hash_key)
 
         if not sessions_raw:
             return []
@@ -352,18 +362,18 @@ class SessionManager:
         -------
             Number of active sessions
         """
-        if not self._redis_client:
+        client = self.redis_client
+        if not client:
             return 0
-
         zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
         # O(1) count using ZCARD - prefer ZSET as it's the ordering source of truth
-        count: int = await self._redis_client.zcard(zset_key)
+        count: int = await client.zcard(zset_key)
 
         # Fallback to HLEN if ZSET doesn't exist (migration case)
         if count == 0:
             hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
-            count = await self._redis_client.hlen(hash_key)
+            count = await client.hlen(hash_key)
 
         return count
 
@@ -380,7 +390,8 @@ class SessionManager:
         -------
             Dict with migration statistics
         """
-        if not self._redis_client:
+        client = self.redis_client
+        if not client:
             logger.warning("Redis not configured, skipping ZSET migration")
             return {"migrated": 0, "errors": []}
 
@@ -393,7 +404,7 @@ class SessionManager:
 
         cursor = 0
         while True:
-            cursor, keys = await self._redis_client.scan(cursor, match=match_pattern, count=batch_size)
+            cursor, keys = await client.scan(cursor, match=match_pattern, count=batch_size)
 
             for key in keys:
                 if isinstance(key, bytes):
@@ -405,7 +416,7 @@ class SessionManager:
                     zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
                     # Get all sessions from Hash
-                    sessions_raw = await self._redis_client.hgetall(key)
+                    sessions_raw = await client.hgetall(key)
                     if not sessions_raw:
                         continue
 
@@ -433,7 +444,7 @@ class SessionManager:
 
                     if zset_entries:
                         # Atomically add to ZSET with TTL
-                        async with self._redis_client.pipeline() as pipe:
+                        async with client.pipeline() as pipe:
                             pipe.zadd(zset_key, zset_entries)
                             pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
                             await pipe.execute()
@@ -466,7 +477,8 @@ class SessionManager:
         -------
             Number of users migrated
         """
-        if not self._redis_client:
+        client = self.redis_client
+        if not client:
             logger.warning("Redis not configured, skipping migration")
             return 0
 
@@ -478,7 +490,7 @@ class SessionManager:
 
         match_pattern = f"{self.SESSION_KEY_PREFIX}*"
 
-        async for key in self._redis_client.scan_iter(match=match_pattern):
+        async for key in client.scan_iter(match=match_pattern):
             if isinstance(key, bytes):
                 key = key.decode("utf-8")
 
@@ -492,7 +504,7 @@ class SessionManager:
                 user_id = key.replace(self.SESSION_KEY_PREFIX, "")
 
                 # Get legacy sessions
-                sessions_raw = await self._redis_client.get(key)
+                sessions_raw = await client.get(key)
                 if not sessions_raw:
                     continue
 
@@ -504,7 +516,7 @@ class SessionManager:
                 hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
 
                 # Use pipeline for atomicity per user
-                async with self._redis_client.pipeline(transaction=True) as pipe:
+                async with client.pipeline(transaction=True) as pipe:
                     # Add all sessions to hash
                     for session in sessions:
                         pipe.hset(hash_key, session["session_id"], json_dumps(session, as_str=True))

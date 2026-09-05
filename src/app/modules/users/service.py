@@ -26,6 +26,7 @@ from src.app.modules.rate_limits.service import RateLimitService
 
 # TierService is absorbed into RateLimitService; alias retained for call-site & test-patch compatibility
 TierService = RateLimitService
+from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.users.crud import CRUDUser, crud_users
 from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
@@ -284,28 +285,9 @@ class UserService:
             email = email.lower().strip()
             username = username.lower().strip()
 
-            keys = [
-                _user_cache_key(user_id),
-            ]
+            from src.app.modules.users.session_invalidation import build_user_invalidation_keys
 
-            # Only build tenant-scoped keys when tenant_id is available
-            from src.app.core.utils.cache import build_tenant_key
-
-            token_keys = [
-                build_tenant_key(f"user:{username}:token_version", str(tenant_id) if tenant_id else None),
-                build_tenant_key(f"user:{email}:token_version", str(tenant_id) if tenant_id else None),
-            ]
-
-            if tenant_id is not None:
-                tenant_id_str = str(tenant_id)
-                keys.extend(
-                    [
-                        f"{USER_CACHE_PREFIX}:{tenant_id_str}:email:{email}",
-                        f"{USER_CACHE_PREFIX}:{tenant_id_str}:username:{username}",
-                        f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{username}",
-                        f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{email}",
-                    ]
-                )
+            keys, token_keys = build_user_invalidation_keys(user_id, username, email, tenant_id)
 
             if keys:
                 await client.delete(*keys)
@@ -369,7 +351,7 @@ class UserService:
         if client is None or not users:
             return
 
-        from src.app.core.utils.cache import build_tenant_key
+        from src.app.modules.users.session_invalidation import build_user_invalidation_keys
 
         tenant_context = get_current_tenant()
         delete_keys: list[str] = []
@@ -383,34 +365,26 @@ class UserService:
                     username = user["username"]
                     tenant_id = user.get("tenant_id")
                     current_version = user.get("token_version", 0)
-                else:
+                elif hasattr(user, "id"):
                     user_id = user.id
                     email = user.email
                     username = user.username
                     tenant_id = user.tenant_id
                     current_version = getattr(user, "token_version", 0)
+                else:
+                    user_id = getattr(user, "id", user[0] if len(user) > 0 else None)
+                    email = getattr(user, "email", user[1] if len(user) > 1 else None)
+                    username = getattr(user, "username", user[2] if len(user) > 2 else None)
+                    tenant_id = getattr(user, "tenant_id", user[3] if len(user) > 3 else None)
+                    current_version = getattr(user, "token_version", user[4] if len(user) > 4 else 0)
 
                 if tenant_id is None and tenant_context is not None:
                     tenant_id = tenant_context.tenant_id
 
-                email = email.lower().strip()
-                username = username.lower().strip()
-                tid_arg = str(tenant_id) if tenant_id else None
-
-                delete_keys.append(_user_cache_key(user_id))
-                token_sets.append((build_tenant_key(f"user:{username}:token_version", tid_arg), current_version))
-                token_sets.append((build_tenant_key(f"user:{email}:token_version", tid_arg), current_version))
-
-                if tenant_id is not None:
-                    tenant_id_str = str(tenant_id)
-                    delete_keys.extend(
-                        [
-                            f"{USER_CACHE_PREFIX}:{tenant_id_str}:email:{email}",
-                            f"{USER_CACHE_PREFIX}:{tenant_id_str}:username:{username}",
-                            f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{username}",
-                            f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{email}",
-                        ]
-                    )
+                u_del_keys, u_tok_keys = build_user_invalidation_keys(user_id, username, email, tenant_id)
+                delete_keys.extend(u_del_keys)
+                for tk in u_tok_keys:
+                    token_sets.append((tk, current_version))
             except Exception as e:
                 logger.warning("Failed to build batch-invalidation keys for user", error=e)
 
@@ -428,6 +402,29 @@ class UserService:
         except Exception as e:
             logger.warning("Failed to batch-invalidate user caches", count=len(users), error=e)
 
+
+    async def invalidate_sessions(
+        self,
+        users: Any,
+        reason: InvalidationReason,
+        *,
+        tenant_id: Any = None,
+        flush_permissions: bool = False,
+        commit: bool = True,
+        explicit_token_version: int | None = None,
+    ) -> None:
+        """Public seam: invalidate sessions and cache for users."""
+        from src.app.modules.users.session_invalidation import invalidate_user_sessions
+
+        await invalidate_user_sessions(
+            self.db,
+            users,
+            reason,
+            tenant_id=tenant_id,
+            flush_permissions=flush_permissions,
+            commit=commit,
+            explicit_token_version=explicit_token_version,
+        )
     async def _get_cached_user(self, cache_key: str) -> dict[str, Any] | None:
         """Get cached user data if available."""
         client = get_redis()
@@ -714,13 +711,13 @@ class UserService:
 
         if db_user is None:
             raise ModelNotFoundError("User", username)
-        db_username = db_user["username"] if isinstance(db_user, dict) else db_user.username
-        db_email = db_user["email"] if isinstance(db_user, dict) else db_user.email
+        db_username = get_user_attr(db_user, "username")
+        db_email = get_user_attr(db_user, "email")
         # SECURITY FIX: Cross-tenant check matching delete
         from src.app.core.tenancy.context import get_current_tenant
 
         current_tenant = get_current_tenant()
-        user_tenant_id = db_user.get("tenant_id") if isinstance(db_user, dict) else getattr(db_user, "tenant_id", None)
+        user_tenant_id = get_user_attr(db_user, "tenant_id")
         if current_tenant is not None and user_tenant_id is not None and str(user_tenant_id) != str(current_tenant.id):
             raise ModelNotFoundError("User", username)
 
@@ -733,14 +730,14 @@ class UserService:
         reason = InvalidationReason.PROFILE_EDIT
         if values.email is not None and values.email != db_email:
             reason = InvalidationReason.CREDENTIAL_CHANGE
-            tenant_id_val = db_user.get("tenant_id") if isinstance(db_user, dict) else db_user.tenant_id
+            tenant_id_val = get_user_attr(db_user, "tenant_id")
             if await self.crud.exists(db=self.db, email=values.email, tenant_id=tenant_id_val, is_deleted=False):
                 raise DuplicateError("email", values.email)
 
         # Check for duplicate username if changing (exclude soft-deleted users)
         if values.username is not None and values.username != db_username:
             reason = InvalidationReason.CREDENTIAL_CHANGE
-            tenant_id_val = db_user.get("tenant_id") if isinstance(db_user, dict) else db_user.tenant_id
+            tenant_id_val = get_user_attr(db_user, "tenant_id")
             if await self.crud.exists(db=self.db, username=values.username, tenant_id=tenant_id_val, is_deleted=False):
                 raise DuplicateError("username", values.username)
 
@@ -753,7 +750,7 @@ class UserService:
 
             from src.app.modules.users.models import User
 
-            user_id_val = db_user["id"] if isinstance(db_user, dict) else db_user.id
+            user_id_val = get_user_attr(db_user, "id")
             await self.db.execute(
                 sa_update(User).where(User.id == user_id_val).values(token_version=User.token_version + 1)
             )
@@ -824,7 +821,7 @@ class UserService:
         from src.app.core.tenancy.context import get_current_tenant
 
         current_tenant = get_current_tenant()
-        user_tenant_id = db_user.get("tenant_id") if isinstance(db_user, dict) else getattr(db_user, "tenant_id", None)
+        user_tenant_id = get_user_attr(db_user, "tenant_id")
         if current_tenant is not None and user_tenant_id != current_tenant.id:
             raise ModelNotFoundError("User", username)
 
@@ -841,8 +838,8 @@ class UserService:
 
         from sqlalchemy import update as sa_update
 
-        user_id_val = db_user["id"] if isinstance(db_user, dict) else db_user.id
-        user_tenant_id = db_user.get("tenant_id") if isinstance(db_user, dict) else getattr(db_user, "tenant_id", None)
+        user_id_val = get_user_attr(db_user, "id")
+        user_tenant_id = get_user_attr(db_user, "tenant_id")
 
         # SECURITY FIX: Blacklist token before DB operation to ensure a mid-flight crash
         # doesn't leave a deleted user with a valid token.
@@ -915,7 +912,7 @@ class UserService:
 
         current_tenant = get_current_tenant()
         if current_tenant:
-            db_tenant_id = db_user.tenant_id if not isinstance(db_user, dict) else db_user.get("tenant_id")
+            db_tenant_id = get_user_attr(db_user, "tenant_id")
             if db_tenant_id and str(db_tenant_id) != str(current_tenant.id):
                 from src.app.core.exceptions.http_exceptions import ForbiddenException
 
@@ -927,7 +924,7 @@ class UserService:
         # SECURITY FIX: Blacklist token before DB operation
         await blacklist_token(token=token, db=self.db)
 
-        db_username = db_user.username if not isinstance(db_user, dict) else db_user["username"]
+        db_username = get_user_attr(db_user, "username")
         await self.crud.db_delete(db=self.db, username=db_username)
         await self._invalidate_user_cache(
             db_user,
@@ -957,13 +954,13 @@ class UserService:
         ModelNotFoundError
             If user or tier not found
         """
-        # Use service registry for cross-module decoupling
+        # Direct service construction per ADR-0001 (service registry deleted)
         db_user = await self._get_active_user(username)
 
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
-        db_username = db_user.username if not isinstance(db_user, dict) else db_user["username"]
+        db_username = get_user_attr(db_user, "username")
 
         # Validate tier exists via rate limits module
         rate_limit_svc = TierService(self.db)
@@ -977,7 +974,7 @@ class UserService:
         # SECURITY FIX: Increment token_version to invalidate active JWTs
         from sqlalchemy import update as sa_update
 
-        user_id_val = db_user["id"] if isinstance(db_user, dict) else db_user.id
+        user_id_val = get_user_attr(db_user, "id")
         await self.db.execute(
             sa_update(User).where(User.id == user_id_val).values(token_version=User.token_version + 1)
         )
@@ -993,7 +990,7 @@ class UserService:
         )
 
         # A3 FIX: Handle both ORM objects and dict responses
-        user_name = db_user["name"] if isinstance(db_user, dict) else db_user.name
+        user_name = get_user_attr(db_user, "name")
         return {"message": f"User {user_name} Tier updated"}
 
     async def downgrade_to_free_tier(self, user_id: int) -> int | None:
@@ -1019,7 +1016,7 @@ class UserService:
             logger.warning("Free tier not configured; skipping downgrade", user_id=user_id)
             return None
 
-        free_tier_id = free_tier.get("id") if isinstance(free_tier, dict) else free_tier.id
+        free_tier_id = get_user_attr(free_tier, "id")
 
         await self.crud.update(
             db=self.db,
@@ -1042,14 +1039,14 @@ class UserService:
         # this lets us pass the honest TIER_CHANGE reason instead of PROFILE_EDIT.
         db_user = await self.crud.get(db=self.db, id=user_id, is_deleted=False)
         if db_user is not None:
-            new_version = db_user["token_version"] if isinstance(db_user, dict) else db_user.token_version
+            new_version = get_user_attr(db_user, "token_version")
             await self._invalidate_user_cache(
                 db_user,
                 bump_token_version=True,
                 reason=InvalidationReason.TIER_CHANGE,
                 explicit_token_version=new_version,
             )
-        return free_tier_id
+        return cast(int | None, free_tier_id)
 
     async def get_with_rate_limits(self, username: str) -> dict[str, Any]:
         """Get user with their tier's rate limits.

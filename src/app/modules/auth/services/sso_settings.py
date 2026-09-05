@@ -21,7 +21,7 @@ from src.app.core.exceptions.http_exceptions import (
 _SSO_SETTINGS_CACHE_TTL = 300
 from src.app.core.security.encryption import get_encryption
 from src.app.core.tenancy.context import get_current_tenant  # Needed to get default tenant_id if not passed
-from src.app.modules.audit_logs.service import audit_action
+from src.app.modules.audit_logs.trail import audit
 from src.app.modules.auth.crud import crud_sso_settings
 from src.app.modules.auth.models import SSOSettings
 from src.app.modules.auth.schemas import (
@@ -35,7 +35,6 @@ from src.app.modules.auth.schemas import (
 class SSOSettingsService:
     """Service for managing SSO provider settings with encryption."""
 
-    @audit_action("sso_settings.create", "sso_settings")
     async def create_settings(
         self, db: AsyncSession, settings: SSOSettingsCreate, user_id: int, tenant_id: UUID | None = None
     ) -> SSOSettingsRead:
@@ -77,6 +76,15 @@ class SSOSettingsService:
 
         # Invalidate cache so subsequent reads use the fresh record
         await self._invalidate_provider_cache(settings.provider)
+
+        await audit(
+            action="sso_settings.create",
+            entity_type="sso_settings",
+            entity_id=str(db_obj.id) if hasattr(db_obj, "id") else None,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            details={"provider": settings.provider},
+        )
 
         return SSOSettingsRead.model_validate(db_obj)
 
@@ -183,7 +191,6 @@ class SSOSettingsService:
             "updated_at": settings.updated_at if hasattr(settings, "updated_at") else settings["updated_at"],
         }
 
-    @audit_action("sso_settings.update", "sso_settings")
     async def update_settings(
         self, db: AsyncSession, provider: str, settings: SSOSettingsUpdate, user_id: int, tenant_id: UUID | None = None
     ) -> SSOSettingsRead:
@@ -222,9 +229,17 @@ class SSOSettingsService:
         # Invalidate cache so subsequent reads pick up the change
         await self._invalidate_provider_cache(provider)
 
+        current_id = current.get("id") if isinstance(current, dict) else getattr(current, "id", None)
+        await audit(
+            action="sso_settings.update",
+            entity_type="sso_settings",
+            entity_id=str(current_id) if current_id is not None else None,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            details={"provider": provider},
+        )
         return SSOSettingsRead.model_validate(current)
 
-    @audit_action("sso_settings.delete", "sso_settings")
     async def delete_settings(
         self, db: AsyncSession, provider: str, user_id: int, tenant_id: UUID | None = None
     ) -> None:
@@ -243,6 +258,14 @@ class SSOSettingsService:
         # Invalidate cache so stale data is immediately evicted
         await self._invalidate_provider_cache(provider)
 
+        await audit(
+            action="sso_settings.delete",
+            entity_type="sso_settings",
+            entity_id=provider,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            details={"provider": provider},
+        )
     @staticmethod
     async def _invalidate_provider_cache(provider: str) -> None:
         """Delete the Redis cache entry for a single SSO provider."""

@@ -116,11 +116,11 @@ async def test_render_template(mock_jinja, service, mock_db):
 
 @pytest.mark.asyncio
 @patch("src.app.modules.notifications.service.rate_limiter")
-@patch("src.app.modules.notifications.service.event_bus")
-async def test_send_email_success(mock_event_bus, mock_rate_limiter, service, mock_db):
+@patch("src.app.core.utils.queue.pool", new_callable=AsyncMock)
+async def test_send_email_success(mock_arq_pool, mock_rate_limiter, service, mock_db):
     t_id = uuid4()
     mock_rate_limiter.check_rate_limit = AsyncMock(return_value=(False, {}))
-    mock_event_bus.publish = AsyncMock()
+    mock_arq_pool.enqueue_job = AsyncMock()
     mock_db.add = MagicMock()
     mock_db.commit = AsyncMock()
     mock_db.refresh = AsyncMock()
@@ -132,7 +132,7 @@ async def test_send_email_success(mock_event_bus, mock_rate_limiter, service, mo
 
         assert notification.status == NotificationStatus.PENDING
         mock_db.add.assert_called_once()
-        mock_event_bus.publish.assert_called_once()
+        mock_arq_pool.enqueue_job.assert_awaited_once()
 
 
 @pytest.mark.asyncio

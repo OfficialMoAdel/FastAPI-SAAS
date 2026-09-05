@@ -1684,6 +1684,12 @@ def mock_redis(request):
         # Single seam: every Redis consumer reads cache.client at call time via
         # redis_provider.get_redis(), so this one patch covers all of them.
         patch("src.app.core.utils.cache.client", new=fake_redis),
+        # NOT redundant with the line above: RateLimiter.get_client() needs a
+        # client with evalsha/pipeline semantics (FakeRedis simulates Lua and
+        # returns numeric counts). Test-local doubles of cache.client (bare
+        # AsyncMocks, None) would otherwise leak into the fixed-window Lua
+        # path, producing AsyncMock counts -> TypeError -> fail-closed 429s
+        # (see test_tenant_optimization_e2e). Keep this guard patch.
         patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=fake_redis),
         patch("src.app.core.utils.queue.pool", new=fake_redis),
         patch("src.app.core.redis_provider.get_redis_pool", new=AsyncMock(return_value=fake_redis)),

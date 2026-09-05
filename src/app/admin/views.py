@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from src.app.core.config import settings
 from src.app.modules.posts.models import Post
 from src.app.modules.posts.schemas import PostUpdate
-from src.app.modules.tiers.models import Tier
+from src.app.modules.rate_limits.models import Tier
 from src.app.modules.tiers.schemas import TierCreate, TierUpdate
 from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreate, UserCreateInternal, UserUpdate

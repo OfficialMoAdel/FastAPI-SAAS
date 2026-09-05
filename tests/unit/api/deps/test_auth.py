@@ -26,6 +26,7 @@ from src.app.api.deps.auth import (
     get_optional_user,
     get_user_by_api_key,
     requires_api_key_scope,
+    resolve_principal,
 )
 from src.app.core.exceptions.http_exceptions import ForbiddenException, UnauthorizedException
 
@@ -947,3 +948,57 @@ async def test_get_current_superuser_ok() -> None:
     user = AuthenticatedUser(id=1, email="a@b.com", is_superuser=True, is_active=True)
     result = await get_current_superuser(user)
     assert result.id == 1
+# ---------------------------------------------------------------------------
+# resolve_principal (unified seam tests)
+# ---------------------------------------------------------------------------
+
+
+async def test_resolve_principal_strict_success() -> None:
+    request = _make_request()
+    token_data = MagicMock()
+    token_data.username_or_email = "alice"
+    token_data.token_version = 1
+    user = {"id": 10, "email": "alice@example.com", "username": "alice", "is_active": True, "token_version": 1}
+
+    with (
+        patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
+        patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.UserService") as mock_us,
+    ):
+        mock_us.return_value.get_user_auth_info = AsyncMock(return_value=user)
+        ctx = await resolve_principal(request, _make_db(), token="valid_tok", strict=True)
+    assert ctx is not None
+    assert ctx.user.id == 10
+    assert ctx.user.email == "alice@example.com"
+
+
+async def test_resolve_principal_strict_unauthenticated_raises() -> None:
+    request = _make_request()
+    with pytest.raises(UnauthorizedException, match="User not authenticated"):
+        await resolve_principal(request, _make_db(), token="", strict=True)
+
+
+async def test_resolve_principal_optional_unauthenticated_returns_none() -> None:
+    request = _make_request()
+    result = await resolve_principal(request, _make_db(), token="", strict=False)
+    assert result is None
+
+
+async def test_resolve_principal_optional_success() -> None:
+    request = _make_request()
+    token_data = MagicMock()
+    token_data.username_or_email = "alice"
+    token_data.token_version = 0
+    user = {"id": 10, "email": "alice@example.com", "username": "alice", "is_active": True, "token_version": 0}
+
+    with (
+        patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
+        patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.UserService") as mock_us,
+    ):
+        mock_us.return_value.get_user_auth_info = AsyncMock(return_value=user)
+        result = await resolve_principal(request, _make_db(), token="valid_tok", strict=False)
+    assert result is not None
+    assert result.user.id == 10

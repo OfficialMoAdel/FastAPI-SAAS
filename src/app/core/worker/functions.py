@@ -188,18 +188,11 @@ async def startup(ctx: Worker) -> None:
         if settings.arq.ARQ_ENABLED:
             from arq.connections import ArqRedis
 
-            from src.app.core.json_utils import json_dumps, json_loads
-
-            def _serialize(obj: dict) -> bytes:
-                return json_dumps(obj)  # type: ignore[return-value]  # orjson returns bytes when as_str=False
-
-            def _deserialize(data: bytes | str | memoryview) -> Any:
-                return json_loads(data)
+            from src.app.core.events.arq_adapter import get_arq_pool_kwargs
 
             arq_pool = ArqRedis(
                 connection_pool=pool,
-                job_serializer=_serialize,
-                job_deserializer=_deserialize,
+                **get_arq_pool_kwargs(),
             )
             event_bus.set_arq_queue(arq_pool)
 

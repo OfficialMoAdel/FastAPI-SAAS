@@ -104,7 +104,7 @@ class TestRequestNotification:
     """Tests for standardized request_notification event dispatch."""
 
     @pytest.mark.asyncio
-    @patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock)
+    @patch("src.app.modules.notifications.service.event_bus.publish", new_callable=AsyncMock)
     async def test_request_notification_publishes_standard_event(self, mock_publish) -> None:
         """request_notification formats payload and publishes notification.request."""
         tenant_id = uuid4()
@@ -323,7 +323,7 @@ class TestMagicLinkTaskOutboxSeam:
     """Tests that send_magic_link_email_task dispatches via notification.request seam."""
 
     @pytest.mark.asyncio
-    @patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock)
+    @patch("src.app.modules.notifications.service.event_bus.publish", new_callable=AsyncMock)
     async def test_send_magic_link_email_task_publishes_notification_request(self, mock_publish) -> None:
         """send_magic_link_email_task publishes notification.request with no direct NotificationService."""
         from src.app.modules.auth.tasks import send_magic_link_email_task

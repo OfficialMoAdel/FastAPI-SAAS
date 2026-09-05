@@ -15,8 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import local_session
 from src.app.core.logger import get_logger
+from src.app.modules.rate_limits.models import Tier
 from src.app.modules.tenants.models import Tenant
-from src.app.modules.tiers.models import Tier
 
 logger = get_logger(__name__)
 

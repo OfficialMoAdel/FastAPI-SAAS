@@ -420,7 +420,7 @@ class TestAuthServiceEmailFlows:
 
         with (
             patch("src.app.modules.auth.services.passwords.UserService") as mock_get_service,
-            patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock) as mock_publish,
+            patch("src.app.modules.notifications.service.event_bus.publish", new_callable=AsyncMock) as mock_publish,
             patch("src.app.modules.auth.services.passwords.PasswordResetToken") as mock_token_model,
             patch("src.app.modules.auth.services.passwords.settings") as mock_settings,
         ):
@@ -477,7 +477,7 @@ class TestAuthServiceEmailFlows:
             patch("src.app.modules.auth.services.email_verification.UserService") as mock_get_service,
             patch("src.app.modules.auth.services.email_verification.EmailVerificationToken") as mock_token_cls,
             patch("src.app.modules.auth.services.email_verification.settings") as mock_settings,
-            patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock) as mock_publish,
+            patch("src.app.modules.notifications.service.event_bus.publish", new_callable=AsyncMock) as mock_publish,
         ):
             mock_user_service = MagicMock()
             mock_user_service.crud = MagicMock()

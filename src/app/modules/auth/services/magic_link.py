@@ -362,56 +362,21 @@ class MagicLinkService:
         """
         from urllib.parse import quote
 
-        from src.app.core.redis_provider import get_arq
 
         # Build magic link URL. URL-encode the token to guard against any special
         # characters in future token formats and prevent URL truncation or injection.
         magic_link_url = f"{settings.app.FRONTEND_URL}/auth/magic-link?token={quote(token, safe='')}"
 
-        # Enqueue via ARQ if available
-        arq = get_arq()
-        if arq:
-            try:
-                await arq.enqueue_job(
-                    "send_magic_link_email_task",
-                    email,
-                    magic_link_url,
-                    user_id,
-                )
-                logger.info(
-                    "magic_link_email_enqueued",
-                    extra={"user_id": user_id, "email": email},
-                )
-            except Exception as e:
-                logger.error(
-                    "failed_to_enqueue_magic_link_email",
-                    extra={"user_id": user_id, "email": email, "error": str(e)},
-                )
-                from src.app.modules.notifications.service import request_notification
+        # Standardized notification dispatch via unified outbox seam (Candidate 8)
+        from src.app.modules.notifications.service import request_notification
 
-                await request_notification(
-                    to_email=email,
-                    template_name="magic_link",
-                    context={"magic_link_url": magic_link_url},
-                    tenant_id=tenant_id,
-                    user_id=user_id,
-                )
-        else:
-            # ARQ not available - dispatch directly via notification.request outbox event
-            logger.info(
-                "arq_queue_not_available_magic_link_fallback_dispatch",
-                extra={"user_id": user_id, "email": email},
-            )
-            from src.app.modules.notifications.service import request_notification
-
-            await request_notification(
-                to_email=email,
-                template_name="magic_link",
-                context={"magic_link_url": magic_link_url},
-                tenant_id=tenant_id,
-                user_id=user_id,
-            )
-
+        await request_notification(
+            to_email=email,
+            template_name="magic_link",
+            context={"magic_link_url": magic_link_url},
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
     async def _create_auth_tokens(self, user: dict) -> dict[str, Any]:
         """Create access and refresh tokens and register the session.
 

@@ -172,40 +172,23 @@ class RoleService:
         await self._invalidate_role_cache(role_id)
 
         # BUG FIX: Also invalidate permission caches and bump token_version for all affected users
-        users_records: list[Any] = []
         if affected_user_ids:
-            from sqlalchemy import update as sa_update
-
-            from src.app.modules.users.models import User
-
-            # Project rows BEFORE the bump so the batch can write old+1 == new DB value.
-            users_stmt = select(
-                User.id, User.email, User.username, User.tenant_id, User.token_version
-            ).where(User.id.in_(affected_user_ids)).where(tenant_scope(User, self.tenant_id))
-            users_result = await self.db.execute(users_stmt)
-            users_records = list(users_result.all())
-
-            await self.db.execute(
-                sa_update(User)
-                .where(User.id.in_(affected_user_ids)).where(tenant_scope(User, self.tenant_id))
-                .values(token_version=User.token_version + 1)
+            from src.app.modules.users.session_invalidation import (
+                InvalidationReason,
+                invalidate_user_sessions,
             )
 
-        # Commit both the role deletion and the token version updates atomically
-        await self.db.commit()
-
-        for user_id in affected_user_ids:
-            await invalidate_user_permissions_cache(user_id, self.tenant_id)
-
-        # Sync token_version cache (bump=True → old+1 == new DB value; CREDENTIAL_CHANGE per policy).
-        if users_records:
-            from src.app.modules.users.service import UserService
-            from src.app.modules.users.session_invalidation import InvalidationReason
-
-            await UserService(self.db)._invalidate_user_cache_batch(
-                users_records, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+            await invalidate_user_sessions(
+                self.db,
+                affected_user_ids,
+                reason=InvalidationReason.CREDENTIAL_CHANGE,
+                tenant_id=self.tenant_id,
+                commit=True,
             )
-
+            for user_id in affected_user_ids:
+                await invalidate_user_permissions_cache(user_id, self.tenant_id)
+        else:
+            await self.db.commit()
     async def get_all_permissions(self) -> Sequence[Permission]:
         """Get all available permissions in the system.
 
@@ -513,35 +496,19 @@ class RoleService:
         affected_user_ids = list(affected_users_result.scalars().all())
 
         if affected_user_ids:
-            from sqlalchemy import update as sa_update
-
-            from src.app.modules.users.models import User
-
-            # N3: project only the columns needed for cache invalidation
-            # (id/email/username/tenant_id/token_version) instead of loading
-            # full User rows (incl. hashed_password), then invalidate the whole
-            # batch in ONE Redis pipeline instead of 2 round-trips per user.
-            users_stmt = select(
-                User.id, User.email, User.username, User.tenant_id, User.token_version
-            ).where(User.id.in_(affected_user_ids)).where(tenant_scope(User, self.tenant_id))
-            users_result = await self.db.execute(users_stmt)
-            users_records = users_result.all()
-
-            await self.db.execute(
-                sa_update(User)
-                .where(User.id.in_(affected_user_ids)).where(tenant_scope(User, self.tenant_id))
-                .values(token_version=User.token_version + 1)
+            from src.app.modules.users.session_invalidation import (
+                InvalidationReason,
+                invalidate_user_sessions,
             )
-            await self.db.commit()
 
-            from src.app.modules.users.service import UserService
-            from src.app.modules.users.session_invalidation import InvalidationReason
-
-            await UserService(self.db)._invalidate_user_cache_batch(
-                users_records, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+            await invalidate_user_sessions(
+                self.db,
+                affected_user_ids,
+                reason=InvalidationReason.CREDENTIAL_CHANGE,
+                tenant_id=self.tenant_id,
+                commit=True,
             )
             await invalidate_users_permissions_cache_batch(affected_user_ids, self.tenant_id)
-
     async def remove_permission_from_role(self, role_id: int, permission_slug: str) -> None:
         """Remove a permission from a role."""
         role = await self.get_role(role_id)
@@ -582,35 +549,18 @@ class RoleService:
             affected_user_ids = list(affected_users_result.scalars().all())
 
             if affected_user_ids:
-                from sqlalchemy import update as sa_update
-
-                from src.app.modules.users.models import User
-
-                # N3: project only the columns needed for cache invalidation
-                # (id/email/username/tenant_id/token_version) instead of loading
-                # full User rows (incl. hashed_password), then invalidate the whole
-                # batch in ONE Redis pipeline instead of 2 round-trips per user.
-                users_stmt = select(
-                    User.id, User.email, User.username, User.tenant_id, User.token_version
-                ).where(User.id.in_(affected_user_ids)).where(tenant_scope(User, self.tenant_id))
-                users_result = await self.db.execute(users_stmt)
-                users_records = users_result.all()
-
-                await self.db.execute(
-                    sa_update(User)
-                    .where(User.id.in_(affected_user_ids)).where(tenant_scope(User, self.tenant_id))
-                    .values(token_version=User.token_version + 1)
-                )
-                await self.db.commit()
-
-                from src.app.modules.users.service import UserService
-                from src.app.modules.users.session_invalidation import InvalidationReason
-
-                await UserService(self.db)._invalidate_user_cache_batch(
-                    users_records, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+                from src.app.modules.users.session_invalidation import (
+                    InvalidationReason,
+                    invalidate_user_sessions,
                 )
 
-            if affected_user_ids:
+                await invalidate_user_sessions(
+                    self.db,
+                    affected_user_ids,
+                    reason=InvalidationReason.CREDENTIAL_CHANGE,
+                    tenant_id=self.tenant_id,
+                    commit=True,
+                )
                 await invalidate_users_permissions_cache_batch(affected_user_ids, self.tenant_id)
 
     async def assign_role_to_user(self, user_id: int, role_id: int) -> None:
@@ -657,11 +607,8 @@ class RoleService:
             await self.db.rollback()
             return  # Already assigned concurrently, idempotent
 
-        # Invalidate user cache and user permissions cache
-        # Role grant changes the user's effective permission set, which
-        # CREDENTIAL_CHANGE in spirit (JWT-embedded roles / permission
-        # bitmask become stale). Bump token_version so cached permissions
-        # are recomputed on the next request.
+        # Cache-only invalidation: SQL token_version bump already executed above.
+        # Do NOT route through invalidate_user_sessions here (it would bump twice).
         from src.app.modules.users.service import UserService
 
         await UserService(self.db)._invalidate_user_cache(
@@ -692,7 +639,6 @@ class RoleService:
         if user_role:
             await self.db.delete(user_role)
 
-            # SECURITY FIX: Increment token_version atomicaly to invalidate active JWTs on role change
             from sqlalchemy import update as sa_update
 
             from src.app.modules.users.models import User
@@ -701,10 +647,9 @@ class RoleService:
                 sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1)
             )
             await self.db.commit()
-            # Role removal changes the user's effective permission set, so
-            # bump token_version (CREDENTIAL_CHANGE) to invalidate sessions
-            # that were issued under the old role grant.
+
             from src.app.modules.users.service import UserService
+            from src.app.modules.users.session_invalidation import InvalidationReason
 
             await UserService(self.db)._invalidate_user_cache(
                 user_record, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE

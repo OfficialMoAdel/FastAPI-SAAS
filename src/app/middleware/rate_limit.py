@@ -277,52 +277,20 @@ class RateLimitMiddleware:
                 tier_name = None
 
         # 4. Resolve limits
-        from src.app.core.security.rate_limit_cache import get_tier_policy
+        from src.app.core.security.rate_policy import build_rate_limit_key, resolve_rate_limits
         from src.app.core.utils.path_utils import sanitize_path
 
         path = sanitize_path(request.url.path)
-        limit = None
-        period = None
+        limit, period = await resolve_rate_limits(
+            path, tier_id=tier_id_raw, tier_name=tier_name, user_id=user_id
+        )
 
-        if tier_name and user_id:
-            if tier_id_raw is not None:
-                try:
-                    tier_id_val = int(tier_id_raw)
-                    if tier_id_val:
-                        tier_policies = await get_tier_policy(tier_id_val)
-                        if tier_policies:
-                            for policy in tier_policies:
-                                if policy.get("path") == path:
-                                    limit = policy.get("limit")
-                                    period = policy.get("period")
-                                    break
-                except (ValueError, TypeError):
-                    pass
-
-        if limit is None or period is None:
-            # Fallback to settings tier config
-            resolved_tier = str(tier_name).lower() if tier_name else "anonymous"  # H5 FIX: coerce int tier_name
-            limit_config = settings.rate_limit.TIER_RATE_LIMITS.get(resolved_tier)
-            if limit_config is None:
-                default_limit = (
-                    settings.rate_limit.DEFAULT_AUTHENTICATED_LIMIT
-                    if user_id
-                    else settings.rate_limit.DEFAULT_ANONYMOUS_LIMIT
-                )
-                limit_config = default_limit
-
-            limit, period = limit_config
-
-        if not user_id:
-            # For anonymous users, use the proxy-aware client IP (not the raw peer,
-            # which is the load balancer/reverse proxy behind trusted proxies).
-            anonymous_ip = getattr(request.state, "client_ip", None) or get_client_ip(request)
-            key = f"rate_limit:anonymous:ip:{anonymous_ip}:{path}"
-        else:
-            # For authenticated users, scope by tenant if available
-            from src.app.core.utils.cache import build_tenant_key
-
-            base_key = f"rate_limit:user:{user_id}:{path}"
-            key = build_tenant_key(base_key, tenant_id)
+        raw_ip = getattr(request.state, "client_ip", None) if not user_id else None
+        anonymous_ip = (
+            raw_ip
+            if isinstance(raw_ip, str) and raw_ip
+            else (get_client_ip(request) if not user_id else None)
+        )
+        key = build_rate_limit_key(path, user_id=user_id, tenant_id=tenant_id, anonymous_ip=anonymous_ip)
 
         return limit, period, key
