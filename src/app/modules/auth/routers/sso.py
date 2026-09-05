@@ -12,12 +12,49 @@ from src.app.api.deps import RequestContextDep
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_loads
+from src.app.modules._base.exceptions import (
+    ModelNotFoundError as _DomainNotFoundError,
+)
+from src.app.modules._base.exceptions import (
+    UnauthorizedError as _DomainUnauthorizedError,
+)
+from src.app.modules._base.exceptions import (
+    ValidationError as _DomainValidationError,
+)
 from src.app.modules.auth.crud import crud_user_sso_connections
 from src.app.modules.auth.rate_limit import check_auth_rate_limit
 from src.app.modules.auth.schemas import AuthTokenResponse, SSOProvider, SSOProviderRead, SSOProvidersResponse
 from src.app.modules.auth.services.sso import SSOService, get_sso_service
 
 router = APIRouter(prefix="/account/sso", tags=["sso"])
+
+_DOMAIN_STATUS_CODES = {
+    _DomainValidationError: status.HTTP_400_BAD_REQUEST,
+    _DomainUnauthorizedError: status.HTTP_401_UNAUTHORIZED,
+    _DomainNotFoundError: status.HTTP_404_NOT_FOUND,
+}
+
+
+def _domain_error_with_cleared_cookie(exc: Exception) -> HTTPException:
+    """Convert a domain failure to HTTP while clearing the sso_state cookie.
+
+    The SSO service raises _base domain errors (not HTTPException), so the
+    `except HTTPException` cookie hygiene never fires for them. Status codes
+    mirror the central handlers in core/errors.py; note the error `code`
+    field follows the generic HTTP mapping (e.g. INVALID_INPUT) rather than
+    the domain-specific code the central handler would emit.
+    """
+    for cls, code in _DOMAIN_STATUS_CODES.items():
+        if isinstance(exc, cls):
+            http_status = code
+            break
+    else:
+        http_status = status.HTTP_400_BAD_REQUEST
+    return HTTPException(
+        status_code=http_status,
+        detail=str(exc),
+        headers={"Set-Cookie": _get_clear_cookie_str()},
+    )
 
 
 def _get_state_cookie_kwargs(provider: str | None = None) -> dict:
@@ -151,6 +188,7 @@ async def initiate_sso_alias(
     _validate_redirect_uri(redirect_uri)
     return await initiate_sso(request, provider, db, sso_service, redirect_uri)
 
+
 @router.get("/{provider}/callback", dependencies=[Depends(check_auth_rate_limit)])
 async def handle_callback(
     request: Request,
@@ -189,6 +227,8 @@ async def handle_callback(
         headers["Set-Cookie"] = _get_clear_cookie_str()
         e.headers = headers
         raise e
+    except (_DomainValidationError, _DomainUnauthorizedError, _DomainNotFoundError) as e:
+        raise _domain_error_with_cleared_cookie(e)
     except httpx.TimeoutException:
         headers = {"Set-Cookie": _get_clear_cookie_str()}
         raise HTTPException(
@@ -259,6 +299,8 @@ async def handle_post_callback(
         headers["Set-Cookie"] = _get_clear_cookie_str()
         e.headers = headers
         raise e
+    except (_DomainValidationError, _DomainUnauthorizedError, _DomainNotFoundError) as e:
+        raise _domain_error_with_cleared_cookie(e)
     except httpx.TimeoutException:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,

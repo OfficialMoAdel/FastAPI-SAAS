@@ -7,19 +7,18 @@ Performance Optimization (R2-HYBRID MED-2):
 """
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any
 from uuid import UUID
 
 import structlog
 from cachetools import TTLCache
 from fastapi import Depends
-from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
-from src.app.core.db.tenant_crud import scoped_query, tenant_scope
+from src.app.core.db.tenant_crud import scoped_query
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.monitoring.r1_unified_metrics import record_rbac_cache_hit, record_rbac_cache_miss
 from src.app.core.rbac.dependencies import (
@@ -28,6 +27,7 @@ from src.app.core.rbac.dependencies import (
 )
 from src.app.core.tenancy.context import TenantContext, get_current_tenant
 from src.app.modules._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
+from src.app.modules.rbac.crud import crud_associations, crud_permissions, crud_roles
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
 from src.app.modules.rbac.schemas import RoleCreate, RoleUpdate
 from src.app.modules.users.session_invalidation import InvalidationReason
@@ -76,26 +76,18 @@ class RoleService:
 
     async def get_roles(self, skip: int = 0, limit: int = 100) -> Sequence[Role]:
         """Get all roles for the current tenant."""
-        stmt = (
-            scoped_query(Role, self.tenant_id).offset(skip).limit(limit).order_by(Role.id)
-        )
-        result = await self.db.execute(stmt)
-        return result.scalars().all()
+        return await crud_roles.get_roles(self.db, self.tenant_id, skip=skip, limit=limit)
 
     async def get_role(self, role_id: int) -> Role:
         """Get a role by ID within the current tenant."""
-        stmt = scoped_query(Role, self.tenant_id).where(Role.id == role_id)
-        result = await self.db.execute(stmt)
-        role = cast("Role | None", result.scalar_one_or_none())
+        role = await crud_roles.get_by_id(self.db, self.tenant_id, role_id)
         if not role:
             raise ModelNotFoundError("Role", role_id)
         return role
 
     async def get_role_by_name(self, name: str) -> Role | None:
         """Get a role by name within the current tenant."""
-        stmt = scoped_query(Role, self.tenant_id).where(Role.name == name)
-        result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
+        return await crud_roles.get_by_name(self.db, self.tenant_id, name)
 
     async def create_role(self, role_in: RoleCreate) -> Role:
         """Create a new custom role for the current tenant."""
@@ -149,23 +141,8 @@ class RoleService:
 
         if role.is_system:
             raise ForbiddenError("System roles cannot be deleted", reason="system_role")
-        affected_users_stmt = select(UserRole.user_id).where(
-            UserRole.role_id == role_id,
-        ).where(
-            tenant_scope(UserRole, self.tenant_id)
-        )
-        affected_users_result = await self.db.execute(affected_users_stmt)
-        affected_user_ids = list(affected_users_result.scalars().all())
-
-        # FIX: Delete relations before deleting the role to prevent IntegrityError
-        from sqlalchemy import delete
-
-        # Delete related role permissions
-        await self.db.execute(delete(RolePermission).where(RolePermission.role_id == role_id))
-
-        # Delete related user roles
-        await self.db.execute(delete(UserRole).where(UserRole.role_id == role_id))
-
+        affected_user_ids = await crud_associations.get_role_affected_user_ids(self.db, self.tenant_id, role_id)
+        await crud_roles.delete_relations(self.db, role_id, tenant_id=self.tenant_id)
         await self.db.delete(role)
         # T110: Defer commit until after token_version increment to maintain atomicity
         # Invalidate cache for the deleted role
@@ -189,6 +166,7 @@ class RoleService:
                 await invalidate_user_permissions_cache(user_id, self.tenant_id)
         else:
             await self.db.commit()
+
     async def get_all_permissions(self) -> Sequence[Permission]:
         """Get all available permissions in the system.
 
@@ -198,9 +176,7 @@ class RoleService:
         Returns:
             Sequence of all Permission objects
         """
-        stmt = select(Permission).order_by(Permission.slug)
-        result = await self.db.execute(stmt)
-        return result.scalars().all()
+        return await crud_permissions.get_all(self.db)
 
     async def get_role_permissions(self, role_id: int) -> Sequence[Permission]:
         """Get all permissions for a role with L1+L2 caching.
@@ -276,13 +252,7 @@ class RoleService:
         record_rbac_cache_miss()
         await self.get_role(role_id)  # Verify role exists and belongs to tenant
 
-        stmt = (
-            select(Permission)
-            .join(RolePermission, RolePermission.permission_id == Permission.id)
-            .where(RolePermission.role_id == role_id)
-        )
-        result = await self.db.execute(stmt)
-        permissions = list(result.scalars().all())
+        permissions = list(await crud_permissions.get_by_role(self.db, role_id))
 
         # Serialize for caching
         perm_dicts = [
@@ -454,23 +424,14 @@ class RoleService:
             raise ForbiddenError("System role permissions cannot be modified", reason="system_role")
 
         # Get permission by slug
-        stmt = select(Permission).where(Permission.slug == permission_slug)
-        result = await self.db.execute(stmt)
-        permission = result.scalar_one_or_none()
+        permission = await crud_permissions.get_by_slug(self.db, permission_slug)
         if not permission:
             raise ModelNotFoundError("Permission", permission_slug)
 
         # Check if already assigned
-        rp_stmt = select(RolePermission).where(
-            and_(
-                RolePermission.role_id == role_id,
-                RolePermission.permission_id == permission.id,
-            )
-        )
-        result = await self.db.execute(rp_stmt)
-        if result.scalar_one_or_none():
+        existing = await crud_associations.get_role_permission(self.db, role_id, permission.id)
+        if existing:
             return  # Already assigned, idempotent
-
         role_permission = RolePermission(
             role_id=role_id,
             permission_id=permission.id,
@@ -487,13 +448,7 @@ class RoleService:
         await self._invalidate_role_cache(role_id)
 
         # Invalidate user permission caches and bump token_version for affected users
-        affected_users_stmt = select(UserRole.user_id).where(
-            UserRole.role_id == role_id,
-        ).where(
-            tenant_scope(UserRole, self.tenant_id)
-        )
-        affected_users_result = await self.db.execute(affected_users_stmt)
-        affected_user_ids = list(affected_users_result.scalars().all())
+        affected_user_ids = await crud_associations.get_role_affected_user_ids(self.db, self.tenant_id, role_id)
 
         if affected_user_ids:
             from src.app.modules.users.session_invalidation import (
@@ -509,6 +464,7 @@ class RoleService:
                 commit=True,
             )
             await invalidate_users_permissions_cache_batch(affected_user_ids, self.tenant_id)
+
     async def remove_permission_from_role(self, role_id: int, permission_slug: str) -> None:
         """Remove a permission from a role."""
         role = await self.get_role(role_id)
@@ -517,37 +473,19 @@ class RoleService:
             raise ForbiddenError("System role permissions cannot be modified", reason="system_role")
 
         # Get permission by slug
-        stmt = select(Permission).where(Permission.slug == permission_slug)
-        result = await self.db.execute(stmt)
-        permission = result.scalar_one_or_none()
+        permission = await crud_permissions.get_by_slug(self.db, permission_slug)
         if not permission:
             raise ModelNotFoundError("Permission", permission_slug)
 
         # Find and delete the role permission
-        rp_stmt = select(RolePermission).where(
-            and_(
-                RolePermission.role_id == role_id,
-                RolePermission.permission_id == permission.id,
-            )
-        )
-        result = await self.db.execute(rp_stmt)
-        role_permission = result.scalar_one_or_none()
-        if role_permission:
-            await self.db.delete(role_permission)
+        removed = await crud_associations.remove_role_permission(self.db, role_id, permission.id)
+        if removed:
             await self.db.commit()
 
             # Invalidate cache for this role
             await self._invalidate_role_cache(role_id)
 
-            # Invalidate user permission caches and bump token_version for affected users
-            affected_users_stmt = select(UserRole.user_id).where(
-                UserRole.role_id == role_id,
-            ).where(
-                tenant_scope(UserRole, self.tenant_id)
-            )
-            affected_users_result = await self.db.execute(affected_users_stmt)
-            affected_user_ids = list(affected_users_result.scalars().all())
-
+            affected_user_ids = await crud_associations.get_role_affected_user_ids(self.db, self.tenant_id, role_id)
             if affected_user_ids:
                 from src.app.modules.users.session_invalidation import (
                     InvalidationReason,
@@ -572,6 +510,7 @@ class RoleService:
 
         # Verify user belongs to the same tenant (P1 fix: tenant isolation)
         from src.app.modules.users.models import User
+
         user_stmt = scoped_query(User, self.tenant_id).where(User.id == user_id)
         user_result = await self.db.execute(user_stmt)
         user_record = user_result.scalar_one_or_none()
@@ -579,10 +518,7 @@ class RoleService:
             raise ModelNotFoundError("User", user_id)
 
         # Check if already assigned
-        stmt = (
-            scoped_query(UserRole, self.tenant_id)
-            .where(UserRole.user_id == user_id, UserRole.role_id == role_id)
-        )
+        stmt = scoped_query(UserRole, self.tenant_id).where(UserRole.user_id == user_id, UserRole.role_id == role_id)
         result = await self.db.execute(stmt)
         if result.scalar_one_or_none():
             return  # Already assigned, idempotent
@@ -595,12 +531,7 @@ class RoleService:
         self.db.add(user_role)
 
         # SECURITY FIX: Increment token_version to invalidate active JWTs on role change
-        from sqlalchemy import update as sa_update
-
-        from src.app.modules.users.models import User
-
-        await self.db.execute(sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
-
+        await crud_associations.bump_user_token_version(self.db, user_id)
         try:
             await self.db.commit()
         except IntegrityError:
@@ -630,24 +561,10 @@ class RoleService:
         if not user_record:
             raise ModelNotFoundError("User", user_id)
 
-        stmt = (
-            scoped_query(UserRole, self.tenant_id)
-            .where(UserRole.user_id == user_id, UserRole.role_id == role_id)
-        )
-        result = await self.db.execute(stmt)
-        user_role = result.scalar_one_or_none()
-        if user_role:
-            await self.db.delete(user_role)
-
-            from sqlalchemy import update as sa_update
-
-            from src.app.modules.users.models import User
-
-            await self.db.execute(
-                sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1)
-            )
+        removed = await crud_associations.remove_user_role(self.db, self.tenant_id, user_id, role_id)
+        if removed:
+            await crud_associations.bump_user_token_version(self.db, user_id)
             await self.db.commit()
-
             from src.app.modules.users.service import UserService
             from src.app.modules.users.session_invalidation import InvalidationReason
 
@@ -655,16 +572,10 @@ class RoleService:
                 user_record, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
             )
             await invalidate_user_permissions_cache(user_id, self.tenant_id)
+
     async def get_user_roles(self, user_id: int) -> Sequence[Role]:
         """Get all roles for a user within the current tenant."""
-        stmt = (
-            select(Role)
-            .join(UserRole, UserRole.role_id == Role.id)
-            .where(UserRole.user_id == user_id)
-            .where(tenant_scope(UserRole, self.tenant_id))
-        )
-        result = await self.db.execute(stmt)
-        return result.scalars().all()
+        return await crud_roles.get_user_roles(self.db, self.tenant_id, user_id)
 
 
 def get_role_service(

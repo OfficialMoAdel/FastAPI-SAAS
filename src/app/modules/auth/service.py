@@ -3,7 +3,6 @@
 from typing import Any, cast
 from uuid import UUID
 
-from fastapi import Request, Response
 from jwt import ExpiredSignatureError
 from jwt.exceptions import PyJWTError as JWTError
 from redis.asyncio import Redis
@@ -12,7 +11,6 @@ from structlog import get_logger
 
 from src.app.core.config import settings
 from src.app.core.events import EventPriority
-from src.app.core.exceptions.http_exceptions import UnauthorizedException
 from src.app.core.security import (
     TokenType,
     blacklist_token,
@@ -24,6 +22,7 @@ from src.app.core.security import (
     verify_token,
 )
 from src.app.core.utils.ip_utils import get_client_ip
+from src.app.modules._base.exceptions import ServiceUnavailableError, UnauthorizedError
 from src.app.modules.audit_logs import audit
 from src.app.modules.auth.services.email_verification import EmailVerificationService
 from src.app.modules.auth.services.lockout import LoginLockoutPolicy
@@ -32,7 +31,7 @@ from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.users.service import UserService
 
 logger = get_logger(__name__)
-__all__ = ["AuthService", "AuthGateway", "get_auth_service", "get_auth"]
+__all__ = ["AuthService", "get_auth_service"]
 
 
 def get_auth_service() -> "AuthService":
@@ -46,14 +45,66 @@ def get_auth_service() -> "AuthService":
     return AuthService()
 
 
-
-
 class AuthService:
     """Service class for authentication-related business logic."""
 
     # Precomputed dummy bcrypt hash for timing attack prevention.
     # Used when user doesn't exist to ensure constant-time authentication.
     _DUMMY_BCRYPT_HASH = "$2b$12$DOUePotH1f1kDX4WZ21DzuRgFk7C8xFhasEURTDHCx1KnvQstFIvi"  # noqa: S105
+
+    def __init__(
+        self,
+        lockout_policy: LoginLockoutPolicy | None = None,
+    ) -> None:
+        self.lockout = lockout_policy or LoginLockoutPolicy()
+
+    async def _resolve_user_auth_info(
+        self,
+        username_or_email: str,
+        db: AsyncSession,
+    ) -> dict[str, Any] | None:
+        """Resolve user auth info by email or username with caching (PR-06 deduplication)."""
+        user_service = UserService(db)
+        if "@" in username_or_email:
+            return await user_service.get_user_auth_info(email=username_or_email)
+        return await user_service.get_user_auth_info(username=username_or_email)
+
+    async def _revoke_session(
+        self,
+        access_token: str | None,
+        user_data: Any,
+        db: AsyncSession,
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Invalidate the specific Redis session on logout.
+
+        Returns (db_user, session_revoked) so callers can audit the
+        revocation outcome without masking unexpected failures.
+        """
+        from redis.exceptions import RedisError
+        from sqlalchemy.exc import SQLAlchemyError
+
+        if not user_data or not access_token:
+            return None, False
+        db_user: dict[str, Any] | None = None
+        try:
+            db_user = await self._resolve_user_auth_info(user_data.username_or_email, db)
+            if db_user and access_token:
+                from src.app.core.security.jwt_utils import (
+                    extract_claim_unverified,
+                    extract_jti_unverified,
+                )
+                from src.app.core.security.session_manager import session_manager as global_session_manager
+
+                session_id = (
+                    extract_claim_unverified(access_token, "sid")
+                    or extract_jti_unverified(access_token)
+                    or access_token[:32]
+                )
+                await global_session_manager.invalidate_session(db_user["id"], session_id)
+            return db_user, True
+        except (SQLAlchemyError, RedisError, JWTError, AttributeError, KeyError) as e:
+            logger.warning("failed_to_invalidate_session_on_logout", error=str(e))
+            return db_user, False
 
     async def authenticate_user(self, username_or_email: str, password: str, db: AsyncSession) -> dict[str, Any] | None:
         """Authenticate user by checking database and password.
@@ -68,11 +119,7 @@ class AuthService:
         """
         # Use eager loading to get tier info for JWT claims (enables Zero-DB rate limiting)
         # Use UserService to benefit from auth info caching
-        user_service = UserService(db)
-        if "@" in username_or_email:
-            db_user = await user_service.get_user_auth_info(email=username_or_email)
-        else:
-            db_user = await user_service.get_user_auth_info(username=username_or_email)
+        db_user = await self._resolve_user_auth_info(username_or_email, db)
 
         # SECURITY: Use dummy hash if user not found to prevent timing attacks.
         # This ensures bcrypt verification always takes ~100ms, preventing
@@ -97,7 +144,7 @@ class AuthService:
         # so the stored cost converges to the configured value over time.
         if needs_rehash(hash_to_verify):
             try:
-                await user_service.update_password_hash(db_user["id"], await get_password_hash(password))
+                await UserService(db).update_password_hash(db_user["id"], await get_password_hash(password))
             except Exception as e:  # noqa: BLE001 - rehash is best-effort; never block login
                 logger.warning("rehash_on_login_failed", user_id=db_user.get("id"), error=str(e))
 
@@ -105,14 +152,19 @@ class AuthService:
 
     async def _publish_login_audit(
         self,
-        request: Request,
-        username: str,
-        success: bool,
+        request: Any = None,
+        username: str = "",
+        success: bool = False,
         tenant_id: int | UUID | None = None,
         user_id: int | None = None,
         reason: str | None = None,
+        *,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
     ) -> None:
         """Publish audit log for login attempt."""
+        resolved_ip = ip_address or (get_client_ip(request) if request else None)
+        resolved_ua = user_agent or (request.headers.get("user-agent") if hasattr(request, "headers") else None)
         try:
             await audit(
                 action="auth.login",
@@ -125,8 +177,8 @@ class AuthService:
                     "success": success,
                     "reason": reason,
                 },
-                ip_address=get_client_ip(request),
-                user_agent=request.headers.get("user-agent"),
+                ip_address=resolved_ip,
+                user_agent=resolved_ua,
                 priority=EventPriority.NORMAL,
             )
         except Exception as e:
@@ -144,10 +196,13 @@ class AuthService:
         self,
         username: str,
         password: str,
-        response: Response,
-        request: Request,
-        db: AsyncSession,
-        redis: Redis,
+        response: Any = None,
+        request: Any = None,
+        db: AsyncSession | None = None,
+        redis: Redis | None = None,
+        *,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
     ) -> dict[str, Any]:
         """Authenticate user and generate tokens.
 
@@ -176,18 +231,22 @@ class AuthService:
         UnauthorizedException
             If credentials are invalid or account is locked
         """
+        if db is None:
+            raise ServiceUnavailableError("Database session is required")
+        if redis is None:
+            raise ServiceUnavailableError("Redis client is required")
         # SECURITY FIX: Normalize username for consistent lockout tracking
         # Prevents bypass via case variations (e.g., User@example.com vs user@example.com)
         normalized_username = username.lower().strip()
 
         # SECURITY FIX: Check lockout BEFORE authentication to prevent CPU exhaustion (DoS)
-        lockout = LoginLockoutPolicy()
+        lockout = self.lockout
         if await lockout.is_locked(redis, normalized_username):
             # Avoid DB hit on locked path to prevent resource exhaustion (A-R1-03)
             await self._publish_login_audit(
-                request, username, False, reason="account_locked"
+                request, username, False, reason="account_locked", ip_address=ip_address, user_agent=user_agent
             )
-            raise UnauthorizedException("Wrong username, email or password.")
+            raise UnauthorizedError("Wrong username, email or password.")
 
         # Authenticate (this takes time due to bcrypt)
         # SECURITY FIX: Use normalized_username (already computed for lockout key)
@@ -196,11 +255,15 @@ class AuthService:
 
         if not user:
             await lockout.record_failed_attempt(redis, normalized_username)
-            await self._publish_login_audit(request, username, False, reason="invalid_credentials")
-            raise UnauthorizedException("Wrong username, email or password.")
+            await self._publish_login_audit(
+                request, username, False, reason="invalid_credentials", ip_address=ip_address, user_agent=user_agent
+            )
+            raise UnauthorizedError("Wrong username, email or password.")
         if not user.get("is_active", False):
-            await self._publish_login_audit(request, username, False, reason="account_inactive")
-            raise UnauthorizedException("User account is no longer active.")
+            await self._publish_login_audit(
+                request, username, False, reason="account_inactive", ip_address=ip_address, user_agent=user_agent
+            )
+            raise UnauthorizedError("User account is no longer active.")
 
         # Clear failed attempts on success (single roundtrip)
         await lockout.clear(redis, normalized_username)
@@ -212,9 +275,7 @@ class AuthService:
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], db)
 
         if mfa_enabled:
-            from src.app.core.utils.ip_utils import get_client_ip
-
-            client_ip = get_client_ip(request)
+            client_ip = ip_address or (get_client_ip(request) if request else None)
 
             # Generate MFA pending token
             from src.app.core.security.tokens import TokenGenerator
@@ -238,6 +299,8 @@ class AuthService:
                 True,
                 tenant_id=user["tenant_id"],
                 user_id=user["id"],
+                ip_address=ip_address,
+                user_agent=user_agent,
             )
 
             return {
@@ -247,15 +310,20 @@ class AuthService:
                 "message": "MFA verification required",
             }
 
-        return await self._generate_auth_tokens(user, response, request, username)
+        return await self._generate_auth_tokens(
+            user, response, request, username, ip_address=ip_address, user_agent=user_agent
+        )
 
     async def _generate_auth_tokens(
         self,
         user: dict[str, Any],
-        response: Response,
-        request: Request,
-        username: str,
-    ) -> dict[str, str]:
+        response: Any = None,
+        request: Any = None,
+        username: str = "",
+        *,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict[str, Any]:
         """Generate access and refresh tokens, set cookies, register session.
 
         Args:
@@ -276,24 +344,45 @@ class AuthService:
         )
 
         # Audit log success
-        await self._publish_login_audit(request, username, True, tenant_id=user["tenant_id"], user_id=user["id"])
+        await self._publish_login_audit(
+            request,
+            username,
+            True,
+            tenant_id=user["tenant_id"],
+            user_id=user["id"],
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
 
-        return {"access_token": issued.access_token, "token_type": "bearer"}
+        return {
+            "access_token": issued.access_token,
+            "token_type": "bearer",
+            "refresh_token": issued.refresh_token,
+        }
 
     async def refresh_access_token(
-        self, refresh_token: str | None, response: Response, db: AsyncSession, request: Request | None = None
-    ) -> dict[str, str]:
+        self,
+        refresh_token: str | None,
+        response: Any = None,
+        db: AsyncSession | None = None,
+        request: Any = None,
+        *,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict[str, Any]:
         """Refresh access token using refresh token.
 
         Implements rotation: invalidates old refresh token and issues a new one.
         Includes absolute session lifetime check to prevent indefinite refresh.
         """
+        if db is None:
+            raise ServiceUnavailableError("Database session is required")
         if not refresh_token:
-            raise UnauthorizedException("Refresh token missing.")
+            raise UnauthorizedError("Refresh token missing.")
 
         user_data = await verify_token(refresh_token, TokenType.REFRESH, db)
         if not user_data:
-            raise UnauthorizedException("Invalid refresh token.")
+            raise UnauthorizedError("Invalid refresh token.")
 
         # SECURITY FIX: Check absolute session expiration to enforce maximum session lifetime
         # Use absolute_exp from already-verified token (avoid double JWT decode)
@@ -303,29 +392,23 @@ class AuthService:
             from datetime import datetime as dt
 
             if dt.fromtimestamp(absolute_exp, tz=UTC) < dt.now(UTC):
-                raise UnauthorizedException(
+                raise UnauthorizedError(
                     "Session expired. Please log in again.",
                 )
 
         # Fetch user with tier for Zero-DB rate limiting
         # Use UserService to benefit from auth info caching
-        user_service = UserService(db)
-        if "@" in user_data.username_or_email:
-            # Fallback for email-based subjects (rare but safe)
-            db_user = await user_service.get_user_auth_info(email=user_data.username_or_email)
-        else:
-            # Optimized cached path for username-based subjects (standard)
-            db_user = await user_service.get_user_auth_info(username=user_data.username_or_email)
+        db_user = await self._resolve_user_auth_info(user_data.username_or_email, db)
 
         # A1 SECURITY FIX: Block token refresh for deleted, non-existent, or inactive users
         if not db_user or db_user.get("is_deleted", False) or not db_user.get("is_active", False):
-            raise UnauthorizedException("User account is no longer active.")
+            raise UnauthorizedError("User account is no longer active.")
 
         # SECURITY FIX: Check token version to enforce password change/all-session invalidation
         # `user_data.token_version` is pulled from the refresh token by `verify_token`
         current_token_version = db_user.get("token_version", 0)
         if hasattr(user_data, "token_version") and user_data.token_version != current_token_version:
-            raise UnauthorizedException("Session invalidated due to password change or security event.")
+            raise UnauthorizedError("Session invalidated due to password change or security event.")
 
         # Include tier info in JWT claims for Zero-DB rate limiting
         # SECURITY FIX: Include token_version for session invalidation
@@ -350,7 +433,7 @@ class AuthService:
             lock_key = f"refresh_lock:{user_data.jti}"
             lock_acquired = await redis_client.set(lock_key, "1", nx=True, ex=30)
             if not lock_acquired:
-                raise UnauthorizedException("Token refresh already in progress.")
+                raise UnauthorizedError("Token refresh already in progress.")
         try:
             # A2/A3: rotate with carried session claims instead of minting fresh ones
             new_access_token, new_refresh_token = await TokenIssuer.rotate_token_pair(token_data, old_refresh_payload)
@@ -376,25 +459,35 @@ class AuthService:
         except Exception as e:
             logger.warning("failed_to_invalidate_old_session_on_refresh", error=str(e))
 
-        # Cookie security settings based on environment
-        from src.app.core.security.login_helpers import register_login_session, set_refresh_cookie
-
-        set_refresh_cookie(response, new_refresh_token)
+        # NOTE: refresh cookie ownership lives in the router (single owner)
+        # to avoid double Set-Cookie on refresh; service only returns the token.
+        from src.app.core.security.login_helpers import register_login_session
 
         await register_login_session(
-            user_id=db_user["id"], access_token=new_access_token, request=request, verify=False
+            user_id=db_user["id"],
+            access_token=new_access_token,
+            request=request,
+            verify=False,
+            device_label=user_agent,
         )
 
-        return {"access_token": new_access_token, "token_type": "bearer"}
+        return {
+            "access_token": new_access_token,
+            "token_type": "bearer",
+            "refresh_token": new_refresh_token,
+        }
 
     async def logout(
         self,
         access_token: str | None,
         refresh_token: str | None,
-        response: Response,
-        request: Request,
-        db: AsyncSession,
-    ) -> dict[str, str]:
+        response: Any = None,
+        request: Any = None,
+        db: AsyncSession | None = None,
+        *,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict[str, Any]:
         """Logout user by blacklisting tokens.
 
         Parameters
@@ -412,93 +505,67 @@ class AuthService:
 
         Returns
         -------
-        dict[str, str]
-            Success message
+        dict[str, Any]
+            Success message plus ``session_revoked`` flag so callers can
+            distinguish full vs partial (tokens blacklisted, session
+            registry untouched) logout. The HTTP layer exposes only
+            ``message`` via LogoutResponse; direct callers see both keys.
 
         Raises
         ------
         UnauthorizedException
             If neither access nor refresh token is provided, or a token is invalid
         """
-        try:
-            # A8 FIX: previously a missing refresh cookie raised 401, so
-            # access-token-only clients (no cookies) could never log out.
-            # Require at least one token; blacklist whatever is provided —
-            # blacklist_tokens() already skips None entries.
-            if not access_token and not refresh_token:
-                raise UnauthorizedException("No token provided.")
+        if db is None:
+            raise ServiceUnavailableError("Database session is required")
+        if not access_token and not refresh_token:
+            raise UnauthorizedError("No token provided.")
 
-            # Try to get user info from token before blacklisting to log who logged out
-            user_data = None
-            if access_token:
-                try:
-                    user_data = await verify_token(access_token, TokenType.ACCESS, db)
-                except (UnauthorizedException, ExpiredSignatureError):
-                    pass  # Token expired or invalid, proceed with logout anyway
-
-            await blacklist_tokens(access_token=access_token, refresh_token=refresh_token, db=db)
-            from src.app.core.security.login_helpers import clear_refresh_cookies
-
-            clear_refresh_cookies(response)
-
-            # Try to invalidate the specific session to decrement active sessions
-            db_user = None
-            user_service = None
-            if user_data:
-                try:
-                    user_service = UserService(db)
-                    if "@" in user_data.username_or_email:
-                        db_user = await user_service.get_user_auth_info(email=user_data.username_or_email)
-                    else:
-                        db_user = await user_service.get_user_auth_info(username=user_data.username_or_email)
-
-                    if db_user and access_token:
-                        from src.app.core.security.jwt_utils import (
-                            extract_claim_unverified,
-                            extract_jti_unverified,
-                        )
-                        from src.app.core.security.session_manager import session_manager as global_session_manager
-
-                        # A3: sessions are registered under the stable sid
-                        # claim, not the per-token jti — invalidating by jti
-                        # never matched the registry and was a silent no-op.
-                        session_id = (
-                            extract_claim_unverified(access_token, "sid")
-                            or extract_jti_unverified(access_token)
-                            or access_token[:32]
-                        )
-                        await global_session_manager.invalidate_session(db_user["id"], session_id)
-                except Exception as e:
-                    logger.warning("failed_to_invalidate_session_on_logout", error=str(e))
-
-            # Audit log logout — reuse db_user from session invalidation (saves 1 DB query)
+        user_data = None
+        if access_token:
             try:
-                username = user_data.username_or_email if user_data else "unknown"
-                user_id_val = db_user["id"] if db_user else None
-                tenant_id_val = db_user.get("tenant_id") if db_user else None
+                user_data = await verify_token(access_token, TokenType.ACCESS, db)
+            except (UnauthorizedError, ExpiredSignatureError):
+                pass  # Token expired or invalid, proceed with logout anyway
 
-                await audit(
-                    action="auth.logout",
-                    entity_type="user",
-                    entity_id=user_id_val,
-                    tenant_id=tenant_id_val,
-                    user_id=user_id_val,
-                    details={
-                        "username": username,
-                        "success": True,
-                    },
-                    ip_address=get_client_ip(request),
-                    user_agent=request.headers.get("user-agent"),
-                    priority=EventPriority.NORMAL,
-                )
-            except Exception as e:
-                logger.warning("failed_to_publish_logout_audit_log", error=str(e))
-
-            return {"message": "Logged out successfully"}
-
+        try:
+            await blacklist_tokens(access_token=access_token, refresh_token=refresh_token, db=db)
         except JWTError as e:
             logger.error("logout_jwt_error", error=str(e))
-            raise UnauthorizedException("Invalid token.")
+            raise UnauthorizedError("Invalid token.") from e
+
+        from src.app.core.security.login_helpers import clear_refresh_cookies
+
+        if response is not None:
+            clear_refresh_cookies(response)
+
+        db_user, session_revoked = await self._revoke_session(access_token, user_data, db)
+
+        # Audit log logout — reuse db_user from session invalidation (saves 1 DB query)
+        try:
+            username = user_data.username_or_email if user_data else "unknown"
+            user_id_val = db_user["id"] if db_user else None
+            tenant_id_val = db_user.get("tenant_id") if db_user else None
+
+            await audit(
+                action="auth.logout",
+                entity_type="user",
+                entity_id=user_id_val,
+                tenant_id=tenant_id_val,
+                user_id=user_id_val,
+                details={
+                    "username": username,
+                    "success": True,
+                    "session_revoked": session_revoked,
+                },
+                ip_address=ip_address or (get_client_ip(request) if request else None),
+                user_agent=user_agent or (request.headers.get("user-agent") if hasattr(request, "headers") else None),
+                priority=EventPriority.NORMAL,
+            )
+        except Exception as e:
+            logger.warning("failed_to_publish_logout_audit_log", error=str(e))
+
+        return {"message": "Logged out successfully", "session_revoked": session_revoked}
 
     # ------------------------------------------------------------------
     # Password lifecycle — delegated to PasswordLifecycleService
@@ -558,6 +625,3 @@ class AuthService:
     ) -> dict[str, str]:
         """Verify email using verification token (delegates to EmailVerificationService)."""
         return await EmailVerificationService().verify_email(token, db)
-
-get_auth = get_auth_service
-AuthGateway = AuthService

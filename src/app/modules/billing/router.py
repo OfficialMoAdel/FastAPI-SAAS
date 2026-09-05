@@ -1,14 +1,12 @@
 """Billing & Payments router - HTTP handlers for billing operations."""
 
 from typing import Annotated, Any
-from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep
-from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
 from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
@@ -46,7 +44,10 @@ from src.app.modules.billing.subscription_service import (
     get_subscription_plan_service,
     get_user_subscription_service,
 )
-from src.app.modules.billing.webhook import handle_webhook_event, verify_webhook_signature
+from src.app.modules.billing.webhook import (
+    ingest_webhook,
+    verify_webhook_signature,
+)
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 logger = get_logger(__name__)
@@ -60,67 +61,11 @@ logger = get_logger(__name__)
 @router.post("/webhook", response_model=WebhookResponse, status_code=status.HTTP_200_OK)
 async def stripe_webhook(
     request: Request,
-    db: AsyncSession = Depends(async_get_db),
 ) -> Any:
-    """
-    Handle Stripe webhooks.
-
-    H1 FIX: the signature is ALWAYS verified against the global platform
-    secret first. The tenant identity is derived from the *verified* event
-    payload afterwards — never from a query param or unverified body metadata.
-    The previous flow let an attacker influence which HMAC secret validated
-    the delivery by passing ?tenant_id=... or embedding tenant_id in the raw
-    body, enabling forged events for any known tenant UUID.
-    """
+    """Handle Stripe webhooks."""
     payload = await request.body()
     sig_header = request.headers.get("Stripe-Signature")
-
-    if not sig_header:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing Stripe-Signature header",
-        )
-
-    webhook_secret = (
-        settings.billing.STRIPE_WEBHOOK_SECRET.get_secret_value() if settings.billing.STRIPE_WEBHOOK_SECRET else None
-    )
-    if not webhook_secret:
-        logger.error("STRIPE_WEBHOOK_SECRET is not set in configuration")
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Webhook secret not configured",
-        )
-
-    # Verify signature against the GLOBAL secret (executor: CPU-bound).
-    import asyncio
-
-    event = await asyncio.get_running_loop().run_in_executor(
-        None, verify_webhook_signature, payload, sig_header, webhook_secret
-    )
-
-    # Tenant is now authoritative: extracted from the VERIFIED event object.
-    _derive_and_attach_tenant(event)
-
-    # Handle event directly so that exceptions propagate and Stripe can retry
-    await handle_webhook_event(event)
-
-    return {"status": "success"}
-
-
-def _derive_and_attach_tenant(event: Any) -> None:
-    """B6: attach the tenant id parsed from the verified event's metadata.
-
-    Only used as an advisory hint for logging; handlers resolve the
-    authoritative tenant from the DB record matched on the verified
-    stripe_subscription_id / invoice / charge id.
-    """
-    obj = event.get("data", {}).get("object", {}) if isinstance(event, dict) else {}
-    metadata_tenant = obj.get("metadata", {}).get("tenant_id") or obj.get("client_reference_id")
-    if metadata_tenant:
-        try:
-            event["derived_tenant_id"] = str(UUID(str(metadata_tenant)))
-        except (ValueError, AttributeError):
-            pass
+    return await ingest_webhook(payload, sig_header, verify_fn=verify_webhook_signature)
 
 
 # =============================================================================

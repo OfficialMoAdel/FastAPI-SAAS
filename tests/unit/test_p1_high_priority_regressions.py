@@ -7,8 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from src.app.core.exceptions.http_exceptions import BadRequestException
-from src.app.modules._base.exceptions import ModelNotFoundError
+from src.app.modules._base.exceptions import ModelNotFoundError, ValidationError
 from src.app.modules.api_keys.service import APIKeyService
 from src.app.modules.auth.models import MFAMethod
 from src.app.modules.auth.schemas import MFAEnableRequest
@@ -46,7 +45,7 @@ class TestP1HighPriorityRegressions:
 
     @pytest.mark.asyncio
     async def test_p1_2_mfa_service_handles_integrity_error(self):
-        """P1-2: enable_mfa must catch IntegrityError and raise BadRequestException."""
+        """P1-2: enable_mfa must catch IntegrityError and raise ValidationError."""
         service = MFAService()
         mock_db = AsyncMock()
         mock_db.commit.side_effect = IntegrityError("duplicate key", params={}, orig=Exception("unique constraint"))
@@ -62,7 +61,7 @@ class TestP1HighPriorityRegressions:
             mock_get_redis.return_value = mock_redis
 
             req = MFAEnableRequest(setup_token="setup_123", totp_token="123456")
-            with pytest.raises(BadRequestException) as exc_info:
+            with pytest.raises(ValidationError) as exc_info:
                 await service.enable_mfa(user_id=1, request=req, db=mock_db)
 
             assert "MFA is already enabled" in str(exc_info.value.detail)

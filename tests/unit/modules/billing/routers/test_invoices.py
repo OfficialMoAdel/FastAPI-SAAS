@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from src.app.modules.billing.routes.invoices import get_invoice, list_invoices
+from src.app.modules.billing.routers.invoices import get_invoice, list_invoices
 
 
 async def test_list_invoices():
@@ -13,7 +13,7 @@ async def test_list_invoices():
     mock_service.get_user_records = AsyncMock(return_value={"data": [{"id": 1}], "total_count": 1})
 
     with patch(
-        "src.app.modules.billing.routes.invoices.get_billing_record_service",
+        "src.app.modules.billing.routers.invoices.get_billing_record_service",
         return_value=mock_service,
     ):
         result = await list_invoices(current_user={"id": 1}, db=MagicMock(), page=1, per_page=20, status=None)
@@ -29,7 +29,7 @@ async def test_list_invoices_has_next():
     mock_service.get_user_records = AsyncMock(return_value={"data": [{"id": 1}], "total_count": 50})
 
     with patch(
-        "src.app.modules.billing.routes.invoices.get_billing_record_service",
+        "src.app.modules.billing.routers.invoices.get_billing_record_service",
         return_value=mock_service,
     ):
         result = await list_invoices(current_user={"id": 1}, db=MagicMock(), page=1, per_page=20, status="succeeded")
@@ -41,7 +41,7 @@ async def test_get_invoice_success():
     mock_service.get_record = AsyncMock(return_value={"id": 5, "user_id": 1})
 
     with patch(
-        "src.app.modules.billing.routes.invoices.get_billing_record_service",
+        "src.app.modules.billing.routers.invoices.get_billing_record_service",
         return_value=mock_service,
     ):
         result = await get_invoice(invoice_id=5, current_user={"id": 1}, db=MagicMock())
@@ -53,7 +53,7 @@ async def test_get_invoice_not_found():
     mock_service.get_record = AsyncMock(return_value=None)
 
     with patch(
-        "src.app.modules.billing.routes.invoices.get_billing_record_service",
+        "src.app.modules.billing.routers.invoices.get_billing_record_service",
         return_value=mock_service,
     ):
         with pytest.raises(HTTPException) as exc:
@@ -66,7 +66,7 @@ async def test_get_invoice_forbidden():
     mock_service.get_record = AsyncMock(return_value={"id": 5, "user_id": 2})
 
     with patch(
-        "src.app.modules.billing.routes.invoices.get_billing_record_service",
+        "src.app.modules.billing.routers.invoices.get_billing_record_service",
         return_value=mock_service,
     ):
         with pytest.raises(HTTPException) as exc:

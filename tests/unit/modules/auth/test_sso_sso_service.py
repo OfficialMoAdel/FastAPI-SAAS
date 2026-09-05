@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from fastapi import Request
 
-from src.app.core.exceptions.http_exceptions import BadRequestException
+from src.app.modules._base.exceptions import ValidationError
 from src.app.modules.auth.schemas import SSOProvider
 from src.app.modules.auth.services.sso import SSOService
 
@@ -62,7 +62,7 @@ async def test_get_authorization_url_success(
 @patch("src.app.modules.auth.services.sso_settings.sso_settings_service.get_decrypted_settings")
 async def test_get_authorization_url_disabled_provider(mock_get_settings, service, mock_db, mock_request):
     mock_get_settings.return_value = {"is_enabled": False}
-    with pytest.raises(BadRequestException) as excinfo:
+    with pytest.raises(ValidationError) as excinfo:
         await service.get_authorization_url(mock_db, mock_request, SSOProvider.GOOGLE)
     assert "disabled" in str(excinfo.value)
 
@@ -115,7 +115,7 @@ async def test_disconnect_provider_fails_only_method(mock_user_service_cls, mock
 
     mock_crud_sso.count_for_user = AsyncMock(return_value=1)  # Only 1 connection
 
-    with pytest.raises(BadRequestException) as excinfo:
+    with pytest.raises(ValidationError) as excinfo:
         await service.disconnect_provider(mock_db, 1, SSOProvider.GOOGLE, tenant_id=uuid4())
     assert "only authentication method" in str(excinfo.value)
 
@@ -128,7 +128,7 @@ async def test_disconnect_provider_fails_only_method(mock_user_service_cls, mock
 @pytest.mark.asyncio
 async def test_get_provider_instance_unsupported_provider(service):
     """Test _get_provider_instance raises for unsupported provider (line 68)."""
-    with pytest.raises(BadRequestException) as excinfo:
+    with pytest.raises(ValidationError) as excinfo:
         service._get_provider_instance(
             "unsupported_provider",
             {"client_id": "id", "client_secret": "secret"},

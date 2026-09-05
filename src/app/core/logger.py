@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import cast
 
 import structlog
@@ -17,10 +18,11 @@ from src.app.core.config import EnvironmentOption, settings
 from src.app.core.observability.log_sampling import make_sampling_processor
 from src.app.core.observability.log_sanitizer import SanitizingProcessor
 
-# Log directory setup
-LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+# Log directory setup (repo root/logs or override via LOG_DIR)
+_default_log_dir = Path(__file__).resolve().parents[3] / "logs"
+LOG_DIR = os.getenv("LOG_DIR", str(_default_log_dir))
 if not os.path.exists(LOG_DIR):
-    os.makedirs(LOG_DIR)
+    os.makedirs(LOG_DIR, exist_ok=True)
 
 LOG_FILE_PATH = os.path.join(LOG_DIR, "app.log")
 

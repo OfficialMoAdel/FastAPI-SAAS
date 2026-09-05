@@ -1,7 +1,6 @@
 """API Key service layer - business logic for API key management."""
 
 import hashlib
-import inspect
 import secrets
 from datetime import UTC, datetime
 from typing import Any
@@ -229,8 +228,6 @@ class APIKeyService(BaseService[APIKey]):
         )
         key_result = await self.db.execute(key_stmt)
         key = key_result.scalar_one_or_none()
-        if inspect.isawaitable(key):
-            key = await key
 
         if key is None:
             raise ModelNotFoundError("APIKey", key_id)
@@ -291,7 +288,7 @@ class APIKeyService(BaseService[APIKey]):
         if redis_client is None or not tenant_id:
             return None
         try:
-            from src.app.modules.tenants.service import get_tenant_cache_key
+            from src.app.core.tenancy.cache import get_tenant_cache_key
 
             raw = await redis_client.get(get_tenant_cache_key(tenant_id))
             if raw is None:
@@ -509,8 +506,6 @@ class APIKeyService(BaseService[APIKey]):
         )
         old_key_result = await self.db.execute(old_key_stmt)
         old_key = old_key_result.scalar_one_or_none()
-        if inspect.isawaitable(old_key):
-            old_key = await old_key
 
         if old_key is None:
             raise ModelNotFoundError("APIKey", key_id)

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.modules.billing.routes.checkouts import (
+from src.app.modules.billing.routers.checkouts import (
     cancel_current_subscription,
     create_checkout,
     get_current_subscription,
@@ -19,7 +19,7 @@ async def test_create_checkout():
     data = MagicMock()
 
     with patch(
-        "src.app.modules.billing.routes.checkouts.get_checkout_service",
+        "src.app.modules.billing.routers.checkouts.get_checkout_service",
         return_value=mock_service,
     ):
         result = await create_checkout(data=data, current_user=current_user, db=MagicMock())
@@ -39,7 +39,7 @@ async def test_get_current_subscription_active():
     )
 
     with patch(
-        "src.app.modules.billing.routes.checkouts.get_user_subscription_service",
+        "src.app.modules.billing.routers.checkouts.get_user_subscription_service",
         return_value=mock_service,
     ):
         result = await get_current_subscription(current_user={"id": 1}, db=MagicMock())
@@ -51,7 +51,7 @@ async def test_get_current_subscription_none():
     mock_service.get_user_subscriptions = AsyncMock(return_value={"data": []})
 
     with patch(
-        "src.app.modules.billing.routes.checkouts.get_user_subscription_service",
+        "src.app.modules.billing.routers.checkouts.get_user_subscription_service",
         return_value=mock_service,
     ):
         result = await get_current_subscription(current_user={"id": 1}, db=MagicMock())
@@ -65,7 +65,7 @@ async def test_cancel_subscription_with_id():
 
     current_user = {"id": 1, "tenant_id": 3}
     with patch(
-        "src.app.modules.billing.routes.checkouts.get_user_subscription_service",
+        "src.app.modules.billing.routers.checkouts.get_user_subscription_service",
         return_value=mock_service,
     ):
         result = await cancel_current_subscription(current_user=current_user, db=MagicMock(), subscription_id=7)
@@ -81,7 +81,7 @@ async def test_cancel_subscription_finds_active():
 
     current_user = {"id": 1, "tenant_id": 3}
     with patch(
-        "src.app.modules.billing.routes.checkouts.get_user_subscription_service",
+        "src.app.modules.billing.routers.checkouts.get_user_subscription_service",
         return_value=mock_service,
     ):
         result = await cancel_current_subscription(current_user=current_user, db=MagicMock(), subscription_id=None)
@@ -96,7 +96,7 @@ async def test_cancel_subscription_no_active_raises():
 
     current_user = {"id": 1, "tenant_id": 3}
     with patch(
-        "src.app.modules.billing.routes.checkouts.get_user_subscription_service",
+        "src.app.modules.billing.routers.checkouts.get_user_subscription_service",
         return_value=mock_service,
     ):
         with pytest.raises(HTTPException) as exc:
@@ -113,7 +113,7 @@ async def test_cancel_subscription_unauthorized():
 
     current_user = {"id": 1, "tenant_id": 3}
     with patch(
-        "src.app.modules.billing.routes.checkouts.get_user_subscription_service",
+        "src.app.modules.billing.routers.checkouts.get_user_subscription_service",
         return_value=mock_service,
     ):
         with pytest.raises(HTTPException) as exc:

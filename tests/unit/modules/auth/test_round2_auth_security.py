@@ -6,8 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.core.exceptions.http_exceptions import BadRequestException, UnauthorizedException
-from src.app.modules._base.exceptions import ServiceUnavailableError
+from src.app.modules._base.exceptions import ServiceUnavailableError, UnauthorizedError, ValidationError
 from src.app.modules.auth.errors import InvalidMagicLinkError, MagicLinkAlreadyUsedError
 from src.app.modules.auth.schemas import MFAEnableRequest, MFAVerifyRequest
 from src.app.modules.auth.services.magic_link import MagicLinkService
@@ -60,7 +59,7 @@ class TestTOTPReplayProtection:
             assert result1["valid"] is True
 
             # Second verification with same code fails with replay error
-            with pytest.raises(BadRequestException, match="already been used"):
+            with pytest.raises(ValidationError, match="already been used"):
                 await service.verify_totp_token(42, req, mock_db, prevent_replay=True)
 
 
@@ -88,7 +87,7 @@ class TestMFASetupTokenBinding:
             patch("src.app.modules.auth.services.mfa.get_redis", return_value=mock_redis),
             patch("src.app.modules.auth.services.mfa.crud_mfa_methods.get", new_callable=AsyncMock, return_value=None),
         ):
-            with pytest.raises(BadRequestException, match="does not belong to the current user"):
+            with pytest.raises(ValidationError, match="does not belong to the current user"):
                 await service.enable_mfa(200, req, mock_db)
 
 
@@ -101,7 +100,7 @@ class TestMFALockoutFailClosed:
         service = MFAService()
 
         with patch("src.app.modules.auth.services.mfa.get_redis", return_value=None):
-            with pytest.raises(UnauthorizedException, match="Authentication temporarily unavailable"):
+            with pytest.raises(UnauthorizedError, match="Authentication temporarily unavailable"):
                 await service._check_mfa_lockout(user_id=1)
 
 

@@ -6,7 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.app.modules.billing.routes.products import router as products_router
+from src.app.modules.billing.routers.products import router as products_router
 
 
 @pytest.fixture
@@ -57,7 +57,7 @@ def test_path_parameter_for_stripe_ids():
 
 def test_list_endpoint_pagination():
     """Test that list endpoint supports pagination parameters."""
-    with patch("src.app.modules.billing.routes.products.get_product_service") as mock_get_service:
+    with patch("src.app.modules.billing.routers.products.get_product_service") as mock_get_service:
         mock_service = AsyncMock()
         import uuid
         from datetime import datetime
@@ -90,7 +90,7 @@ def test_list_endpoint_pagination():
         mock_get_service.return_value = mock_service
 
         # Mock the database dependency
-        with patch("src.app.modules.billing.routes.products.async_get_db"):
+        with patch("src.app.modules.billing.routers.products.async_get_db"):
             from fastapi import FastAPI
             from fastapi.testclient import TestClient
 
@@ -111,7 +111,7 @@ def test_list_endpoint_pagination():
 def test_delegates_to_billing_service():
     """Test that the router delegates to billing ProductService."""
     # This is verified by the import in router.py
-    from src.app.modules.billing.routes.products import get_product_service
+    from src.app.modules.billing.routers.products import get_product_service
     from src.app.modules.billing.service import get_product_service as billing_get_product_service
 
     # Should be the same function

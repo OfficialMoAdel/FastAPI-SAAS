@@ -68,7 +68,7 @@ class TestInvalidateCacheReasonGuard:
 
         service = UserService(db=AsyncMock())
         mock_client = AsyncMock()
-        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
+        with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
             # must not raise
             await service._invalidate_user_cache(
                 _user(),
@@ -84,7 +84,7 @@ class TestInvalidateCacheReasonGuard:
         from src.app.modules.users.service import UserService
 
         service = UserService(db=AsyncMock())
-        with patch("src.app.modules.users.service.get_redis", return_value=AsyncMock()):
+        with patch("src.app.modules.users.cache.get_redis", return_value=AsyncMock()):
             with pytest.raises(ValueError, match="does not match"):
                 await service._invalidate_user_cache(
                     _user(), bump_token_version=True, reason=InvalidationReason.PROFILE_EDIT
@@ -103,7 +103,7 @@ class TestInvalidateCacheReasonGuard:
         from src.app.modules.users.service import UserService
 
         service = UserService(db=AsyncMock())
-        with patch("src.app.modules.users.service.get_redis", return_value=AsyncMock()):
+        with patch("src.app.modules.users.cache.get_redis", return_value=AsyncMock()):
             with pytest.raises(TypeError):
                 await service._invalidate_user_cache(_user())  # type: ignore[call-arg]
             with pytest.raises(TypeError):
@@ -152,7 +152,7 @@ class TestInvalidateCacheReasonGuard:
         mock_client.delete = AsyncMock()
 
         service = UserService(db=AsyncMock())
-        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
+        with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
             await service._invalidate_user_cache(
                 _user(token_version=5),
                 bump_token_version=should_bump_token_version(reason),

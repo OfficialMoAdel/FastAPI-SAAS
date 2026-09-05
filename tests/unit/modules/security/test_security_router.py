@@ -247,12 +247,11 @@ async def test_get_ip_violation_stats_none() -> None:
 async def test_passkey_routes() -> None:
     mock_db = AsyncMock()
     mock_ctx = type("Ctx", (), {"db": mock_db, "user_id": 1, "user": {"id": 1}})()
-    with (
-        patch("src.app.modules.security.router.passkey_service.list_credentials", new_callable=AsyncMock) as mock_list,
-        patch("src.app.modules.security.router.passkey_service.delete_credential", new_callable=AsyncMock),
-    ):
-        mock_list.return_value = []
-        res = await list_passkeys(mock_ctx)
-        assert res == []
+    mock_svc = AsyncMock()
+    mock_svc.list_credentials.return_value = []
+    res = await list_passkeys(mock_ctx, mock_svc)
+    assert res == []
+    mock_svc.list_credentials.assert_awaited_once_with(db=mock_db, user_id=1)
 
-        await delete_passkey(123, mock_ctx)
+    await delete_passkey(123, mock_ctx, mock_svc)
+    mock_svc.delete_credential.assert_awaited_once_with(db=mock_db, user_id=1, credential_id=123)

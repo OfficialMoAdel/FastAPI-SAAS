@@ -76,8 +76,8 @@ class TestSSOSettingsServiceCreate:
 
     @pytest.mark.asyncio
     async def test_create_settings_rejects_duplicate_provider(self):
-        """Verify DuplicateValueException raised for existing provider."""
-        from src.app.core.exceptions.http_exceptions import DuplicateValueException
+        """Verify DuplicateError raised for existing provider."""
+        from src.app.modules._base.exceptions import DuplicateError
 
         service = SSOSettingsService()
         mock_db = AsyncMock()
@@ -91,7 +91,7 @@ class TestSSOSettingsServiceCreate:
                 client_secret="test_secret",
             )
 
-            with pytest.raises(DuplicateValueException):
+            with pytest.raises(DuplicateError):
                 await service.create_settings(mock_db, settings, user_id=1)
 
 
@@ -126,8 +126,8 @@ class TestSSOSettingsServiceGetDecrypted:
 
     @pytest.mark.asyncio
     async def test_get_decrypted_settings_raises_not_found(self):
-        """Verify NotFoundException raised for missing provider."""
-        from src.app.core.exceptions.http_exceptions import NotFoundException
+        """Verify ModelNotFoundError raised for missing provider."""
+        from src.app.modules._base.exceptions import ModelNotFoundError
 
         service = SSOSettingsService()
         mock_db = AsyncMock()
@@ -135,7 +135,7 @@ class TestSSOSettingsServiceGetDecrypted:
         with patch("src.app.modules.auth.services.sso_settings.crud_sso_settings") as mock_crud:
             mock_crud.get = AsyncMock(return_value=None)
 
-            with pytest.raises(NotFoundException):
+            with pytest.raises(ModelNotFoundError):
                 await service.get_decrypted_settings(mock_db, "nonexistent")
 
 
@@ -223,8 +223,8 @@ class TestSSOSettingsServiceDelete:
 
     @pytest.mark.asyncio
     async def test_delete_settings_raises_not_found(self):
-        """Verify NotFoundException raised for missing provider."""
-        from src.app.core.exceptions.http_exceptions import NotFoundException
+        """Verify ModelNotFoundError raised for missing provider."""
+        from src.app.modules._base.exceptions import ModelNotFoundError
 
         service = SSOSettingsService()
         mock_db = AsyncMock()
@@ -232,7 +232,7 @@ class TestSSOSettingsServiceDelete:
         with patch("src.app.modules.auth.services.sso_settings.crud_sso_settings") as mock_crud:
             mock_crud.exists = AsyncMock(return_value=False)
 
-            with pytest.raises(NotFoundException):
+            with pytest.raises(ModelNotFoundError):
                 await service.delete_settings(mock_db, "nonexistent", user_id=1)
 
 

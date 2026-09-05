@@ -21,7 +21,6 @@ here (the standalone module was merged in).
 from __future__ import annotations
 
 import asyncio
-import inspect
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -105,11 +104,9 @@ async def enqueue(
             args.append(str(tenant_id))
         try:
             if defer_by > 0:
-                enqueue_result = pool.enqueue_job("deliver_webhook_task", *args, _defer_by=defer_by)
+                await pool.enqueue_job("deliver_webhook_task", *args, _defer_by=defer_by)
             else:
-                enqueue_result = pool.enqueue_job("deliver_webhook_task", *args)
-            if inspect.isawaitable(enqueue_result):
-                await enqueue_result
+                await pool.enqueue_job("deliver_webhook_task", *args)
         except Exception as e:
             logger.error(
                 "webhook_enqueue_failed",

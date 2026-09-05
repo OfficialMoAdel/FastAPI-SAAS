@@ -36,10 +36,10 @@ from webauthn.helpers.structs import (
 
 from src.app.api.deps.auth import AuthenticatedUser
 from src.app.core.config import EnvironmentOption, settings
-from src.app.core.exceptions.http_exceptions import BadRequestException, NotFoundException
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.utils.lua_manager import get_lua_manager
+from src.app.modules._base.exceptions import ModelNotFoundError, ServiceUnavailableError, ValidationError
 from src.app.modules.auth.crud import crud_passkey_credentials
 from src.app.modules.auth.schemas import PasskeyCredentialCreate
 from src.app.modules.auth.services.tokens import TokenIssuer
@@ -99,8 +99,8 @@ class PasskeyService:
 
         # 1. Check passkey limit
         if not await crud_passkey_credentials.can_create(db=db, user_id=user_id):
-            raise BadRequestException(
-                detail=f"Maximum number of passkeys ({crud_passkey_credentials.MAX_PASSKEYS_PER_USER}) reached."
+            raise ValidationError(
+                f"Maximum number of passkeys ({crud_passkey_credentials.MAX_PASSKEYS_PER_USER}) reached."
             )
 
         # 2. Get existing credentials to exclude
@@ -127,8 +127,6 @@ class PasskeyService:
 
         # 4. Store challenge in Redis (fail-closed if Redis unavailable)
         if not redis:
-            from src.app.modules._base.exceptions import ServiceUnavailableError
-
             raise ServiceUnavailableError("Passkey registration is temporarily unavailable.")
         await self._store_challenge(redis, registration_id, options.challenge, device_type, user_id)
 
@@ -163,10 +161,10 @@ class PasskeyService:
         # 1. Retrieve stored challenge
         stored_data = await self._get_stored_challenge(redis, registration_id) if redis else None
         if not stored_data:
-            raise BadRequestException(detail="Registration challenge expired or invalid.")
+            raise ValidationError("Registration challenge expired or invalid.")
 
         if stored_data["user_id"] != user_id:
-            raise BadRequestException(detail="Registration challenge belongs to another user.")
+            raise ValidationError("Registration challenge belongs to another user.")
 
         challenge = stored_data["challenge"]
         device_type = stored_data["device_type"]
@@ -185,8 +183,8 @@ class PasskeyService:
                 expected_rp_id=_get_rp_id(),
             )
         except Exception as e:
-            logger.warning("Passkey verification failed for user :", user_id=user_id, error=e)
-            raise BadRequestException(detail="Passkey verification failed.")
+            logger.warning("Passkey verification failed", error=e, user_id=user_id)
+            raise ValidationError("Passkey verification failed.")
 
         # 3. Encrypt sensitive data
         import hashlib
@@ -227,7 +225,7 @@ class PasskeyService:
         if tenant:
             user = await crud_users.get(db=db, id=user_id)
             if user and user.get("tenant_id") != tenant.id:
-                raise NotFoundException(detail="Passkey credentials not found.")
+                raise ModelNotFoundError("PasskeyCredential", user_id, message="Passkey credentials not found.")
 
         return await crud_passkey_credentials.get_by_user(db=db, user_id=user_id)
 
@@ -240,11 +238,11 @@ class PasskeyService:
         if tenant:
             user = await crud_users.get(db=db, id=user_id)
             if user and user.get("tenant_id") != tenant.id:
-                raise NotFoundException(detail="Passkey credential not found.")
+                raise ModelNotFoundError("PasskeyCredential", credential_id, message="Passkey credential not found.")
 
         cred = await crud_passkey_credentials.get_credential(db=db, id=credential_id)
         if not cred or cred.user_id != user_id:
-            raise NotFoundException(detail="Passkey credential not found.")
+            raise ModelNotFoundError("PasskeyCredential", credential_id, message="Passkey credential not found.")
 
         await crud_passkey_credentials.delete_credential(db=db, db_object=cred)
 
@@ -284,8 +282,6 @@ class PasskeyService:
 
         # 3. Store challenge in Redis with unique challenge_id (fail-closed if Redis unavailable)
         if not redis:
-            from src.app.modules._base.exceptions import ServiceUnavailableError
-
             raise ServiceUnavailableError("Passkey authentication is temporarily unavailable.")
 
         challenge_id = str(uuid.uuid4())
@@ -316,23 +312,23 @@ class PasskeyService:
             BadRequestException: If verification fails, challenge expired, or replay attempt.
         """
         if not credential:
-            raise BadRequestException(detail="Credential is required.")
+            raise ValidationError("Credential is required.")
 
         if not challenge_id:
-            raise BadRequestException(detail="challenge_id is required.")
+            raise ValidationError("challenge_id is required.")
 
         # 1. Retrieve stored challenge
         stored_challenge = await self._get_stored_auth_challenge(redis, challenge_id) if redis else None
         if not stored_challenge:
-            raise BadRequestException(detail="Authentication challenge expired or invalid.")
+            raise ValidationError("Authentication challenge expired or invalid.")
 
         # 2. Find credential in database by raw ID
         raw_id = credential.get("rawId") or credential.get("id")
         if not raw_id:
-            raise BadRequestException(detail="Credential ID is required.")
+            raise ValidationError("Credential ID is required.")
         db_credential = await self._find_credential_by_id(db, raw_id)
         if not db_credential:
-            raise BadRequestException(detail="Credential not found.")
+            raise ValidationError("Credential not found.")
 
         # 3. Verify authentication response
         try:
@@ -345,7 +341,7 @@ class PasskeyService:
             )
         except Exception as e:
             logger.warning("Passkey authentication failed", error=e)
-            raise BadRequestException(detail="Passkey authentication failed.")
+            raise ValidationError("Passkey authentication failed.")
 
         # 4. Check counter for replay prevention
         new_count = verification.new_sign_count
@@ -359,14 +355,14 @@ class PasskeyService:
                 f"Possible replay attack for credential {db_credential.id}: "
                 f"stored counter={db_credential.counter}, received={new_count}"
             )
-            raise BadRequestException(detail="Counter mismatch - possible replay attack.")
+            raise ValidationError("Counter mismatch - possible replay attack.")
 
         # 5. Update counter and last_used_at
         await self._update_credential_counter(db, db_credential, new_count)
 
         user = await self._get_user_for_credential(db, db_credential)
         if not user:
-            raise BadRequestException(detail="User not found for credential.")
+            raise ValidationError("User not found for credential.")
 
         # S4 FIX: Check MFA before issuing tokens (mirrors auth login flow)
         from src.app.modules.auth.services.mfa import get_mfa_service

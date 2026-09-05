@@ -5,11 +5,9 @@ from uuid import uuid4
 
 import pytest
 
+from src.app.core.events.notifications import request_notification
 from src.app.modules.notifications.models import NotificationStatus
-from src.app.modules.notifications.service import (
-    NotificationService,
-    request_notification,
-)
+from src.app.modules.notifications.service import NotificationService
 
 
 @pytest.mark.asyncio
@@ -69,7 +67,7 @@ async def test_send_email_arq_unavailable_fails_gracefully():
 
 @pytest.mark.asyncio
 async def test_request_notification_publishes_to_outbox():
-    with patch("src.app.modules.notifications.service.event_bus.publish", new_callable=AsyncMock) as mock_pub:
+    with patch("src.app.core.events.notifications.event_bus.publish", new_callable=AsyncMock) as mock_pub:
         await request_notification(
             to_email="bob@example.com",
             template_name="magic_link",

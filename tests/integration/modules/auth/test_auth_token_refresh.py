@@ -64,7 +64,7 @@ class TestTokenRefreshWithCaching:
     @pytest.mark.asyncio
     async def test_a1_deleted_user_blocked_with_real_cache(self, auth_service, real_redis, mock_response):
         """A1 SECURITY: Verify deleted user cannot refresh token even with valid cache."""
-        from src.app.core.exceptions.http_exceptions import UnauthorizedException
+        from src.app.modules._base.exceptions import UnauthorizedError
 
         # Setup: Cache contains deleted user
         cache_key = "auth:user:deleteduser"
@@ -102,7 +102,7 @@ class TestTokenRefreshWithCaching:
             mock_get_user_service.return_value = mock_user_service
 
             # Should raise UnauthorizedException due to is_deleted=True
-            with pytest.raises(UnauthorizedException) as exc_info:
+            with pytest.raises(UnauthorizedError) as exc_info:
                 await auth_service.refresh_access_token("valid_refresh_token", mock_response, mock_db)
 
             assert "no longer active" in str(exc_info.value.detail)

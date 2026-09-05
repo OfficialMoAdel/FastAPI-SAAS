@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from functools import lru_cache
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 import jwt
@@ -12,7 +13,6 @@ from cachetools import TTLCache
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from jwt.exceptions import PyJWTError as JWTError
 from redis.asyncio import Redis
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,7 +42,68 @@ _in_flight_token_version: dict[str, asyncio.Task[int | None]] = {}
 _token_version_lock = asyncio.Lock()
 
 _jwt_logger = get_logger(__name__)
+class TokenVersionLookup(Protocol):
+    """Protocol for resolving user token_version without core importing modules (PR-12 / DIP)."""
 
+    async def __call__(self, username_or_email: str) -> int | None:
+        ...
+
+
+class UserTenantLookup(Protocol):
+    """Protocol for resolving user tenant_id without core importing modules (PR-12 / DIP)."""
+
+    async def __call__(self, username_or_email: str, db: AsyncSession) -> Any | None:
+        ...
+
+
+_token_version_lookup: Callable[[str], Awaitable[int | None]] | None = None
+_user_tenant_lookup: Callable[[str, AsyncSession], Awaitable[Any | None]] | None = None
+
+
+def register_token_version_lookup(lookup: Callable[[str], Awaitable[int | None]]) -> None:
+    """Register the persistence provider for user token_version lookups (DIP seam)."""
+    global _token_version_lookup
+    _token_version_lookup = lookup
+
+
+def register_user_tenant_lookup(lookup: Callable[[str, AsyncSession], Awaitable[Any | None]]) -> None:
+    """Register the persistence provider for user tenant_id lookups (DIP seam)."""
+    global _user_tenant_lookup
+    _user_tenant_lookup = lookup
+
+
+def reset_jwt_security_lookups() -> None:
+    """Reset registered security lookups (test isolation seam).
+
+    TEST-ONLY: guarded to non-production environments to prevent accidental
+    unwiring in production (P0 fail-open fix).
+    """
+    import os
+
+    env = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "local")).lower()
+    if env in ("production", "prod"):
+        raise RuntimeError("reset_jwt_security_lookups is test-only and blocked in production")
+    global _token_version_lookup, _user_tenant_lookup
+    _token_version_lookup = None
+    _user_tenant_lookup = None
+
+
+def ensure_jwt_lookups_registered() -> None:
+    """Assert DIP seams are wired; call once at startup after imports (P0).
+
+    Raises ServiceUnavailableError when either lookup is missing so the app
+    fails fast instead of silently skipping token_version enforcement.
+    """
+    if _token_version_lookup is None or _user_tenant_lookup is None:
+        from src.app.modules._base.exceptions import ServiceUnavailableError
+
+        missing = []
+        if _token_version_lookup is None:
+            missing.append("token_version")
+        if _user_tenant_lookup is None:
+            missing.append("user_tenant")
+        _jwt_logger.error("jwt_security_lookups_unwired", missing=missing)
+        raise ServiceUnavailableError(f"JWT security lookups unwired: {', '.join(missing)}")
 
 @lru_cache(maxsize=1)
 def _get_signing_key() -> str:
@@ -219,18 +280,19 @@ async def _load_token_version(cache_key: str, username_or_email: str, redis_clie
     on the winner's request-scoped session meant waiters' awaits could execute
     on a session that was mid-commit, rolled back, or already closed
     (SessionClosedError / stale transaction state), rejecting valid tokens.
-    """
-    from src.app.core.db.database import local_session
-    from src.app.modules.users.crud import crud_users
 
-    async with local_session() as session:
-        if "@" in username_or_email:
-            user = await crud_users.get(session, email=username_or_email)
-        else:
-            user = await crud_users.get(session, username=username_or_email)
-    if not user:
+    P0 FIX (fail-closed): when the lookup is unwired, raise instead of
+    returning None so verify_token rejects the token explicitly rather than
+    silently skipping version enforcement.
+    """
+    if _token_version_lookup is None:
+        from src.app.modules._base.exceptions import ServiceUnavailableError
+
+        _jwt_logger.error("token_version_lookup_unwired", user=username_or_email)
+        raise ServiceUnavailableError("Token version service unavailable")
+    version = await _token_version_lookup(username_or_email)
+    if version is None:
         return None
-    version = user.get("token_version")
     if redis_client and version is not None:
         try:
             await redis_client.set(cache_key, str(version), ex=300, nx=True)
@@ -364,14 +426,12 @@ async def _resolve_tenant_id_for_token(payload: dict[str, Any], db: AsyncSession
     if tenant:
         return tenant.id
 
-    from src.app.modules.users.models import User
-
     sub = payload.get("sub")
-    if sub:
-        stmt = select(User.tenant_id).where((User.username == sub) | (User.email == sub)).limit(1)
-        result = await db.execute(stmt)
-        return result.scalar()
+    if sub and _user_tenant_lookup is not None:
+        return await _user_tenant_lookup(sub, db)
 
+    if sub:
+        _jwt_logger.warning("user_tenant_lookup_unwired", user=sub)
     return None
 
 
@@ -411,6 +471,13 @@ async def blacklist_tokens(
                         tenant_id = await _resolve_tenant_id_for_token(payload, db)
                         if not tenant_id:
                             _jwt_logger.warning("Could not determine tenant_id for token blacklisting")
+                            # P0 FIX (fail-closed): still blacklist in Redis even without
+                            # tenant_id so the token is revoked on the hot path.
+                            if jti:
+                                jti_key = f"jti:{jti}"
+                                tokens_for_cache.append((jti_key, expires_at))
+                            else:
+                                tokens_for_cache.append((token, expires_at))
                             continue
 
                     if isinstance(tenant_id, str):

@@ -39,7 +39,7 @@ class TestFileStreaming:
     @pytest.mark.asyncio
     async def test_file_router_streaming_pattern(self) -> None:
         """Verify file router uses streaming read pattern."""
-        from src.app.modules.storage.files_router import router
+        from src.app.modules.storage.routers.files import router
 
         # Check that the router exists and has upload endpoint
         routes = [r.path for r in router.routes]

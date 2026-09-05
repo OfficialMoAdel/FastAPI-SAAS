@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
-from uuid import UUID
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
@@ -14,9 +13,7 @@ from sqlalchemy.orm import joinedload
 
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.exceptions.http_exceptions import ForbiddenException
-from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
-from src.app.core.redis_provider import get_redis
 from src.app.core.security import blacklist_token, get_password_hash
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
@@ -37,78 +34,13 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Cache configuration
-USER_CACHE_TTL = 60  # seconds
-USER_CACHE_PREFIX = "user:profile"
-AUTH_INFO_CACHE_TTL = 3600  # 1 hour
-AUTH_INFO_CACHE_PREFIX = "user:auth"
-
-
-def _user_cache_key(user_id: UUID | str) -> str:
-    """Generate cache key for user profile.
-
-    User ID is globally unique (UUID), so no tenant scoping needed.
-    """
-    return f"{USER_CACHE_PREFIX}:{user_id}"
-
-
-def _require_tenant_id(tenant_id: int | str | None = None) -> str | None:
-    """
-    Get current tenant ID if available, without raising when called outside tenant context.
-
-    Tenant context is used for tenant-scoped cache keys to prevent
-    cross-tenant cache collisions. When running in pre-auth or global context,
-    returns None to allow safe fallback.
-    """
-    if tenant_id is not None:
-        return str(tenant_id)
-
-    tenant = get_current_tenant()
-    if tenant is not None:
-        return str(tenant.id)
-    return None
-
-
-def _user_email_cache_key(email: str, tenant_id: int | str | None = None) -> str:
-    """Generate cache key for user by email (tenant-scoped, no collision risk).
-
-    SECURITY FIX: Normalizes email to lowercase to prevent cache misses
-    when the same email is provided with different casing.
-    """
-    t_id = _require_tenant_id(tenant_id)
-    # Normalize email to lowercase for consistent cache keys
-    normalized_email = email.lower().strip()
-    if t_id:
-        return f"{USER_CACHE_PREFIX}:{t_id}:email:{normalized_email}"
-    return f"{USER_CACHE_PREFIX}:global:email:{normalized_email}"
-
-
-def _user_username_cache_key(username: str, tenant_id: int | str | None = None) -> str:
-    """Generate cache key for user by username (tenant-scoped, no collision risk).
-
-    SECURITY FIX: Normalizes username to lowercase to prevent cache misses
-    when the same username is provided with different casing.
-    """
-    t_id = _require_tenant_id(tenant_id)
-    # Normalize username to lowercase for consistent cache keys
-    normalized_username = username.lower().strip()
-    if t_id:
-        return f"{USER_CACHE_PREFIX}:{t_id}:username:{normalized_username}"
-    return f"{USER_CACHE_PREFIX}:global:username:{normalized_username}"
-
-
-def _user_auth_cache_key(identifier: str, tenant_id: int | str | None = None) -> str:
-    """Generate cache key for user auth info (tenant-scoped, no collision risk).
-
-    SECURITY FIX: Normalizes identifier to lowercase to prevent cache misses
-    when the same email/username is provided with different casing, consistent
-    with _user_email_cache_key and _user_username_cache_key.
-    """
-    t_id = _require_tenant_id(tenant_id)
-    normalized = identifier.lower().strip()
-    if t_id:
-        return f"{AUTH_INFO_CACHE_PREFIX}:{t_id}:{normalized}"
-    return f"{AUTH_INFO_CACHE_PREFIX}:global:{normalized}"
+from src.app.modules.users.cache import (
+    UserCacheInvalidator,
+    _user_auth_cache_key,
+    _user_cache_key,
+    _user_email_cache_key,
+    _user_username_cache_key,
+)
 
 
 class UserService:
@@ -178,55 +110,8 @@ class UserService:
         )
 
     async def _cache_user(self, user: User | dict[str, Any]) -> None:
-        """Cache user profile in Redis."""
-        client = get_redis()
-        if client is None:
-            return
-
-        try:
-            # Handle both ORM object and dict
-            if isinstance(user, dict):
-                user_data = user.copy()
-                user_data.pop("hashed_password", None)
-                user_id = user["id"]
-                email = user["email"]
-                username = user["username"]
-                tenant_id = user.get("tenant_id")
-            else:
-                # U7: Direct dict construction instead of Pydantic validate+dump
-                # ORM data is already validated, skip redundant Pydantic overhead
-                user_data = {
-                    "id": user.id,
-                    "created_at": user.created_at.isoformat() if user.created_at else None,
-                    "updated_at": user.updated_at.isoformat() if user.updated_at else None,
-                    "name": user.name,
-                    "username": user.username,
-                    "email": user.email,
-                    "profile_image_url": user.profile_image_url,
-                    "tier_id": user.tier_id,
-                    "tenant_id": str(user.tenant_id) if user.tenant_id else None,
-                    "is_superuser": user.is_superuser,
-                    "is_email_verified": user.is_email_verified,
-                    "is_active": user.is_active,
-                }
-                user_id = user.id
-                email = user.email
-                username = user.username
-                tenant_id = user.tenant_id
-
-            serialized = json_dumps(user_data)
-
-            # Cache by all lookup keys using a pipeline for single round-trip
-            async with client.pipeline(transaction=False) as pipe:
-                pipe.setex(_user_cache_key(user_id), USER_CACHE_TTL, serialized)
-                pipe.setex(_user_email_cache_key(email, tenant_id), USER_CACHE_TTL, serialized)
-                pipe.setex(_user_username_cache_key(username, tenant_id), USER_CACHE_TTL, serialized)
-                await pipe.execute()
-        except Exception as e:
-            # Log warning but don't fail the request due to cache issues
-            user_id_log = user["id"] if isinstance(user, dict) else user.id
-            logger.warning("Failed to cache user %s: %s", user_id_log, e)
-
+        """Cache user profile in Redis (delegates to UserCacheInvalidator)."""
+        await UserCacheInvalidator.cache_user(user)
     async def _invalidate_user_cache(
         self,
         user: User | dict[str, Any],
@@ -234,174 +119,20 @@ class UserService:
         reason: InvalidationReason,
         explicit_token_version: int | None = None,
     ) -> None:
-        """Invalidate all cache entries for a user.
-
-        Avoids relying on tenant context by using tenant_id from the user payload
-        when available to build tenant-scoped cache keys safely.
-        Falls back to get_current_tenant() if tenant_id is not in user data.
-
-        Both ``bump_token_version`` and ``reason`` are REQUIRED (no defaults) so
-        every caller must make the security-affecting-vs-benign decision
-        explicitly. A credential change that forgets to bump is a session
-        invalidation bypass; a benign profile edit that bumps forces every
-        user to re-auth on every name/avatar change. The two parameters
-        must agree — ``bump_token_version`` MUST equal
-        ``should_bump_token_version(reason)`` — to keep the two sources of
-        truth from diverging silently.
-        """
-        # R2-02: the two parameters encode the same decision and must agree.
-        # Checked BEFORE the try block so this programming error propagates
-        # instead of being swallowed by the broad cache-failure handler below.
-        if bump_token_version != should_bump_token_version(reason):
-            raise ValueError(
-                f"bump_token_version={bump_token_version} does not match "
-                f"should_bump_token_version(reason={reason!r}). "
-                "Pass the bump value derived from the reason."
-            )
-        client = get_redis()
-        if client is None:
-            return
-
-        try:
-            # Handle both ORM object and dict
-            if isinstance(user, dict):
-                user_id = user["id"]
-                email = user["email"]
-                username = user["username"]
-                tenant_id = user.get("tenant_id")
-            else:
-                user_id = user.id
-                email = user.email
-                username = user.username
-                tenant_id = user.tenant_id
-
-            # Fallback to get current tenant from context if tenant_id not provided
-            if tenant_id is None:
-                tenant_context = get_current_tenant()
-                if tenant_context is not None:
-                    tenant_id = tenant_context.tenant_id
-
-            # Normalize to match cache keys
-            email = email.lower().strip()
-            username = username.lower().strip()
-
-            from src.app.modules.users.session_invalidation import build_user_invalidation_keys
-
-            keys, token_keys = build_user_invalidation_keys(user_id, username, email, tenant_id)
-
-            if keys:
-                await client.delete(*keys)
-            if token_keys:
-                # Forcefully overwrite token_version to prevent stale-read race conditions
-                # where an old token_version is re-cached right after invalidation.
-                # In users/service, if the token_version was incremented (e.g. deletion, tier change)
-                # it's usually `user.token_version + 1`. For normal profile updates, it's unchanged.
-                # To be safe, we assume it incremented, as an artificially higher version just logs out the user
-                # which is acceptable on profile changes that trigger invalidation.
-                # If explicit_token_version is provided (post-bump caller already knows the new DB value),
-                # use it directly — this lets downgrade_to_free_tier pass TIER_CHANGE honestly instead of
-                # PROFILE_EDIT, decoupling the cache write from ORM-fetch timing.
-                if explicit_token_version is not None:
-                    new_version = explicit_token_version
-                else:
-                    if isinstance(user, dict):
-                        current_version = user.get("token_version", 0)
-                    else:
-                        current_version = getattr(user, "token_version", 0)
-
-                    # S3 FIX: Only bump token_version for security-affecting changes
-                    # (password change, email change, deletion, tier change).
-                    # Benign profile updates (name, avatar) should NOT invalidate sessions.
-                    # R2-02: agreement between bump_token_version and reason is
-                    # enforced at the function entry; trust the parameter here.
-                    new_version = current_version + 1 if bump_token_version else current_version
-
-                async with client.pipeline(transaction=False) as pipe:
-                    for key in token_keys:
-                        pipe.set(key, str(new_version), ex=300)
-                    await pipe.execute()
-        except Exception as e:
-            user_id_log = user["id"] if isinstance(user, dict) else user.id
-            logger.warning("Failed to invalidate cache for user", user_id_log=user_id_log, error=e)
-
+        """Invalidate all cache entries for a user (delegates to UserCacheInvalidator)."""
+        await UserCacheInvalidator.invalidate_user_cache(
+            user, bump_token_version, reason, explicit_token_version
+        )
     async def _invalidate_user_cache_batch(
         self,
         users: Sequence[Any],
         bump_token_version: bool = False,
         reason: InvalidationReason | None = None,
     ) -> None:
-        """Invalidate cache entries for many users in ONE Redis pipeline.
-
-        N3: replaces per-user ``_invalidate_user_cache`` loops (2 round-trips
-        per user) with a single pipelined round-trip for the whole batch.
-        Accepts ORM objects, dicts, or SQLAlchemy ``Row`` tuples — only
-        ``id/email/username/tenant_id/token_version`` are read, so callers
-        should project just those columns instead of loading full rows.
-
-        Mirrors ``_invalidate_user_cache`` key construction exactly so cache
-        behavior is unchanged; a malformed entry is skipped, not fatal.
-        When ``reason`` is provided, ``bump_token_version`` must agree with
-        ``should_bump_token_version(reason)`` (R2-02 guard).
-        """
-        if reason is not None and bump_token_version != should_bump_token_version(reason):
-            raise ValueError(
-                f"bump_token_version={bump_token_version} does not match should_bump_token_version(reason={reason!r})."
-            )
-        client = get_redis()
-        if client is None or not users:
-            return
-
-        from src.app.modules.users.session_invalidation import build_user_invalidation_keys
-
-        tenant_context = get_current_tenant()
-        delete_keys: list[str] = []
-        token_sets: list[tuple[str, int]] = []
-
-        for user in users:
-            try:
-                if isinstance(user, dict):
-                    user_id = user["id"]
-                    email = user["email"]
-                    username = user["username"]
-                    tenant_id = user.get("tenant_id")
-                    current_version = user.get("token_version", 0)
-                elif hasattr(user, "id"):
-                    user_id = user.id
-                    email = user.email
-                    username = user.username
-                    tenant_id = user.tenant_id
-                    current_version = getattr(user, "token_version", 0)
-                else:
-                    user_id = getattr(user, "id", user[0] if len(user) > 0 else None)
-                    email = getattr(user, "email", user[1] if len(user) > 1 else None)
-                    username = getattr(user, "username", user[2] if len(user) > 2 else None)
-                    tenant_id = getattr(user, "tenant_id", user[3] if len(user) > 3 else None)
-                    current_version = getattr(user, "token_version", user[4] if len(user) > 4 else 0)
-
-                if tenant_id is None and tenant_context is not None:
-                    tenant_id = tenant_context.tenant_id
-
-                u_del_keys, u_tok_keys = build_user_invalidation_keys(user_id, username, email, tenant_id)
-                delete_keys.extend(u_del_keys)
-                for tk in u_tok_keys:
-                    token_sets.append((tk, current_version))
-            except Exception as e:
-                logger.warning("Failed to build batch-invalidation keys for user", error=e)
-
-        if not delete_keys and not token_sets:
-            return
-
-        try:
-            async with client.pipeline(transaction=False) as pipe:
-                if delete_keys:
-                    pipe.delete(*delete_keys)
-                for key, version in token_sets:
-                    new_version = version + 1 if bump_token_version else version
-                    pipe.set(key, str(new_version), ex=300)
-                await pipe.execute()
-        except Exception as e:
-            logger.warning("Failed to batch-invalidate user caches", count=len(users), error=e)
-
+        """Invalidate cache entries for many users in ONE Redis pipeline (delegates to UserCacheInvalidator)."""
+        await UserCacheInvalidator.invalidate_user_cache_batch(
+            users, bump_token_version, reason
+        )
 
     async def invalidate_sessions(
         self,
@@ -426,27 +157,23 @@ class UserService:
             explicit_token_version=explicit_token_version,
         )
     async def _get_cached_user(self, cache_key: str) -> dict[str, Any] | None:
-        """Get cached user data if available."""
-        client = get_redis()
-        if client is None:
-            return None
+        """Get cached user data if available (delegates to UserCacheInvalidator)."""
+        return await UserCacheInvalidator.get_cached_user(cache_key)
 
-        try:
-            cached = await client.get(cache_key)
-            if cached:
-                result: dict[str, Any] = json_loads(cached)
-                return result
-        except Exception as e:
-            logger.warning("Failed to get cached user", error=e)
-        return None
-
-    async def create(self, user: UserCreate) -> User:
+    async def create(
+        self,
+        user: UserCreate,
+        email_verifier: Callable[[str], Awaitable[None]] | None = None,
+    ) -> User:
         """Create a new user with validation and password hashing.
 
         Parameters
         ----------
         user : UserCreate
             User creation data
+        email_verifier : Callable[[str], Awaitable[None]] | None
+            Optional callback invoked with the new user's email to send a
+            verification email. Injected by routers; None skips the email.
 
         Returns
         -------
@@ -503,16 +230,18 @@ class UserService:
             # Now explicitly commit the transaction so the event fires
             await self.db.commit()
 
-            # M22: Send verification email automatically upon registration
-            try:
-                from src.app.modules.auth.service import get_auth_service
-
-                auth_service = get_auth_service()
-                await auth_service.send_verification_email(email=result.email, db=self.db)
-            except Exception as email_err:
-                logger.error(
-                    "Failed to send verification email during registration", error=str(email_err), user_id=result.id
-                )
+            # M22: Send verification email automatically upon registration.
+            # Decoupled via injected email_verifier (PR-10): UserService no longer
+            # imports AuthService directly; routers inject the verifier.
+            if email_verifier is not None:
+                try:
+                    await email_verifier(result.email)
+                except Exception as email_err:
+                    logger.error(
+                        "Failed to send verification email during registration",
+                        error=str(email_err),
+                        user_id=result.id,
+                    )
 
             def _log_task_error(task: asyncio.Task) -> None:
                 """Log errors from background event tasks so they are not silently swallowed."""
@@ -578,14 +307,7 @@ class UserService:
             return None
 
         # Cache it
-        client = get_redis()
-        if client:
-            try:
-                serialized = json_dumps(user_with_tier)
-                await client.setex(cache_key, AUTH_INFO_CACHE_TTL, serialized)
-            except Exception as e:
-                logger.warning("Failed to cache auth info for :", identifier=identifier, error=e)
-
+        await UserCacheInvalidator.cache_user_auth_info(cache_key, user_with_tier)
         return user_with_tier
 
     async def get_by_username(self, username: str) -> dict[str, Any]:

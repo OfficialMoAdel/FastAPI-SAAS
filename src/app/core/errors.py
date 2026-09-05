@@ -9,6 +9,9 @@ Provides consistent error response format across all endpoints:
         "request_id": "uuid"  # For debugging
     }
 }
+
+Handlers are registered per domain via ``register_*_handlers`` helpers;
+``setup_exception_handlers`` is the thin composer that wires them all.
 """
 
 from typing import Any
@@ -39,6 +42,7 @@ class ErrorCode:
     NOT_FOUND = "NOT_FOUND"
     ALREADY_EXISTS = "ALREADY_EXISTS"
     CONFLICT = "CONFLICT"
+    GONE = "GONE"
 
     # Validation errors
     VALIDATION_ERROR = "VALIDATION_ERROR"
@@ -61,6 +65,8 @@ class ErrorCode:
 
     # Resource limit errors
     SESSION_LIMIT_EXCEEDED = "SESSION_LIMIT_EXCEEDED"
+    STORAGE_QUOTA_EXCEEDED = "STORAGE_QUOTA_EXCEEDED"
+    STORAGE_BACKEND_ERROR = "STORAGE_BACKEND_ERROR"
 
 
 def create_error_response(
@@ -108,29 +114,8 @@ def create_error_response(
     return JSONResponse(status_code=status_code, content=error_body, headers=headers)
 
 
-def setup_exception_handlers(app: FastAPI) -> None:
-    # H7 FIX: Deferred domain imports — breaks core -> modules cycle.
-    from src.app.modules._base.exceptions import (  # type: ignore
-        DuplicateError,
-        ForbiddenError,
-        ModelNotFoundError,
-        RateLimitExceededError,
-        ServiceUnavailableError,
-        StripeError,
-        TenantContextError,
-    )
-    from src.app.modules._base.exceptions import (
-        ValidationError as BaseValidationError,
-    )
-    from src.app.modules.ai.unified_errors import SessionLimitExceededError  # type: ignore
-    from src.app.modules.billing.exceptions import PaymentRequiredError  # type: ignore
-
-    """Register global exception handlers on the FastAPI app.
-
-    Call this after creating the app:
-        app = FastAPI()
-        setup_exception_handlers(app)
-    """
+def _register_framework_handlers(app: FastAPI) -> None:
+    """Framework-level handlers: HTTP, cache, Pydantic validation, DB timeout."""
 
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -166,6 +151,77 @@ def setup_exception_handlers(app: FastAPI) -> None:
             details={"error_type": "cache_error"},
             request_id=request_id,
         )
+
+    @app.exception_handler(ValidationError)
+    async def validation_exception_handler(request: Request, exc: ValidationError) -> JSONResponse:
+        """Handle Pydantic validation errors."""
+        request_id = getattr(request.state, "request_id", None)
+
+        # Format validation errors
+        details: dict[str, Any] = {"fields": []}
+        for error in exc.errors():
+            details["fields"].append(
+                {
+                    "location": ".".join(str(loc) for loc in error["loc"]),
+                    "message": error["msg"],
+                    "type": error["type"],
+                }
+            )
+
+        logger.warning(
+            "Validation error",
+            error_count=len(exc.errors()),
+            request_id=request_id,
+            path=request.url.path,
+        )
+
+        return create_error_response(
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Request validation failed",
+            status_code=422,
+            details=details,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(SQLAlchemyTimeoutError)
+    async def db_timeout_exception_handler(request: Request, exc: SQLAlchemyTimeoutError) -> JSONResponse:
+        """Handle database pool timeout errors.
+
+        Returns HTTP 503 Service Unavailable when the DB pool is exhausted.
+        """
+        request_id = getattr(request.state, "request_id", None)
+
+        logger.error(
+            "Database connection pool exhausted",
+            error=str(exc),
+            request_id=request_id,
+            path=request.url.path,
+        )
+
+        return create_error_response(
+            code=ErrorCode.SERVICE_UNAVAILABLE,
+            message="Database connection pool exhausted. Please try again later.",
+            status_code=503,
+            request_id=request_id,
+        )
+
+
+def _register_base_handlers(app: FastAPI) -> None:
+    """Shared _base domain handlers (CRUD, validation, tenancy, availability)."""
+    # H7 FIX: Deferred domain imports — breaks core -> modules cycle.
+    from src.app.modules._base.exceptions import (  # type: ignore
+        DuplicateError,
+        ForbiddenError,
+        ModelNotFoundError,
+        RateLimitExceededError,
+        ServiceUnavailableError,
+        StripeError,
+        TenantContextError,
+        UnauthorizedError,
+    )
+    from src.app.modules._base.exceptions import (
+        ValidationError as BaseValidationError,
+    )
 
     @app.exception_handler(ModelNotFoundError)  # type: ignore
     async def model_not_found_handler(request: Request, exc: ModelNotFoundError) -> JSONResponse:  # type: ignore
@@ -328,6 +384,81 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
+    @app.exception_handler(UnauthorizedError)  # type: ignore
+    async def unauthorized_error_handler(request: Request, exc: UnauthorizedError) -> JSONResponse:  # type: ignore
+        """Handle UnauthorizedError from _base exceptions."""
+        request_id = getattr(request.state, "request_id", None)
+        logger.warning(
+            "Unauthorized error",
+            message=exc.message,
+            reason=getattr(exc, "reason", "unauthorized"),
+            request_id=request_id,
+            path=request.url.path,
+        )
+        return create_error_response(
+            code=ErrorCode.UNAUTHORIZED,
+            message=exc.message,
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            request_id=request_id,
+        )
+
+
+def _register_auth_handlers(app: FastAPI) -> None:
+    """Auth domain handlers."""
+    # H7 FIX: Deferred domain imports — breaks core -> modules cycle.
+    from src.app.modules.auth.errors import AuthError  # type: ignore
+
+    @app.exception_handler(AuthError)  # type: ignore
+    async def auth_error_handler(request: Request, exc: AuthError) -> JSONResponse:  # type: ignore
+        """Handle AuthError from auth domain."""
+        request_id = getattr(request.state, "request_id", None)
+        logger.warning(
+            "Auth domain error",
+            detail=exc.detail,
+            status_code=exc.status_code,
+            request_id=request_id,
+            path=request.url.path,
+        )
+        code = _status_to_error_code(exc.status_code)
+        return create_error_response(
+            code=code,
+            message=exc.detail,
+            status_code=exc.status_code,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        """Catch-all handler for unexpected exceptions."""
+        request_id = getattr(request.state, "request_id", None)
+
+        # Log full exception for debugging
+        logger.exception(
+            "Unhandled exception",
+            error=str(exc),
+            error_type=type(exc).__name__,
+            request_id=request_id,
+            path=request.url.path,
+            method=request.method,
+        )
+
+        return create_error_response(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="An internal error occurred",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            request_id=request_id,
+        )
+
+
+def _register_billing_handlers(app: FastAPI) -> None:
+    """Billing domain handlers (payments + webhooks)."""
+    # H7 FIX: Deferred domain imports — breaks core -> modules cycle.
+    from src.app.modules.billing.exceptions import (  # type: ignore
+        PaymentRequiredError,
+        WebhookNotConfiguredError,
+        WebhookVerificationError,
+    )
+
     @app.exception_handler(PaymentRequiredError)  # type: ignore
     async def payment_required_handler(request: Request, exc: PaymentRequiredError) -> JSONResponse:  # type: ignore
         """Handle PaymentRequiredError for billing/payment failures.
@@ -356,36 +487,122 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
-    @app.exception_handler(ValidationError)
-    async def validation_exception_handler(request: Request, exc: ValidationError) -> JSONResponse:
-        """Handle Pydantic validation errors."""
+    @app.exception_handler(WebhookVerificationError)  # type: ignore
+    async def webhook_verification_error_handler(request: Request, exc: WebhookVerificationError) -> JSONResponse:  # type: ignore
+        """Handle WebhookVerificationError from billing module."""
         request_id = getattr(request.state, "request_id", None)
-
-        # Format validation errors
-        details: dict[str, Any] = {"fields": []}
-        for error in exc.errors():
-            details["fields"].append(
-                {
-                    "location": ".".join(str(loc) for loc in error["loc"]),
-                    "message": error["msg"],
-                    "type": error["type"],
-                }
-            )
-
-        logger.warning(
-            "Validation error",
-            error_count=len(exc.errors()),
-            request_id=request_id,
-            path=request.url.path,
-        )
-
+        logger.warning("Webhook verification error", error=str(exc), request_id=request_id, path=request.url.path)
         return create_error_response(
-            code=ErrorCode.VALIDATION_ERROR,
-            message="Request validation failed",
-            status_code=422,
-            details=details,
+            code=ErrorCode.INVALID_INPUT,
+            message=str(exc),
+            status_code=status.HTTP_400_BAD_REQUEST,
             request_id=request_id,
         )
+
+    @app.exception_handler(WebhookNotConfiguredError)  # type: ignore
+    async def webhook_not_configured_handler(request: Request, exc: WebhookNotConfiguredError) -> JSONResponse:  # type: ignore
+        """Handle WebhookNotConfiguredError from billing module."""
+        request_id = getattr(request.state, "request_id", None)
+        logger.error("Webhook secret not configured", error=str(exc), request_id=request_id, path=request.url.path)
+        return create_error_response(
+            code=ErrorCode.SERVICE_UNAVAILABLE,
+            message=exc.message,
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            request_id=request_id,
+        )
+
+
+def _register_storage_handlers(app: FastAPI) -> None:
+    """Storage domain handlers."""
+    # H7 FIX: Deferred domain imports — breaks core -> modules cycle.
+    from src.app.modules.storage.errors import (  # type: ignore
+        FileEntityNotFoundError,
+        FileTypeNotAllowedError,
+        InvalidCredentialsError,
+        QuotaExceededError,
+        StorageBackendError,
+        StorageNotConfiguredError,
+    )
+
+    @app.exception_handler(FileEntityNotFoundError)  # type: ignore
+    async def file_not_found_handler(request: Request, exc: FileEntityNotFoundError) -> JSONResponse:  # type: ignore
+        """Handle FileEntityNotFoundError from storage module."""
+        request_id = getattr(request.state, "request_id", None)
+        logger.warning("File entity not found", error=str(exc), request_id=request_id, path=request.url.path)
+        return create_error_response(
+            code=ErrorCode.NOT_FOUND,
+            message="File not found",
+            status_code=status.HTTP_404_NOT_FOUND,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(StorageNotConfiguredError)  # type: ignore
+    async def storage_not_configured_handler(request: Request, exc: StorageNotConfiguredError) -> JSONResponse:  # type: ignore
+        """Handle StorageNotConfiguredError from storage module."""
+        request_id = getattr(request.state, "request_id", None)
+        logger.warning("Storage not configured", error=str(exc), request_id=request_id, path=request.url.path)
+        return create_error_response(
+            code=ErrorCode.INVALID_INPUT,
+            message="Storage not configured for this tenant.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(FileTypeNotAllowedError)  # type: ignore
+    async def file_type_not_allowed_handler(request: Request, exc: FileTypeNotAllowedError) -> JSONResponse:  # type: ignore
+        """Handle FileTypeNotAllowedError from storage module."""
+        request_id = getattr(request.state, "request_id", None)
+        logger.warning("File type not allowed", error=str(exc), request_id=request_id, path=request.url.path)
+        return create_error_response(
+            code=ErrorCode.INVALID_INPUT,
+            message="File type not allowed.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(QuotaExceededError)  # type: ignore
+    async def quota_exceeded_handler(request: Request, exc: QuotaExceededError) -> JSONResponse:  # type: ignore
+        """Handle QuotaExceededError from storage module."""
+        request_id = getattr(request.state, "request_id", None)
+        logger.warning("Storage quota exceeded", error=str(exc), request_id=request_id, path=request.url.path)
+        return create_error_response(
+            code=ErrorCode.STORAGE_QUOTA_EXCEEDED,
+            message="Storage quota exceeded.",
+            status_code=status.HTTP_507_INSUFFICIENT_STORAGE,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(StorageBackendError)  # type: ignore
+    async def storage_backend_error_handler(request: Request, exc: StorageBackendError) -> JSONResponse:  # type: ignore
+        """Handle StorageBackendError from storage module."""
+        request_id = getattr(request.state, "request_id", None)
+        # P0 FIX: never echo provider internals (paths, buckets, credentials
+        # fragments) to the client; log detail server-side with sanitizer.
+        logger.error("Storage backend error", error=str(exc), request_id=request_id, path=request.url.path)
+        return create_error_response(
+            code=ErrorCode.STORAGE_BACKEND_ERROR,
+            message="Storage provider error during file operation.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(InvalidCredentialsError)  # type: ignore
+    async def invalid_credentials_error_handler(request: Request, exc: InvalidCredentialsError) -> JSONResponse:  # type: ignore
+        """Handle InvalidCredentialsError from storage module."""
+        request_id = getattr(request.state, "request_id", None)
+        logger.warning("Invalid storage credentials", error=str(exc), request_id=request_id, path=request.url.path)
+        return create_error_response(
+            code=ErrorCode.INVALID_INPUT,
+            message="Invalid storage provider credentials.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            request_id=request_id,
+        )
+
+
+def _register_ai_handlers(app: FastAPI) -> None:
+    """AI domain handlers (session limits)."""
+    # H7 FIX: Deferred domain imports — breaks core -> modules cycle.
+    from src.app.modules.ai.unified_errors import SessionLimitExceededError  # type: ignore
 
     @app.exception_handler(SessionLimitExceededError)  # type: ignore
     async def session_limit_exceeded_handler(request: Request, exc: SessionLimitExceededError) -> JSONResponse:  # type: ignore
@@ -419,49 +636,21 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
-    @app.exception_handler(SQLAlchemyTimeoutError)
-    async def db_timeout_exception_handler(request: Request, exc: SQLAlchemyTimeoutError) -> JSONResponse:
-        """Handle database pool timeout errors.
 
-        Returns HTTP 503 Service Unavailable when the DB pool is exhausted.
-        """
-        request_id = getattr(request.state, "request_id", None)
+def setup_exception_handlers(app: FastAPI) -> None:
+    """Register global exception handlers on the FastAPI app.
 
-        logger.error(
-            "Database connection pool exhausted",
-            error=str(exc),
-            request_id=request_id,
-            path=request.url.path,
-        )
-
-        return create_error_response(
-            code=ErrorCode.SERVICE_UNAVAILABLE,
-            message="Database connection pool exhausted. Please try again later.",
-            status_code=503,
-            request_id=request_id,
-        )
-
-    @app.exception_handler(Exception)
-    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-        """Catch-all handler for unexpected exceptions."""
-        request_id = getattr(request.state, "request_id", None)
-
-        # Log full exception for debugging
-        logger.exception(
-            "Unhandled exception",
-            error=str(exc),
-            error_type=type(exc).__name__,
-            request_id=request_id,
-            path=request.url.path,
-            method=request.method,
-        )
-
-        return create_error_response(
-            code=ErrorCode.INTERNAL_ERROR,
-            message="An internal error occurred",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            request_id=request_id,
-        )
+    Thin composer over the per-domain ``register_*`` helpers above.
+    Call this after creating the app:
+        app = FastAPI()
+        setup_exception_handlers(app)
+    """
+    _register_framework_handlers(app)
+    _register_base_handlers(app)
+    _register_auth_handlers(app)
+    _register_billing_handlers(app)
+    _register_storage_handlers(app)
+    _register_ai_handlers(app)
 
 
 def _status_to_error_code(status_code: int) -> str:
@@ -473,9 +662,12 @@ def _status_to_error_code(status_code: int) -> str:
         403: ErrorCode.FORBIDDEN,
         404: ErrorCode.NOT_FOUND,
         409: ErrorCode.CONFLICT,
+        410: ErrorCode.GONE,
         422: ErrorCode.VALIDATION_ERROR,
         429: ErrorCode.RATE_LIMITED,
         500: ErrorCode.INTERNAL_ERROR,
+        502: ErrorCode.STORAGE_BACKEND_ERROR,
         503: ErrorCode.SERVICE_UNAVAILABLE,
+        507: ErrorCode.STORAGE_QUOTA_EXCEEDED,
     }
     return mapping.get(status_code, ErrorCode.INTERNAL_ERROR)

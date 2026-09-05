@@ -129,4 +129,9 @@ async def update_storage_settings(
         )
 
 
-__all__ = ["router"]
+__all__ = [
+    "create_storage_settings",
+    "get_storage_settings",
+    "router",
+    "update_storage_settings",
+]

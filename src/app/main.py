@@ -10,7 +10,6 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
-from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
 from redis.exceptions import RedisError  # P1-4
 
@@ -29,8 +28,8 @@ from src.app.middleware.request_id import RequestIDMiddleware
 from src.app.middleware.security_headers import SecurityHeadersMiddleware
 from src.app.middleware.tenant import TenantMiddleware
 
-# admin will be initialized before lifespan
-admin: Any = create_admin_interface()
+# admin interface initialized inside lifespan to eliminate import-time side effects
+admin: Any = None
 logger = get_logger(__name__)
 
 
@@ -91,10 +90,176 @@ async def _warm_application_caches() -> None:
     except Exception as e:
         logger.error("Failed to warm application caches", error=str(e))
 
-@asynccontextmanager
-async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: C901 - one-time startup orchestration; intentional monolithic lifespan
 
-    """Custom lifespan that includes admin initialization and cache warming."""
+def _init_pool_metrics() -> None:
+    """Initialize database pool metrics collection."""
+    from src.app.core.db.database import get_async_engine
+    from src.app.core.utils.pool_metrics import setup_pool_metrics
+
+    try:
+        async_engine = get_async_engine()
+        setup_pool_metrics(async_engine)
+    except Exception as e:
+        logger.warning("Pool metrics setup failed", error=str(e))
+
+
+def _init_event_bus_and_queue(redis_client: Any) -> None:
+    """Initialize event bus, background queue, and pre-register handlers."""
+    from src.app.core.events import event_bus
+
+    if redis_client:
+        event_bus.set_redis_client(redis_client)
+        if settings.arq.ARQ_ENABLED:
+            try:
+                from src.app.core.utils.queue import pool as arq_queue
+
+                if arq_queue:
+                    event_bus.set_arq_queue(arq_queue)
+                    logger.info("ARQ queue initialized for async event dispatch (reusing shared pool)")
+                else:
+                    logger.warning("Shared ARQ queue pool not initialized, events will run synchronously")
+            except Exception as e:
+                logger.warning("ARQ queue initialization failed, events will run synchronously", error=str(e))
+        else:
+            logger.info("ARQ background tasks are disabled, events will run synchronously")
+
+    event_bus.register_all_handlers()
+
+
+async def _init_rate_limiting_and_security(redis_client: Any) -> None:
+    """Initialize session manager, GCRA rate limiter, and Lua scripts."""
+    if not redis_client:
+        return
+
+    from src.app.core.security.session_manager import session_manager
+
+    session_manager.set_redis_client(redis_client)
+
+    from src.app.core.utils.gcra_rate_limit import init_gcra_rate_limiter
+    from src.app.core.utils.lua_manager import get_lua_manager
+
+    init_gcra_rate_limiter(redis_client)
+    logger.info("GCRA rate limiter initialized")
+    try:
+        loaded_scripts = await get_lua_manager().preload_scripts(redis_client)
+        logger.info("Lua scripts preloaded", count=len(loaded_scripts))
+    except RedisError as e:
+        logger.error("Failed to preload Lua scripts", error=str(e))
+        if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
+            raise
+
+    from src.app.core.security.auto_ban import _start_ban_l1_invalidation_listener
+    from src.app.core.security.rate_limit_cache import start_policy_invalidation_listener
+
+    _start_ban_l1_invalidation_listener()
+    start_policy_invalidation_listener()
+
+
+async def _load_security_runtime_config() -> None:
+    """Load dynamic security configuration overrides from Redis store via table loop."""
+    from pydantic import TypeAdapter, ValidationError
+
+    from src.app.core.utils.config_store import get_runtime_config
+
+    config = await get_runtime_config()
+    if not config:
+        return
+
+    security_keys = (
+        "IP_WHITELIST_ENABLED",
+        "IP_BLACKLIST_ENABLED",
+        "IP_WHITELIST_BYPASS_RATE_LIMIT",
+        "AUTO_BAN_ENABLED",
+        "AUTO_BAN_THRESHOLD",
+        "AUTO_BAN_DURATION",
+        "AUTO_BAN_ESCALATION",
+    )
+    model_fields = type(settings.security).model_fields
+    for key in security_keys:
+        if key not in config:
+            continue
+        field = model_fields.get(key)
+        if field is None or field.annotation is None:
+            logger.error("Skipping unknown security runtime config key", key=key)
+            continue
+        raw = config[key]
+        try:
+            coerced: Any = raw
+            if isinstance(raw, str):
+                stripped = raw.strip()
+                if field.annotation is bool:
+                    lowered = stripped.lower()
+                    if lowered in ("true", "1", "yes", "on"):
+                        coerced = True
+                    elif lowered in ("false", "0", "no", "off"):
+                        coerced = False
+                elif field.annotation is int and stripped:
+                    coerced = int(stripped) if coerced == raw else coerced
+            validated = TypeAdapter(field.annotation).validate_python(coerced)
+            setattr(settings.security, key, validated)
+        except (ValidationError, ValueError, TypeError) as e:
+            logger.error("Skipping invalid security runtime config value", key=key, error=str(e))
+            continue
+    logger.info("Security runtime config loaded from Redis")
+
+
+async def _warm_startup_caches() -> None:
+    """Warm application and token blacklist caches concurrently on startup."""
+    logger.info("Starting application cache warming...")
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(_warm_token_blacklist_cache(), _warm_application_caches()),
+            timeout=15.0,
+        )
+    except TimeoutError:
+        logger.warning("Cache warming exceeded 15s timeout; continuing boot with partial state")
+
+
+async def _init_admin() -> None:
+    """Initialize admin interface if enabled."""
+    global admin
+    if admin is None:
+        admin = create_admin_interface()
+    if admin:
+        try:
+            await admin.initialize()
+            logger.info("Admin interface initialized successfully")
+        except Exception as e:
+            logger.error("Failed to initialize admin interface", error=str(e))
+
+
+async def _teardown_security_listeners() -> None:
+    """Shutdown bcrypt thread pool and cancel L1 pubsub invalidation listeners."""
+    try:
+        from src.app.core.security import _bcrypt_executor
+
+        if _bcrypt_executor is not None:
+            _bcrypt_executor.shutdown(wait=True)
+            import src.app.core.security
+
+            src.app.core.security._bcrypt_executor = None
+            logger.info("Bcrypt thread pool shutdown successfully")
+    except Exception as e:
+        logger.error("Failed to shutdown bcrypt thread pool", error=str(e))
+
+    from src.app.core.security.auto_ban import stop_ban_l1_invalidation_listener
+    from src.app.core.security.rate_limit_cache import stop_policy_invalidation_listener
+    from src.app.middleware.tenant import stop_l1_invalidation_listener
+
+    await stop_ban_l1_invalidation_listener()
+    await stop_l1_invalidation_listener()
+    await stop_policy_invalidation_listener()
+    try:
+        from src.app.modules.auth.http_client import close_sso_http_client
+
+        await close_sso_http_client()
+    except Exception as e:
+        logger.error("Failed to close SSO HTTP client", error=str(e))
+
+
+@asynccontextmanager
+async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Startup and shutdown orchestration composing modular phases."""
     from src.app.core.logger import setup_logging
 
     setup_logging()
@@ -108,141 +273,20 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:  # no
     default_lifespan = lifespan_factory(settings, create_tables_on_start=settings.app.CREATE_TABLES_ON_STARTUP)
 
     async with default_lifespan(app):
-        from src.app.core.db.database import get_async_engine
-        from src.app.core.utils.pool_metrics import setup_pool_metrics
-
-        try:
-            async_engine = get_async_engine()
-            setup_pool_metrics(async_engine)
-        except Exception as e:
-            logger.warning("Pool metrics setup failed", error=str(e))
-
-        from src.app.core.events import event_bus
         from src.app.core.redis_provider import get_redis
 
         redis_client = get_redis()
-
-        if redis_client:
-            event_bus.set_redis_client(redis_client)
-            # Initialize ARQ queue so NORMAL/LOW events dispatch asynchronously
-            # Without this, all events fall back to synchronous in-process execution
-            # Task 26: Only initialize if ARQ_ENABLED is True
-            if settings.arq.ARQ_ENABLED:
-                try:
-                    from src.app.core.utils.queue import pool as arq_queue
-
-                    if arq_queue:
-                        event_bus.set_arq_queue(arq_queue)
-                        logger.info("ARQ queue initialized for async event dispatch (reusing shared pool)")
-                    else:
-                        logger.warning("Shared ARQ queue pool not initialized, events will run synchronously")
-                except Exception as e:
-                    logger.warning("ARQ queue initialization failed, events will run synchronously", error=str(e))
-            else:
-                logger.info("ARQ background tasks are disabled, events will run synchronously")
-
-        # Pre-register event handlers to avoid cold start penalties
-        # Explicitly registers module-level event handlers without dynamic scanning
-        event_bus.register_all_handlers()
-
-        # Initialize session manager for concurrent session limiting
-        from src.app.core.security.session_manager import session_manager
-
-        if redis_client:
-            session_manager.set_redis_client(redis_client)
-
-        # FIXED: Initialize GCRA rate limiter for algorithm selection
-        from src.app.core.utils.gcra_rate_limit import init_gcra_rate_limiter
-        from src.app.core.utils.lua_manager import get_lua_manager
-
-        if redis_client:
-            init_gcra_rate_limiter(redis_client)
-            logger.info("GCRA rate limiter initialized")
-            try:
-                loaded_scripts = await get_lua_manager().preload_scripts(redis_client)
-                logger.info("Lua scripts preloaded", count=len(loaded_scripts))
-            except RedisError as e:
-                logger.error("Failed to preload Lua scripts", error=str(e))
-                if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
-                    raise
-            # P1-6 / P2-2: start cross-worker L1 invalidation listeners
-            # (auto-ban, rate limit tier policy, and tenant L1 listeners)
-            from src.app.core.security.auto_ban import _start_ban_l1_invalidation_listener
-            from src.app.core.security.rate_limit_cache import start_policy_invalidation_listener
-
-            _start_ban_l1_invalidation_listener()
-            start_policy_invalidation_listener()
-        # Warm application caches
-        logger.info("Loading security runtime config...")
-        from src.app.core.utils.config_store import get_runtime_config
-
-        config = await get_runtime_config()
-        if config:
-            if "IP_WHITELIST_ENABLED" in config:
-                settings.security.IP_WHITELIST_ENABLED = config["IP_WHITELIST_ENABLED"]
-            if "IP_BLACKLIST_ENABLED" in config:
-                settings.security.IP_BLACKLIST_ENABLED = config["IP_BLACKLIST_ENABLED"]
-            if "IP_WHITELIST_BYPASS_RATE_LIMIT" in config:
-                settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT = config["IP_WHITELIST_BYPASS_RATE_LIMIT"]
-            if "AUTO_BAN_ENABLED" in config:
-                settings.security.AUTO_BAN_ENABLED = config["AUTO_BAN_ENABLED"]
-            if "AUTO_BAN_THRESHOLD" in config:
-                settings.security.AUTO_BAN_THRESHOLD = config["AUTO_BAN_THRESHOLD"]
-            if "AUTO_BAN_DURATION" in config:
-                settings.security.AUTO_BAN_DURATION = config["AUTO_BAN_DURATION"]
-            if "AUTO_BAN_ESCALATION" in config:
-                settings.security.AUTO_BAN_ESCALATION = config["AUTO_BAN_ESCALATION"]
-            logger.info("Security runtime config loaded from Redis")
-
-        logger.info("Starting application cache warming...")
-        # A-7: the two warmers are independent (each opens its own session and
-        # catches its own errors), so run them concurrently instead of serially.
-        # P1-4: cap the warm gather at 15s so a hung dependency cannot stall
-        # boot forever; the warmers catch their own errors, so a timeout
-        # here just means we yield faster with whatever finished.
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(_warm_token_blacklist_cache(), _warm_application_caches()),
-                timeout=15.0,
-            )
-        except TimeoutError:
-            logger.warning("Cache warming exceeded 15s timeout; continuing boot with partial state")
-
-        # R1-06: the fixed post-warming sleep was removed. Cache warming is
-        # already awaited above; sleeping before yield only delayed worker
-        # readiness (2s x workers per boot) with no functional benefit.
-        # Initialize admin interface if it exists
-        if admin:
-            try:
-                # Initialize admin database and setup
-                await admin.initialize()
-                logger.info("Admin interface initialized successfully")
-            except Exception as e:
-                logger.error("Failed to initialize admin interface", error=str(e))
+        _init_pool_metrics()
+        _init_event_bus_and_queue(redis_client)
+        await _init_rate_limiting_and_security(redis_client)
+        await _load_security_runtime_config()
+        await _warm_startup_caches()
+        await _init_admin()
 
         yield
 
-        # Shutdown bcrypt executor
-        try:
-            from src.app.core.security import _bcrypt_executor
+        await _teardown_security_listeners()
 
-            if _bcrypt_executor is not None:
-                _bcrypt_executor.shutdown(wait=True)
-                import src.app.core.security
-
-                src.app.core.security._bcrypt_executor = None
-                logger.info("Bcrypt thread pool shutdown successfully")
-        except Exception as e:
-            logger.error("Failed to shutdown bcrypt thread pool", error=str(e))
-
-        # Cancel the L1 invalidation listeners (leaked pubsub tasks).
-        from src.app.core.security.auto_ban import stop_ban_l1_invalidation_listener
-        from src.app.core.security.rate_limit_cache import stop_policy_invalidation_listener
-        from src.app.middleware.tenant import stop_l1_invalidation_listener
-
-        await stop_ban_l1_invalidation_listener()
-        await stop_l1_invalidation_listener()
-        await stop_policy_invalidation_listener()
 
 app = create_application(
     router=get_router(),
@@ -292,94 +336,7 @@ app.add_middleware(GZipFilterMiddleware, minimum_size=500, compresslevel=6)
 # Admin mounting moved to lifespan
 
 
-# OpenAPI custom schema
-def custom_openapi():
-    """Generate custom OpenAPI schema."""
-    if app.openapi_schema:
-        return app.openapi_schema
+# OpenAPI custom schema (single wiring point in api/openapi.py)
+from src.app.api.openapi import setup_custom_openapi
 
-    project_name = settings.app.APP_NAME
-    version = settings.app.APP_VERSION or "1.0.0"
-    description = settings.app.APP_DESCRIPTION
-
-    openapi_schema = get_openapi(
-        title=project_name,
-        version=version,
-        description=description,
-        routes=app.routes,
-    )
-
-    components = openapi_schema.setdefault("components", {})
-    security_schemes = components.setdefault("securitySchemes", {})
-    security_schemes.update(
-        {
-            "bearerAuth": {
-                "type": "http",
-                "scheme": "bearer",
-                "bearerFormat": "JWT",
-                "description": "Enter JWT token obtained from /api/v1/auth/login",
-            },
-            "ApiKeyAuth": {
-                "type": "apiKey",
-                "in": "header",
-                "name": "X-API-Key",
-                "description": "Enter API Key",
-            },
-        }
-    )
-
-    # Identify paths that explicitly depend on authentication.
-    # HARDENED: previously matched dependency __name__ against a string list,
-    # so any same-named local function (or a renamed auth dep) silently
-    # dropped OpenAPI protection. Now compare against the CANONICAL callables
-    # imported from their owning modules — identity, not name similarity.
-    protected_paths = set()
-    from fastapi.params import Security
-
-    from src.app.api.deps.auth import (
-        get_current_superuser,
-        get_current_user,
-        get_optional_user,
-        get_user_by_api_key,
-    )
-
-    _auth_callables = {
-        id(fn) for fn in (get_current_user, get_current_superuser, get_optional_user, get_user_by_api_key)
-    }
-
-    for route in app.routes:
-        if not hasattr(route, "dependencies"):
-            continue
-        for dep in getattr(route, "dependencies", []):
-            is_auth_dep = isinstance(dep, Security)
-            if not is_auth_dep and hasattr(dep, "dependency") and callable(dep.dependency):
-                fn = dep.dependency
-                if id(fn) in _auth_callables:
-                    is_auth_dep = True
-                else:
-                    qualname = f"{getattr(fn, '__module__', '')}.{getattr(fn, '__qualname__', '')}"
-                    # requires_permission() returns a closure; detect via its
-                    # fully-qualified name rather than display name prefixes.
-                    if qualname.startswith("src.app.core.rbac.dependencies.requires_permission"):
-                        is_auth_dep = True
-
-            if is_auth_dep and hasattr(route, "path"):
-                protected_paths.add(route.path)
-                break
-
-    # Apply security only to protected routes
-    for path_str, path_item in openapi_schema["paths"].items():
-        is_protected = path_str in protected_paths
-        for method in path_item.values():
-            if method.get("security"):
-                continue
-            if is_protected:
-                # Add both bearerAuth and ApiKeyAuth as OR conditions
-                method.setdefault("security", []).append({"bearerAuth": []})
-                method["security"].append({"ApiKeyAuth": []})
-
-    app.openapi_schema = openapi_schema
-    return app.openapi_schema
-
-
-app.openapi = custom_openapi  # type: ignore[method-assign]
+setup_custom_openapi(app)

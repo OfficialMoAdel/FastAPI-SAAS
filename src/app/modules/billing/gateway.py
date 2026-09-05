@@ -31,21 +31,15 @@ class PaymentGateway(Protocol):
         """Create a customer portal session."""
         ...
 
-    async def modify_subscription(
-        self, subscription_id: str, tenant_id: Any = None, **kwargs: Any
-    ) -> Any:
+    async def modify_subscription(self, subscription_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
         """Modify a subscription."""
         ...
 
-    async def retrieve_subscription(
-        self, subscription_id: str, tenant_id: Any = None, **kwargs: Any
-    ) -> Any:
+    async def retrieve_subscription(self, subscription_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
         """Retrieve a subscription."""
         ...
 
-    async def retrieve_invoice(
-        self, invoice_id: str, tenant_id: Any = None, **kwargs: Any
-    ) -> Any:
+    async def retrieve_invoice(self, invoice_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
         """Retrieve an invoice."""
         ...
 
@@ -133,9 +127,7 @@ class StripeGateway:
             logger.error("Stripe portal error", error=str(e))
             raise StripeError("Failed to initialize customer portal.", status_code=400) from e
 
-    async def modify_subscription(
-        self, subscription_id: str, tenant_id: Any = None, **kwargs: Any
-    ) -> Any:
+    async def modify_subscription(self, subscription_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
         """Modify a Stripe Subscription with retry resilience."""
         api_key = await self._require_api_key(tenant_id, kwargs.pop("api_key", None))
         try:
@@ -151,9 +143,7 @@ class StripeGateway:
             logger.error("Stripe subscription modify error", error=str(e))
             raise StripeError(f"Failed to modify subscription in Stripe: {str(e)}") from e
 
-    async def retrieve_subscription(
-        self, subscription_id: str, tenant_id: Any = None, **kwargs: Any
-    ) -> Any:
+    async def retrieve_subscription(self, subscription_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
         """Retrieve a Stripe Subscription with retry resilience."""
         api_key = await self._require_api_key(tenant_id, kwargs.pop("api_key", None))
         try:
@@ -169,16 +159,12 @@ class StripeGateway:
             logger.error("Stripe subscription retrieve error", error=str(e))
             raise StripeError(f"Failed to retrieve subscription from Stripe: {str(e)}") from e
 
-    async def retrieve_invoice(
-        self, invoice_id: str, tenant_id: Any = None, **kwargs: Any
-    ) -> Any:
+    async def retrieve_invoice(self, invoice_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
         """Retrieve a Stripe Invoice with retry resilience."""
         api_key = await self._require_api_key(tenant_id, kwargs.pop("api_key", None))
         try:
             return await with_retry(
-                fn=lambda: asyncio.to_thread(
-                    lambda: stripe.Invoice.retrieve(invoice_id, api_key=api_key, **kwargs)
-                ),
+                fn=lambda: asyncio.to_thread(lambda: stripe.Invoice.retrieve(invoice_id, api_key=api_key, **kwargs)),
                 max_attempts=3,
                 delay_seconds=0.2,
                 exceptions=(stripe.StripeError,),
@@ -191,3 +177,30 @@ class StripeGateway:
 def get_payment_gateway(db: AsyncSession | None = None) -> PaymentGateway:
     """Get PaymentGateway instance."""
     return StripeGateway(db)
+
+
+# Deprecated alias for port formalization (PR-08 / Finding #9).
+# Canonical names are PaymentGateway / get_payment_gateway; the BillingGateway
+# names remain for back-compat and will be removed in a future release.
+BillingGateway = PaymentGateway
+
+
+def get_billing_gateway(db: AsyncSession | None = None) -> PaymentGateway:
+    """Deprecated alias of get_payment_gateway (kept for back-compat)."""
+    import warnings
+
+    warnings.warn(
+        "get_billing_gateway is deprecated; use get_payment_gateway instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return get_payment_gateway(db)
+
+
+__all__ = [
+    "BillingGateway",
+    "PaymentGateway",
+    "StripeGateway",
+    "get_billing_gateway",
+    "get_payment_gateway",
+]

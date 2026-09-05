@@ -32,7 +32,7 @@ from src.app.modules.auth.schemas import (
     PasskeyCredentialResponse,
     PasskeyDeleteResponse,
 )
-from src.app.modules.auth.services.passkey import passkey_service
+from src.app.modules.auth.services.passkey import PasskeyService, get_passkey_service
 from src.app.modules.security.schemas import (
     AutoBanConfig,
     AutoBanConfigUpdate,
@@ -61,26 +61,28 @@ router = APIRouter(prefix="/security", tags=["security"])
 @router.get("/passkeys", response_model=list[PasskeyCredentialResponse])
 async def list_passkeys(
     ctx: RequestContextDep,
+    passkey_svc: Annotated[PasskeyService, Depends(get_passkey_service)],
 ):
     """List user's passkey credentials.
 
     This is a convenience endpoint that wraps /auth/passkey/credentials
     for backward compatibility with the old backend.
     """
-    return await passkey_service.list_credentials(db=ctx.db, user_id=ctx.user_id)
+    return await passkey_svc.list_credentials(db=ctx.db, user_id=ctx.user_id)
 
 
 @router.delete("/passkeys/{passkey_id}", response_model=PasskeyDeleteResponse)
 async def delete_passkey(
     passkey_id: int,
     ctx: RequestContextDep,
+    passkey_svc: Annotated[PasskeyService, Depends(get_passkey_service)],
 ):
     """Delete a passkey credential.
 
     This is a convenience endpoint that wraps /auth/passkey/credentials/{credential_id}
     for backward compatibility with the old backend.
     """
-    await passkey_service.delete_credential(db=ctx.db, user_id=ctx.user_id, credential_id=passkey_id)
+    await passkey_svc.delete_credential(db=ctx.db, user_id=ctx.user_id, credential_id=passkey_id)
     return PasskeyDeleteResponse(message="Passkey deleted successfully")
 
 

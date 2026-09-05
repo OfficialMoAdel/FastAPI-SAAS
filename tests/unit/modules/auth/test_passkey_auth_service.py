@@ -161,7 +161,7 @@ class TestPasskeyAuthenticationVerification:
     @pytest.mark.asyncio
     async def test_verify_authentication_validates_challenge(self):
         """Verify authentication validates the stored challenge."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
 
         service = PasskeyService()
@@ -171,7 +171,7 @@ class TestPasskeyAuthenticationVerification:
         with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
             mock_get_challenge.return_value = None  # No stored challenge
 
-            with pytest.raises(BadRequestException) as exc_info:
+            with pytest.raises(ValidationError) as exc_info:
                 await service.verify_authentication(
                     db=mock_db,
                     redis=mock_redis,
@@ -184,7 +184,7 @@ class TestPasskeyAuthenticationVerification:
     @pytest.mark.asyncio
     async def test_verify_authentication_finds_credential(self):
         """Verify authentication finds the credential by ID."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
 
         service = PasskeyService()
@@ -201,7 +201,7 @@ class TestPasskeyAuthenticationVerification:
             with patch.object(service, "_find_credential_by_id", new_callable=AsyncMock) as mock_find:
                 mock_find.return_value = None  # Credential not found
 
-                with pytest.raises(BadRequestException) as exc_info:
+                with pytest.raises(ValidationError) as exc_info:
                     await service.verify_authentication(
                         db=mock_db,
                         redis=mock_redis,
@@ -222,7 +222,7 @@ class TestPasskeyAuthenticationVerification:
     @pytest.mark.asyncio
     async def test_verify_authentication_checks_counter(self):
         """Verify authentication checks counter to prevent replay attacks."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
 
         service = PasskeyService()
@@ -254,7 +254,7 @@ class TestPasskeyAuthenticationVerification:
                         new_sign_count=5,  # Lower than stored counter (10)
                     )
 
-                    with pytest.raises(BadRequestException) as exc_info:
+                    with pytest.raises(ValidationError) as exc_info:
                         await service.verify_authentication(
                             db=mock_db,
                             redis=mock_redis,
@@ -529,12 +529,12 @@ class TestPasskeyAuthenticationHelpers:
 @pytest.mark.asyncio
 async def test_verify_authentication_credential_required():
     """Test verify_authentication requires credential."""
-    from src.app.core.exceptions.http_exceptions import BadRequestException
+    from src.app.modules._base.exceptions import ValidationError
     from src.app.modules.auth.services.passkey import PasskeyService
 
     service = PasskeyService()
 
-    with pytest.raises(BadRequestException) as exc:
+    with pytest.raises(ValidationError) as exc:
         await service.verify_authentication(
             db=AsyncMock(),
             redis=AsyncMock(),
@@ -548,12 +548,12 @@ async def test_verify_authentication_credential_required():
 @pytest.mark.asyncio
 async def test_verify_authentication_challenge_id_required():
     """Test verify_authentication requires challenge_id."""
-    from src.app.core.exceptions.http_exceptions import BadRequestException
+    from src.app.modules._base.exceptions import ValidationError
     from src.app.modules.auth.services.passkey import PasskeyService
 
     service = PasskeyService()
 
-    with pytest.raises(BadRequestException) as exc:
+    with pytest.raises(ValidationError) as exc:
         await service.verify_authentication(
             db=AsyncMock(),
             redis=AsyncMock(),
@@ -567,7 +567,7 @@ async def test_verify_authentication_challenge_id_required():
 @pytest.mark.asyncio
 async def test_verify_authentication_raw_id_required():
     """Test verify_authentication requires rawId or id in credential."""
-    from src.app.core.exceptions.http_exceptions import BadRequestException
+    from src.app.modules._base.exceptions import ValidationError
     from src.app.modules.auth.services.passkey import PasskeyService
 
     service = PasskeyService()
@@ -577,7 +577,7 @@ async def test_verify_authentication_raw_id_required():
 
     # Provide credential with id but no rawId - will pass initial check
     # Then it will try to find by id, and credential not found
-    with pytest.raises(BadRequestException) as exc:
+    with pytest.raises(ValidationError) as exc:
         await service.verify_authentication(
             db=AsyncMock(),
             redis=mock_redis,
@@ -592,7 +592,7 @@ async def test_verify_authentication_raw_id_required():
 @pytest.mark.asyncio
 async def test_verify_authentication_user_not_found():
     """Test verify_authentication fails when user not found for credential."""
-    from src.app.core.exceptions.http_exceptions import BadRequestException
+    from src.app.modules._base.exceptions import ValidationError
     from src.app.modules.auth.services.passkey import PasskeyService
 
     service = PasskeyService()
@@ -615,7 +615,7 @@ async def test_verify_authentication_user_not_found():
                     with patch.object(service, "_get_user_for_credential", new_callable=AsyncMock) as mock_get_user:
                         mock_get_user.return_value = None  # User not found
 
-                        with pytest.raises(BadRequestException) as exc:
+                        with pytest.raises(ValidationError) as exc:
                             await service.verify_authentication(
                                 db=mock_db,
                                 redis=mock_redis,
@@ -629,7 +629,7 @@ async def test_verify_authentication_user_not_found():
 @pytest.mark.asyncio
 async def test_verify_registration_exception_handling():
     """Test verify_registration handles exceptions from webauthn."""
-    from src.app.core.exceptions.http_exceptions import BadRequestException
+    from src.app.modules._base.exceptions import ValidationError
     from src.app.modules.auth.services.passkey import PasskeyService
 
     service = PasskeyService()
@@ -648,7 +648,7 @@ async def test_verify_registration_exception_handling():
         with patch.object(service, "_verify_with_webauthn", new_callable=MagicMock) as mock_verify:
             mock_verify.side_effect = Exception("Verification failed")
 
-            with pytest.raises(BadRequestException) as exc:
+            with pytest.raises(ValidationError) as exc:
                 await service.verify_registration(
                     db=mock_db,
                     user=mock_user,
@@ -663,7 +663,7 @@ async def test_verify_registration_exception_handling():
 @pytest.mark.asyncio
 async def test_verify_authentication_exception_handling():
     """Test verify_authentication handles exceptions from webauthn."""
-    from src.app.core.exceptions.http_exceptions import BadRequestException
+    from src.app.modules._base.exceptions import ValidationError
     from src.app.modules.auth.services.passkey import PasskeyService
 
     service = PasskeyService()
@@ -682,7 +682,7 @@ async def test_verify_authentication_exception_handling():
             with patch.object(service, "_verify_authentication_response") as mock_verify:
                 mock_verify.side_effect = Exception("Auth verification failed")
 
-                with pytest.raises(BadRequestException) as exc:
+                with pytest.raises(ValidationError) as exc:
                     await service.verify_authentication(
                         db=mock_db,
                         redis=mock_redis,

@@ -15,7 +15,7 @@ async def send_magic_link_email_task(
     user_id: int,
 ) -> str:
     """Send magic link email via notification request event outbox seam."""
-    from src.app.modules.notifications.service import request_notification
+    from src.app.core.events.notifications import request_notification
 
     await request_notification(
         to_email=email,

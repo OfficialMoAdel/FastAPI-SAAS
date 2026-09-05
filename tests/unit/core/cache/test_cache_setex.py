@@ -24,18 +24,17 @@ class TestSetexUsage:
         assert "setex" in source.lower()
         # Verify no separate EXPIRE after SET pattern
         assert source.count("setex") > 0
-
     def test_user_cache_pipeline_uses_setex(self):
         """Verify user cache pipeline uses SETEX."""
         from pathlib import Path
 
-        service_path = Path(__file__).parents[4] / "src" / "app" / "modules" / "users" / "service.py"
-        source = service_path.read_text()
+        cache_path = Path(__file__).parents[4] / "src" / "app" / "modules" / "users" / "cache.py"
+        source = cache_path.read_text()
 
         # Pipeline should use setex for user caching
         assert "pipe.setex" in source
-        # Multiple setex calls in pipeline (user_id, email, username keys)
         assert source.count("pipe.setex") >= 3
+
 
     def test_tenant_cache_uses_setex(self):
         """Verify tenant middleware uses SETEX."""

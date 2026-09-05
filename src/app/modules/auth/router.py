@@ -10,9 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.deps import RequestContextDep
 from src.app.core.db.database import async_get_db
 from src.app.core.security import oauth2_scheme
-from src.app.core.security.login_helpers import get_refresh_cookie
+from src.app.core.security.login_helpers import (
+    clear_refresh_cookies,
+    get_refresh_cookie,
+    set_refresh_cookie,
+)
 from src.app.core.security.session_manager import SessionManager
 from src.app.core.utils.cache import async_get_redis
+from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.auth.schemas import (
     EmailVerificationConfirm,
     EmailVerificationRequest,
@@ -46,6 +51,11 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserSer
     return UserService(db)
 
 
+def _get_session_manager(redis: Annotated[Redis, Depends(async_get_redis)]) -> SessionManager:
+    """Dependency provider for SessionManager."""
+    return SessionManager(redis)
+
+
 router = APIRouter(prefix="/account", tags=["account"])
 
 from src.app.modules.auth.rate_limit import check_auth_rate_limit
@@ -65,7 +75,21 @@ async def login_for_access_token(
     auth_service: Annotated[AuthService, Depends(_get_auth_service)],
 ) -> Any:
     """Authenticate user and return access token."""
-    return await auth_service.login(form_data.username, form_data.password, response, request, db, redis)
+    ip_address = get_client_ip(request)
+    user_agent = request.headers.get("user-agent")
+    result = await auth_service.login(
+        form_data.username,
+        form_data.password,
+        response=response,
+        request=request,
+        db=db,
+        redis=redis,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+    if isinstance(result, dict) and result.get("refresh_token"):
+        set_refresh_cookie(response, result["refresh_token"])
+    return result
 
 
 @router.post(
@@ -78,9 +102,12 @@ async def register(
     request: Request,
     user: UserCreate,
     user_service: Annotated[UserService, Depends(_get_user_service)],
+    db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> Any:
     """Register a new user account."""
-    return await user_service.create(user)
+    from src.app.modules.auth.services.email_verification import make_email_verifier
+
+    return await user_service.create(user, email_verifier=make_email_verifier(db))
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse, dependencies=[Depends(check_auth_rate_limit)])
@@ -96,7 +123,17 @@ async def refresh_access_token(
         from fastapi import HTTPException, status
 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token missing")
-    return await auth_service.refresh_access_token(refresh_token, response, db, request)
+    result = await auth_service.refresh_access_token(
+        refresh_token,
+        response=response,
+        db=db,
+        request=request,
+        ip_address=get_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    if isinstance(result, dict) and result.get("refresh_token"):
+        set_refresh_cookie(response, result["refresh_token"])
+    return result
 
 
 @router.post(
@@ -114,7 +151,17 @@ async def logout(
 ) -> Any:
     """Logout user by blacklisting tokens."""
     refresh_token = get_refresh_cookie(request)
-    return await auth_service.logout(access_token, refresh_token, response, request, db)
+    result = await auth_service.logout(
+        access_token,
+        refresh_token,
+        response=response,
+        request=request,
+        db=db,
+        ip_address=get_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    clear_refresh_cookies(response)
+    return result
 
 
 @router.patch(
@@ -188,10 +235,9 @@ async def verify_email(
 @router.get("/sessions", response_model=SessionListResponse, responses={401: {"description": "Unauthorized"}})
 async def list_sessions(
     ctx: RequestContextDep,
-    redis: Annotated[Redis, Depends(async_get_redis)],
+    session_manager: Annotated[SessionManager, Depends(_get_session_manager)],
 ) -> SessionListResponse:
     """List all active sessions for current user."""
-    session_manager = SessionManager(redis)
     sessions = await session_manager.get_active_sessions(user_id=ctx.user_id)
 
     from datetime import datetime
@@ -255,12 +301,12 @@ async def list_sessions(
 @router.get("/sessions/count", response_model=SessionCountResponse, responses={401: {"description": "Unauthorized"}})
 async def count_sessions(
     ctx: RequestContextDep,
-    redis: Annotated[Redis, Depends(async_get_redis)],
+    session_manager: Annotated[SessionManager, Depends(_get_session_manager)],
 ) -> SessionCountResponse:
     """Count active sessions for current user."""
-    session_manager = SessionManager(redis)
     count = await session_manager.count_active_sessions(user_id=ctx.user_id)
     return SessionCountResponse(count=count)
+
 
 from src.app.modules.auth.routers.magic_link import router as magic_link_router
 from src.app.modules.auth.routers.mfa import router as mfa_router

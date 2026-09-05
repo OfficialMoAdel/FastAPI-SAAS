@@ -6,8 +6,8 @@ from fastapi import UploadFile
 
 from src.app.api.deps.request_context import RequestContext
 from src.app.core.tenancy.context import TenantContext
-from src.app.modules.storage.files_router import upload_file
 from src.app.modules.storage.local_storage import CHUNK_SIZE, LocalStorage
+from src.app.modules.storage.routers.files import upload_file
 from src.app.modules.storage.s3_storage import S3Storage
 
 
@@ -49,7 +49,7 @@ async def test_router_upload_file_optimization():
     mock_result.created_at = "2023-01-01T00:00:00Z"
     mock_service.upload_file.return_value = mock_result
 
-    with patch("src.app.modules.storage.files_router.get_storage", return_value=mock_service):
+    with patch("src.app.modules.storage.routers.files.get_storage", return_value=mock_service):
         await upload_file(
             file=mock_file,
             ctx=ctx,

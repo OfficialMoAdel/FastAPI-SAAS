@@ -82,11 +82,11 @@ class TestEnableMFA:
     @pytest.mark.asyncio
     async def test_enable_mfa_already_enabled_raises_error(self, mfa_service, mock_db, mock_user_id):
         """Test that enabling MFA when already enabled raises error."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.crud import crud_mfa_methods
 
         with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value={"id": "test-id"}):
-            with pytest.raises(BadRequestException, match="already enabled"):
+            with pytest.raises(ValidationError, match="already enabled"):
                 # MFAEnableRequest takes setup_token and totp_token
                 await mfa_service.enable_mfa(
                     user_id=mock_user_id,
@@ -97,7 +97,7 @@ class TestEnableMFA:
     @pytest.mark.asyncio
     async def test_enable_mfa_invalid_token_raises_error(self, mfa_service, mock_db, mock_user_id):
         """Test that enabling with invalid TOTP token raises error."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.crud import crud_mfa_methods
         from src.app.modules.auth.schemas import MFAEnableRequest
 
@@ -113,7 +113,7 @@ class TestEnableMFA:
                 )
                 with patch("src.app.core.utils.cache.client") as mock_redis:
                     mock_redis.get = AsyncMock(return_value=b"JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
-                    with pytest.raises(BadRequestException, match="Invalid TOTP"):
+                    with pytest.raises(ValidationError, match="Invalid TOTP"):
                         await mfa_service.enable_mfa(
                             user_id=mock_user_id,
                             request=request,
@@ -163,13 +163,13 @@ class TestVerifyTotpToken:
     @pytest.mark.asyncio
     async def test_verify_totp_token_not_enabled_raises_error(self, mfa_service, mock_db, mock_user_id):
         """Test verifying TOTP when MFA not enabled raises error."""
-        from src.app.core.exceptions.http_exceptions import UnauthorizedException
+        from src.app.modules._base.exceptions import UnauthorizedError
         from src.app.modules.auth.crud import crud_mfa_methods
         from src.app.modules.auth.schemas import MFAVerifyRequest
 
         with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=None):
             request = MFAVerifyRequest(totp_token="123456", backup_code=None)
-            with pytest.raises(UnauthorizedException, match="not enabled"):
+            with pytest.raises(UnauthorizedError, match="not enabled"):
                 await mfa_service.verify_totp_token(
                     user_id=mock_user_id,
                     request=request,
@@ -209,7 +209,7 @@ class TestVerifyTotpToken:
     @pytest.mark.asyncio
     async def test_verify_totp_token_invalid(self, mfa_service, mock_db, mock_user_id):
         """Test invalid TOTP verification fails."""
-        from src.app.core.exceptions.http_exceptions import UnauthorizedException
+        from src.app.modules._base.exceptions import UnauthorizedError
         from src.app.modules.auth.crud import crud_mfa_methods
         from src.app.modules.auth.schemas import MFAVerifyRequest
 
@@ -232,7 +232,7 @@ class TestVerifyTotpToken:
                         mfa_service, "_verify_backup_code", new_callable=AsyncMock, return_value={"verified": False}
                     ):
                         request = MFAVerifyRequest(totp_token="000000", backup_code=None)
-                        with pytest.raises(UnauthorizedException, match="Invalid MFA token"):
+                        with pytest.raises(UnauthorizedError, match="Invalid MFA token"):
                             await mfa_service.verify_totp_token(
                                 user_id=mock_user_id,
                                 request=request,
@@ -377,7 +377,7 @@ class TestDisableMFA:
     @pytest.mark.asyncio
     async def test_disable_mfa_not_enabled_raises_error(self, mfa_service, mock_db, mock_user_id):
         """Test disabling MFA when not enabled raises error."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.crud import crud_mfa_methods
 
         mock_user = {"id": mock_user_id, "hashed_password": "hashed", "tenant_id": 1}
@@ -386,7 +386,7 @@ class TestDisableMFA:
             mock_crud.get = AsyncMock(return_value=mock_user)
             with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=True):
                 with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=None):
-                    with pytest.raises(BadRequestException, match="not enabled"):
+                    with pytest.raises(ValidationError, match="not enabled"):
                         await mfa_service.disable_mfa(
                             user_id=mock_user_id,
                             password="valid_password",
@@ -398,7 +398,7 @@ class TestDisableMFA:
     @pytest.mark.asyncio
     async def test_disable_mfa_invalid_token_raises_error(self, mfa_service, mock_db, mock_user_id):
         """Test disabling MFA with invalid token raises error."""
-        from src.app.core.exceptions.http_exceptions import UnauthorizedException
+        from src.app.modules._base.exceptions import UnauthorizedError
         from src.app.modules.auth.crud import crud_mfa_methods
 
         mfa_method = {
@@ -420,7 +420,7 @@ class TestDisableMFA:
                             mock_totp_instance.verify.return_value = False
                             mock_totp.return_value = mock_totp_instance
 
-                            with pytest.raises(UnauthorizedException, match="Invalid MFA token"):
+                            with pytest.raises(UnauthorizedError, match="Invalid MFA token"):
                                 await mfa_service.disable_mfa(
                                     user_id=mock_user_id,
                                     password="valid_password",
@@ -596,7 +596,7 @@ class TestMFALockout:
         Note: Rate limiting is enforced at the router layer, not in the service.
         This test verifies the service correctly rejects invalid tokens.
         """
-        from src.app.core.exceptions.http_exceptions import UnauthorizedException
+        from src.app.modules._base.exceptions import UnauthorizedError
         from src.app.modules.auth.crud import crud_mfa_methods
         from src.app.modules.auth.schemas import MFAVerifyRequest
 
@@ -617,7 +617,7 @@ class TestMFALockout:
                     # Each failed attempt should raise UnauthorizedException
                     for _ in range(5):
                         request = MFAVerifyRequest(totp_token="000000", backup_code=None)
-                        with pytest.raises(UnauthorizedException, match="Invalid MFA token"):
+                        with pytest.raises(UnauthorizedError, match="Invalid MFA token"):
                             await mfa_service.verify_totp_token(
                                 user_id=mock_user_id,
                                 request=request,

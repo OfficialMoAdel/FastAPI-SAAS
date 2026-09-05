@@ -3,9 +3,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import stripe
-from fastapi import HTTPException
 
 import src.app.modules.billing.webhook as webhook_module
+from src.app.modules.billing.exceptions import WebhookVerificationError
 
 # Global mock for redis_client, as it might be uninitialized (None) in isolated unit tests
 webhook_module.redis_client = AsyncMock()
@@ -42,11 +42,10 @@ def test_verify_webhook_signature_invalid_payload():
     with patch("stripe.Webhook.construct_event") as mock_construct:
         mock_construct.side_effect = ValueError("Invalid payload")
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(WebhookVerificationError) as exc:
             verify_webhook_signature(payload, sig_header, secret)
 
-        assert exc.value.status_code == 400
-        assert "Invalid payload" in exc.value.detail
+        assert "Invalid payload" in str(exc.value)
 
 
 def test_verify_webhook_signature_invalid_signature():
@@ -58,11 +57,10 @@ def test_verify_webhook_signature_invalid_signature():
     with patch("stripe.Webhook.construct_event") as mock_construct:
         mock_construct.side_effect = stripe.error.SignatureVerificationError("Invalid signature", "sig_header")
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(WebhookVerificationError) as exc:
             verify_webhook_signature(payload, sig_header, secret)
 
-        assert exc.value.status_code == 400
-        assert "Invalid signature" in exc.value.detail
+        assert "Invalid signature" in str(exc.value)
 
 
 @pytest.mark.asyncio

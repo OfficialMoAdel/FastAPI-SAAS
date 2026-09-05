@@ -12,7 +12,7 @@ from src.app.modules.storage.errors import (
     InvalidCredentialsError,
     StorageNotConfiguredError,
 )
-from src.app.modules.storage.settings_router import (
+from src.app.modules.storage.routers.settings import (
     create_storage_settings,
     get_storage_settings,
     update_storage_settings,

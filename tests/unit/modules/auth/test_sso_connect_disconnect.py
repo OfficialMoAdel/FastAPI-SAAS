@@ -129,7 +129,7 @@ class TestDisconnectProviderService:
     @pytest.mark.asyncio
     async def test_disconnect_fails_if_last_auth_method(self):
         """Verify disconnect fails if provider is user's only authentication method."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules._base.exceptions import ValidationError
 
         service = SSOService()
         mock_db = AsyncMock()
@@ -137,7 +137,7 @@ class TestDisconnectProviderService:
         with patch.object(service, "_can_disconnect", new_callable=AsyncMock) as mock_can:
             mock_can.return_value = False
 
-            with pytest.raises(BadRequestException) as exc_info:
+            with pytest.raises(ValidationError) as exc_info:
                 await service.disconnect_provider(
                     db=mock_db,
                     user_id=123,

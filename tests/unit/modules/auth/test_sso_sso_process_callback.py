@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from fastapi import Request
 
-from src.app.core.exceptions.http_exceptions import BadRequestException
+from src.app.modules._base.exceptions import ValidationError
 from src.app.modules.auth.providers.apple import AppleProvider
 from src.app.modules.auth.schemas import SSOProvider
 from src.app.modules.auth.services.sso import SSOService
@@ -47,7 +47,7 @@ async def test_process_callback_invalid_state(mock_redis, mock_get_manager, serv
     mock_manager.consume.return_value = None
     mock_get_manager.return_value = mock_manager
 
-    with pytest.raises(BadRequestException, match="Invalid or expired state parameter"):
+    with pytest.raises(ValidationError, match="Invalid or expired state parameter"):
         await service.process_callback(mock_db, mock_request, SSOProvider.GOOGLE, "code123", "state123")
 
 
@@ -59,7 +59,7 @@ async def test_process_callback_provider_mismatch(mock_redis, mock_get_manager, 
     mock_manager.consume.return_value = {"provider": "github"}
     mock_get_manager.return_value = mock_manager
 
-    with pytest.raises(BadRequestException, match="State provider mismatch"):
+    with pytest.raises(ValidationError, match="State provider mismatch"):
         await service.process_callback(mock_db, mock_request, SSOProvider.GOOGLE, "code123", "state123")
 
 
@@ -82,7 +82,7 @@ async def test_process_callback_exchange_failed(
     mock_provider_instance.exchange_code_for_token.side_effect = Exception("Exchange error")
     mock_get_provider.return_value = mock_provider_instance
 
-    with pytest.raises(BadRequestException, match="Failed to exchange code with provider"):
+    with pytest.raises(ValidationError, match="Failed to exchange code with provider"):
         await service.process_callback(mock_db, mock_request, SSOProvider.GOOGLE, "code123", "state123")
 
 

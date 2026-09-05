@@ -23,8 +23,8 @@ from structlog import get_logger
 
 from src.app.core.config import settings
 from src.app.core.events import EventPriority
-from src.app.core.exceptions.http_exceptions import BadRequestException, UnauthorizedException
 from src.app.core.redis_provider import get_redis
+from src.app.modules._base.exceptions import ServiceUnavailableError, UnauthorizedError, ValidationError
 from src.app.modules.audit_logs import audit
 from src.app.modules.auth.crud import crud_mfa_methods
 from src.app.modules.auth.models import MFAMethod
@@ -108,12 +108,8 @@ class MFAService:
                 await client.setex(f"mfa_setup:{setup_token}", 600, f"{user_id}:{secret}")
             except Exception as e:
                 logger.error("Redis failed during MFA setup: %s", e)
-                from src.app.modules._base.exceptions import ServiceUnavailableError
-
                 raise ServiceUnavailableError("MFA setup is currently unavailable.")
         else:
-            from src.app.modules._base.exceptions import ServiceUnavailableError
-
             raise ServiceUnavailableError("MFA setup is currently unavailable.")
 
         # Note: In production, generate actual QR code image
@@ -146,7 +142,7 @@ class MFAService:
         # Check if MFA is already enabled
         existing = await crud_mfa_methods.get(db=db, user_id=user_id, type="totp")
         if existing:
-            raise BadRequestException("MFA is already enabled for this user")
+            raise ValidationError("MFA is already enabled for this user")
 
         # Retrieve secret from Redis using setup_token
         mfa_setup_key = f"mfa_setup:{request.setup_token}"
@@ -154,19 +150,19 @@ class MFAService:
         totp_secret_bytes = await client.get(mfa_setup_key) if client else None
 
         if not totp_secret_bytes:
-            raise BadRequestException("Setup token expired or invalid. Please restart MFA setup.")
+            raise ValidationError("Setup token expired or invalid. Please restart MFA setup.")
 
         raw_val = totp_secret_bytes.decode("utf-8") if isinstance(totp_secret_bytes, bytes) else str(totp_secret_bytes)
         if ":" in raw_val:
             bound_uid_str, totp_secret = raw_val.split(":", 1)
             if bound_uid_str != str(user_id):
-                raise BadRequestException("Setup token does not belong to the current user")
+                raise ValidationError("Setup token does not belong to the current user")
         else:
             totp_secret = raw_val
         # Verify the provided TOTP token
         totp = pyotp.TOTP(totp_secret, interval=TOTP_INTERVAL, digits=TOTP_DIGITS)
         if not totp.verify(request.totp_token, valid_window=TOTP_SKEW):
-            raise BadRequestException("Invalid TOTP token. Please try again.")
+            raise ValidationError("Invalid TOTP token. Please try again.")
 
         # Clean up the setup token
         if client is not None:
@@ -194,7 +190,7 @@ class MFAService:
             await db.refresh(mfa_method)
         except IntegrityError as exc:
             await db.rollback()
-            raise BadRequestException("MFA is already enabled for this user") from exc
+            raise ValidationError("MFA is already enabled for this user") from exc
         logger.info("mfa_enabled", user_id=user_id, method="totp")
 
         # Audit log: MFA enabled
@@ -236,7 +232,7 @@ class MFAService:
 
             if settings.auth.AUDIT_LOG_FAILURE_MODE == "fail_closed":
                 logger.error("Redis unavailable - MFA lockout failing closed | user_id=%s", user_id)
-                raise UnauthorizedException("Authentication temporarily unavailable. Please try again later.")
+                raise UnauthorizedError("Authentication temporarily unavailable. Please try again later.")
             logger.warning("Redis unavailable - MFA lockout disabled (fail open) | user_id=%s", user_id)
             return
 
@@ -257,13 +253,13 @@ class MFAService:
 
             if settings.auth.AUDIT_LOG_FAILURE_MODE == "fail_closed":
                 logger.error("MFA lockout check failed - failing closed", user_id=user_id, error=str(e))
-                raise UnauthorizedException("Authentication temporarily unavailable.")
+                raise UnauthorizedError("Authentication temporarily unavailable.")
             logger.error("MFA lockout check failed", user_id=user_id, error=str(e))
             return  # Fail open
 
         if result == -1:
             logger.warning("mfa_lockout_enforced", user_id=user_id)
-            raise UnauthorizedException("MFA locked. Too many failed attempts. Try again later.")
+            raise UnauthorizedError("MFA locked. Too many failed attempts. Try again later.")
 
     async def _reset_mfa_lockout(self, user_id: int) -> None:
         """Reset MFA lockout counter after successful verification."""
@@ -298,7 +294,7 @@ class MFAService:
         # Get user's MFA method (FastCRUD returns dict)
         mfa_method_dict: dict[str, Any] | None = await crud_mfa_methods.get(db=db, user_id=user_id, type="totp")
         if not mfa_method_dict:
-            raise UnauthorizedException("MFA is not enabled for this user")
+            raise UnauthorizedError("MFA is not enabled for this user")
 
         # SECURITY FIX: Check and increment MFA lockout AFTER confirming MFA is enabled
         # to prevent DoS against non-MFA users
@@ -326,7 +322,7 @@ class MFAService:
                         used_key = f"mfa_used:{user_id}:{request.totp_token}"
                         is_fresh = await client.set(used_key, "1", nx=True, ex=30)
                         if not is_fresh:
-                            raise BadRequestException("TOTP token has already been used. Please wait for a new code.")
+                            raise ValidationError("TOTP token has already been used. Please wait for a new code.")
 
                 # Update last_used_at - fetch model instance
                 mfa_method = await db.get(MFAMethod, mfa_method_dict["id"])
@@ -378,7 +374,7 @@ class MFAService:
             )
         except Exception as e:
             logger.debug("Audit logging failed (non-critical): %s", e)
-        raise UnauthorizedException("Invalid MFA token")
+        raise UnauthorizedError("Invalid MFA token")
 
     async def _verify_backup_code(
         self,
@@ -524,15 +520,15 @@ class MFAService:
         # Verify user exists and password is correct
         user = await crud_users.get(db=db, id=user_id, is_deleted=False)
         if not user:
-            raise UnauthorizedException("Invalid credentials")
+            raise UnauthorizedError("Invalid credentials")
 
         if not await verify_password(password, user.get("hashed_password", "")):
-            raise UnauthorizedException("Invalid credentials")
+            raise UnauthorizedError("Invalid credentials")
 
         # Get user's MFA method (FastCRUD returns dict)
         mfa_method_dict: dict[str, Any] | None = await crud_mfa_methods.get(db=db, user_id=user_id, type="totp")
         if not mfa_method_dict:
-            raise BadRequestException("MFA is not enabled for this user")
+            raise ValidationError("MFA is not enabled for this user")
 
         # SECURITY FIX: Enforce cryptographic MFA verification before stripping MFA state.
         # This replaces the optional check to prevent an MFA bypass where someone with
@@ -645,15 +641,15 @@ class MFAService:
         # Verify user exists and password is correct
         user = await crud_users.get(db=db, id=user_id, is_deleted=False)
         if not user:
-            raise UnauthorizedException("Invalid credentials")
+            raise UnauthorizedError("Invalid credentials")
 
         if not await verify_password(password, user.get("hashed_password", "")):
-            raise UnauthorizedException("Invalid credentials")
+            raise UnauthorizedError("Invalid credentials")
 
         # Get user's MFA method (FastCRUD returns dict)
         mfa_method_dict: dict[str, Any] | None = await crud_mfa_methods.get(db=db, user_id=user_id, type="totp")
         if not mfa_method_dict:
-            raise BadRequestException("MFA is not enabled for this user")
+            raise ValidationError("MFA is not enabled for this user")
 
         # SECURITY FIX: Enforce cryptographic MFA verification before changing state.
         # This inherently handles check_mfa_lockout + increments, checking TOTP ranges,

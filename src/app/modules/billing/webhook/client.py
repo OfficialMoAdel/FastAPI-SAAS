@@ -7,9 +7,9 @@ the payload against the signing secret before any business logic runs.
 from typing import cast
 
 import stripe
-from fastapi import HTTPException, status
 
 from src.app.core.logger import get_logger
+from src.app.modules.billing.exceptions import WebhookVerificationError
 
 logger = get_logger(__name__)
 
@@ -27,7 +27,7 @@ def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> st
         stripe.Event object
 
     Raises:
-        HTTPException: If signature verification fails
+        WebhookVerificationError: If signature or payload verification fails
     """
     try:
         # Constructing event is CPU bound, but typically fast enough.
@@ -36,9 +36,9 @@ def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> st
         return cast(stripe.Event, event)
     except ValueError as e:
         # Invalid payload
-        logger.error("Invalid payload", error=e)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid payload")
+        logger.error("Invalid payload", error=str(e))
+        raise WebhookVerificationError("Invalid payload") from e
     except stripe.SignatureVerificationError as e:
         # Invalid signature
-        logger.error("Invalid signature", error=e)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
+        logger.error("Invalid signature", error=str(e))
+        raise WebhookVerificationError("Invalid signature") from e

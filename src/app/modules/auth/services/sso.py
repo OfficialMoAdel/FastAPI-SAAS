@@ -7,14 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
 from src.app.core.events import EventPriority
-from src.app.core.exceptions.http_exceptions import (
-    BadRequestException,
-    NotFoundException,
-    UnauthorizedException,
-)
 from src.app.core.logger import get_logger
 from src.app.core.security.tokens import get_sso_state_manager
 from src.app.core.tenancy.context import get_current_tenant, set_current_tenant
+from src.app.modules._base.exceptions import (
+    ModelNotFoundError,
+    UnauthorizedError,
+    ValidationError,
+)
 from src.app.modules.audit_logs import audit
 from src.app.modules.auth.crud import crud_user_sso_connections
 from src.app.modules.auth.providers.apple import AppleProvider
@@ -70,7 +70,7 @@ class SSOService:
                 key_id=settings["key_id"],
                 private_key=settings["private_key"],
             )
-        raise BadRequestException(f"Provider '{provider_name}' is not supported yet")
+        raise ValidationError(f"Provider '{provider_name}' is not supported yet")
 
     async def get_authorization_url(
         self,
@@ -98,7 +98,7 @@ class SSOService:
 
         settings_data = await sso_settings_service.get_decrypted_settings(db, provider)
         if not settings_data["is_enabled"]:
-            raise BadRequestException(f"Provider '{provider}' is disabled")
+            raise ValidationError(f"Provider '{provider}' is disabled")
 
         if not redirect_uri:
             base_url = str(request.base_url).rstrip("/")
@@ -117,7 +117,7 @@ class SSOService:
         redis_client = get_redis()
 
         if not redis_client:
-            raise BadRequestException("Redis client not initialized")
+            raise ValidationError("Redis client not initialized")
         sso_state_manager = get_sso_state_manager(redis_client)
         from src.app.core.security.tokens import TokenGenerator
 
@@ -161,15 +161,15 @@ class SSOService:
         redis_client = get_redis()
 
         if not redis_client:
-            raise BadRequestException("Redis client not initialized")
+            raise ValidationError("Redis client not initialized")
         sso_state_manager = get_sso_state_manager(redis_client)
         state_data = await sso_state_manager.consume(state)
 
         if not state_data:
-            raise BadRequestException("Invalid or expired state parameter")
+            raise ValidationError("Invalid or expired state parameter")
 
         if state_data["provider"] != provider:
-            raise BadRequestException("State provider mismatch")
+            raise ValidationError("State provider mismatch")
 
         # Preserve any tenant context already set by upstream middleware (e.g. an
         # authenticated user in connect_mode). We only override it below if the SSO
@@ -201,11 +201,11 @@ class SSOService:
                         if tenant_model:
                             set_current_tenant(tenant_model)
                         else:
-                            raise BadRequestException("Tenant context not found")
+                            raise ValidationError("Tenant context not found")
                     else:
                         set_current_tenant(cast(Tenant, tenant_result))
                 else:
-                    raise BadRequestException("Tenant context not found")
+                    raise ValidationError("Tenant context not found")
 
             from src.app.modules.auth.services.sso_settings import sso_settings_service
 
@@ -216,11 +216,11 @@ class SSOService:
                 token_response = await oauth_provider.exchange_code_for_token(code)
             except Exception as e:
                 logger.error("SSO Code Exchange Failed", error_type=type(e).__name__, provider=provider)
-                raise BadRequestException("Failed to exchange code with provider")
+                raise ValidationError("Failed to exchange code with provider")
 
             access_token = token_response.get("access_token")
             if not access_token:
-                raise BadRequestException("No access token received from provider")
+                raise ValidationError("No access token received from provider")
 
             # Apple uses id_token for user info (no userinfo endpoint)
             user_info: Any
@@ -228,7 +228,7 @@ class SSOService:
                 if provider == SSOProvider.APPLE:
                     id_token = token_response.get("id_token")
                     if not id_token:
-                        raise BadRequestException("No id_token received from Apple")
+                        raise ValidationError("No id_token received from Apple")
                     # Apple provider has different signature, cast to access it
                     apple_provider = cast(AppleProvider, oauth_provider)
                     user_info = await apple_provider.get_user_info(id_token, user_data=user_data)
@@ -242,11 +242,11 @@ class SSOService:
                     user_info = await oauth_provider.get_user_info(access_token)
             except Exception as e:
                 logger.error("SSO User Info Fetch Failed", error_type=type(e).__name__, provider=provider)
-                raise BadRequestException("Failed to fetch user info from provider")
+                raise ValidationError("Failed to fetch user info from provider")
 
             current_tenant = get_current_tenant()
             if not current_tenant:
-                raise BadRequestException("Cannot process SSO login without tenant context")
+                raise ValidationError("Cannot process SSO login without tenant context")
 
             connection = await crud_user_sso_connections.get_by_provider_user_id(
                 db=db,
@@ -261,11 +261,11 @@ class SSOService:
 
             if connect_mode:
                 if not connect_user_id:
-                    raise BadRequestException("Missing user ID for connect mode")
+                    raise ValidationError("Missing user ID for connect mode")
 
                 if connection:
                     if connection.user_id != connect_user_id:
-                        raise BadRequestException(
+                        raise ValidationError(
                             f"This {provider.title()} account is already connected to another user"
                         )
 
@@ -281,7 +281,7 @@ class SSOService:
 
                 found_user_data = await UserService(db).get(connect_user_id)
                 if not found_user_data:
-                    raise NotFoundException("User to connect not found")
+                    raise ModelNotFoundError("User", message="User to connect not found")
             else:
                 if connection:
                     await crud_user_sso_connections.update(
@@ -293,10 +293,10 @@ class SSOService:
                     )
                     found_user_data = await UserService(db).get(connection.user_id)
                     if not found_user_data:
-                        raise NotFoundException("Associated user not found")
+                        raise ModelNotFoundError("User", message="Associated user not found")
                 else:
                     if not user_info.email:
-                        raise BadRequestException("Email required from provider")
+                        raise ValidationError("Email required from provider")
 
                     is_verified = getattr(user_info, "email_verified", False)
                     if isinstance(is_verified, bool):
@@ -305,13 +305,13 @@ class SSOService:
                         verified = str(is_verified).lower() in ("true", "1", "yes")
 
                     if not verified:
-                        raise BadRequestException("Unverified provider emails are not permitted for security reasons")
+                        raise ValidationError("Unverified provider emails are not permitted for security reasons")
 
                     user_by_email = await UserService(db).get_by_email(user_info.email)
 
                     if user_by_email:
                         # M27: Security - prevent account takeover via IdP
-                        raise BadRequestException(
+                        raise ValidationError(
                             "An account with this email already exists. "
                             "Please log in using your existing credentials and "
                             "link this provider in your account settings."
@@ -339,7 +339,7 @@ class SSOService:
                             # Retrieve ORM object to set in context
                             tenant_orm = await db.get(TenantModel, new_tenant_dict["id"])
                             if not tenant_orm:
-                                raise BadRequestException("Failed to create personal tenant")
+                                raise ValidationError("Failed to create personal tenant")
 
                             set_current_tenant(tenant_orm)
 
@@ -359,7 +359,7 @@ class SSOService:
             elif isinstance(found_user_data, dict) and not found_user_data.get("is_active", False):
                 is_disabled = True
             if is_disabled:
-                raise UnauthorizedException("Account is disabled")
+                raise UnauthorizedError("Account is disabled")
 
             # Fetch fully normalized User object with tier eager loaded for token claims
             email_val = found_user_data.email if hasattr(found_user_data, "email") else found_user_data["email"]
@@ -367,7 +367,7 @@ class SSOService:
             normalized_user = await user_svc.get_user_auth_info(email=email_val)
 
             if not normalized_user:
-                raise UnauthorizedException("Account not found")
+                raise UnauthorizedError("Account not found")
 
             # SECURITY FIX: Check if MFA is enabled before issuing access token
             from src.app.modules.auth.services.mfa import get_mfa_service
@@ -384,7 +384,7 @@ class SSOService:
                 from src.app.core.utils.ip_utils import get_client_ip
 
                 if not mfa_redis_client:
-                    raise BadRequestException("Authentication service unavailable")
+                    raise ValidationError("Authentication service unavailable")
 
                 mfa_token_store = get_mfa_pending_token_manager(mfa_redis_client)
                 mfa_token = TokenGenerator.generate_magic_link_token()
@@ -466,7 +466,7 @@ class SSOService:
         """Create UserSSOConnection."""
         current_tenant = get_current_tenant()
         if not current_tenant:
-            raise BadRequestException("Cannot link account without tenant context")
+            raise ValidationError("Cannot link account without tenant context")
         connection_in = UserSSOConnectionCreate(
             user_id=user_id,
             tenant_id=current_tenant.id,
@@ -529,7 +529,7 @@ class SSOService:
                     raise
                 # If username duplicate, try again
                 if attempt == max_retries - 1:
-                    raise BadRequestException("Failed to generate a unique username. Please try again.")
+                    raise ValidationError("Failed to generate a unique username. Please try again.")
                 logger.warning("Username collision during SSO registration", username=username, attempt=attempt + 1)
 
     async def get_enabled_providers(self, db: AsyncSession) -> list[dict[str, Any]]:
@@ -544,7 +544,7 @@ class SSOService:
             try:
                 sso_settings = await sso_settings_service.get_settings_by_provider(db, provider.value)
                 is_enabled = sso_settings.is_enabled
-            except NotFoundException:
+            except ModelNotFoundError:
                 pass
 
             providers_list.append(
@@ -585,12 +585,12 @@ class SSOService:
         )
 
         if not connection:
-            raise NotFoundException(f"No {provider} connection found for this account")
+            raise ModelNotFoundError("UserSSOConnection", message=f"No {provider} connection found for this account")
 
         # Check if user can disconnect this provider
         can_disconnect = await self._can_disconnect(db, user_id, tenant_id)
         if not can_disconnect:
-            raise BadRequestException(
+            raise ValidationError(
                 "Cannot disconnect: this is your only authentication method. "
                 "Please set a password or connect another SSO provider first."
             )
@@ -619,7 +619,7 @@ class SSOService:
             True if user can safely disconnect a provider
         """
         if tenant_id is None:
-            raise BadRequestException("Tenant context required")
+            raise ValidationError("Tenant context required")
 
         # Check if user has a real password (SSO-only accounts store a sentinel
         # "!SSO_ONLY_ACCOUNT_NO_PASSWORD" placeholder, which is NOT a valid password).

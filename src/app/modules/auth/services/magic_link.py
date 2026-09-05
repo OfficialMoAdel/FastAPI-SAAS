@@ -113,6 +113,7 @@ class MagicLinkService:
         # Generate and store token in Redis
         manager = self._get_magic_link_manager()
         from src.app.core.security.tokens import TokenGenerator
+
         token = TokenGenerator.generate_magic_link_token()
         await manager.create(
             token=token,
@@ -123,8 +124,8 @@ class MagicLinkService:
                     "user_id": user["id"],
                     "ip_address": ip_address,
                     "user_agent": user_agent,
-                }
-            }
+                },
+            },
         )
 
         # Store in database for audit trail with hashed token (H-14)
@@ -197,6 +198,7 @@ class MagicLinkService:
         if token_data is None:
             # Token not found - check if it was already used
             from src.app.modules.auth.crud import get_magic_link_by_token
+
             db_link = await get_magic_link_by_token(db=self.db, token=token)
             if db_link and db_link.used_at is not None:
                 raise MagicLinkAlreadyUsedError("Token already used")
@@ -213,11 +215,9 @@ class MagicLinkService:
         try:
             db_link = await get_magic_link_by_token(db=self.db, token=token)
             if db_link:
-                from unittest.mock import Mock
-
                 # Check DB expiry and used_at guard (A2-12)
                 used_at_val = getattr(db_link, "used_at", None)
-                if used_at_val is not None and not isinstance(used_at_val, Mock):
+                if used_at_val is not None:
                     raise MagicLinkAlreadyUsedError("Token already used")
                 expires_at_val = getattr(db_link, "expires_at", None)
                 if isinstance(expires_at_val, datetime):
@@ -287,7 +287,7 @@ class MagicLinkService:
                     "username": str(user.get("username") or user.get("email") or ""),
                     "ip_address": ip_address,
                     "scope": "mfa_pending",
-                }
+                },
             )
 
             logger.info(
@@ -312,6 +312,7 @@ class MagicLinkService:
         refresh_token = tokens.pop("refresh_token", None)
         if response and refresh_token:
             from src.app.core.security.login_helpers import set_refresh_cookie
+
             set_refresh_cookie(response, refresh_token)
 
         logger.info(
@@ -362,13 +363,12 @@ class MagicLinkService:
         """
         from urllib.parse import quote
 
-
         # Build magic link URL. URL-encode the token to guard against any special
         # characters in future token formats and prevent URL truncation or injection.
         magic_link_url = f"{settings.app.FRONTEND_URL}/auth/magic-link?token={quote(token, safe='')}"
 
         # Standardized notification dispatch via unified outbox seam (Candidate 8)
-        from src.app.modules.notifications.service import request_notification
+        from src.app.core.events.notifications import request_notification
 
         await request_notification(
             to_email=email,
@@ -377,6 +377,7 @@ class MagicLinkService:
             tenant_id=tenant_id,
             user_id=user_id,
         )
+
     async def _create_auth_tokens(self, user: dict) -> dict[str, Any]:
         """Create access and refresh tokens and register the session.
 

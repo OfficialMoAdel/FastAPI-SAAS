@@ -4,7 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.app.modules.storage.settings_router import router as storage_router
+from src.app.modules.storage.routers.settings import router as storage_router
 
 
 @pytest.fixture

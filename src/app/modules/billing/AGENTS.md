@@ -83,30 +83,63 @@ except PaymentFailedError as e:
     raise HTTPException(402, str(e))
 ```
 
-## Module Structure
+## Module Structure & Service Charters
 
 ```
 src/app/modules/billing/
-├── __init__.py           # Module exports
-├── router.py             # /billing endpoints
-├── service.py            # BillingService class
-├── lifecycle.py          # SubscriptionLifecycleService
-├── webhook.py            # Stripe webhook handlers
-├── crud.py               # CRUD operations
-├── models.py             # SQLAlchemy models
-├── schemas.py            # Pydantic schemas
-└── exceptions.py         # Billing-specific exceptions
+├── __init__.py               # Module exports
+├── router.py                 # Primary /billing endpoint controller
+├── routers/                  # Modular sub-routers package
+│   ├── checkouts.py          # /checkouts endpoints
+│   ├── invoices.py           # /invoices endpoints
+│   ├── prices.py             # /prices endpoints
+│   └── products.py           # /products endpoints
+├── routes/                   # Backward-compatibility router re-export shims
+├── gateway.py                # BillingGateway / PaymentGateway port & StripeGateway adapter
+├── service.py                # BillingService facade (customer portal, catalog sync)
+├── subscription_service.py   # UserSubscriptionService, SubscriptionPlanService, BillingRecordService
+├── checkout_service.py       # CheckoutService (checkout session creation & URL validation)
+├── lifecycle.py              # SubscriptionLifecycleService (state machine & cancellation)
+├── webhook/                  # Stripe webhook ingest and processing subpackage
+│   ├── client.py             # Wire-level signature validation
+│   ├── idempotency.py        # Distributed Redis lock & terminal DB processed marker
+│   ├── ingest.py             # Webhook ingest entrypoint (H1 verified-then-tenant ordering)
+│   ├── dispatch.py           # Event router and registry
+│   └── handlers/             # Modular event processors (checkout, subscriptions, invoices, refunds)
+├── crud.py                   # TenantAwareCRUD repositories
+├── models.py                 # SQLAlchemy models (UserSubscription, Product, Pricing, BillingRecord)
+├── schemas.py                # Pydantic DTOs
+└── exceptions.py             # Billing domain exceptions (PaymentRequiredError, WebhookVerificationError)
 ```
+
+### Service File Charters
+
+1. **`gateway.py` (The Infrastructure Port):**
+   * Owns the `BillingGateway` / `PaymentGateway` Protocol definition and `StripeGateway` resilience implementation (`with_retry`).
+   * Sole home of `stripe.*` SDK calls in the billing domain; zero business policy or database models.
+
+2. **`service.py` (The Customer Facade):**
+   * `BillingService` facade for customer portal sessions, customer management, and product catalog synchronization.
+
+3. **`subscription_service.py` (Internal Persistence Services):**
+   * Owns `UserSubscriptionService`, `SubscriptionPlanService`, and `BillingRecordService` for database-backed subscription queries, plan listings, and payment history.
+
+4. **`checkout_service.py` (Checkout Orchestration):**
+   * Owns `CheckoutService` responsible for checkout session creation, success/cancel URL validation, and tenant pricing resolution.
+
+5. **`lifecycle.py` (State Machine Engine):**
+   * Owns `SubscriptionLifecycleService`, subscription status mapping (`map_stripe_status`), and valid transition rules (`is_valid_transition`) preventing out-of-order resurrection of churned accounts.
 
 ## Touch Points
 
 - **Billing service**: `modules/billing/service.py::BillingService`
-- **Webhook handler**: `modules/billing/webhook.py::handle_stripe_webhook`
+- **Billing gateway**: `modules/billing/gateway.py::BillingGateway` / `StripeGateway`
+- **Webhook ingest**: `modules/billing/webhook/ingest.py::ingest_webhook`
+- **Subscription service**: `modules/billing/subscription_service.py::UserSubscriptionService`
 - **Lifecycle service**: `modules/billing/lifecycle.py::SubscriptionLifecycleService`
-- **Product CRUD**: `modules/billing/crud.py::crud_product`
+- **Product CRUD**: `modules/billing/crud.py::crud_products`
 - **Pricing CRUD**: `modules/billing/crud.py::crud_pricing`
-- **Subscription CRUD**: `modules/billing/crud.py::crud_user_subscription`
-
+- **Subscription CRUD**: `modules/billing/crud.py::crud_user_subscriptions`
 ## JIT Index Hints
 
 ```bash

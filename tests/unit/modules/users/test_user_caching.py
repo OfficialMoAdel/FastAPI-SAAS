@@ -54,8 +54,8 @@ class TestUserAuthInfoCaching:
         }
 
         mock_client = AsyncMock()
-        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
-            with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
+        with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
+            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
                 mock_client.get = AsyncMock(
                     return_value='{"id": "550e8400-e29b-41d4-a716-446655440000", '
                     '"username": "testuser", "email": "test@example.com", '
@@ -81,8 +81,8 @@ class TestUserAuthInfoCaching:
         }
 
         mock_client = AsyncMock()
-        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
-            with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
+        with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
+            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
                 mock_client.get = AsyncMock(
                     return_value='{"id": "550e8400-e29b-41d4-a716-446655440000", '
                     '"username": "testuser", "email": "test@example.com", '
@@ -107,8 +107,8 @@ class TestUserAuthInfoCaching:
         }
 
         mock_client = AsyncMock()
-        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
-            with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
+        with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
+            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
                 mock_client.get = AsyncMock(return_value=None)  # Cache miss
                 mock_client.setex = AsyncMock()
 
@@ -130,7 +130,7 @@ class TestUserAuthInfoCaching:
         from src.app.modules.users.service import _user_auth_cache_key
 
         mock_tenant = _create_mock_tenant()
-        with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
+        with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
             cache_key = _user_auth_cache_key("testuser")
             # Cache key format is user:auth:{tenant_id}:{identifier}
             assert cache_key == f"user:auth:{mock_tenant.id}:testuser"
@@ -141,7 +141,7 @@ class TestUserAuthInfoCaching:
         from src.app.modules.users.service import _user_auth_cache_key
 
         mock_tenant = _create_mock_tenant()
-        with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
+        with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
             cache_key = _user_auth_cache_key("test@example.com")
             # Cache key format is user:auth:{tenant_id}:{identifier}
             assert cache_key == f"user:auth:{mock_tenant.id}:test@example.com"
@@ -179,8 +179,8 @@ class TestUserCacheInvalidation:
         }
 
         mock_client = AsyncMock()
-        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
-            with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
+        with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
+            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
                 class MockPipeline:
                     def __init__(self):
                         self.set_calls = []
@@ -252,8 +252,8 @@ class TestUserCachingWithoutRedis:
             "tier": {"id": 1, "name": "free"},
         }
 
-        with patch("src.app.modules.users.service.get_redis", return_value=None):
-            with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
+        with patch("src.app.modules.users.cache.get_redis", return_value=None):
+            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
 
                 user_service.crud.get_user_with_tier_eager = AsyncMock(return_value=user_data)
 
@@ -290,8 +290,8 @@ class TestUserCacheBatchInvalidation:
         ]
 
         mock_client = AsyncMock()
-        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
-            with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
+        with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
+            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
                 class MockPipeline:
                     def __init__(self):
                         self.set_calls = []
@@ -338,8 +338,8 @@ class TestUserCacheBatchInvalidation:
         rows = [MagicMock(id=1, email="a@example.com", username="alice", tenant_id=tid, token_version=3)]
 
         mock_client = AsyncMock()
-        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
-            with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
+        with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
+            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
                 class MockPipeline:
                     def __init__(self):
                         self.set_calls = []
@@ -371,14 +371,14 @@ class TestUserCacheBatchInvalidation:
     async def test_batch_noop_without_redis(self, user_service: Any) -> None:
         """No Redis client -> no-op, no error."""
         rows = [MagicMock(id=1, email="a@example.com", username="alice", tenant_id="t", token_version=1)]
-        with patch("src.app.modules.users.service.get_redis", return_value=None):
+        with patch("src.app.modules.users.cache.get_redis", return_value=None):
             await user_service._invalidate_user_cache_batch(rows)  # must not raise
 
     @pytest.mark.asyncio
     async def test_batch_empty_input_noop(self, user_service: Any) -> None:
         """Empty user list -> no Redis interaction."""
         mock_client = AsyncMock()
-        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
+        with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
             await user_service._invalidate_user_cache_batch([])
             mock_client.pipeline.assert_not_called()
             mock_client.delete.assert_not_called()
@@ -418,7 +418,7 @@ class TestDowngradeToFreeTierTokenVersion:
 
         with (
             patch("src.app.modules.users.service.TierService", return_value=mock_tier_svc),
-            patch("src.app.modules.users.service.get_redis", return_value=None),
+            patch("src.app.modules.users.cache.get_redis", return_value=None),
         ):
             result = await user_service.downgrade_to_free_tier(user_id=42)
 

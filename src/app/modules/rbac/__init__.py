@@ -1,5 +1,13 @@
 """RBAC module for role-based access control."""
 
+from src.app.modules.rbac.crud import (
+    CRUDAssociations,
+    CRUDPermission,
+    CRUDRole,
+    crud_associations,
+    crud_permissions,
+    crud_roles,
+)
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
 from src.app.modules.rbac.schemas import (
     PermissionRead,
@@ -31,4 +39,11 @@ __all__ = [
     # Service
     "RoleService",
     "get_role_service",
+    # CRUD
+    "CRUDRole",
+    "CRUDPermission",
+    "CRUDAssociations",
+    "crud_roles",
+    "crud_permissions",
+    "crud_associations",
 ]

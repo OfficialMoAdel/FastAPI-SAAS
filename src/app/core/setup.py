@@ -144,6 +144,12 @@ def lifespan_factory(
             if create_tables_on_start:
                 await create_tables()
 
+            # Explicit user-domain security lookup wiring (deterministic;
+            # backstops the import-time registration in users/__init__.py).
+            from src.app.modules.users import register_users_security_lookups
+
+            register_users_security_lookups()
+
             # Warm caches after DB and Redis are ready
 
             from src.app.core.cache.warmer import warm_caches

@@ -18,10 +18,10 @@ def get_v1_router() -> APIRouter:
         sso_settings_router,
     )
     from src.app.modules.billing.router import router as billing_router
-    from src.app.modules.billing.routes.checkouts import router as checkouts_router
-    from src.app.modules.billing.routes.invoices import router as invoices_router
-    from src.app.modules.billing.routes.prices import router as prices_router
-    from src.app.modules.billing.routes.products import router as products_router
+    from src.app.modules.billing.routers.checkouts import router as checkouts_router
+    from src.app.modules.billing.routers.invoices import router as invoices_router
+    from src.app.modules.billing.routers.prices import router as prices_router
+    from src.app.modules.billing.routers.products import router as products_router
     from src.app.modules.dashboard.router import router as dashboard_router
     from src.app.modules.feature_flags.router import router as feature_flags_router
     from src.app.modules.health.router import router as health_router

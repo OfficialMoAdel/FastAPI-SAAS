@@ -15,10 +15,7 @@ from src.app.modules.notifications.models import (
     Notification,
     NotificationStatus,
 )
-from src.app.modules.notifications.service import (
-    NotificationService,
-    request_notification,
-)
+from src.app.modules.notifications.service import NotificationService
 
 __all__ = [
     "EmailAttachment",
@@ -31,7 +28,6 @@ __all__ = [
     "NotificationStatus",
     "SMTPProvider",
     "get_email_provider",
-    "request_notification",
     "reset_email_provider",
     "set_email_provider",
 ]

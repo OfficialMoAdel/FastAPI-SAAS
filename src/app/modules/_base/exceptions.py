@@ -27,16 +27,23 @@ class ModelNotFoundError(Exception):
         message: Human-readable error message.
     """
 
-    def __init__(self, model_name: str, identifier: Any):
+    def __init__(self, model_name: str, identifier: Any = None, message: str | None = None):
         """Initialize ModelNotFoundError.
 
         Args:
-            model_name: Name of the model class (e.g., "User", "Tenant").
-            identifier: The ID or identifier that was not found.
+            model_name: Name of the model class (e.g., "User", "Tenant") or message.
+            identifier: Optional ID or identifier that was not found.
+            message: Optional explicit error message override.
         """
         self.model_name = model_name
         self.identifier = identifier
-        self.message = f"{model_name} with id {identifier} not found"
+        if message:
+            self.message = message
+        elif identifier is not None:
+            self.message = f"{model_name} with id {identifier} not found"
+        else:
+            self.message = model_name
+        self.detail = self.message
         super().__init__(self.message)
 
 
@@ -54,8 +61,8 @@ class ValidationError(Exception):
             message: Description of the validation failure.
         """
         self.message = message
+        self.detail = message
         super().__init__(self.message)
-
 
 class DuplicateError(Exception):
     """Raised when a duplicate record is detected.
@@ -103,6 +110,22 @@ class ForbiddenError(Exception):
         self.reason = reason
         super().__init__(self.message)
 
+class UnauthorizedError(Exception):
+    """Raised when authentication fails or credentials are required.
+
+    Attributes:
+        message: Human-readable error message.
+        reason: Optional machine-readable reason code.
+        detail: Backward-compatibility attribute mirroring message.
+    """
+
+    def __init__(self, message: str = "Unauthorized", reason: str = "unauthorized"):
+        self.message = message
+        self.reason = reason
+        self.detail = message
+        super().__init__(self.message)
+
+
 
 class RateLimitExceededError(Exception):
     """Raised when a rate limit is exceeded.
@@ -144,6 +167,7 @@ __all__ = [
     "ValidationError",
     "DuplicateError",
     "ForbiddenError",
+    "UnauthorizedError",
     "RateLimitExceededError",
     "TenantContextError",
     "ServiceUnavailableError",

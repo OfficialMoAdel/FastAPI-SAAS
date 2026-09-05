@@ -86,6 +86,7 @@ class SessionInfo(BaseModel):
     ip_address: str | None = None
     user_agent: str | None = None
 
+
 class SessionListResponse(BaseModel):
     """Session list response schema."""
 
@@ -277,6 +278,7 @@ class PasskeyRegistrationOptionsResponse(BaseModel):
     publicKey: dict[str, Any]
     registration_id: str
 
+
 class PasskeyCredentialResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 
@@ -286,6 +288,7 @@ class PasskeyCredentialResponse(BaseModel):
     last_used_at: datetime | None = None
     aaguid: str | Any | None = None
     transports: list[str] | None = None
+
 
 class PasskeyCredentialList(BaseList[PasskeyCredentialResponse]):
     pass
@@ -307,6 +310,7 @@ class PasskeyLoginVerifyRequest(BaseModel):
 class PasskeyAuthenticationOptionsResponse(BaseModel):
     publicKey: dict[str, Any]
     challenge_id: str
+
 
 class PasskeyCredentialCreate(BaseCreate):
     user_id: int
@@ -389,6 +393,7 @@ class MFASetupResponse(BaseModel):
 class MFAEnableRequest(BaseModel):
     setup_token: str
     totp_token: str = Field(..., min_length=6, max_length=6)
+
     @field_validator("totp_token")
     @classmethod
     def validate_totp_token(cls, v: str) -> str:

@@ -9,7 +9,7 @@ username/tenant comparisons.
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep, get_current_superuser
@@ -45,9 +45,15 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> Any:
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(requires_permission(Permission.USERS_MANAGE))],
 )
-async def write_user(request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)) -> Any:
+async def write_user(
+    user: UserCreate,
+    service: UserService = Depends(_get_user_service),
+    db: AsyncSession = Depends(async_get_db),
+) -> Any:
     """Create a new user."""
-    return await service.create(user)
+    from src.app.modules.auth.services.email_verification import make_email_verifier
+
+    return await service.create(user, email_verifier=make_email_verifier(db))
 
 
 @router.get(
@@ -56,7 +62,6 @@ async def write_user(request: Request, user: UserCreate, service: UserService = 
     dependencies=[Depends(requires_permission(Permission.USERS_READ))],
 )
 async def read_users(
-    request: Request,
     pagination: PaginationParams = Depends(get_pagination_params),
     service: UserService = Depends(_get_user_service),
 ) -> Any:
@@ -69,7 +74,6 @@ async def read_users(
 
 @router.get("/me", response_model=UserReadPublic)
 async def read_users_me(
-    request: Request,
     ctx: RequestContextDep,
     service: UserService = Depends(_get_user_service),
 ) -> Any:
@@ -113,7 +117,6 @@ async def read_users_me(
 
 @router.get("/{user_id}", response_model=UserReadPublic)
 async def read_user(
-    request: Request,
     user_id: str,
     ctx: RequestContextDep,
     service: UserService = Depends(_get_user_service),
@@ -149,7 +152,6 @@ async def read_user(
 
 @router.patch("/{user_id}", response_model=UserUpdateResponse)
 async def patch_user(
-    request: Request,
     values: UserUpdate,
     user_id: str,
     ctx: RequestContextDep,
@@ -165,7 +167,6 @@ async def patch_user(
 
 @router.put("/{user_id}", response_model=UserUpdateResponse)
 async def put_user(
-    request: Request,
     values: UserUpdate,
     user_id: str,
     ctx: RequestContextDep,
@@ -181,7 +182,6 @@ async def put_user(
 
 @router.delete("/{user_id}", response_model=UserDeleteResponse)
 async def erase_user(
-    request: Request,
     user_id: str,
     ctx: RequestContextDep,
     service: UserService = Depends(_get_user_service),
@@ -197,7 +197,6 @@ async def erase_user(
 
 @router.delete("/db/{user_id}", response_model=UserDeleteResponse, dependencies=[Depends(get_current_superuser)])
 async def erase_db_user(
-    request: Request,
     user_id: str,
     service: UserService = Depends(_get_user_service),
     token: str = Depends(oauth2_scheme),
@@ -212,9 +211,7 @@ async def erase_db_user(
 
 
 @router.get("/{user_id}/rate-limits", response_model=dict[str, Any], dependencies=[Depends(get_current_superuser)])
-async def read_user_rate_limits(
-    request: Request, user_id: str, service: UserService = Depends(_get_user_service)
-) -> dict[str, Any]:
+async def read_user_rate_limits(user_id: str, service: UserService = Depends(_get_user_service)) -> dict[str, Any]:
     """Get user's rate limits based on their tier.
 
     Supports both integer user IDs and username strings for backward compatibility.
@@ -224,7 +221,6 @@ async def read_user_rate_limits(
 
 @router.get("/{user_id}/tier", response_model=UserTierResponse | None)
 async def read_user_tier(
-    request: Request,
     user_id: str,
     ctx: RequestContextDep,
     service: UserService = Depends(_get_user_service),
@@ -255,7 +251,7 @@ async def read_user_tier(
 
 @router.patch("/{user_id}/tier", response_model=UserUpdateResponse, dependencies=[Depends(get_current_superuser)])
 async def patch_user_tier(
-    request: Request, user_id: str, values: UserTierUpdate, service: UserService = Depends(_get_user_service)
+    user_id: str, values: UserTierUpdate, service: UserService = Depends(_get_user_service)
 ) -> UserUpdateResponse:
     """Update user's tier (superuser only).
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from uuid import UUID
 
 from cachetools import TTLCache  # noqa: F401 — re-exported for typing
 
@@ -28,6 +29,11 @@ _L1_INVALIDATION_CHANNEL = "tenant:l1_invalidate"
 # exposes a non-resetting view so service callers can invalidate without
 # re-importing the middleware module.
 _l1_invalidation_task: asyncio.Task | None = None
+def get_tenant_cache_key(tenant_id: UUID | str) -> str:
+    """Generate Redis cache key for tenant."""
+    return f"tenant:{tenant_id}"
+
+
 
 
 def invalidate_tenant_l1(slug: str | None = None) -> None:

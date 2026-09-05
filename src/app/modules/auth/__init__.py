@@ -23,9 +23,7 @@ __all__ = [
     "mfa_router",
     # Services
     "AuthService",
-    "AuthGateway",
     "get_auth_service",
-    "get_auth",
     "SSOService",
     "get_sso_service",
     "SSOSettingsService",
@@ -62,7 +60,7 @@ def __getattr__(name: str) -> Any:
 
         return getattr(r, name)
 
-    if name in ("AuthService", "AuthGateway", "get_auth_service", "get_auth"):
+    if name in ("AuthService", "get_auth_service"):
         from src.app.modules.auth import service as s
 
         return getattr(s, name)

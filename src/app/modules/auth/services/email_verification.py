@@ -7,14 +7,15 @@ including timing equalization to prevent account enumeration.
 
 import asyncio
 import random
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
-from src.app.core.exceptions.http_exceptions import UnauthorizedException
 from src.app.core.security.tokens import hash_token
 from src.app.core.utils.user_utils import get_user_attr
+from src.app.modules._base.exceptions import UnauthorizedError
 from src.app.modules.auth.models import EmailVerificationToken, generate_verification_token
 from src.app.modules.users.service import UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
@@ -65,7 +66,7 @@ class EmailVerificationService:
             verification_link = f"{settings.app.FRONTEND_URL}/verify-email?token={raw_token}"
 
             # Standardized notification dispatch via event bus outbox seam
-            from src.app.modules.notifications.service import request_notification
+            from src.app.core.events.notifications import request_notification
 
             await request_notification(
                 to_email=email,
@@ -98,16 +99,16 @@ class EmailVerificationService:
         verification_token = result.scalar_one_or_none()
 
         if not verification_token:
-            raise UnauthorizedException("Invalid verification token.")
+            raise UnauthorizedError("Invalid verification token.")
 
         if verification_token.is_expired:
-            raise UnauthorizedException("Verification token has expired.")
+            raise UnauthorizedError("Verification token has expired.")
 
         # Get user
         user_service = UserService(db)
         user = await user_service.crud.get(db=db, id=verification_token.user_id, is_deleted=False)
         if not user:
-            raise UnauthorizedException("User not found.")
+            raise UnauthorizedError("User not found.")
 
         # BUG FIX: Reject verification for admin-disabled accounts.
         # But if they are inactive ONLY because they are unverified, we activate them here.
@@ -115,7 +116,7 @@ class EmailVerificationService:
         is_email_verified = bool(get_user_attr(user, "is_email_verified", False))
         if not is_active and is_email_verified:
             # Already verified but inactive -> Admin disabled
-            raise UnauthorizedException("This account is inactive. Please contact support.")
+            raise UnauthorizedError("This account is inactive. Please contact support.")
 
         # Update user status to verified and active
         await user_service.crud.update(
@@ -143,3 +144,17 @@ class EmailVerificationService:
             user, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
         )
         return {"message": "Email verified successfully."}
+
+
+def make_email_verifier(db: AsyncSession) -> Callable[[str], Awaitable[None]]:
+    """Build an email-verifier closure bound to the live request session.
+
+    Shared factory for auth ``register`` + users ``write_user`` (dedupes the
+    identical inline closures). ``db`` must be the live request session —
+    never defer the returned callable into background work.
+    """
+
+    async def _verifier(email: str) -> None:
+        await EmailVerificationService().send_verification_email(email, db)
+
+    return _verifier

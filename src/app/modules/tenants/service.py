@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
+from src.app.core.tenancy.cache import get_tenant_cache_key
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.tenants.crud import crud_tenants
@@ -39,11 +40,6 @@ def _tenant_to_dict(tenant: Tenant) -> dict[str, Any]:
         "storage_usage_bytes": getattr(tenant, "storage_usage_bytes", 0),
         "file_count": getattr(tenant, "file_count", 0),
     }
-
-
-def get_tenant_cache_key(tenant_id: UUID | str) -> str:
-    """Generate Redis cache key for tenant."""
-    return f"tenant:{tenant_id}"
 
 
 def _get_slug_cache_key(slug: str) -> str:

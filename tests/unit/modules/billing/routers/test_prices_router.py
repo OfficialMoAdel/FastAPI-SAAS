@@ -6,7 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.app.modules.billing.routes.prices import router as prices_router
+from src.app.modules.billing.routers.prices import router as prices_router
 
 
 @pytest.fixture
@@ -53,12 +53,12 @@ def test_create_requires_product_id_query():
 
 def test_list_endpoint_supports_filters():
     """Test that list endpoint supports filtering by product_id and is_active."""
-    with patch("src.app.modules.billing.routes.prices.PricingService") as MockService:
+    with patch("src.app.modules.billing.routers.prices.PricingService") as MockService:
         mock_instance = MockService.return_value
         mock_instance.list_prices = AsyncMock(return_value={"data": [], "total_count": 0})
 
         # Mock the database and tenant dependencies
-        with patch("src.app.modules.billing.routes.prices.async_get_db"):
+        with patch("src.app.modules.billing.routers.prices.async_get_db"):
             from fastapi import FastAPI
             from fastapi.testclient import TestClient
 

@@ -177,7 +177,7 @@ class TestPasskeyServiceMaxLimit:
     @pytest.mark.asyncio
     async def test_rejects_registration_when_at_limit(self):
         """Verify registration fails when user has 10 passkeys."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
 
         service = PasskeyService()
@@ -190,7 +190,7 @@ class TestPasskeyServiceMaxLimit:
         ) as mock_can_create:
             mock_can_create.return_value = False  # cannot create (at limit)
 
-            with pytest.raises(BadRequestException) as exc_info:
+            with pytest.raises(ValidationError) as exc_info:
                 await service.generate_registration_challenge(
                     db=mock_db,
                     user=mock_user,
@@ -243,7 +243,7 @@ class TestPasskeyServiceVerification:
     @pytest.mark.asyncio
     async def test_verify_registration_validates_challenge(self):
         """Verify registration validates the stored challenge."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
 
         service = PasskeyService()
@@ -253,7 +253,7 @@ class TestPasskeyServiceVerification:
         with patch.object(service, "_get_stored_challenge", new_callable=AsyncMock) as mock_challenge:
             mock_challenge.return_value = None  # No stored challenge
 
-            with pytest.raises(BadRequestException) as exc_info:
+            with pytest.raises(ValidationError) as exc_info:
                 await service.verify_registration(
                     db=mock_db,
                     user=mock_user,
@@ -411,7 +411,7 @@ class TestPasskeyServiceCredentialDeletion:
     @pytest.mark.asyncio
     async def test_delete_credential_verifies_ownership(self):
         """Verify delete checks that credential belongs to user."""
-        from src.app.core.exceptions.http_exceptions import NotFoundException
+        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.auth.services.passkey import PasskeyService
 
         service = PasskeyService()
@@ -423,7 +423,7 @@ class TestPasskeyServiceCredentialDeletion:
         ) as mock_get:
             mock_get.return_value = None  # Credential not found
 
-            with pytest.raises(NotFoundException):
+            with pytest.raises(ModelNotFoundError):
                 await service.delete_credential(
                     db=mock_db,
                     user_id=1,
@@ -546,7 +546,7 @@ class TestPasskeyServiceAuthentication:
     @pytest.mark.asyncio
     async def test_verify_authentication_replay_attack(self):
         """Verify replay attack detection (counter check)."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
 
         service = PasskeyService()
@@ -565,7 +565,7 @@ class TestPasskeyServiceAuthentication:
                     # New counter is 10 (or lower) -> Replay
                     mock_verify.return_value = MagicMock(new_sign_count=10)
 
-                    with pytest.raises(BadRequestException) as exc:
+                    with pytest.raises(ValidationError) as exc:
                         await service.verify_authentication(
                             db=mock_db, redis=mock_redis, credential={"id": "x"}, challenge_id="test-challenge-id"
                         )  # noqa: E501
@@ -575,7 +575,7 @@ class TestPasskeyServiceAuthentication:
     @pytest.mark.asyncio
     async def test_verify_authentication_invalid_challenge(self):
         """Verify fails when challenge is invalid or expired."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
 
         service = PasskeyService()
@@ -583,7 +583,7 @@ class TestPasskeyServiceAuthentication:
         with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
             mock_get_challenge.return_value = None
 
-            with pytest.raises(BadRequestException) as exc:
+            with pytest.raises(ValidationError) as exc:
                 await service.verify_authentication(
                     db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id"
                 )  # noqa: E501
@@ -593,7 +593,7 @@ class TestPasskeyServiceAuthentication:
     @pytest.mark.asyncio
     async def test_verify_authentication_credential_not_found(self):
         """Verify fails when credential not found in DB."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
 
         service = PasskeyService()
@@ -604,7 +604,7 @@ class TestPasskeyServiceAuthentication:
             with patch.object(service, "_find_credential_by_id", new_callable=AsyncMock) as mock_find:
                 mock_find.return_value = None
 
-                with pytest.raises(BadRequestException) as exc:
+                with pytest.raises(ValidationError) as exc:
                     await service.verify_authentication(
                         db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id"
                     )  # noqa: E501

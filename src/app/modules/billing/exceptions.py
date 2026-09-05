@@ -58,4 +58,25 @@ class SubscriptionRequiredError(Exception):
         super().__init__(self.message)
 
 
-__all__ = ["PaymentRequiredError", "SubscriptionRequiredError"]
+class WebhookVerificationError(Exception):
+    """Raised when Stripe webhook payload or signature verification fails."""
+
+    def __init__(self, message: str = "Webhook verification failed"):
+        self.message = message
+        super().__init__(self.message)
+
+
+class WebhookNotConfiguredError(Exception):
+    """Raised when Stripe webhook secret is not configured in environment."""
+
+    def __init__(self, message: str = "Webhook secret not configured"):
+        self.message = message
+        super().__init__(self.message)
+
+
+__all__ = [
+    "PaymentRequiredError",
+    "SubscriptionRequiredError",
+    "WebhookNotConfiguredError",
+    "WebhookVerificationError",
+]

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.app.modules._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
+from src.app.modules.rbac.crud import crud_associations
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
 from src.app.modules.rbac.schemas import RoleCreate, RoleUpdate
 from src.app.modules.rbac.service import RoleService
@@ -252,27 +253,47 @@ class TestRoleServicePermissions:
 
     @pytest.mark.asyncio
     async def test_remove_permission_success(self, role_service, mock_db, mock_role, mock_permission):
-        """Test removing permission from role."""
+        """Test removing permission from role (single-statement atomic delete)."""
         role_service.get_role = AsyncMock(return_value=mock_role)
 
-        mock_result_perm = MagicMock()
-        mock_result_perm.scalar_one_or_none.return_value = mock_permission
+        with (
+            patch(
+                "src.app.modules.rbac.service.crud_permissions.get_by_slug",
+                new_callable=AsyncMock,
+                return_value=mock_permission,
+            ),
+            patch.object(
+                crud_associations, "remove_role_permission", new_callable=AsyncMock, return_value=True
+            ) as mock_remove,
+            patch.object(crud_associations, "get_role_affected_user_ids", new_callable=AsyncMock, return_value=[]),
+            patch.object(role_service, "_invalidate_role_cache", new_callable=AsyncMock) as mock_invalidate,
+        ):
+            await role_service.remove_permission_from_role(1, "users:read")
 
-        # Mock existing link (Found)
-        mock_link = RolePermission(role_id=1, permission_id=1)
-        mock_result_link = MagicMock()
-        mock_result_link.scalar_one_or_none.return_value = mock_link
+            # Atomic path: single DELETE statement, no loaded-object db.delete.
+            mock_remove.assert_awaited_once_with(mock_db, 1, mock_permission.id)
+            mock_db.delete.assert_not_called()
+            mock_db.commit.assert_called_once()
+            mock_invalidate.assert_awaited_once_with(1)
 
-        # Mock affected users
-        mock_affected_result = MagicMock()
-        mock_affected_result.scalars.return_value.all.return_value = []
+    @pytest.mark.asyncio
+    async def test_remove_permission_not_assigned_noop(self, role_service, mock_db, mock_role, mock_permission):
+        """Removing a non-assigned permission is a no-op (no commit, no invalidation)."""
+        role_service.get_role = AsyncMock(return_value=mock_role)
 
-        mock_db.execute.side_effect = [mock_result_perm, mock_result_link, mock_affected_result]
+        with (
+            patch(
+                "src.app.modules.rbac.service.crud_permissions.get_by_slug",
+                new_callable=AsyncMock,
+                return_value=mock_permission,
+            ),
+            patch.object(crud_associations, "remove_role_permission", new_callable=AsyncMock, return_value=False),
+            patch.object(role_service, "_invalidate_role_cache", new_callable=AsyncMock) as mock_invalidate,
+        ):
+            await role_service.remove_permission_from_role(1, "users:read")
 
-        await role_service.remove_permission_from_role(1, "users:read")
-
-        mock_db.delete.assert_called_once_with(mock_link)
-        mock_db.commit.assert_called_once()
+            mock_db.commit.assert_not_called()
+            mock_invalidate.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_role_permissions(self, role_service, mock_db, mock_role, mock_permission):
@@ -482,33 +503,29 @@ class TestRoleServiceUserAssignment:
 
     @pytest.mark.asyncio
     async def test_remove_role_success(self, role_service, mock_db):
-        """Test removing role from user."""
-        mock_user_role = UserRole(
-            user_id=123,
-            role_id=1,
-            tenant_id=MockUser.DEFAULT_TENANT_ID,
-        )
-
+        """Test removing role from user (single-statement atomic delete)."""
         # Mock user tenant-isolation check (user exists in tenant)
         mock_user_result = MagicMock()
         mock_user_result.scalar_one_or_none.return_value = MagicMock(id=123, tenant_id=MockUser.DEFAULT_TENANT_ID)
+        mock_db.execute = AsyncMock(return_value=mock_user_result)
 
-        # Mock find-UserRole check
-        mock_role_result = MagicMock()
-        mock_role_result.scalar_one_or_none.return_value = mock_user_role
+        with (
+            patch.object(
+                crud_associations, "remove_user_role", new_callable=AsyncMock, return_value=True
+            ) as mock_remove,
+            patch.object(crud_associations, "bump_user_token_version", new_callable=AsyncMock),
+            patch(
+                "src.app.modules.rbac.service.invalidate_user_permissions_cache", new_callable=AsyncMock
+            ) as mock_cache,
+            patch("src.app.modules.users.service.UserService") as mock_user_service_cls,
+        ):
+            mock_user_service_cls.return_value._invalidate_user_cache = AsyncMock()
 
-        # Mock token_version UPDATE result
-        mock_update_result = MagicMock()
-
-        # Calls: (1) user check, (2) find UserRole, (3) token_version UPDATE
-        mock_db.execute = AsyncMock(side_effect=[mock_user_result, mock_role_result, mock_update_result])
-
-        with patch(
-            "src.app.modules.rbac.service.invalidate_user_permissions_cache", new_callable=AsyncMock
-        ) as mock_cache:
             await role_service.remove_role_from_user(user_id=123, role_id=1)
 
-            mock_db.delete.assert_called_once_with(mock_user_role)
-            # Single commit after both delete and token_version update
+            # Atomic path: single DELETE statement, no loaded-object db.delete.
+            mock_remove.assert_awaited_once_with(mock_db, role_service.tenant_id, 123, 1)
+            mock_db.delete.assert_not_called()
+            # Single commit after delete + token_version update
             assert mock_db.commit.call_count == 1
             mock_cache.assert_called_once()

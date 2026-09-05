@@ -66,9 +66,12 @@ class TestMagicLinkService:
     def mock_db(self):
         """Create a mock async database session."""
         from unittest.mock import AsyncMock, MagicMock
+
         db = AsyncMock()
         mock_result = MagicMock()
         db_link = MagicMock()
+        # Fresh (unused) link: replay guard treats any non-None used_at as used.
+        db_link.used_at = None
         mock_result.scalar_one_or_none.return_value = db_link
         db.execute.return_value = mock_result
         return db

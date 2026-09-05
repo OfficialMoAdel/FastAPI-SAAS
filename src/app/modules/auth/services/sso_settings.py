@@ -11,10 +11,7 @@ from src.app.core.redis_provider import get_redis
 
 logger = get_logger(__name__)
 
-from src.app.core.exceptions.http_exceptions import (
-    DuplicateValueException,
-    NotFoundException,
-)
+from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 
 # sso-cache FIX: single source of truth for the provider-settings cache TTL,
 # used by both the startup warmer and the read write-through path.
@@ -44,7 +41,7 @@ class SSOSettingsService:
         """
         # Check if provider already exists
         if await crud_sso_settings.exists(db=db, provider=settings.provider):
-            raise DuplicateValueException(f"Settings for provider '{settings.provider}' already exist")
+            raise DuplicateError("provider", settings.provider)
 
         encryption = get_encryption()
 
@@ -111,7 +108,7 @@ class SSOSettingsService:
 
         settings = await crud_sso_settings.get(db=db, provider=provider)
         if not settings:
-            raise NotFoundException(f"Settings for provider '{provider}' not found")
+            raise ModelNotFoundError("SSOSettings", provider, message=f"Settings for provider '{provider}' not found")
 
         result = SSOSettingsRead.model_validate(settings)
 
@@ -155,7 +152,7 @@ class SSOSettingsService:
         """
         settings = await crud_sso_settings.get(db=db, provider=provider)
         if not settings:
-            raise NotFoundException(f"Settings for provider '{provider}' not found")
+            raise ModelNotFoundError("SSOSettings", provider, message=f"Settings for provider '{provider}' not found")
 
         encryption = get_encryption()
 
@@ -197,7 +194,7 @@ class SSOSettingsService:
         """Update SSO settings."""
         current = await crud_sso_settings.get(db=db, provider=provider)
         if not current:
-            raise NotFoundException(f"Settings for provider '{provider}' not found")
+            raise ModelNotFoundError("SSOSettings", provider, message=f"Settings for provider '{provider}' not found")
 
         # Determine tenant_id if not passed
         if not tenant_id:
@@ -251,7 +248,7 @@ class SSOSettingsService:
                 tenant_id = tenant.id
 
         if not await crud_sso_settings.exists(db=db, provider=provider):
-            raise NotFoundException(f"Settings for provider '{provider}' not found")
+            raise ModelNotFoundError("SSOSettings", provider, message=f"Settings for provider '{provider}' not found")
 
         await crud_sso_settings.delete(db=db, provider=provider)
 

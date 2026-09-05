@@ -22,7 +22,11 @@ Redis client is read at call time through
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
-from src.app.modules.billing.crud import crud_billing_records, crud_user_subscriptions
+from src.app.modules.billing.crud import (
+    crud_billing_records,
+    crud_subscription_plans,
+    crud_user_subscriptions,
+)
 
 logger = get_logger(__name__)
 
@@ -51,3 +55,4 @@ from .idempotency import (  # noqa: E402,F401
     _try_acquire_event_lock,
     mark_event_processed,
 )
+from .ingest import derive_and_attach_tenant, ingest_webhook  # noqa: E402,F401

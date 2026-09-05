@@ -14,19 +14,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.core.config import settings
-from src.app.core.events import EventPriority, event_bus
-from src.app.core.exceptions.http_exceptions import BadRequestException, UnauthorizedException
+from src.app.core.events import EventPriority
 from src.app.core.security import get_password_hash, verify_password
 from src.app.core.security.tokens import hash_token
+from src.app.modules._base.exceptions import UnauthorizedError, ValidationError
 from src.app.modules.audit_logs import audit
 from src.app.modules.auth.models import PasswordResetToken, generate_reset_token
 from src.app.modules.users.service import UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
 
 logger = get_logger(__name__)
-# Re-exported for test backward compatibility
-# (TODO: REMOVE once tests/unit/modules/auth no longer patch this module attribute)
-event_bus = event_bus
 
 
 class PasswordLifecycleService:
@@ -50,11 +47,11 @@ class PasswordLifecycleService:
         user_service = UserService(db)
         user = await user_service.crud.get(db=db, id=user_id, is_deleted=False, is_active=True)
         if not user:
-            raise UnauthorizedException("User not found.")
+            raise UnauthorizedError("User not found.")
 
         # Verify current password
         if not await verify_password(current_password, user["hashed_password"]):
-            raise UnauthorizedException("Current password is incorrect.")
+            raise UnauthorizedError("Current password is incorrect.")
 
         # SECURITY FIX: Enforce password complexity
         try:
@@ -62,7 +59,7 @@ class PasswordLifecycleService:
 
             UserCreate.validate_password_complexity(new_password)
         except ValueError as e:
-            raise BadRequestException(str(e))
+            raise ValidationError(str(e))
 
         # Hash and update new password
         new_hashed = await get_password_hash(new_password)
@@ -204,7 +201,7 @@ class PasswordLifecycleService:
             # `subject`, and `html_content` (pre-rendered). The mismatched payload caused the
             # event to be silently dropped → password reset emails were NEVER sent.
             # Standardized notification dispatch via outbox seam
-            from src.app.modules.notifications.service import request_notification
+            from src.app.core.events.notifications import request_notification
 
             await request_notification(
                 to_email=email,
@@ -256,25 +253,25 @@ class PasswordLifecycleService:
         reset_token = result.scalar_one_or_none()
 
         if not reset_token:
-            raise UnauthorizedException("Invalid password reset token.")
+            raise UnauthorizedError("Invalid password reset token.")
 
         if not reset_token.is_valid:
             if reset_token.used:
-                raise UnauthorizedException("This password reset token has already been used.")
+                raise UnauthorizedError("This password reset token has already been used.")
             if reset_token.is_expired:
-                raise UnauthorizedException("This password reset token has expired.")
-            raise UnauthorizedException("Invalid password reset token.")
+                raise UnauthorizedError("This password reset token has expired.")
+            raise UnauthorizedError("Invalid password reset token.")
 
         # SECURITY FIX: Get user WITHOUT is_deleted filter to check account status
         user_service = UserService(db)
         user = await user_service.crud.get(db=db, id=reset_token.user_id)
         if not user:
-            raise UnauthorizedException("Invalid password reset token.")
+            raise UnauthorizedError("Invalid password reset token.")
 
         # S5 FIX: Prevent SSO-only accounts from setting a local password
         hashed_pw = user.get("hashed_password", "") if isinstance(user, dict) else getattr(user, "hashed_password", "")
         if str(hashed_pw).startswith("!SSO_ONLY"):
-            raise UnauthorizedException("This account uses SSO authentication. Password reset is not available.")
+            raise UnauthorizedError("This account uses SSO authentication. Password reset is not available.")
 
         # SECURITY FIX: Use generic message for deleted/inactive accounts
         # Prevents account enumeration attacks - attackers cannot determine account status
@@ -282,7 +279,7 @@ class PasswordLifecycleService:
         is_active = user.get("is_active", False) if isinstance(user, dict) else getattr(user, "is_active", False)
         if is_deleted or not is_active:
             await asyncio.sleep(0.15 + random.uniform(-0.05, 0.05))
-            raise UnauthorizedException("This account is not accessible. Please contact support for assistance.")
+            raise UnauthorizedError("This account is not accessible. Please contact support for assistance.")
 
         # SECURITY FIX: Enforce password complexity BEFORE marking token as used
         try:
@@ -290,7 +287,7 @@ class PasswordLifecycleService:
 
             UserCreate.validate_password_complexity(new_password)
         except ValueError as e:
-            raise BadRequestException(str(e))
+            raise ValidationError(str(e))
 
         # Mark token as used AFTER successful validation
         # SECURITY FIX: Prevents token reuse if password change fails later, but avoids burning on bad input
