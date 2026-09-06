@@ -68,13 +68,13 @@ class SqlAlchemyUserRepository(UserRepository):
         return dict(result) if result else {}
 
     async def update(self, user_id: int, user_data: Any) -> dict[str, Any] | None:
-        result = await self.crud.update(
+        await self.crud.update(
             db=self.db,
             id=user_id,
             object=user_data,
             schema_to_select=UserRead,
         )
-        return dict(result) if result else None
+        return await self.get(id=user_id)
 
     async def delete(self, user_id: int) -> bool:
         await self.crud.db_delete(db=self.db, id=user_id)

@@ -18,6 +18,8 @@ from src.app.core.pagination import PaginationParams, get_pagination_params
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.core.security import oauth2_scheme
+from src.app.core.utils.user_utils import get_user_attr
+from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules.users.schemas import (
     UserCreate,
     UserDeleteResponse,
@@ -79,40 +81,13 @@ async def read_users_me(
 ) -> Any:
     """Get current authenticated user profile.
 
-    `ctx.user` returns auth-oriented payload; fetch full user profile
-    to satisfy `UserRead` response contract.
+    `ctx.user` returns auth-oriented payload; the service resolves the full
+    user profile to satisfy the `UserRead` response contract.
     """
-    current_user = ctx.user
-    # Normalize current_user to dict (supports both dict and ORM/attr objects)
-    if isinstance(current_user, dict):
-        user_id = current_user.get("id")
-        username = current_user.get("username")
-        has_profile_fields = {"name", "profile_image_url"}.issubset(current_user.keys())
-    else:
-        user_id = getattr(current_user, "id", None)
-        username = getattr(current_user, "username", None)
-        has_profile_fields = hasattr(current_user, "name") and hasattr(current_user, "profile_image_url")
-
-    # R5-1: Reuse current_user directly if it already has the full profile fields
-    # (e.g. if loaded via API key or DB fallback)
-    if has_profile_fields:
-        return current_user
-
-    try:
-        if user_id is not None:
-            user = await service.get(int(user_id))
-            if user:
-                return user
-        elif username:
-            user = await service.get_by_username(username)
-            if user:
-                return user
-    except (ValueError, TypeError) as e:
-        from src.app.core.logger import get_logger
-
-        logger = get_logger(__name__)
-        logger.warning("Invalid user context inside read_users_me", error=str(e))
-    raise HTTPException(status_code=401, detail="Invalid user context")
+    user = await service.resolve_current_profile(ctx.user)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid user context")
+    return user
 
 
 @router.get("/{user_id}", response_model=UserReadPublic)
@@ -124,28 +99,20 @@ async def read_user(
     """Get user by ID or username (authenticated users only).
 
     Supports both integer user IDs and username strings for backward compatibility.
+    Tenant isolation is enforced in the service (cross-tenant reads 404);
+    ownership via the single ownership seam (superuser bypass included).
     """
-    # Try to get by ID first, then fall back to username
-    try:
-        user = await service.get(int(user_id))
-    except (ValueError, TypeError):
-        # If not a valid integer, try username
-        user = await service.get_by_username(user_id)
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
     # SECURITY: tenant isolation — a cross-tenant user is indistinguishable
     # from a nonexistent one (404, not 403). ctx.require_tenant() enforces
     # that this is a tenant-bound path.
     ctx.require_tenant()
-    user_tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
-    if str(user_tenant_id) != str(ctx.tenant_id):
+    try:
+        user = await service.get_profile(user_id, tenant_id=ctx.tenant_id)
+    except ModelNotFoundError:
         raise HTTPException(status_code=404, detail="User not found")
 
     # SECURITY: IDOR via the single ownership seam (superuser bypass included).
-    target_user_id = user.get("id") if isinstance(user, dict) else user.id
-    ctx.require_ownership(target_user_id)
+    ctx.require_ownership(get_user_attr(user, "id"))
 
     return user
 

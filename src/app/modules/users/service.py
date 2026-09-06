@@ -31,6 +31,7 @@ from src.app.modules.users.session_invalidation import InvalidationReason, shoul
 
 if TYPE_CHECKING:
     from src.app.api.deps.auth import AuthenticatedUser
+    from src.app.repositories.interfaces.user import UserRepository
 
 logger = get_logger(__name__)
 
@@ -61,19 +62,16 @@ class UserService:
 
     def __init__(
         self,
-        db: AsyncSession | None = None,
-        repository: Any = None,
+        db: AsyncSession,
+        repository: UserRepository | None = None,
     ) -> None:
         self.db = db
         self.crud = crud_users
-        if repository is not None:
-            self.repository = repository
-        elif db is not None:
+        self.repository: UserRepository | None = repository
+        if self.repository is None:
             from src.app.repositories.sqlalchemy.user import SqlAlchemyUserRepository
 
             self.repository = SqlAlchemyUserRepository(db, crud=self.crud)
-        else:
-            self.repository = None
     @staticmethod
     def _parse_user_id(username: str) -> int | None:
         """M-8: parse a user identifier that may be an integer ID or a username.
@@ -327,6 +325,8 @@ class UserService:
             user_with_tier = await self.repository.get_with_tier(username=username, email=email)
         else:
             user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, username=username, email=email)
+        if not user_with_tier:
+            return None
 
         # Cache it
         await UserCacheInvalidator.cache_user_auth_info(cache_key, user_with_tier)
@@ -390,6 +390,65 @@ class UserService:
             from src.app.modules.users.schemas import UserRead
 
             return UserRead.model_validate(user).model_dump(mode="json")
+        return None
+    async def get_profile(
+        self,
+        identifier: str,
+        *,
+        tenant_id: Any,
+    ) -> dict[str, Any]:
+        """Load a user by ID or username and enforce tenant isolation.
+
+        Cross-tenant lookups raise ModelNotFoundError so they are
+        indistinguishable from nonexistent users (404, not 403).
+        """
+        try:
+            user = await self.get(int(identifier))
+        except (ValueError, TypeError):
+            try:
+                user = await self.get_by_username(identifier)
+            except ModelNotFoundError:
+                user = None
+        if user is None:
+            raise ModelNotFoundError("User", identifier)
+        user_tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+        if tenant_id is not None and str(user_tenant_id) != str(tenant_id):
+            raise ModelNotFoundError("User", identifier)
+        return user
+
+    async def resolve_current_profile(self, current_user: Any) -> dict[str, Any] | None:
+        """Resolve the full profile for the authenticated principal.
+
+        Returns the principal directly when it already carries profile fields
+        (e.g. loaded via API key or DB fallback); otherwise loads via ID or
+        username. Returns None when the principal is unresolvable.
+        """
+        if isinstance(current_user, dict):
+            user_id = current_user.get("id")
+            username = current_user.get("username")
+            if {"name", "profile_image_url"}.issubset(current_user.keys()):
+                return current_user
+        else:
+            user_id = getattr(current_user, "id", None)
+            username = getattr(current_user, "username", None)
+            if hasattr(current_user, "name") and hasattr(current_user, "profile_image_url"):
+                return cast(dict[str, Any], current_user)
+        try:
+            if user_id is not None:
+                user = await self.get(int(user_id))
+                if user:
+                    return user
+            elif username:
+                try:
+                    return await self.get_by_username(username)
+                except ModelNotFoundError:
+                    return None
+        except (ValueError, TypeError):
+            if username:
+                try:
+                    return await self.get_by_username(username)
+                except ModelNotFoundError:
+                    return None
         return None
 
     async def get_by_email(self, email: str) -> dict[str, Any] | None:
@@ -908,5 +967,7 @@ class UserService:
 
 
 def get_user_service(db: AsyncSession) -> UserService:
-    """Dependency injection factory for UserService."""
-    return UserService(db)
+    """Dependency injection factory for UserService (wired via composition root)."""
+    from src.app.repositories.sqlalchemy.user import SqlAlchemyUserRepository
+
+    return UserService(db, repository=SqlAlchemyUserRepository(db))

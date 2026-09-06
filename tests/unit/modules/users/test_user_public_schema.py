@@ -45,7 +45,7 @@ class TestUsersMeBodyFiltering:
     def test_service_path_omits_privileged_fields(self, client) -> None:
         """GET /users/me via service fetch: body has no is_superuser/tenant_id."""
         mock_service = Mock(spec=UserService)
-        mock_service.get = AsyncMock(return_value=_full_user_dict())
+        mock_service.resolve_current_profile = AsyncMock(return_value=_full_user_dict())
 
         # current_user WITHOUT profile fields -> handler takes the service path
         client.app.dependency_overrides[get_current_user] = lambda: {
@@ -89,8 +89,7 @@ class TestGetUserByIdBodyFiltering:
     def test_get_user_by_id_omits_privileged_fields(self, client) -> None:
         """GET /users/{user_id}: body has no is_superuser/tenant_id."""
         mock_service = Mock(spec=UserService)
-        mock_service.get = AsyncMock(return_value=_full_user_dict())
-        mock_service.get_by_username = AsyncMock(return_value=_full_user_dict())
+        mock_service.get_profile = AsyncMock(return_value=_full_user_dict())
 
         client.app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 

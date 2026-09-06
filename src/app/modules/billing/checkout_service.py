@@ -26,32 +26,37 @@ logger = get_logger(__name__)
 class CheckoutService:
     """Service for managing Stripe checkout sessions."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(
+        self,
+        db: AsyncSession,
+        gateway: Any = None,
+        settings_service: Any = None,
+        plan_service: Any = None,
+    ):
         self.db = db
+        from src.app.modules.billing.gateway import get_payment_gateway
+
+        self.gateway = gateway or get_payment_gateway(self.db)
+        self.settings_service = settings_service or StripeSettingsService(self.db)
+        self.plan_service = plan_service or SubscriptionPlanService(self.db)
 
     async def create_session(self, user_id: int, user_email: str, data: CheckoutCreate) -> CheckoutSession:
         """Create a Stripe Checkout session."""
         tenant = require_active_tenant()
 
-        # Use Platform API Key from Env
-        from src.app.modules.billing.gateway import get_payment_gateway
-
-        gateway = get_payment_gateway(self.db)
-        api_key = await gateway.get_api_key(tenant.id)
+        api_key = await self.gateway.get_api_key(tenant.id)
         if not api_key:
             raise StripeError("Stripe API key not configured", status_code=500)
 
         # Get settings to find Customer ID
-        settings_service = StripeSettingsService(self.db)
-        stripe_settings = await settings_service.get_settings()
+        stripe_settings = await self.settings_service.get_settings()
 
         customer_id = None
         if stripe_settings:
             customer_id = stripe_settings.get("stripe_customer_id")
 
         # Get Plan
-        plan_service = SubscriptionPlanService(self.db)
-        plan = await plan_service.get_plan(data.plan_id)
+        plan = await self.plan_service.get_plan(data.plan_id)
         # Get Price ID based on interval
         price_id = (
             plan["stripe_price_id_monthly"] if data.billing_interval == "monthly" else plan["stripe_price_id_yearly"]
@@ -81,7 +86,7 @@ class CheckoutService:
             else:
                 session_kwargs["customer_email"] = user_email
 
-            session = await gateway.create_checkout_session(tenant_id=tenant.id, **session_kwargs)
+            session = await self.gateway.create_checkout_session(tenant_id=tenant.id, **session_kwargs)
 
             checkout_url = session.url
             if not checkout_url:

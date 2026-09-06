@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,7 +38,7 @@ class SqlAlchemyTenantRepository(TenantRepository):
         kwargs: dict[str, Any] = {"offset": offset, "limit": limit, "schema_to_select": TenantResponse}
         if is_active is not None:
             kwargs["is_active"] = is_active
-        return await self.crud.get_multi(db=self.db, **kwargs)
+        return cast(dict[str, Any], await self.crud.get_multi(db=self.db, **kwargs))
 
     async def create(self, tenant_data: Any) -> dict[str, Any]:
         result = await self.crud.create(db=self.db, object=tenant_data, schema_to_select=TenantResponse)

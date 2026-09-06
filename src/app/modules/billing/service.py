@@ -99,7 +99,6 @@ from src.app.modules._base.exceptions import (
     ModelNotFoundError,
     TenantContextError,
 )
-from src.app.modules._base.service import BaseService
 
 logger = get_logger(__name__)
 
@@ -210,11 +209,11 @@ def _product_to_dict(product: Product, pricing_tiers: list[Pricing]) -> dict[str
     }
 
 
-class StripeSettingsService(BaseService[StripeSettings]):
+class StripeSettingsService:
     """Service for managing tenant Stripe settings."""
 
-    def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None):
-        super().__init__(StripeSettings, db)
+    def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None) -> None:
+        self.db = db
         self.tenant_id = tenant_id
         self._encryption = CredentialEncryption()
 
@@ -226,17 +225,10 @@ class StripeSettingsService(BaseService[StripeSettings]):
         return current_tenant.id if current_tenant is not None else None
 
     def _resolve_tenant(self, entity_name: str = "Billing", entity_id: Any = None) -> Any:
-        """Resolve tenant with cross-tenant mismatch guard (no silent or-write)."""
-        from src.app.core.tenancy.context import get_current_tenant as _get_ctx
+        """Resolve tenant with cross-tenant mismatch guard."""
+        from src.app.modules.billing.tenant_resolver import resolve_billing_tenant_id
 
-        ctx = _get_ctx()
-        ctx_id = ctx.id if ctx is not None else None
-        if self.tenant_id is not None and ctx_id is not None and str(self.tenant_id) != str(ctx_id):
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        tid = self.tenant_id if self.tenant_id is not None else ctx_id
-        if tid is None:
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        return tid
+        return resolve_billing_tenant_id(self.tenant_id, entity_name, entity_id, tenant_getter=get_current_tenant)
     async def get_settings(self) -> dict[str, Any] | None:
         """Get Stripe settings for the current tenant."""
         tid = self.current_tenant_id
@@ -294,11 +286,11 @@ class StripeSettingsService(BaseService[StripeSettings]):
         return self._encryption.decrypt_column(record["encrypted_webhook_secret"])
 
 
-class ProductService(BaseService[Product]):
+class ProductService:
     """Service for managing products."""
 
-    def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None):
-        super().__init__(Product, db)
+    def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None) -> None:
+        self.db = db
         self.tenant_id = tenant_id
 
     @property
@@ -310,16 +302,9 @@ class ProductService(BaseService[Product]):
 
     def _resolve_tenant(self, entity_name: str = "Product", entity_id: Any = None) -> Any:
         """Resolve tenant with cross-tenant mismatch guard."""
-        from src.app.core.tenancy.context import get_current_tenant as _get_ctx
+        from src.app.modules.billing.tenant_resolver import resolve_billing_tenant_id
 
-        ctx = _get_ctx()
-        ctx_id = ctx.id if ctx is not None else None
-        if self.tenant_id is not None and ctx_id is not None and str(self.tenant_id) != str(ctx_id):
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        tid = self.tenant_id if self.tenant_id is not None else ctx_id
-        if tid is None:
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        return tid
+        return resolve_billing_tenant_id(self.tenant_id, entity_name, entity_id, tenant_getter=get_current_tenant)
 
     def _require_tenant(self, entity_name: str = "Product", entity_id: Any = None) -> Any:
         tid = self.current_tenant_id
@@ -428,11 +413,11 @@ class ProductService(BaseService[Product]):
         )
 
 
-class PricingService(BaseService[Pricing]):
+class PricingService:
     """Service for managing pricing tiers."""
 
-    def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None):
-        super().__init__(Pricing, db)
+    def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None) -> None:
+        self.db = db
         self.tenant_id = tenant_id
 
     @property
@@ -444,16 +429,9 @@ class PricingService(BaseService[Pricing]):
 
     def _resolve_tenant(self, entity_name: str = "Pricing", entity_id: Any = None) -> Any:
         """Resolve tenant with cross-tenant mismatch guard."""
-        from src.app.core.tenancy.context import get_current_tenant as _get_ctx
+        from src.app.modules.billing.tenant_resolver import resolve_billing_tenant_id
 
-        ctx = _get_ctx()
-        ctx_id = ctx.id if ctx is not None else None
-        if self.tenant_id is not None and ctx_id is not None and str(self.tenant_id) != str(ctx_id):
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        tid = self.tenant_id if self.tenant_id is not None else ctx_id
-        if tid is None:
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        return tid
+        return resolve_billing_tenant_id(self.tenant_id, entity_name, entity_id, tenant_getter=get_current_tenant)
 
     def _require_tenant(self, entity_name: str = "Pricing", entity_id: Any = None) -> Any:
         tid = self.current_tenant_id

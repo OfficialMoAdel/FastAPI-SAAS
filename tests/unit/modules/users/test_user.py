@@ -10,6 +10,7 @@ from src.app.core.exceptions.http_exceptions import (
     NotFoundException,
 )
 from src.app.main import app
+from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules.users import router as users_router
 from src.app.modules.users.service import UserService
 
@@ -97,7 +98,7 @@ class TestReadUser:
     def test_read_user_success(self, client, auth_headers, sample_user_read, mock_user_service_override):
         """Test successful user retrieval."""
         expected_result = sample_user_read.model_dump()
-        mock_service = _create_mock_user_service(get_by_username=expected_result)
+        mock_service = _create_mock_user_service(get_profile=expected_result)
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
         response = client.get("/api/v1/users/test_user", headers=auth_headers)
@@ -107,7 +108,7 @@ class TestReadUser:
 
     def test_read_user_not_found(self, client, auth_headers, mock_user_service_override):
         """Test user retrieval when user doesn't exist."""
-        mock_service = _create_mock_user_service(get_by_username=NotFoundException("User not found"))
+        mock_service = _create_mock_user_service(get_profile=ModelNotFoundError("User", "nonexistent_user"))
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
         response = client.get("/api/v1/users/nonexistent_user", headers=auth_headers)
