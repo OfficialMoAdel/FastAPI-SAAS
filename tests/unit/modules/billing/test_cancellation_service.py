@@ -80,8 +80,8 @@ class TestCancellationService:
                     "src.app.modules.billing.crud.crud_user_subscriptions.update",
                     new_callable=AsyncMock,
                 ):
-                    with patch("src.app.modules.billing.gateway.settings") as mock_settings:
-                        mock_settings.STRIPE_SECRET_KEY = "sk_test_123"
+                    with patch("src.app.clients.billing.stripe.settings") as mock_settings:
+                        mock_settings.billing.STRIPE_SECRET_KEY = "sk_test_123"
                         with patch("stripe.Subscription.modify"):
                             result = await service.cancel_subscription(subscription_id=1)
 
@@ -138,8 +138,8 @@ class TestCancellationService:
                     "src.app.modules.billing.crud.crud_user_subscriptions.update",
                     new_callable=AsyncMock,
                 ):
-                    with patch("src.app.modules.billing.gateway.settings") as mock_settings:
-                        mock_settings.STRIPE_SECRET_KEY = "sk_test_123"
+                    with patch("src.app.clients.billing.stripe.settings") as mock_settings:
+                        mock_settings.billing.STRIPE_SECRET_KEY = "sk_test_123"
                         with patch("stripe.Subscription.modify"):
                             # Should still update (idempotent operation)
                             result = await service.cancel_subscription(subscription_id=1)

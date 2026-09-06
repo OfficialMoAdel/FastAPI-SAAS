@@ -59,10 +59,21 @@ class UserService:
 
     crud: CRUDUser  # Custom CRUD with get_user_with_tier_eager
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(
+        self,
+        db: AsyncSession | None = None,
+        repository: Any = None,
+    ) -> None:
         self.db = db
         self.crud = crud_users
+        if repository is not None:
+            self.repository = repository
+        elif db is not None:
+            from src.app.repositories.sqlalchemy.user import SqlAlchemyUserRepository
 
+            self.repository = SqlAlchemyUserRepository(db, crud=self.crud)
+        else:
+            self.repository = None
     @staticmethod
     def _parse_user_id(username: str) -> int | None:
         """M-8: parse a user identifier that may be an integer ID or a username.
@@ -80,10 +91,13 @@ class UserService:
         Consolidates the six copy-pasted ``try: int(username)`` lookup blocks.
         """
         parsed_id = self._parse_user_id(username)
+        if self.repository is not None:
+            if parsed_id is not None:
+                return await self.repository.get(id=parsed_id, is_deleted=False)
+            return await self.repository.get(username=username, is_deleted=False)
         if parsed_id is not None:
             return await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
         return await self.crud.get(db=self.db, username=username, is_deleted=False)
-
     async def list_users(
         self,
         *,
@@ -93,13 +107,20 @@ class UserService:
     ) -> dict[str, Any]:
         """Get paginated list of users."""
         offset = (page - 1) * per_page
-        result = await self.crud.get_multi(
-            db=self.db,
-            offset=offset,
-            limit=per_page,
-            is_deleted=is_deleted,
-            schema_to_select=UserRead,
-        )
+        if self.repository is not None:
+            result = await self.repository.get_multi(
+                offset=offset,
+                limit=per_page,
+                is_deleted=is_deleted,
+            )
+        else:
+            result = await self.crud.get_multi(
+                db=self.db,
+                offset=offset,
+                limit=per_page,
+                is_deleted=is_deleted,
+                schema_to_select=UserRead,
+            )
         from src.app.core.pagination import build_paginated_response
 
         return build_paginated_response(
@@ -301,10 +322,11 @@ class UserService:
         if cached:
             return cached
 
-        # Fetch from DB (using eager loading)
-        user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, username=username, email=email)
-        if not user_with_tier:
-            return None
+        # Fetch from DB (using eager loading via repository or crud)
+        if self.repository is not None:
+            user_with_tier = await self.repository.get_with_tier(username=username, email=email)
+        else:
+            user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, username=username, email=email)
 
         # Cache it
         await UserCacheInvalidator.cache_user_auth_info(cache_key, user_with_tier)

@@ -164,21 +164,20 @@ async def _invalidate_caches_delegate(
     reason: InvalidationReason,
     explicit_token_version: int | None,
 ) -> None:
-    """Delegate cache invalidation to UserService so test patch targets and metrics are observed."""
+    """Delegate cache invalidation to UserCacheInvalidator directly."""
     from typing import cast
 
-    from src.app.modules.users.service import UserService
+    from src.app.modules.users.cache import UserCacheInvalidator
 
-    user_svc = UserService(db)
-    if len(users_list) == 1 and not is_raw_id and hasattr(user_svc, "_invalidate_user_cache"):
-        await user_svc._invalidate_user_cache(
+    if len(users_list) == 1 and not is_raw_id:
+        await UserCacheInvalidator.invalidate_user_cache(
             cast(Any, users_list[0]),
             bump_token_version=bump,
             reason=reason,
             explicit_token_version=explicit_token_version,
         )
-    elif hasattr(user_svc, "_invalidate_user_cache_batch"):
-        await user_svc._invalidate_user_cache_batch(
+    else:
+        await UserCacheInvalidator.invalidate_user_cache_batch(
             extracted_users,
             bump_token_version=bump,
             reason=reason,
@@ -254,9 +253,14 @@ async def invalidate_user_sessions(
 
     # 4. Invalidate caches via UserService so test patch targets and metrics are observed
     await _invalidate_caches_delegate(
-        db, users_list, extracted_users, is_raw_id, bump, reason, explicit_token_version
+        db,
+        users_list,
+        extracted_users,
+        is_raw_id,
+        bump,
+        reason,
+        explicit_token_version,
     )
-
 
 __all__ = [
     "AUTH_INFO_CACHE_PREFIX",

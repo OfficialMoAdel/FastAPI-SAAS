@@ -14,7 +14,6 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any, BinaryIO
-from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import Depends
@@ -27,7 +26,6 @@ from src.app.core.db.database import async_get_db
 from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.security.encryption import get_encryption
-from src.app.modules.storage.azure_storage import AzureBlobStorage
 from src.app.modules.storage.errors import (
     FileEntityNotFoundError,
     FileTypeNotAllowedError,
@@ -37,10 +35,8 @@ from src.app.modules.storage.errors import (
     StorageNotConfiguredError,
 )
 from src.app.modules.storage.interfaces import StorageProvider
-from src.app.modules.storage.local_storage import LocalStorage
 from src.app.modules.storage.metrics import storage_metrics
 from src.app.modules.storage.models import File, StorageProviderType, StorageSettings
-from src.app.modules.storage.s3_storage import S3Storage
 from src.app.modules.storage.schemas import (
     FileRead,
     FileUpdate,
@@ -72,25 +68,6 @@ class Download:
     def iter_bytes(self) -> AsyncIterator[bytes]:
         """Iterate over file bytes in chunks (framework-free)."""
         return self._stream_factory()
-
-    def to_response(self) -> Any:
-        """Construct a pre-configured StreamingResponse with RFC 5987 disposition.
-
-        Deprecated: Routers should construct StreamingResponse directly from
-        iter_bytes() and file metadata. Kept for backward compatibility.
-        """
-
-        from fastapi.responses import StreamingResponse
-
-        encoded_filename = quote(self.file.original_name)
-        return StreamingResponse(
-            self.iter_bytes(),
-            media_type=self.file.mime_type,
-            headers={
-                "Content-Disposition": f"attachment; filename*=utf-8''{encoded_filename}",
-                "Content-Length": str(self.file.size_bytes),
-            },
-        )
 
 
 class StoredObject:
@@ -302,24 +279,9 @@ class StorageAdminService:
         provider: StorageProviderType,
         credentials: dict[str, Any],
     ) -> StorageProvider:
-        if provider == StorageProviderType.S3:
-            return S3Storage(
-                bucket=credentials.get("bucket_name", credentials.get("bucket", "default-bucket")),
-                region=credentials.get("region", "us-east-1"),
-                aws_access_key_id=credentials.get("access_key_id"),
-                aws_secret_access_key=credentials.get("secret_access_key"),
-            )
-        if provider == StorageProviderType.AZURE:
-            return AzureBlobStorage(
-                connection_string=credentials["connection_string"],
-                container_name=credentials["container_name"],
-            )
-        if provider == StorageProviderType.LOCAL:
-            return LocalStorage(
-                base_path=credentials["base_path"],
-                base_url=credentials.get("base_url", "/files"),
-            )
-        raise ValueError(f"Unknown provider: {provider}")
+        from src.app.clients.storage.registry import StorageProviderRegistry
+
+        return StorageProviderRegistry.create(provider, credentials)
 
 
 # ============================================================================

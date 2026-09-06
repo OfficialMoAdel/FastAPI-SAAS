@@ -181,7 +181,7 @@ class TestInvalidateUserSessions:
         mock_db = AsyncMock()
         user = _user(id=42, token_version=2)
 
-        patch_target = "src.app.modules.users.service.UserService._invalidate_user_cache"
+        patch_target = "src.app.modules.users.cache.UserCacheInvalidator.invalidate_user_cache"
         with patch(patch_target, new_callable=AsyncMock) as mock_inv:
             await invalidate_user_sessions(
                 mock_db,
@@ -209,7 +209,7 @@ class TestInvalidateUserSessions:
         mock_db = AsyncMock()
         user = _user(id=42, token_version=2)
 
-        patch_target = "src.app.modules.users.service.UserService._invalidate_user_cache"
+        patch_target = "src.app.modules.users.cache.UserCacheInvalidator.invalidate_user_cache"
         with patch(patch_target, new_callable=AsyncMock) as mock_inv:
             await invalidate_user_sessions(
                 mock_db,
@@ -242,7 +242,7 @@ class TestInvalidateUserSessions:
         ]
         mock_db.execute.side_effect = [mock_result, MagicMock()]
 
-        patch_target = "src.app.modules.users.service.UserService._invalidate_user_cache_batch"
+        patch_target = "src.app.modules.users.cache.UserCacheInvalidator.invalidate_user_cache_batch"
         with patch(patch_target, new_callable=AsyncMock) as mock_batch:
             await invalidate_user_sessions(
                 mock_db,
