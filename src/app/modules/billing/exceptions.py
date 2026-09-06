@@ -73,9 +73,18 @@ class WebhookNotConfiguredError(Exception):
         self.message = message
         super().__init__(self.message)
 
+class StripeError(Exception):
+    """Raised when a Stripe API call fails."""
+
+    def __init__(self, message: str, status_code: int = 400):
+        self.message = message
+        self.status_code = status_code
+        super().__init__(self.message)
+
 
 __all__ = [
     "PaymentRequiredError",
+    "StripeError",
     "SubscriptionRequiredError",
     "WebhookNotConfiguredError",
     "WebhookVerificationError",

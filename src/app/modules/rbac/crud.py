@@ -113,15 +113,13 @@ def _rows_affected(result: object) -> bool:
 class CRUDAssociations:
     """Repository for UserRole and RolePermission associations."""
 
-    @staticmethod
-    async def get_role_affected_user_ids(db: AsyncSession, tenant_id: UUID, role_id: int) -> list[int]:
+    async def get_role_affected_user_ids(self, db: AsyncSession, tenant_id: UUID, role_id: int) -> list[int]:
         """Get all user IDs assigned to a role within a tenant."""
         stmt = select(UserRole.user_id).where(UserRole.role_id == role_id).where(tenant_scope(UserRole, tenant_id))
         result = await db.execute(stmt)
         return list(result.scalars().all())
 
-    @staticmethod
-    async def get_role_permission(db: AsyncSession, role_id: int, permission_id: int) -> RolePermission | None:
+    async def get_role_permission(self, db: AsyncSession, role_id: int, permission_id: int) -> RolePermission | None:
         """Check if a permission is assigned to a role."""
         stmt = select(RolePermission).where(
             and_(
@@ -132,8 +130,7 @@ class CRUDAssociations:
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
-    @staticmethod
-    async def remove_role_permission(db: AsyncSession, role_id: int, permission_id: int) -> bool:
+    async def remove_role_permission(self, db: AsyncSession, role_id: int, permission_id: int) -> bool:
         """Remove a permission from a role (single-statement, race-safe)."""
         result = await db.execute(
             delete(RolePermission).where(
@@ -145,15 +142,13 @@ class CRUDAssociations:
         )
         return _rows_affected(result)
 
-    @staticmethod
-    async def get_user_role(db: AsyncSession, tenant_id: UUID, user_id: int, role_id: int) -> UserRole | None:
+    async def get_user_role(self, db: AsyncSession, tenant_id: UUID, user_id: int, role_id: int) -> UserRole | None:
         """Get user role assignment within a tenant."""
         stmt = scoped_query(UserRole, tenant_id).where(UserRole.user_id == user_id, UserRole.role_id == role_id)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
-    @staticmethod
-    async def remove_user_role(db: AsyncSession, tenant_id: UUID, user_id: int, role_id: int) -> bool:
+    async def remove_user_role(self, db: AsyncSession, tenant_id: UUID, user_id: int, role_id: int) -> bool:
         """Remove user role assignment (single-statement, race-safe)."""
         result = await db.execute(
             delete(UserRole).where(
@@ -164,13 +159,11 @@ class CRUDAssociations:
         )
         return _rows_affected(result)
 
-    @staticmethod
-    async def bump_user_token_version(db: AsyncSession, user_id: int) -> None:
+    async def bump_user_token_version(self, db: AsyncSession, user_id: int) -> None:
         """Increment token_version for user in database."""
         from src.app.modules.users.models import User
 
         await db.execute(sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
-
 
 crud_roles = CRUDRole(Role)
 crud_permissions = CRUDPermission(Permission)

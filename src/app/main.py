@@ -184,17 +184,7 @@ async def _load_security_runtime_config() -> None:
             continue
         raw = config[key]
         try:
-            coerced: Any = raw
-            if isinstance(raw, str):
-                stripped = raw.strip()
-                if field.annotation is bool:
-                    lowered = stripped.lower()
-                    if lowered in ("true", "1", "yes", "on"):
-                        coerced = True
-                    elif lowered in ("false", "0", "no", "off"):
-                        coerced = False
-                elif field.annotation is int and stripped:
-                    coerced = int(stripped) if coerced == raw else coerced
+            coerced = raw.strip() if isinstance(raw, str) else raw
             validated = TypeAdapter(field.annotation).validate_python(coerced)
             setattr(settings.security, key, validated)
         except (ValidationError, ValueError, TypeError) as e:

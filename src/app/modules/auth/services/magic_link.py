@@ -308,13 +308,6 @@ class MagicLinkService:
         # Create auth tokens
         tokens = await self._create_auth_tokens(user)
 
-        # Set cookie if response is provided
-        refresh_token = tokens.pop("refresh_token", None)
-        if response and refresh_token:
-            from src.app.core.security.login_helpers import set_refresh_cookie
-
-            set_refresh_cookie(response, refresh_token)
-
         logger.info(
             "Magic link verified successfully",
             extra={

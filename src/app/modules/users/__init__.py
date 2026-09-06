@@ -59,9 +59,6 @@ def register_users_security_lookups() -> None:
     register_user_tenant_lookup(_users_tenant_lookup)
 
 
-register_users_security_lookups()
-
-
 def __getattr__(name: str):
     """Lazy import to avoid circular imports."""
     if name == "users_router":

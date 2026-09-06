@@ -208,18 +208,17 @@ def _register_framework_handlers(app: FastAPI) -> None:
 
 def _register_base_handlers(app: FastAPI) -> None:
     """Shared _base domain handlers (CRUD, validation, tenancy, availability)."""
-    # H7 FIX: Deferred domain imports — breaks core -> modules cycle.
-    from src.app.modules._base.exceptions import (  # type: ignore
+    from src.app.core.exceptions.http_exceptions import TenantContextError
+    from src.app.modules.billing.exceptions import StripeError
+    from src.app.shared.exceptions import (
         DuplicateError,
         ForbiddenError,
         ModelNotFoundError,
         RateLimitExceededError,
         ServiceUnavailableError,
-        StripeError,
-        TenantContextError,
         UnauthorizedError,
     )
-    from src.app.modules._base.exceptions import (
+    from src.app.shared.exceptions import (
         ValidationError as BaseValidationError,
     )
 

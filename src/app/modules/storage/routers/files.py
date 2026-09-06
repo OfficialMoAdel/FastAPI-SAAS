@@ -137,9 +137,18 @@ async def download_file(
     service: StorageService = Depends(get_storage),
 ) -> Any:
     """Download a file via streaming response."""
-    download = await service.download(ctx.tenant_id, file_id, user_id=ctx.user_id)
-    return download.to_response()
+    from urllib.parse import quote
 
+    download = await service.download(ctx.tenant_id, file_id, user_id=ctx.user_id)
+    encoded_filename = quote(download.file.original_name)
+    return StreamingResponse(
+        download.iter_bytes(),
+        media_type=download.file.mime_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=utf-8''{encoded_filename}",
+            "Content-Length": str(download.file.size_bytes),
+        },
+    )
 
 @router.get(
     "/{file_id}/info",

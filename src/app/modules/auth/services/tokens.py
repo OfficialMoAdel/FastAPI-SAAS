@@ -17,7 +17,7 @@ from fastapi import Request, Response
 
 from src.app.core.config import settings
 from src.app.core.security import create_access_token, create_refresh_token
-from src.app.core.security.login_helpers import register_login_session, set_refresh_cookie
+from src.app.core.security.login_helpers import register_login_session
 
 
 @dataclass(frozen=True)
@@ -168,10 +168,6 @@ class TokenIssuer:
             token_data.update(safe_extra)
 
         access_token, refresh_token = await TokenIssuer.create_token_pair(token_data)
-
-        if response is not None:
-            set_refresh_cookie(response, refresh_token)
-
         await register_login_session(
             user_id=user["id"],
             access_token=access_token,

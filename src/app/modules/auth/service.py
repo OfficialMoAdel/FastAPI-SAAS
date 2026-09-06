@@ -339,7 +339,6 @@ class AuthService:
             user,
             channel="password",
             request=request,
-            response=response,
             subject=user["username"],
         )
 

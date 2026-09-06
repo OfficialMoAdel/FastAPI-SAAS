@@ -107,7 +107,6 @@ class UserCacheInvalidator:
     user_email_cache_key = staticmethod(_user_email_cache_key)
     user_username_cache_key = staticmethod(_user_username_cache_key)
     user_auth_cache_key = staticmethod(_user_auth_cache_key)
-
     @staticmethod
     async def get_cached_user(cache_key: str) -> dict[str, Any] | None:
         """Get cached user data if available."""
@@ -224,10 +223,6 @@ class UserCacheInvalidator:
                 if tenant_context is not None:
                     tenant_id = tenant_context.tenant_id
 
-            # Normalize to match cache keys
-            email = email.lower().strip()
-            username = username.lower().strip()
-
             keys, token_keys = build_user_invalidation_keys(user_id, username, email, tenant_id)
 
             if keys:
@@ -294,11 +289,11 @@ class UserCacheInvalidator:
                 if tenant_id is None and tenant_context is not None:
                     tenant_id = tenant_context.tenant_id
 
-                # Normalize email/username (lower().strip()) to match the
-                # single-user path. Guard non-str/None values since batch
-                # inputs may be raw tuples or partial dicts.
-                norm_email = str(email).lower().strip() or None if email is not None else None
-                norm_username = str(username).lower().strip() or None if username is not None else None
+                # Guard non-str/None values and empty strings since batch inputs
+                # may be raw tuples or partial dicts. Lowercasing/stripping is
+                # handled by build_user_invalidation_keys.
+                norm_email = str(email).strip() or None if email is not None else None
+                norm_username = str(username).strip() or None if username is not None else None
 
                 u_del_keys, u_tok_keys = build_user_invalidation_keys(user_id, norm_username, norm_email, tenant_id)
                 delete_keys.extend(u_del_keys)

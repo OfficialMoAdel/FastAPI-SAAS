@@ -214,20 +214,14 @@ def lifespan_factory(
             await close_sso_http_client()
 
             # Close Webhook HTTP client pool
-            try:
-                from src.app.modules.webhooks.http_client import close_webhook_http_client
+            from src.app.modules.webhooks.http_client import close_webhook_http_client
 
-                await close_webhook_http_client()
-            except ImportError:
-                pass
+            await close_webhook_http_client()
 
             # Close AI providers
-            try:
-                from src.app.modules.ai.factory import AIProviderFactory
+            from src.app.modules.ai.factory import AIProviderFactory
 
-                await AIProviderFactory.shutdown_all()
-            except ImportError:
-                pass
+            await AIProviderFactory.shutdown_all()
 
     return lifespan
 
@@ -284,20 +278,7 @@ def create_application(
             allow_origins=cors_origins,
             allow_credentials=allow_credentials,
             allow_methods=settings.cors.CORS_METHODS,
-            allow_headers=getattr(
-                settings,
-                "CORS_HEADERS",
-                [
-                    "Content-Type",
-                    "Authorization",
-                    "X-Request-ID",
-                    "X-Webhook-Signature",
-                    "X-Webhook-Event",
-                    "X-Webhook-ID",
-                    "X-Webhook-Timestamp",
-                    "X-Tenant-ID",
-                ],
-            ),
+            allow_headers=settings.cors.CORS_HEADERS,
         )
 
     if environment != EnvironmentOption.PRODUCTION:

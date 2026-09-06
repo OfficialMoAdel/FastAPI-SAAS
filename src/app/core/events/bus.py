@@ -784,55 +784,12 @@ class EventBus:
     def register_all_handlers(self) -> None:
         """Pre-register all event handlers during startup.
 
-        Explicitly imports and registers module-level event handlers without dynamic scanning.
+        Delegates to application-level handler wiring in src.app.events to keep
+        core infrastructure strictly decoupled from feature modules.
         """
-        try:
-            from src.app.modules.audit_logs.service import handle_audit_log_event
-            from src.app.modules.notifications.service import (
-                handle_notification_request_event,
-                handle_notification_send_event,
-            )
-            from src.app.modules.webhooks.service import handle_webhook_trigger_event, webhook_event_adapter
+        from src.app.events import register_application_event_handlers
 
-            self.register_handler("audit.log", handle_audit_log_event)
-            self.register_handler("notification.send", handle_notification_send_event)
-            self.register_handler("notification.request", handle_notification_request_event)
-            self.register_handler("webhook.trigger", handle_webhook_trigger_event)
-
-            # R1-H9: Route common business events to the webhook dispatcher.
-            # webhook_event_adapter is a MODULE-LEVEL function (see its
-            # definition in webhooks/service.py): the async ARQ path enqueues
-            # handler.__module__ + handler.__name__ and the worker re-imports
-            # it. A per-event closure failed getattr() in the worker and every
-            # business-event webhook landed in the DLQ as a "Permanent Error".
-            # The adapter recovers the event type from _event_meta.event_name.
-            business_events = [
-                "user.created",
-                "user.deleted",
-                "user.updated",
-                "api_key.created",
-                "api_key.deleted",
-                "sso.login",
-                "auth.mfa.enabled",
-                "auth.mfa.disabled",
-                "auth.login",
-                "auth.logout",
-            ]
-            for evt in business_events:
-                self.register_handler(evt, webhook_event_adapter)
-
-            _pkg.logger.info(
-                "Event handler registration complete",
-                total_handlers=sum(len(handlers) for handlers in self._handlers.values()),
-            )
-            self._registration_complete = True
-        except Exception as e:
-            _pkg.logger.error(
-                "Failed to register event handlers during startup",
-                error=str(e),
-                exc_info=True,
-            )
-
+        register_application_event_handlers(self)
 
 # Global event bus instance
 event_bus = EventBus()

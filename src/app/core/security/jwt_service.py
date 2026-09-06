@@ -95,7 +95,7 @@ def ensure_jwt_lookups_registered() -> None:
     fails fast instead of silently skipping token_version enforcement.
     """
     if _token_version_lookup is None or _user_tenant_lookup is None:
-        from src.app.modules._base.exceptions import ServiceUnavailableError
+        from src.app.shared.exceptions import ServiceUnavailableError
 
         missing = []
         if _token_version_lookup is None:
@@ -286,7 +286,7 @@ async def _load_token_version(cache_key: str, username_or_email: str, redis_clie
     silently skipping version enforcement.
     """
     if _token_version_lookup is None:
-        from src.app.modules._base.exceptions import ServiceUnavailableError
+        from src.app.shared.exceptions import ServiceUnavailableError
 
         _jwt_logger.error("token_version_lookup_unwired", user=username_or_email)
         raise ServiceUnavailableError("Token version service unavailable")

@@ -18,7 +18,6 @@ from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import Depends
-from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
@@ -74,8 +73,15 @@ class Download:
         """Iterate over file bytes in chunks (framework-free)."""
         return self._stream_factory()
 
-    def to_response(self) -> StreamingResponse:
-        """Construct a pre-configured StreamingResponse with RFC 5987 disposition."""
+    def to_response(self) -> Any:
+        """Construct a pre-configured StreamingResponse with RFC 5987 disposition.
+
+        Deprecated: Routers should construct StreamingResponse directly from
+        iter_bytes() and file metadata. Kept for backward compatibility.
+        """
+
+        from fastapi.responses import StreamingResponse
+
         encoded_filename = quote(self.file.original_name)
         return StreamingResponse(
             self.iter_bytes(),

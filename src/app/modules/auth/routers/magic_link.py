@@ -87,7 +87,14 @@ async def verify_magic_link(
     - 400: Token is invalid or expired
     - 410: Token was already used
     """
+    from src.app.core.security.login_helpers import set_refresh_cookie
     from src.app.core.utils.ip_utils import get_client_ip
 
     ip_address = get_client_ip(request)
-    return await service.verify_magic_link(token=body.token, ip_address=ip_address, response=response)
+    result = await service.verify_magic_link(token=body.token, ip_address=ip_address)
+    refresh_token = getattr(result, "refresh_token", None) or (
+        result.get("refresh_token") if isinstance(result, dict) else None
+    )
+    if refresh_token:
+        set_refresh_cookie(response, refresh_token)
+    return result

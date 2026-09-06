@@ -334,10 +334,12 @@ async def complete_mfa_login(
         user,
         channel="mfa",
         request=fastapi_request,
-        response=response,
         subject=user["username"],
         verify=False,  # MFA completion: session registered from unverified jti extraction
     )
+    from src.app.core.security.login_helpers import set_refresh_cookie
+
+    set_refresh_cookie(response, issued.refresh_token)
     return MFACompleteLoginResponse(
         access_token=issued.access_token,
         token_type="bearer",

@@ -1,176 +1,29 @@
-"""Base exceptions for all feature modules.
-
-Provides reusable exception classes for common error scenarios
-across all feature modules.
-
-Usage:
-    from src.app.modules._base import ModelNotFoundError, ValidationError
-
-    async def get_user(user_id: int) -> User:
-        user = await service.get(user_id)
-        if not user:
-            raise ModelNotFoundError("User", user_id)
-        return user
-"""
+"""Base exceptions re-exported from src.app.shared.exceptions for backward compatibility."""
 
 from __future__ import annotations
 
-from typing import Any
-
-
-class ModelNotFoundError(Exception):
-    """Raised when a model is not found by ID or other criteria.
-
-    Attributes:
-        model_name: Name of the model class.
-        identifier: The ID or identifier used for lookup.
-        message: Human-readable error message.
-    """
-
-    def __init__(self, model_name: str, identifier: Any = None, message: str | None = None):
-        """Initialize ModelNotFoundError.
-
-        Args:
-            model_name: Name of the model class (e.g., "User", "Tenant") or message.
-            identifier: Optional ID or identifier that was not found.
-            message: Optional explicit error message override.
-        """
-        self.model_name = model_name
-        self.identifier = identifier
-        if message:
-            self.message = message
-        elif identifier is not None:
-            self.message = f"{model_name} with id {identifier} not found"
-        else:
-            self.message = model_name
-        self.detail = self.message
-        super().__init__(self.message)
-
-
-class ValidationError(Exception):
-    """Raised when validation fails.
-
-    Attributes:
-        message: Human-readable error message describing the validation failure.
-    """
-
-    def __init__(self, message: str):
-        """Initialize ValidationError.
-
-        Args:
-            message: Description of the validation failure.
-        """
-        self.message = message
-        self.detail = message
-        super().__init__(self.message)
-
-class DuplicateError(Exception):
-    """Raised when a duplicate record is detected.
-
-    Typically used for unique constraint violations.
-
-    Attributes:
-        field: The field that has a duplicate value.
-        value: The duplicate value.
-        message: Human-readable error message.
-    """
-
-    def __init__(self, field: str, value: Any):
-        """Initialize DuplicateError.
-
-        Args:
-            field: The field name with duplicate value (e.g., "email").
-            value: The duplicate value.
-        """
-        self.field = field
-        self.value = value
-        self.message = f"Duplicate value for {field}: {value}"
-        super().__init__(self.message)
-
-
-class ForbiddenError(Exception):
-    """Raised when an action is forbidden.
-
-    Used when a valid request is rejected due to business rules,
-    not authentication/authorization.
-
-    Attributes:
-        message: Human-readable error message.
-        reason: Machine-readable reason code.
-    """
-
-    def __init__(self, message: str, reason: str = "forbidden"):
-        """Initialize ForbiddenError.
-
-        Args:
-            message: Description of why the action is forbidden.
-            reason: Machine-readable reason code for the error.
-        """
-        self.message = message
-        self.reason = reason
-        super().__init__(self.message)
-
-class UnauthorizedError(Exception):
-    """Raised when authentication fails or credentials are required.
-
-    Attributes:
-        message: Human-readable error message.
-        reason: Optional machine-readable reason code.
-        detail: Backward-compatibility attribute mirroring message.
-    """
-
-    def __init__(self, message: str = "Unauthorized", reason: str = "unauthorized"):
-        self.message = message
-        self.reason = reason
-        self.detail = message
-        super().__init__(self.message)
-
-
-
-class RateLimitExceededError(Exception):
-    """Raised when a rate limit is exceeded.
-
-    Attributes:
-        message: Human-readable error message.
-        retry_after: Seconds to wait before retrying.
-    """
-
-    def __init__(self, message: str, retry_after: int = 60):
-        self.message = message
-        self.retry_after = retry_after
-        super().__init__(self.message)
-
-
-# H3: single source of truth lives in core/exceptions/http_exceptions.py
-from src.app.core.exceptions.http_exceptions import TenantContextError  # noqa: E402
-
-
-class ServiceUnavailableError(Exception):
-    """Raised when an external service (Stripe, Redis) is unavailable."""
-
-    def __init__(self, message: str):
-        self.message = message
-        super().__init__(self.message)
-
-
-class StripeError(Exception):
-    """Raised when a Stripe API call fails."""
-
-    def __init__(self, message: str, status_code: int = 400):
-        self.message = message
-        self.status_code = status_code
-        super().__init__(self.message)
-
+from src.app.core.exceptions.http_exceptions import TenantContextError
+from src.app.modules.billing.exceptions import StripeError
+from src.app.shared.exceptions import (
+    AppException,
+    DuplicateError,
+    ForbiddenError,
+    ModelNotFoundError,
+    RateLimitExceededError,
+    ServiceUnavailableError,
+    UnauthorizedError,
+    ValidationError,
+)
 
 __all__ = [
-    "ModelNotFoundError",
-    "ValidationError",
+    "AppException",
     "DuplicateError",
     "ForbiddenError",
-    "UnauthorizedError",
+    "ModelNotFoundError",
     "RateLimitExceededError",
-    "TenantContextError",
     "ServiceUnavailableError",
     "StripeError",
+    "TenantContextError",
+    "UnauthorizedError",
+    "ValidationError",
 ]
-

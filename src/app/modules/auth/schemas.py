@@ -48,7 +48,7 @@ class LoginTokenResponse(BaseModel):
 
     access_token: str
     token_type: str = "bearer"
-
+    refresh_token: str | None = Field(default=None, exclude=True)
 
 class LoginMFAResponse(BaseModel):
     """Login MFA required response schema."""
