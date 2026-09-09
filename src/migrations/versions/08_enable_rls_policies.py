@@ -141,12 +141,10 @@ def upgrade() -> None:
         """
     )
 
-    op.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_recent
-        ON audit_logs(tenant_id, created_at DESC)
-        """
-    )
+    # NOTE: no idx_audit_logs_tenant_recent here — audit_logs' hot list is
+    # served by idx_audit_logs_tenant_created_id (tenant_id, created_at DESC,
+    # id DESC) created in 07_observability; a separate 2-column index would
+    # be redundant (former B5 finding).
 
     op.execute(
         """
@@ -177,7 +175,6 @@ def downgrade() -> None:
 
     # 2. Drop indexes created for RLS
     op.execute("DROP INDEX IF EXISTS idx_post_tenant_active")
-    op.execute("DROP INDEX IF EXISTS idx_audit_logs_tenant_recent")
     op.execute("DROP INDEX IF EXISTS idx_files_tenant_active")
     op.execute("DROP INDEX IF EXISTS idx_user_tenant_active")
     op.execute("DROP INDEX IF EXISTS idx_webhook_deliveries_tenant_recent")

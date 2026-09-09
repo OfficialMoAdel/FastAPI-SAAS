@@ -68,9 +68,11 @@ class TestP14ParallelEnqueueImplementation:
         """_publish_async should still have sync fallback for failures."""
         source = inspect.getsource(EventBus._publish_async)
 
-        # Verify sync fallback exists
+        # Verify sync fallback exists. B8/B9 routed both fallback blocks
+        # (circuit-open + enqueue-failure) through _sync_fallback_handler,
+        # which calls handler(data) and DLQs on failure.
         assert "sync" in source.lower(), "Should have sync fallback"
-        assert "handler(data)" in source, "Should call handler directly on failure"
+        assert "_sync_fallback_handler" in source, "Should route failures through _sync_fallback_handler"
 
 
 class TestP14EventBusParallelEnqueue:

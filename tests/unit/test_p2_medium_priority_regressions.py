@@ -59,12 +59,13 @@ class TestP2MediumPriorityRegressions:
         assert middleware._is_exempt_path("/api/v1/health") is True
         # H-1: /metrics is no longer exempt
         assert middleware._is_exempt_path("/metrics") is False
-        # B11: ip_filter now follows the shared COMMON_EXEMPT_PATHS contract
-        # (docs/openapi are unauthenticated; Stripe webhook receivers must
-        # never be blocked by IP blacklisting — a blacklisted Stripe source
+        # B11: ip_filter follows the shared exempt-path contract, but KEEPS
+        # blacklist + bad-bot enforcement on docs/openapi (scanner defense,
+        # e2e contract) — its base set excludes only the docs trio, while
+        # Stripe webhook receivers stay exempt (a blacklisted Stripe source
         # IP would silently drop all billing events).
-        assert middleware._is_exempt_path("/openapi.json") is True
-        assert middleware._is_exempt_path("/docs") is True
+        assert middleware._is_exempt_path("/openapi.json") is False
+        assert middleware._is_exempt_path("/docs") is False
         assert middleware._is_exempt_path("/api/v1/billing/webhook") is True
         assert middleware._is_exempt_path("/api/v1/webhooks/stripe") is True
 

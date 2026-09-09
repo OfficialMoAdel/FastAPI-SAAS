@@ -39,7 +39,16 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_audit_logs_user_id"), ondelete="SET NULL"),
     )
-    op.create_index("idx_audit_tenant_created", "audit_logs", ["tenant_id", "created_at"])
+    # B5/P-M2 keyset composite (merged from the former migration 09):
+    # covers query_logs ORDER BY created_at DESC, id DESC with the
+    # deterministic tie-breaker; replaces the superseded 2-column
+    # (tenant_id, created_at) index.
+    op.create_index(
+        "idx_audit_logs_tenant_created_id",
+        "audit_logs",
+        ["tenant_id", "created_at", "id"],
+        postgresql_ops={"created_at": "DESC", "id": "DESC"},
+    )
     op.create_index("idx_audit_tenant_action", "audit_logs", ["tenant_id", "action"])
     op.create_index("idx_audit_user", "audit_logs", ["user_id"])
     op.create_index("idx_audit_action", "audit_logs", ["action"])
@@ -101,7 +110,15 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_notifications_user_id"), ondelete="SET NULL"),
         sa.CheckConstraint("status IN ('pending', 'sent', 'failed')", name=op.f("ck_notifications_status_valid")),
     )
-    op.create_index("idx_notification_tenant_created", "notifications", ["tenant_id", "created_at"])
+    # B5/P-M2 keyset composite (merged from the former migration 09):
+    # serves get_notifications ORDER BY created_at DESC with the id
+    # tie-breaker; replaces the superseded 2-column (tenant_id, created_at).
+    op.create_index(
+        "idx_notifications_tenant_created_id",
+        "notifications",
+        ["tenant_id", "created_at", "id"],
+        postgresql_ops={"created_at": "DESC", "id": "DESC"},
+    )
     op.create_index("idx_notification_status", "notifications", ["status"])
     op.create_index("idx_notification_tenant_status", "notifications", ["tenant_id", "status"])
     op.create_index(

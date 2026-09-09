@@ -29,8 +29,12 @@ COMMON_EXEMPT_PATHS: frozenset[str] = frozenset(
         "/api/v1/health/ready",
         "/api/v1/ready",
         "/ready",
-        "/live",
-        "/metrics",
+        # H-1: /metrics REMOVED from the common exempt set. The metrics
+        # endpoints are superuser-gated (api/monitoring.py) and live under
+        # /api/metrics[...]; leaving bare /metrics exempt let anonymous
+        # scrapers bypass ip_filter, attack detection, AND tenant middleware.
+        # Real metrics paths are NOT exempt (they never were) — this entry
+        # only matched stray bare-/metrics probes.
         # S8 FIX: webhook endpoints receive third-party payloads that may
         # contain SQL-like strings. The receiving endpoints verify signatures
         # independently (e.g. Stripe HMAC).
@@ -40,17 +44,34 @@ COMMON_EXEMPT_PATHS: frozenset[str] = frozenset(
 )
 
 
-def is_path_exempt(path: str, additional: frozenset[str] = frozenset()) -> bool:
-    """Return True if path is in the common set or the middleware's extras.
+# ip_filter's exempt set: the common paths MINUS the docs/openapi trio. The
+# e2e contract (tests/e2e/core/security/test_ip_filtering.py) requires
+# ip_filter to keep blacklist + bad-bot enforcement on /docs, /redoc and
+# /openapi.json (scanner defense), while health probes and the Stripe-style
+# webhook receivers stay exempt (a blacklisted Stripe source IP must never
+# get webhooks 403'd). Derived so future additions to the common set are
+# inherited automatically — no drift.
+IP_FILTER_EXEMPT_PATHS: frozenset[str] = frozenset(
+    COMMON_EXEMPT_PATHS - {"/docs", "/redoc", "/openapi.json"}
+)
+
+
+def is_path_exempt(
+    path: str,
+    additional: frozenset[str] = frozenset(),
+    base: frozenset[str] = COMMON_EXEMPT_PATHS,
+) -> bool:
+    """Return True if path is in the base set or the middleware's extras.
 
     Per-middleware modules call this with their own extra paths; the
-    common set is checked once.
+    base set is checked once. Pass a narrower ``base`` (e.g.
+    IP_FILTER_EXEMPT_PATHS) to exempt fewer common paths.
     """
-    if path in COMMON_EXEMPT_PATHS or path in additional:
+    if path in base or path in additional:
         return True
     # Common case: sub-paths of an exempt prefix (e.g. /metrics/foo).
     # Mirrors the existing prefix-startswith checks in the three middlewares.
-    for prefix in COMMON_EXEMPT_PATHS:
+    for prefix in base:
         if path.startswith(f"{prefix}/"):
             return True
     for prefix in additional:

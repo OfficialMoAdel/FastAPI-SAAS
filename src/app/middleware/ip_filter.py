@@ -15,12 +15,15 @@ from src.app.modules.security.service import IPFilterService
 
 logger = get_logger(__name__)
 
-# P2-7: use the shared common set; ip_filter has no extra exemptions of
-# its own (health/metrics are already in COMMON_EXEMPT_PATHS).
-from src.app.core.middleware_exempt import COMMON_EXEMPT_PATHS, is_path_exempt
+# P2-7: use the shared exempt-path contract. ip_filter inherits the common
+# set (health probes, Stripe webhook receivers) but KEEPS blacklist and
+# bad-bot enforcement on /docs, /redoc and /openapi.json (scanner defense —
+# see the e2e contract in tests/e2e/core/security/test_ip_filtering.py),
+# hence the derived IP_FILTER_EXEMPT_PATHS base instead of COMMON alone.
+from src.app.core.middleware_exempt import IP_FILTER_EXEMPT_PATHS, is_path_exempt
 
 _IP_FILTER_EXTRA_EXEMPT: frozenset[str] = frozenset()
-EXEMPT_PATHS: frozenset[str] = COMMON_EXEMPT_PATHS | _IP_FILTER_EXTRA_EXEMPT  # backward-compat re-export
+EXEMPT_PATHS: frozenset[str] = IP_FILTER_EXEMPT_PATHS | _IP_FILTER_EXTRA_EXEMPT  # backward-compat re-export
 
 import re
 
@@ -70,12 +73,14 @@ class IPFilterMiddleware:
     def _is_exempt_path(self, path: str) -> bool:
         """Check if path is exempt from IP filtering.
 
-        B11: consult the shared COMMON_EXEMPT_PATHS contract (docs/openapi,
-        health probes, Stripe webhook receivers) instead of the private
-        health-only set — a blacklisted Stripe source IP must not get its
-        webhooks 403'd, and /docs must not be IP-filtered.
+        B11: consult the shared exempt-path contract instead of a private
+        health-only set. The base is IP_FILTER_EXEMPT_PATHS — the common
+        set (health probes, Stripe webhook receivers) minus the docs trio,
+        so a blacklisted Stripe source IP never gets its webhooks 403'd,
+        while /docs and /openapi.json stay IP-filtered (blacklist +
+        bad-bot scanner defense).
         """
-        return is_path_exempt(path, _IP_FILTER_EXTRA_EXEMPT)
+        return is_path_exempt(path, _IP_FILTER_EXTRA_EXEMPT, base=IP_FILTER_EXEMPT_PATHS)
     async def __call__(self, scope, receive, send):
         """Process request through IP filter."""
         if scope["type"] != "http":
