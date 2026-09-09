@@ -8,8 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.app.modules.ai.router import get_ai_settings_service
 from src.app.modules.ai.schemas import AISettingsUpdate
-from src.app.modules.ai.service import AISettingsService, get_ai_settings_service
+from src.app.modules.ai.service import AISettingsService
 
 
 @pytest.fixture

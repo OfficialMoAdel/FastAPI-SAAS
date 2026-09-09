@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.app.core.db.rls import RLSAuditFailureError
 from src.app.core.tenancy.context import TenantContext
 from src.app.middleware.tenant import TenantMiddleware
 from src.app.modules.tenants.models import Tenant
@@ -76,3 +77,51 @@ async def test_get_tenant_by_slug_db_fetch_returns_tenant_context():
     assert isinstance(result, TenantContext)
     assert result.id == tid
     assert result.slug == "gamma"
+
+
+@pytest.mark.asyncio
+async def test_get_tenant_by_slug_audit_failure_falls_back():
+    """Q-M9: RLS bypass audit failure is caught by TYPE (not string-match) and
+    tenant resolution falls back to the standard RLS-protected query."""
+    tid = uuid4()
+    mock_tenant = MagicMock(spec=Tenant)
+    mock_tenant.id = tid
+    mock_tenant.slug = "delta"
+    mock_tenant.name = "Delta Inc"
+    mock_tenant.is_active = True
+
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_tenant
+
+    execute_results = iter(
+        [
+            RLSAuditFailureError("RLS bypass aborted due to audit log failure: boom"),
+            mock_result,
+        ]
+    )
+
+    async def execute_side_effect(*args, **kwargs):
+        item = next(execute_results)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(side_effect=execute_side_effect)
+    mock_session.connection = AsyncMock(return_value=AsyncMock())
+
+    middleware = TenantMiddleware(app=MagicMock())
+
+    with (
+        patch("src.app.middleware.tenant.local_session") as mock_local_session,
+        patch("src.app.middleware.tenant.get_redis", return_value=None),
+        patch("src.app.middleware.tenant.logger") as mock_logger,
+    ):
+        mock_local_session.return_value.__aenter__.return_value = mock_session
+        result = await middleware._get_tenant_by_slug("delta")
+
+    assert result is not None
+    assert isinstance(result, TenantContext)
+    assert result.id == tid
+    # The fallback was logged as an error
+    assert mock_logger.error.called

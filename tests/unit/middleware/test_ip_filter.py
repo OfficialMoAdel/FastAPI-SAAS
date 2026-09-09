@@ -177,9 +177,11 @@ class TestPathExemption:
         assert middleware._is_exempt_path("/health/live") is True
         assert middleware._is_exempt_path("/health/ready") is True
 
-    def test_exempt_metrics_path(self, middleware):
-        """Test that metrics path is exempt."""
-        assert middleware._is_exempt_path("/metrics") is True
+    def test_metrics_path_not_exempt(self, middleware):
+        """H-1: /metrics must NOT bypass IP filtering — the real metrics
+        endpoints are superuser-gated under /api/metrics and bare /metrics
+        probes are scraper noise that should hit every middleware."""
+        assert middleware._is_exempt_path("/metrics") is False
 
     def test_non_exempt_paths(self, middleware):
         """Test that API paths are not exempt."""
@@ -189,7 +191,6 @@ class TestPathExemption:
     def test_exempt_with_prefix(self, middleware):
         """Test that paths starting with exempt prefixes are exempt."""
         assert middleware._is_exempt_path("/health/custom") is True
-        assert middleware._is_exempt_path("/metrics/detailed") is True
 
 
 class TestWhitelistEnforcement:
@@ -432,8 +433,11 @@ class TestExemptPathBehavior:
 
     @pytest.mark.asyncio
     async def test_exempt_path_with_blacklisted_ip(self, middleware, mock_request, mock_response):
-        """Test that exempt paths allow blacklisted IPs."""
-        mock_request.url.path = "/metrics"
+        """Test that exempt (health) paths allow blacklisted IPs.
+
+        H-1: /metrics is no longer exempt, so this test uses a health path —
+        the only paths that legitimately bypass IP filtering."""
+        mock_request.url.path = "/health/live"
         mock_request.client.host = "10.0.0.1"  # Blacklisted IP
         mock_resp = mock_response
         with (
@@ -444,6 +448,20 @@ class TestExemptPathBehavior:
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)
+
+    @pytest.mark.asyncio
+    async def test_metrics_path_with_blacklisted_ip_is_blocked(self, middleware, mock_request, mock_response):
+        """H-1: /metrics must NOT bypass the IP blacklist — scraper IPs get 403."""
+        mock_request.url.path = "/metrics"
+        mock_request.client.host = "10.0.0.1"
+        mock_resp = mock_response
+        with (
+            patch.object(middleware._filter_service, "check_ip_status", return_value=(True, False)),
+            patch_setting("IP_BLACKLIST_ENABLED", True, "BAD_BOT_FILTER_ENABLED", True),
+        ):
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
+
+            assert response.status_code == 403
 
 
 class TestEdgeCases:

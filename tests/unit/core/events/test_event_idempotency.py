@@ -38,17 +38,18 @@ async def test_lua_script_executes_successfully(mock_redis_client, mock_settings
 
 @pytest.mark.asyncio
 async def test_concurrent_identical_events_processed_once(mock_redis_client, mock_settings):
-    """Test that concurrent identical events are processed only once."""
+    """H-6: sequential re-publishes of a processed event are skipped.
+
+    Concurrent first-flight duplicates may ALL enqueue (peek-before-claim):
+    the claim now happens after successful publish so a crash between check
+    and enqueue can never permanently drop the event (at-least-once).
+    Concurrent collapse is the handler's idempotency responsibility, same
+    as ARQ redelivery."""
     event_bus = EventBus()
     event_bus.set_redis_client(mock_redis_client)
 
-    # Mock Lua script to return 1 (new key) for first call, 0 (existing) for rest
-    call_count = 0
-
-    async def mock_execute(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        return 1 if call_count == 1 else 0  # 1 = new, 0 = duplicate
+    # First publish marks the event idempotent (exists → duplicate).
+    mock_redis_client.exists = AsyncMock(side_effect=[0, 1, 1])
 
     processed_count = 0
 
@@ -56,25 +57,16 @@ async def test_concurrent_identical_events_processed_once(mock_redis_client, moc
         nonlocal processed_count
         processed_count += 1
 
-    with patch("src.app.core.events.get_lua_manager") as mock_lua_mgr:
-        mock_manager = MagicMock()
-        mock_manager.execute = mock_execute
-        mock_lua_mgr.return_value = mock_manager
+    with patch("src.app.core.events.settings", mock_settings):
+        event_bus.subscribe("test.event")(handler)
+        # First publish: peek says new → processed, then marked.
+        await event_bus.publish("test.event", {"id": "same-id"}, event_id="same-event-id")
+        # Re-publishes after completion: peek says duplicate → skipped.
+        await event_bus.publish("test.event", {"id": "same-id"}, event_id="same-event-id")
+        await event_bus.publish("test.event", {"id": "same-id"}, event_id="same-event-id")
 
-        with patch("src.app.core.events.settings", mock_settings):
-            event_bus.subscribe("test.event")(handler)
-
-            # Publish same event 10 times concurrently
-            await asyncio.gather(
-                *[event_bus.publish("test.event", {"id": "same-id"}, event_id="same-event-id") for _ in range(10)]
-            )
-
-    # Wait for background tasks to complete
-    await asyncio.sleep(0.1)
-
-    # Only first event should be processed
     assert processed_count == 1
-    assert call_count == 10  # All 10 checked idempotency
+    assert mock_redis_client.exists.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -141,25 +133,22 @@ async def test_idempotency_key_has_correct_format(mock_redis_client, mock_settin
 
 @pytest.mark.asyncio
 async def test_lua_returns_0_for_duplicate(mock_redis_client, mock_settings):
-    """Test that Lua script returns 0 for duplicate events."""
+    """H-6: a peek-reported duplicate is skipped without processing."""
     event_bus = EventBus()
     event_bus.set_redis_client(mock_redis_client)
 
-    # Mock Lua script to return 0 (duplicate)
-    with patch("src.app.core.events.get_lua_manager") as mock_lua_mgr:
-        mock_manager = MagicMock()
-        mock_manager.execute = AsyncMock(return_value=0)  # Duplicate
-        mock_lua_mgr.return_value = mock_manager
+    # Peek says the event was already processed.
+    mock_redis_client.exists = AsyncMock(return_value=1)
 
-        processed = False
+    processed = False
 
-        async def handler(data):
-            nonlocal processed
-            processed = True
+    async def handler(data):
+        nonlocal processed
+        processed = True
 
-        with patch("src.app.core.events.settings", mock_settings):
-            event_bus.subscribe("test.event")(handler)
-            await event_bus.publish("test.event", {"id": "duplicate-id"}, event_id="dup-123")
+    with patch("src.app.core.events.settings", mock_settings):
+        event_bus.subscribe("test.event")(handler)
+        await event_bus.publish("test.event", {"id": "duplicate-id"}, event_id="dup-123")
 
     # Event should not be processed (duplicate)
     assert not processed
@@ -195,22 +184,18 @@ async def test_lua_returns_1_for_new_event(mock_redis_client, mock_settings):
 
 
 @pytest.mark.asyncio
-async def test_race_condition_prevented_under_load(mock_redis_client, mock_settings):
-    """Test that race conditions are prevented under high load."""
+async def test_processed_event_repeated_under_load_is_skipped(mock_redis_client, mock_settings):
+    """H-6: after an event is published and marked, high-volume re-publishes
+    are all skipped (read-only peek). Concurrent in-flight duplicates may
+    enqueue more than once — handler idempotency covers that, mirroring ARQ
+    at-least-once redelivery. The old 100-publish test asserted check-time
+    SETNX collapse, which H-6 deliberately traded away for crash recovery."""
     event_bus = EventBus()
     event_bus.set_redis_client(mock_redis_client)
 
-    # Track how many times each event ID is checked
-    checked_ids = []
-    lock = asyncio.Lock()
-
-    async def mock_execute(redis_client, script_name, keys, args):
-        # Simulate race condition: multiple calls for same key
-        async with lock:
-            if keys[0] in checked_ids:
-                return 0  # Duplicate
-            checked_ids.append(keys[0])
-            return 1  # New
+    # First peek: new (0). After the first publish completes and marks the
+    # key, every subsequent peek reports duplicate (1).
+    mock_redis_client.exists = AsyncMock(side_effect=[0] + [1] * 100)
 
     handler_calls = 0
 
@@ -218,23 +203,14 @@ async def test_race_condition_prevented_under_load(mock_redis_client, mock_setti
         nonlocal handler_calls
         handler_calls += 1
 
-    with patch("src.app.core.events.get_lua_manager") as mock_lua_mgr:
-        mock_manager = MagicMock()
-        mock_manager.execute = mock_execute
-        mock_lua_mgr.return_value = mock_manager
+    with patch("src.app.core.events.settings", mock_settings):
+        event_bus.subscribe("test.event")(handler)
+        await event_bus.publish("test.event", {"id": "same-id"}, event_id="race-test")
+        # Flood of re-publishes after completion — all duplicates.
+        await asyncio.gather(
+            *[event_bus.publish("test.event", {"id": "same-id"}, event_id="race-test") for _ in range(100)]
+        )
 
-        with patch("src.app.core.events.settings", mock_settings):
-            event_bus.subscribe("test.event")(handler)
-
-            # Publish same event 100 times concurrently
-            await asyncio.gather(
-                *[event_bus.publish("test.event", {"id": "same-id"}, event_id="race-test") for _ in range(100)]
-            )
-
-    # Wait for background tasks to complete
-    await asyncio.sleep(0.1)
-
-    # Only one event should be processed
     assert handler_calls == 1
 
 
@@ -269,16 +245,18 @@ async def test_lua_manager_called_for_idempotency(mock_redis_client, mock_settin
 
 @pytest.mark.asyncio
 async def test_redis_failure_uses_fallback():
-    """Test that Redis failure falls back to non-Lua implementation."""
+    """H-6: peek fails open; Lua mark failure falls back to SETNX; the
+    event is still processed (availability over duplicate suppression)."""
     event_bus = EventBus()
 
-    # Mock Redis to raise exception on Lua execution
+    # Peek raises (Redis down pre-publish) — must fail open.
     mock_redis = AsyncMock()
+    mock_redis.exists = AsyncMock(side_effect=Exception("peek failed"))
     mock_redis.set = AsyncMock(return_value=True)
     mock_redis.incr = AsyncMock(return_value=1)
     event_bus.set_redis_client(mock_redis)
 
-    # Mock Lua manager to raise exception
+    # Lua manager raises on the post-publish mark.
     with patch("src.app.core.events.get_lua_manager") as mock_lua_mgr:
         mock_manager = MagicMock()
         mock_manager.execute = AsyncMock(side_effect=Exception("Lua script failed"))
@@ -297,36 +275,33 @@ async def test_redis_failure_uses_fallback():
         with patch("src.app.core.events.settings", mock_settings):
             event_bus.subscribe("test.event")(handler)
 
-            # Event should still be processed using fallback
+            # Event should still be processed (peek fail-open + mark fallback)
             await event_bus.publish("test.event", {"id": "test-id"}, event_id="fallback-test")
 
-    # Wait for background tasks to complete
     await asyncio.sleep(0.1)
 
-    # Event should be processed (fallback path)
     assert processed
-    # Fallback should use set
+    # Fallback mark should use set (nx=True)
     mock_redis.set.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_feature_flag_disables_lua_optimization(mock_redis_client):
-    """Test that feature flag controls Lua optimization."""
+    """H-6: with the Lua flag off, the post-publish mark uses SETNX, and
+    the Lua manager is never invoked."""
     event_bus = EventBus()
 
-    # Mock Redis for fallback path
     mock_redis = AsyncMock()
+    mock_redis.exists = AsyncMock(return_value=0)
     mock_redis.set = AsyncMock(return_value=True)
     mock_redis.incr = AsyncMock(return_value=1)
     event_bus.set_redis_client(mock_redis)
 
-    # Register handler
     async def handler(data):
         pass
 
     event_bus.subscribe("test.event")(handler)
 
-    # Mock settings with feature flag disabled
     mock_settings = MagicMock()
     mock_settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = False
     mock_settings.EVENT_HANDLER_TIMEOUT_SECONDS = 30
@@ -339,8 +314,7 @@ async def test_feature_flag_disables_lua_optimization(mock_redis_client):
         with patch("src.app.core.events.settings", mock_settings):
             await event_bus.publish("test.event", {"data": "test"}, event_id="flag-test")
 
-        # Lua manager should NOT be called when flag is disabled
         mock_lua_mgr.assert_not_called()
 
-    # Should use fallback path instead
+    # Post-publish mark used the SETNX fallback
     mock_redis.set.assert_called_once()

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 from fastapi import Request
@@ -29,6 +30,8 @@ from src.app.api.deps.auth import (
     resolve_principal,
 )
 from src.app.core.exceptions.http_exceptions import ForbiddenException, UnauthorizedException
+from src.app.core.schemas import TokenData
+from src.app.core.tenancy.context import TenantContext
 
 
 def _make_request(headers: dict[str, str] | None = None, state: Any = None) -> MagicMock:
@@ -58,6 +61,7 @@ def _clear_security_caches():
 
 async def test_authenticated_user_attr_access() -> None:
     from src.app.core.utils.user_utils import get_user_attr
+
     u = AuthenticatedUser(id=1, email="a@b.com", username="a")
     assert u.email == "a@b.com"
     assert get_user_attr(u, "email") == "a@b.com"
@@ -74,10 +78,10 @@ async def test_create_auth_context_from_dict() -> None:
 
 async def test_create_auth_context_from_obj() -> None:
     user = AuthenticatedUser(id=2, email="c@d.com")
-    ctx = await _create_auth_context(user, None, "tenant", _make_db(), is_dependency_override=True)
+    ctx = await _create_auth_context(user, None, None, _make_db(), is_dependency_override=True)
     assert ctx.user.id == 2
     assert ctx.is_dependency_override is True
-    assert ctx.tenant == "tenant"
+    assert ctx.tenant is None
 
 
 async def test_is_token_blacklisted_cache_true() -> None:
@@ -117,7 +121,6 @@ async def test_is_token_blacklisted_cache_none_db_miss() -> None:
 # ---------------------------------------------------------------------------
 # get_auth_context
 # ---------------------------------------------------------------------------
-
 
 
 async def test_get_auth_context_no_token_from_header() -> None:
@@ -193,9 +196,7 @@ async def test_get_auth_context_cached_success() -> None:
 
 async def test_get_auth_context_verify_token_success() -> None:
     request = _make_request()
-    token_data = MagicMock()
-    token_data.username_or_email = "bob"
-    token_data.token_version = 0
+    token_data = TokenData(username_or_email="bob", token_version=0)
     user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": 1}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
@@ -211,9 +212,7 @@ async def test_get_auth_context_verify_token_success() -> None:
 
 async def test_get_auth_context_user_not_found() -> None:
     request = _make_request()
-    token_data = MagicMock()
-    token_data.username_or_email = "bob"
-    token_data.token_version = 0
+    token_data = TokenData(username_or_email="bob", token_version=0)
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
@@ -228,9 +227,7 @@ async def test_get_auth_context_user_not_found() -> None:
 
 async def test_get_auth_context_inactive() -> None:
     request = _make_request()
-    token_data = MagicMock()
-    token_data.username_or_email = "bob"
-    token_data.token_version = 0
+    token_data = TokenData(username_or_email="bob", token_version=0)
     user = {"id": 2, "email": "bob@x.com", "is_active": False, "token_version": 0}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
@@ -246,9 +243,7 @@ async def test_get_auth_context_inactive() -> None:
 
 async def test_get_auth_context_deleted() -> None:
     request = _make_request()
-    token_data = MagicMock()
-    token_data.username_or_email = "bob"
-    token_data.token_version = 0
+    token_data = TokenData(username_or_email="bob", token_version=0)
     user = {"id": 2, "email": "bob@x.com", "is_active": True, "is_deleted": True, "token_version": 0}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
@@ -264,9 +259,7 @@ async def test_get_auth_context_deleted() -> None:
 
 async def test_get_auth_context_version_mismatch() -> None:
     request = _make_request()
-    token_data = MagicMock()
-    token_data.username_or_email = "bob"
-    token_data.token_version = 5
+    token_data = TokenData(username_or_email="bob", token_version=5)
     user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 2}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
@@ -282,13 +275,9 @@ async def test_get_auth_context_version_mismatch() -> None:
 
 async def test_get_auth_context_tenant_mismatch() -> None:
     request = _make_request()
-    token_data = MagicMock()
-    token_data.username_or_email = "bob"
-    token_data.token_version = 0
+    token_data = TokenData(username_or_email="bob", token_version=0)
     user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": 1}
-    tenant = MagicMock()
-    tenant.id = 9
-    tenant.slug = "other"
+    tenant = TenantContext(tenant_id=UUID(int=9), tenant_slug="other", tenant_name="Other", is_active=True)
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
@@ -303,9 +292,7 @@ async def test_get_auth_context_tenant_mismatch() -> None:
 
 async def test_get_auth_context_superuser_tenant_ok() -> None:
     request = _make_request()
-    token_data = MagicMock()
-    token_data.username_or_email = "bob"
-    token_data.token_version = 0
+    token_data = TokenData(username_or_email="bob", token_version=0)
     user = {
         "id": 2,
         "email": "bob@x.com",
@@ -314,9 +301,7 @@ async def test_get_auth_context_superuser_tenant_ok() -> None:
         "token_version": 0,
         "tenant_id": 1,
     }
-    tenant = MagicMock()
-    tenant.id = 9
-    tenant.slug = "other"
+    tenant = TenantContext(tenant_id=UUID(int=9), tenant_slug="other", tenant_name="Other", is_active=True)
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
@@ -459,7 +444,6 @@ async def test_get_user_by_api_key_inactive() -> None:
     assert result is None
 
 
-
 async def test_is_token_blacklisted_token_check() -> None:
     db = _make_db()
     with (
@@ -582,9 +566,7 @@ async def test_get_optional_auth_context_exception() -> None:
 
 async def test_get_optional_auth_context_user_lookup_exception() -> None:
     request = _make_request(headers={"Authorization": "Bearer abc"})
-    token_data = MagicMock()
-    token_data.username_or_email = "bob"
-    token_data.token_version = 0
+    token_data = TokenData(username_or_email="bob", token_version=0)
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
@@ -724,9 +706,7 @@ async def test_verify_optional_verify_token_exception() -> None:
 
 async def test_verify_optional_success() -> None:
     request = _make_request()
-    token_data = MagicMock()
-    token_data.username_or_email = "bob"
-    token_data.token_version = 0
+    token_data = TokenData(username_or_email="bob", token_version=0)
     user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": 1}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
@@ -742,9 +722,7 @@ async def test_verify_optional_success() -> None:
 
 async def test_verify_optional_inactive() -> None:
     request = _make_request()
-    token_data = MagicMock()
-    token_data.username_or_email = "bob"
-    token_data.token_version = 0
+    token_data = TokenData(username_or_email="bob", token_version=0)
     user = {"id": 2, "email": "bob@x.com", "is_active": False, "token_version": 0}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
@@ -759,9 +737,7 @@ async def test_verify_optional_inactive() -> None:
 
 async def test_verify_optional_tenant_mismatch() -> None:
     request = _make_request()
-    token_data = MagicMock()
-    token_data.username_or_email = "bob"
-    token_data.token_version = 0
+    token_data = TokenData(username_or_email="bob", token_version=0)
     user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": 1}
     tenant = MagicMock()
     tenant.id = 9
@@ -835,9 +811,7 @@ async def test_get_optional_api_key_valid() -> None:
 
 async def test_get_optional_bearer_success() -> None:
     request = _make_request(headers={"Authorization": "Bearer tok"})
-    token_data = MagicMock()
-    token_data.username_or_email = "bob"
-    token_data.token_version = 0
+    token_data = TokenData(username_or_email="bob", token_version=0)
     user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
@@ -948,6 +922,8 @@ async def test_get_current_superuser_ok() -> None:
     user = AuthenticatedUser(id=1, email="a@b.com", is_superuser=True, is_active=True)
     result = await get_current_superuser(user)
     assert result.id == 1
+
+
 # ---------------------------------------------------------------------------
 # resolve_principal (unified seam tests)
 # ---------------------------------------------------------------------------
@@ -955,9 +931,7 @@ async def test_get_current_superuser_ok() -> None:
 
 async def test_resolve_principal_strict_success() -> None:
     request = _make_request()
-    token_data = MagicMock()
-    token_data.username_or_email = "alice"
-    token_data.token_version = 1
+    token_data = TokenData(username_or_email="alice", token_version=1)
     user = {"id": 10, "email": "alice@example.com", "username": "alice", "is_active": True, "token_version": 1}
 
     with (
@@ -987,9 +961,7 @@ async def test_resolve_principal_optional_unauthenticated_returns_none() -> None
 
 async def test_resolve_principal_optional_success() -> None:
     request = _make_request()
-    token_data = MagicMock()
-    token_data.username_or_email = "alice"
-    token_data.token_version = 0
+    token_data = TokenData(username_or_email="alice", token_version=0)
     user = {"id": 10, "email": "alice@example.com", "username": "alice", "is_active": True, "token_version": 0}
 
     with (

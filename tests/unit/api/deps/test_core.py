@@ -30,18 +30,20 @@ def _fake_settings():
 
 
 async def test_rate_limiter_user_with_tier_and_limit():
+    """H-9: the tier path now resolves via the unified rate-policy engine
+    (L1/Redis policy cache → DB → settings) instead of a per-request DB
+    crud.get. Patch the engine seam and assert the resolved limit flows
+    through to the limiter."""
     request = _make_request()
     db = MagicMock()
     user = {"id": "u1", "tier": {"id": "t1", "name": "pro"}}
-    rate_limit = {"limit": 100, "period": 60}
     with (
-        patch.object(deps_core, "crud_rate_limits") as crud,
+        patch.object(deps_core, "resolve_rate_limits", new=AsyncMock(return_value=(100, 60))) as resolve,
         patch.object(deps_core, "rate_limiter") as rl,
     ):
-        crud.get = AsyncMock(return_value=rate_limit)
         rl.is_rate_limited = AsyncMock(return_value=False)
         await deps_core.rate_limiter_dependency(request=request, db=db, user=user)
-    crud.get.assert_awaited_once()
+    resolve.assert_awaited_once()
     kwargs = rl.is_rate_limited.call_args.kwargs
     assert kwargs["user_id"] == "u1"
     assert kwargs["limit"] == 100
@@ -49,15 +51,14 @@ async def test_rate_limiter_user_with_tier_and_limit():
 
 
 async def test_rate_limiter_user_with_tier_no_limit_uses_default():
+    """H-9: cache-miss + no DB row → engine falls back to settings default."""
     request = _make_request()
     db = MagicMock()
     user = {"id": "u1", "tier": {"id": "t1", "name": "pro"}}
     with (
-        patch.object(deps_core, "crud_rate_limits") as crud,
+        patch.object(deps_core, "resolve_rate_limits", new=AsyncMock(return_value=(50, 30))),
         patch.object(deps_core, "rate_limiter") as rl,
-        patch.object(deps_core, "settings", _fake_settings()),
     ):
-        crud.get = AsyncMock(return_value=None)
         rl.is_rate_limited = AsyncMock(return_value=False)
         await deps_core.rate_limiter_dependency(request=request, db=db, user=user)
     kwargs = rl.is_rate_limited.call_args.kwargs
@@ -67,12 +68,13 @@ async def test_rate_limiter_user_with_tier_no_limit_uses_default():
 
 
 async def test_rate_limiter_user_no_tier_uses_default():
+    """H-9: no tier → engine resolves the settings default (no DB hit)."""
     request = _make_request()
     db = MagicMock()
     user = {"id": "u1"}
     with (
+        patch.object(deps_core, "resolve_rate_limits", new=AsyncMock(return_value=(50, 30))),
         patch.object(deps_core, "rate_limiter") as rl,
-        patch.object(deps_core, "settings", _fake_settings()),
     ):
         rl.is_rate_limited = AsyncMock(return_value=False)
         await deps_core.rate_limiter_dependency(request=request, db=db, user=user)

@@ -22,8 +22,10 @@ class TestRateLimitDependency:
 
     @pytest.fixture
     def mock_current_user(self):
-        """Create a mock current user."""
-        return {"id": 1, "email": "test@example.com"}
+        """Create a mock current user (Q-M2: real AuthenticatedUser)."""
+        from src.app.api.deps.auth import AuthenticatedUser
+
+        return AuthenticatedUser(id=1, email="test@example.com")
 
     @pytest.mark.asyncio
     async def test_rate_limit_allows_request_within_limit(self, mock_response, mock_current_user):
@@ -132,7 +134,7 @@ class TestRateLimitDependency:
 
             await check_rate_limit_dependency(mock_response, mock_current_user)
 
-            mock_check.assert_called_once_with(mock_current_user["id"])
+            mock_check.assert_called_once_with(mock_current_user.id)
 
     @pytest.mark.asyncio
     async def test_rate_limit_with_zero_remaining(self, mock_response, mock_current_user):

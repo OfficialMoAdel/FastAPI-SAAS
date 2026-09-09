@@ -115,25 +115,22 @@ async def test_small_file_integrity(s3_storage):
     """Scenario 1: Small file integrity (1KB)."""
     storage_instance, storage = s3_storage
 
-    with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+    content = os.urandom(1024)
+    mock_file = MockUploadFile(content, len(content))
 
-        content = os.urandom(1024)
-        mock_file = MockUploadFile(content, len(content))
+    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
-        with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
-            mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
+        upload_result = await storage_instance.upload(
+            file=mock_file, path="test/small.bin", mime_type="application/octet-stream"
+        )
 
-            upload_result = await storage_instance.upload(
-                file=mock_file, path="test/small.bin", mime_type="application/octet-stream"
-            )
+    assert upload_result.success
 
-        assert upload_result.success
+    download_result = await download_all(storage_instance, "test/small.bin")
 
-        download_result = await download_all(storage_instance, "test/small.bin")
-
-        assert download_result == content
-        assert md5_bytes(download_result) == md5_bytes(content)
+    assert download_result == content
+    assert md5_bytes(download_result) == md5_bytes(content)
 
 
 @pytest.mark.asyncio
@@ -141,27 +138,24 @@ async def test_large_file_integrity(s3_storage):
     """Scenario 2: Large file integrity (10MB for testing, 100MB in production)."""
     storage_instance, storage = s3_storage
 
-    with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+    content = os.urandom(10 * 1024 * 1024)  # 10MB
+    mock_file = MockUploadFile(content, len(content))
 
-        content = os.urandom(10 * 1024 * 1024)  # 10MB
-        mock_file = MockUploadFile(content, len(content))
+    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
-        with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
-            mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
+        upload_result = await storage_instance.upload(
+            file=mock_file, path="test/large.bin", mime_type="application/octet-stream"
+        )
 
-            upload_result = await storage_instance.upload(
-                file=mock_file, path="test/large.bin", mime_type="application/octet-stream"
-            )
+    assert upload_result.success
+    assert upload_result.size == len(content)
 
-        assert upload_result.success
-        assert upload_result.size == len(content)
+    download_result = await download_all(storage_instance, "test/large.bin")
 
-        download_result = await download_all(storage_instance, "test/large.bin")
-
-        assert len(download_result) == len(content)
-        assert download_result == content
-        assert md5_bytes(download_result) == md5_bytes(content)
+    assert len(download_result) == len(content)
+    assert download_result == content
+    assert md5_bytes(download_result) == md5_bytes(content)
 
 
 @pytest.mark.asyncio
@@ -169,27 +163,24 @@ async def test_png_image_integrity(s3_storage):
     """Scenario 3: Binary file type - PNG image."""
     storage_instance, storage = s3_storage
 
-    with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+    img = Image.new("RGB", (100, 100), color="red")
+    img_bytes = io.BytesIO()
+    img.save(img_bytes, format="PNG")
+    content = img_bytes.getvalue()
 
-        img = Image.new("RGB", (100, 100), color="red")
-        img_bytes = io.BytesIO()
-        img.save(img_bytes, format="PNG")
-        content = img_bytes.getvalue()
+    mock_file = MockUploadFile(content, len(content), "test.png")
 
-        mock_file = MockUploadFile(content, len(content), "test.png")
+    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
-        with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
-            mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
+        upload_result = await storage_instance.upload(file=mock_file, path="test/image.png", mime_type="image/png")
 
-            upload_result = await storage_instance.upload(file=mock_file, path="test/image.png", mime_type="image/png")
+    assert upload_result.success
 
-        assert upload_result.success
+    download_result = await download_all(storage_instance, "test/image.png")
 
-        download_result = await download_all(storage_instance, "test/image.png")
-
-        assert download_result == content
-        assert md5_bytes(download_result) == md5_bytes(content)
+    assert download_result == content
+    assert md5_bytes(download_result) == md5_bytes(content)
 
 
 @pytest.mark.asyncio
@@ -197,25 +188,22 @@ async def test_pdf_file_integrity(s3_storage):
     """Scenario 3: Binary file type - PDF."""
     storage_instance, storage = s3_storage
 
-    with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+    content = b"%PDF-1.4\n" + os.urandom(1024) + b"%%EOF"
+    mock_file = MockUploadFile(content, len(content), "test.pdf")
 
-        content = b"%PDF-1.4\n" + os.urandom(1024) + b"%%EOF"
-        mock_file = MockUploadFile(content, len(content), "test.pdf")
+    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
-        with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
-            mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
+        upload_result = await storage_instance.upload(
+            file=mock_file, path="test/doc.pdf", mime_type="application/pdf"
+        )
 
-            upload_result = await storage_instance.upload(
-                file=mock_file, path="test/doc.pdf", mime_type="application/pdf"
-            )
+    assert upload_result.success
 
-        assert upload_result.success
+    download_result = await download_all(storage_instance, "test/doc.pdf")
 
-        download_result = await download_all(storage_instance, "test/doc.pdf")
-
-        assert download_result == content
-        assert md5_bytes(download_result) == md5_bytes(content)
+    assert download_result == content
+    assert md5_bytes(download_result) == md5_bytes(content)
 
 
 @pytest.mark.asyncio
@@ -223,34 +211,31 @@ async def test_zip_archive_integrity(s3_storage):
     """Scenario 3: Binary file type - ZIP archive."""
     storage_instance, storage = s3_storage
 
-    with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        zipf.writestr("file1.txt", b"content1")
+        zipf.writestr("file2.txt", b"content2")
+    content = zip_buffer.getvalue()
 
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-            zipf.writestr("file1.txt", b"content1")
-            zipf.writestr("file2.txt", b"content2")
-        content = zip_buffer.getvalue()
+    mock_file = MockUploadFile(content, len(content), "test.zip")
 
-        mock_file = MockUploadFile(content, len(content), "test.zip")
+    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
-        with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
-            mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
+        upload_result = await storage_instance.upload(
+            file=mock_file, path="test/archive.zip", mime_type="application/zip"
+        )
 
-            upload_result = await storage_instance.upload(
-                file=mock_file, path="test/archive.zip", mime_type="application/zip"
-            )
+    assert upload_result.success
 
-        assert upload_result.success
+    download_result = await download_all(storage_instance, "test/archive.zip")
 
-        download_result = await download_all(storage_instance, "test/archive.zip")
+    assert download_result == content
+    assert md5_bytes(download_result) == md5_bytes(content)
 
-        assert download_result == content
-        assert md5_bytes(download_result) == md5_bytes(content)
-
-        with zipfile.ZipFile(io.BytesIO(download_result), "r") as zipf:
-            assert zipf.read("file1.txt") == b"content1"
-            assert zipf.read("file2.txt") == b"content2"
+    with zipfile.ZipFile(io.BytesIO(download_result), "r") as zipf:
+        assert zipf.read("file1.txt") == b"content1"
+        assert zipf.read("file2.txt") == b"content2"
 
 
 @pytest.mark.asyncio
@@ -258,24 +243,21 @@ async def test_content_type_preservation(s3_storage):
     """Scenario 4: Content-Type preservation."""
     storage_instance, storage = s3_storage
 
-    with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+    content = b"test content"
+    mock_file = MockUploadFile(content, len(content))
 
-        content = b"test content"
-        mock_file = MockUploadFile(content, len(content))
+    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
-        with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
-            mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
+        upload_result = await storage_instance.upload(
+            file=mock_file, path="test/file.txt", mime_type="text/plain; charset=utf-8"
+        )
 
-            upload_result = await storage_instance.upload(
-                file=mock_file, path="test/file.txt", mime_type="text/plain; charset=utf-8"
-            )
+    assert upload_result.success
 
-        assert upload_result.success
+    download_result = await download_all(storage_instance, "test/file.txt")
 
-        download_result = await download_all(storage_instance, "test/file.txt")
-
-        assert download_result == content
+    assert download_result == content
 
 
 @pytest.mark.asyncio
@@ -283,29 +265,26 @@ async def test_multipart_boundary_integrity(s3_storage):
     """Scenario 5: Multipart boundary - file that triggers multipart (>5MB)."""
     storage_instance, storage = s3_storage
 
-    with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+    content = os.urandom(10 * 1024 * 1024)  # 10MB, >5MB threshold
+    mock_file = MockUploadFile(content, len(content))
 
-        content = os.urandom(10 * 1024 * 1024)  # 10MB, >5MB threshold
-        mock_file = MockUploadFile(content, len(content))
+    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
-        with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
-            mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
+        upload_result = await storage_instance.upload(
+            file=mock_file, path="test/multipart.bin", mime_type="application/octet-stream"
+        )
 
-            upload_result = await storage_instance.upload(
-                file=mock_file, path="test/multipart.bin", mime_type="application/octet-stream"
-            )
+    assert upload_result.success
+    assert upload_result.size == len(content)
 
-        assert upload_result.success
-        assert upload_result.size == len(content)
+    download_result = await download_all(storage_instance, "test/multipart.bin")
 
-        download_result = await download_all(storage_instance, "test/multipart.bin")
+    assert len(download_result) == len(content)
+    assert download_result == content
+    assert md5_bytes(download_result) == md5_bytes(content)
 
-        assert len(download_result) == len(content)
-        assert download_result == content
-        assert md5_bytes(download_result) == md5_bytes(content)
-
-        verify_no_corruption_at_boundaries(download_result, chunk_size=8 * 1024 * 1024)
+    verify_no_corruption_at_boundaries(download_result, chunk_size=8 * 1024 * 1024)
 
 
 def verify_no_corruption_at_boundaries(content: bytes, chunk_size: int):
@@ -324,24 +303,21 @@ async def test_zero_byte_file_integrity(s3_storage):
     """Edge case: Zero-byte file integrity."""
     storage_instance, storage = s3_storage
 
-    with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+    content = b""
+    mock_file = MockUploadFile(content, 0)
 
-        content = b""
-        mock_file = MockUploadFile(content, 0)
+    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
-        with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
-            mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
+        upload_result = await storage_instance.upload(
+            file=mock_file, path="test/empty.bin", mime_type="application/octet-stream"
+        )
 
-            upload_result = await storage_instance.upload(
-                file=mock_file, path="test/empty.bin", mime_type="application/octet-stream"
-            )
+    assert upload_result.success
 
-        assert upload_result.success
+    download_result = await download_all(storage_instance, "test/empty.bin")
 
-        download_result = await download_all(storage_instance, "test/empty.bin")
-
-        assert download_result == b""
+    assert download_result == b""
 
 
 @pytest.mark.asyncio
@@ -349,25 +325,22 @@ async def test_exact_multipart_threshold_integrity(s3_storage):
     """Edge case: File exactly at multipart threshold (5MB)."""
     storage_instance, storage = s3_storage
 
-    with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+    content = os.urandom(5 * 1024 * 1024)  # Exactly 5MB
+    mock_file = MockUploadFile(content, len(content))
 
-        content = os.urandom(5 * 1024 * 1024)  # Exactly 5MB
-        mock_file = MockUploadFile(content, len(content))
+    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
-        with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
-            mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
+        upload_result = await storage_instance.upload(
+            file=mock_file, path="test/threshold.bin", mime_type="application/octet-stream"
+        )
 
-            upload_result = await storage_instance.upload(
-                file=mock_file, path="test/threshold.bin", mime_type="application/octet-stream"
-            )
+    assert upload_result.success
 
-        assert upload_result.success
+    download_result = await download_all(storage_instance, "test/threshold.bin")
 
-        download_result = await download_all(storage_instance, "test/threshold.bin")
-
-        assert download_result == content
-        assert md5_bytes(download_result) == md5_bytes(content)
+    assert download_result == content
+    assert md5_bytes(download_result) == md5_bytes(content)
 
 
 @pytest.mark.asyncio
@@ -375,22 +348,19 @@ async def test_just_below_multipart_threshold_integrity(s3_storage):
     """Edge case: File just below multipart threshold (5MB - 1 byte)."""
     storage_instance, storage = s3_storage
 
-    with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+    content = os.urandom(5 * 1024 * 1024 - 1)  # 5MB - 1 byte
+    mock_file = MockUploadFile(content, len(content))
 
-        content = os.urandom(5 * 1024 * 1024 - 1)  # 5MB - 1 byte
-        mock_file = MockUploadFile(content, len(content))
+    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
-        with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
-            mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
+        upload_result = await storage_instance.upload(
+            file=mock_file, path="test/below-threshold.bin", mime_type="application/octet-stream"
+        )
 
-            upload_result = await storage_instance.upload(
-                file=mock_file, path="test/below-threshold.bin", mime_type="application/octet-stream"
-            )
+    assert upload_result.success
 
-        assert upload_result.success
+    download_result = await download_all(storage_instance, "test/below-threshold.bin")
 
-        download_result = await download_all(storage_instance, "test/below-threshold.bin")
-
-        assert download_result == content
-        assert md5_bytes(download_result) == md5_bytes(content)
+    assert download_result == content
+    assert md5_bytes(download_result) == md5_bytes(content)

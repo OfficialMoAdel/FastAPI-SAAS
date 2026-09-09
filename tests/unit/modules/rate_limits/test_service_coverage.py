@@ -18,11 +18,16 @@ def _make_service() -> tuple[RateLimitService, AsyncMock]:
 
 
 def _patch_tier():
-    tier_service = AsyncMock()
-    tier_service.get_tier.return_value = {"id": 5, "name": "free"}
-    return patch(
-        "src.app.modules.rate_limits.service.TierService",
-        return_value=tier_service,
+    """Patch the tier resolution seam (Q-M6: single implementation — get_tier).
+
+    The old helper patched the module-level TierService alias, which the
+    inherited `_get_tier_or_404` constructed; composition removed that
+    branch, so the seam is now the get_tier method itself.
+    """
+    return patch.object(
+        RateLimitService,
+        "get_tier",
+        AsyncMock(return_value={"id": 5, "name": "free"}),
     )
 
 

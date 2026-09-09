@@ -32,7 +32,9 @@ if not _loaded:
     os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32chars")
     os.environ.setdefault("POSTGRES_USER", "test")
     os.environ.setdefault("POSTGRES_PASSWORD", "test")
-    os.environ.setdefault("ADMIN_PASSWORD", "SuperS3cretP@ssw0rd!123")
+    # C-1 hygiene: never default to a git-history-leaked value — the
+    # FirstUserSettings blocklist rejects it at settings import time.
+    os.environ.setdefault("ADMIN_PASSWORD", "CIRuntimeAdminPw?a1B2c3D4e5")
 
 os.environ.setdefault("ENVIRONMENT", "local")
 

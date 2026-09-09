@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from src.app.api.deps.auth import AuthenticatedUser
 from src.app.modules.billing.routers.invoices import get_invoice, list_invoices
 
 
@@ -16,7 +17,13 @@ async def test_list_invoices():
         "src.app.modules.billing.routers.invoices.get_billing_record_service",
         return_value=mock_service,
     ):
-        result = await list_invoices(current_user={"id": 1}, db=MagicMock(), page=1, per_page=20, status=None)
+        result = await list_invoices(
+            current_user=AuthenticatedUser(id=1, email="u@e.com"),
+            db=MagicMock(),
+            page=1,
+            per_page=20,
+            status=None,
+        )
         assert result["items"] == [{"id": 1}]
         assert result["total"] == 1
         assert result["has_next"] is False
@@ -32,7 +39,13 @@ async def test_list_invoices_has_next():
         "src.app.modules.billing.routers.invoices.get_billing_record_service",
         return_value=mock_service,
     ):
-        result = await list_invoices(current_user={"id": 1}, db=MagicMock(), page=1, per_page=20, status="succeeded")
+        result = await list_invoices(
+            current_user=AuthenticatedUser(id=1, email="u@e.com"),
+            db=MagicMock(),
+            page=1,
+            per_page=20,
+            status="succeeded",
+        )
         assert result["has_next"] is True
 
 
@@ -44,7 +57,7 @@ async def test_get_invoice_success():
         "src.app.modules.billing.routers.invoices.get_billing_record_service",
         return_value=mock_service,
     ):
-        result = await get_invoice(invoice_id=5, current_user={"id": 1}, db=MagicMock())
+        result = await get_invoice(invoice_id=5, current_user=AuthenticatedUser(id=1, email="u@e.com"), db=MagicMock())
         assert result == {"id": 5, "user_id": 1}
 
 
@@ -57,7 +70,7 @@ async def test_get_invoice_not_found():
         return_value=mock_service,
     ):
         with pytest.raises(HTTPException) as exc:
-            await get_invoice(invoice_id=5, current_user={"id": 1}, db=MagicMock())
+            await get_invoice(invoice_id=5, current_user=AuthenticatedUser(id=1, email="u@e.com"), db=MagicMock())
         assert exc.value.status_code == 404
 
 
@@ -70,5 +83,5 @@ async def test_get_invoice_forbidden():
         return_value=mock_service,
     ):
         with pytest.raises(HTTPException) as exc:
-            await get_invoice(invoice_id=5, current_user={"id": 1}, db=MagicMock())
+            await get_invoice(invoice_id=5, current_user=AuthenticatedUser(id=1, email="u@e.com"), db=MagicMock())
         assert exc.value.status_code == 403

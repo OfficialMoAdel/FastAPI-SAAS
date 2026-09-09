@@ -52,13 +52,13 @@ class TestUsersMeBodyFiltering:
             "id": 1,
             "username": "testuser",
         }
-        client.app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
+        client.app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         try:
             response = client.get("/api/v1/users/me", headers={"X-Tenant-ID": "1"})
         finally:
             client.app.dependency_overrides.pop(get_current_user, None)
-            client.app.dependency_overrides.pop(users_router._get_user_service, None)
+            client.app.dependency_overrides.pop(users_router.get_user_service, None)
 
         assert response.status_code == 200, response.text
         body = response.json()
@@ -91,12 +91,12 @@ class TestGetUserByIdBodyFiltering:
         mock_service = Mock(spec=UserService)
         mock_service.get_profile = AsyncMock(return_value=_full_user_dict())
 
-        client.app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
+        client.app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         try:
             response = client.get("/api/v1/users/1", headers={"X-Tenant-ID": "1"})
         finally:
-            client.app.dependency_overrides.pop(users_router._get_user_service, None)
+            client.app.dependency_overrides.pop(users_router.get_user_service, None)
 
         assert response.status_code == 200, response.text
         body = response.json()

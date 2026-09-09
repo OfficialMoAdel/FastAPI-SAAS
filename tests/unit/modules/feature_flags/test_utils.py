@@ -113,7 +113,7 @@ async def test_get_feature_flags_cache_exception_falls_to_db():
     with patch("src.app.core.utils.cache.client", redis):
         result = await ff_utils.get_feature_flags(db, "t1")
         assert result == {"a": 1}
-        redis.setex.assert_awaited_once()
+        redis.set.assert_called_once()
 
 
 async def test_get_feature_flags_no_redis():

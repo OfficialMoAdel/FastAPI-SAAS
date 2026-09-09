@@ -10,14 +10,48 @@ Tests the complete MFA flow from setup through verification, including:
 6. Regenerate backup codes
 """
 
-import uuid
-
 import pytest
+
+_test_ip: dict[str, str] = {}
+
+
+@pytest.fixture(autouse=True)
+def _stable_ip_per_test(request):
+    """One fixed client IP per test.
+
+    S-M3 (MFA_ENFORCE_IP_BINDING default True) requires the login request
+    and the later MFA-completion requests to share a client IP, while
+    rate-limit bypass still wants distinct IPs across tests. Derive
+    deterministically from the test name: stable within a test, spread
+    across tests.
+    """
+    _test_ip["ip"] = f"192.168.1.{abs(hash(request.node.name)) % 200 + 10}"
+    try:
+        yield
+    finally:
+        _test_ip.pop("ip", None)
 
 
 def ip_headers():
-    """Helper to generate a unique IP for each request to bypass rate limits."""
-    return {"X-Forwarded-For": f"192.168.1.{uuid.uuid4().int % 255}", "X-Tenant-ID": "test-tenant-e2e"}
+    """Helper returning test-request headers with the per-test stable IP."""
+    return {"X-Forwarded-For": _test_ip.get("ip", "192.168.1.50"), "X-Tenant-ID": "test-tenant-e2e"}
+
+
+@pytest.fixture(autouse=True)
+def _open_registration_for_mfa_flow():
+    """S-M2: these MFA e2e tests register into the shared test tenant to
+    exercise MFA — not registration policy (covered by unit tests in
+    test_account_register.py). Patch settings.auth directly: the gate
+    lives at settings.auth.AUTH_OPEN_REGISTRATION, so a top-level
+    override_settings kwarg would be a no-op."""
+    from src.app.core.config import settings
+
+    original = settings.auth.AUTH_OPEN_REGISTRATION
+    settings.auth.AUTH_OPEN_REGISTRATION = True
+    try:
+        yield
+    finally:
+        settings.auth.AUTH_OPEN_REGISTRATION = original
 
 
 # MFA End-to-End Tests
@@ -46,6 +80,7 @@ class TestMFASetupFlow:
         user_id = register_response.json()["id"]
 
         from sqlalchemy import text
+
         db.execute(text(f"UPDATE users SET is_active = 1 WHERE id = '{user_id}'"))
         db.commit()
 
@@ -166,6 +201,7 @@ class TestMFALoginWithTOTP:
         user_id = register_response.json()["id"]
 
         from sqlalchemy import text
+
         db.execute(text(f"UPDATE users SET is_active = 1 WHERE id = '{user_id}'"))
         db.commit()
 
@@ -276,6 +312,7 @@ class TestMFALoginWithBackupCode:
         user_id = register_response.json()["id"]
 
         from sqlalchemy import text
+
         db.execute(text(f"UPDATE users SET is_active = 1 WHERE id = '{user_id}'"))
         db.commit()
 
@@ -405,6 +442,7 @@ class TestMFALockoutFlow:
         user_id = register_response.json()["id"]
 
         from sqlalchemy import text
+
         db.execute(text(f"UPDATE users SET is_active = 1 WHERE id = '{user_id}'"))
         db.commit()
 
@@ -474,7 +512,16 @@ class TestMFALockoutFlow:
             print(f"[STEP 1.{i + 1}] Failed attempt {i + 1}: 401 Unauthorized")
 
         # [STEP 2] 6th attempt should be locked out (401)
-        login_headers_6 = ip_headers()
+        # The 5 logins above exhaust the login rate limit (5/min/IP), so
+        # clear only the auth rate-limit keys (MFA attempt counter is a
+        # separate per-user key and must be preserved) and use a fresh IP
+        # for the login+complete pair (MFA lockout is per-user, IP-agnostic;
+        # IP binding only requires login and complete-login share an IP).
+        if cache.client:
+            auth_keys = await cache.client.keys("ratelimit:auth_ip:*")
+            if auth_keys:
+                await cache.client.delete(*auth_keys)
+        login_headers_6 = {"X-Forwarded-For": "192.168.99.50", "X-Tenant-ID": "test-tenant-e2e"}
         login_response = await async_client.post(
             "/api/v1/account/login",
             headers=login_headers_6,
@@ -522,6 +569,7 @@ class TestMFADisableFlow:
         user_id = register_response.json()["id"]
 
         from sqlalchemy import text
+
         db.execute(text(f"UPDATE users SET is_active = 1 WHERE id = '{user_id}'"))
         db.commit()
 
@@ -615,6 +663,7 @@ class TestMFARegenerateBackupCodes:
         user_id = register_response.json()["id"]
 
         from sqlalchemy import text
+
         db.execute(text(f"UPDATE users SET is_active = 1 WHERE id = '{user_id}'"))
         db.commit()
 

@@ -115,6 +115,7 @@ async def test_cache_decorator_uses_setex():
 
         # Verify result is a Response with JSON content
         import json
+
         assert json.loads(result.body.decode()) == {"data": "value"}
 
         # Verify Redis pipeline calls
@@ -128,7 +129,7 @@ async def test_cache_decorator_uses_setex():
 
         # Verify arguments
         call_args = mock_pipeline.setex.call_args
-        assert call_args[0][0] == "test:123"  # key
+        assert call_args[0][0] == "v2:test:123"  # key (P-M1 versioned)
         assert call_args[0][1] == 60  # time
 
         # Value is bytes because json_dumps returns bytes by default

@@ -77,6 +77,25 @@ async def test_get_multi_joined_list() -> None:
     assert result == [{"id": 2}]
 
 
+async def test_get_multi_joined_page_clamp_h8() -> None:
+    """H-8 regression: page=0/negative previously produced a negative
+    OFFSET (500 on malformed pagination input). Must clamp like get_multi."""
+    service, _ = _make_service()
+    service.crud.get_multi_joined.return_value = {"data": []}
+    await service.get_multi_joined(page=0, per_page=10)
+    call_kwargs = service.crud.get_multi_joined.await_args.kwargs
+    assert call_kwargs["offset"] == 0
+    # negative page also clamps to the first page
+    await service.get_multi_joined(page=-3, per_page=10)
+    call_kwargs = service.crud.get_multi_joined.await_args.kwargs
+    assert call_kwargs["offset"] == 0
+    # per_page=0 clamps to 1 (no negative OFFSET, no zero-limit weirdness)
+    await service.get_multi_joined(page=2, per_page=0)
+    call_kwargs = service.crud.get_multi_joined.await_args.kwargs
+    assert call_kwargs["offset"] == 1
+    assert call_kwargs["limit"] == 1
+
+
 async def test_create() -> None:
     service, _ = _make_service()
     obj = create_autospec(PasskeyCredential, instance=True)

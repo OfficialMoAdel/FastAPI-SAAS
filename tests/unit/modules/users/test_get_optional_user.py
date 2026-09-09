@@ -11,6 +11,8 @@ from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps.auth import AuthenticatedUser, get_optional_user
+from src.app.core.schemas import TokenData
+from src.app.core.tenancy.context import TenantContext
 from tests.conftest import MockUser
 
 
@@ -57,13 +59,17 @@ class TestGetOptionalUserWithValidToken:
         mock_request.headers = {"Authorization": "Bearer valid_token_123"}
 
         # Mock tenant context
-        mock_tenant = MagicMock()
-        mock_tenant.id = MockUser.DEFAULT_TENANT_ID
+        mock_tenant = TenantContext(
+            tenant_id=MockUser.DEFAULT_TENANT_ID,
+            tenant_slug="test-tenant",
+            tenant_name="Test Tenant",
+            is_active=True,
+        )
 
         with patch("src.app.api.deps.auth.verify_token") as mock_verify:
             with patch("src.app.api.deps.auth.UserService") as MockUserService:
                 with patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant:
-                    mock_verify.return_value = MagicMock(username_or_email="test@example.com", token_version=1)
+                    mock_verify.return_value = TokenData(username_or_email="test@example.com", token_version=1)
                     mock_get_tenant.return_value = mock_tenant
 
                     mock_user_service = AsyncMock()
@@ -86,13 +92,17 @@ class TestGetOptionalUserWithValidToken:
         # Arrange
         mock_request.headers = {"Authorization": "Bearer token_abc"}
 
-        mock_tenant = MagicMock()
-        mock_tenant.id = MockUser.DEFAULT_TENANT_ID
+        mock_tenant = TenantContext(
+            tenant_id=MockUser.DEFAULT_TENANT_ID,
+            tenant_slug="test-tenant",
+            tenant_name="Test Tenant",
+            is_active=True,
+        )
 
         with patch("src.app.api.deps.auth.verify_token") as mock_verify:
             with patch("src.app.api.deps.auth.UserService") as MockUserService:
                 with patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant:
-                    mock_verify.return_value = MagicMock(username_or_email="user@test.com", token_version=1)
+                    mock_verify.return_value = TokenData(username_or_email="user@test.com", token_version=1)
                     mock_get_tenant.return_value = mock_tenant
 
                     mock_user_service = AsyncMock()
@@ -152,13 +162,17 @@ class TestGetOptionalUserRateLimitIntegration:
         mock_request.headers = {"Authorization": "Bearer premium_user_token"}
         mock_user_dict["tier_id"] = 2  # Premium tier
 
-        mock_tenant = MagicMock()
-        mock_tenant.id = MockUser.DEFAULT_TENANT_ID
+        mock_tenant = TenantContext(
+            tenant_id=MockUser.DEFAULT_TENANT_ID,
+            tenant_slug="test-tenant",
+            tenant_name="Test Tenant",
+            is_active=True,
+        )
 
         with patch("src.app.api.deps.auth.verify_token") as mock_verify:
             with patch("src.app.api.deps.auth.UserService") as MockUserService:
                 with patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant:
-                    mock_verify.return_value = MagicMock(username_or_email="premium@example.com", token_version=1)
+                    mock_verify.return_value = TokenData(username_or_email="premium@example.com", token_version=1)
                     mock_get_tenant.return_value = mock_tenant
 
                     mock_user_service = AsyncMock()

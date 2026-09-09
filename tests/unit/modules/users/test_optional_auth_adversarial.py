@@ -11,6 +11,8 @@ from src.app.api.deps.auth import (
     AuthContext,
     get_optional_auth_context,
 )
+from src.app.core.schemas import TokenData
+from src.app.core.tenancy.context import TenantContext
 
 
 @pytest.fixture
@@ -30,10 +32,12 @@ def mock_db():
 @pytest.fixture
 def mock_tenant():
     """Mock Tenant."""
-    tenant = MagicMock()
-    tenant.id = UUID("00000000-0000-0000-0000-000000000001")
-    tenant.slug = "test-tenant"
-    return tenant
+    return TenantContext(
+        tenant_id=UUID("00000000-0000-0000-0000-000000000001"),
+        tenant_slug="test-tenant",
+        tenant_name="Test Tenant",
+        is_active=True,
+    )
 
 
 @pytest.mark.asyncio
@@ -58,7 +62,7 @@ async def test_case_1_valid_jwt_token(mock_request, mock_db, mock_tenant):
         patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant,
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
     ):
-        mock_verify.return_value = MagicMock(username_or_email="test@example.com", token_version=1)
+        mock_verify.return_value = TokenData(username_or_email="test@example.com", token_version=1)
         mock_get_tenant.return_value = mock_tenant
 
         mock_user_service = AsyncMock()

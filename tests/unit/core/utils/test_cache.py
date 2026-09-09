@@ -468,7 +468,7 @@ async def test_delete_keys_by_pattern_iteration_limit(client: MagicMock) -> None
 def test_build_cache_key_no_tenant() -> None:
     with patch("src.app.core.utils.cache.get_current_tenant", return_value=None):
         key = _build_cache_key("user", 42, {}, False)
-    assert key == "user:42"
+    assert key == "v2:user:42"  # P-M1 key version strands pre-fix entries
 
 
 def test_build_cache_key_with_tenant() -> None:
@@ -480,13 +480,13 @@ def test_build_cache_key_with_tenant() -> None:
     )
     with patch("src.app.core.utils.cache.get_current_tenant", return_value=tenant):
         key = _build_cache_key("user", 42, {}, False)
-    assert key == "tenant:00000000-0000-0000-0000-000000000001:user:42"
+    assert key == "tenant:00000000-0000-0000-0000-000000000001:v2:user:42"
 
 
 def test_build_cache_key_user_scoped_dict() -> None:
     with patch("src.app.core.utils.cache.get_current_tenant", return_value=None):
         key = _build_cache_key("user", 42, {"current_user": {"id": 7}}, True)
-    assert key == "user:7:user:42"
+    assert key == "user:7:v2:user:42"
 
 
 def test_build_cache_key_user_scoped_obj() -> None:
@@ -495,7 +495,7 @@ def test_build_cache_key_user_scoped_obj() -> None:
 
     with patch("src.app.core.utils.cache.get_current_tenant", return_value=None):
         key = _build_cache_key("user", 42, {"current_user": U()}, True)
-    assert key == "user:9:user:42"
+    assert key == "user:9:v2:user:42"
 
 
 # ---------------------------------------------------------------------------
@@ -537,54 +537,22 @@ async def test_cache_get_hit(client: MagicMock) -> None:
     assert resp.body == b'{"cached": true}'
 
 
-async def test_cache_get_hit_filters_via_response_model(client: MagicMock) -> None:
-    """H2: cached payload must be re-filtered through the route response_model.
+async def test_cache_get_hit_no_revalidation_returns_stored_bytes(client: MagicMock) -> None:
+    """P-M1: a cache hit is returned as stored — no Pydantic re-validation.
 
-    Regression: the re-validation block was unreachable dead code, so cached
-    payloads for routes WITH a response_model were returned unfiltered
-    (exclude/alias bypass).
+    The route's response_model filters the payload at WRITE time (the
+    decorator serializes `response_model.model_validate(...).model_dump()`
+    before SETEX), so the stored bytes are already response-model-shaped.
+    Re-validating each item on every hit cost more CPU than the query the
+    cache exists to skip. A route WITH a response_model must therefore
+    serve the raw cached bytes unchanged, with no fresh handler call.
     """
     from fastapi import Request
 
     class OutModel(BaseModel):
         ok: bool
 
-    client.get = AsyncMock(return_value=b'{"ok": true, "secret": "leak"}')
-    client.ttl = AsyncMock(return_value=100)
-    request = MagicMock(spec=Request)
-    request.method = "GET"
-    request.state = MagicMock()
-    route = MagicMock()
-    route.response_model = OutModel
-    request.scope = {"route": route}
-
-    calls = {"n": 0}
-
-    @cache(key_prefix="p", resource_id_name="rid")
-    async def handler(request, rid):
-        calls["n"] += 1
-        return {"ok": True, "secret": "leak"}
-
-    with (
-        patch("src.app.core.utils.cache.get_current_tenant", return_value=None),
-        patch("src.app.core.utils.cache.random.random", return_value=1.0),
-    ):
-        resp = await handler(request, rid=1)
-
-    assert calls["n"] == 0  # cache hit, no fresh fetch
-    assert b"secret" not in resp.body
-    assert b'"ok":true' in resp.body or b'"ok": true' in resp.body
-
-
-async def test_cache_get_hit_invalid_payload_falls_through(client: MagicMock) -> None:
-    """H2: a cached payload that fails response_model validation must never be
-    served — fall through to a fresh handler call."""
-    from fastapi import Request
-
-    class OutModel(BaseModel):
-        ok: bool
-
-    client.get = AsyncMock(return_value=b'{"wrong_shape": 1}')
+    client.get = AsyncMock(return_value=b'{"ok": true}')
     client.ttl = AsyncMock(return_value=100)
     request = MagicMock(spec=Request)
     request.method = "GET"
@@ -606,8 +574,50 @@ async def test_cache_get_hit_invalid_payload_falls_through(client: MagicMock) ->
     ):
         resp = await handler(request, rid=1)
 
-    assert calls["n"] == 1  # fresh handler call, not the invalid cached payload
-    assert resp.body == b'{"ok":true}'
+    assert calls["n"] == 0  # cache hit: raw bytes served, no fresh fetch
+    assert resp.body == b'{"ok": true}'
+
+
+async def test_cache_write_validation_failure_skips_caching(client: MagicMock) -> None:
+    """P-M1 fail-closed: a write-time validation failure must NOT cache.
+
+    The hit path serves stored bytes without re-validation, so caching an
+    unfiltered payload would serve it to everyone. On failure the decorator
+    serves the fresh response only and stores nothing (next request
+    re-runs the handler). The v2 key version additionally strands any
+    pre-fix unfiltered entries (never read again; expire via TTL).
+    """
+    from fastapi import Request
+
+    class OutModel(BaseModel):
+        ok: bool
+
+    client.get = AsyncMock(return_value=None)
+    client.ttl = AsyncMock(return_value=100)
+    request = MagicMock(spec=Request)
+    request.method = "GET"
+    request.state = MagicMock()
+    route = MagicMock()
+    route.response_model = OutModel
+    request.scope = {"route": route}
+
+    calls = {"n": 0}
+
+    @cache(key_prefix="p", resource_id_name="rid")
+    async def handler(request, rid):
+        calls["n"] += 1
+        return {"wrong_shape": 1}  # fails OutModel validation
+
+    with (
+        patch("src.app.core.utils.cache.get_current_tenant", return_value=None),
+        patch("src.app.core.utils.cache.random.random", return_value=1.0),
+    ):
+        resp = await handler(request, rid=1)
+
+    assert calls["n"] == 1  # handler ran (miss), fresh response served
+    assert b"wrong_shape" in resp.body
+    # Nothing was written to the cache on validation failure
+    client.setex.assert_not_called()
 
 
 async def test_cache_get_miss_and_set(client: MagicMock) -> None:

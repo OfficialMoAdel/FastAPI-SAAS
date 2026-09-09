@@ -9,6 +9,7 @@ Tests cover:
 
 import json
 import time
+from unittest.mock import patch
 
 from src.app.modules.webhooks.utils import generate_signing_secret, verify_webhook_signature
 
@@ -122,6 +123,21 @@ class TestVerifyWebhookSignature:
         result = verify_webhook_signature(payload, signature, old_timestamp, secret, tolerance=600)
 
         assert result is True
+
+    def test_verify_custom_tolerance_signed_scheme(self) -> None:
+        """Test custom tolerance with the timestamp-bound t=,v1= scheme."""
+        from src.app.modules.webhooks.signer import sign_payload
+
+        secret = "test_secret"
+        payload_dict = {"user_id": "123"}
+        payload_bytes = json.dumps(payload_dict, sort_keys=True).encode("utf-8")
+
+        # 6 minutes ago: fails at default tolerance, passes at 10 minutes
+        old_timestamp = int(time.time()) - 360
+        signature = sign_payload(payload_dict, secret, old_timestamp)
+
+        assert verify_webhook_signature(payload_bytes, signature, old_timestamp, secret) is False
+        assert verify_webhook_signature(payload_bytes, signature, old_timestamp, secret, tolerance=600) is True
 
     def test_verify_signature_without_prefix(self) -> None:
         """Test verifying signature without 'sha256=' prefix."""
@@ -249,6 +265,51 @@ class TestVerifyWebhookSignature:
         result = verify_webhook_signature(payload, invalid_sig, timestamp, secret)
 
         assert result is False
+
+    def test_legacy_signature_accepted_with_deprecation_warning(self) -> None:
+        """S-M1: legacy sha256= digests are accepted during the sunset window but log a warning."""
+        import hashlib
+        import hmac
+
+        from src.app.modules.webhooks import utils as webhooks_utils
+
+        secret = "test_secret"
+        payload = b'{"user_id": "123"}'
+        expected_sig = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+        signature = f"sha256={expected_sig}"
+        timestamp = int(time.time())
+
+        with patch("src.app.modules.webhooks.utils.logger") as mock_logger:
+            result = webhooks_utils.verify_webhook_signature(payload, signature, timestamp, secret)
+
+        assert result is True
+        assert any(
+            "legacy_webhook_signature_accepted_deprecated" in str(call) for call in mock_logger.warning.call_args_list
+        )
+
+    def test_legacy_signature_rejected_after_sunset(self, monkeypatch) -> None:
+        """S-M1: legacy sha256= digests are rejected once the sunset date has passed."""
+        import hashlib
+        import hmac
+
+        from src.app.modules.webhooks import utils as webhooks_utils
+
+        secret = "test_secret"
+        payload = b'{"user_id": "123"}'
+        expected_sig = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+        signature = f"sha256={expected_sig}"
+        timestamp = int(time.time())
+
+        # Simulate a verification attempt after the sunset date.
+        monkeypatch.setattr(webhooks_utils, "_legacy_signature_sunset_reached", lambda: True)
+
+        with patch("src.app.modules.webhooks.utils.logger") as mock_logger:
+            result = webhooks_utils.verify_webhook_signature(payload, signature, timestamp, secret)
+
+        assert result is False
+        assert any(
+            "legacy_webhook_signature_rejected_after_sunset" in str(call) for call in mock_logger.warning.call_args_list
+        )
 
 
 class TestGenerateSigningSecret:

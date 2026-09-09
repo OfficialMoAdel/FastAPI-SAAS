@@ -21,13 +21,18 @@ class TestBrokenImportsFix:
         # verify it's actually the module we expect
         assert feature_flags.__name__ == "src.app.modules.feature_flags"
 
-    def test_templates_imports_successfully(self):
-        """P0-2b: templates.py must import without error."""
-        logger.info("Testing templates import")
-        from src.app.core.utils import templates
+    def test_notification_template_engine_imports_successfully(self):
+        """P0-2b: the live email-template engine must import without error.
 
-        assert templates is not None
-        assert templates.__name__ == "src.app.core.utils.templates"
+        S-M4: core/utils/templates.py (the near-dead duplicate with
+        autoescape off) was deleted; notifications/service.py is the single
+        template engine (SandboxedEnvironment + autoescape=True).
+        """
+        logger.info("Testing notifications template engine import")
+        from src.app.modules import notifications
+
+        assert notifications is not None
+        assert notifications.__name__ == "src.app.modules.notifications"
 
     def test_rls_imports_successfully(self):
         """P0-2c: rls.py must import without error."""

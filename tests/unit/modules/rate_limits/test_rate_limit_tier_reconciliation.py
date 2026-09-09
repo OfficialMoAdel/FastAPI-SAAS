@@ -3,16 +3,16 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules.rate_limits.models import RateLimit, Tier
+from src.app.modules.rate_limits.router import get_rate_limit_service
 from src.app.modules.rate_limits.schemas import (
     RateLimitCreate,
     TierCreate,
     TierUpdate,
 )
-from src.app.modules.rate_limits.service import RateLimitService, get_rate_limit_service
+from src.app.modules.rate_limits.service import RateLimitService
 
 
 @pytest.fixture
@@ -94,7 +94,7 @@ class TestRateLimitServiceTierOperations:
 
     @pytest.mark.asyncio
     async def test_delete_tier_in_use_raises_conflict(self, rate_limit_service, mock_db):
-        """Deleting a tier in use by users or rate limits returns 409 Conflict."""
+        """Deleting a tier in use raises the domain DuplicateError (Q-M1: 409 mapping lives in core/errors.py)."""
         with patch.object(rate_limit_service, "tier_crud") as mock_tier_crud:
             mock_tier_crud.get = AsyncMock(return_value={"id": 5, "name": "busy_tier"})
 
@@ -102,11 +102,10 @@ class TestRateLimitServiceTierOperations:
             mock_result.scalar_one.return_value = 3  # 3 users reference this tier
             mock_db.execute = AsyncMock(return_value=mock_result)
 
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(DuplicateError) as exc_info:
                 await rate_limit_service.delete_tier("busy_tier")
 
-            assert exc_info.value.status_code == 409
-            assert "still in use" in exc_info.value.detail
+            assert "still in use" in exc_info.value.message
 
 
 class TestRateLimitDirectTierResolution:

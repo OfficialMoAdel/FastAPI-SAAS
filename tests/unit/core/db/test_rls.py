@@ -125,14 +125,17 @@ async def test_bypass_rls_exception(mock_session, mock_connection):
 
 @pytest.mark.asyncio
 async def test_bypass_rls_audit_error(mock_session, mock_connection):
-    # Audit log failure is FATAL — bypass_rls MUST raise RuntimeError.
+    # Audit log failure is FATAL — bypass_rls MUST raise the typed
+    # RLSAuditFailureError (Q-M9) so callers match on the class, not strings.
+    from src.app.core.db.rls import RLSAuditFailureError
+
     with (
         patch(
             "src.app.core.db.rls._write_bypass_audit",
             new_callable=AsyncMock,
             side_effect=Exception("Audit log failed"),
         ),
-        pytest.raises(RuntimeError, match="RLS bypass aborted due to audit log failure"),
+        pytest.raises(RLSAuditFailureError, match="RLS bypass aborted due to audit log failure"),
     ):
         async with bypass_rls(mock_session, reason="test"):
             pass
@@ -271,5 +274,3 @@ def test_restore_rls_context_error():
 
         # Verify connection invalidation is still called to protect pool
         mock_conn.invalidate.assert_called_once()
-
-

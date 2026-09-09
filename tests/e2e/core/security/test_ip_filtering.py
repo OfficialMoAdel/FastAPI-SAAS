@@ -246,13 +246,16 @@ class TestExemptPathsE2E:
             finally:
                 await ip_filter_service.remove_from_blacklist("192.168.1.200")
 
-    async def test_metrics_exempt_from_bad_bot_filter(self, async_client: AsyncClient):
-        """Test that metrics path bypasses bad bot filter."""
-        response = await async_client.get("/metrics", headers={"User-Agent": "sqlmap/1.0"})
+    async def test_metrics_scanned_by_bad_bot_filter(self, async_client: AsyncClient, override_settings):
+        """H-1: bare /metrics is NOT exempt — a sqlmap UA must be 403-blocked
+        by the bad bot filter just like any other path. (The real, superuser-
+        gated metrics endpoints live under /api/metrics, which was never in
+        the exempt sets.)"""
+        with override_settings(BAD_BOT_FILTER_ENABLED=True):
+            response = await async_client.get("/metrics", headers={"User-Agent": "sqlmap/1.0"})
 
-        # Verify: Exempt path allowed
-        # Note: This may return 200 or require auth, but should not be 403 from bot filter
-        assert response.status_code != 403 or "Bad bot" not in response.text
+        # Verify: bot filter applies (403) — no middleware bypass for /metrics
+        assert response.status_code == 403
 
 
 class TestProxyHeadersE2E:

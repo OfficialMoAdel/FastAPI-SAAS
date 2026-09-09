@@ -10,7 +10,7 @@ Tests cover:
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -156,6 +156,70 @@ class TestPostServiceGet:
             assert "data" in result
             assert len(result["data"]) == 1
 
+    @pytest.mark.asyncio
+    async def test_get_posts_keyset_no_cursor(self, mock_db, mock_user):
+        """First keyset page: no cursor -> ordered DESC query, full envelope."""
+        from src.app.modules.posts.service import PostService
+
+        service = PostService(mock_db)
+        rows = [MagicMock(id=3, created_at=datetime(2026, 9, 7, 12, 0, tzinfo=UTC))]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = rows
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        with (
+            patch("src.app.modules.posts.service.tenant_scope", return_value=True),
+            patch("src.app.modules.posts.service.select"),
+        ):
+            result = await service.get_posts_keyset(user_id=mock_user["id"], limit=10)
+
+        assert result["items"] == rows
+        # short page => end of listing
+        assert result["next_cursor"] is None
+        assert result["has_next"] is False
+        assert result["limit"] == 10
+
+    @pytest.mark.asyncio
+    async def test_get_posts_keyset_full_page_has_next_cursor(self, mock_db, mock_user):
+        """A full page yields next_cursor encoding the last row's (created_at, id)."""
+        from src.app.modules.posts.service import PostService
+
+        service = PostService(mock_db)
+        last_created = datetime(2026, 9, 7, 11, 0, tzinfo=UTC)
+        rows = [MagicMock(id=i, created_at=last_created) for i in range(10)]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = rows
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        from src.app.core.pagination import decode_keyset_cursor
+
+        with (
+            patch("src.app.modules.posts.service.tenant_scope", return_value=True),
+            patch("src.app.modules.posts.service.select"),
+        ):
+            result = await service.get_posts_keyset(user_id=mock_user["id"], limit=10)
+
+        assert result["has_next"] is True
+        created_at, row_id = decode_keyset_cursor(result["next_cursor"])
+        assert created_at == last_created
+        assert row_id == rows[-1].id
+
+    @pytest.mark.asyncio
+    async def test_get_posts_keyset_malformed_cursor_raises(self, mock_db, mock_user):
+        """A malformed cursor must raise ValueError before any DB access."""
+        from src.app.modules.posts.service import PostService
+
+        service = PostService(mock_db)
+
+        with (
+            patch("src.app.modules.posts.service.tenant_scope", return_value=True),
+            patch("src.app.modules.posts.service.select"),
+        ):
+            with pytest.raises(ValueError):
+                await service.get_posts_keyset(user_id=mock_user["id"], cursor="!!!bad!!!")
+
+        mock_db.execute.assert_not_called()
+
 
 class TestPostServiceUpdate:
     """Tests for post updates."""
@@ -183,9 +247,9 @@ class TestPostServiceUpdate:
 
     @pytest.mark.asyncio
     async def test_update_post_forbidden_for_other_user(self, mock_db, mock_user, mock_post, post_update):
-        """Test that updating another user's post raises ForbiddenException."""
-        from src.app.core.exceptions.http_exceptions import ForbiddenException
+        """Test that updating another user's post raises the domain ForbiddenError (Q-M1)."""
         from src.app.modules.posts.service import PostService
+        from src.app.shared.exceptions import ForbiddenError
 
         service = PostService(mock_db)
         other_user = {**mock_user, "id": 999, "username": "otheruser"}
@@ -193,7 +257,7 @@ class TestPostServiceUpdate:
         with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
 
-            with pytest.raises(ForbiddenException):
+            with pytest.raises(ForbiddenError):
                 await service.update_post(
                     post_id=1,
                     values=post_update,
@@ -243,9 +307,9 @@ class TestPostServiceDelete:
 
     @pytest.mark.asyncio
     async def test_delete_post_forbidden_for_other_user(self, mock_db, mock_user, mock_post):
-        """Test that deleting another user's post raises ForbiddenException."""
-        from src.app.core.exceptions.http_exceptions import ForbiddenException
+        """Test that deleting another user's post raises the domain ForbiddenError (Q-M1)."""
         from src.app.modules.posts.service import PostService
+        from src.app.shared.exceptions import ForbiddenError
 
         service = PostService(mock_db)
         other_user = {**mock_user, "id": 999, "username": "otheruser"}
@@ -253,7 +317,7 @@ class TestPostServiceDelete:
         with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
 
-            with pytest.raises(ForbiddenException):
+            with pytest.raises(ForbiddenError):
                 await service.delete_post(
                     post_id=1,
                     current_user=other_user,

@@ -144,7 +144,7 @@ async def test_check_db_fallback_cache_hit() -> None:
     # The fast path looks up cache_key = jti (raw), not the "jti:"-prefixed DB form.
     _db_fallback_cache["abc"] = True
     try:
-        result = await _check_db_fallback("abc", "tok", _make_db())
+        result = await _check_db_fallback("abc", "tok")
         assert result is True
     finally:
         _db_fallback_cache.pop("abc", None)
@@ -156,7 +156,7 @@ async def test_check_db_fallback_in_flight() -> None:
     task = asyncio.create_task(asyncio.sleep(0))  # placeholder
     _in_flight_db_checks["tok"] = task
     try:
-        result = await _check_db_fallback(None, "tok", _make_db())
+        result = await _check_db_fallback(None, "tok")
         # function returns await task (the completed sleep task's result = None)
         assert result is None
     finally:
@@ -164,19 +164,17 @@ async def test_check_db_fallback_in_flight() -> None:
 
 
 async def test_check_db_fallback_db_check() -> None:
-    db = _make_db()
     with patch("src.app.core.security.jwt_service.crud_token_blacklist.exists", new=AsyncMock(return_value=True)):
-        result = await _check_db_fallback("abc", "tok", db)
+        result = await _check_db_fallback("abc", "tok")
     assert result is True
 
 
 async def test_check_db_fallback_exception() -> None:
-    db = _make_db()
     with patch(
         "src.app.core.security.jwt_service.crud_token_blacklist.exists",
         new=AsyncMock(side_effect=RuntimeError("db down")),
     ):
-        result = await _check_db_fallback("abc", "tok", db)
+        result = await _check_db_fallback("abc", "tok")
     assert result is None
 
 

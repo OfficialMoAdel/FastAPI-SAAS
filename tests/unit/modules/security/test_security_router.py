@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.app.api.deps.auth import AuthenticatedUser
 from src.app.core.config import settings
 from src.app.modules.security.router import (
     add_ip_to_blacklist,
@@ -31,13 +32,13 @@ from src.app.modules.security.schemas import (
 @pytest.mark.asyncio
 async def test_add_ip_to_whitelist() -> None:
     request = IPAddressRequest(ip_address="1.2.3.4", reason="test")
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
 
     with patch(
         "src.app.modules.security.router.ip_filter_service.add_to_whitelist", new_callable=AsyncMock
     ) as mock_add:
         mock_add.return_value = True
-        response = await add_ip_to_whitelist(request, current_user)  # type: ignore[arg-type]
+        response = await add_ip_to_whitelist(request, current_user)  # Q-M2: real type, ignore obsolete
 
         assert response.success is True
         assert response.ip_address == "1.2.3.4"
@@ -48,13 +49,13 @@ async def test_add_ip_to_whitelist() -> None:
 
 @pytest.mark.asyncio
 async def test_remove_ip_from_whitelist() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
 
     with patch(
         "src.app.modules.security.router.ip_filter_service.remove_from_whitelist", new_callable=AsyncMock
     ) as mock_remove:
         mock_remove.return_value = True
-        response = await remove_ip_from_whitelist("1.2.3.4", current_user)  # type: ignore[arg-type]
+        response = await remove_ip_from_whitelist("1.2.3.4", current_user)  # Q-M2: real type, ignore obsolete
 
         assert response.success is True
         assert response.ip_address == "1.2.3.4"
@@ -65,13 +66,13 @@ async def test_remove_ip_from_whitelist() -> None:
 @pytest.mark.asyncio
 async def test_add_ip_to_blacklist() -> None:
     request = IPAddressRequest(ip_address="1.2.3.4", reason="test")
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
 
     with patch(
         "src.app.modules.security.router.ip_filter_service.add_to_blacklist", new_callable=AsyncMock
     ) as mock_add:
         mock_add.return_value = True
-        response = await add_ip_to_blacklist(request, current_user)  # type: ignore[arg-type]
+        response = await add_ip_to_blacklist(request, current_user)  # Q-M2: real type, ignore obsolete
 
         assert response.success is True
         assert response.ip_address == "1.2.3.4"
@@ -81,13 +82,13 @@ async def test_add_ip_to_blacklist() -> None:
 
 @pytest.mark.asyncio
 async def test_remove_ip_from_blacklist() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
 
     with patch(
         "src.app.modules.security.router.ip_filter_service.remove_from_blacklist", new_callable=AsyncMock
     ) as mock_remove:
         mock_remove.return_value = True
-        response = await remove_ip_from_blacklist("1.2.3.4", current_user)  # type: ignore[arg-type]
+        response = await remove_ip_from_blacklist("1.2.3.4", current_user)  # Q-M2: real type, ignore obsolete
 
         assert response.success is True
         assert response.action == "removed"
@@ -95,7 +96,7 @@ async def test_remove_ip_from_blacklist() -> None:
 
 @pytest.mark.asyncio
 async def test_get_ip_lists() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
 
     with (
         patch("src.app.modules.security.router.ip_filter_service.get_whitelist", new_callable=AsyncMock) as mock_white,
@@ -114,14 +115,14 @@ async def test_get_ip_lists() -> None:
 
 @pytest.mark.asyncio
 async def test_get_ip_filter_config() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
     response = await get_ip_filter_config(current_user)  # type: ignore[arg-type]
     assert response.whitelist_enabled == settings.IP_WHITELIST_ENABLED
 
 
 @pytest.mark.asyncio
 async def test_update_ip_filter_config() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
     update = IPFilterConfigUpdate(whitelist_enabled=False)
 
     # Store old setting
@@ -137,14 +138,14 @@ async def test_update_ip_filter_config() -> None:
 
 @pytest.mark.asyncio
 async def test_get_auto_ban_config() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
     response = await get_auto_ban_config(current_user)  # type: ignore[arg-type]
     assert response.enabled == settings.AUTO_BAN_ENABLED
 
 
 @pytest.mark.asyncio
 async def test_update_auto_ban_config() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
     update = AutoBanConfigUpdate(enabled=not settings.AUTO_BAN_ENABLED)
 
     old_setting = settings.AUTO_BAN_ENABLED
@@ -157,7 +158,7 @@ async def test_update_auto_ban_config() -> None:
 
 @pytest.mark.asyncio
 async def test_list_banned_ips() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
     with patch("src.app.modules.security.router.get_all_banned_ips", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = [{"ip": "1.2.3.4", "reason": "test", "ttl_seconds": 60, "ban_count": 1}]
 
@@ -169,7 +170,7 @@ async def test_list_banned_ips() -> None:
 @pytest.mark.asyncio
 async def test_manually_ban_ip() -> None:
     request = IPAddressRequest(ip_address="1.2.3.4")
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
 
     with patch("src.app.modules.security.router.ban_ip", new_callable=AsyncMock) as mock_ban:
         mock_ban.return_value = True
@@ -180,7 +181,7 @@ async def test_manually_ban_ip() -> None:
 
 @pytest.mark.asyncio
 async def test_unban_ip_address() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
 
     with patch("src.app.modules.security.router.unban_ip", new_callable=AsyncMock) as mock_unban:
         mock_unban.return_value = True
@@ -191,7 +192,7 @@ async def test_unban_ip_address() -> None:
 
 @pytest.mark.asyncio
 async def test_unban_ip_address_invalid() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
     response = await unban_ip_address("invalid-ip", current_user)  # type: ignore[arg-type]
     assert response.success is False
     assert "Invalid IP address format" in response.message
@@ -199,7 +200,7 @@ async def test_unban_ip_address_invalid() -> None:
 
 @pytest.mark.asyncio
 async def test_get_violation_statistics() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
     with patch("src.app.modules.security.router.get_violation_stats", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = {"total_ips": 5, "total_violations": 10}
         response = await get_violation_statistics(current_user)  # type: ignore[arg-type]
@@ -209,7 +210,7 @@ async def test_get_violation_statistics() -> None:
 
 @pytest.mark.asyncio
 async def test_get_violation_statistics_none() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
     with patch("src.app.modules.security.router.get_violation_stats", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = None
         response = await get_violation_statistics(current_user)  # type: ignore[arg-type]
@@ -219,7 +220,7 @@ async def test_get_violation_statistics_none() -> None:
 
 @pytest.mark.asyncio
 async def test_get_ip_violation_stats() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
     with patch("src.app.modules.security.router.get_violation_stats", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = {"violations": 5}
         response = await get_ip_violation_stats("1.2.3.4", current_user)  # type: ignore[arg-type]
@@ -229,14 +230,14 @@ async def test_get_ip_violation_stats() -> None:
 
 @pytest.mark.asyncio
 async def test_get_ip_violation_stats_invalid() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
     response = await get_ip_violation_stats("invalid-ip", current_user)  # type: ignore[arg-type]
     assert response.violations == 0
 
 
 @pytest.mark.asyncio
 async def test_get_ip_violation_stats_none() -> None:
-    current_user = {"id": 1}
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
     with patch("src.app.modules.security.router.get_violation_stats", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = None
         response = await get_ip_violation_stats("1.2.3.4", current_user)  # type: ignore[arg-type]

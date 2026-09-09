@@ -6,14 +6,24 @@ from src.app.admin import initialize as admin_init
 from src.app.core.config import EnvironmentOption
 
 
-async def test_get_db_session_yields_session():
+async def test_get_db_session_yields_session_with_audited_bypass():
+    """C-2: admin sessions must yield inside an audited bypass_rls context."""
     fake_session = MagicMock()
     fake_cm = MagicMock()
     fake_cm.__aenter__ = AsyncMock(return_value=fake_session)
     fake_cm.__aexit__ = AsyncMock(return_value=False)
-    with patch.object(admin_init, "get_db_context", return_value=fake_cm):
+    bypass_cm = MagicMock()
+    bypass_cm.__aenter__ = AsyncMock(return_value=fake_session)
+    bypass_cm.__aexit__ = AsyncMock(return_value=False)
+    with (
+        patch.object(admin_init, "get_db_context", return_value=fake_cm),
+        patch("src.app.core.db.rls.bypass_rls", return_value=bypass_cm) as mock_bypass,
+    ):
         async for session in admin_init._get_db_session():
             assert session is fake_session
+        mock_bypass.assert_called_once_with(
+            fake_session, reason="CRUDAdmin panel data access (cross-tenant operator view)"
+        )
 
 
 def _patch_settings(enabled=True, redis_enabled=False, **overrides):

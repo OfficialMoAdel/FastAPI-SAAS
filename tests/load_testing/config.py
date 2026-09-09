@@ -9,7 +9,8 @@ class LoadTestConfig(BaseSettings):
 
     # Test User Credentials (Admin/Superuser for setup)
     ADMIN_EMAIL: str = "premium_e2e@example.com"
-    ADMIN_PASSWORD: str = "SuperS3cretP@ssw0rd!123"
+    # C-1 hygiene: not a git-history-leaked value. Override via LOAD_TEST_ADMIN_PASSWORD.
+    ADMIN_PASSWORD: str = "LoadTestAdminPw?a1B2c3D4e5f6"
 
     # Default Test Tenant
     TEST_TENANT_ID: str | None = "test-tenant-e2e"  # Can be overridden or fetched dynamically

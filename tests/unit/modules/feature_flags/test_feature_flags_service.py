@@ -70,27 +70,39 @@ async def test_get_flag_by_key_not_found(service, mock_db):
 async def test_create_flag(service, mock_db):
     data = FeatureFlagCreate(key="test", description="desc", default_value=True, value_type="boolean")
     mock_flag = make_mock_flag()
-    with patch.object(service, "create", new_callable=AsyncMock) as mock_create:
-        mock_create.return_value = mock_flag
+    with (
+        patch.object(service, "create", new_callable=AsyncMock) as mock_create,
+        patch.object(service.crud, "get", new_callable=AsyncMock, return_value=mock_flag) as mock_get,
+    ):
         result = await service.create_flag(data)
         assert result.id == 1
+        mock_get.assert_awaited_once_with(db=mock_db, key="test")
+        mock_create.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_update_flag(service, mock_db):
     data = FeatureFlagUpdate(description="new desc")
     mock_flag = make_mock_flag(desc="new desc")
-    with patch.object(service, "update", new_callable=AsyncMock) as mock_update:
-        mock_update.return_value = mock_flag
+    with (
+        patch.object(service, "update", new_callable=AsyncMock) as mock_update,
+        patch.object(service.crud, "get", new_callable=AsyncMock, return_value=mock_flag) as mock_get,
+    ):
         result = await service.update_flag(1, data)
         assert result.description == "new desc"
+        mock_get.assert_awaited_once_with(db=mock_db, id=1)
+        mock_update.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_update_flag_not_found(service, mock_db):
+    """B8 regression: update always 'succeeds' at the crud layer (None
+    return); the 404 decision must come from the post-write re-read."""
     data = FeatureFlagUpdate(description="new desc")
-    with patch.object(service, "update", new_callable=AsyncMock) as mock_update:
-        mock_update.return_value = None
+    with (
+        patch.object(service, "update", new_callable=AsyncMock),
+        patch.object(service.crud, "get", new_callable=AsyncMock, return_value=None),
+    ):
         with pytest.raises(ModelNotFoundError):
             await service.update_flag(1, data)
 

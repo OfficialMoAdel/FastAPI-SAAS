@@ -59,7 +59,7 @@ class TestWriteUser:
             "username": sample_user_data["username"],
         }
         mock_service = _create_mock_user_service(create=expected_result)
-        app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
+        app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         headers = {**auth_headers, **TEST_TENANT_HEADER}
         response = client.post("/api/v1/users", json=sample_user_data, headers=headers)
@@ -70,7 +70,7 @@ class TestWriteUser:
     def test_create_user_duplicate_email(self, client, auth_headers, sample_user_data, mock_user_service_override):
         """Test user creation with duplicate email."""
         mock_service = _create_mock_user_service(create=DuplicateValueException("Email is already registered"))
-        app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
+        app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         headers = {**auth_headers, **TEST_TENANT_HEADER}
         response = client.post("/api/v1/users", json=sample_user_data, headers=headers)
@@ -82,7 +82,7 @@ class TestWriteUser:
     def test_create_user_duplicate_username(self, client, auth_headers, sample_user_data, mock_user_service_override):
         """Test user creation with duplicate username."""
         mock_service = _create_mock_user_service(create=DuplicateValueException("Username not available"))
-        app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
+        app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         headers = {**auth_headers, **TEST_TENANT_HEADER}
         response = client.post("/api/v1/users", json=sample_user_data, headers=headers)
@@ -99,7 +99,7 @@ class TestReadUser:
         """Test successful user retrieval."""
         expected_result = sample_user_read.model_dump()
         mock_service = _create_mock_user_service(get_profile=expected_result)
-        app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
+        app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         response = client.get("/api/v1/users/test_user", headers=auth_headers)
 
@@ -109,7 +109,7 @@ class TestReadUser:
     def test_read_user_not_found(self, client, auth_headers, mock_user_service_override):
         """Test user retrieval when user doesn't exist."""
         mock_service = _create_mock_user_service(get_profile=ModelNotFoundError("User", "nonexistent_user"))
-        app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
+        app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         response = client.get("/api/v1/users/nonexistent_user", headers=auth_headers)
 
@@ -141,7 +141,7 @@ class TestPatchUser:
     def test_patch_user_success(self, client, auth_headers, sample_user_read, mock_user_service_override):
         """Test successful user update."""
         mock_service = _create_mock_user_service(update={"message": "User updated"})
-        app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
+        app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         response = client.patch(
             "/api/v1/users/test_user",
@@ -154,7 +154,7 @@ class TestPatchUser:
     def test_patch_user_forbidden(self, client, auth_headers, mock_user_service_override):
         """Test user update by non-owner/non-superuser."""
         mock_service = _create_mock_user_service(update=ForbiddenException("You can only update your own account"))
-        app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
+        app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         response = client.patch(
             "/api/v1/users/other_user",
@@ -171,7 +171,7 @@ class TestEraseUser:
     def test_erase_user_success(self, client, auth_headers, mock_user_service_override):
         """Test successful user deletion."""
         mock_service = _create_mock_user_service(delete={"message": "User deleted successfully"})
-        app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
+        app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         response = client.delete("/api/v1/users/test_user", headers=auth_headers)
 
@@ -180,7 +180,7 @@ class TestEraseUser:
     def test_erase_user_not_found(self, client, auth_headers, mock_user_service_override):
         """Test deleting non-existent user."""
         mock_service = _create_mock_user_service(delete=NotFoundException("User not found"))
-        app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
+        app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         response = client.delete("/api/v1/users/nonexistent_user", headers=auth_headers)
 
@@ -189,7 +189,7 @@ class TestEraseUser:
     def test_erase_user_forbidden(self, client, auth_headers, mock_user_service_override):
         """Test user deletion by non-owner."""
         mock_service = _create_mock_user_service(delete=ForbiddenException("You can only delete your own account"))
-        app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
+        app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         response = client.delete("/api/v1/users/other_user", headers=auth_headers)
 

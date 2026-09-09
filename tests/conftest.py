@@ -43,8 +43,17 @@ os.environ.setdefault("REDIS_QUEUE_PORT", "6379")
 os.environ.setdefault("REDIS_CACHE_HOST", "localhost")
 os.environ.setdefault("REDIS_CACHE_PORT", "6379")
 
-# Load environment variables from src/.env
-load_dotenv("src/.env")
+# C-1 note: setdefault (not force-set) is deliberate — DB-backed tests
+# inherit the developer's real credentials from src/.env (loaded by the root
+# conftest with override=True before this file runs). Forcing the DSN here
+# breaks that pairing (verified by A/B: forced triplet → 53 failures).
+# A shell-exported POSTGRES_PASSWORD matching a leaked value no longer
+# aborts collection: the validator warns (local) instead of raising, and
+# hard-fails only in staging/production.
+
+# Load environment variables from src/.env — override=False only fills keys
+# that are still unset, preserving the root-conftest/critical values above.
+load_dotenv("src/.env", override=False)
 
 # Disable bad bot filter for tests (httpx is used by test clients)
 os.environ["BAD_BOT_FILTER_ENABLED"] = "false"
@@ -192,37 +201,13 @@ def get_testing_session_local():
     return TestingSessionLocal
 
 
+# A-M6: single model-registration point — imports every model for its
+# Base.metadata side-effect (billing/feature_flags/notifications included,
+# which the old tenants-loop provided implicitly). Replaces the 30-line
+# manual import block that rotted out of sync with models/__init__.py.
+from src.app import models  # noqa: F401
 from src.app.core.db.database import Base
-from src.app.core.db.token_blacklist import TokenBlacklist  # noqa: F401
-from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings, AITokenUsage  # noqa: F401
-from src.app.modules.api_keys.models import APIKey  # noqa: F401
-from src.app.modules.audit_logs.models import AuditLog  # noqa: F401
-
-# Import all models to ensure Base.metadata is fully populated for drop_all/create_all
-# This is critical - SQLAlchemy needs all models imported before create_all()
-# 1. Independent / Leaf models (or close to leaf)
-from src.app.modules.auth.models import (  # noqa: F401
-    EmailVerificationToken,
-    MagicLink,
-    MFAMethod,
-    PasskeyCredential,
-    PasswordResetToken,
-    SSOSettings,
-    UserSSOConnection,
-)
-from src.app.modules.posts.models import Post  # noqa: F401
-from src.app.modules.rate_limits.models import RateLimit  # noqa: F401
-from src.app.modules.rbac.models import Role, RolePermission, UserRole  # noqa: F401
-from src.app.modules.storage.models import File, StorageSettings  # noqa: F401
-
-# 3. Models that depend on User/Others (Root)
-from src.app.modules.tenants.models import Tenant  # noqa: F401
-from src.app.modules.tiers.models import Tier  # noqa: F401
-from src.app.modules.user_preferences.models import UserPreferences  # noqa: F401
-
-# 2. Models that depend on above
-from src.app.modules.users.models import User
-from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint  # noqa: F401
+from src.app.models import Tenant, User
 
 # Debug: Print registered tables to verify imports
 print(f"DEBUG: Registered tables: {Base.metadata.tables.keys()}")

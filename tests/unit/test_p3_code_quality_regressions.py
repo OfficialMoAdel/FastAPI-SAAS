@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from src.app.api.deps.auth import AuthenticatedUser
 from src.app.modules.ai.router import chat_completion
 from src.app.modules.ai.service import ChatCompletionError
 from src.app.modules.audit_logs.service import AuditLogService
@@ -91,7 +92,7 @@ class TestP3CodeQualityRegressions:
                 await chat_completion(
                     session_id=1,
                     request=MagicMock(),
-                    current_user={"id": 1},
+                    current_user=AuthenticatedUser(id=1, email="u@e.com"),
                     db=mock_db,
                 )
             assert exc_info.value.status_code == 503

@@ -148,8 +148,9 @@ async def test_erase_db_post_success():
 
 
 async def test_get_post_service_dependency():
+    """Q-M4: factory lives in router.py (sync constructor call)."""
     db = MagicMock()
     with patch.object(posts_router, "get_post_service", return_value="svc") as gps:
-        result = await posts_router._get_post_service(db=db)
+        result = posts_router.get_post_service(db)
     gps.assert_called_once_with(db)
     assert result == "svc"

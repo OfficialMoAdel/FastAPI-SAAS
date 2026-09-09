@@ -4,8 +4,9 @@ Tests follow TDD approach - these tests define the expected behavior
 for storage providers that feature modules can use.
 """
 
+import sys
 from io import BytesIO
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -85,11 +86,25 @@ class TestS3Storage:
         """Fixture for mock S3 client."""
         client = MagicMock()
         client.put_object = MagicMock(return_value={"ETag": '"test"'})
+        client.upload_fileobj = MagicMock()
         client.get_object = MagicMock()
         client.delete_object = MagicMock()
         client.head_object = MagicMock()
         client.generate_presigned_url = MagicMock(return_value="https://signed-url")
         return client
+
+    @pytest.fixture(autouse=True)
+    def mock_botocore(self):
+        """Mock botocore module (not installed in unit-test env) for upload tests."""
+        mock_config = MagicMock()
+        mock_config.return_value = MagicMock()
+        saved = sys.modules.get("botocore.config")
+        sys.modules["botocore.config"] = mock_config
+        yield
+        if saved is not None:
+            sys.modules["botocore.config"] = saved
+        else:
+            sys.modules.pop("botocore.config", None)
 
     def test_s3_storage_implements_interface(self, mock_s3_client):
         """Test that S3Storage implements StorageProvider."""
@@ -121,8 +136,7 @@ class TestS3Storage:
 
     @pytest.mark.asyncio
     async def test_s3_upload(self, mock_s3_client):
-        """Test S3 file upload."""
-
+        """Test S3 file upload (streaming path — the only path since P-M8)."""
         from src.app.modules.storage.s3_storage import S3Storage
 
         storage = S3Storage(s3_client=mock_s3_client, bucket="test-bucket")
@@ -130,26 +144,20 @@ class TestS3Storage:
         file_content = b"test file content"
         file_obj = BytesIO(file_content)
 
-        # Disable streaming uploads so the legacy path (which computes size from the
-        # spooled temp file) is exercised. Production reads the delegated flag via
-        # settings.performance.FEATURE_STREAMING_UPLOADS, so patch it there.
-        with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-            mock_settings.performance.FEATURE_STREAMING_UPLOADS = False
-            result = await storage.upload(file=file_obj, path="uploads/test.txt", mime_type="text/plain")
+        result = await storage.upload(file=file_obj, path="uploads/test.txt", mime_type="text/plain")
 
         assert result.success is True
         assert "uploads/test.txt" in result.path
-        # Legacy path now correctly computes size (17 bytes for b"test file content").
         assert result.size == 17
-        mock_s3_client.put_object.assert_called_once()
+        mock_s3_client.upload_fileobj.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_s3_upload_failure(self, mock_s3_client):
         """Test S3 file upload failure handling."""
         from src.app.modules.storage.s3_storage import S3Storage
 
-        mock_s3_client.put_object.side_effect = MockClientError(
-            {"Error": {"Code": "500", "Message": "Internal Error"}}, "PutObject"
+        mock_s3_client.upload_fileobj.side_effect = MockClientError(
+            {"Error": {"Code": "500", "Message": "Internal Error"}}, "UploadFileobj"
         )
 
         storage = S3Storage(s3_client=mock_s3_client, bucket="test-bucket")

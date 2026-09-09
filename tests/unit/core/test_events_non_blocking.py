@@ -164,12 +164,16 @@ class TestCriticalEventWithRedis:
 
     @pytest.mark.asyncio
     async def test_critical_event_with_idempotency_check(self) -> None:
-        """Idempotency check should not make publish blocking."""
+        """Idempotency check should not make publish blocking.
+
+        H-6: peek (exists) reports not-processed; the event runs and is
+        marked after completion."""
         event_bus = EventBus()
 
         # Mock Redis client
         mock_redis = AsyncMock()
-        mock_redis.set.return_value = True  # Not a duplicate
+        mock_redis.exists.return_value = 0  # H-6 peek: not processed
+        mock_redis.set.return_value = True  # Post-publish mark succeeds
         mock_redis.incr.return_value = 1  # Sequence number
         event_bus._redis_client = mock_redis
 
@@ -193,15 +197,23 @@ class TestCriticalEventWithRedis:
         # Should take at least 300ms because it is awaited
         assert elapsed >= 0.3, f"Publish with idempotency check took {elapsed:.3f}s"
         assert handler_called.is_set()
+        # H-6: the claim mark ran after the handlers. Default settings route
+        # the mark through the Lua manager (EVENT_BUS_USE_LUA_IDEMPOTENCY
+        # defaults True) — assert no duplicate-skip of the publish instead of
+        # pinning the exact mark implementation.
+        assert mock_redis.exists.await_count >= 1
 
     @pytest.mark.asyncio
     async def test_duplicate_event_skipped_quickly(self) -> None:
-        """Duplicate events should be skipped without scheduling handlers."""
+        """Duplicate events should be skipped without scheduling handlers.
+
+        H-6: the peek (exists) reports already-processed → immediate skip."""
         event_bus = EventBus()
 
-        # Mock Redis - return that event was already processed
+        # Mock Redis - peek reports the event was already processed
         mock_redis = AsyncMock()
-        mock_redis.set.return_value = False  # Already processed
+        mock_redis.exists.return_value = 1  # H-6 peek: already processed
+        mock_redis.set.return_value = True
         event_bus._redis_client = mock_redis
 
         handler_called = False
@@ -212,29 +224,20 @@ class TestCriticalEventWithRedis:
 
         event_bus._handlers["test.duplicate_event"] = [handler]
 
-        # Disable Lua optimization to ensure we hit the mocked get() path
-        from src.app.core.config import settings
+        start = time.perf_counter()
+        await event_bus.publish(
+            "test.duplicate_event",
+            {"test": "data"},
+            priority=EventPriority.CRITICAL,
+            event_id="already-processed-123",
+        )
+        elapsed = time.perf_counter() - start
 
-        original_val = settings.EVENT_BUS_USE_LUA_IDEMPOTENCY
-        settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = False
+        # Should return immediately (< 50ms — duplicate skip is fast but async overhead applies)
+        assert elapsed < 0.05
 
-        try:
-            start = time.perf_counter()
-            await event_bus.publish(
-                "test.duplicate_event",
-                {"test": "data"},
-                priority=EventPriority.CRITICAL,
-                event_id="already-processed-123",
-            )
-            elapsed = time.perf_counter() - start
+        # Give time for any potential handler execution
+        await asyncio.sleep(0.05)
 
-            # Should return immediately (< 50ms — duplicate skip is fast but async overhead applies)
-            assert elapsed < 0.05
-
-            # Give time for any potential handler execution
-            await asyncio.sleep(0.05)
-
-            # Handler should NOT have been called
-            assert not handler_called, "Handler was called for duplicate event!"
-        finally:
-            settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = original_val
+        # Handler should NOT have been called
+        assert not handler_called, "Handler was called for duplicate event!"
