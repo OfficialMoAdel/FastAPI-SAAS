@@ -34,7 +34,7 @@ from src.app.modules.auth.schemas import (
 )
 from src.app.modules.auth.services.mfa import MFAService, get_mfa_service
 from src.app.modules.auth.services.tokens import TokenIssuer
-from src.app.modules.users.service import get_user_service
+from src.app.modules.users.router import get_user_service
 
 router = APIRouter(prefix="/mfa", tags=["mfa"])
 
@@ -281,6 +281,10 @@ async def complete_mfa_login(
     client_ip = get_client_ip(fastapi_request)
 
     token_store = get_mfa_pending_token_manager(client)
+    # S-M3: read the token's remaining TTL BEFORE the atomic GETDEL consume —
+    # it is the clock for the IP-rotation grace window below (the common
+    # same-IP path discards it and pays no extra RTT beyond this single read).
+    remaining_ttl = await token_store.remaining_ttl(request.mfa_token)
     token_data = await token_store.consume(request.mfa_token)
 
     if not token_data or token_data.get("scope") != "mfa_pending":
@@ -289,18 +293,24 @@ async def complete_mfa_login(
     stored_ip = token_data.get("ip_address")
     if stored_ip and stored_ip != client_ip:
         from src.app.core.logger import get_logger
+
         logger = get_logger(__name__)
-        logger.warning(
-            "MFA IP mismatch",
-            stored_ip=stored_ip,
-            client_ip=client_ip,
-            user_id=token_data.get("user_id")
-        )
-        # SECURITY FIX (M-1): Optionally reject IP mismatch to prevent stolen MFA tokens
+        logger.warning("MFA IP mismatch", stored_ip=stored_ip, client_ip=client_ip, user_id=token_data.get("user_id"))
+        # SECURITY FIX (M-1) + S-M3: reject IP mismatch so a stolen 5-minute
+        # MFA pending token cannot be completed from another machine. Escape
+        # hatch for networks that legitimately rotate the client IP mid-login
+        # (mobile carriers): the token was minted at login, so a fresh token
+        # seen from a new IP is a plausible mid-login rotation — accept while
+        # the token is younger than MFA_IP_BINDING_GRACE_SECONDS. A
+        # near-expiry token from a new IP is not plausible and is rejected.
         if settings.auth.MFA_ENFORCE_IP_BINDING:
-            raise UnauthorizedException(
-                "MFA verification rejected: IP address changed since login. Please try again."
-            )
+            grace = settings.auth.MFA_IP_BINDING_GRACE_SECONDS
+            token_age = settings.auth.MFA_PENDING_EXPIRY_SECONDS - remaining_ttl
+            within_grace = grace > 0 and 0 <= token_age <= grace
+            if not within_grace:
+                raise UnauthorizedException(
+                    "MFA verification rejected: IP address changed since login. Please try again."
+                )
 
     user_id = token_data.get("user_id")
     username = token_data.get("username")

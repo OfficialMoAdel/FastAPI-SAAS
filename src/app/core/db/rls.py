@@ -36,6 +36,17 @@ for _var in [RLS_TENANT_VAR, RLS_USER_VAR, RLS_BYPASS_VAR]:
 F = TypeVar("F", bound=Callable[..., Any])
 
 
+class RLSAuditFailureError(RuntimeError):
+    """Raised when the mandatory RLS bypass audit-log INSERT fails (Q-M9).
+
+    Typed successor of the generic ``RuntimeError`` raised from
+    :func:`bypass_rls` when the compliance audit row cannot be written —
+    an attacker able to force audit failure must not gain a silent RLS
+    bypass. Callers (e.g. tenant middleware) catch THIS class instead of
+    string-matching ``"audit log failure" in str(e)``.
+    """
+
+
 def _is_sqlite(connection: Any) -> bool:
     """Check if the connection is using SQLite dialect."""
     try:
@@ -365,7 +376,6 @@ async def bypass_rls(
         try:
             # T2 FIX: dedicated connection + explicit COMMIT (see helper).
             await _write_bypass_audit(user_id, reason)
-            logger.debug("RLS bypass audit log created", user_id=user_id, reason=reason)
         except Exception as audit_error:
             # SECURITY FIX: Audit log failure MUST be fatal. If an attacker can force
             # the audit log insertion to fail, they could bypass RLS silently.
@@ -375,8 +385,8 @@ async def bypass_rls(
                 reason=reason,
                 error=str(audit_error),
             )
-            # Re-raise to abort the RLS bypass
-            raise RuntimeError(f"RLS bypass aborted due to audit log failure: {audit_error}") from audit_error
+            # Re-raise to abort the RLS bypass (Q-M9: typed, not string-matched)
+            raise RLSAuditFailureError(f"RLS bypass aborted due to audit log failure: {audit_error}") from audit_error
 
         yield session
 
@@ -395,7 +405,6 @@ async def bypass_rls(
             logger.debug("RLS bypass cleared")
         except Exception as e:
             logger.warning("Failed to clear RLS bypass", error=str(e))
-
 
 
 async def get_current_tenant_id(connection: AsyncConnection) -> str | None:
@@ -499,6 +508,7 @@ __all__ = [
     "RLS_TENANT_VAR",
     "RLS_USER_VAR",
     "RLS_BYPASS_VAR",
+    "RLSAuditFailureError",
     "set_rls_context",
     "clear_rls_context",
     "rls_context",

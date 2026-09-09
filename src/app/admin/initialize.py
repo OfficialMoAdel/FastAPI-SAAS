@@ -9,13 +9,20 @@ from src.app.core.db.database import get_db_context
 
 
 async def _get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Wrapper to provide CRUDAdmin-compatible session generator.
+    """Provide CRUDAdmin-compatible sessions with a cross-tenant contract.
 
-    CRUDAdmin expects Callable[[], AsyncGenerator[AsyncSession, None]]
-    but async_get_db returns _AsyncGeneratorContextManager due to @asynccontextmanager.
+    C-2 tenancy contract: the admin panel is an operator surface that manages
+    ALL tenants, so its sessions run inside an audited `bypass_rls` context
+    (fail-closed: if the bypass audit write fails, the session fails to
+    yield). TenantMiddleware exempts the admin mount path, so no
+    `X-Tenant-ID` header is required or honored here — every admin query
+    intentionally sees all tenants. See `src/app/admin/AGENTS.md`.
     """
+    from src.app.core.db.rls import bypass_rls
+
     async with get_db_context() as session:
-        yield session
+        async with bypass_rls(session, reason="CRUDAdmin panel data access (cross-tenant operator view)"):
+            yield session
 
 
 def create_admin_interface() -> CRUDAdmin | None:

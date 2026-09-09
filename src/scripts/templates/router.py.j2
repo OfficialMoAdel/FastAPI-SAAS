@@ -4,12 +4,16 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 
-from ...api.deps import AuthenticatedUser, get_current_user, tenant_dependency
-from ...core.db.database import async_get_db
-from ...core.tenancy.context import TenantContext
-from ...modules.users.models import User
-from .schemas import {{ ModelName }}Create, {{ ModelName }}List, {{ ModelName }}Read, {{ ModelName }}Update
-from .service import {{ ModelName }}Service, get_{{ module_name }}_service
+from src.app.api.deps import AuthenticatedUser, get_current_user, tenant_dependency
+from src.app.core.db.database import async_get_db
+from src.app.core.tenancy.context import TenantContext
+from src.app.modules.{{ module_name }}.schemas import (
+    {{ ModelName }}Create,
+    {{ ModelName }}List,
+    {{ ModelName }}Read,
+    {{ ModelName }}Update,
+)
+from src.app.modules.{{ module_name }}.service import {{ ModelName }}Service, get_{{ module_name }}_service
 
 router = APIRouter(prefix="/{{ module_name }}s", tags=["{{ module_name }}s"])
 
@@ -32,8 +36,7 @@ async def create_{{ module_name }}(
     """Create a new {{ module_name }}."""
     return await service.create_{{ module_name }}(
         data=body,
-        user_id=current_user.id,
-        tenant_id=current_tenant.id,
+        current_user=current_user,
     )
 
 
@@ -47,7 +50,6 @@ async def list_{{ module_name }}s(
 ) -> dict:
     """List {{ module_name }}s for the current tenant."""
     result = await service.list_{{ module_name }}s(
-        tenant_id=current_tenant.id,
         page=page,
         items_per_page=per_page,
     )
@@ -71,15 +73,16 @@ async def get_{{ module_name }}(
     service: {{ ModelName }}ServiceDep,
 ) -> {{ ModelName }}Read:
     """Get a {{ module_name }} by ID."""
+    # tenant filter injected from request context by the CRUD seam
     result = await service.crud.get(
         db=service.db,
         id=id,
-        tenant_id=current_tenant.id,
         schema_to_select={{ ModelName }}Read,  # type: ignore[arg-type]
     )
     if not result:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="{{ ModelName }} not found")
+        from src.app.modules._base.exceptions import ModelNotFoundError
+
+        raise ModelNotFoundError("{{ ModelName }}", id)
     return {{ ModelName }}Read.model_validate(result)
 
 
@@ -95,8 +98,7 @@ async def update_{{ module_name }}(
     return await service.update_{{ module_name }}(
         id=id,
         data=body,
-        user_id=current_user.id,
-        tenant_id=current_tenant.id,
+        current_user=current_user,
     )
 
 
@@ -110,6 +112,5 @@ async def delete_{{ module_name }}(
     """Delete a {{ module_name }}."""
     await service.delete_{{ module_name }}(
         id=id,
-        user_id=current_user.id,
-        tenant_id=current_tenant.id,
+        current_user=current_user,
     )

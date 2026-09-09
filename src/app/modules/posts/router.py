@@ -13,7 +13,7 @@ from src.app.core.schemas import MessageResponse
 from src.app.core.utils.cache import cache
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.posts.schemas import PostCreate, PostRead, PostUpdate
-from src.app.modules.posts.service import PostService, get_post_service
+from src.app.modules.posts.service import PostService
 
 # R1-08: posts previously mounted a top-level path param (/{username}/posts)
 # directly under /v1, the only router to do so. That made {username} match any
@@ -29,9 +29,13 @@ def _require_post_owner(username: str, ctx: RequestContextDep) -> None:
         raise ForbiddenException()
 
 
-async def _get_post_service(db: AsyncSession = Depends(async_get_db)) -> PostService:
-    """Dependency for PostService injection."""
-    return get_post_service(db)
+def get_post_service(db: AsyncSession = Depends(async_get_db)) -> PostService:
+    """Dependency injection factory for PostService.
+
+    Q-M4: factories live in router.py — service files stay Depends-free.
+    (Absorbs the old pointless `_get_post_service` wrapper, M-4.)
+    """
+    return PostService(db)
 
 @router.post("/by-user/{username}", response_model=PostRead, status_code=status.HTTP_201_CREATED)
 async def write_post(
@@ -39,7 +43,7 @@ async def write_post(
     username: str,
     post: PostCreate,
     ctx: RequestContextDep,
-    service: PostService = Depends(_get_post_service),
+    service: PostService = Depends(get_post_service),
 ) -> dict[str, Any]:
     """Create a new post."""
     _require_post_owner(username, ctx)
@@ -59,7 +63,7 @@ async def read_posts(
     request: Request,
     username: str,
     ctx: RequestContextDep,
-    service: PostService = Depends(_get_post_service),
+    service: PostService = Depends(get_post_service),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(10, ge=1, le=100, description="Page size"),
 ) -> Any:
@@ -75,7 +79,7 @@ async def read_post(
     username: str,
     id: int,
     ctx: RequestContextDep,
-    service: PostService = Depends(_get_post_service),
+    service: PostService = Depends(get_post_service),
 ) -> dict[str, Any]:
     """Get a single post by ID."""
     _require_post_owner(username, ctx)
@@ -95,7 +99,7 @@ async def patch_post(
     id: int,
     values: PostUpdate,
     ctx: RequestContextDep,
-    service: PostService = Depends(_get_post_service),
+    service: PostService = Depends(get_post_service),
 ) -> dict[str, str]:
     """Update a post."""
     _require_post_owner(username, ctx)
@@ -114,7 +118,7 @@ async def erase_post(
     username: str,
     id: int,
     ctx: RequestContextDep,
-    service: PostService = Depends(_get_post_service),
+    service: PostService = Depends(get_post_service),
 ) -> Response:
     """Soft delete a post."""
     _require_post_owner(username, ctx)
@@ -134,7 +138,7 @@ async def erase_post(
     user_scoped=True,
 )
 async def erase_db_post(
-    request: Request, username: str, id: int, service: PostService = Depends(_get_post_service)
+    request: Request, username: str, id: int, service: PostService = Depends(get_post_service)
 ) -> Response:
     """Permanently delete a post from database (superuser only)."""
     await service.hard_delete(id)

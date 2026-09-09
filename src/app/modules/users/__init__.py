@@ -66,7 +66,7 @@ def __getattr__(name: str):
 
         return users_router
     if name == "get_user_service":
-        from src.app.modules.users.service import get_user_service
+        from src.app.modules.users.router import get_user_service
 
         return get_user_service
     if name == "crud_users":

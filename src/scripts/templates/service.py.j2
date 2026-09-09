@@ -1,20 +1,27 @@
 """{{ ModelName }} service layer - business logic."""
 
 from typing import Any
-from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.exceptions.http_exceptions import ForbiddenException
-from .._base.exceptions import DuplicateError, ModelNotFoundError
-from .._base.service import BaseService
-from .crud import crud_{{ module_name }}
-from .models import {{ ModelName }}
-from .schemas import {{ ModelName }}Create, {{ ModelName }}Read, {{ ModelName }}Update
+from src.app.core.utils.user_utils import get_user_attr
+from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
+from src.app.modules._base.service import BaseService
+from src.app.modules.{{ module_name }}.crud import crud_{{ module_name }}
+from src.app.modules.{{ module_name }}.models import {{ ModelName }}
+from src.app.modules.{{ module_name }}.schemas import {{ ModelName }}Create, {{ ModelName }}Read, {{ ModelName }}Update
+from src.app.shared.exceptions import ForbiddenError
 
 
 class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
-    """Service class for {{ module_name }}-related business logic."""
+    """Service class for {{ module_name }}-related business logic.
+
+    Tenant isolation note: ``crud_{{ module_name }}`` is a TenantAwareCRUD —
+    the tenant_id filter is injected from request context on every call.
+    Service methods therefore do NOT take (or pass) explicit ``tenant_id``
+    kwargs; a caller-supplied value would be ignored (and logged) by the
+    seam.
+    """
 
     def __init__(self, db: AsyncSession):
         """Initialize {{ ModelName }}Service.
@@ -29,8 +36,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
     async def create_{{ module_name }}(
         self,
         data: {{ ModelName }}Create,
-        user_id: int,
-        tenant_id: UUID,
+        current_user: Any,
     ) -> {{ ModelName }}Read:
         """Create a new {{ module_name }}.
 
@@ -38,10 +44,8 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         ----------
         data : {{ ModelName }}Create
             Creation data
-        user_id : int
-            ID of creating user
-        tenant_id : int
-            ID of tenant
+        current_user : Any
+            Currently authenticated user (already validated by auth)
 
         Returns
         -------
@@ -53,21 +57,19 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         DuplicateError
             If {{ fields[0].name if fields else 'name' }} already exists
         """
-        # Check for duplicates
-{%- if fields %}
+        # Check for duplicates (tenant filter injected by the CRUD seam)
+{% if fields %}
         existing = await self.crud.get(
             db=self.db,
             {{ fields[0].name }}=data.{{ fields[0].name }},
-            tenant_id=tenant_id,
         )
         if existing:
             raise DuplicateError("{{ fields[0].name }}", data.{{ fields[0].name }})
-{%- endif %}
+{% endif %}
 
-        # Create object
+        # Create object (tenant_id injected from context by the CRUD seam)
         create_data = data.model_dump()
-        create_data["user_id"] = user_id
-        create_data["tenant_id"] = tenant_id
+        create_data["user_id"] = get_user_attr(current_user, "id")
 
         result = await self.crud.create(
             db=self.db,
@@ -77,16 +79,13 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
 
     async def list_{{ module_name }}s(
         self,
-        tenant_id: UUID,
         page: int = 1,
         items_per_page: int = 20,
     ) -> dict[str, Any]:
-        """List {{ module_name }}s for a tenant.
+        """List {{ module_name }}s for the current tenant.
 
         Parameters
         ----------
-        tenant_id : int
-            Tenant ID
         page : int
             Page number
         items_per_page : int
@@ -99,7 +98,6 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         """
         return await self.crud.get_multi(
             db=self.db,
-            tenant_id=tenant_id,
             offset=(page - 1) * items_per_page,
             limit=items_per_page,
             schema_to_select={{ ModelName }}Read,  # type: ignore[arg-type]
@@ -109,8 +107,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         self,
         id: int,
         data: {{ ModelName }}Update,
-        user_id: int,
-        tenant_id: UUID,
+        current_user: Any,
     ) -> {{ ModelName }}Read:
         """Update a {{ module_name }}.
 
@@ -120,10 +117,8 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
             {{ ModelName }} ID
         data : {{ ModelName }}Update
             Update data
-        user_id : int
-            ID of requesting user
-        tenant_id : int
-            Tenant ID
+        current_user : Any
+            Currently authenticated user
 
         Returns
         -------
@@ -134,20 +129,20 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         ------
         ModelNotFoundError
             If not found
-        ForbiddenException
+        ForbiddenError
             If user doesn't have permission
         """
-        # Get existing
+        # Get existing (tenant filter injected by the CRUD seam)
         existing = await self.crud.get(
             db=self.db,
             id=id,
-            tenant_id=tenant_id,
         )
         if not existing:
             raise ModelNotFoundError("{{ ModelName }}", id)
 
-        if existing.get("user_id") != user_id if isinstance(existing, dict) else getattr(existing, "user_id", None) != user_id:
-            raise ForbiddenException("You don't have permission to update this")
+        existing_user_id = existing.get("user_id") if isinstance(existing, dict) else getattr(existing, "user_id", None)
+        if existing_user_id != get_user_attr(current_user, "id"):
+            raise ForbiddenError("You don't have permission to update this {{ module_name }}")
 
         # Update
         update_data = data.model_dump(exclude_unset=True, exclude_none=True)
@@ -161,8 +156,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
     async def delete_{{ module_name }}(
         self,
         id: int,
-        user_id: int,
-        tenant_id: UUID,
+        current_user: Any,
     ) -> None:
         """Delete a {{ module_name }}.
 
@@ -170,29 +164,27 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         ----------
         id : int
             {{ ModelName }} ID
-        user_id : int
-            ID of requesting user
-        tenant_id : int
-            Tenant ID
+        current_user : Any
+            Currently authenticated user
 
         Raises
         ------
         ModelNotFoundError
             If not found
-        ForbiddenException
+        ForbiddenError
             If user doesn't have permission
         """
-        # Get existing
+        # Get existing (tenant filter injected by the CRUD seam)
         existing = await self.crud.get(
             db=self.db,
             id=id,
-            tenant_id=tenant_id,
         )
         if not existing:
             raise ModelNotFoundError("{{ ModelName }}", id)
 
-        if existing.get("user_id") != user_id if isinstance(existing, dict) else getattr(existing, "user_id", None) != user_id:
-            raise ForbiddenException("You don't have permission to delete this")
+        existing_user_id = existing.get("user_id") if isinstance(existing, dict) else getattr(existing, "user_id", None)
+        if existing_user_id != get_user_attr(current_user, "id"):
+            raise ForbiddenError("You don't have permission to delete this {{ module_name }}")
 
         await self.crud.delete(db=self.db, id=id)
 

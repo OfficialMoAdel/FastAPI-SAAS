@@ -9,6 +9,7 @@ from src.app.modules.rbac.crud import (
     crud_roles,
 )
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
+from src.app.modules.rbac.router import get_role_service
 from src.app.modules.rbac.schemas import (
     PermissionRead,
     RoleCreate,
@@ -19,7 +20,7 @@ from src.app.modules.rbac.schemas import (
     UserRoleRead,
     UserRolesResponse,
 )
-from src.app.modules.rbac.service import RoleService, get_role_service
+from src.app.modules.rbac.service import RoleService
 
 __all__ = [
     # Models

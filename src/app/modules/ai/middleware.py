@@ -11,13 +11,14 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Response, status
 
 from src.app.api.deps import get_current_user
+from src.app.api.deps.auth import AuthenticatedUser
 from src.app.modules.ai.rate_limiter import RateLimitError, check_ai_rate_limit
 
 
 async def check_rate_limit_dependency(
     response: Response,
-    current_user: Annotated[dict, Depends(get_current_user)],
-) -> dict:
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> AuthenticatedUser:
     """FastAPI dependency to check rate limit before processing request.
 
     T099: Rate limiting middleware (60 requests/user/minute).
@@ -33,7 +34,7 @@ async def check_rate_limit_dependency(
     Raises:
         HTTPException: 429 Too Many Requests if rate limit exceeded
     """
-    user_id = current_user["id"]
+    user_id = current_user.id
 
     try:
         is_allowed, remaining, retry_after = await check_ai_rate_limit(user_id)
@@ -64,4 +65,4 @@ async def check_rate_limit_dependency(
 
 
 # Type alias for dependency injection
-RateLimitedUser = Annotated[dict, Depends(check_rate_limit_dependency)]
+RateLimitedUser = Annotated[AuthenticatedUser, Depends(check_rate_limit_dependency)]

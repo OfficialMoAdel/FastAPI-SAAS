@@ -50,7 +50,22 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
     # Double check filtering just in case we are using global index (if logic changed)
     # But here we switched index_key. So keys are already filtered by definition of the set.
 
-    # Delete all matching keys in a pipeline for efficiency
+    # P-M5: collect ALL sharded-index keys via SCAN *before* opening the
+    # pipeline. The previous shape issued SCAN round-trips while the pipeline
+    # was open, serializing network I/O that is independent of the pipeline's
+    # purpose and stretching the pipeline's lifetime across every SCAN page.
+    sharded_index_keys: list[str] = []
+    if not prefix:
+        # BUG FIX (retained): clear all sharded indexes for the tenant to
+        # prevent orphaned empty sets.
+        cursor = 0
+        while True:
+            cursor, sharded_keys = await client.scan(cursor, match=f"tenant_index:{tenant_id}:*", count=100)
+            sharded_index_keys.extend(k.decode("utf-8") if isinstance(k, bytes) else k for k in sharded_keys)
+            if cursor == 0:
+                break
+
+    # Delete all matching keys in ONE pipeline for efficiency
     async with client.pipeline(transaction=False) as pipe:
         pipe.delete(*keys)
 
@@ -60,15 +75,8 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
         # If we used a sharded index, we must ALSO remove these keys from the global index
         if prefix and global_index_key:
             pipe.srem(global_index_key, *keys)
-        elif not prefix:
-            # BUG FIX: Clear all sharded indexes for the tenant to prevent orphaned empty sets
-            cursor = 0
-            while True:
-                cursor, sharded_keys = await client.scan(cursor, match=f"tenant_index:{tenant_id}:*", count=100)
-                if sharded_keys:
-                    pipe.delete(*sharded_keys)
-                if cursor == 0:
-                    break
+        elif sharded_index_keys:
+            pipe.delete(*sharded_index_keys)
 
         results = await pipe.execute()
 

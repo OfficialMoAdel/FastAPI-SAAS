@@ -1,30 +1,19 @@
+"""Rate limit models.
+
+A-M2: the ``Tier`` entity now lives canonically in
+``src/app/modules/tiers/models.py`` (rate limits reference tiers, not the
+reverse). The import below re-exports it from here for one release so
+existing ``from src.app.modules.rate_limits.models import Tier`` sites keep
+working; new code must import from ``modules.tiers.models``.
+"""
+
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
-
-
-class Tier(Base):
-    """Tier model defining access tiers and grouping rate limit rules."""
-
-    __tablename__ = "tier"
-
-    id: Mapped[int] = mapped_column("id", autoincrement=True, nullable=False, unique=True, primary_key=True, init=False)
-    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None, onupdate=lambda: datetime.now(UTC)
-    )
-
-    rate_limits: Mapped[list["RateLimit"]] = relationship(
-        "RateLimit",
-        back_populates="tier",
-        lazy="noload",  # Don't load by default
-        init=False,
-    )
+from src.app.modules.tiers.models import Tier  # noqa: F401  (deprecated re-export, A-M2)
 
 
 class RateLimit(Base, kw_only=True):

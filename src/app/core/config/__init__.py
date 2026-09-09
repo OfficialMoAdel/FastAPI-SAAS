@@ -13,12 +13,23 @@ Removing the delegation (the report's later big-bang step) is deliberately NOT
 done in this increment.
 """
 
+import os
 from typing import Any
 
 from dotenv import load_dotenv
 
-# Load .env into os.environ before child BaseSettings classes instantiate
-load_dotenv()
+# C-3: keys present in the REAL process environment BEFORE load_dotenv()
+# injects src/.env, plus keys that the dotenv load added. This is the only
+# honest signal for "the operator explicitly set ENVIRONMENT":
+# pydantic-settings' fields_set cannot tell dotenv-sourced values from
+# env-var values (load_dotenv() injects into os.environ before any
+# Settings class constructs, so every construction reports the field as
+# set). Keys in the dotenv file are equally explicit operator choices.
+_RAW_ENV_KEYS: frozenset[str] = frozenset(os.environ.keys())
+
+# Load .env into os.environ before child BaseSettings classes instantiate.
+_load_dotenv_result = load_dotenv(verbose=False)  # bool: file found or not
+_RAW_ENV_KEYS = _RAW_ENV_KEYS | frozenset(os.environ.keys())
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -26,7 +37,13 @@ from src.app.core.config.app import AppSettings
 from src.app.core.config.auth import KNOWN_LEAKED_ADMIN_PASSWORDS, AuthSettings, FirstUserSettings
 from src.app.core.config.cache import ClientSideCacheSettings, RedisCacheSettings, TestSettings
 from src.app.core.config.crypt import KNOWN_LEAKED_SECRET_KEYS, CryptSettings
-from src.app.core.config.database import DatabaseConfigMixin, MySQLSettings, PostgresSettings, SQLiteSettings
+from src.app.core.config.database import (
+    KNOWN_LEAKED_POSTGRES_PASSWORDS,
+    DatabaseConfigMixin,
+    MySQLSettings,
+    PostgresSettings,
+    SQLiteSettings,
+)
 from src.app.core.config.environment import CORSSettings, EnvironmentOption, EnvironmentSettings, StorageSettings
 from src.app.core.config.integrations import AISettings, ArqSettings, BillingSettings
 from src.app.core.config.performance import EventSettings, PerformanceSettings, QueryProfilerSettings, R1UnifiedSettings
@@ -44,6 +61,7 @@ __all__ = [
     "KNOWN_LEAKED_SECRET_KEYS",
     "CryptSettings",
     "DatabaseConfigMixin",
+    "KNOWN_LEAKED_POSTGRES_PASSWORDS",
     "SQLiteSettings",
     "MySQLSettings",
     "PostgresSettings",
@@ -150,6 +168,55 @@ class Settings(BaseSettings):
                     "Restrict CORS_ORIGINS to your real deployment origins."
                 )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_environment_explicit(self) -> "Settings":
+        """Fail fast when a DEFAULTED ENVIRONMENT faces remote infra (C-3).
+
+        `ENVIRONMENT` defaults to LOCAL, which silently skips the production
+        gates (CORS wildcard hard-fail, ENCRYPTION_KEY requirement, HSTS,
+        docs hiding). An operator who points the app at real infrastructure
+        but never sets ENVIRONMENT would run production data with dev
+        security posture. Refuse to boot in that state and demand an explicit
+        choice. An explicit `ENVIRONMENT=local` (e.g. a LAN dev database)
+        is honored as a deliberate operator decision.
+        """
+        # The honest "explicitly configured?" signal: ENVIRONMENT present
+        # in the process env or the dotenv file (see _RAW_ENV_KEYS note at
+        # module top). fields_set can't discriminate — load_dotenv() injects
+        # src/.env into os.environ before any Settings class constructs,
+        # so every construction reports the field as set.
+        if "ENVIRONMENT" in _RAW_ENV_KEYS:
+            return self
+        env = getattr(self.env.ENVIRONMENT, "value", self.env.ENVIRONMENT)
+        if env != "local":
+            return self
+        # Bare hostnames that still mean "this machine" (dev defaults,
+        # docker-compose service names, Docker Desktop host alias).
+        local_hosts = frozenset(
+            {"localhost", "127.0.0.1", "::1", "0.0.0.0", "db", "postgres", "redis", "host.docker.internal"}
+        )
+        remote: list[str] = []
+        if (self.postgres.POSTGRES_SERVER or "").lower() not in local_hosts:
+            remote.append(f"POSTGRES_SERVER={self.postgres.POSTGRES_SERVER!r}")
+        redis_hosts = {
+            "REDIS_CACHE_HOST": self.redis_cache.REDIS_CACHE_HOST,
+            "REDIS_QUEUE_HOST": self.redis_queue.REDIS_QUEUE_HOST,
+            "CRUD_ADMIN_REDIS_HOST": self.admin.CRUD_ADMIN_REDIS_HOST,
+        }
+        for label, host in redis_hosts.items():
+            if host and host.lower() not in local_hosts:
+                remote.append(f"{label}={host!r}")
+        if remote:
+            raise ValueError(
+                "SECURITY ERROR (C-3): ENVIRONMENT defaulted to 'local' while "
+                f"infrastructure points at non-local hosts: {', '.join(remote)}. "
+                "Running remote infrastructure with dev security posture (open "
+                "CORS/docs, no HSTS, optional ENCRYPTION_KEY) is refused. Set "
+                "ENVIRONMENT explicitly — 'local' for a deliberate LAN dev setup, "
+                "'staging' or 'production' for real deployments."
+            )
         return self
 
     @property

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
+from src.app.core.utils.cache_guard import cache_guard
 from src.app.modules._base import ModelNotFoundError
 from src.app.modules.tenants.models import Tenant
 
@@ -37,19 +38,18 @@ async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: st
         stacklevel=2,
     )
     from src.app.core.utils.cache import build_tenant_key
+
     cache_key = build_tenant_key(f"feature:{feature_name}", tenant_id)
     redis_client = get_redis()
 
     # Try cache first
     if redis_client:
-        try:
+        with cache_guard("flag_utils_get", cache_key=cache_key):
             cached_value = await redis_client.get(cache_key)
             if cached_value is not None:
                 # Redis may return bytes or str depending on decode_responses setting
                 val_str: str = (cached_value.decode() if isinstance(cached_value, bytes) else cached_value).lower()
                 return val_str == "true"
-        except Exception as e:
-            logger.debug("Cache get failed", error=e)
 
     # Fallback to DB
     result = await db.get(Tenant, tenant_id)
@@ -60,10 +60,8 @@ async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: st
 
     # Update cache
     if redis_client:
-        try:
+        with cache_guard("flag_utils_write", cache_key=cache_key):
             await redis_client.setex(cache_key, CACHE_TTL, str(enabled).lower())
-        except Exception as e:
-            logger.debug("Cache operation failed", error=e)
 
     return enabled
 
@@ -76,42 +74,27 @@ async def get_feature_flags(db: AsyncSession, tenant_id: UUID) -> dict[str, Any]
         db: Database session
         tenant_id: Tenant UUID
 
-    Returns
-    -------
-        dict: All feature flags for the tenant
+    Returns:
+        dict of flag name to enabled state
     """
-    warnings.warn(
-        "get_feature_flags is deprecated, use FeatureFlagService.get_tenant_flags() instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     from src.app.core.utils.cache import build_tenant_key
+
     cache_key = build_tenant_key("features", tenant_id)
     redis_client = get_redis()
 
-    # Try cache first
     if redis_client:
-        try:
-            cached_value = await redis_client.get(cache_key)
-            if cached_value:
-                result_data: dict[str, Any] = json_loads(cached_value)
-                return result_data
-        except Exception as e:
-            logger.debug("Cache get failed", error=e)
+        with cache_guard("flags_get_all", tenant_id=str(tenant_id)):
+            cached = await redis_client.get(cache_key)
+            if cached is not None:
+                return dict(json_loads(cached))
 
-    # Fallback to DB
     result = await db.get(Tenant, tenant_id)
-    flags = {}
-
+    flags: dict[str, bool] = {}
     if result and result.feature_flags:
-        flags = result.feature_flags
-
-    # Update cache
+        flags = dict(result.feature_flags)
     if redis_client:
-        try:
-            await redis_client.setex(cache_key, CACHE_TTL, json_dumps(flags, as_str=True))
-        except Exception as e:
-            logger.debug("Cache operation failed", error=e)
+        with cache_guard("flags_write_all", tenant_id=str(tenant_id)):
+            await redis_client.set(cache_key, json_dumps(flags, as_str=True), ex=CACHE_TTL)
 
     return flags
 
@@ -166,12 +149,15 @@ async def update_feature_flag(db: AsyncSession, tenant_id: UUID, feature_name: s
     if redis_client:
         try:
             from src.app.core.utils.cache import build_tenant_key
+
             # Delete specific feature key
             await redis_client.delete(build_tenant_key(f"feature:{feature_name}", tenant_id))
             # Delete all features key
             await redis_client.delete(build_tenant_key("features", tenant_id))
         except Exception as e:
-            logger.debug("Cache invalidation failed", error=e)
+            # Q-M3: failed invalidation leaves stale flag values until TTL —
+            # warn with identifiers so operators can flush manually.
+            logger.warning("Feature flag utils cache invalidation failed", tenant_id=str(tenant_id), error=str(e))
 
     return tenant
 
@@ -224,6 +210,7 @@ async def bulk_update_feature_flags(db: AsyncSession, tenant_id: UUID, flags: di
     if redis_client:
         try:
             from src.app.core.utils.cache import build_tenant_key
+
             # Delete all features key
             await redis_client.delete(build_tenant_key("features", tenant_id))
 
@@ -232,6 +219,8 @@ async def bulk_update_feature_flags(db: AsyncSession, tenant_id: UUID, flags: di
             if keys_to_delete:
                 await redis_client.delete(*keys_to_delete)
         except Exception as e:
-            logger.debug("Cache invalidation failed", error=e)
+            # Q-M3: failed invalidation leaves stale flag values until TTL —
+            # warn with identifiers so operators can flush manually.
+            logger.warning("Feature flag utils cache invalidation failed", tenant_id=str(tenant_id), error=str(e))
 
     return tenant

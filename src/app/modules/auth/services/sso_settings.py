@@ -1,11 +1,8 @@
 from typing import Any
 from uuid import UUID
 
-from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.cache.warmer import warmer
-from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
 
@@ -274,70 +271,5 @@ class SSOSettingsService:
                 logger.warning("Failed to invalidate SSO settings cache", provider=provider, error=str(e))
 
 
-def get_sso_settings_service(db: AsyncSession = Depends(async_get_db)) -> "SSOSettingsService":
-    """Dependency injection factory for SSOSettingsService.
-
-    Parameters
-    ----------
-    db : AsyncSession
-        Database session from async_get_db
-
-    Returns
-    -------
-    SSOSettingsService
-        Service instance
-    """
-    return SSOSettingsService()
-
-
 # Legacy singleton for backward compatibility - will be removed
 sso_settings_service = SSOSettingsService()
-
-
-# ============================================================================
-# Cache Warming
-# ============================================================================
-
-
-@warmer.register("sso_settings")
-async def warm_sso_settings(session: AsyncSession) -> int:
-    """Warm SSO settings cache.
-
-    Fetches active SSO providers and stores them in Redis cache.
-    Low-cardinality, high-read data perfect for caching.
-
-    Args:
-        session: Database session
-
-    Returns:
-        Number of SSO settings cached
-    """
-    from sqlalchemy import select
-
-    from src.app.core.json_utils import json_dumps
-
-    query = select(SSOSettings).where(SSOSettings.is_enabled)
-    result = await session.execute(query)
-    settings = result.scalars().all()
-
-    cached_count = 0
-    redis_client = get_redis()
-    if redis_client:
-        try:
-            for setting in settings:
-                cache_key = f"sso_settings:{setting.provider}"
-                setting_data = {
-                    "id": setting.id,
-                    "provider": setting.provider,
-                    "is_enabled": setting.is_enabled,
-                    "additional_config": setting.additional_config or {},
-                }
-                await redis_client.setex(cache_key, _SSO_SETTINGS_CACHE_TTL, json_dumps(setting_data, as_str=True))
-                cached_count += 1
-
-            logger.info("Warmed cache for SSO settings", cached_count=cached_count)
-        except Exception as e:
-            logger.error("Failed to warm SSO settings cache", error=e)
-            return 0
-
-    return cached_count

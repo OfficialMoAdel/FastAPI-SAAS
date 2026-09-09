@@ -85,12 +85,18 @@ def _create_engine() -> AsyncEngine:
             future=True,
             pool_size=settings.postgres.DB_POOL_SIZE,
             max_overflow=settings.postgres.DB_MAX_OVERFLOW,
-            pool_pre_ping=True,
+            # H-2: pool_pre_ping removed. pre_ping + the RLS checkout listener
+            # fired 2 guaranteed RTTs before every real query (~5-10% p50 tax,
+            # −30-40% effective pool throughput). Stale/broken connections are
+            # still covered: pool_recycle=3600 bounds connection lifetime, and
+            # asyncpg's TCP keepalive surfaces dead sockets on first use.
+            # The RLS re-assertion on checkout (restore_rls_context) is
+            # INTENTIONALLY KEPT — see rls.py:fail-closed invariant.
             pool_recycle=3600,
             pool_timeout=settings.postgres.DB_POOL_TIMEOUT,
             # P1-1: Configure asyncpg statement cache for better performance
             connect_args={
-                "statement_cache_size": getattr(settings, "DB_STATEMENT_CACHE_SIZE", 100),
+                "statement_cache_size": settings.postgres.DB_STATEMENT_CACHE_SIZE,
                 "max_cacheable_statement_size": 10240,  # 10KB max statement size
             },
         )

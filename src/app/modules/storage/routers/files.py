@@ -13,8 +13,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep
+from src.app.core.db.database import async_get_db
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.modules.storage.schemas import (
@@ -25,12 +27,22 @@ from src.app.modules.storage.schemas import (
     QuotaResponse,
     SignedUrlResponse,
 )
-from src.app.modules.storage.service import (
-    StorageService,
-    get_storage,
-)
+from src.app.modules.storage.service import StorageService
 
 router = APIRouter(prefix="/files", tags=["files"])
+
+
+def get_storage(db: AsyncSession = Depends(async_get_db)) -> StorageService:
+    """Dependency injection factory for StorageService.
+
+    Q-M4: factories live in router.py — service files stay Depends-free.
+    """
+    return StorageService(db)
+
+
+def get_file_service(db: AsyncSession = Depends(async_get_db)) -> StorageService:
+    """Backward-compatible dependency factory for FileService."""
+    return StorageService(db)
 
 
 @router.post(

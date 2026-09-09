@@ -313,22 +313,6 @@ class AISettingsService(BaseService[AISettings]):
             return settings
 
 
-# Dependency injection factories
-def get_chat_session_service(db: AsyncSession) -> ChatSessionService:
-    """Get ChatSessionService instance."""
-    return ChatSessionService(db)
-
-
-def get_chat_message_service(db: AsyncSession) -> ChatMessageService:
-    """Get ChatMessageService instance."""
-    return ChatMessageService(db)
-
-
-def get_ai_settings_service(db: AsyncSession) -> AISettingsService:
-    """Get AISettingsService instance."""
-    return AISettingsService(db)
-
-
 class ChatCompletionService:
     """Service for AI chat completions via AIProvider."""
 
@@ -344,6 +328,7 @@ class ChatCompletionService:
             self._injected_provider = True
         else:
             from src.app.modules.ai.factory import AIProviderFactory
+
             self.provider = AIProviderFactory.get_provider()
             self._injected_provider = False
         self._fallback_provider = fallback_provider
@@ -351,20 +336,69 @@ class ChatCompletionService:
         self._message_service = ChatMessageService(db)
         self._settings_service = AISettingsService(db)
 
-    def _get_fallback_provider(self) -> Any | None:
+    async def _get_fallback_provider(self) -> Any | None:
+        """Resolve the fallback provider, probing candidates in parallel (P-M10).
+
+        Previously each candidate was constructed sequentially with
+        try/except-continue, so a misconfigured provider list paid every
+        failure serially before finding a working one. Now:
+
+        1. All non-primary candidates are CONSTRUCTED concurrently —
+           construction is a sync factory call, so each runs in a worker
+           thread via ``asyncio.to_thread``; it fails fast for missing
+           credentials, which makes it the probe.
+        2. Constructed providers are HEALTH-CHECKED concurrently; the
+           results are used only for ordering: healthy candidates come
+           first, preserving factory registration order within each group.
+        3. First-success wins: the first healthy provider is returned; if
+           none pass their health check, the first constructed provider is
+           returned (health is an ordering hint, not a gate — an at-the-moment
+           failed probe may still serve the next request).
+        """
         if self._fallback_provider is not None:
             return self._fallback_provider
         if self._injected_provider:
             return None
         from src.app.modules.ai.factory import SUPPORTED_PROVIDERS, AIProviderFactory
+
         current_name = getattr(self.provider, "provider_name", None)
-        for name in SUPPORTED_PROVIDERS:
-            if name != current_name:
-                try:
-                    return AIProviderFactory.get_provider(provider_name=name)
-                except Exception:
-                    continue
-        return None
+        candidates = [name for name in SUPPORTED_PROVIDERS if name != current_name]
+        if not candidates:
+            return None
+
+        # 1. Parallel construction probes (sync factory calls in threads;
+        #    failures — e.g. missing API keys — surface as exceptions).
+        constructed: list[Any] = []
+        try:
+            results = await asyncio.gather(
+                *(asyncio.to_thread(AIProviderFactory.get_provider, provider_name=name) for name in candidates),
+                return_exceptions=True,
+            )
+            constructed = [p for p in results if not isinstance(p, BaseException)]
+        except Exception:
+            return None
+        if not constructed:
+            return None
+
+        # 2. Health-aware ordering: probe all constructed providers'
+        #    reachability concurrently, healthy ones first. Providers expose
+        #    an async health_check(); anything else is treated as unhealthy.
+        async def _probe(p: Any) -> bool:
+            check = getattr(p, "health_check", None)
+            if check is None:
+                return False
+            try:
+                return bool(await check())
+            except Exception:
+                return False
+
+        health = await asyncio.gather(*(_probe(p) for p in constructed))
+
+        ordered = [p for p, h in zip(constructed, health, strict=True) if h]
+        ordered += [p for p, h in zip(constructed, health, strict=True) if not h]
+
+        # 3. First-success wins.
+        return ordered[0] if ordered else None
 
     async def _invoke_chat(
         self,
@@ -494,9 +528,7 @@ class ChatCompletionService:
         async def _primary_call() -> dict[str, Any]:
             try:
                 return await with_retry(
-                    lambda: self._invoke_chat(
-                        self.provider, model, history, temperature, max_tokens, system_prompt
-                    ),
+                    lambda: self._invoke_chat(self.provider, model, history, temperature, max_tokens, system_prompt),
                     max_attempts=2,
                     delay_seconds=0.05,
                     exceptions=(AIProviderError,),
@@ -506,12 +538,10 @@ class ChatCompletionService:
                 raise
 
         async def _fallback_call() -> dict[str, Any]:
-            fb = self._get_fallback_provider()
+            fb = await self._get_fallback_provider()
             if fb is not None and fb is not self.provider:
                 logger.warning("Primary AI provider failed after retries, attempting fallback provider")
-                return await self._invoke_chat(
-                    fb, model, history, temperature, max_tokens, system_prompt
-                )
+                return await self._invoke_chat(fb, model, history, temperature, max_tokens, system_prompt)
             if _last_err:
                 raise _last_err[0]
             raise ChatCompletionError("No fallback provider available", "no_fallback", model)
@@ -652,7 +682,7 @@ class ChatCompletionService:
             except (AIProviderError, ChatCompletionError) as primary_err:
                 _last_err.append(primary_err)
                 logger.warning("Primary provider streaming failed, checking fallback", error=str(primary_err))
-                fb = self._get_fallback_provider()
+                fb = await self._get_fallback_provider()
                 if fb is not None and fb is not self.provider:
                     try:
                         async for chunk in self._invoke_chat_stream(

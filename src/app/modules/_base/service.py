@@ -14,9 +14,13 @@ Usage:
         async def get_by_email(self, email: str) -> User | None:
             return await self.crud.get(db=self.db, email=email)
 
-    # Dependency injection factory
-    def get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserService:
-        return UserService(db)
+    # Q-M4: dependency factories (get_*_service with Depends(...)) live in
+    # router modules, NOT in service files — service files stay
+    # framework-free. Register the factory in the router that consumes it:
+
+    # router.py:
+    # def get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserService:
+    #     return UserService(db)
 """
 
 from __future__ import annotations
@@ -109,18 +113,23 @@ class BaseService(Generic[T]):
                 crud = _CRUD_CACHE.setdefault(model, FastCRUD(model))
         return crud
 
-    async def get(self, id: Any) -> T | None:
+    async def get(self, id: Any) -> T | dict[str, Any] | None:
         """Get a single record by ID.
 
         Args:
             id: The record ID.
 
         Returns:
-            The record if found, None otherwise.
+            The record if found, None otherwise. C-4: FastCRUD returns a
+            plain dict unless `schema_to_select`/`return_as_model` is passed,
+            and `TenantAwareCRUD.get` is explicitly dict-typed — so the
+            return is `T | dict | None`, not `T | None`. Consume with
+            dict-safe access (`get_user_attr`-style helpers or isinstance
+            narrowing) or pass `schema_to_select` at the call site.
         """
         async with self._circuit_guard():
             result = await self.crud.get(db=self.db, id=id)
-        return cast(T | None, result)
+        return cast("T | dict[str, Any] | None", result)
 
     async def get_multi(
         self,
@@ -128,7 +137,7 @@ class BaseService(Generic[T]):
         per_page: int = 20,
         eager_loads: list[str] | None = None,
         **kwargs: Any,
-    ) -> list[T]:
+    ) -> list[T | dict[str, Any]]:
         """Get multiple records with pagination and optional eager loading.
 
         Args:
@@ -142,6 +151,8 @@ class BaseService(Generic[T]):
         Returns:
             List of records for the requested page. Returns empty list if no
             records found. FastCRUD's dict response is unwrapped automatically.
+            C-4: the eager-loads path returns real ORM models; the plain path
+            returns FastCRUD dicts. Consume dict-safely or narrow explicitly.
         """
         # M3: guard page=0 / negative and overflow (was page=0 -> OFFSET -20)
         if page < 1:
@@ -214,8 +225,8 @@ class BaseService(Generic[T]):
                     **kwargs,
                 )
                 if isinstance(result, dict):
-                    return cast(list[T], result.get("data", []))
-                return cast(list[T], result)
+                    return cast("list[T | dict[str, Any]]", result.get("data", []))
+                return cast("list[T | dict[str, Any]]", result)
 
     async def get_multi_joined(
         self,
@@ -257,7 +268,15 @@ class BaseService(Generic[T]):
             )
             ```
         """
-        offset = (page - 1) * per_page
+        # H-8: same page/per_page clamp as get_multi — page=0 previously
+        # produced a negative OFFSET (500 on malformed pagination input).
+        if page < 1:
+            page = 1
+        if per_page < 1:
+            per_page = 1
+        if per_page > MAX_PER_PAGE:
+            per_page = MAX_PER_PAGE
+        offset = max(0, (page - 1) * per_page)
         async with self._circuit_guard():
             result = await self.crud.get_multi_joined(
                 db=self.db,
@@ -273,20 +292,22 @@ class BaseService(Generic[T]):
             return cast(list[dict[str, Any]], result.get("data", []))
         return cast(list[dict[str, Any]], result)
 
-    async def create(self, **kwargs: Any) -> T:
+    async def create(self, **kwargs: Any) -> T | dict[str, Any]:
         """Create a new record.
 
         Args:
             **kwargs: Fields for the new record.
 
         Returns:
-            The created record.
+            The created record. C-4: FastCRUD returns a dict unless
+            `schema_to_select`/`return_as_model` is passed — map explicitly
+            or consume dict-safely at the call site.
         """
         async with self._circuit_guard():
             result = await self.crud.create(db=self.db, object=kwargs)
-        return cast(T, result)
+        return cast("T | dict[str, Any]", result)
 
-    async def update(self, id: Any, **kwargs: Any) -> T | None:
+    async def update(self, id: Any, **kwargs: Any) -> T | dict[str, Any] | None:
         """Update a record by ID.
 
         Args:
@@ -294,11 +315,15 @@ class BaseService(Generic[T]):
             **kwargs: Fields to update.
 
         Returns:
-            The updated record if found, None otherwise.
+            The updated record if found, None otherwise. C-4: FastCRUD
+            returns a dict (or None) without `schema_to_select`, and
+            `TenantAwareCRUD.update` returns None unconditionally — falsy
+            means "not found OR tenant-scoped update with no row payload",
+            so callers must re-read when they need the updated state.
         """
         async with self._circuit_guard():
             result = await self.crud.update(db=self.db, object=kwargs, id=id)
-        return cast(T | None, result)
+        return cast("T | dict[str, Any] | None", result)
 
     async def delete(self, id: Any) -> None:
         """Delete a record by ID.

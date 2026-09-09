@@ -5,7 +5,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .._base.schemas import BaseCreate, BaseList, BaseRead, BaseUpdate
+from src.app.modules._base.schemas import BaseCreate, BaseList, BaseRead, BaseUpdate
 
 
 # ============================================================================
@@ -15,25 +15,25 @@ from .._base.schemas import BaseCreate, BaseList, BaseRead, BaseUpdate
 class {{ ModelName }}Base(BaseModel):
     """Base schema for {{ module_name }}."""
 
-{%- for field in fields %}
-{%- if field.type == 'str' %}
+{% for field in fields %}
+{% if field.type == 'str' %}
     {{ field.name }}: Annotated[str, Field(min_length=1, max_length={{ field.max_length or 100 }}, examples=["{{ field.example or field.name.title() }}"])]
-{%- elif field.type == 'int' %}
+{% elif field.type == 'int' %}
     {{ field.name }}: int = Field(ge=0, examples=[{{ field.example or 0 }}])
-{%- elif field.type == 'bool' %}
+{% elif field.type == 'bool' %}
     {{ field.name }}: bool = Field(default={{ field.default or 'True' }})
-{%- elif field.type == 'text' %}
+{% elif field.type == 'text' %}
     {{ field.name }}: str | None = Field(default=None, max_length=500)
-{%- elif field.type == 'jsonb' %}
+{% elif field.type == 'jsonb' %}
     {{ field.name }}: dict = Field(default_factory=dict)
-{%- elif field.type == 'datetime' %}
+{% elif field.type == 'datetime' %}
     {{ field.name }}: datetime | None = Field(default=None)
-{%- elif field.type == 'Decimal' %}
+{% elif field.type == 'Decimal' %}
     {{ field.name }}: float = Field(ge=0, examples=[{{ field.example or 0.0 }}])
-{%- else %}
+{% else %}
     {{ field.name }}: str = Field(examples=["{{ field.example or field.name.title() }}"])
-{%- endif %}
-{%- endfor %}
+{% endif %}
+{% endfor %}
 
 
 # ============================================================================
@@ -49,25 +49,25 @@ class {{ ModelName }}Create({{ ModelName }}Base, BaseCreate):
 class {{ ModelName }}Update(BaseUpdate):
     """Schema for updating a {{ module_name }} (partial update)."""
 
-{%- for field in fields %}
-{%- if field.type == 'str' %}
+{% for field in fields %}
+{% if field.type == 'str' %}
     {{ field.name }}: str | None = Field(default=None, min_length=1, max_length={{ field.max_length or 100 }})
-{%- elif field.type == 'int' %}
+{% elif field.type == 'int' %}
     {{ field.name }}: int | None = Field(default=None, ge=0)
-{%- elif field.type == 'bool' %}
+{% elif field.type == 'bool' %}
     {{ field.name }}: bool | None = Field(default=None)
-{%- elif field.type == 'text' %}
+{% elif field.type == 'text' %}
     {{ field.name }}: str | None = Field(default=None, max_length=500)
-{%- elif field.type == 'jsonb' %}
+{% elif field.type == 'jsonb' %}
     {{ field.name }}: dict | None = Field(default=None)
-{%- elif field.type == 'datetime' %}
+{% elif field.type == 'datetime' %}
     {{ field.name }}: datetime | None = Field(default=None)
-{%- elif field.type == 'Decimal' %}
+{% elif field.type == 'Decimal' %}
     {{ field.name }}: float | None = Field(default=None, ge=0)
-{%- else %}
+{% else %}
     {{ field.name }}: str | None = Field(default=None)
-{%- endif %}
-{%- endfor %}
+{% endif %}
+{% endfor %}
 
 
 # ============================================================================
@@ -77,29 +77,29 @@ class {{ ModelName }}Update(BaseUpdate):
 class {{ ModelName }}Read(BaseRead):
     """Schema for reading a {{ module_name }}."""
 
-{%- for field in fields %}
-{%- if field.type == 'str' %}
+{% for field in fields %}
+{% if field.type == 'str' %}
     {{ field.name }}: str
-{%- elif field.type == 'int' %}
+{% elif field.type == 'int' %}
     {{ field.name }}: int
-{%- elif field.type == 'bool' %}
+{% elif field.type == 'bool' %}
     {{ field.name }}: bool
-{%- elif field.type == 'text' %}
+{% elif field.type == 'text' %}
     {{ field.name }}: str | None
-{%- elif field.type == 'jsonb' %}
+{% elif field.type == 'jsonb' %}
     {{ field.name }}: dict
-{%- elif field.type == 'datetime' %}
+{% elif field.type == 'datetime' %}
     {{ field.name }}: datetime | None
-{%- elif field.type == 'Decimal' %}
+{% elif field.type == 'Decimal' %}
     {{ field.name }}: float
-{%- else %}
+{% else %}
     {{ field.name }}: str
-{%- endif %}
-{%- endfor %}
-{%- if not no_tenant %}
+{% endif %}
+{% endfor %}
+{% if not no_tenant %}
     user_id: int
     tenant_id: int
-{%- endif %}
+{% endif %}
     is_active: bool
 
     model_config = ConfigDict(from_attributes=True)

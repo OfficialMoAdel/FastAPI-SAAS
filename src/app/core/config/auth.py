@@ -57,14 +57,35 @@ class AuthSettings(BaseSettings):
     MFA_PENDING_EXPIRY_SECONDS: int = Field(
         default=300, ge=60, le=3600, description="MFA pending token TTL in seconds (default: 5 minutes)"
     )
+    # S-M2: open self-service registration gate. When False (default), the
+    # public /account/register endpoint only creates the FIRST user of a
+    # tenant (tenant bootstrap); joining an EXISTING tenant requires an
+    # admin-created account — closing anonymous signup into any tenant via
+    # a guessable X-Tenant-ID slug.
+    AUTH_OPEN_REGISTRATION: bool = Field(
+        default=False,
+        description="Allow self-service registration into existing tenants (default False: first-user bootstrap only)",
+    )
     AUTH_MAX_SESSIONS: int = Field(default=5, ge=1, le=50, description="Max concurrent sessions per user")
     AUTH_SESSION_TTL_SECONDS: int = Field(
         default=86400 * 7, ge=3600, le=86400 * 30, description="Session TTL in seconds"
     )
     # SECURITY FIX (M-1): When True, MFA completion is rejected if client IP
     # differs from the IP used during the login phase.
+    # S-M3: default flipped to True — a stolen 5-minute MFA pending token
+    # could previously be completed from any IP. Networks that legitimately
+    # rotate client IPs mid-login (mobile carriers) can widen the escape
+    # hatch via MFA_IP_BINDING_GRACE_SECONDS instead of disabling binding.
     MFA_ENFORCE_IP_BINDING: bool = Field(
-        default=False, description="Reject MFA completion if client IP changed since login (prevents stolen MFA tokens)"
+        default=True, description="Reject MFA completion if client IP changed since login (prevents stolen MFA tokens)"
+    )
+    # S-M3: rotation-window escape hatch — when the client IP changed since
+    # login, completion is still accepted while the pending token is within
+    # this many seconds of expiring (i.e. the IP rotated recently enough that
+    # both IPs plausibly belong to the same login attempt). 0 disables the
+    # grace window entirely (strictest posture).
+    MFA_IP_BINDING_GRACE_SECONDS: int = Field(
+        default=60, ge=0, le=300, description="Grace window for IP rotation during MFA completion (0 = strict)"
     )
     # Token blacklist cache failure mode - fail_closed by default for security
     # "fail_open": Return None when Redis unavailable (allow auth to continue)

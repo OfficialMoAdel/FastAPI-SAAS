@@ -1,10 +1,12 @@
 """SSO Settings router - HTTP handlers for SSO provider management (admin only)."""
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep, get_current_superuser
+from src.app.core.db.database import async_get_db
 from src.app.modules.auth.crud import crud_sso_settings
 from src.app.modules.auth.schemas import (
     SSOSettingsCreate,
@@ -13,7 +15,21 @@ from src.app.modules.auth.schemas import (
     SSOSettingsUpdate,
 )
 
+if TYPE_CHECKING:
+    from src.app.modules.auth.services.sso_settings import SSOSettingsService
+
+
 router = APIRouter(prefix="/ssos", tags=["ssos"])
+
+
+def get_sso_settings_service(db: AsyncSession = Depends(async_get_db)) -> "SSOSettingsService":
+    """Dependency injection factory for SSOSettingsService.
+
+    Q-M4: factories live in router.py — service files stay Depends-free.
+    """
+    from src.app.modules.auth.services.sso_settings import SSOSettingsService
+
+    return SSOSettingsService()
 
 
 @router.post(

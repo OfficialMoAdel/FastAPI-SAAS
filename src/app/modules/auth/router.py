@@ -8,7 +8,10 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep
+from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
+from src.app.core.exceptions.http_exceptions import ForbiddenException
+from src.app.core.logger import get_logger
 from src.app.core.security import oauth2_scheme
 from src.app.core.security.login_helpers import (
     clear_refresh_cookies,
@@ -16,6 +19,7 @@ from src.app.core.security.login_helpers import (
     set_refresh_cookie,
 )
 from src.app.core.security.session_manager import SessionManager
+from src.app.core.tenancy.context import get_current_tenant
 from src.app.core.utils.cache import async_get_redis
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.auth.schemas import (
@@ -37,18 +41,16 @@ from src.app.modules.auth.schemas import (
     SessionListResponse,
 )
 from src.app.modules.auth.service import AuthService
+from src.app.modules.users.router import get_user_service as _get_user_service
 from src.app.modules.users.schemas import UserCreate, UserReadPublic
 from src.app.modules.users.service import UserService
+
+logger = get_logger(__name__)
 
 
 def _get_auth_service() -> AuthService:
     """Get AuthService instance."""
     return AuthService()
-
-
-async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserService:
-    """Get UserService instance."""
-    return UserService(db)
 
 
 def _get_session_manager(redis: Annotated[Redis, Depends(async_get_redis)]) -> SessionManager:
@@ -104,8 +106,37 @@ async def register(
     user_service: Annotated[UserService, Depends(_get_user_service)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> Any:
-    """Register a new user account."""
+    """Register a new user account.
+
+    S-M2 signup gate: while ``AUTH_OPEN_REGISTRATION`` is False (default),
+    self-service registration only bootstraps the FIRST user of a tenant.
+    Joining an existing tenant requires an admin-created account — the old
+    behavior let anyone register into any tenant by guessing its
+    ``X-Tenant-ID`` slug.
+    """
     from src.app.modules.auth.services.email_verification import make_email_verifier
+
+    if not settings.auth.AUTH_OPEN_REGISTRATION:
+        tenant = get_current_tenant()
+        if tenant is not None and tenant.is_active:
+            # NO_TENANT (exempt paths) and inactive tenants fall through to
+            # the normal service path: the duplicate/tenant checks there are
+            # the honest failure for those requests.
+            from sqlalchemy import select
+
+            from src.app.modules.users.models import User
+
+            stmt = select(User.id).where(User.tenant_id == tenant.id, User.is_deleted.is_(False)).limit(1)
+            tenant_has_users = (await db.scalar(stmt)) is not None
+            if tenant_has_users:
+                logger.warning(
+                    "registration_gate_rejected",
+                    path="/account/register",
+                    tenant_id=str(tenant.id),
+                )
+                raise ForbiddenException(
+                    detail="Registration is closed for this tenant. Ask an administrator to create your account."
+                )
 
     return await user_service.create(user, email_verifier=make_email_verifier(db))
 

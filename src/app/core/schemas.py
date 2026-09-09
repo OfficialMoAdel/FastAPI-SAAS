@@ -1,3 +1,13 @@
+"""Core shared Pydantic schemas (A-M7: kept deliberately).
+
+Not stray: 11 modules import from here (health, posts, rate_limits, tiers,
+users schemas + token-blacklist CRUD + auth schemas). These are the
+cross-module contracts (health payloads, MessageResponse, UUID/Timestamp/
+PersistentDeletion mixins, Token schemas, ErrorResponse) — the module-mixins
+duplicate role that ``app/schemas/`` does not cover. ``app/schemas/`` holds
+only admin jobs API schemas (see jobs.py).
+"""
+
 import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import Any, Literal

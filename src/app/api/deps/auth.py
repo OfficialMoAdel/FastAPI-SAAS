@@ -1,4 +1,4 @@
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, NoReturn
 from uuid import UUID
 
 from fastapi import Depends, Request
@@ -8,9 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import ForbiddenException, UnauthorizedException
 from src.app.core.logger import get_logger
+from src.app.core.schemas import TokenData
 from src.app.core.security import TokenType, api_key_scheme, oauth2_scheme, verify_token
 from src.app.core.security.jwt_utils import get_cached_jwt_payload
-from src.app.core.tenancy.context import get_current_tenant
+from src.app.core.tenancy.context import TenantContext, get_current_tenant
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.users.service import UserService
 
@@ -41,35 +42,19 @@ class AuthenticatedUser(BaseModel):
     api_key_id: str | int | None = None
     api_key_scopes: list[str] | None = None
 
-    # M-1: dict-compat accessors used to call model_dump() on EVERY access —
-    # a full serialization per lookup on the hot auth path. With extra="ignore"
-    # the dump's key set is exactly the declared fields, so direct field lookup
-    # (instance attrs) and model_fields (class-level) are behavior-identical
-    # and allocation-free.
-    def __getitem__(self, key: str) -> Any:
-        if key in self.model_fields:
-            return getattr(self, key)
-        raise KeyError(key)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        if key in self.model_fields:
-            return getattr(self, key)
-        return default
-
-    def keys(self) -> Any:
-        return self.model_fields.keys()
-
-    def __contains__(self, key: str) -> bool:
-        return key in self.model_fields
-
-    def __len__(self) -> int:
-        return len(self.model_fields)
+    # Q-M2: dict-compat shim (__getitem__/get/keys/__contains__/__len__)
+    # deleted. All call sites use attribute access (or get_user_attr for
+    # dict|model unions). Do NOT re-add subscript access — it hid type
+    # errors on the hottest auth path.
 
 
 class AuthContext(BaseModel):
     user: AuthenticatedUser
-    token_data: Any  # The token data returned from verify_token or cached JWT payload dict
-    tenant: Any  # The tenant context (or None if no tenant context is available)
+    # Q-M7: token_data is either the TokenData object returned by verify_token
+    # (core.schemas.TokenData) or the raw cached JWT payload dict (same claim
+    # fields as keys); tenant is the lightweight TenantContext (or None).
+    token_data: TokenData | dict[str, Any] | None
+    tenant: TenantContext | None
     is_dependency_override: bool = False
 
 
@@ -247,24 +232,164 @@ async def _enforce_session_valid(
         raise UnauthorizedException("Session has been revoked.")
 
 
-def _enforce_tenant_match(
-    _request: Request | None,
+# ---------------------------------------------------------------------------
+# H-7: shared auth primitives. One implementation, parameterized by
+# on_failure: "raise" surfaces the domain exception (strict path);
+# "return_none" raises a silent _OptionalAuthAbort that ONLY the optional
+# flow converts to None (degrade to anonymous). This kills the drift risk of
+# maintaining two parallel user-loading / session-validation / tenant-
+# matching stacks — the logic is shared; only the failure PLUMBING differs.
+# ---------------------------------------------------------------------------
+
+
+class _OptionalAuthAbort(Exception):
+    """Internal control-flow signal for the optional path (H-7).
+
+    Raised by shared primitives in return_none mode; caught ONLY by
+    _resolve_optional_bearer_flow and converted to None. Never escapes.
+    """
+
+
+_FailureMode = Literal["raise", "return_none"]
+
+
+def _auth_fail(on_failure: _FailureMode, message: str, exc: type[Exception] = UnauthorizedException) -> NoReturn:
+    """Signal an auth failure per the caller's failure mode.
+
+    Always raises (domain exception in raise mode, _OptionalAuthAbort in
+    return_none mode) — typed NoReturn so mypy knows callers never see a
+    normal return and downstream code is unreachable after a failure.
+    """
+    if on_failure == "raise":
+        raise exc(message)
+    logger.debug("optional_auth_degraded_to_anonymous", reason=message)
+    raise _OptionalAuthAbort(message)
+
+
+async def _resolve_token_data(
+    request: Request | None,
+    token: str,
+    cached_payload: dict[str, Any] | None,
+    db: AsyncSession,
+    on_failure: _FailureMode,
+) -> tuple[Any, str, int, str | None, int | None, str | None]:
+    """Shared token-data resolution: cached payload or verify_token.
+
+    Returns (token_data, username_or_email, payload_version, jti, jwt_exp,
+    session_id).
+    """
+    if cached_payload:
+        cached_blacklist = getattr(request.state, "is_token_blacklisted", None) if request is not None else None
+        if cached_blacklist is False:
+            pass  # Verified clean by middleware probe
+        elif cached_blacklist is True or await _is_token_blacklisted_with_fallback(
+            token, cached_payload.get("jti"), db
+        ):
+            _auth_fail(on_failure, "Token has been revoked.")
+
+        if cached_payload.get("token_type") != TokenType.ACCESS:
+            _auth_fail(on_failure, "User not authenticated.")
+        username_or_email = cached_payload.get("sub")
+        if not username_or_email:
+            _auth_fail(on_failure, "User not authenticated.")
+        return (
+            cached_payload,
+            username_or_email,
+            cached_payload.get("token_version", 0),
+            cached_payload.get("jti"),
+            cached_payload.get("exp"),
+            cached_payload.get("sid") or cached_payload.get("jti"),
+        )
+
+    # No cached payload — verify the token directly. The optional path
+    # degrades verify_token errors to anonymous rather than re-raising.
+    try:
+        token_data = await verify_token(token, TokenType.ACCESS, db)
+    except Exception as e:
+        if on_failure == "raise":
+            raise
+        logger.warning("optional_token_verify_failed_degrading_to_anonymous", error=str(e))
+        raise _OptionalAuthAbort("token_verify_failed") from e
+    if token_data is None:
+        _auth_fail(on_failure, "User not authenticated.")
+    return (
+        token_data,
+        token_data.username_or_email,
+        getattr(token_data, "token_version", 0) or 0,
+        getattr(token_data, "jti", None),
+        getattr(token_data, "exp", None),
+        getattr(token_data, "sid", None) or getattr(token_data, "jti", None),
+    )
+
+
+async def _load_and_validate_user(
+    db: AsyncSession,
+    username_or_email: str,
+    payload_version: int,
+    on_failure: _FailureMode,
+) -> dict[str, Any]:
+    """Shared user loading: fetch by email/username, validate liveness + version."""
+    user_service = UserService(db)
+    if "@" in username_or_email:
+        user = await user_service.get_user_auth_info(email=username_or_email)
+    else:
+        user = await user_service.get_user_auth_info(username=username_or_email)
+
+    if not user:
+        _auth_fail(on_failure, "User not authenticated.")
+    if not user.get("is_active", False):
+        _auth_fail(on_failure, "User account is no longer active.")
+    if user.get("is_deleted", False):
+        _auth_fail(on_failure, "User account has been deleted.")
+    if payload_version != user.get("token_version", 0):
+        _auth_fail(on_failure, "Session expired. Please log in again.")
+    return user
+
+
+async def _enforce_session_validity(
+    session_id: str | None,
+    user_id: Any,
+    jwt_exp: int | None,
+    on_failure: _FailureMode,
+) -> None:
+    """Shared session-validity check (revoked sid → failure)."""
+    if not session_id:
+        return
+    try:
+        from src.app.core.security.session_manager import session_manager
+
+        sess_ok = await session_manager.is_session_valid(user_id=user_id, session_id=session_id, jwt_exp=jwt_exp)
+    except Exception as e:
+        if on_failure == "raise":
+            raise
+        logger.warning("optional_session_check_failed_degrading_to_anonymous", error=str(e))
+        raise _OptionalAuthAbort("session_check_failed") from e
+    if not sess_ok:
+        _auth_fail(on_failure, "Session has been revoked.")
+
+
+def _enforce_user_tenant_match(
     user: dict[str, Any],
     current_tenant: Any,
+    on_failure: _FailureMode,
 ) -> None:
-    """Tenant isolation guard for non-superusers."""
-    if not (current_tenant and not user.get("is_superuser", False)):
+    """Shared tenant-mismatch check (superusers bypass)."""
+    if not current_tenant or user.get("is_superuser", False):
         return
-    if str(user.get("tenant_id")) == str(current_tenant.id):
-        return
-    logger.warning(
-        "tenant_mismatch_detected",
-        user_id=user["id"],
-        user_tenant_id=user.get("tenant_id"),
-        requested_tenant_id=current_tenant.id,
-        requested_tenant_slug=current_tenant.slug,
-    )
-    raise ForbiddenException("User does not belong to the current tenant.")
+    user_tid = str(user.get("tenant_id")) if user.get("tenant_id") is not None else None
+    curr_tid = str(getattr(current_tenant, "id", getattr(current_tenant, "tenant_id", None)))
+    if user_tid != curr_tid:
+        if on_failure == "raise":
+            logger.warning(
+                "tenant_mismatch_detected",
+                user_id=user["id"],
+                user_tenant_id=user.get("tenant_id"),
+                requested_tenant_id=current_tenant.id,
+                requested_tenant_slug=current_tenant.slug,
+            )
+            raise ForbiddenException("User does not belong to the current tenant.")
+        logger.debug("optional_auth_degraded_to_anonymous", reason="tenant_mismatch")
+        raise _OptionalAuthAbort("tenant_mismatch")
 
 
 async def _resolve_optional_bearer_flow(
@@ -274,83 +399,23 @@ async def _resolve_optional_bearer_flow(
     cached_payload: dict[str, Any] | None,
     current_tenant: Any,
 ) -> AuthContext | None:
-    """Non-strict (optional auth) path: returns None on any verification failure."""
+    """Non-strict (optional auth) path: returns None on any verification failure.
+
+    H-7: runs the SAME primitives as the strict path with
+    on_failure="return_none"; their _OptionalAuthAbort signals degrade here.
+    """
     try:
-        token_data_opt: Any
-        if cached_payload:
-            jti = cached_payload.get("jti")
-            cached_blacklist = (
-                getattr(request.state, "is_token_blacklisted", None) if request is not None else None
-            )
-            if cached_blacklist is False:
-                pass
-            elif cached_blacklist is True or await _is_token_blacklisted_with_fallback(token, jti, db):
-                return None
+        resolved = await _resolve_token_data(request, token, cached_payload, db, on_failure="return_none")
+        token_data, username_or_email, payload_version, _jti, jwt_exp, session_id = resolved
 
-            token_type = cached_payload.get("token_type")
-            if token_type != TokenType.ACCESS:
-                return None
+        user = await _load_and_validate_user(db, username_or_email, payload_version, on_failure="return_none")
 
-            username_or_email = cached_payload.get("sub")
-            if not username_or_email:
-                return None
-            token_data_opt = cached_payload
-            payload_version = cached_payload.get("token_version", 0)
-        else:
-            try:
-                token_data_opt = await verify_token(token, TokenType.ACCESS, db)
-            except Exception as e:
-                logger.warning("optional_token_verify_failed_degrading_to_anonymous", error=str(e))
-                return None
-            if token_data_opt is None:
-                return None
+        await _enforce_session_validity(session_id, user.get("id"), jwt_exp, on_failure="return_none")
+        _enforce_user_tenant_match(user, current_tenant, on_failure="return_none")
 
-            username_or_email = token_data_opt.username_or_email
-            payload_version = getattr(token_data_opt, "token_version", 0) or 0
-
-        user_service = UserService(db)
-        if "@" in username_or_email:
-            user = await user_service.get_user_auth_info(email=username_or_email)
-        else:
-            user = await user_service.get_user_auth_info(username=username_or_email)
-
-        if not user or not user.get("is_active", False) or user.get("is_deleted", False):
-            return None
-
-        if payload_version != user.get("token_version", 0):
-            return None
-
-        # Parity with strict path: enforce session validity (revoked sid → None,
-        # never an authenticated context). Infra errors degrade to None (anonymous).
-        _uid: Any = user.get("id")
-        if _uid is None:
-            return None
-        if isinstance(token_data_opt, dict):
-            _sess_id = token_data_opt.get("sid") or token_data_opt.get("jti")
-            _jwt_exp = token_data_opt.get("exp")
-        else:
-            _sess_id = getattr(token_data_opt, "sid", None) or getattr(token_data_opt, "jti", None)
-            _jwt_exp = getattr(token_data_opt, "exp", None)
-        if _sess_id:
-            try:
-                from src.app.core.security.session_manager import session_manager as _sm
-
-                _sess_ok = await _sm.is_session_valid(
-                    user_id=_uid, session_id=_sess_id, jwt_exp=_jwt_exp
-                )
-            except Exception as _se:
-                logger.warning("optional_session_check_failed_degrading_to_anonymous", error=str(_se))
-                return None
-            if not _sess_ok:
-                return None
-
-        if current_tenant:
-            user_tid = str(user.get("tenant_id")) if user.get("tenant_id") is not None else None
-            curr_tid = str(getattr(current_tenant, "id", getattr(current_tenant, "tenant_id", None)))
-            if user_tid != curr_tid and not user.get("is_superuser", False):
-                return None
-
-        return await _create_auth_context(user, token_data_opt, current_tenant, db)
+        return await _create_auth_context(user, token_data, current_tenant, db)
+    except _OptionalAuthAbort:
+        return None
     except Exception as e:
         logger.warning("optional_auth_context_verify_failed_degrading_to_anonymous", error=str(e))
         return None
@@ -410,17 +475,19 @@ async def resolve_principal(
     cached_payload = get_cached_jwt_payload(request) if request is not None else None
 
     if strict:
-        resolved = await (
-            _resolve_cached_token_data(request, cached_payload)
-            if cached_payload
-            else _resolve_verified_token_data(token, db)
-        )
+        # H-7: the strict path now consumes the SAME primitives as the
+        # optional path (on_failure="raise"). Steps 3-6 collapse into the
+        # shared implementations; the composite prefetch stays inline
+        # because it is strict-only (RBAC bitmask warm).
+        resolved = await _resolve_token_data(request, token, cached_payload, db, on_failure="raise")
         if resolved is None:
             raise UnauthorizedException("User not authenticated.")
         token_data, username_or_email, payload_version, jti, jwt_exp, session_id = resolved
 
         # 4. User loading & verification
-        user = await _load_user_for_token(db, username_or_email, payload_version)
+        user = await _load_and_validate_user(db, username_or_email, payload_version, on_failure="raise")
+        if user is None:
+            raise UnauthorizedException("User not authenticated.")
         user_id = user["id"]
         user_tenant_id = user.get("tenant_id")
 
@@ -444,12 +511,14 @@ async def resolve_principal(
             request.state.cached_permissions_bitmask = (user_id, str(user_tenant_id), bitmask)
 
         # 6. Tenant isolation check
-        _enforce_tenant_match(request, user, current_tenant)
+        _enforce_user_tenant_match(user, current_tenant, on_failure="raise")
 
         return await _create_auth_context(user, token_data, current_tenant, db)
 
     else:
         return await _resolve_optional_bearer_flow(request, db, token, cached_payload, current_tenant)
+
+
 async def get_auth_context(
     request: Request,
     db: AsyncSession = Depends(async_get_db),
@@ -459,6 +528,7 @@ async def get_auth_context(
     ctx = await resolve_principal(request, db, token=token, strict=True)
     assert ctx is not None
     return ctx
+
 
 async def get_current_user(
     request: Request,

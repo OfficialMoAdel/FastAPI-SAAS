@@ -12,9 +12,15 @@ class AppSettings(BaseSettings):
     CONTACT_NAME: str | None = None
     CONTACT_EMAIL: str | None = None
     FRONTEND_URL: str = "http://localhost:3000"  # Frontend URL for magic links, etc.
+    # Cache warming
     CACHE_WARMING_ENABLED: bool = True
-    # R1-06: CACHE_WARMING_DELAY_SECONDS removed — the post-warming readiness
-    # sleep it configured was deleted from the lifespan (blocked startup).
+    # P-M9: token blacklist boot-time warmup loads every active blacklisted
+    # token — O(total sessions). Cap the warmup set to the most-recent N rows;
+    # tokens beyond the cap fall back to the on-demand DB check on first use.
+    # 0 disables warmup entirely (cold start; every revoked-token lookup pays
+    # one DB round-trip until it is cached).
+    TOKEN_BLACKLIST_WARMUP_LIMIT: int = Field(default=1000, ge=0, le=1_000_000)
+
     # DATABASE: Control table creation (set to False in production)
     CREATE_TABLES_ON_STARTUP: bool = False
 

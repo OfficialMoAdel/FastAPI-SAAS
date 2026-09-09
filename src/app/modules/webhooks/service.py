@@ -567,23 +567,25 @@ class WebhookService:
     async def check_test_rate_limit(self, tenant_id: UUID, current_user: "dict[str, Any] | AuthenticatedUser") -> None:
         """Enforce the per-tier rate limit for endpoint test calls.
 
-        Raises HTTPException 429 when exceeded. Moved out of the router
-        (architecture candidate 8): the tier-policy lookup + fallback
-        defaults + limiter call are service logic, not presentation.
+        Q-M1: raises the domain RateLimitExceededError (moved out of the
+        router in architecture candidate 8) — the tier-policy lookup,
+        fallback defaults, and limiter call are service logic, not
+        presentation. The central handler maps the domain error to 429.
 
         The check happens BEFORE endpoint lookup intentionally — it
         prevents timing-based endpoint enumeration (404s still consume
         quota).
         """
-        from fastapi import HTTPException, status
-
         from src.app.core.utils.path_utils import sanitize_path
         from src.app.core.utils.rate_limit import rate_limiter
+        from src.app.core.utils.user_utils import get_user_attr
         from src.app.modules.rate_limits.models import RateLimit
+        from src.app.shared.exceptions import RateLimitExceededError
 
-        tier_id = current_user.get("tier_id")
-        if tier_id is None and isinstance(current_user.get("tier"), dict):
-            tier_id = current_user["tier"].get("id")
+        tier = get_user_attr(current_user, "tier")
+        tier_id = get_user_attr(current_user, "tier_id")
+        if tier_id is None and isinstance(tier, dict):
+            tier_id = tier.get("id")
 
         rate_limit_path = sanitize_path("/api/v1/webhooks/{endpoint_id}/test")
         stmt = select(RateLimit).where(
@@ -599,10 +601,7 @@ class WebhookService:
 
         is_limited, _ = await rate_limiter.check_rate_limit(f"webhook:test:{tenant_id}", limit, period)
         if is_limited:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Rate limit exceeded: {limit} tests per {period} seconds",
-            )
+            raise RateLimitExceededError(f"Rate limit exceeded: {limit} tests per {period} seconds", retry_after=period)
 
     def _generate_signature(self, payload: dict[str, Any], secret: str) -> str:
         """Generate HMAC-SHA256 signature for webhook payload.
@@ -648,6 +647,7 @@ class WebhookService:
         expected_signature = self._generate_signature(payload, secret)
         signatures = [s.strip() for s in signature.split(",") if s.strip()]
         return any(hmac.compare_digest(sig, expected_signature) for sig in signatures)
+
     async def retry_delivery(self, delivery_id: UUID) -> WebhookDelivery:
         """Retry a failed delivery."""
         delivery = await self.db.get(WebhookDelivery, delivery_id)

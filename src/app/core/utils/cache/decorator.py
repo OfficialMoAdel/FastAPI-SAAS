@@ -12,6 +12,11 @@ from src.app.core.exceptions.cache_exceptions import (
 )
 from src.app.core.utils import cache as _state
 
+# P-M1: cache-key version. v2 = fail-closed write path (entries are only
+# ever response-model-filtered bytes). Pre-v2 entries may hold unfiltered
+# payloads and are never read again; they expire naturally via TTL.
+_CACHE_KEY_VERSION = "v2"
+
 
 def _infer_resource_id(kwargs: dict[str, Any], resource_id_type: type | tuple[type, ...]) -> int | str:
     """Infer the resource ID from a dictionary of keyword arguments.
@@ -197,7 +202,10 @@ def _build_cache_key(
             user_id = getattr(cu, "id", None)
 
     formatted_key_prefix = _format_prefix(key_prefix, kwargs)
-    base_key = f"{formatted_key_prefix}:{resource_id}"
+    # P-M1 key version: entries written before the fail-closed write path
+    # (pre-fix versions may hold UNFILTERED payloads cached on validation
+    # failure) are never read again. Bump on any future write-format change.
+    base_key = f"{_CACHE_KEY_VERSION}:{formatted_key_prefix}:{resource_id}"
     if user_id is not None:
         base_key = f"user:{user_id}:{base_key}"
     return _state.build_tenant_key(base_key, tenant_id)
@@ -212,9 +220,16 @@ async def _try_get_cached(
     """P3-2: read-through cache path extracted from cache().inner.
 
     Tries the Lua script first (1 RT), falls back to two GET+TTL calls
-    on failure, then evaluates the probabilistic refresh-ahead and the
-    response_model re-filter. Returns the bytes to send in a Response,
-    or None to indicate a cache miss.
+    on failure, then evaluates the probabilistic refresh-ahead. Returns
+    the bytes to send in a Response, or None to indicate a cache miss.
+
+    P-M1: cached payloads are returned as stored — no Pydantic re-validation
+    on the hit path. Every entry was already filtered through the route's
+    response_model at WRITE time (cache().inner, "Filter against route
+    response_model at write time"), so re-validating each item on every hit
+    cost more CPU than the miss-path query it was meant to save. Validation
+    failures on the write path fall back to serializing the raw result, so
+    the cached bytes are always response-model-shaped.
     """
     try:
         lua_mgr = _state.get_lua_manager()
@@ -243,41 +258,6 @@ async def _try_get_cached(
                 if lock_acquired:
                     request.state.cache_refresh_lock_key = lock_key
                     return None  # cache miss — let the handler refresh
-
-    # H2: When response_model is defined on route, ensure response schema filters are respected
-    route = request.scope.get("route") if hasattr(request, "scope") and request.scope else None
-    response_model = getattr(route, "response_model", None) if route else None
-    if response_model is not None:
-        try:
-            # orjson.loads natively accepts bytes without decode('utf-8')
-            raw = _state.json_loads(cached_data)
-            if hasattr(response_model, "model_validate"):
-                if isinstance(raw, list):
-                    filtered = [
-                        response_model.model_validate(item).model_dump(mode="json", by_alias=True) for item in raw
-                    ]
-                else:
-                    validated = response_model.model_validate(raw)
-                    filtered = validated.model_dump(mode="json", by_alias=True)
-            elif hasattr(response_model, "parse_obj"):
-                if isinstance(raw, list):
-                    filtered = [response_model.parse_obj(item).dict(by_alias=True) for item in raw]
-                else:
-                    validated = response_model.parse_obj(raw)
-                    filtered = validated.dict(by_alias=True)
-            else:
-                filtered = None
-            if filtered is not None:
-                cached_data = _state.json_dumps(filtered)
-        except Exception as e:
-            # Never return an unfiltered cached payload on validation failure:
-            # fall through to a fresh handler call (treat as cache miss).
-            _state.stampede_logger.warning(
-                "Cached response re-validation failed; forcing fresh handler call",
-                error=str(e),
-                cache_key=cache_key,
-            )
-            return None
 
     return cached_data
 
@@ -447,8 +427,19 @@ def cache(  # noqa: C901
                                 to_serialize = [response_model.parse_obj(item).dict(by_alias=True) for item in result]
                             else:
                                 to_serialize = response_model.parse_obj(result).dict(by_alias=True)
-                    except Exception:
-                        to_serialize = result
+                    except Exception as e:
+                        # P-M1 fail-closed: NEVER cache a payload that failed
+                        # response-model filtering. Serve it fresh-only for
+                        # this request; the next request re-runs the handler.
+                        # (The old fallback serialized the raw result into
+                        # the cache — combined with a no-revalidation hit
+                        # path, unfiltered data would be served to everyone.)
+                        _state.stampede_logger.warning(
+                            "Cache write validation failed; serving fresh without caching",
+                            error=str(e),
+                            cache_key=cache_key,
+                        )
+                        return Response(content=_state.json_dumps(result), media_type="application/json")
 
                 # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder
                 serialized_data = _state.json_dumps(to_serialize)

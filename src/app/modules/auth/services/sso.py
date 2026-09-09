@@ -321,8 +321,8 @@ class SSOService:
                         if not current_tenant:
                             # Auto-create a personal tenant for organic SSO signups
                             from src.app.modules.tenants.models import Tenant as TenantModel
+                            from src.app.modules.tenants.router import get_tenant_service
                             from src.app.modules.tenants.schemas import TenantCreate
-                            from src.app.modules.tenants.service import get_tenant_service
 
                             tenant_svc = get_tenant_service(db)
 

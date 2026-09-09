@@ -2,8 +2,8 @@
 
 Components are imported lazily to avoid circular imports.
 Direct imports:
-    from src.app.modules.tenants.service import get_tenant_service, TenantService
-    from src.app.modules.tenants.router import router as tenants_router
+    from src.app.modules.tenants.service import TenantService
+    from src.app.modules.tenants.router import router as tenants_router, get_tenant_service
     from src.app.modules.tenants.crud import crud_tenants
 """
 
@@ -23,7 +23,7 @@ def __getattr__(name: str):
 
         return tenants_router
     if name == "get_tenant_service":
-        from src.app.modules.tenants.service import get_tenant_service
+        from src.app.modules.tenants.router import get_tenant_service
 
         return get_tenant_service
     if name == "TenantService":

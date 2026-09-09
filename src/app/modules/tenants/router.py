@@ -4,26 +4,30 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep, get_current_superuser
+from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.tenants.schemas import TenantCreate, TenantList, TenantResponse, TenantUpdate
-from src.app.modules.tenants.service import TenantService, get_tenant_service
+from src.app.modules.tenants.service import TenantService
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
 
-async def _get_tenant_service(
-    ctx: RequestContextDep,
-) -> TenantService:
-    """Dependency factory for TenantService."""
-    return get_tenant_service(ctx.db)
+def get_tenant_service(db: AsyncSession = Depends(async_get_db)) -> TenantService:
+    """Dependency injection factory for TenantService.
+
+    Q-M4: factories live in router.py — service files stay Depends-free.
+    (Absorbs the old `_get_tenant_service` ctx wrapper, M-4.)
+    """
+    return TenantService(db)
 
 
-TenantServiceDep = Annotated[TenantService, Depends(_get_tenant_service)]
+TenantServiceDep = Annotated[TenantService, Depends(get_tenant_service)]
 
 
 @router.get("", response_model=TenantList, dependencies=[Depends(get_current_superuser)])

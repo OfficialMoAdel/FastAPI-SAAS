@@ -1,3 +1,10 @@
+"""Health endpoints — the canonical HTTP health surface (A-M7).
+
+The check implementations live in ``src/app/core/health.py`` (the canonical
+check library; also delegated to by api/monitoring.py's richer ops
+endpoints). This module owns only the HTTP surface: /health and /ready.
+"""
+
 import asyncio
 import logging
 from datetime import UTC, datetime
@@ -10,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
-from src.app.core.health import check_database_health, check_redis_health
+from src.app.core.health import check_database_health, check_redis_health, check_redis_queue_health
 from src.app.core.schemas import HealthCheck, ReadyCheck
 from src.app.core.utils.cache import async_get_redis
 
@@ -40,7 +47,6 @@ async def ready(
     redis: Annotated[Redis, Depends(async_get_redis)], db: Annotated[AsyncSession, Depends(async_get_db)]
 ) -> JSONResponse:
     from src.app.core.events import event_bus
-    from src.app.core.health import check_redis_queue_health
 
     # R2 #12: Run independent health checks in parallel
     database_result, redis_result, queue_result = await asyncio.gather(

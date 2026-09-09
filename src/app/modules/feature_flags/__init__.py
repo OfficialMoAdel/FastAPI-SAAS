@@ -7,6 +7,7 @@ from src.app.modules.feature_flags.crud import (
     crud_feature_flags,
 )
 from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
+from src.app.modules.feature_flags.router import get_feature_flag_service
 from src.app.modules.feature_flags.schemas import (
     FeatureFlagCheckResponse,
     FeatureFlagCreate,
@@ -18,10 +19,7 @@ from src.app.modules.feature_flags.schemas import (
     FeatureFlagsResponse,
     FeatureFlagUpdate,
 )
-from src.app.modules.feature_flags.service import (
-    FeatureFlagService,
-    get_feature_flag_service,
-)
+from src.app.modules.feature_flags.service import FeatureFlagService
 
 __all__ = [
     # Models

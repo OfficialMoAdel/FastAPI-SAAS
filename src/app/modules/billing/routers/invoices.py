@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import get_current_user
+from src.app.api.deps.auth import AuthenticatedUser
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
 from src.app.modules.billing.schemas import BillingRecordList, BillingRecordRead
@@ -21,7 +22,7 @@ logger = get_logger(__name__)
 
 @router.get("", response_model=BillingRecordList)
 async def list_invoices(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -40,7 +41,7 @@ async def list_invoices(
         Paginated list of invoices with metadata
     """
     service = get_billing_record_service(db)
-    result = await service.get_user_records(current_user["id"], page=page, limit=per_page, status=status)
+    result = await service.get_user_records(current_user.id, page=page, limit=per_page, status=status)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
     return {
@@ -56,7 +57,7 @@ async def list_invoices(
 @router.get("/{invoice_id}", response_model=BillingRecordRead)
 async def get_invoice(
     invoice_id: int,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> dict:
     """Get a single invoice (billing record) by ID.
@@ -79,7 +80,7 @@ async def get_invoice(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
 
     # SECURITY FIX: Verify invoice belongs to current user
-    if result.get("user_id") != current_user["id"]:
+    if result.get("user_id") != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to this invoice")
 
     return dict(result)

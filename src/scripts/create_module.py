@@ -323,6 +323,77 @@ def render_template(template_name: str, context: ModuleContext) -> str:
     )
 
 
+def render_migration_template(context: ModuleContext, down_revision: str | None) -> str:
+    """Render the Alembic migration skeleton for the new module (A-M4).
+
+    The skeleton includes ENABLE + FORCE ROW LEVEL SECURITY and the
+    tenant_isolation/bypass_rls policies so a generated tenant table never
+    ships without row-level isolation. The upgrade body is left as an
+    alembic-autogenerate placeholder — run
+    ``uv run alembic revision --autogenerate`` and copy the table DDL in,
+    or hand-write it; the RLS block is the part codegen must not forget.
+
+    Args:
+        context: The module context.
+        down_revision: Current Alembic head revision id (or None if unknown —
+            the caller must fill it in; the skeleton ships with a TODO marker).
+
+    Returns:
+        Rendered migration file content.
+    """
+    from datetime import UTC, datetime
+
+    env = get_template_env()
+    template = env.get_template("migration.py.j2")
+    revision_id = f"add_{context.module_name}"
+    upgrade_body = (
+        f"# TODO(A-M4): create the {context.table_name} table here — run\n"
+        f'# `uv run alembic revision --autogenerate -m "Add {context.table_name} table"`\n'
+        "# and copy the generated create_table block into this upgrade().\n"
+        "# The RLS statements below this block are generated for you.\n"
+        'raise NotImplementedError("Fill in the table DDL from alembic autogenerate")'
+    )
+    downgrade_body = (
+        "# TODO(A-M4): drop the table here (mirror of the upgrade DDL)\n"
+        'raise NotImplementedError("Fill in the table drop")'
+    )
+    return template.render(
+        revision_id=revision_id,
+        down_revision=down_revision or "TODO_FILL_IN_CURRENT_HEAD",
+        create_date=datetime.now(UTC).strftime("%Y-%m-%d"),
+        upgrade_body=upgrade_body,
+        downgrade_body=downgrade_body,
+        table_name=context.table_name,
+        no_tenant=not context.tenant_aware,
+    )
+
+
+def get_current_alembic_head() -> str | None:
+    """Read the current Alembic head revision from the versions directory.
+
+    Scans ``src/migrations/versions/*.py`` for ``down_revision`` references;
+    the head is the revision no other revision points at. Returns None when
+    the directory is missing or empty (the caller then leaves a TODO marker).
+    """
+    versions_dir = Path(__file__).resolve().parents[1] / "migrations" / "versions"
+    if not versions_dir.is_dir():
+        return None
+    revisions: set[str] = set()
+    parents: set[str] = set()
+    for path in versions_dir.glob("*.py"):
+        if path.name == "__init__.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        rev_match = re.search(r'^revision(?::\s*str)?\s*=\s*["\']([^"\']+)', text, re.MULTILINE)
+        parent_match = re.search(r'^down_revision(?::\s*str \| None)?\s*=\s*["\']([^"\']+)', text, re.MULTILINE)
+        if rev_match:
+            revisions.add(rev_match.group(1))
+        if parent_match:
+            parents.add(parent_match.group(1))
+    heads = revisions - parents
+    return sorted(heads)[0] if len(heads) == 1 else None
+
+
 def generate_module(
     context: ModuleContext,
     dry_run: bool = False,
@@ -428,6 +499,9 @@ Field Types:
   uuid     → UUID(as_uuid=True), UUID
 
 Optional fields: Add '?' suffix (e.g., 'description:text?')
+
+Migration: --migration also emits an Alembic skeleton (with ENABLE/FORCE
+ROW LEVEL SECURITY + tenant policies) into src/migrations/versions/.
         """,
     )
 
@@ -462,6 +536,13 @@ Optional fields: Add '?' suffix (e.g., 'description:text?')
     )
 
     parser.add_argument(
+        "--migration",
+        action="store_true",
+        help="Also emit an Alembic migration skeleton with ENABLE/FORCE RLS + tenant policies "
+        "into src/migrations/versions/ (A-M4)",
+    )
+
+    parser.add_argument(
         "--output-dir",
         type=str,
         default=None,
@@ -486,18 +567,37 @@ Optional fields: Add '?' suffix (e.g., 'description:text?')
             output_dir=args.output_dir,
         )
 
+        # Optional: emit the RLS-aware migration skeleton (A-M4)
+        if args.migration and not args.dry_run:
+            versions_dir = Path(__file__).resolve().parents[1] / "migrations" / "versions"
+            migration_path = versions_dir / f"add_{context.module_name}.py"
+            if migration_path.exists() and not args.force:
+                print(f"Skipping existing migration: {migration_path}")
+            else:
+                migration_path.write_text(
+                    render_migration_template(context, get_current_alembic_head()), encoding="utf-8"
+                )
+                print(f"Generated: {migration_path}")
+
         if not args.dry_run and generated:
             print(f"\n{'=' * 60}")
             print(f"Successfully generated module: {args.module_name}")
             print(f"{'=' * 60}")
-            print("\nNext steps:")
+            print("\nRegistration checklist (A-M5):")
             print(f"  1. Review the generated code in src/app/modules/{args.module_name}/")
-            print(f"  2. Run type check: uv run mypy src/app/modules/{args.module_name}/")
-            print(f"  3. Run linter: uv run ruff check src/app/modules/{args.module_name}/")
-            print("  4. Add router to src/app/api/v1/api.py:")
+            print("  2. Add the model import to src/app/models/__init__.py (single registration point)")
+            print(
+                f"  3. Run checks: uv run mypy src/app/modules/{args.module_name}/ && "
+                f"uv run ruff check src/app/modules/{args.module_name}/"
+            )
+            print("  4. Add router to src/app/api/v1/__init__.py:")
             print(f"     from src.app.modules.{args.module_name}.router import router as {args.module_name}_router")
-            print(f"     api_router.include_router({args.module_name}_router)")
-            print(f"  5. Generate migrations: uv run alembic revision --autogenerate -m 'Add {args.module_name} table'")
+            print(f"     router.include_router({args.module_name}_router)")
+            if not args.migration:
+                print("  5. Generate a migration with RLS: rerun with --migration, or")
+                print(f"     uv run alembic revision --autogenerate -m 'Add {args.module_name} table'")
+                print("     then add ENABLE/FORCE ROW LEVEL SECURITY + tenant_isolation/bypass_rls policies")
+                print("     (pattern: src/migrations/versions/08_enable_rls_policies.py)")
 
         return 0
 

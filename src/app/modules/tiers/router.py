@@ -4,13 +4,25 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastcrud import PaginatedListResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import get_current_superuser
+from src.app.core.db.database import async_get_db
 from src.app.core.schemas import MessageResponse
+from src.app.modules.rate_limits.router import get_rate_limit_service
 from src.app.modules.rate_limits.schemas import TierCreate, TierRead, TierUpdate
-from src.app.modules.rate_limits.service import RateLimitService, get_rate_limit_service
+from src.app.modules.rate_limits.service import RateLimitService
+from src.app.modules.tiers.service import TierService
 
 router = APIRouter(tags=["tiers"])
+
+
+def get_tier_service(db: AsyncSession = Depends(async_get_db)) -> TierService:
+    """Dependency injection factory for TierService.
+
+    Q-M4: factories live in router.py — service files stay Depends-free.
+    """
+    return TierService(db)
 
 
 @router.post(

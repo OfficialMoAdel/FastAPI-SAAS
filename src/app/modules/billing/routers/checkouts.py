@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import get_current_user
+from src.app.api.deps.auth import AuthenticatedUser
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
 from src.app.modules.billing.checkout_service import get_checkout_service
@@ -29,7 +30,7 @@ logger = get_logger(__name__)
 @router.post("", response_model=CheckoutSessionSchema)
 async def create_checkout(
     data: CheckoutCreate,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> CheckoutSessionSchema:
     """Create a Stripe checkout session for subscription.
@@ -44,15 +45,15 @@ async def create_checkout(
     """
     service = get_checkout_service(db)
     return await service.create_session(
-        user_id=current_user["id"],
-        user_email=current_user["email"],
+        user_id=current_user.id,
+        user_email=current_user.email,
         data=data,
     )
 
 
 @router.get("/current", response_model=UserSubscriptionRead | None)
 async def get_current_subscription(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> dict | None:
     """Get the current user's active subscription.
@@ -67,7 +68,7 @@ async def get_current_subscription(
         Current subscription details or None
     """
     service = get_user_subscription_service(db)
-    result = await service.get_user_subscriptions(current_user["id"])
+    result = await service.get_user_subscriptions(current_user.id)
     subscriptions = result.get("data", [])
 
     # Return the first active subscription (most recent)
@@ -82,7 +83,7 @@ async def get_current_subscription(
 
 @router.post("/cancel", response_model=UserSubscriptionRead)
 async def cancel_current_subscription(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
     subscription_id: Annotated[int | None, Body(embed=True)] = None,
 ) -> dict:
@@ -106,7 +107,7 @@ async def cancel_current_subscription(
 
     # If subscription_id not provided, find the current active subscription
     if subscription_id is None:
-        result = await service.get_user_subscriptions(current_user["id"])
+        result = await service.get_user_subscriptions(current_user.id)
         subscriptions = result.get("data", [])
         active_subs = [s for s in subscriptions if s.get("status") in {"active", "trialing", "past_due"}]
 
@@ -121,10 +122,7 @@ async def cancel_current_subscription(
     # Verify the subscription belongs to the current user
     subscription = await service.get_subscription(subscription_id)
 
-    if (
-        subscription["user_id"] != current_user["id"]
-        or str(subscription.get("tenant_id")) != str(current_user.get("tenant_id"))
-    ):
+    if subscription["user_id"] != current_user.id or str(subscription.get("tenant_id")) != str(current_user.tenant_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to cancel this subscription",

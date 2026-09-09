@@ -1,8 +1,10 @@
 """Feature Flags API Router."""
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep
+from src.app.core.db.database import async_get_db
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.modules._base import ModelNotFoundError
@@ -12,9 +14,19 @@ from src.app.modules.feature_flags.schemas import (
     FeatureFlagsResponse,
     FeatureFlagUpdateRequest,
 )
-from src.app.modules.feature_flags.service import FeatureFlagService, get_feature_flag_service
+from src.app.modules.feature_flags.service import FeatureFlagService
 
 router = APIRouter(prefix="/features", tags=["features"])
+
+
+def get_feature_flag_service(
+    db: AsyncSession = Depends(async_get_db),
+) -> FeatureFlagService:
+    """Dependency injection factory for FeatureFlagService.
+
+    Q-M4: factories live in router.py — service files stay Depends-free.
+    """
+    return FeatureFlagService(db=db)
 
 
 @router.get(

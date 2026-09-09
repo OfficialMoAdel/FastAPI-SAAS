@@ -51,6 +51,25 @@ async def create_tables() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
 
+def _resolve_create_tables_on_start(settings_obj: Settings | Any, requested: bool) -> bool:
+    """A-M4: default CREATE_TABLES_ON_STARTUP to False outside local.
+
+    ``create_all`` coexists with Alembic migrations, and a table created by
+    ``create_all`` is NOT covered by migration 08's hand-maintained
+    ``TENANT_TABLES`` list — it silently lacks RLS policies and row-level
+    tenant isolation. A non-local environment must therefore never default
+    to creating tables at startup; only an explicit
+    ``CREATE_TABLES_ON_STARTUP=true`` in settings.app opts in. Local keeps
+    the legacy behavior (``requested`` — main.py passes the flag itself, so
+    an explicit False is honored there) so the bootstrap workflow is
+    unchanged.
+    """
+    environment = getattr(settings_obj.env, "ENVIRONMENT", EnvironmentOption.LOCAL)
+    if environment == EnvironmentOption.LOCAL:
+        return requested
+    return bool(getattr(settings_obj.app, "CREATE_TABLES_ON_STARTUP", False)) and requested
+
+
 # -------------- cache --------------
 async def create_redis_cache_pool() -> None:
     """Initialize Redis cache pool and client via the Redis provider."""
@@ -107,7 +126,13 @@ def lifespan_factory(
     settings: Settings | Any,
     create_tables_on_start: bool = True,
 ) -> Callable[[FastAPI], _AsyncGeneratorContextManager[Any]]:
-    """Factory to create a lifespan async context manager for a FastAPI app."""
+    """Factory to create a lifespan async context manager for a FastAPI app.
+
+    A-M4: ``create_tables_on_start`` is gated by
+    ``_resolve_create_tables_on_start`` — outside local it defaults to off
+    unless settings.app.CREATE_TABLES_ON_STARTUP explicitly opts in.
+    """
+    create_tables_on_start = _resolve_create_tables_on_start(settings, create_tables_on_start)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator:
@@ -260,7 +285,9 @@ def create_application(
     if environment == EnvironmentOption.PRODUCTION:
         kwargs.update({"docs_url": None, "redoc_url": None, "openapi_url": None})
 
-    # Use custom lifespan if provided, otherwise use default factory
+    # Use custom lifespan if provided, otherwise use default factory.
+    # The factory applies the A-M4 gate: outside local, create_all at startup
+    # requires an explicit settings.app.CREATE_TABLES_ON_STARTUP opt-in.
     if lifespan is None:
         lifespan = lifespan_factory(settings, create_tables_on_start=create_tables_on_start)
 

@@ -41,7 +41,7 @@ class PendingTokenStore:
             data: Dictionary of data to store with the token.
         """
         key = self._get_key(token)
-        payload = orjson.dumps(data).decode('utf-8')
+        payload = orjson.dumps(data).decode("utf-8")
         await self._redis.setex(key, self.ttl, payload)
 
     async def consume(self, token: str) -> dict[str, Any] | None:
@@ -85,6 +85,23 @@ class PendingTokenStore:
             return cast(dict[str, Any], orjson.loads(data))
         except orjson.JSONDecodeError:
             return None
+
+    async def remaining_ttl(self, token: str) -> int:
+        """Remaining TTL in seconds for a token's key.
+
+        Returns Redis semantics: -2 when the key does not exist, -1 when it
+        exists without expiry. Used by MFA IP binding (S-M3) to derive the
+        token's age — must be read BEFORE :meth:`consume` (GETDEL) removes
+        the key. Named ``remaining_ttl`` to avoid the ``self.ttl`` seconds
+        attribute set in ``__init__``.
+
+        Args:
+            token: The raw token string.
+
+        Returns:
+            Remaining TTL in seconds, or -2/-1 per Redis TTL semantics.
+        """
+        return int(await self._redis.ttl(self._get_key(token)))
 
     async def delete(self, token: str) -> bool:
         """Delete token data.

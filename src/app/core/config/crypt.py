@@ -6,6 +6,16 @@ from typing import Literal
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
+# C-1 leaked-secret blocklist. Provenance (verified via
+# `git log -p -- .env.txt src/.env.local`):
+# - `de2132a4...be1c8` — SECRET_KEY committed in 6cbc8a56/af450c42/9119f7fd
+#   (`src/.env.local` + `.env.txt`). ENCRYPTION_KEY was always empty in
+#   history, so there is no historical ENCRYPTION_KEY value to block.
+# - `mypassword` (POSTGRES_PASSWORD, same commits) is blocklisted in
+#   `database.KNOWN_LEAKED_POSTGRES_PASSWORDS`; `Str1ngst!`
+#   (ADMIN_PASSWORD) in `auth.KNOWN_LEAKED_ADMIN_PASSWORDS`.
+# When rotating after a leak, append the old value here so it can never be
+# reused — startup validation rejects any match (fail-closed).
 KNOWN_LEAKED_SECRET_KEYS: frozenset[str] = frozenset(
     {
         "de2132a4a3a029d6a93a2aefcb519f0219990f92ca258a7c5ed938a444dbe1c8",

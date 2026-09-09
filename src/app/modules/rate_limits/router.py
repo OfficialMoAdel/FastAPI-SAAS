@@ -4,13 +4,23 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request, status
 from fastcrud import PaginatedListResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import get_current_superuser
+from src.app.core.db.database import async_get_db
 from src.app.core.schemas import MessageResponse
 from src.app.modules.rate_limits.schemas import RateLimitCreate, RateLimitRead, RateLimitUpdate
-from src.app.modules.rate_limits.service import RateLimitService, get_rate_limit_service
+from src.app.modules.rate_limits.service import RateLimitService
 
 router = APIRouter(tags=["rate_limits"])
+
+
+def get_rate_limit_service(db: AsyncSession = Depends(async_get_db)) -> RateLimitService:
+    """Dependency injection factory for RateLimitService.
+
+    Q-M4: factories live in router.py — service files stay Depends-free.
+    """
+    return RateLimitService(db)
 
 
 @router.post(

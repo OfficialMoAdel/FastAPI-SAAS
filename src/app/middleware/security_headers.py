@@ -61,8 +61,11 @@ class SecurityHeadersMiddleware:
         self.csp_policy = csp_policy or self.DEFAULT_CSP
         self.frame_options = frame_options
 
-        # Only enable HSTS in production (requires HTTPS)
-        self.is_production = settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION
+        # S-M6: enable HSTS in every non-local environment (staging included).
+        # The previous `== PRODUCTION` gate left staging deployments without
+        # HSTS — an SSL-strip window in staging-tier deployments. LOCAL only
+        # (plain HTTP dev servers must not receive HSTS headers).
+        self.enable_hsts_env = settings.env.ENVIRONMENT != EnvironmentOption.LOCAL
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -88,7 +91,7 @@ class SecurityHeadersMiddleware:
                 if self.enable_csp:
                     headers.setdefault("Content-Security-Policy", self.csp_policy)
 
-                if self.enable_hsts and self.is_production:
+                if self.enable_hsts and self.enable_hsts_env:
                     headers.setdefault(
                         "Strict-Transport-Security", f"max-age={self.hsts_max_age}; includeSubDomains; preload"
                     )

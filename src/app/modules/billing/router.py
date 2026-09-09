@@ -308,7 +308,7 @@ async def create_checkout_session(
 ) -> CheckoutSession:
     """Create a Stripe checkout session."""
     service = get_checkout_service(ctx.db)
-    return await service.create_session(user_id=ctx.user_id, user_email=ctx.user["email"], data=data)
+    return await service.create_session(user_id=ctx.user_id, user_email=ctx.user.email, data=data)
 
 
 class PortalSessionRequest(BaseModel):

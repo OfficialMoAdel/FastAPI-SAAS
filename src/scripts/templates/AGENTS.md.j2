@@ -29,17 +29,16 @@ uv run ruff check src/app/modules/{{ module_name }}/
 ```python
 # Example from src/app/modules/{{ module_name }}/service.py:
 class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
-    async def create_{{ module_name }}(self, data: {{ ModelName }}Create, user_id: int, tenant_id: int) -> {{ ModelName }}Read:
-        # Check for duplicates
-        existing = await self.crud.get(db=self.db, name=data.name, tenant_id=tenant_id)
+    async def create_{{ module_name }}(self, data: {{ ModelName }}Create, current_user: Any) -> {{ ModelName }}Read:
+        # Check for duplicates (tenant filter injected by the CRUD seam)
+        existing = await self.crud.get(db=self.db, name=data.name)
         if existing:
             raise DuplicateError("name", data.name)
-        
-        # Create with tenant context
+
+        # Create with tenant context (tenant_id injected by the CRUD seam)
         create_data = data.model_dump()
-        create_data["user_id"] = user_id
-        create_data["tenant_id"] = tenant_id
-        
+        create_data["user_id"] = get_user_attr(current_user, "id")
+
         result = await self.crud.create(db=self.db, object=create_data)
         return {{ ModelName }}Read.model_validate(result)
 ```
@@ -60,13 +59,29 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
 
 ## Common Gotchas
 
-- All queries must include `tenant_id` for multi-tenancy
+- Never pass explicit ``tenant_id`` to CRUD/service calls — the
+  TenantAwareCRUD seam injects the request context's tenant and blocks
+  caller-supplied overrides (logged as ``tenant_id_override_blocked``)
+- Service methods take ``current_user`` (the authenticated principal), not
+  bare ``user_id``/``tenant_id`` kwargs
 - Service methods should validate ownership before updates/deletes
-- Use `model_dump(exclude_unset=True)` for partial updates
-- Response schemas use `ConfigDict(from_attributes=True)`
+- Use ``model_dump(exclude_unset=True)`` for partial updates
+- Response schemas use ``ConfigDict(from_attributes=True)``
+- Raise domain errors (``ModelNotFoundError``, ``DuplicateError``,
+  ``ForbiddenError``) — never HTTP-shaped exceptions from the service layer
 
-## Pre-PR Checks
+## Registration Checklist (post-generation)
 
+After generating this module, complete these registration steps:
+
+1. Add the model import to `src/app/models/__init__.py` (single registration point)
+2. Register the router in `src/app/api/v1/__init__.py`
+3. Generate a migration with RLS: `uv run alembic revision --autogenerate -m 'Add {{ table_name }} table'`
+   — then add `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`, and
+   the `tenant_isolation` + `bypass_rls` policies to the new table (see
+   `src/migrations/versions/08_enable_rls_policies.py` for the pattern);
+   `CREATE TABLES_ON_STARTUP`-created tables silently lack RLS policies
+4. Run checks (mypy, ruff, unit tests for this module):
 ```bash
 uv run mypy src/app/modules/{{ module_name }}/ && uv run ruff check src/app/modules/{{ module_name }}/ && uv run pytest tests/unit/{{ module_name }}/ -v
 ```

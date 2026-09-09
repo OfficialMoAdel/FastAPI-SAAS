@@ -29,14 +29,29 @@ from src.app.modules.ai.schemas import (
     RateLimitError as RateLimitErrorSchema,
 )
 from src.app.modules.ai.service import (
+    AISettingsService,
     ChatCompletionError,
-    get_ai_settings_service,
+    ChatMessageService,
+    ChatSessionService,
     get_chat_completion_service,
-    get_chat_message_service,
-    get_chat_session_service,
 )
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+
+
+def get_chat_session_service(db: AsyncSession = Depends(async_get_db)) -> ChatSessionService:
+    """Dependency injection factory (Q-M4: lives in router, not service)."""
+    return ChatSessionService(db)
+
+
+def get_chat_message_service(db: AsyncSession = Depends(async_get_db)) -> ChatMessageService:
+    """Dependency injection factory (Q-M4: lives in router, not service)."""
+    return ChatMessageService(db)
+
+
+def get_ai_settings_service(db: AsyncSession = Depends(async_get_db)) -> AISettingsService:
+    """Dependency injection factory (Q-M4: lives in router, not service)."""
+    return AISettingsService(db)
 
 
 # =============================================================================
@@ -217,7 +232,7 @@ async def chat_completion(
     """
     service = get_chat_completion_service(db)
     try:
-        return await service.complete(session_id, current_user["id"], request)
+        return await service.complete(session_id, current_user.id, request)
     except ChatCompletionError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -248,7 +263,7 @@ async def chat_completion_stream(
 
     async def generate():
         try:
-            async for chunk in service.complete_stream(session_id, current_user["id"], request):
+            async for chunk in service.complete_stream(session_id, current_user.id, request):
                 data = str(json_dumps(chunk, as_str=True))
                 yield f"data: {data}\n\n"
         except ChatCompletionError as e:

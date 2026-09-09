@@ -1,3 +1,11 @@
+"""Health-check library — the canonical check implementations (A-M7).
+
+Consumers: ``modules/health/router.py`` (the canonical HTTP surface for
+/health and /ready) and ``api/monitoring.py`` (richer ops endpoints that
+delegate their DB probe here). Keeping the probes in core/ and only the
+HTTP surface in modules/ preserves the core→modules layering contract.
+"""
+
 import asyncio
 import logging
 import time

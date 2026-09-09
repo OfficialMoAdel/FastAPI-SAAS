@@ -62,12 +62,31 @@ class GZipFilterMiddleware:
     branch (``content_encoding_set``) instead of stripping headers after
     compression. The exempt decision is made on the response Content-Type at
     ``http.response.start`` time, where GZipMiddleware itself makes it.
+
+    P-M4: the marker gate, the GZipMiddleware instance and its nested marker
+    class used to be rebuilt PER REQUEST. Both are now built once in
+    ``__init__``; the per-request exempt flag travels through the ASGI scope
+    dict (``scope["gzip_filter_exempt"]``) instead of a closure variable, so
+    the inner marker and the outer stripper — two separate frames of the same
+    request — can share state without any per-request object construction.
     """
+
+    _EXEMPT_SCOPE_KEY = "gzip_filter_exempt"
 
     def __init__(self, app: ASGIApp, minimum_size: int = 500, compresslevel: int = 6) -> None:
         self.app = app
         self.minimum_size = minimum_size
         self.compresslevel = compresslevel
+
+        # Inner gate: marks exempt responses so GZipMiddleware skips them.
+        # The exempt flag is written into the scope dict, which the outer
+        # stripper reads back — see __call__.
+        marker_app = _ExemptMarker(app)
+        self._gzip_app = GZipMiddleware(
+            marker_app,
+            minimum_size=self.minimum_size,
+            compresslevel=self.compresslevel,
+        )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -81,39 +100,12 @@ class GZipFilterMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Per-request flag shared between the inner marker and the outer stripper.
-        exempt: dict[str, bool] = {"v": False}
-
-        # Inner gate: marks exempt responses so GZipMiddleware skips them.
-        inner_app = self.app
-
-        class _ExemptMarker:
-            def __init__(self, app: ASGIApp) -> None:
-                self._app = app
-
-            async def __call__(self, s: Scope, r: Receive, inner_send: Send) -> None:
-                async def _send(message: Message) -> None:
-                    if message["type"] == "http.response.start":
-                        ct = _content_type_of(message)
-                        has_ce = any(
-                            k.lower() == b"content-encoding"  # type: ignore[union-attr]
-                            for k, _ in message.get("headers", [])  # type: ignore[arg-type]
-                        )
-                        if ct and _is_exempt_content_type(ct) and not has_ce:
-                            exempt["v"] = True
-                            message["headers"] = [  # type: ignore[arg-type]
-                                *message.get("headers", []),  # type: ignore[arg-type]
-                                (b"content-encoding", b"identity"),
-                            ]
-                    await inner_send(message)
-
-                await self._app(s, r, _send)
-
-        marker_app = _ExemptMarker(inner_app)
-        gzip_app = GZipMiddleware(marker_app, minimum_size=self.minimum_size, compresslevel=self.compresslevel)
+        # Per-request flag shared between the inner marker and the outer
+        # stripper via the ASGI scope dict (P-M4; was a closure dict).
+        scope[self._EXEMPT_SCOPE_KEY] = False
 
         async def _outer_send(message: Message) -> None:
-            if message["type"] == "http.response.start" and exempt["v"]:
+            if message["type"] == "http.response.start" and scope[self._EXEMPT_SCOPE_KEY]:
                 # Strip the synthetic marker so clients never see Content-Encoding: identity.
                 message["headers"] = [  # type: ignore[arg-type]
                     (k, v)
@@ -125,4 +117,33 @@ class GZipFilterMiddleware:
                 ]
             await send(message)
 
-        await gzip_app(scope, receive, _outer_send)
+        await self._gzip_app(scope, receive, _outer_send)
+
+
+class _ExemptMarker:
+    """Inner ASGI gate that marks exempt responses with ``Content-Encoding: identity``.
+
+    Module-level class (P-M4): one instance is constructed per middleware
+    instance at startup instead of a fresh nested class + instance per request.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, s: Scope, r: Receive, inner_send: Send) -> None:
+        async def _send(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                ct = _content_type_of(message)
+                has_ce = any(
+                    k.lower() == b"content-encoding"  # type: ignore[union-attr]
+                    for k, _ in message.get("headers", [])  # type: ignore[arg-type]
+                )
+                if ct and _is_exempt_content_type(ct) and not has_ce:
+                    s[GZipFilterMiddleware._EXEMPT_SCOPE_KEY] = True
+                    message["headers"] = [  # type: ignore[arg-type]
+                        *message.get("headers", []),  # type: ignore[arg-type]
+                        (b"content-encoding", b"identity"),
+                    ]
+            await inner_send(message)
+
+        await self._app(s, r, _send)

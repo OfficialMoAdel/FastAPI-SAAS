@@ -7,17 +7,15 @@ Performance Optimization (R2-HYBRID MED-2):
 """
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import structlog
 from cachetools import TTLCache
-from fastapi import Depends
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
-from src.app.core.db.database import async_get_db
 from src.app.core.db.tenant_crud import scoped_query
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.monitoring.r1_unified_metrics import record_rbac_cache_hit, record_rbac_cache_miss
@@ -25,7 +23,6 @@ from src.app.core.rbac.dependencies import (
     invalidate_user_permissions_cache,
     invalidate_users_permissions_cache_batch,
 )
-from src.app.core.tenancy.context import TenantContext, get_current_tenant
 from src.app.modules._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 from src.app.modules.rbac.crud import crud_associations, crud_permissions, crud_roles
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
@@ -162,8 +159,10 @@ class RoleService:
                 tenant_id=self.tenant_id,
                 commit=True,
             )
-            for user_id in affected_user_ids:
-                await invalidate_user_permissions_cache(user_id, self.tenant_id)
+            # P-M7: batch pipeline (1 Redis RTT) instead of a sequential
+            # per-user invalidation loop (N RTTs) — the batch helper already
+            # existed for exactly this role-mutation shape.
+            await invalidate_users_permissions_cache_batch(affected_user_ids, self.tenant_id)
         else:
             await self.db.commit()
 
@@ -578,22 +577,3 @@ class RoleService:
         return await crud_roles.get_user_roles(self.db, self.tenant_id, user_id)
 
 
-def get_role_service(
-    db: Annotated[AsyncSession, Depends(async_get_db)],
-    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
-) -> RoleService:
-    """Dependency injection factory for RoleService.
-
-    Parameters
-    ----------
-    db : AsyncSession
-        Database session from async_get_db
-    tenant : TenantContext
-        Current tenant context from get_current_tenant
-
-    Returns
-    -------
-    RoleService
-        Service instance with database session and tenant context
-    """
-    return RoleService(db=db, tenant_id=tenant.id)

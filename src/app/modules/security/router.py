@@ -21,6 +21,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, status
 
 from src.app.api.deps import RequestContextDep, get_current_superuser
+from src.app.api.deps.auth import AuthenticatedUser
 from src.app.core.config import settings
 from src.app.core.security.auto_ban import (
     ban_ip,
@@ -86,7 +87,6 @@ async def delete_passkey(
     return PasskeyDeleteResponse(message="Passkey deleted successfully")
 
 
-
 # ============================================================================
 # Admin Endpoints (IP Filter Management)
 # ============================================================================
@@ -100,7 +100,7 @@ async def delete_passkey(
 )
 async def add_ip_to_whitelist(
     request: IPAddressRequest,
-    current_user: Annotated[dict, Depends(get_current_superuser)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],
 ) -> IPListUpdateResponse:
     """Add an IP address to the whitelist.
 
@@ -115,7 +115,7 @@ async def add_ip_to_whitelist(
         ip_address=request.ip_address,
         reason=request.reason,
         expires_at=request.expires_at,
-        added_by=current_user.get("id"),
+        added_by=current_user.id,
     )
 
     return IPListUpdateResponse(
@@ -136,7 +136,7 @@ async def add_ip_to_whitelist(
 )
 async def remove_ip_from_whitelist(
     ip_address: str,
-    current_user: Annotated[dict, Depends(get_current_superuser)],  # noqa: ARG001
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
 ) -> IPListUpdateResponse:
     """Remove an IP address from the whitelist.
 
@@ -163,7 +163,7 @@ async def remove_ip_from_whitelist(
 )
 async def add_ip_to_blacklist(
     request: IPAddressRequest,
-    current_user: Annotated[dict, Depends(get_current_superuser)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],
 ) -> IPListUpdateResponse:
     """Add an IP address to the blacklist.
 
@@ -178,7 +178,7 @@ async def add_ip_to_blacklist(
         ip_address=request.ip_address,
         reason=request.reason,
         expires_at=request.expires_at,
-        added_by=current_user.get("id"),
+        added_by=current_user.id,
     )
 
     return IPListUpdateResponse(
@@ -199,7 +199,7 @@ async def add_ip_to_blacklist(
 )
 async def remove_ip_from_blacklist(
     ip_address: str,
-    current_user: Annotated[dict, Depends(get_current_superuser)],  # noqa: ARG001
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
 ) -> IPListUpdateResponse:
     """Remove an IP address from the blacklist.
 
@@ -224,7 +224,7 @@ async def remove_ip_from_blacklist(
     dependencies=[Depends(get_current_superuser)],
 )
 async def get_ip_lists(
-    current_user: Annotated[dict, Depends(get_current_superuser)],  # noqa: ARG001
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
 ) -> IPListsResponse:
     """Get both whitelist and blacklist with all entries.
 
@@ -274,7 +274,7 @@ async def get_ip_lists(
     dependencies=[Depends(get_current_superuser)],
 )
 async def get_ip_filter_config(
-    current_user: Annotated[dict, Depends(get_current_superuser)],  # noqa: ARG001
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
 ) -> IPFilterConfig:
     """Get current IP filter configuration.
 
@@ -297,7 +297,7 @@ async def get_ip_filter_config(
 )
 async def update_ip_filter_config(
     config_update: IPFilterConfigUpdate,
-    current_user: Annotated[dict, Depends(get_current_superuser)],  # noqa: ARG001
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
 ) -> IPFilterConfig:
     """Update IP filter configuration.
 
@@ -316,6 +316,7 @@ async def update_ip_filter_config(
     """
 
     from src.app.core.utils.config_store import update_runtime_config
+
     updates: dict[str, Any] = {}
     if config_update.whitelist_enabled is not None:
         settings.security.IP_WHITELIST_ENABLED = config_update.whitelist_enabled
@@ -347,7 +348,7 @@ async def update_ip_filter_config(
     dependencies=[Depends(get_current_superuser)],
 )
 async def get_auto_ban_config(
-    current_user: Annotated[dict, Depends(get_current_superuser)],  # noqa: ARG001
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
 ) -> AutoBanConfig:
     """Get current auto-ban configuration.
 
@@ -371,7 +372,7 @@ async def get_auto_ban_config(
 )
 async def update_auto_ban_config(
     config_update: AutoBanConfigUpdate,
-    current_user: Annotated[dict, Depends(get_current_superuser)],  # noqa: ARG001
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
 ) -> AutoBanConfig:
     """Update auto-ban configuration.
 
@@ -388,6 +389,7 @@ async def update_auto_ban_config(
     """
 
     from src.app.core.utils.config_store import update_runtime_config
+
     updates: dict[str, Any] = {}
     if config_update.enabled is not None:
         settings.security.AUTO_BAN_ENABLED = config_update.enabled
@@ -418,7 +420,7 @@ async def update_auto_ban_config(
     dependencies=[Depends(get_current_superuser)],
 )
 async def list_banned_ips(
-    current_user: Annotated[dict, Depends(get_current_superuser)],  # noqa: ARG001
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
 ) -> BannedIPsResponse:
     """Get all currently banned IP addresses.
 
@@ -453,7 +455,7 @@ async def list_banned_ips(
 )
 async def manually_ban_ip(
     request: IPAddressRequest,
-    current_user: Annotated[dict, Depends(get_current_superuser)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],
 ) -> BanActionResponse:
     """Manually ban an IP address.
 
@@ -467,7 +469,7 @@ async def manually_ban_ip(
     """
     success = await ban_ip(
         request.ip_address,
-        reason=request.reason or f"Manual ban by admin {current_user.get('id')}",
+        reason=request.reason or f"Manual ban by admin {current_user.id}",
     )
 
     return BanActionResponse(
@@ -485,7 +487,7 @@ async def manually_ban_ip(
 )
 async def unban_ip_address(
     ip_address: str,
-    current_user: Annotated[dict, Depends(get_current_superuser)],  # noqa: ARG001
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
 ) -> BanActionResponse:
     """Remove ban from an IP address.
 
@@ -522,7 +524,7 @@ async def unban_ip_address(
     dependencies=[Depends(get_current_superuser)],
 )
 async def get_violation_statistics(
-    current_user: Annotated[dict, Depends(get_current_superuser)],  # noqa: ARG001
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
 ) -> ViolationStats:
     """Get violation statistics.
 
@@ -552,7 +554,7 @@ async def get_violation_statistics(
 )
 async def get_ip_violation_stats(
     ip_address: str,
-    current_user: Annotated[dict, Depends(get_current_superuser)],  # noqa: ARG001
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
 ) -> IPViolationStats:
     """Get violation statistics for a specific IP.
 

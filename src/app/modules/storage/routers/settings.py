@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep
+from src.app.core.db.database import async_get_db
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.modules.storage.errors import (
@@ -21,12 +23,22 @@ from src.app.modules.storage.schemas import (
     StorageSettingsRead,
     StorageSettingsUpdate,
 )
-from src.app.modules.storage.service import (
-    StorageAdminService,
-    get_storage_admin,
-)
+from src.app.modules.storage.service import StorageAdminService
 
 router = APIRouter(prefix="/storage", tags=["storage"])
+
+
+def get_storage_admin(db: AsyncSession = Depends(async_get_db)) -> StorageAdminService:
+    """Dependency injection factory for StorageAdminService.
+
+    Q-M4: factories live in router.py — service files stay Depends-free.
+    """
+    return StorageAdminService(db)
+
+
+def get_storage_settings_service(db: AsyncSession = Depends(async_get_db)) -> StorageAdminService:
+    """Backward-compatible dependency factory for StorageSettingsService."""
+    return StorageAdminService(db)
 
 
 @router.get(

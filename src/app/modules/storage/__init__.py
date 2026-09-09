@@ -80,13 +80,18 @@ def __getattr__(name: str) -> Any:
         "Download",
         "FileService",
         "StorageSettingsService",
-        "get_storage_admin",
-        "get_file_service",
-        "get_storage_settings_service",
     ):
         from src.app.modules.storage import service as s
 
         return getattr(s, name)
+    if name == "get_file_service":
+        from src.app.modules.storage.routers import files as f
+
+        return getattr(f, name)
+    if name in ("get_storage_admin", "get_storage_settings_service"):
+        from src.app.modules.storage.routers import settings as st
+
+        return getattr(st, name)
 
     if name in (
         "S3Credentials",

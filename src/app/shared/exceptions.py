@@ -2,6 +2,14 @@
 
 Zero-dependency leaf exceptions that can be safely imported by core,
 middleware, domain services, repositories, and controllers.
+
+A-M1 (partial): feature-domain exceptions must NOT live here — this
+leaf is shared foundation, not a feature surface. StripeError is the
+known deviation: its move to ``modules/billing/exceptions.py`` is
+scheduled for the post-merge single-owner pass (its importers span
+client + billing layers); until then it stays put and is re-exported
+by ``modules/billing/exceptions.py`` and the deprecated
+``modules/_base/exceptions.py`` shim.
 """
 
 from __future__ import annotations
@@ -137,14 +145,17 @@ class ServiceUnavailableError(AppException):
     def __init__(self, message: str = "Service temporarily unavailable"):
         self.message = message
         self.detail = message
-        super().__init__(self.message)
 
 
 class StripeError(AppException):
     """Raised when a Stripe API call fails.
 
-    Lives in the zero-dependency shared leaf so the outbound clients layer
-    (``src/app/clients/``) can raise it without importing feature modules.
+    A-M1 DEBT: this is a billing-domain exception living in the shared
+    leaf. Relocation to ``src.app/modules/billing/exceptions.py`` is
+    scheduled for the post-merge single-owner pass (importers span
+    ``src/app/clients/billing/stripe.py`` and the billing module); it
+    stays here for now and is re-exported by billing and the deprecated
+    ``_base`` shim so no importer breaks mid-merge.
 
     Attributes:
         message: Human-readable error message.

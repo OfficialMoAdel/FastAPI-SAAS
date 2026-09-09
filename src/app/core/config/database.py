@@ -1,7 +1,17 @@
 """R2-03: settings split from core/config.py — database domain."""
 
+import os
+
 from pydantic import BaseModel, Field, SecretStr, ValidationInfo, computed_field, field_validator
 from pydantic_settings import BaseSettings
+
+KNOWN_LEAKED_POSTGRES_PASSWORDS: frozenset[str] = frozenset(
+    {
+        # C-1: committed in 6cbc8a56/af450c42 (`.env.txt`, POSTGRES_PASSWORD).
+        # When rotating after a leak, append the old value here.
+        "mypassword",
+    }
+)
 
 
 class DatabaseConfigMixin(BaseModel):
@@ -80,7 +90,6 @@ class DatabaseConfigMixin(BaseModel):
             )
         return v
 
-
     @computed_field  # type: ignore[prop-decorator]
     @property
     def EFFECTIVE_POOL_SIZE(self) -> int:
@@ -136,6 +145,45 @@ class PostgresSettings(DatabaseConfigMixin, BaseSettings):
     POSTGRES_SYNC_PREFIX: str = "postgresql://"
     POSTGRES_ASYNC_PREFIX: str = "postgresql+asyncpg://"
     POSTGRES_URL: str | None = None
+
+    @field_validator("POSTGRES_PASSWORD", mode="after")
+    @classmethod
+    def validate_no_leaked_password(cls, v: SecretStr | None, info: ValidationInfo) -> SecretStr | None:
+        # C-1: the value was committed to git history (.env.txt in
+        # 6cbc8a56/af450c42). Hard-fail outside local; in local it is also
+        # the documented example value, so only warn — but never let it
+        # boot silently in staging/production.
+        if v is None or v.get_secret_value() not in KNOWN_LEAKED_POSTGRES_PASSWORDS:
+            return v
+        # DatabaseConfigMixin doesn't carry ENVIRONMENT; re-read from the
+        # process environment the same way CryptSettings does (dotenv-aware).
+        from pathlib import Path
+
+        from dotenv import dotenv_values
+
+        env_value = os.environ.get("ENVIRONMENT")
+        if env_value is None:
+            src_dir_env = Path(__file__).resolve().parents[2] / ".env"
+            repo_env = Path(".env")
+            for candidate in (src_dir_env, repo_env):
+                if candidate.is_file():
+                    env_value = dotenv_values(candidate).get("ENVIRONMENT")
+                    if env_value is not None:
+                        break
+        env = (env_value or "local").lower()
+        if env in ("production", "staging"):
+            raise ValueError(
+                "POSTGRES_PASSWORD matches a value that leaked into git history. "
+                "Rotate it immediately and update your .env."
+            )
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "POSTGRES_PASSWORD matches a value that leaked into git history (C-1). "
+            "Local boot allowed, but rotate it and pick a unique password — this "
+            "value must never reach staging/production."
+        )
+        return v
 
     @computed_field  # type: ignore[prop-decorator]
     @property

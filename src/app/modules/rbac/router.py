@@ -3,13 +3,27 @@
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.db.database import async_get_db
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
+from src.app.core.tenancy.context import TenantContext, get_current_tenant
 from src.app.modules.rbac.schemas import PermissionRead, RoleCreate, RoleRead, RoleUpdate
-from src.app.modules.rbac.service import RoleService, get_role_service
+from src.app.modules.rbac.service import RoleService
 
 router = APIRouter(prefix="/roles", tags=["rbac"])
+
+
+def get_role_service(
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
+) -> RoleService:
+    """Dependency injection factory for RoleService.
+
+    Q-M4: factories live in router.py — service files stay Depends-free.
+    """
+    return RoleService(db=db, tenant_id=tenant.id)
 
 
 @router.get(

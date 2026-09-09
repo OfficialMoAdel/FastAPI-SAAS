@@ -395,6 +395,54 @@ class LuaScriptManager:
 
             return {1, ban_count}
         """,
+        # H-3: Ban check + GCRA in ONE round-trip (middleware hot path).
+        # Combines "rate_limit_gcra" TAT logic with the ban-key GET + TTL so
+        # the middleware makes 1 Redis RTT instead of 2 for banned-or-limited.
+        "ban_and_gcra_check": """
+            -- KEYS[1]: GCRA TAT key (e.g. gcra:tenant:{tid}:{uid}:{path})
+            -- KEYS[2]: ban key (e.g. security:ban:{ip})
+            -- ARGV[1]: now_ms, ARGV[2]: emission_interval_ms, ARGV[3]: limit,
+            -- ARGV[4]: burst_tolerance_ms, ARGV[5]: period_ms, ARGV[6]: check_gcra ("1"/"0")
+            -- Returns: {is_allowed, remaining, retry_after_ms, is_banned, ban_reason, ban_ttl}
+            local ban_key = KEYS[2]
+            local ban_reason = redis.call('GET', ban_key)
+            local is_banned = 0
+            local ban_ttl = 0
+            if ban_reason then
+                is_banned = 1
+                ban_ttl = redis.call('TTL', ban_key)
+            end
+
+            if is_banned == 1 or ARGV[6] == '0' then
+                -- Rejected by ban (skip GCRA — the request dies here), or GCRA
+                -- not requested: return neutral GCRA values with ban status.
+                return {0, 0, 0, is_banned, ban_reason or '', ban_ttl}
+            end
+
+            local now_ms = tonumber(ARGV[1])
+            local emission_interval_ms = tonumber(ARGV[2])
+            local limit = tonumber(ARGV[3])
+            local period_ms = tonumber(ARGV[5])
+            local burst_tolerance_ms = tonumber(ARGV[4])
+            local key = KEYS[1]
+            local tat_ms = tonumber(redis.call('GET', key)) or now_ms
+            local new_tat_ms = math.max(now_ms, tat_ms) + emission_interval_ms
+            local allow_at_ms = new_tat_ms - burst_tolerance_ms
+
+            if allow_at_ms > now_ms then
+                local retry_after_ms = allow_at_ms - now_ms
+                return {0, 0, retry_after_ms, 0, '', 0}
+            else
+                redis.call('SET', key, new_tat_ms)
+                redis.call('PEXPIRE', key, math.ceil(period_ms + emission_interval_ms))
+                local remaining = 0
+                if emission_interval_ms > 0 then
+                    remaining = math.floor((now_ms + burst_tolerance_ms - new_tat_ms) / emission_interval_ms)
+                end
+                remaining = math.max(0, math.min(remaining, limit - 1))
+                return {1, remaining, 0, 0, '', 0}
+            end
+        """,
     }
 
     def __init__(self) -> None:

@@ -8,9 +8,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
 from src.app.core.db.database import Base
-from src.app.core.logger import get_logger
-
-logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from src.app.modules.ai.models import AIChatSession, AITokenUsage
@@ -85,12 +82,17 @@ class Tenant(Base):
         flag_modified(self, "feature_flags")
 
     # Relationships
-    # NOTE ON LAZY LOADING STRATEGY:
+    # NOTE ON LAZY LOADING STRATEGY (P-M3):
     # - Large collections (users, audit_logs, etc.) keep default lazy="select" to
     #   avoid loading thousands of rows on every Tenant fetch.
-    # - Singleton/scalar associations (storage_settings, stripe_settings) use
-    #   lazy="selectin" because they are almost always accessed alongside the tenant
-    #   and the extra subquery cost is negligible (one additional tiny query).
+    # - ALL relationships use lazy="noload" — the scalar associations
+    #   (storage_settings, stripe_settings) previously used lazy="selectin",
+    #   which silently amplified every Tenant load into 3 queries (tenant +
+    #   settings + billing). No code reads these attributes off a Tenant
+    #   instance (services query StorageSettings/StripeSettings by tenant_id
+    #   directly), so noload is behavior-identical for every existing caller.
+    #   Eager-load explicitly (selectinload/async resolve) where a future
+    #   caller genuinely needs them.
     users: Mapped[list["User"]] = relationship(back_populates="tenant", init=False, lazy="noload")
     notifications: Mapped[list["Notification"]] = relationship(back_populates="tenant", init=False, lazy="noload")
     email_template_overrides: Mapped[list["EmailTemplateOverride"]] = relationship(
@@ -106,15 +108,14 @@ class Tenant(Base):
         back_populates="tenant", init=False, lazy="noload"
     )
     audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="tenant", init=False, lazy="noload")
-    # Scalar associations — use selectin to avoid N+1 when loading tenant context
     storage_settings: Mapped["StorageSettings | None"] = relationship(
-        back_populates="tenant", uselist=False, init=False, lazy="selectin"
+        back_populates="tenant", uselist=False, init=False, lazy="noload"
     )
     files: Mapped[list["File"]] = relationship(back_populates="tenant", init=False, lazy="noload")
     api_keys: Mapped[list["APIKey"]] = relationship(back_populates="tenant", init=False, lazy="noload")
     # Billing & AI relationships (Phase 3/5)
     stripe_settings: Mapped["StripeSettings | None"] = relationship(
-        back_populates="tenant", uselist=False, init=False, lazy="selectin"
+        back_populates="tenant", uselist=False, init=False, lazy="noload"
     )
     subscription_plans: Mapped[list["SubscriptionPlan"]] = relationship(
         back_populates="tenant", init=False, lazy="noload"
@@ -124,30 +125,12 @@ class Tenant(Base):
     ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(back_populates="tenant", init=False, lazy="noload")
 
 
-# Ensure all related models are imported so SQLAlchemy's mapper can resolve
-# forward-reference strings in relationship() declarations like relationship("StripeSettings").
-# All imports in the TYPE_CHECKING block above are type-hint-only; SQLAlchemy needs the
-# actual classes loaded at configure time. This block must be at module bottom to
-# avoid circular imports since these modules import from tenants.models.
-def _ensure_related_models_registered() -> None:
-    """Import all models referenced in Tenant relationships."""
-    import importlib
-
-    for module_path in [
-        "src.app.modules.ai.models",
-        "src.app.modules.api_keys.models",
-        "src.app.modules.audit_logs.models",
-        "src.app.modules.billing.models",
-        "src.app.modules.feature_flags.models",
-        "src.app.modules.storage.models",
-        "src.app.modules.notifications.models",
-        "src.app.modules.users.models",
-        "src.app.modules.webhooks.models",
-    ]:
-        try:
-            importlib.import_module(module_path)
-        except ImportError as e:
-            logger.warning("tenant_related_model_import_failed", module=module_path, error=str(e))
-
-
-_ensure_related_models_registered()
+# A-M6: registration note. This module deliberately does NOT force-import the
+# sibling model modules it references. All relationships above are string-based
+# forward references (TYPE_CHECKING imports + ``Mapped["..."]`` annotations)
+# resolved by SQLAlchemy against the shared ``Base`` registry at mapper-configure
+# time. The single point that imports every model — and therefore the one
+# entry point every mapper-consuming process must use — is
+# ``src/app/models/__init__.py`` (mirrored by core/setup.py and
+# core/worker/settings.py). Importing the full registry from here instead would
+# re-create the circular-import coupling this god model is being reduced from.

@@ -119,7 +119,9 @@ async def resolve_rate_limits(
         except (ValueError, TypeError):
             pass
 
-    # 2. DB fallback if db session provided and cache missed
+    # 2. DB fallback if db session provided and cache missed. H-9: on hit,
+    # write the full tier policy list back to the policy cache so subsequent
+    # requests resolve from L1/Redis instead of repeating this DB query.
     if (limit is None or period is None) and db is not None and tier_id is not None:
         try:
             from fastcrud import FastCRUD
@@ -129,9 +131,7 @@ async def resolve_rate_limits(
 
             crud: Any = FastCRUD(RateLimit)
             tier_id_val = int(tier_id)
-            rate_limit_rec = await crud.get(
-                db=db, tier_id=tier_id_val, path=path, schema_to_select=RateLimitRead
-            )
+            rate_limit_rec = await crud.get(db=db, tier_id=tier_id_val, path=path, schema_to_select=RateLimitRead)
             if rate_limit_rec:
                 limit = (
                     rate_limit_rec.get("limit")
@@ -143,6 +143,18 @@ async def resolve_rate_limits(
                     if isinstance(rate_limit_rec, dict)
                     else getattr(rate_limit_rec, "period", None)
                 )
+                # H-9 write-back: refresh this tier's whole policy list in
+                # Redis + L1 so the next request is a zero-DB resolution.
+                try:
+                    from src.app.core.security.rate_limit_cache import warm_policy_cache
+
+                    all_rows = await crud.get_multi(db=db, tier_id=tier_id_val, return_total_count=False)
+                    raw_policies = all_rows.get("data") or [] if isinstance(all_rows, dict) else []
+                    policies = [dict(r) if not isinstance(r, dict) else r for r in raw_policies]
+                    if policies:
+                        await warm_policy_cache({tier_id_val: policies})
+                except Exception as wb_err:
+                    logger.debug("policy cache write-back failed", error=str(wb_err))
         except Exception as e:
             logger.debug("DB rate-limit query fallback failed: %s", e)
 
@@ -236,15 +248,11 @@ async def evaluate_rate_policy(
     user_id, tier_id, tier_name, tenant_id = await resolve_rate_limit_identity(request, user)
 
     # 4. Limit resolution
-    limit, period = await resolve_rate_limits(
-        path, tier_id=tier_id, tier_name=tier_name, user_id=user_id, db=db
-    )
+    limit, period = await resolve_rate_limits(path, tier_id=tier_id, tier_name=tier_name, user_id=user_id, db=db)
 
     raw_ip = getattr(request.state, "client_ip", None) if request is not None else None
     anonymous_ip = (
-        raw_ip
-        if isinstance(raw_ip, str) and raw_ip
-        else (get_client_ip(request) if request is not None else "unknown")
+        raw_ip if isinstance(raw_ip, str) and raw_ip else (get_client_ip(request) if request is not None else "unknown")
     )
     key = build_rate_limit_key(path, user_id=user_id, tenant_id=tenant_id, anonymous_ip=anonymous_ip)
 

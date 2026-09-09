@@ -1,6 +1,20 @@
-"""Tiers module (absorbed into rate_limits, re-exported for backward compatibility)."""
+"""Tiers module (composed over rate_limits; re-exports for backward compatibility).
 
-from src.app.modules.rate_limits.models import Tier
+A-M2: the Tier model now lives here canonically. Q-M6: TierService
+composes RateLimitService (no inheritance). The rate-limits rule layer
+remains in ``modules/rate_limits``.
+
+Import-order note: ``rate_limits/models.py`` re-imports ``tiers/models``
+(the deprecated Tier re-export), so this package __init__ must NOT eagerly
+import ``tiers/service.py`` — the service reaches back into
+``rate_limits/models.py`` for RateLimit and would close a circular import
+when a caller imports rate_limits first. The service is therefore resolved
+lazily via __getattr__ (mirrors the storage module's lazy-service pattern).
+"""
+
+from typing import Any
+
+from src.app.modules.tiers.models import Tier
 from src.app.modules.tiers.schemas import Tier as TierSchema
 from src.app.modules.tiers.schemas import (
     TierBase,
@@ -11,7 +25,6 @@ from src.app.modules.tiers.schemas import (
     TierUpdate,
     TierUpdateInternal,
 )
-from src.app.modules.tiers.service import TierService, get_tier_service
 
 __all__ = [
     "Tier",
@@ -26,3 +39,16 @@ __all__ = [
     "TierUpdateInternal",
     "get_tier_service",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily resolve the service exports to keep model imports cycle-free."""
+    if name == "TierService":
+        from src.app.modules.tiers import service as _service
+
+        return _service.TierService
+    if name == "get_tier_service":
+        from src.app.modules.tiers import router as _router
+
+        return _router.get_tier_service
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
