@@ -48,20 +48,28 @@ jobs:
           pipx install uv
           cd src && uv sync --dev
           uv pip install import-linter
-      - name: Enforce layer contracts (core must not import modules)
+      - name: Enforce layer contract (core must not import modules/api/middleware)
+        # H-5: the committed .importlinter carries the contract with the 26
+        # pre-existing violations explicitly ignore_imports-ed. CI now FAILS
+        # on any NEW core->modules import — convention becomes a checked
+        # invariant. The ignore list shrinks as the composition-root refactor
+        # (app/events.py pattern) lands.
         working-directory: src
-        run: |
-          cat > .importlinter <<'EOF'
-          [importlinter]
-          root_packages = app
+        run: uv run python -c "from importlinter.cli import lint_imports; raise SystemExit(lint_imports(no_logo=True))"
 
-          [importlinter:contract:layers]
-          name = Core must not depend on modules
-          type = layers
-          layers =
-              app.modules
-              app.api
-              app.middleware
-              app.core
-          EOF
-          uv run lint-imports --config .importlinter
+  tracked-env-guard:
+    name: Guard against tracked .env files (C-1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the check sees every tracked path
+      - name: Fail if any .env file (except *.example) is tracked
+        run: |
+          tracked=$(git ls-files | grep -E '(^|/)\.env(\.|$)' | grep -v '\.env\.example$' || true)
+          if [ -n "$tracked" ]; then
+            echo "::error::Tracked .env files must never reach the repo (C-1: secrets leaked into history before). Untrack them and purge history with git filter-repo."
+            echo "$tracked"
+            exit 1
+          fi
+          echo "No tracked .env files."

@@ -156,7 +156,7 @@ For more control or development purposes, you can install everything manually.
    # Create database and user
    sudo -u postgres psql
    CREATE DATABASE myapp;
-   CREATE USER myuser WITH PASSWORD 'mypassword';
+CREATE USER myuser WITH PASSWORD '<your-unique-db-password>';  -- C-1: pick a unique value — leaked defaults are blocklisted
    GRANT ALL PRIVILEGES ON DATABASE myapp TO myuser;
    \q
    ```

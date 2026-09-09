@@ -54,7 +54,7 @@ Application Configuration (Runtime)
 Primary configuration through `.env` files:
 ```env
 POSTGRES_USER="myuser"
-POSTGRES_PASSWORD="mypassword"
+POSTGRES_PASSWORD="<your-unique-db-password>"  # C-1: pick a unique value — leaked defaults are blocklisted
 REDIS_CACHE_HOST="localhost"
 SECRET_KEY="your-secret-key"
 ```

@@ -164,21 +164,24 @@ uv run python -m src.scripts.create_module products --force
 
 ### Module Documentation
 
-All 17 active feature modules have dedicated AGENTS.md files:
+All 21 feature modules are documented (20 have dedicated AGENTS.md files; `dashboard` pending — see table):
 
 | Module | Location | Purpose |
 |--------|----------|---------|
-| API Keys | `src/app/modules/api_keys/AGENTS.md` | Programmatic access |
 | AI | `src/app/modules/ai/AGENTS.md` | AI integration |
+| API Keys | `src/app/modules/api_keys/AGENTS.md` | Programmatic access |
+| App Configuration | `src/app/modules/app_configuration/AGENTS.md` | Public app config endpoint |
 | Audit Logs | `src/app/modules/audit_logs/AGENTS.md` | Immutable logging |
 | Auth | `src/app/modules/auth/AGENTS.md` | Authentication & Identity (passwords, SSO, passkeys, magic link, MFA) |
 | Billing | `src/app/modules/billing/AGENTS.md` | Stripe billing |
+| Dashboard | *(AGENTS.md pending)* | Dashboard metrics |
 | Feature Flags | `src/app/modules/feature_flags/AGENTS.md` | Toggle management |
 | Health | `src/app/modules/health/AGENTS.md` | Health checks |
 | Notifications | `src/app/modules/notifications/AGENTS.md` | Email delivery |
 | Posts | `src/app/modules/posts/AGENTS.md` | Blog posts |
-| Rate Limits | `src/app/modules/rate_limits/AGENTS.md` | Rate limiting |
 | RBAC | `src/app/modules/rbac/AGENTS.md` | Permissions |
+| Rate Limits | `src/app/modules/rate_limits/AGENTS.md` | Rate limiting |
+| Security | `src/app/modules/security/AGENTS.md` | Passkey convenience routes |
 | Storage | `src/app/modules/storage/AGENTS.md` | Object storage & tenant configuration |
 | Tasks | `src/app/modules/tasks/AGENTS.md` | Background jobs |
 | Tenants | `src/app/modules/tenants/AGENTS.md` | Multi-tenancy |
@@ -186,6 +189,7 @@ All 17 active feature modules have dedicated AGENTS.md files:
 | User Preferences | `src/app/modules/user_preferences/AGENTS.md` | User settings |
 | Users | `src/app/modules/users/AGENTS.md` | User management |
 | Webhooks | `src/app/modules/webhooks/AGENTS.md` | Event delivery |
+
 ### Quick Find Commands
 
 - Find a module: `find src/app/modules -name "*.py" | head -20`
