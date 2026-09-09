@@ -15,9 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.utils.retry import with_retry
-from src.app.modules._base.exceptions import StripeError
+from src.app.shared.exceptions import StripeError
 
 logger = get_logger(__name__)
+_TRANSIENT_STRIPE_ERRORS: tuple[type[Exception], ...] = (
+    stripe.APIConnectionError,
+    stripe.RateLimitError,
+)
 
 
 class PaymentGateway(Protocol):
@@ -100,7 +104,12 @@ class StripeGateway:
         return api_key
 
     async def create_checkout_session(self, tenant_id: Any = None, **kwargs: Any) -> Any:
-        """Create a Stripe Checkout Session with retry resilience."""
+        """Create a Stripe Checkout Session.
+
+        Retries transient transport failures only (connection errors, rate
+        limits). Permanent failures (auth, invalid params, card errors)
+        surface immediately without backoff.
+        """
         api_key = await self._require_api_key(tenant_id, kwargs.get("api_key"))
         kwargs["api_key"] = api_key
         try:
@@ -108,7 +117,7 @@ class StripeGateway:
                 fn=lambda: asyncio.to_thread(lambda: stripe.checkout.Session.create(**kwargs)),
                 max_attempts=3,
                 delay_seconds=0.2,
-                exceptions=(stripe.StripeError,),
+                exceptions=_TRANSIENT_STRIPE_ERRORS,
             )
         except stripe.StripeError as e:
             logger.error("Stripe checkout error", error=str(e))
@@ -117,7 +126,7 @@ class StripeGateway:
     async def create_portal_session(
         self, customer_id: str, return_url: str, tenant_id: Any = None, **kwargs: Any
     ) -> Any:
-        """Create a Stripe Customer Portal Session with retry resilience."""
+        """Create a Stripe Customer Portal Session (retries transient failures only)."""
         api_key = await self._require_api_key(tenant_id, kwargs.get("api_key"))
         try:
             return await with_retry(
@@ -128,14 +137,14 @@ class StripeGateway:
                 ),
                 max_attempts=3,
                 delay_seconds=0.2,
-                exceptions=(stripe.StripeError,),
+                exceptions=_TRANSIENT_STRIPE_ERRORS,
             )
         except stripe.StripeError as e:
             logger.error("Stripe portal error", error=str(e))
             raise StripeError("Failed to initialize customer portal.", status_code=400) from e
 
     async def modify_subscription(self, subscription_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
-        """Modify a Stripe Subscription with retry resilience."""
+        """Modify a Stripe Subscription (retries transient failures only)."""
         api_key = await self._require_api_key(tenant_id, kwargs.pop("api_key", None))
         try:
             return await with_retry(
@@ -144,14 +153,14 @@ class StripeGateway:
                 ),
                 max_attempts=3,
                 delay_seconds=0.2,
-                exceptions=(stripe.StripeError,),
+                exceptions=_TRANSIENT_STRIPE_ERRORS,
             )
         except stripe.StripeError as e:
             logger.error("Stripe subscription modify error", error=str(e))
             raise StripeError(f"Failed to modify subscription in Stripe: {str(e)}") from e
 
     async def retrieve_subscription(self, subscription_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
-        """Retrieve a Stripe Subscription with retry resilience."""
+        """Retrieve a Stripe Subscription (retries transient failures only)."""
         api_key = await self._require_api_key(tenant_id, kwargs.pop("api_key", None))
         try:
             return await with_retry(
@@ -160,21 +169,21 @@ class StripeGateway:
                 ),
                 max_attempts=3,
                 delay_seconds=0.2,
-                exceptions=(stripe.StripeError,),
+                exceptions=_TRANSIENT_STRIPE_ERRORS,
             )
         except stripe.StripeError as e:
             logger.error("Stripe subscription retrieve error", error=str(e))
             raise StripeError(f"Failed to retrieve subscription from Stripe: {str(e)}") from e
 
     async def retrieve_invoice(self, invoice_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
-        """Retrieve a Stripe Invoice with retry resilience."""
+        """Retrieve a Stripe Invoice (retries transient failures only)."""
         api_key = await self._require_api_key(tenant_id, kwargs.pop("api_key", None))
         try:
             return await with_retry(
                 fn=lambda: asyncio.to_thread(lambda: stripe.Invoice.retrieve(invoice_id, api_key=api_key, **kwargs)),
                 max_attempts=3,
                 delay_seconds=0.2,
-                exceptions=(stripe.StripeError,),
+                exceptions=_TRANSIENT_STRIPE_ERRORS,
             )
         except stripe.StripeError as e:
             logger.error("Stripe invoice retrieve error", error=str(e))

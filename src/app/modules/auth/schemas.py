@@ -48,6 +48,9 @@ class LoginTokenResponse(BaseModel):
 
     access_token: str
     token_type: str = "bearer"
+    # NOTE: transport-only field — routers read it directly via attribute access.
+    # Never round-trip this model through model_dump() → re-validation: the
+    # excluded refresh_token would be silently dropped.
     refresh_token: str | None = Field(default=None, exclude=True)
 
 class LoginMFAResponse(BaseModel):

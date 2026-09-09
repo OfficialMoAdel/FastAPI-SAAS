@@ -138,7 +138,9 @@ class SMTPProvider(EmailProvider):
                     part.set_payload(attachment.content)
                     encoders.encode_base64(part)
                     safe_name = _sanitize_header(attachment.filename)
-                    part.add_header("Content-Disposition", f"attachment; filename={safe_name}")
+                    # Pass filename as a header param so the stdlib quotes /
+                    # RFC 2231-encodes special characters instead of splicing raw.
+                    part.add_header("Content-Disposition", "attachment", filename=safe_name)
                     msg.attach(part)
 
             # Send via async SMTP (non-blocking)

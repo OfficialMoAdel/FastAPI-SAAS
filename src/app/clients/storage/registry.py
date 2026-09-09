@@ -20,7 +20,12 @@ StorageFactory = Callable[[dict[str, Any]], StorageProvider]
 
 
 class StorageProviderRegistry:
-    """Registry mapping StorageProviderType to factory callables."""
+    """Registry mapping StorageProviderType to factory callables.
+
+    The factory map is intentionally process-global (provider wiring is
+    application configuration, not request state). ``unregister``/``reset``
+    exist so tests can isolate factory overrides without leaking between cases.
+    """
 
     _factories: dict[StorageProviderType, StorageFactory] = {}
 
@@ -28,6 +33,19 @@ class StorageProviderRegistry:
     def register(cls, provider_type: StorageProviderType, factory: StorageFactory) -> None:
         """Register a provider factory strategy."""
         cls._factories[provider_type] = factory
+
+    @classmethod
+    def unregister(cls, provider_type: StorageProviderType) -> None:
+        """Remove a provider factory (primarily for test isolation)."""
+        cls._factories.pop(provider_type, None)
+
+    @classmethod
+    def reset(cls) -> None:
+        """Restore the built-in provider factories (primarily for test isolation)."""
+        cls._factories.clear()
+        cls.register(StorageProviderType.S3, _s3_factory)
+        cls.register(StorageProviderType.AZURE, _azure_factory)
+        cls.register(StorageProviderType.LOCAL, _local_factory)
 
     @classmethod
     def create(cls, provider_type: StorageProviderType, credentials: dict[str, Any]) -> StorageProvider:
@@ -48,15 +66,24 @@ def _s3_factory(credentials: dict[str, Any]) -> StorageProvider:
 
 
 def _azure_factory(credentials: dict[str, Any]) -> StorageProvider:
+    try:
+        connection_string = credentials["connection_string"]
+        container_name = credentials["container_name"]
+    except KeyError as e:
+        raise ValueError(f"Azure storage credentials missing required key: {e}") from e
     return AzureBlobStorage(
-        connection_string=credentials["connection_string"],
-        container_name=credentials["container_name"],
+        connection_string=connection_string,
+        container_name=container_name,
     )
 
 
 def _local_factory(credentials: dict[str, Any]) -> StorageProvider:
+    try:
+        base_path = credentials["base_path"]
+    except KeyError as e:
+        raise ValueError(f"Local storage credentials missing required key: {e}") from e
     return LocalStorage(
-        base_path=credentials["base_path"],
+        base_path=base_path,
         base_url=credentials.get("base_url", "/files"),
     )
 

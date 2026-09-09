@@ -7,6 +7,8 @@ T079: HTTP 402 PaymentError response handling
 
 from __future__ import annotations
 
+from src.app.shared.exceptions import StripeError  # noqa: F401  (re-export; canonical home is shared)
+
 
 class PaymentRequiredError(Exception):
     """Raised when payment is required or payment has failed.
@@ -72,15 +74,6 @@ class WebhookNotConfiguredError(Exception):
     def __init__(self, message: str = "Webhook secret not configured"):
         self.message = message
         super().__init__(self.message)
-
-class StripeError(Exception):
-    """Raised when a Stripe API call fails."""
-
-    def __init__(self, message: str, status_code: int = 400):
-        self.message = message
-        self.status_code = status_code
-        super().__init__(self.message)
-
 
 __all__ = [
     "PaymentRequiredError",

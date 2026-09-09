@@ -140,6 +140,25 @@ class ServiceUnavailableError(AppException):
         super().__init__(self.message)
 
 
+class StripeError(AppException):
+    """Raised when a Stripe API call fails.
+
+    Lives in the zero-dependency shared leaf so the outbound clients layer
+    (``src/app/clients/``) can raise it without importing feature modules.
+
+    Attributes:
+        message: Human-readable error message.
+        status_code: HTTP status code to surface at the API boundary.
+        detail: Backward-compatibility attribute mirroring message.
+    """
+
+    def __init__(self, message: str, status_code: int = 400):
+        self.message = message
+        self.status_code = status_code
+        self.detail = message
+        super().__init__(self.message)
+
+
 __all__ = [
     "AppException",
     "DuplicateError",
@@ -147,6 +166,7 @@ __all__ = [
     "ModelNotFoundError",
     "RateLimitExceededError",
     "ServiceUnavailableError",
+    "StripeError",
     "UnauthorizedError",
     "ValidationError",
 ]

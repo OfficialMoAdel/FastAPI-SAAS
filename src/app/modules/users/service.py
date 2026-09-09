@@ -72,6 +72,7 @@ class UserService:
             from src.app.repositories.sqlalchemy.user import SqlAlchemyUserRepository
 
             self.repository = SqlAlchemyUserRepository(db, crud=self.crud)
+
     @staticmethod
     def _parse_user_id(username: str) -> int | None:
         """M-8: parse a user identifier that may be an integer ID or a username.
@@ -96,6 +97,7 @@ class UserService:
         if parsed_id is not None:
             return await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
         return await self.crud.get(db=self.db, username=username, is_deleted=False)
+
     async def list_users(
         self,
         *,
@@ -391,6 +393,7 @@ class UserService:
 
             return UserRead.model_validate(user).model_dump(mode="json")
         return None
+
     async def get_profile(
         self,
         identifier: str,
@@ -432,7 +435,13 @@ class UserService:
             user_id = getattr(current_user, "id", None)
             username = getattr(current_user, "username", None)
             if hasattr(current_user, "name") and hasattr(current_user, "profile_image_url"):
-                return cast(dict[str, Any], current_user)
+                # Attribute-bearing principal (ORM entity, API-key payload):
+                # serialize to a real dict so downstream `.get()` access is safe.
+                try:
+                    return UserRead.model_validate(current_user).model_dump(mode="json")
+                except Exception as e:
+                    logger.warning("Unserializable user principal in resolve_current_profile", error=str(e))
+                    return None
         try:
             if user_id is not None:
                 user = await self.get(int(user_id))
@@ -967,7 +976,7 @@ class UserService:
 
 
 def get_user_service(db: AsyncSession) -> UserService:
-    """Dependency injection factory for UserService (wired via composition root)."""
+    """Dependency injection factory for UserService."""
     from src.app.repositories.sqlalchemy.user import SqlAlchemyUserRepository
 
     return UserService(db, repository=SqlAlchemyUserRepository(db))

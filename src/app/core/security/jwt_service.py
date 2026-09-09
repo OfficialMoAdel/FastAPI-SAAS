@@ -444,7 +444,7 @@ async def blacklist_tokens(
 ) -> None:
     """Blacklist both access and refresh tokens."""
     tokens_for_cache: list[tuple[str, datetime]] = []
-
+    db_rows_staged = False
     tokens_and_payloads = [
         (access_token, access_payload),
         (refresh_token, refresh_payload),
@@ -484,6 +484,7 @@ async def blacklist_tokens(
                         tenant_id = UUID(tenant_id)
 
                     db.add(TokenBlacklist(token=token, expires_at=expires_at, tenant_id=tenant_id))
+                    db_rows_staged = True
 
                     if jti:
                         jti_key = f"jti:{jti}"
@@ -497,7 +498,7 @@ async def blacklist_tokens(
         except JWTError as e:
             _jwt_logger.warning("Skipping blacklist for invalid token", error=str(e))
 
-    if tokens_for_cache:
+    if db_rows_staged:
         try:
             async with db.begin_nested():
                 await db.flush()

@@ -72,8 +72,12 @@ def _get_isolated_redis_url(self):
 
 RedisCacheSettings.REDIS_CACHE_URL = property(_get_isolated_redis_url)
 
-# DO NOT import app globally - it causes state pollution in coverage runs
-# from src.app.main import app  # REMOVED - use get_test_app() fixture instead
+# Wire user-domain JWT security lookups for the test session.
+# Production wires these in the lifespan (core/setup.py); unit tests never
+# run lifespan, so register explicitly here instead of at module import time.
+from src.app.modules.users import register_users_security_lookups as _register_users_security_lookups
+
+_register_users_security_lookups()
 
 
 # SQLite type compilers for PostgreSQL types

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from src.app.core.exceptions.http_exceptions import TenantContextError
-from src.app.modules.billing.exceptions import StripeError
 from src.app.shared.exceptions import (
     AppException,
     DuplicateError,
@@ -11,6 +10,7 @@ from src.app.shared.exceptions import (
     ModelNotFoundError,
     RateLimitExceededError,
     ServiceUnavailableError,
+    StripeError,
     UnauthorizedError,
     ValidationError,
 )
