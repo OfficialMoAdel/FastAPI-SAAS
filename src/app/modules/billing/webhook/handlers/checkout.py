@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from src.app.modules.billing import webhook as _pkg
-from src.app.modules.billing.lifecycle import map_stripe_status
+from src.app.modules.billing.lifecycle import extract_period_timestamps, map_stripe_status
 from src.app.modules.billing.schemas import (
     UserSubscriptionCreateInternal,
 )
@@ -61,8 +61,11 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
             from src.app.modules.billing.gateway import get_payment_gateway
 
             stripe_sub = await get_payment_gateway(None).retrieve_subscription(stripe_subscription_id)
-            period_start = stripe_sub.get("current_period_start")
-            period_end = stripe_sub.get("current_period_end")
+            # P1-4 FIX: current_period_* moved from Subscription to
+            # SubscriptionItem in Stripe API 2025-03-31.basil (the pinned SDK
+            # sends 2025-12-15.clover, where the top-level fields are absent).
+            # Read from items.data[0] with top-level fallback for older versions.
+            period_start, period_end = extract_period_timestamps(stripe_sub)
             if period_start is None or period_end is None:
                 raise ValueError(f"Missing critical timestamps in Stripe subscription {stripe_subscription_id}")
 
@@ -142,13 +145,15 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                     )
 
                     # Build update dict using stripe event data
+                    # P1-4: items.data[0] first, top-level fallback (see extract_period_timestamps)
+                    upd_start, upd_end = extract_period_timestamps(stripe_sub)
                     update_data: dict[str, Any] = {
                         "status": map_stripe_status(stripe_sub.get("status", "")),
                         "current_period_start": datetime.fromtimestamp(
-                            stripe_sub.get("current_period_start") or int(datetime.now(UTC).timestamp()), UTC
+                            upd_start or int(datetime.now(UTC).timestamp()), UTC
                         ),
                         "current_period_end": datetime.fromtimestamp(
-                            stripe_sub.get("current_period_end") or int(datetime.now(UTC).timestamp()), UTC
+                            upd_end or int(datetime.now(UTC).timestamp()), UTC
                         ),
                         "cancel_at_period_end": stripe_sub.get("cancel_at_period_end", False),
                     }
@@ -190,13 +195,15 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                         raw_status = stripe_sub.get("status", "")
                         mapped_status = map_stripe_status(raw_status)
 
+                        # P1-4: items.data[0] first, top-level fallback (see extract_period_timestamps)
+                        race_start, race_end = extract_period_timestamps(stripe_sub)
                         race_update_data: dict[str, Any] = {
                             "status": mapped_status,
                             "current_period_start": datetime.fromtimestamp(
-                                stripe_sub.get("current_period_start") or int(datetime.now(UTC).timestamp()), UTC
+                                race_start or int(datetime.now(UTC).timestamp()), UTC
                             ),
                             "current_period_end": datetime.fromtimestamp(
-                                stripe_sub.get("current_period_end") or int(datetime.now(UTC).timestamp()), UTC
+                                race_end or int(datetime.now(UTC).timestamp()), UTC
                             ),
                             "cancel_at_period_end": stripe_sub.get("cancel_at_period_end", False),
                         }

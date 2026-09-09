@@ -6,7 +6,9 @@ Defines valid subscription states and transitions to ensure
 consistent state management across the application.
 """
 
+from collections.abc import Mapping
 from enum import Enum
+from typing import Any
 
 
 class SubscriptionStatus(str, Enum):
@@ -200,3 +202,38 @@ def get_active_states() -> set[str]:
         SubscriptionStatus.ACTIVE.value,
         SubscriptionStatus.TRIALING.value,
     }
+
+
+def extract_period_timestamps(subscription: Mapping[str, Any]) -> tuple[int | None, int | None]:
+    """Extract (current_period_start, current_period_end) from a Stripe subscription payload.
+
+    P1-4 FIX: Stripe API version 2025-03-31.basil (and later, incl. the pinned
+    2025-12-15.clover) moved ``current_period_start``/``current_period_end``
+    from the Subscription object to its first SubscriptionItem. Reading the
+    top-level fields only returns ``None`` under the pinned SDK, which made
+    every ``checkout.session.completed`` handler fail. Read from
+    ``items.data[0]`` first, falling back to the top-level fields for older
+    API versions.
+
+    Args:
+        subscription: Stripe Subscription payload (dict-like, e.g. from
+            ``retrieve_subscription`` or a webhook event object).
+
+    Returns:
+        Tuple of (period_start, period_end) unix timestamps; either may be
+        ``None`` when absent in both locations.
+    """
+    period_start = subscription.get("current_period_start")
+    period_end = subscription.get("current_period_end")
+
+    if period_start is None or period_end is None:
+        items = subscription.get("items")
+        if isinstance(items, Mapping):
+            data = items.get("data")
+            if isinstance(data, list) and data:
+                first_item = data[0]
+                if isinstance(first_item, Mapping):
+                    period_start = period_start if period_start is not None else first_item.get("current_period_start")
+                    period_end = period_end if period_end is not None else first_item.get("current_period_end")
+
+    return period_start, period_end

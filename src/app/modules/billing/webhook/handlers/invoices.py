@@ -99,7 +99,27 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
         # features) despite having paid, relying solely on a separate
         # customer.subscription.updated event that may be delayed or missed.
         # Only flip past_due -> active; never resurrect a canceled subscription.
-        if db_subscription.status == "past_due":
+        #
+        # P1-6 FIX: the bypass-context read above is a stale snapshot (lock
+        # released when that session exited). Re-verify and lock the row here
+        # — mirroring handle_invoice_payment_failed — so a concurrently
+        # canceled subscription cannot be resurrected by this update.
+        lock_result = await db.execute(
+            select(_pkg.crud_user_subscriptions.model)
+            .where(_pkg.crud_user_subscriptions.model.id == subscription_id)
+            .with_for_update()
+        )
+        db_subscription_locked = lock_result.scalar_one_or_none()
+
+        if not db_subscription_locked:
+            _pkg.logger.warning(
+                "Subscription deleted in race condition gap, skipping status update",
+                stripe_subscription_id=stripe_subscription_id,
+            )
+            await db.commit()  # persist the succeeded BillingRecord insert only
+            return
+
+        if db_subscription_locked.status == "past_due":
             await _pkg.crud_user_subscriptions.update(
                 db=db,
                 id=subscription_id,

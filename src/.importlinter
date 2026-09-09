@@ -1,0 +1,59 @@
+[importlinter]
+root_packages =
+    src
+
+[importlinter:contract:forbidden-core-to-modules]
+name = Core must not depend on modules (H-5)
+type = forbidden
+source_modules =
+    src.app.core
+forbidden_modules =
+    src.app.modules
+    src.app.api
+    src.app.middleware
+ignore_imports =
+    # H-5: pre-existing layering violations, documented in
+    # PLAN_FOR_ADVANCED_OPTIMIZATIONS_ROUND_0.md (H-5) — module-level edges
+    # across 12 core files. The contract runs with these ignored so CI is
+    # green today and CATCHES NEW violations; the composition-root refactor
+    # (app/events.py pattern) shrinks this list over time.
+    src.app.core.errors -> src.app.modules.ai.unified_errors
+    src.app.core.errors -> src.app.modules.auth.errors
+    src.app.core.errors -> src.app.modules.billing.exceptions
+    src.app.core.errors -> src.app.modules.storage.errors
+    src.app.core.rbac.dependencies -> src.app.api.deps
+    src.app.core.rbac.dependencies -> src.app.modules.rbac.models
+    src.app.core.rbac.dependencies -> src.app.modules.tenants.models
+    src.app.core.security.rate_policy -> src.app.modules.rate_limits.models
+    src.app.core.security.rate_policy -> src.app.modules.rate_limits.schemas
+    src.app.core.cache.warmer -> src.app.modules.rate_limits.models
+    src.app.core.cache.warmer -> src.app.modules.tenants.models
+    src.app.core.cache.warmer -> src.app.modules.feature_flags.service
+    src.app.core.setup -> src.app.api.deps
+    src.app.core.setup -> src.app.modules.ai.factory
+    src.app.core.setup -> src.app.modules.auth.http_client
+    src.app.core.setup -> src.app.modules.users
+    src.app.core.setup -> src.app.modules.webhooks.http_client
+    src.app.core.tenancy.cache -> src.app.middleware.tenant
+    src.app.core.tenancy.context -> src.app.modules.tenants.models
+    src.app.core.worker.functions -> src.app.modules.audit_logs.service
+    src.app.core.worker.functions -> src.app.modules.billing.webhook.idempotency
+    src.app.core.worker.functions -> src.app.modules.webhooks.service
+    src.app.core.worker.rls_context -> src.app.modules.audit_logs.trail
+    src.app.core.worker.settings -> src.app.modules.auth.tasks
+    src.app.core.worker.settings -> src.app.modules.notifications.service
+    src.app.core.worker.settings -> src.app.modules.webhooks.delivery
+    # Composition-root indirection (plan §6: app/events.py IS the pattern):
+    # the bus handler-registry and the model-registration file aggregate
+    # every module by design. These two edges are the registration seams,
+    # not layering violations.
+    src.app.core.events.bus -> src.app.events
+    src.app.core.setup -> src.app.models
+    # A-M6 composition seam (mirrors the setup->models edge above): the ARQ
+    # worker registers every model itself because jobs query tenant-scoped
+    # tables before any web request populates the mapper registry.
+    src.app.core.worker.settings -> src.app.models
+    # A-M3 composition seam: the worker registry aggregates per-module
+    # ARQ_FUNCTIONS/ARQ_CRONJOBS by walking the modules package (same
+    # aggregator role as app/events.py and src.app.models above).
+    src.app.core.worker.settings -> src.app.modules

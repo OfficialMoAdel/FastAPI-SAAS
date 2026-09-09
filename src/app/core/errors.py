@@ -14,6 +14,7 @@ Handlers are registered per domain via ``register_*_handlers`` helpers;
 ``setup_exception_handlers`` is the thin composer that wires them all.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import FastAPI, Request, status
@@ -58,6 +59,11 @@ class ErrorCode:
     # Server errors
     INTERNAL_ERROR = "INTERNAL_ERROR"
     SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE"
+    # Q-M5: 501 (not implemented) and 502 (bad gateway) previously had no
+    # dedicated codes — 501 responses were mislabeled SERVICE_UNAVAILABLE
+    # and every 502 was mislabeled STORAGE_BACKEND_ERROR.
+    NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
+    BAD_GATEWAY = "BAD_GATEWAY"
 
     # Tenant errors
     TENANT_NOT_FOUND = "TENANT_NOT_FOUND"
@@ -75,7 +81,7 @@ def create_error_response(
     status_code: int = 400,
     details: dict | None = None,
     request_id: str | None = None,
-    headers: dict[str, str] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     """Create a standardized error response.
 
@@ -137,6 +143,10 @@ def _register_framework_handlers(app: FastAPI) -> None:
             message=str(exc.detail) if exc.detail else "An error occurred",
             status_code=exc.status_code,
             request_id=request_id,
+            # P1-9 FIX: preserve exc.headers — 401s must carry
+            # WWW-Authenticate: Bearer (RFC 6750), and SSO error paths rely on
+            # Set-Cookie headers to clear poisoned session cookies.
+            headers=exc.headers,
         )
 
     @app.exception_handler(CacheException)
@@ -503,8 +513,10 @@ def _register_billing_handlers(app: FastAPI) -> None:
         """Handle WebhookNotConfiguredError from billing module."""
         request_id = getattr(request.state, "request_id", None)
         logger.error("Webhook secret not configured", error=str(exc), request_id=request_id, path=request.url.path)
+        # Q-M5: 501 Not Implemented must not carry SERVICE_UNAVAILABLE —
+        # that code is reserved for 503 responses.
         return create_error_response(
-            code=ErrorCode.SERVICE_UNAVAILABLE,
+            code=ErrorCode.NOT_IMPLEMENTED,
             message=exc.message,
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             request_id=request_id,
@@ -653,7 +665,15 @@ def setup_exception_handlers(app: FastAPI) -> None:
 
 
 def _status_to_error_code(status_code: int) -> str:
-    """Map HTTP status code to error code."""
+    """Map HTTP status code to error code.
+
+    Q-M5: 501 now maps to NOT_IMPLEMENTED (previously 501 responses had no
+    mapping and fell through to INTERNAL_ERROR, and the one explicit 501
+    handler mislabeled itself SERVICE_UNAVAILABLE); 502 maps to the generic
+    BAD_GATEWAY (previously every 502 was mislabeled STORAGE_BACKEND_ERROR,
+    which describes exactly one storage handler, not arbitrary gateway
+    failures).
+    """
     mapping = {
         400: ErrorCode.INVALID_INPUT,
         401: ErrorCode.UNAUTHORIZED,
@@ -665,7 +685,8 @@ def _status_to_error_code(status_code: int) -> str:
         422: ErrorCode.VALIDATION_ERROR,
         429: ErrorCode.RATE_LIMITED,
         500: ErrorCode.INTERNAL_ERROR,
-        502: ErrorCode.STORAGE_BACKEND_ERROR,
+        501: ErrorCode.NOT_IMPLEMENTED,
+        502: ErrorCode.BAD_GATEWAY,
         503: ErrorCode.SERVICE_UNAVAILABLE,
         507: ErrorCode.STORAGE_QUOTA_EXCEEDED,
     }

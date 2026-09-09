@@ -8,6 +8,7 @@ from src.app.modules.billing.webhook import (
     _try_acquire_event_lock,
     handle_checkout_session_completed,
     handle_invoice_payment_succeeded,
+    handle_subscription_updated,
     handle_webhook_event,
     verify_webhook_signature,
 )
@@ -348,3 +349,221 @@ async def test_handle_webhook_event_error_releases_lock_missing_coverage(mock_re
 
             # Verify lock was released on error
             mock_redis.delete.assert_called_once()
+
+
+# ============================================================================
+# P0-1 / P1-6 REGRESSION TESTS — tenant-context + re-lock patterns
+# ============================================================================
+
+
+def _make_subscription_updated_event() -> dict:
+    """customer.subscription.updated event with items.data[0] period fields
+    (Stripe API 2025-03-31.basil+ moved current_period_* to SubscriptionItem)."""
+    return {
+        "id": "evt_sub_updated",
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": {
+                "id": "sub_123",
+                "status": "active",
+                "current_period_start": 1600000000,
+                "current_period_end": 1602592000,
+                "cancel_at_period_end": False,
+                "items": {"data": [{"current_period_start": 1600000000, "current_period_end": 1602592000}]},
+            }
+        },
+    }
+
+
+def _make_invoice_event() -> dict:
+    return {
+        "id": "evt_invoice_paid",
+        "type": "invoice.payment_succeeded",
+        "data": {
+            "object": {
+                "id": "in_123",
+                "subscription": "sub_123",
+                "payment_intent": "pi_123",
+                "amount_paid": 1000,
+                "currency": "usd",
+            }
+        },
+    }
+
+
+def _make_mock_sub(tenant_id=None):
+    """Mock subscription row with realistic attrs."""
+    mock_sub = MagicMock()
+    mock_sub.tenant_id = tenant_id if tenant_id is not None else uuid4()
+    mock_sub.user_id = 1
+    mock_sub.id = 1
+    mock_sub.stripe_subscription_id = "sub_123"
+    return mock_sub
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.job_bypass_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+async def test_subscription_updated_runs_crud_on_tenant_session(
+    mock_crud_subs, mock_bypass_ctx, mock_tenant_ctx
+):  # noqa: E501
+    """P0-1 regression: tenant-scoped CRUD must run on the job_tenant_context
+    session, NOT the bypass session.
+
+    The webhook route is tenant-exempt (no X-Tenant-ID from Stripe), so the
+    bypass session has no tenant ContextVar — running TenantAwareCRUD on it
+    raised TenantContextError on every event and the sync never applied.
+    """
+    bypass_db = AsyncMock()
+    tenant_db = AsyncMock()
+    mock_bypass_ctx.return_value = AsyncContextManagerMock(bypass_db)
+    mock_tenant_ctx.return_value = AsyncContextManagerMock(tenant_db)
+    mock_crud_subs.model = UserSubscription
+
+    mock_sub = _make_mock_sub()
+    bypass_result = MagicMock()
+    bypass_result.scalar_one_or_none.return_value = mock_sub
+    bypass_db.execute = AsyncMock(return_value=bypass_result)
+
+    # Tenant-context re-lock returns the same row.
+    lock_result = MagicMock()
+    lock_result.scalar_one_or_none.return_value = mock_sub
+    tenant_db.execute = AsyncMock(return_value=lock_result)
+
+    mock_crud_subs.update = AsyncMock()
+
+    await handle_subscription_updated(_make_subscription_updated_event())
+
+    # The CRUD update must use the tenant-context session, not the bypass one.
+    mock_crud_subs.update.assert_awaited_once()
+    assert mock_crud_subs.update.call_args[1]["db"] is tenant_db
+    # Both sessions performed their own row lookups.
+    bypass_db.execute.assert_awaited_once()
+    tenant_db.execute.assert_awaited_once()
+    # The tenant context must be entered with the row's tenant_id.
+    mock_tenant_ctx.assert_called_once_with(mock_sub.tenant_id)
+    tenant_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.job_bypass_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+async def test_subscription_updated_race_gap_skips_update(
+    mock_crud_subs, mock_bypass_ctx, mock_tenant_ctx
+):  # noqa: E501
+    """P0-1 companion: if the row vanishes between bypass lookup and tenant
+    re-lock (race gap), the handler must skip the update and not crash."""
+    bypass_db = AsyncMock()
+    tenant_db = AsyncMock()
+    mock_bypass_ctx.return_value = AsyncContextManagerMock(bypass_db)
+    mock_tenant_ctx.return_value = AsyncContextManagerMock(tenant_db)
+    mock_crud_subs.model = UserSubscription
+
+    mock_sub = _make_mock_sub()
+    bypass_result = MagicMock()
+    bypass_result.scalar_one_or_none.return_value = mock_sub
+    bypass_db.execute = AsyncMock(return_value=bypass_result)
+
+    # Tenant-context re-lock finds nothing (deleted in the race gap).
+    lock_result = MagicMock()
+    lock_result.scalar_one_or_none.return_value = None
+    tenant_db.execute = AsyncMock(return_value=lock_result)
+
+    mock_crud_subs.update = AsyncMock()
+
+    await handle_subscription_updated(_make_subscription_updated_event())
+
+    mock_crud_subs.update.assert_not_awaited()
+    tenant_db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.job_bypass_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+@patch("src.app.modules.billing.webhook.crud_billing_records")
+async def test_invoice_payment_succeeded_no_resurrection_of_canceled(
+    mock_crud_billing, mock_crud_subs, mock_bypass_ctx, mock_tenant_ctx
+):  # noqa: E501
+    """P1-6 regression: a concurrently canceled subscription must NOT be
+    resurrected to active by invoice.payment_succeeded.
+
+    Race scenario: the bypass-context snapshot read shows past_due (lock
+    released when that session exited), then customer.subscription.deleted
+    cancels the row, then this handler re-locks and must see canceled —
+    the blind past_due→active update is forbidden.
+    """
+    bypass_db = AsyncMock()
+    tenant_db = AsyncMock()
+    mock_bypass_ctx.return_value = AsyncContextManagerMock(bypass_db)
+    mock_tenant_ctx.return_value = AsyncContextManagerMock(tenant_db)
+    mock_crud_subs.model = UserSubscription
+
+    # Bypass snapshot: stale past_due read.
+    stale_sub = _make_mock_sub()
+    stale_sub.status = "past_due"
+    bypass_result = MagicMock()
+    bypass_result.scalar_one_or_none.return_value = stale_sub
+    bypass_db.execute = AsyncMock(return_value=bypass_result)
+
+    # Tenant-context re-lock: fresh canceled status (concurrent deletion won).
+    locked_sub = _make_mock_sub()
+    locked_sub.status = "canceled"
+    lock_result = MagicMock()
+    lock_result.scalar_one_or_none.return_value = locked_sub
+    tenant_db.execute = AsyncMock(return_value=lock_result)
+
+    mock_crud_subs.update = AsyncMock()
+    mock_crud_billing.create = AsyncMock()
+    mock_crud_billing.exists = AsyncMock(return_value=False)
+
+    await handle_invoice_payment_succeeded(_make_invoice_event())
+
+    # Billing record is still created (payment happened)...
+    mock_crud_billing.create.assert_awaited_once()
+    # ...but the subscription must NOT be flipped back to active.
+    mock_crud_subs.update.assert_not_awaited()
+    tenant_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.job_bypass_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+@patch("src.app.modules.billing.webhook.crud_billing_records")
+async def test_invoice_payment_succeeded_restores_past_due(
+    mock_crud_billing, mock_crud_subs, mock_bypass_ctx, mock_tenant_ctx
+):  # noqa: E501
+    """P1-6 companion: a genuinely past_due subscription (confirmed under the
+    re-lock) must be restored to active after successful payment."""
+    bypass_db = AsyncMock()
+    tenant_db = AsyncMock()
+    mock_bypass_ctx.return_value = AsyncContextManagerMock(bypass_db)
+    mock_tenant_ctx.return_value = AsyncContextManagerMock(tenant_db)
+    mock_crud_subs.model = UserSubscription
+
+    past_due_sub = _make_mock_sub()
+    past_due_sub.status = "past_due"
+    bypass_result = MagicMock()
+    bypass_result.scalar_one_or_none.return_value = past_due_sub
+    bypass_db.execute = AsyncMock(return_value=bypass_result)
+
+    locked_sub = _make_mock_sub()
+    locked_sub.status = "past_due"
+    lock_result = MagicMock()
+    lock_result.scalar_one_or_none.return_value = locked_sub
+    tenant_db.execute = AsyncMock(return_value=lock_result)
+
+    mock_crud_subs.update = AsyncMock()
+    mock_crud_billing.create = AsyncMock()
+    mock_crud_billing.exists = AsyncMock(return_value=False)
+
+    await handle_invoice_payment_succeeded(_make_invoice_event())
+
+    mock_crud_billing.create.assert_awaited_once()
+    mock_crud_subs.update.assert_awaited_once()
+    assert mock_crud_subs.update.call_args[1]["db"] is tenant_db
+    assert mock_crud_subs.update.call_args[1]["object"] == {"status": "active"}
+    tenant_db.commit.assert_awaited_once()

@@ -27,6 +27,8 @@ from src.app.modules.user_preferences.crud import crud_user_preferences
 from src.app.modules.user_preferences.models import DEFAULT_PREFERENCES
 from src.app.modules.user_preferences.schemas import UserPreferencesUpdate
 from src.app.modules.users import crud_users
+from src.app.modules.users.cache import UserCacheInvalidator
+from src.app.modules.users.session_invalidation import InvalidationReason
 
 logger = get_logger(__name__)
 
@@ -261,6 +263,15 @@ class PreferencesService:
         # Update user.profile_image_url
         await crud_users.update(db=db, object={"profile_image_url": image_url}, id=user_id)
 
+        # Invalidate the profile/auth caches — profile_image_url is embedded
+        # in both (user:profile:* and user:auth:*); without this the old URL
+        # is served for up to USER_CACHE_TTL / AUTH_INFO_CACHE_TTL.
+        await UserCacheInvalidator.invalidate_user_cache(
+            user,
+            bump_token_version=False,
+            reason=InvalidationReason.PROFILE_EDIT,
+        )
+
         return {"image_url": image_url, "message": "Profile image uploaded successfully"}
 
     async def delete_profile_image(
@@ -328,6 +339,13 @@ class PreferencesService:
             db=db,
             object={"profile_image_url": None},
             id=user_id,
+        )
+
+        # Invalidate the profile/auth caches (same rationale as upload path).
+        await UserCacheInvalidator.invalidate_user_cache(
+            user,
+            bump_token_version=False,
+            reason=InvalidationReason.PROFILE_EDIT,
         )
 
         return None

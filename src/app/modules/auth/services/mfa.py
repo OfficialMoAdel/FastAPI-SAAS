@@ -56,6 +56,31 @@ MFA_ACTION_BACKUP_CODE_USED = "mfa.backup_code.used"
 MFA_ACTION_BACKUP_CODES_REGENERATED = "mfa.backup_codes.regenerated"
 
 
+def _totp_qr_data_uri(provisioning_uri: str) -> str:
+    """Render a TOTP provisioning URI as a base64 PNG data URI (S-M5).
+
+    The QR PNG lets authenticator apps onboard by scanning; callers that
+    prefer the raw ``otpauth://`` URI (manual entry) use ``otpauth_url``.
+    Falls back to "" (the pre-S-M5 placeholder contract) if qrcode isn't
+    installed — MFA setup must never 500 on a missing image library.
+    """
+    import base64
+    import io
+
+    try:
+        import qrcode
+    except ImportError:
+        from src.app.core.logger import get_logger
+
+        get_logger(__name__).error("qrcode package missing; returning empty QR placeholder")
+        return ""
+
+    img = qrcode.make(provisioning_uri)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
 class MFAService:
     """Service for multi-factor authentication operations."""
 
@@ -99,7 +124,15 @@ class MFAService:
                 priority=EventPriority.NORMAL,
             )
         except Exception as e:
-            logger.debug("Audit logging failed (non-critical): %s", e)
+            # Q-M3: audit gaps for MFA setup are security-relevant (the
+            # security trail loses the "who initiated MFA" event) — warn
+            # with identifiers instead of hiding at debug.
+            logger.warning(
+                "mfa_setup_audit_log_failed",
+                user_id=user_id,
+                action=MFA_ACTION_SETUP,
+                error=str(e),
+            )
         # Store secret temporarily in redis (Expires in 10 minutes)
         setup_token = str(uuid.uuid4())
         client = get_redis()
@@ -112,12 +145,14 @@ class MFAService:
         else:
             raise ServiceUnavailableError("MFA setup is currently unavailable.")
 
-        # Note: In production, generate actual QR code image
-        # For now, return the provisioning URI
+        # S-M5: render the provisioning URI as a real scannable QR PNG
+        # (qrcode[pil] is a first-class dependency — pyproject line 56).
+        # Returned as a data URI so any client can inline it; consumers
+        # that only need the raw otpauth:// URI keep using otpauth_url.
         return {
             "setup_token": setup_token,
             "otpauth_url": provisioning_uri,
-            "qr_code_base64": "",  # Placeholder - would be generated
+            "qr_code_base64": _totp_qr_data_uri(provisioning_uri),
         }
 
     async def enable_mfa(
@@ -228,9 +263,12 @@ class MFAService:
         client = get_redis()
         if client is None:
             # SECURITY FIX: Fail closed during infrastructure disruptions
+            # P1-3 FIX: read MFA_LOCKOUT_FAIL_CLOSED (its intended knob) instead
+            # of AUDIT_LOG_FAILURE_MODE — a logging-availability toggle must not
+            # silently weaken TOTP brute-force protection.
             from src.app.core.config import settings
 
-            if settings.auth.AUDIT_LOG_FAILURE_MODE == "fail_closed":
+            if settings.auth.MFA_LOCKOUT_FAIL_CLOSED:
                 logger.error("Redis unavailable - MFA lockout failing closed | user_id=%s", user_id)
                 raise UnauthorizedError("Authentication temporarily unavailable. Please try again later.")
             logger.warning("Redis unavailable - MFA lockout disabled (fail open) | user_id=%s", user_id)
@@ -251,11 +289,13 @@ class MFAService:
         except Exception as e:
             from src.app.core.config import settings
 
-            if settings.auth.AUDIT_LOG_FAILURE_MODE == "fail_closed":
-                logger.error("MFA lockout check failed - failing closed", user_id=user_id, error=str(e))
-                raise UnauthorizedError("Authentication temporarily unavailable.")
-            logger.error("MFA lockout check failed", user_id=user_id, error=str(e))
-            return  # Fail open
+            # P1-3 FIX: read MFA_LOCKOUT_FAIL_CLOSED (its intended knob) instead
+            # of AUDIT_LOG_FAILURE_MODE — see the Redis-unavailable branch above.
+            if not settings.auth.MFA_LOCKOUT_FAIL_CLOSED:
+                logger.error("MFA lockout check failed", user_id=user_id, error=str(e))
+                return  # Fail open
+            logger.error("MFA lockout check failed - failing closed", user_id=user_id, error=str(e))
+            raise UnauthorizedError("Authentication temporarily unavailable.")
 
         if result == -1:
             logger.warning("mfa_lockout_enforced", user_id=user_id)

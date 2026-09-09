@@ -15,7 +15,6 @@ class ArqSettings(BaseSettings):
     # K10 FIX: arq fails every job when max_tries=0 (job_try starts at 1 > 0),
     # so 0 is not a legal value.
     ARQ_MAX_TRIES: int = Field(default=3, ge=1, le=10, description="Default max job tries (>=1)")
-    ARQ_QUEUE_MAX_SIZE: int = Field(default=10000, ge=100, le=100000, description="Max queue size per priority")
 
     @field_validator("ARQ_MAX_JOBS", mode="after")
     @classmethod

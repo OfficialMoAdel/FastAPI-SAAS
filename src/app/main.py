@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
+from crudadmin import CRUDAdmin
 from fastapi import FastAPI
 from fastapi.responses import ORJSONResponse
 from redis.exceptions import RedisError  # P1-4
@@ -21,6 +22,7 @@ from src.app.core.logger import get_logger
 from src.app.core.setup import create_application, lifespan_factory
 from src.app.middleware.attack_detection import AttackDetectionMiddleware
 from src.app.middleware.body_limit import RequestBodyLimitMiddleware
+from src.app.middleware.gzip_filter import GZipFilterMiddleware
 from src.app.middleware.ip_filter import IPFilterMiddleware
 from src.app.middleware.query_profiler import QueryProfilerMiddleware
 from src.app.middleware.rate_limit import RateLimitMiddleware
@@ -29,13 +31,13 @@ from src.app.middleware.security_headers import SecurityHeadersMiddleware
 from src.app.middleware.tenant import TenantMiddleware
 
 # admin interface initialized inside lifespan to eliminate import-time side effects
-admin: Any = None
+admin: "CRUDAdmin | None" = None
 logger = get_logger(__name__)
 
 
 async def _warm_token_blacklist_cache() -> None:
     """Warm the token blacklist Redis cache from database on startup."""
-    from redis.exceptions import RedisError
+    # RedisError imported at module top (M-3: duplicate import removed).
 
     # P1-4: narrow excepts to actual infra failure types so a bug in the
     # warmer surfaces immediately. The blacklist is auth-critical, so a
@@ -50,9 +52,25 @@ async def _warm_token_blacklist_cache() -> None:
     try:
         async with async_session_maker() as db:
             tokens = await crud_token_blacklist.get_active_tokens(db)
-            if tokens:
-                count = await warm_cache_from_db(tokens)
-                logger.info("Token blacklist cache warmed", count=count)
+            # P-M9: cap the warmup set — loading every active blacklisted
+            # token made boot cost O(total sessions). Keep the N
+            # longest-lived entries (they stay in the cache longest, so the
+            # warm-up value per slot is highest); the rest fall back to the
+            # on-demand DB check on first lookup. TOKEN_BLACKLIST_WARMUP_LIMIT
+            # is env-tunable (APP_TOKEN_BLACKLIST_WARMUP_LIMIT); 0 disables
+            # warmup entirely.
+            limit = settings.app.TOKEN_BLACKLIST_WARMUP_LIMIT
+            if limit == 0:
+                logger.info("Token blacklist warmup disabled by TOKEN_BLACKLIST_WARMUP_LIMIT=0")
+            else:
+                capped = tokens if len(tokens) <= limit else sorted(tokens, key=lambda t: t[1], reverse=True)[:limit]
+                if capped:
+                    count = await warm_cache_from_db(capped)
+                    logger.info(
+                        "Token blacklist cache warmed",
+                        count=count,
+                        capped=len(tokens) - len(capped) if len(tokens) > len(capped) else 0,
+                    )
     except (RedisError, SQLAlchemyError) as e:
         logger.error("Failed to warm token blacklist cache", error=str(e))
         if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
@@ -150,9 +168,14 @@ async def _init_rate_limiting_and_security(redis_client: Any) -> None:
 
     from src.app.core.security.auto_ban import _start_ban_l1_invalidation_listener
     from src.app.core.security.rate_limit_cache import start_policy_invalidation_listener
+    from src.app.core.tenancy.cache import start_l1_invalidation_listener
 
     _start_ban_l1_invalidation_listener()
     start_policy_invalidation_listener()
+    # T9: without this listener, tenant L1 invalidation publishes into the
+    # void and other workers serve a suspended tenant as active for up to
+    # the L1 TTL (60s).
+    start_l1_invalidation_listener()
 
 
 async def _load_security_runtime_config() -> None:
@@ -303,9 +326,6 @@ app = create_application(
 # - BodyLimit: Reject oversized requests early
 # - IPFilter: Block unwanted IPs early, sets ip_whitelisted state for RateLimit
 # - GZip: Added last = outermost (compresses ALL responses including 4xx/5xx errors)
-
-from src.app.middleware.gzip_filter import GZipFilterMiddleware
-
 app.add_middleware(RequestIDMiddleware)  # Innermost - must be first for accurate tracing
 # R4 FIX: AttackDetection is now registered BEFORE RateLimitMiddleware, so in
 # LIFO execution order it runs AFTER rate limiting. Previously the expensive

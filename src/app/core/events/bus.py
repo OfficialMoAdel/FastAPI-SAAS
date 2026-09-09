@@ -12,6 +12,8 @@ from src.app.core import events as _pkg
 from src.app.core.events.priority import EventPriority
 
 _UNSET = object()
+
+
 class EventBus:
     """Central event bus for decoupled module communication.
 
@@ -25,8 +27,10 @@ class EventBus:
 
     # Maximum retry attempts before moving to DLQ
     MAX_RETRIES = 3
-    # Retry delays in seconds: [60, 300, 900] = 1min, 5min, 15min
-    RETRY_DELAYS = [60, 300, 900]
+    # M-9: retry backoff in seconds — configurable via EVENT_BUS_RETRY_DELAYS
+    # (settings.events). Resolved per-instance in __init__ (workers may run
+    # with different env than web). Class attr remains as documented default.
+    RETRY_DELAYS: list[int] = [60, 300, 900]
     # Redis key for DLQ list
     DLQ_REDIS_KEY = "event_bus:dlq"
     # Redis key prefix for event sequence counters (per event type)
@@ -38,6 +42,11 @@ class EventBus:
         self._arq_queue: ArqRedis | None = None
         self._redis_client: Any = _UNSET
         self._registration_complete = False
+        # M-9: pull the backoff schedule from settings (default [60,300,900]).
+        # Flat access matches every other EVENT_BUS_* read here; tests patch
+        # _pkg.settings with a MagicMock, so fall back to the class default
+        # when the attribute is missing.
+        self.RETRY_DELAYS = list(getattr(_pkg.settings, "EVENT_BUS_RETRY_DELAYS", None) or type(self).RETRY_DELAYS)
         # P3-2: Semaphore to bound concurrent sync execution
         self._concurrency_semaphore = asyncio.Semaphore(_pkg.settings.EVENT_BUS_CONCURRENCY)
 
@@ -214,8 +223,58 @@ class EventBus:
             return True
 
         # Key was just set -> new event
-        _pkg.record_event_idempotency(is_duplicate=False)
         return False
+
+    async def _peek_idempotency(self, event_id: str) -> bool:
+        """H-6: read-only duplicate check — does NOT set the key.
+
+        The pre-enqueue check must not claim the event: if the process dies
+        before the enqueue, a re-publish must be allowed to retry. The SETNX
+        (claim) happens in ``_mark_idempotent`` only after success.
+        """
+        client = self.redis_client
+        if client is None:
+            return False
+        try:
+            is_set = await client.exists(f"{self.IDEMPOTENCY_KEY_PREFIX}{event_id}")
+            return bool(is_set)
+        except Exception as e:
+            # Fail-open on read errors: treat as not-duplicate so the
+            # publish path proceeds (same availability posture as the old
+            # Lua fallback).
+            _pkg.logger.warning("idempotency_peek_failed_fail_open", error=str(e), event_id=event_id)
+            return False
+
+    async def _mark_idempotent(self, event_id: str) -> None:
+        """H-6: claim the event id AFTER successful publish/enqueue.
+
+        Identical claim semantics to the old ``_check_idempotency`` (SETNX +
+        TTL, Lua or fallback), but timed so a crash between check and
+        enqueue cannot permanently drop a re-published event.
+        """
+        client = self.redis_client
+        if client is None:
+            return
+        idempotency_key = f"{self.IDEMPOTENCY_KEY_PREFIX}{event_id}"
+        try:
+            if _pkg.settings.EVENT_BUS_USE_LUA_IDEMPOTENCY:
+                try:
+                    lua_manager = _pkg.get_lua_manager()
+                    await lua_manager.execute(
+                        client,
+                        "idempotency_check",
+                        keys=[idempotency_key],
+                        args=[str(self.IDEMPOTENCY_TTL_SECONDS), "1"],
+                    )
+                    return
+                except Exception as e:
+                    _pkg.logger.warning("Lua idempotency mark failed, using fallback", error=str(e), event_id=event_id)
+            await client.set(idempotency_key, "1", nx=True, ex=self.IDEMPOTENCY_TTL_SECONDS)
+        except Exception as e:
+            # Claim failure is not fatal: worst case a re-publish runs the
+            # handlers twice — the at-least-once tradeoff documented for
+            # event delivery. Log for observability.
+            _pkg.logger.warning("idempotency_mark_failed", error=str(e), event_id=event_id)
 
     async def publish(
         self,
@@ -245,9 +304,15 @@ class EventBus:
             "event_bus_publish",
             attributes={"event_name": event_name, "priority": priority.value, "event_id": event_id or "none"},
         ):
-            # Check for duplicate event if event_id provided
+            # H-6: idempotency SETNX moved AFTER successful enqueue. The old
+            # order (SETNX → enqueue) permanently dropped re-published events
+            # when the process crashed between the two: the key was already
+            # set, so every retry was treated as a duplicate and never
+            # re-enqueued. Checking duplicates read-only first, then marking
+            # post-enqueue, preserves exactly-once *handling* semantics while
+            # making crash recovery possible (the re-publish wins).
             if event_id and self.redis_client:
-                is_duplicate = await self._check_idempotency(event_id)
+                is_duplicate = await self._peek_idempotency(event_id)
                 if is_duplicate:
                     _pkg.logger.info(
                         "Duplicate event skipped",
@@ -311,10 +376,22 @@ class EventBus:
 
             if priority == EventPriority.CRITICAL:
                 # Execute synchronously, fire-and-forget
-                await self._publish_sync(event_name, enriched_data, handlers)
+                sync_ok = await self._publish_sync(event_name, enriched_data, handlers)
             else:
                 # Queue for async execution via ARQ
                 await self._publish_async(event_name, enriched_data, handlers, priority)
+                sync_ok = True
+
+            # H-6: mark the event processed only AFTER the handlers ran (sync
+            # path) or the enqueue succeeded (async path). A crash before
+            # this point leaves the key unset, so a re-publish re-runs the
+            # event instead of silently dropping it.
+            # P1-10 FIX: on the sync path, only mark idempotent when every
+            # handler succeeded — a failed CRITICAL handler must not be
+            # permanently deduplicated away; a re-publish with the same
+            # event_id retries it.
+            if event_id and self.redis_client and sync_ok:
+                await self._mark_idempotent(event_id)
 
     async def _publish_sync(
         self,
@@ -322,14 +399,24 @@ class EventBus:
         data: dict[str, Any],
         handlers: list[Callable[..., Coroutine[Any, Any, None]]],
         priority: EventPriority = EventPriority.CRITICAL,
-    ) -> None:
+    ) -> bool:
         """Execute handlers synchronously (for critical events).
 
         Args:
             event_name: Name of event
             data: Event payload
             handlers: List of handler functions
+            priority: Event priority
+
+        Returns:
+            True if every handler succeeded; False if any failed (each
+            failure is recorded in the dead-letter queue).
         """
+        # P1-10 FIX: track failures so they reach the DLQ and suppress the
+        # idempotent mark in publish() — previously a failed CRITICAL handler
+        # was reduced to a log line and the event was then marked processed,
+        # permanently losing it even on re-publish with the same event_id.
+        failed_handlers: list[tuple[Callable, str]] = []
 
         async def _call_handler(handler: Callable) -> None:
             # P3-2: Acquire semaphore to bound concurrency
@@ -352,6 +439,9 @@ class EventBus:
                         handler=handler.__name__,
                         timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
+                    failed_handlers.append(
+                        (handler, f"timeout after {_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS}s")
+                    )
                     # We do not re-raise TimeoutError to prevent blocking other handlers
                     # in the gather group (though return_exceptions=True handles that too).
                 except Exception as e:
@@ -362,9 +452,10 @@ class EventBus:
                         error=str(e),
                         exc_info=True,
                     )
+                    failed_handlers.append((handler, str(e)))
 
         if not handlers:
-            return
+            return True
 
         # Execute handlers concurrently
         tasks = [_call_handler(handler) for handler in handlers]
@@ -380,6 +471,32 @@ class EventBus:
                     error=str(result),
                     exc_info=True,
                 )
+                failed_handlers.append((handlers[i], str(result)))
+
+        # P1-10: route each failure to the DLQ (mirroring _sync_fallback_handler)
+        # so the event is recoverable instead of silently lost. A DLQ *write*
+        # failure must not propagate into the publisher's request path
+        # (add_to_dlq re-raises on Redis errors — P2-3): the failure is
+        # already logged there, and sync_ok=False below still suppresses the
+        # idempotent mark, so a re-publish with the same event_id retries.
+        for handler, error in failed_handlers:
+            try:
+                await self.add_to_dlq(
+                    event_name=event_name,
+                    handler_name=getattr(handler, "__name__", repr(handler)),
+                    data=data,
+                    error=error,
+                    attempt_count=1,
+                )
+            except Exception as dlq_error:
+                _pkg.logger.error(
+                    "Failed to route failed handler to DLQ",
+                    event_name=event_name,
+                    handler=getattr(handler, "__name__", repr(handler)),
+                    error=str(dlq_error),
+                )
+
+        return not failed_handlers
 
     async def _publish_async(
         self,
@@ -791,6 +908,7 @@ class EventBus:
 
         register_application_event_handlers(self)
 
+
 # Global event bus instance
 event_bus = EventBus()
 
@@ -813,4 +931,5 @@ def reset_event_bus() -> None:
     existing._registration_complete = fresh._registration_complete
     existing._redis_client = fresh._redis_client
     existing._arq_queue = fresh._arq_queue
+    existing.RETRY_DELAYS = fresh.RETRY_DELAYS  # M-9: keep backoff in lock-step
     _pkg.logger.debug("Event bus singleton reset")

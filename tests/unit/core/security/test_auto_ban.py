@@ -17,6 +17,7 @@ from src.app.core.security.auto_ban import (
     BanInfo,
     ban_ip,
     check_and_auto_ban,
+    check_ban_and_rate_limit,
     get_all_banned_ips,
     get_ban_info,
     get_violation_stats,
@@ -578,3 +579,72 @@ class TestIntegrationScenarios:
             mock_redis.evalsha = AsyncMock(return_value=[1, 3])
             await ban_ip(sample_ip)
             assert mock_redis.evalsha.call_args[0][6] == "14400"
+
+
+class TestCheckBanAndRateLimit:
+    """P1-1 regression: limit <= 0 must block, not allow-unlimited.
+
+    The combined ban+GCRA Lua script has no limit<=0 guard — with
+    emission_interval_ms=0 its TAT math allows every request (fail-open).
+    The Python-side guard mirrors the standalone limiter's explicit block
+    (gcra_rate_limit.py:124-130): a tier policy with limit=0 means
+    "block this path for this tier", not "unlimited access".
+    """
+
+    @pytest.mark.asyncio
+    @patch("src.app.core.security.auto_ban.get_ban_info", new_callable=AsyncMock)
+    @patch("src.app.core.security.auto_ban.get_redis")
+    async def test_limit_zero_blocks(self, mock_get_redis, mock_get_ban_info, mock_redis, sample_ip):
+        """limit=0 must return is_limited=True without invoking the Lua script."""
+        mock_get_redis.return_value = mock_redis
+        mock_get_ban_info.return_value = BanInfo(is_banned=False)
+
+        ban_info, (is_limited, remaining, retry_after) = await check_ban_and_rate_limit(
+            sample_ip, "rate_limit:test:path", 0, 60
+        )
+
+        assert ban_info.is_banned is False
+        assert is_limited is True
+        assert remaining == 0
+        assert retry_after == 60
+        mock_get_ban_info.assert_awaited_once_with(sample_ip)
+        # The guard must fire before the combined Lua script — no EVALSHA call.
+        mock_redis.evalsha.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("src.app.core.security.auto_ban.get_ban_info", new_callable=AsyncMock)
+    @patch("src.app.core.security.auto_ban.get_redis")
+    async def test_negative_limit_blocks(self, mock_get_redis, mock_get_ban_info, mock_redis, sample_ip):
+        """limit=-1 (misconfigured policy) must also block, not allow-unlimited."""
+        mock_get_redis.return_value = mock_redis
+        mock_get_ban_info.return_value = BanInfo(is_banned=False)
+
+        ban_info, (is_limited, remaining, retry_after) = await check_ban_and_rate_limit(
+            sample_ip, "rate_limit:test:path", -1, 120
+        )
+
+        assert ban_info.is_banned is False
+        assert is_limited is True
+        assert remaining == 0
+        assert retry_after == 120
+        mock_redis.evalsha.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("src.app.core.security.auto_ban.get_ban_info", new_callable=AsyncMock)
+    @patch("src.app.core.security.auto_ban.get_redis")
+    async def test_limit_zero_banned_ip_still_reports_ban(
+        self, mock_get_redis, mock_get_ban_info, mock_redis, sample_ip
+    ):
+        """limit=0 with a banned IP must surface the ban info from get_ban_info."""
+        mock_get_redis.return_value = mock_redis
+        mock_get_ban_info.return_value = BanInfo(is_banned=True, reason="banned for test")
+
+        ban_info, (is_limited, remaining, retry_after) = await check_ban_and_rate_limit(
+            sample_ip, "rate_limit:test:path", 0, 60
+        )
+
+        assert ban_info.is_banned is True
+        assert ban_info.reason == "banned for test"
+        assert is_limited is True
+        assert remaining == 0
+        assert retry_after == 60

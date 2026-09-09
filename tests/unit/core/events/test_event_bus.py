@@ -304,3 +304,107 @@ class TestGlobalEventBus:
     def test_global_event_bus_handlers_storage(self) -> None:
         """Test global event_bus stores handlers."""
         assert hasattr(event_bus, "_handlers")
+
+
+class TestCriticalFailureDLQ:
+    """P1-10 regression: failed CRITICAL handlers must reach the DLQ and must
+    NOT be marked idempotent.
+
+    Previously a failed sync handler was reduced to a log line and the event
+    was then marked processed — a re-publish with the same event_id was
+    skipped as a duplicate, permanently losing the event (e.g. MFA/security
+    events published with priority=CRITICAL).
+    """
+
+    @pytest.mark.asyncio
+    async def test_failed_critical_handler_dlqd_and_not_marked_idempotent(
+        self, fresh_event_bus, mock_redis_client
+    ) -> None:
+        """A failing CRITICAL handler → add_to_dlq called, _mark_idempotent NOT called."""
+        fresh_event_bus.set_redis_client(mock_redis_client)
+        fresh_event_bus.add_to_dlq = AsyncMock()
+        fresh_event_bus._mark_idempotent = AsyncMock()
+
+        @fresh_event_bus.subscribe("critical.failure.event")
+        async def failing_handler(data: dict):
+            raise ValueError("boom")
+
+        await fresh_event_bus.publish(
+            "critical.failure.event",
+            {"user_id": "42"},
+            priority=EventPriority.CRITICAL,
+            event_id="evt-critical-failure-1",
+        )
+
+        # Allow event loop to process fire-and-forget create_task()
+        await asyncio.sleep(0)
+
+        # The failure must be routed to the DLQ...
+        fresh_event_bus.add_to_dlq.assert_awaited_once()
+        dlq_kwargs = fresh_event_bus.add_to_dlq.call_args[1]
+        assert dlq_kwargs["event_name"] == "critical.failure.event"
+        assert dlq_kwargs["handler_name"] == "failing_handler"
+        assert dlq_kwargs["error"] == "boom"
+        assert dlq_kwargs["attempt_count"] == 1
+        # ...and the event must NOT be marked idempotent (re-publish retries it).
+        fresh_event_bus._mark_idempotent.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_successful_critical_event_marked_idempotent(
+        self, fresh_event_bus, mock_redis_client
+    ) -> None:
+        """A successful CRITICAL publish with event_id → _mark_idempotent called once."""
+        fresh_event_bus.set_redis_client(mock_redis_client)
+        fresh_event_bus._mark_idempotent = AsyncMock()
+
+        @fresh_event_bus.subscribe("critical.success.event")
+        async def ok_handler(data: dict):
+            pass
+
+        await fresh_event_bus.publish(
+            "critical.success.event",
+            {"user_id": "42"},
+            priority=EventPriority.CRITICAL,
+            event_id="evt-critical-success-1",
+        )
+
+        await asyncio.sleep(0)
+
+        fresh_event_bus._mark_idempotent.assert_awaited_once_with("evt-critical-success-1")
+
+    @pytest.mark.asyncio
+    async def test_failed_critical_event_republish_retries(
+        self, fresh_event_bus, mock_redis_client
+    ) -> None:
+        """End-to-end idempotency semantics: after a failed CRITICAL publish,
+        a re-publish with the same event_id is NOT skipped as a duplicate
+        (no idempotency key was written), so the handler runs again."""
+        fresh_event_bus.set_redis_client(mock_redis_client)
+        # _peek_idempotency consults client.exists — default returns 0 (not duplicate).
+        call_count = 0
+
+        @fresh_event_bus.subscribe("critical.retry.event")
+        async def flaky_handler(data: dict):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ValueError("transient failure")
+
+        await fresh_event_bus.publish(
+            "critical.retry.event",
+            {},
+            priority=EventPriority.CRITICAL,
+            event_id="evt-critical-retry-1",
+        )
+        await asyncio.sleep(0)
+
+        # Re-publish with the same event_id must reach the handler again.
+        await fresh_event_bus.publish(
+            "critical.retry.event",
+            {},
+            priority=EventPriority.CRITICAL,
+            event_id="evt-critical-retry-1",
+        )
+        await asyncio.sleep(0)
+
+        assert call_count == 2

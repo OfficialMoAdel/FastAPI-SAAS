@@ -55,7 +55,6 @@ def invalidate_ban_negative_cache(client_ip: str | None = None) -> None:
         _ban_negative_cache.pop(_ban_cache_key(client_ip), None)
 
 
-
 _ban_invalidation_channel = InvalidationChannel(
     channel=_BAN_L1_INVALIDATION_CHANNEL,
     on_message=lambda ip: invalidate_ban_negative_cache(ip if ip != "*" else None),
@@ -69,6 +68,7 @@ _start_ban_l1_invalidation_listener = _ban_invalidation_channel.start
 async def stop_ban_l1_invalidation_listener() -> None:
     """Cancel the background subscriber (idempotent, awaitable)."""
     await _ban_invalidation_channel.stop()
+
 
 def _ban_cache_key(client_ip: str) -> str:
     return f"ban:{client_ip}"
@@ -217,6 +217,108 @@ async def get_ban_info(client_ip: str, include_count: bool = False) -> BanInfo:
     except Exception as e:
         logger.error("Failed to get ban info for %s: %s", client_ip, e)
         return BanInfo(is_banned=False)
+
+
+async def check_ban_and_rate_limit(
+    client_ip: str,
+    rate_limit_key: str,
+    limit: int,
+    period: int,
+) -> tuple[BanInfo, tuple[bool, int, int]]:
+    """H-3: ban check + GCRA rate limit in ONE Redis Lua round-trip.
+
+    Replaces the middleware's sequential ``get_ban_info`` +
+    ``check_rate_limit_algorithm`` pair (2 RTTs) with a single
+    ``ban_and_gcra_check`` script (1 RTT), extending the composite-Lua
+    pattern from auth_prefetch/lua_manager.
+
+    Args:
+        client_ip: Client IP (ban key namespace).
+        rate_limit_key: GCRA key (already tenant/user/path-scoped).
+        limit: Max requests per period.
+        period: Period in seconds.
+
+    Returns:
+        (BanInfo, (is_limited, remaining, retry_after)) — identical
+        semantics to calling the two functions separately.
+    """
+    from src.app.core.utils.gcra_rate_limit import get_gcra_rate_limiter
+    from src.app.core.utils.lua_manager import get_lua_manager
+
+    redis_client = get_redis()
+    if not redis_client:
+        return BanInfo(is_banned=False), (False, limit, 0)
+
+    # R1-01 parity: honor the negative cache — a cached "not banned" from
+    # this process within _BAN_NEGATIVE_TTL skips nothing here (the script
+    # still checks Redis), but keeps get_ban_info's fast path untouched.
+    cache_key = _ban_cache_key(client_ip)
+    if _ban_negative_cache.get(cache_key):
+        # Ban is negative-cached; only GCRA remains → delegate to the
+        # existing single-RTT limiter to preserve its fail-open policy.
+        gcra = get_gcra_rate_limiter()
+        if gcra is not None:
+            from src.app.core.utils.rate_limit import rate_limiter as _rl
+
+            is_limited, remaining, retry_after = await _rl.check_rate_limit_algorithm(rate_limit_key, limit, period)
+            return BanInfo(is_banned=False), (is_limited, remaining, retry_after)
+
+    # P1-1 FIX: limit <= 0 means "block this path for this tier" (e.g. free
+    # tier cannot call AI endpoints). The combined Lua script has no such
+    # guard — emission_interval_ms=0 makes its TAT math allow every request
+    # (fail-open). Mirror the standalone limiter's explicit block
+    # (gcra_rate_limit.py:124-130) instead of invoking the script.
+    if limit <= 0:
+        ban_info = await get_ban_info(client_ip)
+        return ban_info, (True, 0, period)
+
+    period_ms = period * 1000
+    emission_interval_ms = max(1, round(period_ms / limit)) if limit > 0 else 0
+    burst_tolerance_ms = emission_interval_ms * limit
+    now_ms = int(time.time() * 1000)
+
+    ban_key = BAN_KEY_PREFIX.format(ip=client_ip)
+    gcra_key = f"gcra:{rate_limit_key}"
+
+    try:
+        result = await get_lua_manager().execute(
+            redis_client,
+            "ban_and_gcra_check",
+            keys=[gcra_key, ban_key],
+            args=[
+                str(float(now_ms)),
+                str(float(emission_interval_ms)),
+                str(int(limit)),
+                str(int(burst_tolerance_ms)),
+                str(float(period_ms)),
+                "1",
+            ],
+        )
+        is_allowed, remaining, retry_after_ms, is_banned, ban_reason, ban_ttl = result
+    except Exception as e:
+        logger.warning("Combined ban+GCRA check failed, falling back to sequential", error=str(e))
+        ban_info = await get_ban_info(client_ip)
+        from src.app.core.utils.rate_limit import rate_limiter as _rl
+
+        is_limited, remaining, retry_after = await _rl.check_rate_limit_algorithm(rate_limit_key, limit, period)
+        return ban_info, (is_limited, remaining, retry_after)
+
+    is_b = int(is_banned) == 1
+    ban_info = BanInfo(
+        is_banned=is_b,
+        reason=(ban_reason.decode() if isinstance(ban_reason, bytes) else str(ban_reason or "")) if is_b else None,
+        expires_at=(time.time() + int(ban_ttl)) if is_b and int(ban_ttl) > 0 else None,
+    )
+    if not is_b:
+        _ban_negative_cache[cache_key] = True
+    is_limited = int(is_allowed) == 0
+    import math
+
+    return ban_info, (
+        is_limited,
+        int(float(remaining)),
+        int(math.ceil(float(retry_after_ms) / 1000.0)) if is_limited else 0,
+    )
 
 
 async def ban_ip(

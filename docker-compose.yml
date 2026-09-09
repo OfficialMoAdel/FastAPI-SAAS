@@ -45,7 +45,6 @@ services:
       # ARQ_MAX_JOBS: Max concurrent jobs per worker (default: 10, total capacity = ARQ_WORKERS × ARQ_MAX_JOBS)
       # ARQ_JOB_TIMEOUT: Default job timeout in seconds (default: 300s)
       # ARQ_MAX_TRIES: Retry failed jobs N times (default: 3)
-      # ARQ_QUEUE_MAX_SIZE: Max queue size per priority (default: 10000, prevents memory issues)
       #
       # Scaling recommendations:
       # - Low load: 1 worker, ARQ_MAX_JOBS=10 (10 concurrent jobs)

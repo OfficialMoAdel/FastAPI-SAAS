@@ -39,6 +39,7 @@ from src.app.core.config import EnvironmentOption, settings
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.utils.lua_manager import get_lua_manager
+from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules._base.exceptions import ModelNotFoundError, ServiceUnavailableError, ValidationError
 from src.app.modules.auth.crud import crud_passkey_credentials
 from src.app.modules.auth.schemas import PasskeyCredentialCreate
@@ -94,7 +95,7 @@ class PasskeyService:
         """
         import uuid
 
-        user_id = user["id"]
+        user_id = get_user_attr(user, "id")
         registration_id = str(uuid.uuid4())
 
         # 1. Check passkey limit
@@ -111,8 +112,8 @@ class PasskeyService:
             rp_id=_get_rp_id(),
             rp_name=RP_NAME,
             user_id=str(user_id).encode(),
-            user_name=user["email"],
-            user_display_name=user.get("name") or user["username"],
+            user_name=get_user_attr(user, "email"),
+            user_display_name=get_user_attr(user, "name") or get_user_attr(user, "username"),
             attestation=AttestationConveyancePreference.NONE,
             authenticator_selection=AuthenticatorSelectionCriteria(
                 # BUG FIX: CROSS_PLATFORM was hardcoded, locking out platform authenticators
@@ -156,7 +157,7 @@ class PasskeyService:
         Raises:
             BadRequestException: If verification fails or challenge expired.
         """
-        user_id = user["id"]
+        user_id = get_user_attr(user, "id")
 
         # 1. Retrieve stored challenge
         stored_data = await self._get_stored_challenge(redis, registration_id) if redis else None
@@ -384,7 +385,12 @@ class PasskeyService:
             await mfa_token_store.create(
                 token=mfa_token,
                 data={
-                    "user_id": str(user["id"]),
+                    # P1-2 FIX: keep user_id as int — the other three mfa_pending
+                    # flows (auth/service.py, sso.py, magic_link.py) store int;
+                    # PendingTokenStore orjson-serializes ints natively. A str
+                    # here reached crud_mfa_methods.get(user_id="42") on MFA
+                    # completion → asyncpg DataError against the Integer column.
+                    "user_id": user["id"],
                     "username": user.get("username", ""),
                     "scope": "mfa_pending",
                 },

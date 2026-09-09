@@ -19,6 +19,7 @@ from structlog import get_logger
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.redis_provider import get_redis
 from src.app.core.tenancy.context import get_current_tenant
+from src.app.core.utils.cache_guard import cache_guard
 from src.app.modules.users.models import User
 from src.app.modules.users.session_invalidation import (
     InvalidationReason,
@@ -30,7 +31,10 @@ logger = get_logger(__name__)
 
 
 # Cache configuration
-USER_CACHE_TTL = 60  # seconds
+USER_CACHE_TTL = 300  # seconds (P-M6: raised from 60 — invalidation is already
+# wired on every user mutation via UserCacheInvalidator, so the TTL is only a
+# staleness backstop, not the freshness mechanism; 60s was paying a DB read
+# per user profile every minute for no correctness gain)
 USER_CACHE_PREFIX = "user:profile"
 AUTH_INFO_CACHE_TTL = 3600  # 1 hour
 AUTH_INFO_CACHE_PREFIX = "user:auth"
@@ -107,6 +111,7 @@ class UserCacheInvalidator:
     user_email_cache_key = staticmethod(_user_email_cache_key)
     user_username_cache_key = staticmethod(_user_username_cache_key)
     user_auth_cache_key = staticmethod(_user_auth_cache_key)
+
     @staticmethod
     async def get_cached_user(cache_key: str) -> dict[str, Any] | None:
         """Get cached user data if available."""
@@ -114,13 +119,11 @@ class UserCacheInvalidator:
         if client is None:
             return None
 
-        try:
+        with cache_guard("user_get", cache_key=cache_key):
             cached = await client.get(cache_key)
             if cached:
                 result: dict[str, Any] = json_loads(cached)
                 return result
-        except Exception as e:
-            logger.warning("Failed to get cached user", error=e)
         return None
 
     @staticmethod
@@ -130,7 +133,8 @@ class UserCacheInvalidator:
         if client is None:
             return
 
-        try:
+        user_id_log = user["id"] if isinstance(user, dict) else getattr(user, "id", "unknown")
+        with cache_guard("user_write", user_id=str(user_id_log)):
             # Handle both ORM object and dict
             if isinstance(user, dict):
                 user_data = user.copy()
@@ -169,9 +173,6 @@ class UserCacheInvalidator:
                 pipe.setex(_user_email_cache_key(email, tenant_id), USER_CACHE_TTL, serialized)
                 pipe.setex(_user_username_cache_key(username, tenant_id), USER_CACHE_TTL, serialized)
                 await pipe.execute()
-        except Exception as e:
-            user_id_log = user["id"] if isinstance(user, dict) else user.id
-            logger.warning("Failed to cache user %s: %s", user_id_log, e)
 
     @staticmethod
     async def cache_user_auth_info(cache_key: str, user_with_tier: dict[str, Any]) -> None:
@@ -180,11 +181,9 @@ class UserCacheInvalidator:
         if client is None:
             return
 
-        try:
+        with cache_guard("auth_info_write", cache_key=cache_key):
             serialized = json_dumps(user_with_tier)
             await client.setex(cache_key, AUTH_INFO_CACHE_TTL, serialized)
-        except Exception as e:
-            logger.warning("Failed to cache auth info", error=e)
 
     @staticmethod
     async def invalidate_user_cache(
@@ -193,7 +192,16 @@ class UserCacheInvalidator:
         reason: InvalidationReason,
         explicit_token_version: int | None = None,
     ) -> None:
-        """Invalidate all cache entries for a user."""
+        """Invalidate all cache entries for a user.
+
+        Q-M8 (mirrored from tenants): invalidation failure is NOT a benign
+        cache miss — a stale ``is_active=True`` / old ``token_version``
+        survives in the auth-info cache and keeps authorizing a revoked
+        user for up to AUTH_INFO_CACHE_TTL. Failures are retried exactly
+        once, then logged at error with a poison-key marker so a later
+        reader/ops sweep can detect the user whose cache could not be
+        invalidated.
+        """
         if bump_token_version != should_bump_token_version(reason):
             raise ValueError(
                 f"bump_token_version={bump_token_version} does not match "
@@ -225,23 +233,48 @@ class UserCacheInvalidator:
 
             keys, token_keys = build_user_invalidation_keys(user_id, username, email, tenant_id)
 
-            if keys:
-                await client.delete(*keys)
-            if token_keys:
-                if explicit_token_version is not None:
-                    new_version = explicit_token_version
-                else:
-                    if isinstance(user, dict):
-                        current_version = user.get("token_version", 0)
+            poison_key = f"user:invalidation_failed:{user_id}"
+            for attempt in (1, 2):
+                try:
+                    if keys:
+                        await client.delete(*keys)
+                    if token_keys:
+                        if explicit_token_version is not None:
+                            new_version = explicit_token_version
+                        else:
+                            if isinstance(user, dict):
+                                current_version = user.get("token_version", 0)
+                            else:
+                                current_version = getattr(user, "token_version", 0)
+
+                            new_version = current_version + 1 if bump_token_version else current_version
+
+                        async with client.pipeline(transaction=False) as pipe:
+                            for key in token_keys:
+                                pipe.set(key, str(new_version), ex=300)
+                            await pipe.execute()
+                    break
+                except Exception as e:
+                    if attempt == 1:
+                        logger.warning(
+                            "User cache invalidation failed (retrying)",
+                            user_id=str(user_id),
+                            attempt=attempt,
+                            error=str(e),
+                        )
                     else:
-                        current_version = getattr(user, "token_version", 0)
-
-                    new_version = current_version + 1 if bump_token_version else current_version
-
-                async with client.pipeline(transaction=False) as pipe:
-                    for key in token_keys:
-                        pipe.set(key, str(new_version), ex=300)
-                    await pipe.execute()
+                        # Exhausted: leave a poison marker; the auth-info TTL
+                        # bounds the stale window.
+                        logger.error(
+                            "User cache invalidation failed after retry — stale auth info may persist until TTL",
+                            user_id=str(user_id),
+                            poison_key=poison_key,
+                            error=str(e),
+                        )
+                        try:
+                            await client.set(poison_key, str(reason), ex=AUTH_INFO_CACHE_TTL)
+                        except Exception:
+                            pass  # Redis itself is down; the error log above is the record.
         except Exception as e:
             user_id_log = user["id"] if isinstance(user, dict) else user.id
             logger.warning("Failed to invalidate cache for user", user_id_log=user_id_log, error=e)

@@ -242,7 +242,16 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
     # R3-01: canonical bytes owned by signer; reused for HTTP content so
     # transmitted bytes == signed bytes (json.dumps sort_keys contract).
     payload_bytes = canonical_payload_bytes(delivery.payload)
-    signature_header = sign_payload(delivery.payload, decrypt_data(endpoint.secret), send_timestamp)
+    # P1-5 FIX: prefer signing_secret (what rotate_signing_secret rotates)
+    # over the legacy secret — mirroring the trigger path's preference in
+    # service.py. Previously the wire signature was always computed from
+    # endpoint.secret, so rotation never took effect on delivered headers and
+    # a compromised secret could not be revoked.
+    if endpoint.signing_secret:
+        active_secret = decrypt_data(endpoint.signing_secret)
+    else:
+        active_secret = decrypt_data(endpoint.secret)
+    signature_header = sign_payload(delivery.payload, active_secret, send_timestamp)
     if (
         endpoint.old_signing_secret
         and endpoint.old_secret_expires_at

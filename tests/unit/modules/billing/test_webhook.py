@@ -201,6 +201,14 @@ async def test_handle_webhook_event_invoice_payment_succeeded():
         mock_tenant_db = AsyncMock()
         mock_tenant_ctx.return_value.__aenter__.return_value = mock_tenant_db
 
+        # P1-6: the handler re-locks the subscription row inside the tenant
+        # context before deciding the past_due -> active flip. Locked status
+        # "active" means no flip is applied (no resurrection path).
+        mock_lock_result = MagicMock()
+        mock_locked_sub = MagicMock(status="active")
+        mock_lock_result.scalar_one_or_none.return_value = mock_locked_sub
+        mock_tenant_db.execute.return_value = mock_lock_result
+
         result = await handle_webhook_event(event)
 
         assert result == {"status": "success"}
@@ -327,18 +335,23 @@ async def test_handle_webhook_event_subscription_updated():
         mock_result.scalar_one_or_none.return_value = mock_subscription
         mock_bypass_db.execute.return_value = mock_result
 
-        # Mock tenant db
+        # Mock tenant db — P0-1: the CRUD update and commit now run inside
+        # the tenant context, which first re-locks the row by id.
         mock_tenant_db = AsyncMock()
         mock_tenant_ctx.return_value.__aenter__.return_value = mock_tenant_db
+        mock_tenant_result = MagicMock()
+        mock_tenant_result.scalar_one_or_none.return_value = MagicMock(id=100, status="active")
+        mock_tenant_db.execute.return_value = mock_tenant_result
 
         result = await handle_webhook_event(event)
 
         assert result == {"status": "success"}
         mock_update.assert_called_once()
-        # handle_subscription_updated commits on the bypass db: once from
-        # FastCRUD's update (no commit=False here) and once from the explicit
-        # post-downgrade db.commit() in the handler.
-        assert mock_bypass_db.commit.await_count == 2
+        # P0-1: the CRUD update and the handler's explicit commit now run on
+        # the tenant-context session. The single remaining bypass-db commit
+        # is dispatch's durable processed-marker write (B4), not the handler.
+        assert mock_tenant_db.commit.await_count == 1
+        assert mock_bypass_db.commit.await_count == 1
 
 
 @pytest.mark.asyncio
