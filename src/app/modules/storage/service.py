@@ -13,16 +13,16 @@ import re
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, BinaryIO
 from uuid import UUID
 
-from fastapi import Depends
+from cachetools import TTLCache
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.core.config import settings as app_settings
-from src.app.core.db.database import async_get_db
 from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.security.encryption import get_encryption
@@ -51,6 +51,17 @@ from src.app.modules.storage.schemas import (
 from src.app.modules.tenants.models import Tenant
 
 logger = get_logger(__name__)
+
+# B6: provider instance cache. boto3/Azure clients are designed for reuse;
+# constructing one per operation (SELECT settings -> Fernet decrypt ->
+# boto3.client) costs a fresh connection pool per upload/download/delete.
+# Keyed (tenant_id, updated_at): any settings mutation bumps updated_at
+# (onupdate), rotating the key so a new provider is built on next use.
+# Stale entries age out via TTL. Not tenant-scoped by context — keyed by
+# explicit tenant_id argument, so cross-tenant leakage is impossible.
+_PROVIDER_CACHE: TTLCache[tuple[UUID, datetime | None], StorageProvider] = TTLCache(
+    maxsize=512, ttl=600
+)
 
 
 # ============================================================================
@@ -205,10 +216,30 @@ class StorageAdminService:
         return settings
 
     async def get_provider(self, tenant_id: UUID) -> StorageProvider:
-        """Get a configured StorageProvider instance for a tenant."""
+        """Get a configured StorageProvider instance for a tenant.
+
+        B6: instances are cached per (tenant_id, settings.updated_at) —
+        boto3/Azure clients are designed for reuse; a fresh client per
+        operation built a new connection pool for every upload/download.
+        Any settings mutation bumps updated_at, rotating the cache key.
+        """
         settings = await self.get_settings_or_raise(tenant_id)
+        return self.get_provider_for_settings(settings)
+
+    def get_provider_for_settings(self, settings: StorageSettings) -> StorageProvider:
+        """Return a cached provider for already-fetched settings.
+
+        Callers that already hold the settings row (upload/download/delete)
+        use this to avoid the second SELECT that get_provider would issue.
+        """
+        cache_key = (settings.tenant_id, settings.updated_at)
+        cached = _PROVIDER_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
         credentials = self._decrypt_credentials(settings)
-        return self._create_provider(StorageProviderType(settings.provider), credentials)
+        provider = self._create_provider(StorageProviderType(settings.provider), credentials)
+        _PROVIDER_CACHE[cache_key] = provider
+        return provider
 
     def to_read_schema(self, settings: StorageSettings) -> StorageSettingsRead:
         """Convert model to read schema with masked credentials."""
@@ -396,7 +427,7 @@ class StorageService:
                 f"Storage quota exceeded. Used: {current_size}, Limit: {settings.storage_quota_bytes}"
             )
 
-        provider = await storage_svc.get_provider(tenant_id)
+        provider = storage_svc.get_provider_for_settings(settings)
 
         # FEATURE_UPLOAD_TXN_SPLIT: end read txn before storage network I/O
         max_file_count = settings.max_file_count
@@ -512,8 +543,8 @@ class StorageService:
         """Stream file chunks from physical storage provider."""
         storage_svc = getattr(self, "_storage_service", self.admin)
         file = await self.get_file_or_raise(tenant_id, file_id, user_id)
-        provider = await storage_svc.get_provider(tenant_id)
         settings = await storage_svc.get_settings_or_raise(tenant_id)
+        provider = storage_svc.get_provider_for_settings(settings)
 
         logger.info("file_download_started", file_id=file.id, tenant_id=str(tenant_id), storage_path=file.storage_path)
 
@@ -540,8 +571,8 @@ class StorageService:
         """Storage-first idempotent delete + row cleanup + quota decrement."""
         storage_svc = getattr(self, "_storage_service", self.admin)
         file = await self.get_file_or_raise(tenant_id, file_id, user_id)
-        provider = await storage_svc.get_provider(tenant_id)
         settings = await storage_svc.get_settings_or_raise(tenant_id)
+        provider = storage_svc.get_provider_for_settings(settings)
         file_size = file.size_bytes
         storage_path = file.storage_path
 
@@ -647,7 +678,8 @@ class StorageService:
         """Generate a presigned access URL."""
         storage_svc = getattr(self, "_storage_service", self.admin)
         file = await self.get_file_or_raise(tenant_id, file_id, user_id)
-        provider = await storage_svc.get_provider(tenant_id)
+        settings = await storage_svc.get_settings_or_raise(tenant_id)
+        provider = storage_svc.get_provider_for_settings(settings)
         return await provider.get_url(file.storage_path, expires_in)
 
     get_signed_url = get_presigned_url
@@ -776,24 +808,9 @@ FileService = StorageService
 StorageSettingsService = StorageAdminService
 
 
-def get_storage(db: AsyncSession = Depends(async_get_db)) -> StorageService:
-    """Dependency injection factory for StorageService."""
-    return StorageService(db)
-
-
-def get_storage_admin(db: AsyncSession = Depends(async_get_db)) -> StorageAdminService:
-    """Dependency injection factory for StorageAdminService."""
-    return StorageAdminService(db)
-
-
-def get_file_service(db: AsyncSession = Depends(async_get_db)) -> StorageService:
-    """Backward-compatible dependency factory for FileService."""
-    return StorageService(db)
-
-
-def get_storage_settings_service(db: AsyncSession = Depends(async_get_db)) -> StorageAdminService:
-    """Backward-compatible dependency factory for StorageSettingsService."""
-    return StorageAdminService(db)
+# Q-M4: DI factories (get_storage, get_storage_admin, get_file_service,
+# get_storage_settings_service) live in routers/files.py and
+# routers/settings.py — service files stay Depends-free.
 
 
 __all__ = [
@@ -805,8 +822,4 @@ __all__ = [
     "Download",
     "FileService",
     "StorageSettingsService",
-    "get_storage",
-    "get_storage_admin",
-    "get_file_service",
-    "get_storage_settings_service",
 ]

@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
-from src.app.core.tenancy.cache import get_tenant_cache_key
+from src.app.core.tenancy.cache import TENANT_CACHE_TTL, get_tenant_cache_key
+from src.app.core.utils.cache_guard import cache_guard
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.tenants.crud import crud_tenants
@@ -18,9 +19,6 @@ from src.app.modules.tenants.models import Tenant
 from src.app.modules.tenants.schemas import TenantCreate, TenantResponse, TenantUpdate
 
 logger = get_logger(__name__)
-
-# P2-4: Cache TTL for tenant data (5 minutes)
-TENANT_CACHE_TTL = 300
 
 
 def _tenant_to_dict(tenant: Tenant) -> dict[str, Any]:
@@ -61,46 +59,34 @@ class TenantService(BaseService[Tenant]):
         super().__init__(Tenant, db)
         self.crud = crud_tenants
 
-    async def _cache_tenant(self, tenant: Tenant) -> None:
-        """Cache tenant data in Redis.
+    async def _cache_tenant(self, tenant: Tenant | dict[str, Any]) -> None:
+        """Cache tenant data in Redis (both ID and slug keys).
 
-        P2-4: Caches both ID and slug lookups for O(1) retrieval.
-        Use this for ORM Tenant objects.
+        M-7: single dict-normalizing helper — accepts an ORM Tenant (converted
+        via ``_tenant_to_dict``) or an already-serialized dict (FastCRUD
+        ``schema_to_select`` path). Replaces the near-duplicate
+        ``_cache_tenant_dict``.
         """
         redis_client = get_redis()
         if not redis_client:
             return
 
-        try:
-            tenant_data = _tenant_to_dict(tenant)
-            cache_key = get_tenant_cache_key(tenant.id)
-            await redis_client.set(cache_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL)
-
-            # Also cache by slug for slug-based lookups - store full dict, not just UUID
-            slug_key = _get_slug_cache_key(tenant.slug)
-            await redis_client.set(slug_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL)
-        except Exception as e:
-            logger.debug("Failed to cache tenant", error=str(e))
-
-    async def _cache_tenant_dict(self, tenant_id: Any, tenant_data: dict[str, Any]) -> None:
-        """Cache tenant data dict in Redis.
-
-        P2-4: Used when FastCRUD returns a dict (schema_to_select=TenantResponse).
-        Caches both by ID and by slug for O(1) retrieval.
-        """
-        redis_client = get_redis()
-        if not redis_client or not tenant_data:
+        tenant_data = _tenant_to_dict(tenant) if isinstance(tenant, Tenant) else tenant
+        if not tenant_data:
             return
 
-        try:
-            cache_key = get_tenant_cache_key(tenant_id)
-            await redis_client.set(cache_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL)
+        tenant_id = tenant_data.get("id")
+        if not tenant_id:
+            return
 
-            if "slug" in tenant_data and tenant_data["slug"]:
-                slug_key = _get_slug_cache_key(tenant_data["slug"])
-                await redis_client.set(slug_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL)
-        except Exception as e:
-            logger.debug("Failed to cache tenant dict", error=str(e))
+        with cache_guard("tenant_write", tenant_id=str(tenant_id)):
+            payload = json_dumps(tenant_data, as_str=True)
+            cache_key = get_tenant_cache_key(tenant_id)
+            await redis_client.set(cache_key, payload, ex=TENANT_CACHE_TTL)
+
+            slug = tenant_data.get("slug")
+            if slug:
+                await redis_client.set(_get_slug_cache_key(slug), payload, ex=TENANT_CACHE_TTL)
 
     async def _invalidate_tenant_cache(self, tenant_id: UUID, slug: str | None = None) -> None:
         """Invalidate tenant cache in Redis and every worker's L1 cache.
@@ -109,17 +95,48 @@ class TenantService(BaseService[Tenant]):
         process keeps an in-memory TTLCache that previously served stale
         is_active=True for up to 60s. Publishing on the middleware's
         invalidation channel drops those L1 entries immediately.
+
+        Q-M8: invalidation failure is NOT a benign cache miss — a stale
+        ``is_active=True`` survives and keeps serving a suspended tenant.
+        Failures are therefore logged at warning (recoverable after retry)
+        / error (exhausted retries) and retried exactly once before giving
+        up, leaving a poison-key marker so a later reader/ops sweep can
+        detect the tenant whose cache could not be invalidated.
         """
         redis_client = get_redis()
         if not redis_client:
             return
 
-        try:
-            await redis_client.delete(get_tenant_cache_key(tenant_id))
-            if slug:
-                await redis_client.delete(_get_slug_cache_key(slug))
-        except Exception as e:
-            logger.debug("Failed to invalidate tenant cache", error=str(e))
+        poison_key = f"tenant:invalidation_failed:{tenant_id}"
+        for attempt in (1, 2):
+            try:
+                await redis_client.delete(get_tenant_cache_key(tenant_id))
+                if slug:
+                    await redis_client.delete(_get_slug_cache_key(slug))
+                break
+            except Exception as e:
+                if attempt == 1:
+                    logger.warning(
+                        "Tenant cache invalidation failed (retrying)",
+                        tenant_id=str(tenant_id),
+                        slug=slug,
+                        attempt=attempt,
+                        error=str(e),
+                    )
+                else:
+                    # Exhausted: leave a poison marker + delete the stale keys'
+                    # success path is broken; the TTL bounds the stale window.
+                    logger.error(
+                        "Tenant cache invalidation failed after retry — stale is_active may persist until TTL",
+                        tenant_id=str(tenant_id),
+                        slug=slug,
+                        poison_key=poison_key,
+                        error=str(e),
+                    )
+                    try:
+                        await redis_client.set(poison_key, slug or "", ex=TENANT_CACHE_TTL)
+                    except Exception:
+                        pass  # Redis itself is down; the error log above is the record.
 
         try:
             from src.app.core.tenancy.cache import invalidate_tenant_l1, publish_tenant_l1_invalidation
@@ -128,7 +145,14 @@ class TenantService(BaseService[Tenant]):
             invalidate_tenant_l1(slug)
             await publish_tenant_l1_invalidation(slug)
         except Exception as e:
-            logger.debug("Failed to propagate tenant L1 invalidation", error=str(e))
+            # Q-M8: L1 propagation failure means OTHER workers keep serving
+            # stale is_active for up to the L1 TTL — warn with identifiers.
+            logger.warning(
+                "Tenant L1 invalidation propagation failed — stale is_active may persist on other workers",
+                tenant_id=str(tenant_id),
+                slug=slug,
+                error=str(e),
+            )
 
     async def _get_cached_tenant(self, tenant_id: UUID) -> dict[str, Any] | None:
         """Get tenant from cache if available."""
@@ -136,14 +160,11 @@ class TenantService(BaseService[Tenant]):
         if not redis_client:
             return None
 
-        try:
+        with cache_guard("tenant_get", tenant_id=str(tenant_id)):
             cached = await redis_client.get(get_tenant_cache_key(tenant_id))
             if cached:
                 result: dict[str, Any] = json_loads(cached)
                 return result
-        except Exception as e:
-            logger.error("Failed to get cached tenant", error=str(e))
-
         return None
 
     async def _get_cached_tenant_by_slug(self, slug: str) -> dict[str, Any] | None:
@@ -152,7 +173,7 @@ class TenantService(BaseService[Tenant]):
         if not redis_client:
             return None
 
-        try:
+        with cache_guard("tenant_get_by_slug", slug=slug):
             slug_key = _get_slug_cache_key(slug)
             cached = await redis_client.get(slug_key)
 
@@ -169,9 +190,6 @@ class TenantService(BaseService[Tenant]):
                 if cached_full:
                     result_fallback: dict[str, Any] = json_loads(cached_full)
                     return result_fallback
-        except Exception as e:
-            logger.debug("Failed to get cached tenant by slug", error=str(e))
-
         return None
 
     async def create_tenant(self, tenant: TenantCreate) -> dict[str, Any]:
@@ -220,12 +238,33 @@ class TenantService(BaseService[Tenant]):
         result = _tenant_to_dict(created_tenant)  # type: ignore[arg-type]
 
         # FIXED: Cache the newly created tenant for immediate lookup
-        await self._cache_tenant(created_tenant)
+        if created_tenant is not None:
+            await self._cache_tenant(created_tenant)
 
         # Invalidate the negative cache so newly created tenants aren't hidden
         redis_client = get_redis()
         if redis_client and tenant.slug:
             await redis_client.delete(f"tenant:negative:{tenant.slug}")
+
+        # B7: also clear the in-process L1 negative entries (any worker,
+        # including this one, may have cached "slug not found" while probing
+        # before creation) and fan out to other workers — same T9 machinery
+        # deactivate/reactivate use. Without this, a slug probed before
+        # creation 403s for up to the L1 TTL (60s) after the tenant exists.
+        try:
+            from src.app.core.tenancy.cache import (
+                invalidate_tenant_l1,
+                publish_tenant_l1_invalidation,
+            )
+
+            invalidate_tenant_l1(tenant.slug)
+            await publish_tenant_l1_invalidation(tenant.slug)
+        except Exception as e:
+            logger.warning(
+                "Tenant L1 negative-cache invalidation failed after creation",
+                slug=tenant.slug,
+                error=str(e),
+            )
 
         logger.info(
             "Tenant created | id=%s | slug=%s | name=%s",
@@ -270,7 +309,7 @@ class TenantService(BaseService[Tenant]):
         # NOTE: FastCRUD with schema_to_select returns a dict, not an ORM Tenant object.
         # Cache the dict directly via a lightweight method.
         if tenant:
-            await self._cache_tenant_dict(tenant_id, tenant)
+            await self._cache_tenant(tenant)
 
         return tenant
 
@@ -302,7 +341,7 @@ class TenantService(BaseService[Tenant]):
         # Cache for next request
         # NOTE: FastCRUD with schema_to_select returns a dict, not an ORM Tenant object.
         if tenant:
-            await self._cache_tenant_dict(tenant.get("id"), tenant)
+            await self._cache_tenant(tenant)
 
         return tenant
 
@@ -410,7 +449,7 @@ class TenantService(BaseService[Tenant]):
         updated_dict = _tenant_to_dict(tenant)  # type: ignore[arg-type]
 
         # Write back to cache immediately
-        await self._cache_tenant_dict(tenant_id, updated_dict)
+        await self._cache_tenant(updated_dict)
 
         logger.info(
             "Tenant updated | id=%s | fields=%s",
@@ -458,7 +497,7 @@ class TenantService(BaseService[Tenant]):
 
         # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
         updated_dict = _tenant_to_dict(tenant)  # type: ignore[arg-type]
-        await self._cache_tenant_dict(tenant_id, updated_dict)
+        await self._cache_tenant(updated_dict)
         return updated_dict
 
     async def reactivate_tenant(self, tenant_id: UUID) -> dict[str, Any]:
@@ -499,21 +538,7 @@ class TenantService(BaseService[Tenant]):
 
         # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
         updated_dict = _tenant_to_dict(tenant)  # type: ignore[arg-type]
-        await self._cache_tenant_dict(tenant_id, updated_dict)
+        await self._cache_tenant(updated_dict)
         return updated_dict
 
 
-def get_tenant_service(db: AsyncSession) -> TenantService:
-    """Dependency injection factory for TenantService.
-
-    Parameters
-    ----------
-    db : AsyncSession
-        Database session from async_get_db
-
-    Returns
-    -------
-    TenantService
-        Service instance with database session
-    """
-    return TenantService(db)

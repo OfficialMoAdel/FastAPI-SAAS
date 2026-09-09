@@ -31,7 +31,6 @@ from src.app.modules.users.session_invalidation import InvalidationReason, shoul
 
 if TYPE_CHECKING:
     from src.app.api.deps.auth import AuthenticatedUser
-    from src.app.repositories.interfaces.user import UserRepository
 
 logger = get_logger(__name__)
 
@@ -63,15 +62,9 @@ class UserService:
     def __init__(
         self,
         db: AsyncSession,
-        repository: UserRepository | None = None,
     ) -> None:
         self.db = db
         self.crud = crud_users
-        self.repository: UserRepository | None = repository
-        if self.repository is None:
-            from src.app.repositories.sqlalchemy.user import SqlAlchemyUserRepository
-
-            self.repository = SqlAlchemyUserRepository(db, crud=self.crud)
 
     @staticmethod
     def _parse_user_id(username: str) -> int | None:
@@ -88,12 +81,10 @@ class UserService:
         """M-8: fetch a non-deleted user by integer ID or username.
 
         Consolidates the six copy-pasted ``try: int(username)`` lookup blocks.
+        H-4: dead crud-fallback branch removed — the repository layer was
+        always constructed, so the else-branch could never run.
         """
         parsed_id = self._parse_user_id(username)
-        if self.repository is not None:
-            if parsed_id is not None:
-                return await self.repository.get(id=parsed_id, is_deleted=False)
-            return await self.repository.get(username=username, is_deleted=False)
         if parsed_id is not None:
             return await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
         return await self.crud.get(db=self.db, username=username, is_deleted=False)
@@ -105,22 +96,18 @@ class UserService:
         per_page: int = 10,
         is_deleted: bool = False,
     ) -> dict[str, Any]:
-        """Get paginated list of users."""
+        """Get paginated list of users.
+
+        H-4: repository branch removed — inline the FastCRUD call directly.
+        """
         offset = (page - 1) * per_page
-        if self.repository is not None:
-            result = await self.repository.get_multi(
-                offset=offset,
-                limit=per_page,
-                is_deleted=is_deleted,
-            )
-        else:
-            result = await self.crud.get_multi(
-                db=self.db,
-                offset=offset,
-                limit=per_page,
-                is_deleted=is_deleted,
-                schema_to_select=UserRead,
-            )
+        result = await self.crud.get_multi(
+            db=self.db,
+            offset=offset,
+            limit=per_page,
+            is_deleted=is_deleted,
+            schema_to_select=UserRead,
+        )
         from src.app.core.pagination import build_paginated_response
 
         return build_paginated_response(
@@ -133,6 +120,7 @@ class UserService:
     async def _cache_user(self, user: User | dict[str, Any]) -> None:
         """Cache user profile in Redis (delegates to UserCacheInvalidator)."""
         await UserCacheInvalidator.cache_user(user)
+
     async def _invalidate_user_cache(
         self,
         user: User | dict[str, Any],
@@ -141,9 +129,8 @@ class UserService:
         explicit_token_version: int | None = None,
     ) -> None:
         """Invalidate all cache entries for a user (delegates to UserCacheInvalidator)."""
-        await UserCacheInvalidator.invalidate_user_cache(
-            user, bump_token_version, reason, explicit_token_version
-        )
+        await UserCacheInvalidator.invalidate_user_cache(user, bump_token_version, reason, explicit_token_version)
+
     async def _invalidate_user_cache_batch(
         self,
         users: Sequence[Any],
@@ -151,9 +138,7 @@ class UserService:
         reason: InvalidationReason | None = None,
     ) -> None:
         """Invalidate cache entries for many users in ONE Redis pipeline (delegates to UserCacheInvalidator)."""
-        await UserCacheInvalidator.invalidate_user_cache_batch(
-            users, bump_token_version, reason
-        )
+        await UserCacheInvalidator.invalidate_user_cache_batch(users, bump_token_version, reason)
 
     async def invalidate_sessions(
         self,
@@ -177,6 +162,7 @@ class UserService:
             commit=commit,
             explicit_token_version=explicit_token_version,
         )
+
     async def _get_cached_user(self, cache_key: str) -> dict[str, Any] | None:
         """Get cached user data if available (delegates to UserCacheInvalidator)."""
         return await UserCacheInvalidator.get_cached_user(cache_key)
@@ -204,7 +190,8 @@ class UserService:
         Raises
         ------
         DuplicateError
-            If email or username already exists
+            If the email or username already exists (uniform response — the
+            field is never disclosed)
         """
         # SECURITY FIX: Check for duplicates BEFORE expensive password hashing
         # Prevents DoS via forced bcrypt operations
@@ -222,9 +209,10 @@ class UserService:
         existing_user = await self.db.scalar(stmt)
 
         if existing_user:
-            if existing_user.email == user.email:
-                raise DuplicateError("email", user.email)
-            raise DuplicateError("username", user.username)
+            # S-M2: uniform duplicate response — which field collided is an
+            # enumeration oracle for attackers. One generic credentials-taken
+            # error regardless of whether email or username matched.
+            raise DuplicateError("credentials", message="An account with these credentials already exists")
 
         # Hash password and create internal user object
         user_dict = user.model_dump()
@@ -238,7 +226,22 @@ class UserService:
         user_internal = UserCreateInternal(**user_dict)
 
         try:
-            result = cast(User, await self.crud.create(db=self.db, object=user_internal, commit=False))
+            # B8/H-7-advisory: FastCRUD.create without schema_to_select
+            # returns None (verified against fastcrud 0.20.1 execution.py),
+            # so the old `cast(User, ...)` + `result.id` deref 500'd every
+            # registration. Commit-then-read: flush via commit=False create,
+            # commit, then read back the real ORM row for the payload and
+            # the `-> User` return contract.
+            await self.crud.create(db=self.db, object=user_internal, commit=False)
+            await self.db.commit()
+            read_stmt = select(User).where(
+                or_(User.email == user.email, User.username == user.username),
+                User.is_deleted.is_(False),
+            )
+            read_stmt = read_stmt.where(tenant_scope(User, tenant.id if tenant else None, allow_unscoped=True))
+            result = (await self.db.execute(read_stmt)).scalar_one_or_none()
+            if result is None:
+                raise RuntimeError("User row unreadable immediately after successful commit")
 
             # SECURITY FIX: Ensure event is published ONLY after successful commit
             # Capture result data before commit since it may expire after session flush
@@ -248,8 +251,6 @@ class UserService:
                 "username": result.username,
                 "tenant_id": str(result.tenant_id),
             }
-            # Now explicitly commit the transaction so the event fires
-            await self.db.commit()
 
             # M22: Send verification email automatically upon registration.
             # Decoupled via injected email_verifier (PR-10): UserService no longer
@@ -284,15 +285,15 @@ class UserService:
             task.add_done_callback(_log_task_error)
 
         except IntegrityError as e:
-            # Handle race condition: duplicate was created between our check and insert
-            await self.db.rollback()
-            if "uq_user_email_tenant" in str(e):
-                raise DuplicateError("email", user.email) from e
-            elif "uq_user_username_tenant" in str(e):
-                raise DuplicateError("username", user.username) from e
+            # Handle race condition: duplicate was created between our check and insert.
+            # S-M2: same uniform generic response as the pre-check — the unique
+            # constraint name would otherwise reveal which field collided.
+            if "uq_user_email_tenant" in str(e) or "uq_user_username_tenant" in str(e):
+                await self.db.rollback()
+                raise DuplicateError("credentials", message="An account with these credentials already exists") from e
             raise
 
-        return result  # type: ignore[return-value]
+        return result
 
     async def get_user_auth_info(
         self, *, username: str | None = None, email: str | None = None
@@ -322,11 +323,8 @@ class UserService:
         if cached:
             return cached
 
-        # Fetch from DB (using eager loading via repository or crud)
-        if self.repository is not None:
-            user_with_tier = await self.repository.get_with_tier(username=username, email=email)
-        else:
-            user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, username=username, email=email)
+        # Fetch from DB via the tier-eager CRUD (H-4: repository indirection removed)
+        user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, username=username, email=email)
         if not user_with_tier:
             return None
 
@@ -337,14 +335,13 @@ class UserService:
     async def get_by_username(self, username: str) -> dict[str, Any]:
         """Get a user by username with Redis caching.
 
-        Parameters
-        ----------
-        username : str
-            Username to look up
+        Args:
+        ----
+            username: Username to look up
 
         Returns
         -------
-        dict[str, Any]
+            dict[str, Any]
             User dict
 
         Raises
@@ -352,6 +349,7 @@ class UserService:
         ModelNotFoundError
             If user not found
         """
+
         # Try cache first - return cached data directly to avoid DB query
         cached = await self._get_cached_user(_user_username_cache_key(username))
         if cached:
@@ -534,7 +532,7 @@ class UserService:
             raise ModelNotFoundError("User", username)
 
         # Ownership check (superusers bypass)
-        if db_username != current_user["username"] and not current_user.get("is_superuser"):
+        if db_username != get_user_attr(current_user, "username") and not get_user_attr(current_user, "is_superuser"):
             raise ForbiddenException("You do not have permission to modify this user's email.")
         # Check for duplicate email if changing (exclude soft-deleted users)
         # R2-02: track the invalidation reason; the bump decision is derived
@@ -637,7 +635,7 @@ class UserService:
         if current_tenant is not None and user_tenant_id != current_tenant.id:
             raise ModelNotFoundError("User", username)
 
-        if username != current_user["username"] and not current_user.get("is_superuser"):
+        if username != get_user_attr(current_user, "username") and not get_user_attr(current_user, "is_superuser"):
             raise ForbiddenException("You do not have permission to delete this user.")
 
         # BUG FIX: Previously used two separate auto-committing calls:
@@ -675,10 +673,10 @@ class UserService:
                 entity_type="user",
                 entity_id=user_id_val,
                 tenant_id=user_tenant_id,
-                user_id=current_user["id"],
+                user_id=get_user_attr(current_user, "id"),
                 details={
                     "username": username,
-                    "deleted_by": current_user["username"],
+                    "deleted_by": get_user_attr(current_user, "username"),
                 },
                 priority=EventPriority.NORMAL,
             )
@@ -804,6 +802,48 @@ class UserService:
         # A3 FIX: Handle both ORM objects and dict responses
         user_name = get_user_attr(db_user, "name")
         return {"message": f"User {user_name} Tier updated"}
+
+    async def set_user_status(
+        self,
+        username: str,
+        is_active: bool,
+    ) -> dict[str, str]:
+        """Activate or deactivate a user (superuser/admin action only).
+
+        B2 FIX (review P2): deactivation previously had no sanctioned path —
+        ``is_active`` was only ever flipped False→True by email verification,
+        and direct DB/CRUDAdmin edits bypassed cache invalidation entirely,
+        leaving a deactivated user's cached ``is_active=True`` (and existing
+        JWTs) valid for up to AUTH_INFO_CACHE_TTL. This method treats any
+        status flip as DEACTIVATION-class: bump token_version in the same
+        transaction (kills existing JWTs) and invalidate all cache entries.
+
+        Callers are responsible for authorization (superuser-gated route);
+        the service enforces tenant scoping via the tenant-aware CRUD seam.
+        """
+        db_user = await self._get_active_user(username)
+        if db_user is None:
+            raise ModelNotFoundError("User", username)
+
+        current_status = get_user_attr(db_user, "is_active")
+        if bool(current_status) == is_active:
+            return {"message": f"User {get_user_attr(db_user, 'name')} already {'active' if is_active else 'inactive'}"}
+
+        user_id = get_user_attr(db_user, "id")
+        await self.crud.update(db=self.db, object={"is_active": is_active}, id=user_id, commit=False)
+
+        # DEACTIVATION is bump-class: kill existing JWTs in the same commit.
+        from sqlalchemy import update as sa_update
+
+        await self.db.execute(sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
+        await self.db.commit()
+
+        await self._invalidate_user_cache(
+            db_user,
+            bump_token_version=should_bump_token_version(InvalidationReason.DEACTIVATION),
+            reason=InvalidationReason.DEACTIVATION,
+        )
+        return {"message": f"User {get_user_attr(db_user, 'name')} {'activated' if is_active else 'deactivated'}"}
 
     async def downgrade_to_free_tier(self, user_id: int) -> int | None:
         """Downgrade a user to the configured free tier.
@@ -976,7 +1016,8 @@ class UserService:
 
 
 def get_user_service(db: AsyncSession) -> UserService:
-    """Dependency injection factory for UserService."""
-    from src.app.repositories.sqlalchemy.user import SqlAlchemyUserRepository
+    """Dependency injection factory for UserService.
 
-    return UserService(db, repository=SqlAlchemyUserRepository(db))
+    H-4: repository layer deleted — the service owns its data access via
+    FastCRUD (``crud_users``) directly, same as every other module."""
+    return UserService(db)

@@ -42,18 +42,18 @@ _in_flight_token_version: dict[str, asyncio.Task[int | None]] = {}
 _token_version_lock = asyncio.Lock()
 
 _jwt_logger = get_logger(__name__)
+
+
 class TokenVersionLookup(Protocol):
     """Protocol for resolving user token_version without core importing modules (PR-12 / DIP)."""
 
-    async def __call__(self, username_or_email: str) -> int | None:
-        ...
+    async def __call__(self, username_or_email: str) -> int | None: ...
 
 
 class UserTenantLookup(Protocol):
     """Protocol for resolving user tenant_id without core importing modules (PR-12 / DIP)."""
 
-    async def __call__(self, username_or_email: str, db: AsyncSession) -> Any | None:
-        ...
+    async def __call__(self, username_or_email: str, db: AsyncSession) -> Any | None: ...
 
 
 _token_version_lookup: Callable[[str], Awaitable[int | None]] | None = None
@@ -104,6 +104,7 @@ def ensure_jwt_lookups_registered() -> None:
             missing.append("user_tenant")
         _jwt_logger.error("jwt_security_lookups_unwired", missing=missing)
         raise ServiceUnavailableError(f"JWT security lookups unwired: {', '.join(missing)}")
+
 
 @lru_cache(maxsize=1)
 def _get_signing_key() -> str:
@@ -217,7 +218,7 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
     return encoded_jwt
 
 
-async def _check_db_fallback(jti: str | None, token: str, db: AsyncSession) -> bool | None:
+async def _check_db_fallback(jti: str | None, token: str) -> bool | None:
     """Helper to perform DB fallback check for token blacklisting.
 
     SECURITY FIX: the singleflight task is shared across concurrent requests,
@@ -225,8 +226,7 @@ async def _check_db_fallback(jti: str | None, token: str, db: AsyncSession) -> b
     request may commit/close mid-task, leaving waiters with a closed session
     during exactly the Redis outage this path exists for). The lookup uses its
     own short-lived session; blacklist entries are global jti/token strings,
-    so no tenant context is needed. The ``db`` parameter is kept for signature
-    compatibility.
+    so no tenant context is needed. (M-5: the dead ``db`` parameter is gone.)
     """
     try:
         cache_key = jti if jti else token
@@ -325,7 +325,7 @@ async def is_token_revoked(token: str, jti: str | None, db: AsyncSession) -> boo
     _jwt_logger.warning(
         "Redis unavailable for token blacklist check, falling back to DB. Restore Redis ASAP for optimal security."
     )
-    db_result = await _check_db_fallback(jti, token, db)
+    db_result = await _check_db_fallback(jti, token)
     # Fail closed: an error (None) or a hit (True) both mean revoked.
     return db_result is None or db_result is True
 
@@ -540,39 +540,42 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
 
         if exp_timestamp is not None:
             expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
+            cache_key = f"jti:{jti}" if jti else token
             try:
                 if not tenant_id:
                     tenant_id = await _resolve_tenant_id_for_token(payload, db)
-                    if not tenant_id:
-                        _jwt_logger.warning(
-                            "Could not determine tenant_id for token blacklisting, using Redis fallback"
-                        )
-                        # Fail-closed: still blacklist in Redis even without tenant_id
-                        if jti:
-                            jti_key = f"jti:{jti}"
-                            await add_token_to_blacklist(jti_key, expires_at)
-                        else:
-                            await add_token_to_blacklist(token, expires_at)
-                        return
+                if tenant_id:
+                    if isinstance(tenant_id, str):
+                        tenant_id = UUID(tenant_id)
 
-                async with db.begin_nested():
-                    await crud_token_blacklist.create(
-                        db, object=TokenBlacklistCreate(token=token, expires_at=expires_at, tenant_id=tenant_id)
-                    )
-                    if jti:
-                        jti_key = f"jti:{jti}"
+                    async with db.begin_nested():
                         await crud_token_blacklist.create(
-                            db, object=TokenBlacklistCreate(token=jti_key, expires_at=expires_at, tenant_id=tenant_id)
+                            db, object=TokenBlacklistCreate(token=token, expires_at=expires_at, tenant_id=tenant_id)
                         )
-                        cache_key = jti_key
-                    else:
-                        cache_key = token
-                await db.commit()
-                await add_token_to_blacklist(cache_key, expires_at)
+                        if jti:
+                            await crud_token_blacklist.create(
+                                db,
+                                object=TokenBlacklistCreate(
+                                    token=cache_key, expires_at=expires_at, tenant_id=tenant_id
+                                ),
+                            )
+                    await db.commit()
+                else:
+                    # Fail-closed: still blacklist in Redis even without tenant_id
+                    _jwt_logger.warning(
+                        "Could not determine tenant_id for token blacklisting, using Redis fallback"
+                    )
             except IntegrityError:
                 # C-2: AsyncSession.rollback() is always awaitable.
                 await db.rollback()
                 _jwt_logger.info("Token already blacklisted in DB (IntegrityError)")
+            # B1: the Redis cache write runs on EVERY path (fresh insert,
+            # IntegrityError retry, tenant-less fallback) so the hot-path
+            # check always sees the revocation, and it is LOUD —
+            # add_token_to_blacklist raises ServiceUnavailableError on write
+            # failure so logout/refresh surface 5xx instead of silently
+            # leaving a "revoked" token valid for up to its natural expiry.
+            await add_token_to_blacklist(cache_key, expires_at)
     except JWTError as e:
         _jwt_logger.warning("Skipping blacklist for invalid token", error=str(e))
 

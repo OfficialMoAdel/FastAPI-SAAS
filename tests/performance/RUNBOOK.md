@@ -131,35 +131,20 @@ pytest tests/contract/test_files.py -v -k upload
 
 ---
 
-### 5. P2: FEATURE_STREAMING_UPLOADS
+### 5. P2: Streaming Uploads (formerly FEATURE_STREAMING_UPLOADS)
 
-**Status:** ✅ Enabled  
+**Status:** ✅ Unconditional (flag removed in B13)  
 **Impact:** 10x faster uploads for files >5MB  
 **Risk:** LOW
 
 #### What It Does
-Enables streaming file uploads instead of buffering entire files. Provides dramatic performance improvements for large files.
-
-#### Configuration
-```bash
-# Enabled (default)
-FEATURE_STREAMING_UPLOADS=true
-
-# To rollback
-FEATURE_STREAMING_UPLOADS=false
-```
+Streaming file uploads instead of buffering entire files. Provides dramatic performance improvements for large files. The legacy spooled-temp fallback was deleted in P-M8; the `FEATURE_STREAMING_UPLOADS` flag was dead config and has been removed.
 
 #### Verification
 ```bash
 # Test large file upload performance
 pytest tests/benchmarks/test_files.py -v
 ```
-
-#### Rollback Procedure
-1. Set `FEATURE_STREAMING_UPLOADS=false`
-2. Restart application
-3. Monitor memory usage during uploads
-4. Consider reducing max upload size temporarily
 
 ---
 
@@ -197,7 +182,6 @@ upload_latency_p99 = percentile(upload_durations, 99)
 ```bash
 # Set all flags to false
 export FEATURE_REMOVE_WASTED_CONNECTION=false
-export FEATURE_STREAMING_UPLOADS=false
 
 # Restart application
 systemctl restart fastapi-app
@@ -211,9 +195,6 @@ pytest tests/performance/test_rollback_verification.py -v
 ```bash
 # Rollback only connection optimization
 export FEATURE_REMOVE_WASTED_CONNECTION=false
-
-# Or rollback only streaming uploads
-export FEATURE_STREAMING_UPLOADS=false
 
 # Restart and verify
 systemctl restart fastapi-app
@@ -297,12 +278,12 @@ python -c "from src.app.core.config import Settings; print(Settings().FEATURE_RE
 
 **Diagnosis:**
 ```bash
-# Check if streaming is enabled
-python -c "from src.app.core.config import Settings; print(Settings().FEATURE_STREAMING_UPLOADS)"
+# Streaming is unconditional since P-M8 — verify the upload path directly
+pytest tests/unit/modules/test_s3_streaming.py -v
 ```
 
 **Resolution:**
-- Ensure `FEATURE_STREAMING_UPLOADS=true`
+- Streaming is unconditional (no flag; the legacy buffered fallback was deleted)
 - Check file size limits
 - Verify temp directory has sufficient space
 
@@ -374,8 +355,7 @@ Expected output:
 class Settings(BaseSettings):
     # Performance optimizations
     FEATURE_REMOVE_WASTED_CONNECTION: bool = True
-    FEATURE_STREAMING_UPLOADS: bool = True
-    
+
     # Add future optimizations here
     FEATURE_CACHE_OPTIMIZATION: bool = False  # Future
 ```
@@ -405,7 +385,6 @@ python -c "
 from src.app.core.config import Settings
 s = Settings()
 print(f'REMOVE_WASTED_CONNECTION: {s.FEATURE_REMOVE_WASTED_CONNECTION}')
-print(f'STREAMING_UPLOADS: {s.FEATURE_STREAMING_UPLOADS}')
 "
 
 # Run verification tests
@@ -418,6 +397,5 @@ python scripts/compare_metrics.py \
 
 # Quick rollback (if needed)
 export FEATURE_REMOVE_WASTED_CONNECTION=false
-export FEATURE_STREAMING_UPLOADS=false
 systemctl restart fastapi-app
 ```

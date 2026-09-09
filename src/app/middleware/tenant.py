@@ -32,6 +32,7 @@ from src.app.core.db.database import local_session
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
+from src.app.core.tenancy.cache import TENANT_CACHE_TTL
 from src.app.core.tenancy.context import NO_TENANT, TenantContext, clear_tenant_context, set_current_tenant
 from src.app.modules.tenants.models import Tenant
 
@@ -57,7 +58,6 @@ def invalidate_tenant_l1(slug: str | None = None) -> None:
         _L1_TENANT_CACHE.pop(slug, None)
 
 
-
 _tenant_invalidation_channel = InvalidationChannel(
     channel=_L1_INVALIDATION_CHANNEL,
     on_message=lambda msg: invalidate_tenant_l1(None if msg == "*" else msg),
@@ -70,6 +70,7 @@ stop_l1_invalidation_listener = _tenant_invalidation_channel.stop
 
 # P4: slug validation regex compiled once at import
 _SLUG_RE = re.compile(r"^[a-z0-9\-]+$")
+
 
 @asynccontextmanager
 async def _get_tenant_lock(slug: str) -> AsyncGenerator[asyncio.Lock, None]:
@@ -93,13 +94,34 @@ async def _get_tenant_lock(slug: str) -> AsyncGenerator[asyncio.Lock, None]:
 from src.app.core.middleware_exempt import COMMON_EXEMPT_PATHS
 from src.app.core.middleware_exempt import is_path_exempt as _shared_is_path_exempt
 
-_TENANT_EXTRA_EXEMPT: frozenset[str] = frozenset({"/api/v1/app_configuration"})
+_TENANT_EXTRA_EXEMPT: frozenset[str] = frozenset({"/api/v1/app_configuration", "/api/metrics"})
 TENANT_EXEMPT_PATHS: frozenset[str] = COMMON_EXEMPT_PATHS | _TENANT_EXTRA_EXEMPT
 
+# S-M2 NOTE: registration is NOT exempt — requests to /api/v1/account/register
+# carry X-Tenant-ID and resolve a tenant context, but since the signup gate
+# (auth router) only bootstraps a tenant's FIRST user, resolving an existing
+# active tenant via its guessable slug no longer grants signup rights.
 TENANT_EXEMPT_PREFIXES: tuple[str, ...] = ("/api/v1/tenants", "/api/v1/account/sso")
 
-TENANT_HEADER = "X-Tenant-ID"
 
+def _admin_mount_prefix() -> str:
+    """Resolve the CRUDAdmin mount path for the tenant exemption.
+
+    C-2: the admin panel is a cross-tenant operator surface — it must not
+    400 on a missing `X-Tenant-ID` header. Falls back to `/admin` if the
+    setting is unavailable (import-time safety).
+    """
+    try:
+        prefix = (settings.admin.CRUD_ADMIN_MOUNT_PATH or "/admin").rstrip("/") or "/"
+    except Exception:
+        prefix = "/admin"
+    return prefix
+
+
+ADMIN_EXEMPT_PREFIX: str = _admin_mount_prefix()
+TENANT_EXEMPT_PREFIXES = (*TENANT_EXEMPT_PREFIXES, ADMIN_EXEMPT_PREFIX)
+
+TENANT_HEADER = "X-Tenant-ID"
 
 
 def is_path_exempt(path: str) -> bool:
@@ -257,21 +279,22 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
                 # L3: Database
                 async with local_session() as session:
-                    from src.app.core.db.rls import bypass_rls, clear_rls_context
+                    from src.app.core.db.rls import RLSAuditFailureError, bypass_rls, clear_rls_context
 
                     stmt = select(Tenant).where(Tenant.slug == slug)
                     try:
                         async with bypass_rls(session, reason="Tenant resolution via middleware"):
                             result = await session.execute(stmt)
-                    except RuntimeError as e:
-                        if "audit log failure" in str(e):
-                            logger.error(
-                                "RLS bypass audit failed during tenant resolution, falling back to standard query",
-                                error=str(e),
-                            )
-                            result = await session.execute(stmt)
-                        else:
-                            raise
+                    except RLSAuditFailureError as e:
+                        # Q-M9: typed catch — the bypass audit INSERT failed, so
+                        # the audited bypass is unavailable. Fall back to the
+                        # standard (RLS-protected) query: tenant resolution needs
+                        # no bypass when RLS context is absent for this lookup.
+                        logger.error(
+                            "RLS bypass audit failed during tenant resolution, falling back to standard query",
+                            error=str(e),
+                        )
+                        result = await session.execute(stmt)
                     tenant = result.scalar_one_or_none()
 
                     # SECURITY FIX: Explicitly clear RLS context before returning connection to pool
@@ -299,7 +322,12 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     if redis_client:
                         try:
                             if cache_data:
-                                await redis_client.setex(cache_key, 3600, json_dumps(cache_data))
+                                # B4: use the canonical TTL (300s) — a 3600s
+                                # entry could overwrite a concurrent deactivation's
+                                # re-cached is_active=False for a full hour.
+                                await redis_client.setex(
+                                    cache_key, TENANT_CACHE_TTL, json_dumps(cache_data)
+                                )
                                 # Clear any stale negative cache for this slug
                                 await redis_client.delete(f"tenant:negative:{slug}")
                             else:

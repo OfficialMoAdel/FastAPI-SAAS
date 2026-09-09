@@ -24,6 +24,9 @@ def mock_storage_service():
     service = MagicMock()
     service.get_settings_or_raise = AsyncMock()
     service.get_provider = AsyncMock()
+    # B6: upload/download/delete now resolve the provider synchronously from
+    # already-fetched settings via get_provider_for_settings.
+    service.get_provider_for_settings = MagicMock()
     return service
 
 
@@ -60,7 +63,7 @@ async def test_upload_file_success(file_service, mock_db, mock_storage_service):
     mock_upload_result = MagicMock()
     mock_upload_result.success = True
     mock_provider.upload = AsyncMock(return_value=mock_upload_result)
-    mock_storage_service.get_provider.return_value = mock_provider
+    mock_storage_service.get_provider_for_settings.return_value = mock_provider
 
     result = await file_service.upload_file(
         tenant_id=tenant_id, user_id=user_id, file=file_obj, filename="test.txt", mime_type="text/plain", size_bytes=100
@@ -104,7 +107,7 @@ async def test_upload_file_txn_split_ends_read_txn_before_upload(file_service, m
     mock_upload_result = MagicMock()
     mock_upload_result.success = True
     mock_provider = MagicMock()
-    mock_storage_service.get_provider.return_value = mock_provider
+    mock_storage_service.get_provider_for_settings.return_value = mock_provider
 
     order: list[str] = []
 
@@ -156,7 +159,7 @@ async def test_upload_file_default_keeps_single_txn(file_service, mock_db, mock_
     mock_upload_result = MagicMock()
     mock_upload_result.success = True
     mock_provider.upload = AsyncMock(return_value=mock_upload_result)
-    mock_storage_service.get_provider.return_value = mock_provider
+    mock_storage_service.get_provider_for_settings.return_value = mock_provider
 
     await file_service.upload_file(
         tenant_id=tenant_id, user_id=1, file=file_obj, filename="test.txt", mime_type="text/plain", size_bytes=100
@@ -284,7 +287,7 @@ async def test_download_file(file_service, mock_storage_service):
         yield b"chunk2"
 
     mock_provider.download = mock_download_gen
-    mock_storage_service.get_provider.return_value = mock_provider
+    mock_storage_service.get_provider_for_settings.return_value = mock_provider
 
     chunks = []
     async for chunk in file_service.download_file(tenant_id, file_id):
@@ -325,7 +328,7 @@ async def test_delete_file(file_service, mock_db, mock_storage_service):
 
     mock_provider = MagicMock()
     mock_provider.delete = AsyncMock()
-    mock_storage_service.get_provider.return_value = mock_provider
+    mock_storage_service.get_provider_for_settings.return_value = mock_provider
 
     mock_settings = MagicMock()
     mock_settings.provider = "local"
@@ -355,7 +358,7 @@ async def test_get_signed_url(file_service, mock_storage_service):
 
     mock_provider = MagicMock()
     mock_provider.get_url = AsyncMock(return_value="https://signed.url")
-    mock_storage_service.get_provider.return_value = mock_provider
+    mock_storage_service.get_provider_for_settings.return_value = mock_provider
 
     url = await file_service.get_signed_url(tenant_id, file_id, 3600)
 

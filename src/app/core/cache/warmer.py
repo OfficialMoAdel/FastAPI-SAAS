@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import local_session
 from src.app.core.logger import get_logger
+from src.app.core.tenancy.cache import TENANT_CACHE_TTL as _TENANT_CACHE_TTL
 from src.app.modules.rate_limits.models import Tier
 from src.app.modules.tenants.models import Tenant
 
@@ -23,7 +24,10 @@ logger = get_logger(__name__)
 DEFAULT_TIMEOUT = 30.0
 
 # Cache TTLs (in seconds)
-TENANT_CACHE_TTL = 3600  # 1 hour
+# B4: tenant entries use the canonical 300s TTL (see core/tenancy/cache.py)
+# so a warm entry cannot outlive a concurrent deactivation's re-cache by an
+# hour. Tier entries keep their own 1h TTL.
+TENANT_CACHE_TTL = _TENANT_CACHE_TTL
 TIER_CACHE_TTL = 3600  # 1 hour
 
 

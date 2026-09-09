@@ -122,12 +122,16 @@ class Notification(Base, UUIDMixin):
     __table_args__ = (
         # Query by tenant and status
         Index("idx_notification_tenant_status", "tenant_id", "status"),
-        # Query by tenant and creation time
+        # B5: 3-column keyset composite (created in migration 09) — covers
+        # get_notifications' ORDER BY created_at DESC (id DESC is a legal
+        # refinement) and the upcoming keyset cursor. Declared here so
+        # autogenerate no longer emits DROP INDEX for it.
         Index(
-            "idx_notification_tenant_created",
+            "idx_notifications_tenant_created_id",
             "tenant_id",
             "created_at",
-            postgresql_ops={"created_at": "DESC"},
+            "id",
+            postgresql_ops={"created_at": "DESC", "id": "DESC"},
         ),
         # Query failed notifications for retry
         Index(

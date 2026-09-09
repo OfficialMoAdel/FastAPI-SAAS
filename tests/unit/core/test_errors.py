@@ -21,6 +21,14 @@ from src.app.modules._base.exceptions import (
 )
 from src.app.modules.ai.unified_errors import SessionLimitExceededError
 from src.app.modules.billing.exceptions import PaymentRequiredError
+from src.app.modules.storage.errors import (
+    FileEntityNotFoundError,
+    FileTypeNotAllowedError,
+    InvalidCredentialsError,
+    QuotaExceededError,
+    StorageBackendError,
+    StorageNotConfiguredError,
+)
 
 
 def test_create_error_response():
@@ -98,6 +106,32 @@ async def route_session_limit():
 @app.get("/test/generic")
 async def route_generic():
     raise ValueError("Unexpected error")
+
+# B12: storage exception routes — the P0-2 bug class (a dropped handler
+# registration shipped silently because no test raised these over HTTP).
+@app.get("/test/storage-quota-exceeded")
+async def route_storage_quota_exceeded():
+    raise QuotaExceededError("Storage quota exceeded")
+
+@app.get("/test/storage-backend")
+async def route_storage_backend():
+    raise StorageBackendError("S3 upload failed")
+
+@app.get("/test/storage-file-not-found")
+async def route_storage_file_not_found():
+    raise FileEntityNotFoundError("File not found")
+
+@app.get("/test/storage-file-type-not-allowed")
+async def route_storage_file_type_not_allowed():
+    raise FileTypeNotAllowedError("File type not allowed")
+
+@app.get("/test/storage-not-configured")
+async def route_storage_not_configured():
+    raise StorageNotConfiguredError("Storage not configured")
+
+@app.get("/test/storage-invalid-credentials")
+async def route_storage_invalid_credentials():
+    raise InvalidCredentialsError("Invalid storage credentials")
 
 
 client = TestClient(app, raise_server_exceptions=False)
@@ -196,3 +230,57 @@ def test_generic_exception_handler():
     data = response.json()
     assert data["error"]["code"] == ErrorCode.INTERNAL_ERROR
     assert data["error"]["message"] == "An internal error occurred"
+
+
+def test_storage_quota_exceeded_handler():
+    """B12: QuotaExceededError must map to 507, not fall through to 500."""
+    response = client.get("/test/storage-quota-exceeded")
+    assert response.status_code == 507
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.STORAGE_QUOTA_EXCEEDED
+    assert data["error"]["message"] == "Storage quota exceeded."
+
+
+def test_storage_backend_error_handler():
+    """B12: StorageBackendError must map to 502 with a fixed (non-leaking) message."""
+    response = client.get("/test/storage-backend")
+    assert response.status_code == 502
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.STORAGE_BACKEND_ERROR
+    assert data["error"]["message"] == "Storage provider error during file operation."
+
+
+def test_storage_file_not_found_handler():
+    """B12: FileEntityNotFoundError must map to 404."""
+    response = client.get("/test/storage-file-not-found")
+    assert response.status_code == 404
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.NOT_FOUND
+    assert data["error"]["message"] == "File not found"
+
+
+def test_storage_file_type_not_allowed_handler():
+    """B12: FileTypeNotAllowedError must map to 400."""
+    response = client.get("/test/storage-file-type-not-allowed")
+    assert response.status_code == 400
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.INVALID_INPUT
+    assert data["error"]["message"] == "File type not allowed."
+
+
+def test_storage_not_configured_handler():
+    """B12: StorageNotConfiguredError must map to 400."""
+    response = client.get("/test/storage-not-configured")
+    assert response.status_code == 400
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.INVALID_INPUT
+    assert data["error"]["message"] == "Storage not configured for this tenant."
+
+
+def test_storage_invalid_credentials_handler():
+    """B12: InvalidCredentialsError must map to 400."""
+    response = client.get("/test/storage-invalid-credentials")
+    assert response.status_code == 400
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.INVALID_INPUT
+    assert data["error"]["message"] == "Invalid storage provider credentials."

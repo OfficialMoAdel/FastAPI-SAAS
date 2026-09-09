@@ -2,12 +2,10 @@
 
 from typing import Any, cast
 
-from fastapi import Depends, HTTPException
 from fastcrud import FastCRUD, compute_offset, paginated_response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
@@ -190,16 +188,45 @@ class RateLimitService(BaseService[RateLimit]):
         await crud.update(db=self.db, object=values, name=name)
 
         # Invalidate tier cache on mutation
-        try:
-            redis_client = get_redis()
-            if redis_client:
-                await redis_client.delete(f"tier:{name}")
-                if new_name:
-                    await redis_client.delete(f"tier:{new_name}")
-        except Exception as cache_err:  # noqa: BLE001
-            logger.warning("Failed to invalidate tier cache", error=str(cache_err))
+        keys = [f"tier:{name}"]
+        if new_name and new_name != name:
+            keys.append(f"tier:{new_name}")
+        await self._invalidate_tier_cache(keys, tier_name=name)
 
         return {"message": "Tier updated"}
+
+    async def _invalidate_tier_cache(self, keys: list[str], tier_name: str) -> None:
+        """B10: invalidate tier cache keys with retry — never fail-open.
+
+        cache_guard's documented non-goals (core/utils/cache_guard.py) exclude
+        mutation-side invalidation: a swallowed DELETE leaves every worker
+        serving the old, authority-contradicting tier policy until TTL expiry
+        (e.g. a lowered limit stays generous for up to 1h). Mirror the tenants
+        Q-M8 posture instead: retry once, then error-log with identifiers so
+        the stale-policy window is visible to operators.
+        """
+        redis_client = get_redis()
+        if not redis_client:
+            return
+        for attempt in (1, 2):
+            try:
+                await redis_client.delete(*keys)
+                return
+            except Exception as e:
+                if attempt == 1:
+                    logger.warning(
+                        "Tier cache invalidation failed (retrying)",
+                        tier=tier_name,
+                        keys=keys,
+                        error=str(e),
+                    )
+                else:
+                    logger.error(
+                        "Tier cache invalidation failed after retry — stale tier policy may persist until TTL",
+                        tier=tier_name,
+                        keys=keys,
+                        error=str(e),
+                    )
 
     async def delete_tier(self, name: str) -> dict[str, str]:
         """Delete a tier with referential integrity guard.
@@ -218,8 +245,10 @@ class RateLimitService(BaseService[RateLimit]):
         ------
         ModelNotFoundError
             If tier not found
-        HTTPException
-            409 Conflict if tier is still in use by users or rate limits
+        DuplicateError
+            If tier is still in use by users or rate limits (Q-M1: was
+            HTTPException 409; the central handler maps DuplicateError
+            to 409 with the field/value details)
         RuntimeError
             If checking referential integrity fails unexpectedly
         """
@@ -247,23 +276,22 @@ class RateLimitService(BaseService[RateLimit]):
                 raise RuntimeError(f"Failed to check referential integrity for tier '{name}': {e}") from e
 
             if users_count > 0 or rl_count > 0:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Tier '{name}' is still in use ({users_count} user(s), {rl_count} rate limit(s)) "
+                # Q-M1: domain raise instead of HTTPException(409) — the
+                # central DuplicateError handler maps this to 409.
+                raise DuplicateError(
+                    "tier_in_use",
+                    f"'{name}' ({users_count} user(s), {rl_count} rate limit(s))",
+                    message=f"Tier '{name}' is still in use ({users_count} user(s), {rl_count} rate limit(s)) "
                     "and cannot be deleted",
                 )
 
         await crud.delete(db=self.db, name=name)
 
         # Invalidate tier and rate-limit caches
-        try:
-            redis_client = get_redis()
-            if redis_client:
-                await redis_client.delete(f"tier:{name}")
-                if tier_id:
-                    await redis_client.delete(f"rate_limits:tier:{tier_id}")
-        except Exception as cache_err:  # noqa: BLE001
-            logger.warning("Failed to invalidate tier cache", error=str(cache_err))
+        keys = [f"tier:{name}"]
+        if tier_id:
+            keys.append(f"rate_limits:tier:{tier_id}")
+        await self._invalidate_tier_cache(keys, tier_name=name)
 
         return {"message": "Tier deleted"}
 
@@ -272,18 +300,19 @@ class RateLimitService(BaseService[RateLimit]):
     # ---------------------------------------------------------------------------
 
     async def _get_tier_or_404(self, tier_name: str) -> dict[str, Any]:
-        """Get tier by name or raise ModelNotFoundError directly without cross-module lookup."""
-        if TierService is not RateLimitService:
-            tier_svc = TierService(self.db)
-            return cast(dict[str, Any], await tier_svc.get_tier(tier_name))
+        """Resolve a tier by name, raising ModelNotFoundError when absent.
+
+        Q-M6: the old ``if TierService is not RateLimitService`` branch
+        existed only because TierService INHERITED from this class and
+        tests patched the alias to intercept. TierService now COMPOSES
+        this service and delegates, so the tier resolution has exactly
+        one implementation: this method.
+        """
         return cast(dict[str, Any], await self.get_tier(tier_name))
 
     async def _invalidate_tier_rate_limits_cache(self, tier_id: int) -> None:
-        """Invalidate rate limits cache for a tier."""
-        client = get_redis()
-        if client:
-            cache_key = f"rate_limits:tier:{tier_id}"
-            await client.delete(cache_key)
+        """Invalidate rate limits cache for a tier (B10: retrying, never bare)."""
+        await self._invalidate_tier_cache([f"rate_limits:tier:{tier_id}"], tier_name=str(tier_id))
 
     async def get_rate_limits_by_tier_id(self, tier_id: int) -> dict[str, Any]:
         """Get all rate limits for a tier by tier ID.
@@ -468,9 +497,7 @@ class RateLimitService(BaseService[RateLimit]):
             raise ModelNotFoundError("RateLimit", rate_limit_id)
 
         current_name = (
-            db_rate_limit.get("name")
-            if isinstance(db_rate_limit, dict)
-            else getattr(db_rate_limit, "name", None)
+            db_rate_limit.get("name") if isinstance(db_rate_limit, dict) else getattr(db_rate_limit, "name", None)
         )
         if values.name and values.name != current_name:
             name_exists = await self.crud.exists(db=self.db, name=values.name)
@@ -521,21 +548,3 @@ class RateLimitService(BaseService[RateLimit]):
         return {"message": "Rate Limit deleted"}
 
 
-def get_rate_limit_service(db: AsyncSession = Depends(async_get_db)) -> RateLimitService:
-    """Dependency injection factory for RateLimitService.
-
-    Parameters
-    ----------
-    db : AsyncSession
-        Database session from async_get_db
-
-    Returns
-    -------
-    RateLimitService
-        Initialized RateLimitService instance
-    """
-    return RateLimitService(db)
-
-
-# TierService is absorbed into RateLimitService; alias retained for call-site and test patch compatibility
-TierService = RateLimitService

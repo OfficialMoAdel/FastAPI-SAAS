@@ -21,7 +21,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from src.app.core.config import settings
 from src.app.core.errors import ErrorCode, create_error_response
 from src.app.core.logger import get_logger
-from src.app.core.security.auto_ban import check_and_auto_ban, get_ban_info
+from src.app.core.security.auto_ban import BanInfo, check_and_auto_ban, check_ban_and_rate_limit, get_ban_info
 from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
 from src.app.core.security.logging import SecurityEvent, SecurityEventType, log_security_event
 from src.app.core.utils.ip_utils import get_client_ip
@@ -33,6 +33,50 @@ logger = get_logger(__name__)
 TIER_RATE_LIMITS = settings.rate_limit.TIER_RATE_LIMITS
 DEFAULT_AUTHENTICATED_LIMIT = settings.rate_limit.DEFAULT_AUTHENTICATED_LIMIT
 DEFAULT_ANONYMOUS_LIMIT = settings.rate_limit.DEFAULT_ANONYMOUS_LIMIT
+
+
+async def _reject_banned_ip(
+    client_ip: str,
+    request: Request,
+    ban_info: BanInfo,
+    scope: Scope,
+    receive: Receive,
+    send: Send,
+) -> None:
+    """Emit the 403 banned-IP response (shared by the refresh-path gate and
+    the combined ban+GCRA block below).
+
+    B3: extracted so the refresh-path early-skip can enforce the ban boundary
+    without duplicating the response construction.
+    """
+    logger.warning(
+        "Request from banned IP blocked | ip=%s | reason=%s",
+        client_ip,
+        ban_info.reason,
+    )
+    security_event = SecurityEvent(
+        event_type=SecurityEventType.ATTACK_DETECTED,
+        client_ip=client_ip,
+        request_path=str(request.url.path),
+        reason="Request from banned IP",
+        extra={"ban_reason": ban_info.reason, "expires_at": ban_info.expires_at},
+    )
+    log_security_event(security_event)
+    headers = {
+        "X-Banned": "true",
+        "X-Ban-Reason": ban_info.reason or "Auto-ban",
+    }
+    if ban_info.expires_at:
+        retry_after = int(ban_info.expires_at - time.time()) + 1
+        if retry_after > 0:
+            headers["Retry-After"] = str(retry_after)
+    response = create_error_response(
+        code=ErrorCode.FORBIDDEN,
+        message="Forbidden: IP address banned due to abuse",
+        status_code=status.HTTP_403_FORBIDDEN,
+        headers=headers,
+    )
+    await response(scope, receive, send)
 
 
 class RateLimitMiddleware:
@@ -57,43 +101,10 @@ class RateLimitMiddleware:
         request = Request(scope, receive)
         client_ip = getattr(request.state, "client_ip", None) or get_client_ip(request)
 
-        # SECURITY: Check if IP is banned before processing
-        if settings.security.AUTO_BAN_ENABLED:
-            ban_info = await get_ban_info(client_ip)
-            if ban_info.is_banned:
-                logger.warning(
-                    "Request from banned IP blocked | ip=%s | reason=%s",
-                    client_ip,
-                    ban_info.reason,
-                )
-
-                # Log security event
-                security_event = SecurityEvent(
-                    event_type=SecurityEventType.ATTACK_DETECTED,
-                    client_ip=client_ip,
-                    request_path=str(request.url.path),
-                    reason="Request from banned IP",
-                    extra={"ban_reason": ban_info.reason, "expires_at": ban_info.expires_at},
-                )
-                log_security_event(security_event)
-
-                headers = {
-                    "X-Banned": "true",
-                    "X-Ban-Reason": ban_info.reason or "Auto-ban",
-                }
-                if ban_info.expires_at:
-                    retry_after = int(ban_info.expires_at - time.time()) + 1
-                    if retry_after > 0:
-                        headers["Retry-After"] = str(retry_after)
-
-                response = create_error_response(
-                    code=ErrorCode.FORBIDDEN,
-                    message="Forbidden: IP address banned due to abuse",
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    headers=headers,
-                )
-                await response(scope, receive, send)
-                return
+        # SECURITY + H-3: ban check and GCRA rate limit are merged into ONE
+        # Redis Lua round-trip below (was 2 sequential RTTs). The refresh-path
+        # skip must happen BEFORE the combined call so skipped requests cost
+        # zero Redis ops.
 
         # R5-5: Skip middleware rate limiting for refresh endpoint as it has a strict dependency-level rate limit
         # H5 FIX: normalize path (strip slash/query/case) so /api/v1/auth/refresh/?foo=1 not missed
@@ -102,6 +113,16 @@ class RateLimitMiddleware:
         _parsed = _urlparse(str(request.url))
         _norm_path = _parsed.path.rstrip("/").lower() or "/"
         if _norm_path in ("/api/v1/auth/refresh", "/api/v1/account/refresh"):
+            # B3: the refresh skip must not bypass the ban boundary. On
+            # origin/feature the ban check ran first on every path; the H-3
+            # re-ordering let banned IPs reach the refresh endpoint. Enforce
+            # the ban here with the cheap status-only lookup (5s negative
+            # cache in get_ban_info keeps the common case at zero Redis ops).
+            if settings.security.AUTO_BAN_ENABLED:
+                ban_info = await get_ban_info(client_ip)
+                if ban_info.is_banned:
+                    await _reject_banned_ip(client_ip, request, ban_info, scope, receive, send)
+                    return
             await self.app(scope, receive, send)
             return
 
@@ -135,8 +156,19 @@ class RateLimitMiddleware:
         # Determine rate limit key and limits
         limit, period, key = await self._get_rate_limit_config(request)
 
-        # Check rate limit using configured algorithm
-        is_limited, remaining, retry_after = await rate_limiter.check_rate_limit_algorithm(key, limit, period)
+        # H-3: ban check + rate limit in ONE Lua RTT (was: get_ban_info +
+        # check_rate_limit_algorithm = 2 sequential RTTs). When auto-ban is
+        # disabled or Redis is unavailable the combined helper degrades to
+        # the original sequential semantics.
+        if settings.security.AUTO_BAN_ENABLED:
+            ban_info, (is_limited, remaining, retry_after) = await check_ban_and_rate_limit(
+                client_ip, key, limit, period
+            )
+            if ban_info.is_banned:
+                await _reject_banned_ip(client_ip, request, ban_info, scope, receive, send)
+                return
+        else:
+            is_limited, remaining, retry_after = await rate_limiter.check_rate_limit_algorithm(key, limit, period)
 
         headers = {
             "X-RateLimit-Limit": str(limit),
@@ -281,15 +313,11 @@ class RateLimitMiddleware:
         from src.app.core.utils.path_utils import sanitize_path
 
         path = sanitize_path(request.url.path)
-        limit, period = await resolve_rate_limits(
-            path, tier_id=tier_id_raw, tier_name=tier_name, user_id=user_id
-        )
+        limit, period = await resolve_rate_limits(path, tier_id=tier_id_raw, tier_name=tier_name, user_id=user_id)
 
         raw_ip = getattr(request.state, "client_ip", None) if not user_id else None
         anonymous_ip = (
-            raw_ip
-            if isinstance(raw_ip, str) and raw_ip
-            else (get_client_ip(request) if not user_id else None)
+            raw_ip if isinstance(raw_ip, str) and raw_ip else (get_client_ip(request) if not user_id else None)
         )
         key = build_rate_limit_key(path, user_id=user_id, tenant_id=tenant_id, anonymous_ip=anonymous_ip)
 

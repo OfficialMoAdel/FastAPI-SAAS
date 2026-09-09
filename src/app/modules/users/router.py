@@ -26,19 +26,24 @@ from src.app.modules.users.schemas import (
     UserList,
     UserRead,
     UserReadPublic,
+    UserStatusUpdate,
     UserTierResponse,
     UserTierUpdate,
     UserUpdate,
     UserUpdateResponse,
 )
-from src.app.modules.users.service import UserService, get_user_service
+from src.app.modules.users.service import UserService
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> Any:
-    """Dependency for UserService injection."""
-    return get_user_service(db)
+def get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserService:
+    """Dependency injection factory for UserService.
+
+    Q-M4: factories live in router.py — service files stay Depends-free.
+    (Absorbs the old pointless `_get_user_service` wrapper, M-4.)
+    """
+    return UserService(db)
 
 
 @router.post(
@@ -49,7 +54,7 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> Any:
 )
 async def write_user(
     user: UserCreate,
-    service: UserService = Depends(_get_user_service),
+    service: UserService = Depends(get_user_service),
     db: AsyncSession = Depends(async_get_db),
 ) -> Any:
     """Create a new user."""
@@ -65,7 +70,7 @@ async def write_user(
 )
 async def read_users(
     pagination: PaginationParams = Depends(get_pagination_params),
-    service: UserService = Depends(_get_user_service),
+    service: UserService = Depends(get_user_service),
 ) -> Any:
     """Get paginated list of users for the current tenant (superuser only)."""
     return await service.list_users(
@@ -77,7 +82,7 @@ async def read_users(
 @router.get("/me", response_model=UserReadPublic)
 async def read_users_me(
     ctx: RequestContextDep,
-    service: UserService = Depends(_get_user_service),
+    service: UserService = Depends(get_user_service),
 ) -> Any:
     """Get current authenticated user profile.
 
@@ -94,7 +99,7 @@ async def read_users_me(
 async def read_user(
     user_id: str,
     ctx: RequestContextDep,
-    service: UserService = Depends(_get_user_service),
+    service: UserService = Depends(get_user_service),
 ) -> Any:
     """Get user by ID or username (authenticated users only).
 
@@ -122,7 +127,7 @@ async def patch_user(
     values: UserUpdate,
     user_id: str,
     ctx: RequestContextDep,
-    service: UserService = Depends(_get_user_service),
+    service: UserService = Depends(get_user_service),
 ) -> Any:
     """Update a user (partial update).
 
@@ -137,7 +142,7 @@ async def put_user(
     values: UserUpdate,
     user_id: str,
     ctx: RequestContextDep,
-    service: UserService = Depends(_get_user_service),
+    service: UserService = Depends(get_user_service),
 ) -> Any:
     """Update a user (full update, alias for PATCH).
 
@@ -151,7 +156,7 @@ async def put_user(
 async def erase_user(
     user_id: str,
     ctx: RequestContextDep,
-    service: UserService = Depends(_get_user_service),
+    service: UserService = Depends(get_user_service),
     token: str = Depends(oauth2_scheme),
 ) -> Any:
     """Soft delete a user.
@@ -165,7 +170,7 @@ async def erase_user(
 @router.delete("/db/{user_id}", response_model=UserDeleteResponse, dependencies=[Depends(get_current_superuser)])
 async def erase_db_user(
     user_id: str,
-    service: UserService = Depends(_get_user_service),
+    service: UserService = Depends(get_user_service),
     token: str = Depends(oauth2_scheme),
 ) -> UserDeleteResponse:
     """Permanently delete a user from database (superuser only).
@@ -178,7 +183,7 @@ async def erase_db_user(
 
 
 @router.get("/{user_id}/rate-limits", response_model=dict[str, Any], dependencies=[Depends(get_current_superuser)])
-async def read_user_rate_limits(user_id: str, service: UserService = Depends(_get_user_service)) -> dict[str, Any]:
+async def read_user_rate_limits(user_id: str, service: UserService = Depends(get_user_service)) -> dict[str, Any]:
     """Get user's rate limits based on their tier.
 
     Supports both integer user IDs and username strings for backward compatibility.
@@ -190,7 +195,7 @@ async def read_user_rate_limits(user_id: str, service: UserService = Depends(_ge
 async def read_user_tier(
     user_id: str,
     ctx: RequestContextDep,
-    service: UserService = Depends(_get_user_service),
+    service: UserService = Depends(get_user_service),
 ) -> Any:
     """Get user's tier information (authenticated users only).
 
@@ -218,7 +223,7 @@ async def read_user_tier(
 
 @router.patch("/{user_id}/tier", response_model=UserUpdateResponse, dependencies=[Depends(get_current_superuser)])
 async def patch_user_tier(
-    user_id: str, values: UserTierUpdate, service: UserService = Depends(_get_user_service)
+    user_id: str, values: UserTierUpdate, service: UserService = Depends(get_user_service)
 ) -> UserUpdateResponse:
     """Update user's tier (superuser only).
 
@@ -226,3 +231,17 @@ async def patch_user_tier(
     """
     # R1-15: typed DTO instead of dict[str, str].
     return UserUpdateResponse(**await service.update_tier(user_id, values))
+
+
+@router.patch("/{user_id}/status", response_model=UserUpdateResponse, dependencies=[Depends(get_current_superuser)])
+async def patch_user_status(
+    user_id: str,
+    values: UserStatusUpdate,
+    service: UserService = Depends(get_user_service),
+) -> UserUpdateResponse:
+    """Activate or deactivate a user (superuser only).
+
+    B2: deactivation bumps token_version and invalidates cached auth info so
+    existing JWTs stop authorizing immediately instead of after cache TTL.
+    """
+    return UserUpdateResponse(**await service.set_user_status(user_id, values.is_active))

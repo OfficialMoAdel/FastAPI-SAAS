@@ -45,18 +45,29 @@ class TestP2MediumPriorityRegressions:
         call_args = mock_pipe.psetex.call_args
         assert call_args[0][1] == 86400000  # Exactly 24 hours in ms
 
-    def test_p2_3_ip_filter_exempts_health_and_metrics(self):
-        """P2-3: IPFilterMiddleware must exempt health and metrics probes."""
+    def test_p2_3_ip_filter_exempts_health_not_metrics(self):
+        """P2-3 (superseded by H-1): IPFilterMiddleware must exempt health
+        probes, but NOT /metrics — bare /metrics was a scraper bypass
+        (unauthenticated, skipped attack detection and tenant middleware).
+        Real metrics endpoints are superuser-gated under /api/metrics."""
         middleware = IPFilterMiddleware(app=MagicMock())
         assert middleware._is_exempt_path("/health") is True
         assert middleware._is_exempt_path("/health/live") is True
         assert middleware._is_exempt_path("/health/ready") is True
         assert middleware._is_exempt_path("/ready") is True
-        assert middleware._is_exempt_path("/live") is True
-        assert middleware._is_exempt_path("/metrics") is True
+        assert middleware._is_exempt_path("/health/live") is True
         assert middleware._is_exempt_path("/api/v1/health") is True
-        # Documentation is not exempt from IP filtering / bot protection
-        assert middleware._is_exempt_path("/openapi.json") is False
+        # H-1: /metrics is no longer exempt
+        assert middleware._is_exempt_path("/metrics") is False
+        # B11: ip_filter now follows the shared COMMON_EXEMPT_PATHS contract
+        # (docs/openapi are unauthenticated; Stripe webhook receivers must
+        # never be blocked by IP blacklisting — a blacklisted Stripe source
+        # IP would silently drop all billing events).
+        assert middleware._is_exempt_path("/openapi.json") is True
+        assert middleware._is_exempt_path("/docs") is True
+        assert middleware._is_exempt_path("/api/v1/billing/webhook") is True
+        assert middleware._is_exempt_path("/api/v1/webhooks/stripe") is True
+
     @pytest.mark.asyncio
     async def test_p2_4_get_product_pricing_returns_total_count(self):
         """P2-4: get_product_pricing must request total_count metadata."""
@@ -65,9 +76,11 @@ class TestP2MediumPriorityRegressions:
         mock_product = MagicMock(id=10)
         mock_tenant = MagicMock(id=1)
 
-        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
-             patch("src.app.modules.billing.service.crud_products.get", new_callable=AsyncMock) as mock_prod_get, \
-             patch("src.app.modules.billing.service.crud_pricing.get_multi", new_callable=AsyncMock) as mock_get_multi:
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.modules.billing.service.crud_products.get", new_callable=AsyncMock) as mock_prod_get,
+            patch("src.app.modules.billing.service.crud_pricing.get_multi", new_callable=AsyncMock) as mock_get_multi,
+        ):
             mock_prod_get.return_value = mock_product
             mock_get_multi.return_value = {"data": [], "total_count": 0}
             res = await service.get_product_pricing(product_id=10)

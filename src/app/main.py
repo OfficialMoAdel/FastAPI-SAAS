@@ -29,6 +29,7 @@ from src.app.middleware.rate_limit import RateLimitMiddleware
 from src.app.middleware.request_id import RequestIDMiddleware
 from src.app.middleware.security_headers import SecurityHeadersMiddleware
 from src.app.middleware.tenant import TenantMiddleware
+from src.app.shared.exceptions import ServiceUnavailableError
 
 # admin interface initialized inside lifespan to eliminate import-time side effects
 admin: "CRUDAdmin | None" = None
@@ -71,7 +72,7 @@ async def _warm_token_blacklist_cache() -> None:
                         count=count,
                         capped=len(tokens) - len(capped) if len(tokens) > len(capped) else 0,
                     )
-    except (RedisError, SQLAlchemyError) as e:
+    except (RedisError, SQLAlchemyError, ServiceUnavailableError) as e:
         logger.error("Failed to warm token blacklist cache", error=str(e))
         if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
             raise

@@ -226,7 +226,8 @@ async def test_quota_query_fusion(file_service_from_phase2, mock_db):
         # Mock provider upload
         mock_provider = AsyncMock()
         mock_provider.upload.return_value.success = True
-        file_service_from_phase2._storage_service.get_provider.return_value = mock_provider
+        # B6: upload resolves the provider synchronously from the already-fetched settings.
+        file_service_from_phase2._storage_service.get_provider_for_settings = MagicMock(return_value=mock_provider)
 
         # Call upload_file
         await file_service_from_phase2.upload_file(

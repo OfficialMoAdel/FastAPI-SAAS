@@ -10,6 +10,11 @@ class EventSettings(BaseSettings):
     EVENT_HANDLER_TIMEOUT_SECONDS: float = 30.0
     EVENT_HANDLER_TIMEOUT_CRITICAL: float = 60.0  # For known slow handlers
     EVENT_BUS_CONCURRENCY: int = 50  # Max concurrent sync handlers
+    EVENT_BUS_RETRY_DELAYS: list[int] = Field(default=[60, 300, 900])
+    """M-9: event-bus retry backoff in seconds (was hardcoded [60, 300, 900]).
+
+    Overridable via ``EVENT_BUS_RETRY_DELAYS='[30,120,600]'`` style JSON.
+    """
 
 
 class R1UnifiedSettings(BaseSettings):
@@ -88,10 +93,11 @@ class PerformanceSettings(BaseSettings):
     FEATURE_CONTEXTVAR_OPTIMIZATION: bool = False
     """Use contextvar for tenant context (P0-2)."""
 
-    FEATURE_STREAMING_UPLOADS: bool = True
-    """Use streaming multipart uploads for S3 storage (P0-3)."""
-
-
+    # B13: FEATURE_STREAMING_UPLOADS removed — its only consumer (the
+    # spooled-temporary-file fallback in s3_storage) was deleted in P-M8;
+    # streaming is now unconditional. The flag was dead config still
+    # exercised by test fixtures, which falsely suggested flag-off behavior
+    # was covered.
 
     FEATURE_REMOVE_WASTED_CONNECTION: bool = True
     """Remove wasted DB connection in tenant middleware (P0-1)."""

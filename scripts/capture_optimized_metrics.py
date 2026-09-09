@@ -154,7 +154,7 @@ def generate_optimized_report(output_path: Path) -> dict[str, Any]:
                 "job_tenant_context RLS bug fixed",
                 "Billing webhook RLS fixed",
                 "File upload memory optimization",
-                "FEATURE_STREAMING_UPLOADS enabled",
+                "Streaming uploads (unconditional since P-M8)",
             ],
         },
         "benchmarks": {},

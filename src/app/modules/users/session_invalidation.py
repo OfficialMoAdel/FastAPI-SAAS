@@ -34,6 +34,7 @@ class InvalidationReason(str, Enum):
     CREDENTIAL_CHANGE = "credential_change"
     DELETION = "deletion"
     TIER_CHANGE = "tier_change"
+    DEACTIVATION = "deactivation"
 
 
 # Reasons that must force re-authentication by bumping token_version.
@@ -42,6 +43,7 @@ _BUMP_REASONS: frozenset[InvalidationReason] = frozenset(
         InvalidationReason.CREDENTIAL_CHANGE,
         InvalidationReason.DELETION,
         InvalidationReason.TIER_CHANGE,
+        InvalidationReason.DEACTIVATION,
     }
 )
 

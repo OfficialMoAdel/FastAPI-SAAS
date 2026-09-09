@@ -152,7 +152,7 @@ class UserCreate(UserBase, BaseCreate):
         Field(
             min_length=8,
             max_length=72,
-            examples=["Str1ngst!"],
+            examples=["Ex4mplePw!a9Z"],  # C-1 hygiene: not a git-history-leaked value
             description="Must contain at least one lowercase, uppercase, digit, and special character",
         ),
     ]
@@ -221,6 +221,12 @@ class UserTierUpdate(BaseModel):
     """Schema for updating user tier."""
 
     tier_id: int
+
+
+class UserStatusUpdate(BaseModel):
+    """Schema for activating/deactivating a user (superuser only)."""
+
+    is_active: bool
 
 
 class UserDelete(BaseUpdate):

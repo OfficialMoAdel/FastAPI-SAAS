@@ -17,24 +17,10 @@ logger = get_logger(__name__)
 
 # P2-7: use the shared common set; ip_filter has no extra exemptions of
 # its own (health/metrics are already in COMMON_EXEMPT_PATHS).
-from src.app.core.middleware_exempt import COMMON_EXEMPT_PATHS
+from src.app.core.middleware_exempt import COMMON_EXEMPT_PATHS, is_path_exempt
 
 _IP_FILTER_EXTRA_EXEMPT: frozenset[str] = frozenset()
 EXEMPT_PATHS: frozenset[str] = COMMON_EXEMPT_PATHS | _IP_FILTER_EXTRA_EXEMPT  # backward-compat re-export
-_IP_FILTER_EXEMPT_HEALTH_ONLY: frozenset[str] = frozenset(
-    {
-        "/health",
-        "/health/live",
-        "/health/ready",
-        "/api/v1/health",
-        "/api/v1/health/live",
-        "/api/v1/health/ready",
-        "/api/v1/ready",
-        "/ready",
-        "/live",
-        "/metrics",
-    }
-)
 
 import re
 
@@ -82,13 +68,14 @@ class IPFilterMiddleware:
         self._filter_service = IPFilterService()
 
     def _is_exempt_path(self, path: str) -> bool:
-        """Check if path is exempt from IP filtering."""
-        if path in _IP_FILTER_EXEMPT_HEALTH_ONLY:
-            return True
-        for p in _IP_FILTER_EXEMPT_HEALTH_ONLY:
-            if path.startswith(p + "/"):
-                return True
-        return False
+        """Check if path is exempt from IP filtering.
+
+        B11: consult the shared COMMON_EXEMPT_PATHS contract (docs/openapi,
+        health probes, Stripe webhook receivers) instead of the private
+        health-only set — a blacklisted Stripe source IP must not get its
+        webhooks 403'd, and /docs must not be IP-filtered.
+        """
+        return is_path_exempt(path, _IP_FILTER_EXTRA_EXEMPT)
     async def __call__(self, scope, receive, send):
         """Process request through IP filter."""
         if scope["type"] != "http":

@@ -60,7 +60,16 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
         try:
             from src.app.modules.billing.gateway import get_payment_gateway
 
-            stripe_sub = await get_payment_gateway(None).retrieve_subscription(stripe_subscription_id)
+            # B15: resolve the tenant's own Stripe key when one is configured
+            # (per-tenant Stripe accounts). The gateway falls back to the
+            # platform-global key when the tenant has no StripeSettings row,
+            # so single-account deployments are unaffected. Key resolution
+            # needs a DB session; the resolve runs in a short bypass context
+            # (the webhook path has no tenant middleware context) and the
+            # Stripe HTTP call itself stays outside any DB session.
+            async with _pkg.job_bypass_context("Checkout tenant Stripe key resolve") as gw_db:
+                api_key = await get_payment_gateway(gw_db).get_api_key(tenant_id)
+            stripe_sub = await get_payment_gateway(api_key=api_key).retrieve_subscription(stripe_subscription_id)
             # P1-4 FIX: current_period_* moved from Subscription to
             # SubscriptionItem in Stripe API 2025-03-31.basil (the pinned SDK
             # sends 2025-12-15.clover, where the top-level fields are absent).

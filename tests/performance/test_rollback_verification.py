@@ -30,11 +30,8 @@ OPTIMIZATION_FLAGS: list[tuple[str, str, bool]] = [
         "src.app.core.config.Settings.FEATURE_REMOVE_WASTED_CONNECTION",
         True,
     ),
-    (
-        "FEATURE_STREAMING_UPLOADS",
-        "src.app.core.config.Settings.FEATURE_STREAMING_UPLOADS",
-        True,
-    ),
+    # B13: FEATURE_STREAMING_UPLOADS removed — its only consumer (the
+    # spooled-temp fallback) was deleted in P-M8; streaming is unconditional.
 ]
 
 
@@ -132,36 +129,6 @@ def test_feature_remove_wasted_connection_rollback() -> None:
     # Verify middleware handles both states
     # (The actual connection behavior is tested via integration tests)
     print("✅ FEATURE_REMOVE_WASTED_CONNECTION rollback verified")
-
-
-def test_feature_streaming_uploads_rollback() -> None:
-    """
-    Test rollback of FEATURE_STREAMING_UPLOADS.
-
-    When disabled:
-    - File uploads should revert to buffered mode
-    - Memory usage will increase for large files
-    """
-    from unittest.mock import patch
-
-    from src.app.core.config import Settings
-
-    # Verify flag can be toggled
-    with patch.dict(
-        os.environ,
-        {
-            "PERFORMANCE_FEATURE_STREAMING_UPLOADS": "false",
-            "ADMIN_PASSWORD": "TestAdminP@ssw0rd123",
-            "SECRET_KEY": "test-secret-key-for-testing-only",
-            "POSTGRES_USER": "test",
-            "POSTGRES_PASSWORD": "test",
-        },
-        clear=False,
-    ):
-        settings = Settings()  # type: ignore[call-arg]
-        assert settings.FEATURE_STREAMING_UPLOADS is False
-
-    print("✅ FEATURE_STREAMING_UPLOADS rollback verified")
 
 
 # =============================================================================
@@ -262,17 +229,6 @@ ROLLBACK_PROCEDURES: dict[str, dict[str, str]] = {
         """.strip(),
         "verification": "pytest tests/e2e/test_tenant_isolation_e2e.py -v",
     },
-    "FEATURE_STREAMING_UPLOADS": {
-        "description": "Revert to buffered file uploads",
-        "risk": "MEDIUM - Will increase memory usage for large uploads",
-        "procedure": """
-1. Set environment variable: FEATURE_STREAMING_UPLOADS=false
-2. Restart application
-3. Monitor memory usage during file uploads
-4. Consider reducing max upload size temporarily
-        """.strip(),
-        "verification": "pytest tests/contract/test_files.py -v -k upload",
-    },
 }
 
 
@@ -309,7 +265,6 @@ def test_full_rollback_scenario() -> None:
     # Set all flags to disabled (PerformanceSettings uses PERFORMANCE_ prefix)
     env_patches = {
         "PERFORMANCE_FEATURE_REMOVE_WASTED_CONNECTION": "false",
-        "PERFORMANCE_FEATURE_STREAMING_UPLOADS": "false",
     }
 
     with patch.dict(os.environ, env_patches, clear=False):
@@ -330,7 +285,6 @@ def test_full_rollback_scenario() -> None:
 
             # Verify all flags are disabled
             assert settings.FEATURE_REMOVE_WASTED_CONNECTION is False
-            assert settings.FEATURE_STREAMING_UPLOADS is False
 
             print("✅ Full rollback scenario verified - app can run with all optimizations disabled")
 

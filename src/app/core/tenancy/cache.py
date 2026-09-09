@@ -21,6 +21,15 @@ from src.app.core.redis_provider import get_redis
 
 logger = logging.getLogger(__name__)
 
+# B4: canonical L2 TTL for tenant cache entries. Every writer of the
+# ``tenant:slug:{slug}`` / ``tenant:{id}`` keys (tenants service, middleware
+# L3 fill, cache warmer) must use this value. Previously the middleware L3
+# fill and the warmer wrote 3600s entries while the service wrote 300s — a
+# concurrent deactivation's re-cached ``is_active=False`` could be overwritten
+# by a stale in-flight fill and survive for a full hour. 300s bounds the
+# stale-is_active window to five minutes across all writers.
+TENANT_CACHE_TTL = 300
+
 # Channel name shared with the listener in src.app.middleware.tenant.
 # Keep the literal in one place so middleware and service cannot drift.
 _L1_INVALIDATION_CHANNEL = "tenant:l1_invalidate"

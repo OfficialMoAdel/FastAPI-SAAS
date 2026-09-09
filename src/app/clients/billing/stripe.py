@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, Protocol
+from uuid import uuid4
 
 import stripe
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -112,6 +113,14 @@ class StripeGateway:
         """
         api_key = await self._require_api_key(tenant_id, kwargs.get("api_key"))
         kwargs["api_key"] = api_key
+        # B16: idempotency key scoped to this logical create. with_retry's
+        # retries reuse the same key, so a request that landed on Stripe's
+        # side but whose response was lost (APIConnectionError) returns the
+        # original session instead of creating an orphan duplicate. A fresh
+        # key per call keeps distinct user checkouts distinct — an
+        # attribute-derived key (tenant+plan+user) would wrongly hand a user
+        # restarting checkout the same (possibly expired) session for 24h.
+        kwargs.setdefault("idempotency_key", f"co_{uuid4().hex}")
         try:
             return await with_retry(
                 fn=lambda: asyncio.to_thread(lambda: stripe.checkout.Session.create(**kwargs)),
@@ -146,6 +155,12 @@ class StripeGateway:
     async def modify_subscription(self, subscription_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
         """Modify a Stripe Subscription (retries transient failures only)."""
         api_key = await self._require_api_key(tenant_id, kwargs.pop("api_key", None))
+        # B16: idempotency key scoped to this logical modify — with_retry's
+        # retries reuse it, so a lost-response retry re-applies the same
+        # mutation instead of issuing a second one. Fresh per call: distinct
+        # logical modifications (e.g. cancel now, then re-enable) must not
+        # collide with a 24h-old key.
+        kwargs.setdefault("idempotency_key", f"sm_{uuid4().hex}")
         try:
             return await with_retry(
                 fn=lambda: asyncio.to_thread(

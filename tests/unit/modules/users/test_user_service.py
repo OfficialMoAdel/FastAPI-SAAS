@@ -19,6 +19,7 @@ from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules.users.schemas import UserCreate, UserTierUpdate, UserUpdate
 from src.app.modules.users.service import UserService
+from src.app.modules.users.session_invalidation import InvalidationReason
 
 
 @pytest.fixture(autouse=True)
@@ -156,18 +157,23 @@ class TestUserServiceCreate:
 
     @pytest.mark.asyncio
     async def test_create_success(self, user_service, mock_db, mock_user_create):
-        """Test successful user creation."""
+        """Test successful user creation.
+
+        B8: crud.create returns None (FastCRUD without schema_to_select),
+        so create() commits then re-reads the row — mock the re-read.
+        """
         # Mock: no existing user found
         mock_db.scalar.return_value = None
 
-        # Mock crud_users.create to return created user
+        # Mock the post-commit re-read to return the created user
         created_user = MagicMock()
         created_user.id = 1
         created_user.username = mock_user_create.username
         created_user.email = mock_user_create.email
+        mock_db.execute.return_value.scalar_one_or_none.return_value = created_user
 
         with patch.object(user_service.crud, "create", new_callable=AsyncMock) as mock_create:
-            mock_create.return_value = created_user
+            mock_create.return_value = None  # honest FastCRUD contract
 
             with patch("src.app.modules.users.service.get_current_tenant") as mock_tenant:
                 mock_tenant.return_value = MagicMock(id=uuid.uuid4())
@@ -183,7 +189,7 @@ class TestUserServiceCreate:
 
     @pytest.mark.asyncio
     async def test_create_duplicate_email(self, user_service, mock_db, mock_user_create, mock_existing_user):
-        """Test creation fails for duplicate email."""
+        """Test creation fails for duplicate email (uniform S-M2 response)."""
         # Mock: existing user with same email found
         mock_existing_user.email = mock_user_create.email
         mock_db.scalar.return_value = mock_existing_user
@@ -191,11 +197,13 @@ class TestUserServiceCreate:
         with pytest.raises(DuplicateError) as exc_info:
             await user_service.create(mock_user_create)
 
-        assert "email" in str(exc_info.value)
+        # S-M2: uniform generic message — the colliding field must NOT be disclosed
+        assert "credentials" in str(exc_info.value)
+        assert "email" not in str(exc_info.value).replace("credentials", "")
 
     @pytest.mark.asyncio
     async def test_create_duplicate_username(self, user_service, mock_db, mock_user_create, mock_existing_user):
-        """Test creation fails for duplicate username."""
+        """Test creation fails for duplicate username (uniform S-M2 response)."""
         # Mock: existing user with same username (but different email)
         mock_existing_user.email = "other@example.com"
         mock_existing_user.username = mock_user_create.username
@@ -204,7 +212,9 @@ class TestUserServiceCreate:
         with pytest.raises(DuplicateError) as exc_info:
             await user_service.create(mock_user_create)
 
-        assert "username" in str(exc_info.value)
+        # S-M2: identical generic message for username collisions — no oracle
+        assert "credentials" in str(exc_info.value)
+        assert "username" not in str(exc_info.value).replace("credentials", "")
 
     @pytest.mark.asyncio
     async def test_create_duplicate_check_before_password_hash(
@@ -229,7 +239,8 @@ class TestUserServiceCreate:
             with pytest.raises(DuplicateError) as exc_info:
                 await user_service.create(mock_user_create)
 
-            assert "email" in str(exc_info.value)
+            # S-M2: uniform generic duplicate message
+            assert "credentials" in str(exc_info.value)
 
             # CRITICAL: Password hash should NOT have been called for duplicate
             mock_hash.assert_not_called()
@@ -252,8 +263,8 @@ class TestUserServiceCreate:
 
             with pytest.raises(DuplicateError) as exc_info:
                 await user_service.create(mock_user_create)
-
-            assert "username" in str(exc_info.value)
+            # S-M2: uniform generic duplicate message
+            assert "credentials" in str(exc_info.value)
 
             # Password hash should NOT have been called
             mock_hash.assert_not_called()
@@ -610,3 +621,77 @@ class TestUserServiceTierAndRateLimits:
                     # A3 fix uses dict["name"] instead of db_user.name
                     assert "Test User" in result["message"]
                     assert "updated" in result["message"].lower()
+
+
+class TestSetUserStatus:
+    """B2: deactivation must bump token_version + invalidate cache."""
+
+    @pytest.mark.asyncio
+    async def test_deactivate_bumps_token_version_and_invalidates(self, user_service, mock_existing_user):
+        """Deactivation flips is_active, bumps token_version, invalidates with DEACTIVATION reason."""
+        mock_existing_user.is_active = True
+
+        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_existing_user
+
+            with patch.object(user_service.crud, "update", new_callable=AsyncMock) as mock_update:
+                with patch.object(
+                    user_service, "_invalidate_user_cache", new_callable=AsyncMock
+                ) as mock_invalidate:
+                    result = await user_service.set_user_status("testuser", is_active=False)
+
+                    assert "deactivated" in result["message"]
+                    # is_active flip persisted
+                    mock_update.assert_awaited_once()
+                    update_kwargs = mock_update.call_args[1]
+                    assert update_kwargs["object"] == {"is_active": False}
+                    # token_version bumped in same transaction (sa_update via db.execute)
+                    user_service.db.execute.assert_awaited()
+                    user_service.db.commit.assert_awaited()
+                    # DEACTIVATION-class invalidation (bump=True)
+                    invalidate_kwargs = mock_invalidate.call_args[1]
+                    assert invalidate_kwargs["reason"] == InvalidationReason.DEACTIVATION
+                    assert invalidate_kwargs["bump_token_version"] is True
+
+    @pytest.mark.asyncio
+    async def test_activate_bumps_token_version(self, user_service, mock_existing_user):
+        """Activation (False→True) also bumps — status flips are security-affecting."""
+        mock_existing_user.is_active = False
+
+        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_existing_user
+
+            with patch.object(user_service.crud, "update", new_callable=AsyncMock):
+                with patch.object(user_service, "_invalidate_user_cache", new_callable=AsyncMock) as mock_invalidate:
+                    result = await user_service.set_user_status("testuser", is_active=True)
+
+                    assert "activated" in result["message"]
+                    invalidate_kwargs = mock_invalidate.call_args[1]
+                    assert invalidate_kwargs["reason"] == InvalidationReason.DEACTIVATION
+                    assert invalidate_kwargs["bump_token_version"] is True
+
+    @pytest.mark.asyncio
+    async def test_noop_when_status_unchanged(self, user_service, mock_existing_user):
+        """Same-status call is a no-op: no update, no bump, no invalidation."""
+        mock_existing_user.is_active = True
+
+        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_existing_user
+
+            with patch.object(user_service.crud, "update", new_callable=AsyncMock) as mock_update:
+                with patch.object(user_service, "_invalidate_user_cache", new_callable=AsyncMock) as mock_invalidate:
+                    result = await user_service.set_user_status("testuser", is_active=True)
+
+                    assert "already active" in result["message"]
+                    mock_update.assert_not_awaited()
+                    mock_invalidate.assert_not_awaited()
+                    user_service.db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_user_not_found_raises(self, user_service):
+        """Unknown user raises ModelNotFoundError."""
+        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = None
+
+            with pytest.raises(ModelNotFoundError):
+                await user_service.set_user_status("ghost", is_active=False)

@@ -99,14 +99,9 @@ async def test_local_storage_streaming():
 
 @pytest.mark.asyncio
 async def test_s3_storage_streaming():
-    """Verify S3Storage.upload uses streaming when feature flag is enabled."""
-    # Mock settings and botocore
-    with (
-        patch("src.app.modules.storage.s3_storage.settings") as mock_settings,
-        patch.dict("sys.modules", {"botocore.config": MagicMock()}),
-    ):
-        mock_settings.FEATURE_STREAMING_UPLOADS = True
-
+    """Verify S3Storage.upload uses streaming (the only path since P-M8)."""
+    # Mock botocore
+    with patch.dict("sys.modules", {"botocore.config": MagicMock()}):
         # Mock S3 client
         mock_client = MagicMock()
         # Mock upload_fileobj (it's called in a thread)
@@ -132,23 +127,21 @@ async def test_s3_storage_streaming():
 
 @pytest.mark.asyncio
 async def test_s3_storage_legacy():
-    """Verify S3Storage.upload uses put_object when feature flag is disabled."""
-    with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = False
-        mock_settings.FEATURE_STREAMING_UPLOADS = False
+    """P-M8: upload always uses the streaming path — the legacy spooled-temp
+    fallback was deleted (B13: the FEATURE_STREAMING_UPLOADS flag is gone)."""
+    with patch.dict("sys.modules", {"botocore.config": MagicMock()}):
         mock_client = MagicMock()
+        mock_client.upload_fileobj = MagicMock()
         mock_client.put_object = MagicMock()
 
         provider = S3Storage(s3_client=mock_client, bucket="test-bucket")
 
         mock_file = MagicMock()
-        # Streaming legacy path loops on read() until an empty chunk; provide a
-        # terminating sequence so the loop ends (single return_value would loop forever).
-        mock_file.read.side_effect = [b"content", b""]
+        mock_file.size = 12345
+        mock_file.seek = MagicMock()
 
-        await provider.upload(mock_file, "test/file.txt", "text/plain")
+        result = await provider.upload(mock_file, "test/file.txt", "text/plain")
 
-        # Verify put_object called
-        mock_client.put_object.assert_called_once()
-        # Verify read was invoked (streaming legacy path reads in chunks)
-        mock_file.read.assert_called()
+        assert result.success, f"Upload failed: {result.error}"
+        mock_client.upload_fileobj.assert_called_once()
+        mock_client.put_object.assert_not_called()

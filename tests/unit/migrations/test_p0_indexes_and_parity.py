@@ -20,7 +20,10 @@ class TestP0IndexesAndParity:
 
         assert "idx_audit_tenant_action" in index_map
         assert index_map["idx_audit_tenant_action"] == ["tenant_id", "action"]
-        assert "idx_audit_tenant_created" in index_map
+        # B5: the 09 keyset composite is now declared in the model (replaces
+        # the superseded idx_audit_tenant_created).
+        assert "idx_audit_logs_tenant_created_id" in index_map
+        assert index_map["idx_audit_logs_tenant_created_id"] == ["tenant_id", "created_at", "id"]
         assert "idx_audit_entity" in index_map
         assert "idx_audit_action_created" in index_map
 
@@ -49,10 +52,13 @@ class TestP0IndexesAndParity:
         assert "idx_notification_status_created" in index_map
         assert index_map["idx_notification_status_created"] == ["status", "created_at"]
         assert "idx_notification_tenant_status" in index_map
-        assert "idx_notification_tenant_created" in index_map
+        # B5: the 09 keyset composite is now declared in the model (replaces
+        # the superseded idx_notification_tenant_created).
+        assert "idx_notifications_tenant_created_id" in index_map
+        assert index_map["idx_notifications_tenant_created_id"] == ["tenant_id", "created_at", "id"]
 
     def test_migration_chain_integrity(self) -> None:
-        """Verify 8 migration layers form an unbroken chain from 01_foundation to 08_enable_rls_policies."""
+        """Verify migration layers form an unbroken chain from 01_foundation to 10_drop_superseded_indexes."""
         expected_chain = [
             ("01_foundation", None),
             ("02_authentication", "01_foundation"),
@@ -62,6 +68,8 @@ class TestP0IndexesAndParity:
             ("06_ai_features", "05_content_storage"),
             ("07_observability", "06_ai_features"),
             ("08_enable_rls_policies", "07_observability"),
+            ("09_keyset_composite_indexes", "08_enable_rls_policies"),
+            ("10_drop_superseded_indexes", "09_keyset_composite_indexes"),
         ]
 
         for rev, down_rev in expected_chain:
@@ -158,6 +166,22 @@ class TestP0IndexesAndParity:
                 and "postgresql_where" in kwargs
                 for args, kwargs in created_indexes
             )
+
+    def test_10_drops_superseded_indexes(self) -> None:
+        """B5: migration 10 drops the 2-column indexes superseded by the 09 composites."""
+        mig_10 = importlib.import_module("src.migrations.versions.10_drop_superseded_indexes")
+
+        mock_op = MagicMock()
+        with patch.object(mig_10, "op", mock_op):
+            mig_10.upgrade()
+
+            executed_sqls = [call.args[0] for call in mock_op.execute.call_args_list if call.args]
+            dropped = {sql.split('"')[1] for sql in executed_sqls if "DROP INDEX" in sql}
+            assert dropped == {
+                "idx_audit_tenant_created",
+                "idx_notification_tenant_created",
+                "idx_audit_logs_tenant_recent",
+            }
 
     def test_all_model_indexes_covered_by_migrations(self) -> None:
         """Verify all declared model indexes in __table_args__ appear in Alembic migration files."""

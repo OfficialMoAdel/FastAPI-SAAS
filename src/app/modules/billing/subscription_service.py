@@ -40,6 +40,7 @@ from src.app.modules.billing.schemas import (
     UserSubscriptionRead,
     UserSubscriptionUpdate,
 )
+from src.app.shared.exceptions import ForbiddenError
 
 logger = get_logger(__name__)
 
@@ -151,9 +152,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
         from src.app.core.db.tenant_crud import tenant_scope as _tscope
 
-        stmt = _select(SubscriptionPlan).where(
-            SubscriptionPlan.id == plan_id, _tscope(SubscriptionPlan, tid)
-        )
+        stmt = _select(SubscriptionPlan).where(SubscriptionPlan.id == plan_id, _tscope(SubscriptionPlan, tid))
         result = await self.db.execute(stmt)
         plan = result.scalar_one_or_none()
         if plan is None:
@@ -187,6 +186,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
 class UserSubscriptionService(BaseService[UserSubscription]):
     """Service for managing user subscriptions."""
+
     def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None):
         super().__init__(UserSubscription, db)
         self.tenant_id = tenant_id
@@ -287,27 +287,23 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         result = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
         return dict(result) if result else {}
 
-    async def cancel_subscription_for_user(
-        self, subscription_id: int, user_id: int
-    ) -> dict[str, Any]:
+    async def cancel_subscription_for_user(self, subscription_id: int, user_id: int) -> dict[str, Any]:
         """Cancel a subscription at period end, enforcing user ownership.
 
         Ownership/tenant-isolation check lives here (not in the router) so
         every caller gets it by construction.
 
         Raises:
-            ForbiddenException: If the subscription is not owned by the user.
+            ForbiddenError: If the subscription is not owned by the user
+                (Q-M1: was ForbiddenException; core/errors.py owns the HTTP
+                mapping centrally).
         """
-        from src.app.core.exceptions.http_exceptions import ForbiddenException
-
         subscription = await self.get_subscription(subscription_id)
         sub_user_id = (
-            subscription.get("user_id")
-            if isinstance(subscription, dict)
-            else getattr(subscription, "user_id", None)
+            subscription.get("user_id") if isinstance(subscription, dict) else getattr(subscription, "user_id", None)
         )
         if sub_user_id != user_id:
-            raise ForbiddenException("Not authorized to cancel this subscription")
+            raise ForbiddenError("Not authorized to cancel this subscription")
         return await self.cancel_subscription(subscription_id, user_id=user_id)
 
     async def cancel_subscription(self, subscription_id: int, user_id: int | None = None) -> dict[str, Any]:
@@ -329,17 +325,13 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         ):
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
-        # T109: Update DB first but do not commit yet
-        await crud_user_subscriptions.update(
-            db=self.db,
-            object={
-                "cancel_at_period_end": True,
-                "updated_at": datetime.now(UTC),
-            },
-            id=subscription_id,
-            commit=False,
-        )
-
+        # B14: call Stripe BEFORE taking the DB row lock. FastCRUD's
+        # update(commit=False) executes the UPDATE immediately, so the old
+        # DB-first order held the row lock across the Stripe HTTP call (up to
+        # 3 retries with long timeouts), stalling every webhook handler that
+        # SELECTs ... FOR UPDATE on the same subscription. If the process dies
+        # between the Stripe call and the DB commit below, the
+        # customer.subscription.updated webhook re-syncs cancel_at_period_end.
         stripe_subscription_id = (
             subscription.get("stripe_subscription_id")
             if isinstance(subscription, dict)
@@ -370,6 +362,17 @@ class UserSubscriptionService(BaseService[UserSubscription]):
                 logger.error("Failed to cancel Stripe subscription", error=e)
                 await self.db.rollback()
                 raise StripeError(f"Failed to cancel subscription in Stripe: {str(e)}") from e
+
+        # Short DB transaction: lock held only for the UPDATE + COMMIT.
+        await crud_user_subscriptions.update(
+            db=self.db,
+            object={
+                "cancel_at_period_end": True,
+                "updated_at": datetime.now(UTC),
+            },
+            id=subscription_id,
+            commit=False,
+        )
 
         await self.db.commit()
         result = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
@@ -415,16 +418,14 @@ class BillingRecordService(BaseService[BillingRecord]):
         it by construction.
 
         Raises:
-            ForbiddenException: If the record is not owned by the user.
+            ForbiddenError: If the record is not owned by the user
+                (Q-M1: was ForbiddenException; core/errors.py owns the HTTP
+                mapping centrally).
         """
-        from src.app.core.exceptions.http_exceptions import ForbiddenException
-
         record = await self.get_record(record_id)
-        record_user_id = (
-            record.get("user_id") if isinstance(record, dict) else getattr(record, "user_id", None)
-        )
+        record_user_id = record.get("user_id") if isinstance(record, dict) else getattr(record, "user_id", None)
         if record_user_id != user_id:
-            raise ForbiddenException("Not authorized to view this record")
+            raise ForbiddenError("Not authorized to view this record")
         return cast(dict[str, Any], record)
 
     async def get_user_records(

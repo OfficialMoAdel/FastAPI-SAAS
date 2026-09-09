@@ -480,21 +480,7 @@ class EventBus:
         # already logged there, and sync_ok=False below still suppresses the
         # idempotent mark, so a re-publish with the same event_id retries.
         for handler, error in failed_handlers:
-            try:
-                await self.add_to_dlq(
-                    event_name=event_name,
-                    handler_name=getattr(handler, "__name__", repr(handler)),
-                    data=data,
-                    error=error,
-                    attempt_count=1,
-                )
-            except Exception as dlq_error:
-                _pkg.logger.error(
-                    "Failed to route failed handler to DLQ",
-                    event_name=event_name,
-                    handler=getattr(handler, "__name__", repr(handler)),
-                    error=str(dlq_error),
-                )
+            await self._dlq_quietly(event_name, handler, data, error=error, attempt_count=1)
 
         return not failed_handlers
 
@@ -552,25 +538,11 @@ class EventBus:
                     event_name=event_name,
                     handler=handler.__name__,
                 )
-                try:
-                    await asyncio.wait_for(
-                        handler(data),
-                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
-                    )
-                except TimeoutError:
-                    _pkg.logger.error(
-                        "Fallback sync handler timed out",
-                        event_name=event_name,
-                        handler=handler.__name__,
-                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
-                    )
-                except Exception as e:
-                    _pkg.logger.error(
-                        "Fallback sync handler failed",
-                        event_name=event_name,
-                        handler=handler.__name__,
-                        error=str(e),
-                    )
+                # B8: route through the shared fallback so failures land in
+                # the DLQ (the old inline block only logged them — during a
+                # Redis outage, exactly when the circuit is open, log-only
+                # meant permanent silent loss).
+                await self._sync_fallback_handler(event_name, handler, data, reason="circuit open")
                 return (True, handler, None)  # Handled via fallback
 
             try:
@@ -634,6 +606,40 @@ class EventBus:
             if not success and error is not None:
                 await self._sync_fallback_handler(event_name, handler, data, reason="queue failure")
 
+    async def _dlq_quietly(
+        self,
+        event_name: str,
+        handler: Callable[..., Coroutine[Any, Any, None]],
+        data: dict[str, Any],
+        error: str,
+        attempt_count: int,
+    ) -> None:
+        """B9: write a DLQ entry without ever propagating a failure.
+
+        ``add_to_dlq`` re-raises on Redis errors (correct for the ARQ worker
+        path, where the raise triggers a job retry). But every *web* path that
+        reaches the DLQ — sync fallback after enqueue failure, circuit-open
+        fallback, CRITICAL sync-handler failure — runs inside a request whose
+        primary work already succeeded; a Redis outage there must not 500 the
+        request. The error log inside ``add_to_dlq`` plus this method's own
+        log line are the audit trail when Redis is down.
+        """
+        try:
+            await self.add_to_dlq(
+                event_name=event_name,
+                handler_name=getattr(handler, "__name__", repr(handler)),
+                data=data,
+                error=error,
+                attempt_count=attempt_count,
+            )
+        except Exception as dlq_error:
+            _pkg.logger.error(
+                "Failed to route failed handler to DLQ",
+                event_name=event_name,
+                handler=getattr(handler, "__name__", repr(handler)),
+                error=str(dlq_error),
+            )
+
     async def _sync_fallback_handler(
         self,
         event_name: str,
@@ -664,13 +670,7 @@ class EventBus:
                 handler=handler.__name__,
                 timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
             )
-            await self.add_to_dlq(
-                event_name=event_name,
-                handler_name=getattr(handler, "__name__", repr(handler)),
-                data=data,
-                error=str(e),
-                attempt_count=0,
-            )
+            await self._dlq_quietly(event_name, handler, data, error=str(e), attempt_count=0)
         except Exception as handler_error:
             _pkg.logger.error(
                 "Sync fallback also failed",
@@ -678,13 +678,7 @@ class EventBus:
                 handler=handler.__name__,
                 error=str(handler_error),
             )
-            await self.add_to_dlq(
-                event_name=event_name,
-                handler_name=getattr(handler, "__name__", repr(handler)),
-                data=data,
-                error=str(handler_error),
-                attempt_count=0,
-            )
+            await self._dlq_quietly(event_name, handler, data, error=str(handler_error), attempt_count=0)
 
     async def _publish_async_batch(
         self,

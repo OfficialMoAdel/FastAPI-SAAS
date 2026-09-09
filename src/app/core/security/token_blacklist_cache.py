@@ -27,6 +27,7 @@ from redis.asyncio import Redis
 from src.app.core.logger import get_logger
 from src.app.core.resilience.registry import ServiceType, create_circuit_breaker
 from src.app.core.utils.lua_manager import get_lua_manager
+from src.app.shared.exceptions import ServiceUnavailableError
 
 # Registered with the central CircuitBreakerRegistry (ServiceType.REDIS) so it
 # is visible to the admin circuit-breaker endpoints and health summaries,
@@ -253,11 +254,19 @@ async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:
         expires_at: When the token expires (used as score for auto-cleanup)
 
     Returns:
-        True if added successfully, False on failure
+        True if added successfully
+
+    Raises:
+        ServiceUnavailableError: Redis is unavailable or the write failed.
+            Revocation writes must be loud — a silent False leaves a
+            "logged-out" token valid until its natural expiry (up to 7 days
+            for refresh tokens). Callers (logout, refresh rotation) surface
+            this as 5xx so the client retries instead of believing the
+            logout succeeded.
     """
     redis_client = _get_redis_client()
     if redis_client is None:
-        return False
+        raise ServiceUnavailableError("Redis unavailable — token revocation write skipped")
 
     try:
         # Use expiry timestamp as score for sorted set
@@ -273,8 +282,8 @@ async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:
             await pipe.execute()
         return True
     except Exception as e:
-        logger.warning("Failed to add token to Redis blacklist", error=e)
-        return False
+        logger.error("Failed to add token to Redis blacklist", error=e)
+        raise ServiceUnavailableError("Token revocation write failed") from e
 
 
 async def add_tokens_to_blacklist(tokens: list[tuple[str, datetime]]) -> int:
@@ -285,13 +294,17 @@ async def add_tokens_to_blacklist(tokens: list[tuple[str, datetime]]) -> int:
 
     Returns:
         Number of tokens added successfully
+
+    Raises:
+        ServiceUnavailableError: Redis is unavailable or the write failed.
+            Same loud-revocation contract as ``add_token_to_blacklist``.
     """
     if not tokens:
         return 0
 
     redis_client = _get_redis_client()
     if redis_client is None:
-        return 0
+        raise ServiceUnavailableError("Redis unavailable — token revocation write skipped")
 
     try:
         # M1: Use pipeline for atomic multi-operation (add to blacklist + invalidate negative cache)
@@ -309,8 +322,8 @@ async def add_tokens_to_blacklist(tokens: list[tuple[str, datetime]]) -> int:
         added = results[0] if results else 0
         return added if isinstance(added, int) else len(tokens)
     except Exception as e:
-        logger.warning("Failed to bulk add tokens to Redis blacklist", error=e)
-        return 0
+        logger.error("Failed to bulk add tokens to Redis blacklist", error=e)
+        raise ServiceUnavailableError("Token revocation bulk write failed") from e
 
 
 async def remove_expired_tokens() -> int:

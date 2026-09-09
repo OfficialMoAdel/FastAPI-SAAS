@@ -122,12 +122,15 @@ class AuditLog(Base):
 
     # Composite Indexes for Performance
     __table_args__ = (
-        # Primary query pattern: filter by tenant and time range
+        # B5: 3-column keyset composite (created in migration 09) — covers the
+        # hot query_logs ORDER BY created_at DESC, id DESC exactly. Declared
+        # here so autogenerate no longer emits DROP INDEX for it.
         Index(
-            "idx_audit_tenant_created",
+            "idx_audit_logs_tenant_created_id",
             "tenant_id",
             "created_at",
-            postgresql_ops={"created_at": "DESC"},
+            "id",
+            postgresql_ops={"created_at": "DESC", "id": "DESC"},
         ),
         # Query by tenant and action type (e.g. list_actions, action filtering)
         Index("idx_audit_tenant_action", "tenant_id", "action"),

@@ -16,7 +16,7 @@ Examples:
         pass
 
     def test_specific_flag(with_flag):
-        with with_flag("FEATURE_STREAMING_UPLOADS", True):
+        with with_flag("FEATURE_CONTEXTVAR_OPTIMIZATION", True):
             # Test with specific flag enabled
             pass
 """
@@ -57,11 +57,11 @@ def with_flag():
 
     Example:
         def test_something(with_flag):
-            with with_flag("FEATURE_STREAMING_UPLOADS", True):
+            with with_flag("FEATURE_CONTEXTVAR_OPTIMIZATION", True):
                 # Test with flag enabled
                 pass
 
-            with with_flag("FEATURE_STREAMING_UPLOADS", False):
+            with with_flag("FEATURE_CONTEXTVAR_OPTIMIZATION", False):
                 # Test with flag disabled
                 pass
     """
@@ -87,7 +87,6 @@ def all_flags_enabled():
     """
     flags = [
         "FEATURE_REMOVE_WASTED_CONNECTION",
-        "FEATURE_STREAMING_UPLOADS",
         "FEATURE_CONTEXTVAR_OPTIMIZATION",
         "FEATURE_AUDIT_FLUSH_LIMIT",
     ]
@@ -120,7 +119,6 @@ def all_flags_disabled():
     """
     flags = [
         "FEATURE_REMOVE_WASTED_CONNECTION",
-        "FEATURE_STREAMING_UPLOADS",
         "FEATURE_CONTEXTVAR_OPTIMIZATION",
         "FEATURE_AUDIT_FLUSH_LIMIT",
     ]
@@ -155,7 +153,6 @@ def snapshot_flags():
     """
     flags = [
         "FEATURE_REMOVE_WASTED_CONNECTION",
-        "FEATURE_STREAMING_UPLOADS",
         "FEATURE_CONTEXTVAR_OPTIMIZATION",
         "FEATURE_AUDIT_FLUSH_LIMIT",
     ]
@@ -185,8 +182,7 @@ def flag_state_logger(caplog):
     def _log_flags():
         flags = [
             "FEATURE_REMOVE_WASTED_CONNECTION",
-            "FEATURE_STREAMING_UPLOADS",
-            "FEATURE_CONTEXTVAR_OPTIMIZATION",
+                "FEATURE_CONTEXTVAR_OPTIMIZATION",
             "FEATURE_AUDIT_FLUSH_LIMIT",
         ]
 
@@ -220,8 +216,7 @@ def parametrize_flags():
             "flags": dict.fromkeys(
                 [
                     "FEATURE_REMOVE_WASTED_CONNECTION",
-                    "FEATURE_STREAMING_UPLOADS",
-                    "FEATURE_CONTEXTVAR_OPTIMIZATION",
+                                "FEATURE_CONTEXTVAR_OPTIMIZATION",
                     "FEATURE_AUDIT_FLUSH_LIMIT",
                 ],
                 True,
@@ -232,28 +227,17 @@ def parametrize_flags():
             "flags": dict.fromkeys(
                 [
                     "FEATURE_REMOVE_WASTED_CONNECTION",
-                    "FEATURE_STREAMING_UPLOADS",
-                    "FEATURE_CONTEXTVAR_OPTIMIZATION",
+                                "FEATURE_CONTEXTVAR_OPTIMIZATION",
                     "FEATURE_AUDIT_FLUSH_LIMIT",
                 ],
                 False,
             ),  # noqa: E501
         },
         {
-            "name": "streaming_only",
-            "flags": {
-                "FEATURE_STREAMING_UPLOADS": True,
-                "FEATURE_REMOVE_WASTED_CONNECTION": False,
-                "FEATURE_CONTEXTVAR_OPTIMIZATION": False,
-                "FEATURE_AUDIT_FLUSH_LIMIT": False,
-            },
-        },
-        {
             "name": "contextvar_only",
             "flags": {
-                "FEATURE_STREAMING_UPLOADS": False,
-                "FEATURE_REMOVE_WASTED_CONNECTION": False,
                 "FEATURE_CONTEXTVAR_OPTIMIZATION": True,
+                "FEATURE_REMOVE_WASTED_CONNECTION": False,
                 "FEATURE_AUDIT_FLUSH_LIMIT": False,
             },
         },

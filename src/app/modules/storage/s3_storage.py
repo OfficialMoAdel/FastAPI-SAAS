@@ -20,7 +20,6 @@ import posixpath
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, BinaryIO
 
-from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.modules.storage.interfaces import StorageProvider, StorageResult
 
@@ -75,6 +74,7 @@ class S3Storage(StorageProvider):
             self.client = boto3.client("s3", **client_kwargs)
 
         self.kwargs = kwargs
+
     @staticmethod
     def _validate_s3_key(path: str) -> str:
         """Validate and normalize S3 key, rejecting directory traversal.
@@ -95,7 +95,6 @@ class S3Storage(StorageProvider):
         if ".." in normalized.split("/"):
             raise ValueError("Invalid S3 key: directory traversal detected")
         return normalized
-
 
     async def close(self) -> None:
         """Close the S3 client."""
@@ -120,68 +119,43 @@ class S3Storage(StorageProvider):
         """
         path = self._validate_s3_key(path)
         try:
-            if settings.performance.FEATURE_STREAMING_UPLOADS:
-                # Streaming upload with multipart support
-                # Reset file position to 0 (required for Starlette UploadFile wrapping SpooledTemporaryFile)
-                if hasattr(file, "seek"):
-                    file.seek(0)
+            # P-M8: streaming upload_fileobj is the ONLY path. The legacy
+            # fallback (copying the file into a SpooledTemporaryFile chunk by
+            # chunk via to_thread, then put_object) did a synchronous
+            # temp.write(chunk) on the event loop for files above the spool
+            # threshold and has been deleted. Streaming has been
+            # unconditional since P0-3; every deployment exercises this
+            # path, and multipart handles both small and large files.
+            # Reset file position to 0 (required for Starlette UploadFile wrapping SpooledTemporaryFile)
+            if hasattr(file, "seek"):
+                file.seek(0)
 
-                from botocore.config import TransferConfig
+            from botocore.config import TransferConfig
 
-                transfer_config = TransferConfig(
-                    multipart_threshold=5 * 1024 * 1024,  # 5MB threshold for multipart upload
-                    multipart_chunksize=8 * 1024 * 1024,  # 8MB chunks
-                    max_concurrency=10,
-                )
+            transfer_config = TransferConfig(
+                multipart_threshold=5 * 1024 * 1024,  # 5MB threshold for multipart upload
+                multipart_chunksize=8 * 1024 * 1024,  # 8MB chunks
+                max_concurrency=10,
+            )
 
-                # Use upload_fileobj for streaming (no full file read into memory)
-                await asyncio.to_thread(
-                    self.client.upload_fileobj,
-                    file,
-                    self.bucket,
-                    path,
-                    ExtraArgs={"ContentType": mime_type},
-                    Config=transfer_config,
-                )
+            # Use upload_fileobj for streaming (no full file read into memory)
+            await asyncio.to_thread(
+                self.client.upload_fileobj,
+                file,
+                self.bucket,
+                path,
+                ExtraArgs={"ContentType": mime_type},
+                Config=transfer_config,
+            )
 
-                # Get file size: prefer an explicit .size attribute (e.g. Starlette UploadFile);
-                # otherwise derive it from the file object without disturbing its read position.
-                size = getattr(file, "size", None)
-                if size is None and hasattr(file, "seek"):
-                    current_pos = file.tell()
-                    file.seek(0, 2)
-                    size = file.tell()
-                    file.seek(current_pos)
-            else:
-                # Legacy behavior: stream to a spooled temporary file instead of memory
-                import tempfile
-
-                with tempfile.SpooledTemporaryFile(max_size=5 * 1024 * 1024) as temp:
-                    # Reset file position if needed
-                    if hasattr(file, "seek"):
-                        file.seek(0)
-
-                    # Copy chunks to prevent memory exhaustion
-                    while True:
-                        chunk = await asyncio.to_thread(file.read, 64 * 1024)
-                        if not chunk:
-                            break
-                        temp.write(chunk)
-
-                    # Seek to end to capture the true byte length, then reset to start for upload
-                    temp.seek(0, 2)
-                    size = temp.tell()
-                    temp.seek(0)
-
-                    # Upload to S3 - wrapped in asyncio.to_thread to avoid blocking event loop
-                    await asyncio.to_thread(
-                        self.client.put_object,
-                        Bucket=self.bucket,
-                        Key=path,
-                        Body=temp,
-                        ContentType=mime_type,
-                        **self.kwargs,
-                    )
+            # Get file size: prefer an explicit .size attribute (e.g. Starlette UploadFile);
+            # otherwise derive it from the file object without disturbing its read position.
+            size = getattr(file, "size", None)
+            if size is None and hasattr(file, "seek"):
+                current_pos = file.tell()
+                file.seek(0, 2)
+                size = file.tell()
+                file.seek(current_pos)
 
             return StorageResult(
                 success=True,

@@ -20,6 +20,7 @@ from sqlalchemy.orm import sessionmaker
 from src.app.core.db.crud_token_blacklist import crud_token_blacklist
 from src.app.core.db.database import Base
 from src.app.core.schemas import TokenBlacklistCreate
+from src.app.core.security.auto_ban import BanInfo
 from src.app.core.utils.rate_limit import reset_rate_limiter
 from src.app.main import app
 from src.app.middleware.rate_limit import RateLimitMiddleware
@@ -52,30 +53,32 @@ def client():
     # Cleanup after test
     reset_rate_limiter()
 
-
 @patch("src.app.middleware.rate_limit.rate_limiter")
-def test_rate_limit_headers_allowed(mock_limiter, client):
-    """Test that rate limit headers are set correctly when request is allowed."""
-    # Setup mock to return allowed (False) and a count of 5
-    mock_limiter.check_rate_limit_algorithm = AsyncMock(return_value=(False, 5, 0))
+@patch("src.app.middleware.rate_limit.check_ban_and_rate_limit")
+def test_rate_limit_headers_allowed(mock_combined, mock_limiter, client):
+    """Test that rate limit headers are set correctly when request is allowed.
+
+    H-3: the hot path now runs ban+GCRA in one combined call; mock the new
+    seam. Decorators inject bottom-up, so the FIRST arg is the check_ban
+    mock — set its return_value rather than rebinding the name."""
+    mock_combined.return_value = (BanInfo(is_banned=False), (False, 5, 0))
 
     response = client.get("/")
 
     assert response.status_code == 200
     assert response.headers["X-RateLimit-Limit"] == "10"
     assert response.headers["X-RateLimit-Period"] == "3600"
-
-    # Remaining should be Limit - Count (e.g. 10 - 5 = 5)
-    expected_remaining = max(0, 10 - 5)
-    assert response.headers["X-RateLimit-Remaining"] == str(expected_remaining)
+    assert response.headers["X-RateLimit-Remaining"] == "5"
 
 
 @patch("src.app.middleware.rate_limit.rate_limiter")
-def test_rate_limit_headers_exceeded(mock_limiter, client):
-    """Test that rate limit headers are set correctly when limit is exceeded."""
-    # Setup mock to return limited (True) and a count equal to limit + 1
+@patch("src.app.middleware.rate_limit.check_ban_and_rate_limit")
+def test_rate_limit_headers_exceeded(mock_combined, mock_limiter, client):
+    """Test that rate limit headers are set correctly when limit is exceeded.
+
+    H-3: mock the combined ban+GCRA seam (see test_rate_limit_headers_allowed)."""
     limit = 10
-    mock_limiter.check_rate_limit_algorithm = AsyncMock(return_value=(True, 0, 10))
+    mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10))
 
     response = client.get("/")
 
@@ -86,6 +89,37 @@ def test_rate_limit_headers_exceeded(mock_limiter, client):
     assert response.headers["X-RateLimit-Limit"] == str(limit)
     assert response.headers["X-RateLimit-Remaining"] == "0"
 
+
+@patch("src.app.middleware.rate_limit.settings.security.AUTO_BAN_ENABLED", True)
+@patch("src.app.middleware.rate_limit.get_ban_info", new_callable=AsyncMock)
+def test_banned_ip_blocked_on_refresh_path(mock_ban_info, client):
+    """B3 regression: the refresh-path rate-limit skip must not bypass the
+    ban boundary. A banned IP hitting /api/v1/auth/refresh gets 403, not a
+    pass-through to the endpoint."""
+    mock_ban_info.return_value = BanInfo(
+        is_banned=True, reason="Auto-ban after 5 rate limit violations"
+    )
+
+    response = client.post("/api/v1/auth/refresh")
+
+    assert response.status_code == 403
+    assert response.headers["X-Banned"] == "true"
+    mock_ban_info.assert_awaited_once()
+
+
+@patch("src.app.middleware.rate_limit.settings.security.AUTO_BAN_ENABLED", True)
+@patch("src.app.middleware.rate_limit.get_ban_info", new_callable=AsyncMock)
+def test_unbanned_ip_skips_rate_limit_on_refresh_path(mock_ban_info, client):
+    """B3 companion: a clean IP still gets the zero-Redis-ops refresh skip
+    (the endpoint's own dependency-level rate limit governs it)."""
+    mock_ban_info.return_value = BanInfo(is_banned=False)
+
+    response = client.post("/api/v1/auth/refresh")
+
+    # The bare test app has no /api/v1/auth/refresh route — 404 proves the
+    # request passed THROUGH the middleware instead of being 403'd.
+    assert response.status_code == 404
+    mock_ban_info.assert_awaited_once()
 
 # =============================================================================
 # Unit Tests: Rate Limit Blacklist

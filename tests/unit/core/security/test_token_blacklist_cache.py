@@ -144,11 +144,29 @@ class TestAddTokenToBlacklist:
             mock_pipe.execute.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_returns_false_when_redis_unavailable(self) -> None:
-        """Should return False when Redis is not configured."""
+    async def test_raises_when_redis_unavailable(self) -> None:
+        """Should raise ServiceUnavailableError when Redis is not configured (loud revocation)."""
+        from src.app.shared.exceptions import ServiceUnavailableError
+
         with patch("src.app.core.utils.cache.client", None):
-            result = await add_token_to_blacklist("token", datetime.now(UTC))
-            assert result is False
+            with pytest.raises(ServiceUnavailableError):
+                await add_token_to_blacklist("token", datetime.now(UTC))
+
+    @pytest.mark.asyncio
+    async def test_raises_on_write_failure(self) -> None:
+        """Should raise ServiceUnavailableError when the Redis pipeline write fails."""
+        from src.app.shared.exceptions import ServiceUnavailableError
+
+        mock_pipe = MagicMock()
+        _acm(mock_pipe)
+        mock_pipe.execute = AsyncMock(side_effect=Exception("Connection error"))
+
+        mock_redis = MagicMock()
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            with pytest.raises(ServiceUnavailableError):
+                await add_token_to_blacklist("token", datetime.now(UTC))
 
 
 class TestBulkOperations:
@@ -179,6 +197,36 @@ class TestBulkOperations:
             mock_redis.pipeline.assert_called_once()
             mock_pipe.zadd.assert_called_once()
             mock_pipe.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_bulk_add_raises_when_redis_unavailable(self) -> None:
+        """Should raise ServiceUnavailableError when Redis is not configured (loud revocation)."""
+        from src.app.shared.exceptions import ServiceUnavailableError
+
+        tokens = [("token1", datetime.now(UTC) + timedelta(hours=1))]
+        with patch("src.app.core.utils.cache.client", None):
+            with pytest.raises(ServiceUnavailableError):
+                await add_tokens_to_blacklist(tokens)
+
+    @pytest.mark.asyncio
+    async def test_bulk_add_raises_on_write_failure(self) -> None:
+        """Should raise ServiceUnavailableError when the bulk pipeline write fails."""
+        from src.app.shared.exceptions import ServiceUnavailableError
+
+        mock_pipe = MagicMock()
+        _acm(mock_pipe)
+        mock_pipe.execute = AsyncMock(side_effect=Exception("Connection error"))
+
+        mock_redis = MagicMock()
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
+
+        tokens = [
+            ("token1", datetime.now(UTC) + timedelta(hours=1)),
+            ("token2", datetime.now(UTC) + timedelta(hours=2)),
+        ]
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            with pytest.raises(ServiceUnavailableError):
+                await add_tokens_to_blacklist(tokens)
 
     @pytest.mark.asyncio
     async def test_remove_expired_tokens(self) -> None:
