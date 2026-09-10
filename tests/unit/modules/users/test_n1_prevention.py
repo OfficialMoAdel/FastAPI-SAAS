@@ -249,7 +249,7 @@ class TestUserServiceN1EliminationEagerLoading:
         mock_result.unique.return_value.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with pytest.raises(ModelNotFoundError):
             await user_service.get_with_rate_limits("nonexistent")

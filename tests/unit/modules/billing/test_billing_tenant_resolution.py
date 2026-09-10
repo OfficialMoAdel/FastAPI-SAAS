@@ -5,9 +5,9 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules.billing.service import PricingService, ProductService, StripeSettingsService
 from src.app.modules.billing.subscription_service import SubscriptionPlanService, UserSubscriptionService
+from src.app.shared.exceptions import ModelNotFoundError
 
 
 @pytest.mark.asyncio

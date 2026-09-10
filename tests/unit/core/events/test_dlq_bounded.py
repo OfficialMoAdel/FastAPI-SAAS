@@ -56,7 +56,7 @@ async def test_bounded_dlq_uses_pipeline(mock_redis_client, mock_settings):
 
     # Verify LTRIM keeps newest entries (0 to max_size-1)
     ltrim_call = mock_pipeline.ltrim.call_args[0]
-    assert ltrim_call[0] == "event_bus:dlq"
+    assert ltrim_call[0] == "arq:dlq"
     assert ltrim_call[1] == 0
     assert ltrim_call[2] == 9999  # max_size - 1 (default 10000)
 
@@ -237,21 +237,28 @@ async def test_dlq_entry_format(mock_redis_client, mock_settings):
                 attempt_count=3,
             )
 
-    # Verify LPUSH was called with correct entry format
+    # Verify LPUSH was called with correct entry format (unified arq:dlq queue)
     lpush_call = mock_pipeline.lpush.call_args[0]
-    assert lpush_call[0] == "event_bus:dlq"
+    assert lpush_call[0] == "arq:dlq"
 
     # Parse the JSON entry
     import json
 
     entry = json.loads(lpush_call[1])
 
-    # Verify all required fields
+    # Verify monitor-compatible fields (admin GET /dlq shape). job_id
+    # carries a time_ns suffix so concurrent retries/fan-out never collide.
+    assert entry["job_id"].startswith("bus:user.created:send_welcome_email:")
+    assert entry["function"] == "user.created"
+    assert isinstance(entry["timestamp"], float)
+    # Verify preserved bus fields
     assert entry["event_name"] == "user.created"
     assert entry["handler"] == "send_welcome_email"
     assert entry["data"] == test_data
+    assert entry["payload"] == test_data
     assert entry["error"] == test_error
     assert entry["attempt_count"] == 3
+    assert entry["source"] == "event_bus"
     assert "failed_at" in entry
 
     # Verify timestamp is ISO format

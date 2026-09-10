@@ -91,76 +91,60 @@ class TestP04OrjsonIncompatibility:
 
 
 class TestP04CurrentImplementation:
-    """Tests for the current (correct) webhook HMAC implementation."""
+    """Tests for the current (correct) webhook HMAC implementation.
+
+    Fix #6: the live contract is the send-time Stripe-style ``t=,v1=``
+    header produced by ``signer.sign_payload`` (canonical stdlib-json
+    bytes) — the service trigger-time ``sha256=`` helper is deleted.
+    """
 
     def test_signature_generation_uses_stdlib_json(self) -> None:
-        """Verify we're using stdlib json for signature generation."""
-        from src.app.modules.webhooks.service import WebhookService
-
-        # Create a mock service (we only need to call the method)
-        class MockDB:
-            pass
-
-        service = WebhookService(MockDB())  # type: ignore
+        """Verify the send-time header uses stdlib json canonical bytes."""
+        from src.app.modules.webhooks.signer import canonical_payload_bytes, sign_payload
 
         payload = {"test": "data", "number": 42}
         secret = "test-secret"
 
-        signature = service._generate_signature(payload, secret)
+        assert canonical_payload_bytes(payload) == json.dumps(payload, sort_keys=True).encode("utf-8")
 
-        # Verify it starts with sha256= prefix
-        assert signature.startswith("sha256=")
+        header = sign_payload(payload, secret, 1757328000)
 
-        # Verify it's a valid hex digest (64 chars for SHA256)
-        hex_part = signature[7:]  # Remove "sha256=" prefix
+        # Verify it carries a v1= hex digest (64 chars for SHA256)
+        assert ",v1=" in header
+        hex_part = header.split("v1=", 1)[1].split(",", 1)[0]
         assert len(hex_part) == 64
         assert all(c in "0123456789abcdef" for c in hex_part)
 
     def test_signature_is_deterministic(self) -> None:
-        """Same payload and secret should always produce same signature."""
-        from src.app.modules.webhooks.service import WebhookService
-
-        class MockDB:
-            pass
-
-        service = WebhookService(MockDB())  # type: ignore
+        """Same payload, secret and timestamp should always produce same header."""
+        from src.app.modules.webhooks.signer import sign_payload
 
         payload = {"a": 1, "b": 2}
         secret = "test-secret"
 
-        sig1 = service._generate_signature(payload, secret)
-        sig2 = service._generate_signature(payload, secret)
+        sig1 = sign_payload(payload, secret, 1757328000)
+        sig2 = sign_payload(payload, secret, 1757328000)
 
         assert sig1 == sig2
 
     def test_signature_differs_with_different_secrets(self) -> None:
-        """Different secrets should produce different signatures."""
-        from src.app.modules.webhooks.service import WebhookService
-
-        class MockDB:
-            pass
-
-        service = WebhookService(MockDB())  # type: ignore
+        """Different secrets should produce different headers."""
+        from src.app.modules.webhooks.signer import sign_payload
 
         payload = {"data": "test"}
 
-        sig1 = service._generate_signature(payload, "secret1")
-        sig2 = service._generate_signature(payload, "secret2")
+        sig1 = sign_payload(payload, "secret1", 1757328000)
+        sig2 = sign_payload(payload, "secret2", 1757328000)
 
         assert sig1 != sig2
 
     def test_signature_differs_with_different_payloads(self) -> None:
-        """Different payloads should produce different signatures."""
-        from src.app.modules.webhooks.service import WebhookService
-
-        class MockDB:
-            pass
-
-        service = WebhookService(MockDB())  # type: ignore
+        """Different payloads should produce different headers."""
+        from src.app.modules.webhooks.signer import sign_payload
 
         secret = "test-secret"
 
-        sig1 = service._generate_signature({"a": 1}, secret)
-        sig2 = service._generate_signature({"a": 2}, secret)
+        sig1 = sign_payload({"a": 1}, secret, 1757328000)
+        sig2 = sign_payload({"a": 2}, secret, 1757328000)
 
         assert sig1 != sig2

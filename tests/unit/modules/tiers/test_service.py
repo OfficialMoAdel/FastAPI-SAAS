@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules.tiers.router import get_tier_service
 from src.app.modules.tiers.service import TierService
+from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 
 def _make_service():

@@ -124,23 +124,29 @@ class AsyncContextManagerMock:
 async def test_handle_checkout_session_completed(
     mock_retrieve, mock_crud, mock_tenant_context, mock_plan_get, mock_stripe_event, mock_db
 ):  # noqa: E501
-    # B6/B2-06: the handler validates plan/tenant and user/tenant ownership before minting;
-    # resolve user 1's tenant from DB so metadata matches the seeded user.
+    # B6/B2-06: the handler validates plan/tenant and user/tenant ownership
+    # before minting. The user-membership lookup runs inside a bypass context
+    # against the real DB, so on a fresh/empty database it yields NULL and the
+    # handler (correctly, fail-closed) rejects. Mock just that lookup to
+    # return the event tenant so the success path is hermetic; the Stripe-key
+    # resolve and plan-ownership contexts stay real.
     from uuid import UUID as _UUID
 
-    from sqlalchemy import select
-
-    from src.app.core.db.database import async_session_maker
-    from src.app.modules.users.models import User
-
-    async with async_session_maker() as s:
-        u_res = await s.execute(select(User.tenant_id).where(User.id == 1))
-        real_t = u_res.scalar_one_or_none()
-    if real_t:
-        mock_stripe_event["data"]["object"]["metadata"]["tenant_id"] = str(real_t)
+    from src.app.modules.billing import webhook as _webhook_pkg
 
     event_tenant_id = _UUID(mock_stripe_event["data"]["object"]["metadata"]["tenant_id"])
     mock_plan_get.return_value = {"id": 2, "tenant_id": event_tenant_id}
+
+    _real_bypass = _webhook_pkg.job_bypass_context
+    _user_row = MagicMock()
+    _user_row.scalar_one_or_none.return_value = event_tenant_id
+    _user_db = AsyncMock()
+    _user_db.execute = AsyncMock(return_value=_user_row)
+
+    def _bypass(label, *args, **kwargs):
+        if label == "Checkout user/tenant membership check":
+            return AsyncContextManagerMock(_user_db)
+        return _real_bypass(label, *args, **kwargs)
 
     # Mock subscription retrieval via PaymentGateway seam
     mock_retrieve.return_value = {
@@ -154,7 +160,8 @@ async def test_handle_checkout_session_completed(
     mock_crud.exists = AsyncMock(return_value=False)
     mock_crud.create = AsyncMock()
 
-    await handle_checkout_session_completed(mock_stripe_event)
+    with patch("src.app.modules.billing.webhook.job_bypass_context", side_effect=_bypass):
+        await handle_checkout_session_completed(mock_stripe_event)
 
     mock_crud.create.assert_awaited_once()
     assert mock_crud.create.call_args[1]["object"].status == "active"

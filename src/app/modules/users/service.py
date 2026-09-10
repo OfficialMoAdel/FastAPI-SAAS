@@ -16,10 +16,10 @@ from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.logger import get_logger
 from src.app.core.security import blacklist_token, get_password_hash
 from src.app.core.tenancy.context import get_current_tenant
-from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules.audit_logs import audit
 from src.app.modules.rate_limits.models import Tier
 from src.app.modules.rate_limits.service import RateLimitService
+from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 # TierService is absorbed into RateLimitService; alias retained for call-site & test-patch compatibility
 TierService = RateLimitService
@@ -83,6 +83,15 @@ class UserService:
         Consolidates the six copy-pasted ``try: int(username)`` lookup blocks.
         H-4: dead crud-fallback branch removed — the repository layer was
         always constructed, so the else-branch could never run.
+
+        Deliberately NOT routed through :meth:`get_tenant_user`: this helper
+        serves privileged management flows (update/delete/tier/status,
+        hard-delete) that run under ``USERS_MANAGE`` / superuser gates and
+        may execute without an active tenant context (superusers see all
+        tenants) — the tenant seam is fail-closed without context and would
+        break those paths. Auth-gated reads must use :meth:`get_active_user`
+        and role bookkeeping must use :meth:`get_tenant_user`; do not add new
+        callers here.
         """
         parsed_id = self._parse_user_id(username)
         if parsed_id is not None:
@@ -136,9 +145,12 @@ class UserService:
         users: Sequence[Any],
         bump_token_version: bool = False,
         reason: InvalidationReason | None = None,
+        explicit_token_versions: dict[Any, int] | None = None,
     ) -> None:
         """Invalidate cache entries for many users in ONE Redis pipeline (delegates to UserCacheInvalidator)."""
-        await UserCacheInvalidator.invalidate_user_cache_batch(users, bump_token_version, reason)
+        await UserCacheInvalidator.invalidate_user_cache_batch(
+            users, bump_token_version, reason, explicit_token_versions
+        )
 
     async def invalidate_sessions(
         self,
@@ -331,6 +343,71 @@ class UserService:
         # Cache it
         await UserCacheInvalidator.cache_user_auth_info(cache_key, user_with_tier)
         return user_with_tier
+
+    async def get_active_user(
+        self,
+        *,
+        id: int | None = None,
+        username: str | None = None,
+        email: str | None = None,
+        tenant_id: Any = None,
+    ) -> dict[str, Any] | None:
+        """Named-lookup seam: fetch a non-deleted, active user with tier eager-loaded.
+
+        Enforces ``is_deleted=False`` + ``is_active=True`` + tenant scope in a
+        single query, built on ``CRUDUser.get_user_with_tier_eager`` (which
+        itself composes ``tenant_scope``) — not a parallel helper. Returns the
+        tier-eager auth payload dict, or None when no such user exists in scope.
+
+        Auth-gated reads (password/MFA/passkey/magic-link verification, RBAC
+        membership checks) use this; pure audit tenant-extracts use the seam
+        without the active gate.
+
+        Parameters
+        ----------
+        id : int | None
+            User ID to look up (mutually exclusive with username/email).
+        username : str | None
+            Username to look up (case-insensitive, per-tenant unique).
+        email : str | None
+            Email to look up (case-insensitive, per-tenant unique).
+        tenant_id : Any
+            Explicit tenant scope for worker paths without an active tenant
+            context. Ignored when a context tenant is active.
+        """
+        return await self.crud.get_user_with_tier_eager(
+            db=self.db,
+            id=id,
+            username=username,
+            email=email,
+            require_active=True,
+            tenant_id=tenant_id,
+        )
+
+    async def get_tenant_user(
+        self,
+        *,
+        id: int | None = None,
+        username: str | None = None,
+        email: str | None = None,
+        tenant_id: Any = None,
+    ) -> dict[str, Any] | None:
+        """Membership seam: fetch a non-deleted user with tier eager-loaded.
+
+        Enforces ``is_deleted=False`` + tenant scope but NOT ``is_active`` —
+        role-assignment bookkeeping must work for onboarding flows
+        (create inactive → assign role → activate) and cleanup flows
+        (strip roles from deactivated users). Authentication paths keep
+        using :meth:`get_active_user`.
+        """
+        return await self.crud.get_user_with_tier_eager(
+            db=self.db,
+            id=id,
+            username=username,
+            email=email,
+            require_active=False,
+            tenant_id=tenant_id,
+        )
 
     async def get_by_username(self, username: str) -> dict[str, Any]:
         """Get a user by username with Redis caching.
@@ -553,27 +630,10 @@ class UserService:
 
         await self.crud.update(db=self.db, object=values, username=db_username, commit=False)
 
-        # SECURITY FIX (C2): Permanently invalidate sessions on email/username change.
-        # Previously only set Redis keys with 300s TTL — old tokens worked again after expiry.
-        if should_bump_token_version(reason):
-            from sqlalchemy import update as sa_update
-
-            from src.app.modules.users.models import User
-
-            user_id_val = get_user_attr(db_user, "id")
-            await self.db.execute(
-                sa_update(User).where(User.id == user_id_val).values(token_version=User.token_version + 1)
-            )
-
-        await self.db.commit()
-
-        # Invalidate cache after update. Derive bump_token_version from the
-        # reason to keep the two parameters in lock-step with the policy.
-        await self._invalidate_user_cache(
-            db_user,
-            bump_token_version=should_bump_token_version(reason),
-            reason=reason,
-        )
+        # 1B: the seam owns the SQL bump + commit + cache in one place, so a
+        # credential change can never bump twice or diverge Redis from the DB.
+        tenant_id_val = get_user_attr(db_user, "tenant_id")
+        await self.invalidate_sessions(db_user, reason, tenant_id=tenant_id_val, commit=True)
         return {"message": "User updated"}
 
     async def update_password_hash(self, user_id: int, hashed_password: str) -> None:
@@ -659,12 +719,18 @@ class UserService:
             sa_update(User)
             .where(User.id == user_id_val)
             .values(
-                token_version=User.token_version + 1,
                 is_deleted=True,
                 updated_at=datetime.now(UTC),
             )
         )
-        await self.db.commit()
+        # 1B: the seam owns the SQL bump + commit + cache; the soft-delete
+        # flag staged above commits atomically with the seam's bump.
+        await self.invalidate_sessions(
+            db_user,
+            InvalidationReason.DELETION,
+            tenant_id=user_tenant_id,
+            commit=True,
+        )
 
         # SECURITY FIX: Add audit log for user deletion (Issue 15)
         try:
@@ -682,12 +748,6 @@ class UserService:
             )
         except Exception as e:
             logger.warning("failed_to_publish_user_deletion_audit_log", error=str(e))
-
-        await self._invalidate_user_cache(
-            db_user,
-            bump_token_version=should_bump_token_version(InvalidationReason.DELETION),
-            reason=InvalidationReason.DELETION,
-        )
 
         return {"message": "User deleted successfully"}
 
@@ -735,11 +795,21 @@ class UserService:
         await blacklist_token(token=token, db=self.db)
 
         db_username = get_user_attr(db_user, "username")
+        # Capture the pre-delete version BEFORE the row is gone — reading it
+        # after db_delete risks detached/stale ORM state.
+        pre_version = get_user_attr(db_user, "token_version", 0)
         await self.crud.db_delete(db=self.db, username=db_username)
+        # 1B: the row is gone so no SQL bump is possible; seed Redis with the
+        # pre-delete version + 1 explicitly instead of a stale-dict guess.
+        try:
+            explicit_version = int(pre_version) + 1
+        except (TypeError, ValueError):
+            explicit_version = 1
         await self._invalidate_user_cache(
             db_user,
             bump_token_version=should_bump_token_version(InvalidationReason.DELETION),
             reason=InvalidationReason.DELETION,
+            explicit_token_version=explicit_version,
         )
 
         return {"message": "User deleted from the database"}
@@ -781,22 +851,13 @@ class UserService:
 
         await self.crud.update(db=self.db, object=values.model_dump(), username=db_username, commit=False)
 
-        # SECURITY FIX: Increment token_version to invalidate active JWTs
-        from sqlalchemy import update as sa_update
-
-        user_id_val = get_user_attr(db_user, "id")
-        await self.db.execute(
-            sa_update(User).where(User.id == user_id_val).values(token_version=User.token_version + 1)
-        )
-        await self.db.commit()
-
-        # Invalidate cache. SQL UPDATE above already bumped token_version; the
-        # cache invalidation writes the new value to the token_version keys
-        # with bump_token_version=should_bump_token_version(TIER_CHANGE) == True.
-        await self._invalidate_user_cache(
+        # 1B: the seam owns the SQL bump + commit + cache; the reason selects
+        # TIER_CHANGE policy so cached tier claims are invalidated promptly.
+        await self.invalidate_sessions(
             db_user,
-            bump_token_version=should_bump_token_version(InvalidationReason.TIER_CHANGE),
-            reason=InvalidationReason.TIER_CHANGE,
+            InvalidationReason.TIER_CHANGE,
+            tenant_id=get_user_attr(db_user, "tenant_id"),
+            commit=True,
         )
 
         # A3 FIX: Handle both ORM objects and dict responses
@@ -832,16 +893,13 @@ class UserService:
         user_id = get_user_attr(db_user, "id")
         await self.crud.update(db=self.db, object={"is_active": is_active}, id=user_id, commit=False)
 
-        # DEACTIVATION is bump-class: kill existing JWTs in the same commit.
-        from sqlalchemy import update as sa_update
-
-        await self.db.execute(sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
-        await self.db.commit()
-
-        await self._invalidate_user_cache(
+        # 1B: DEACTIVATION is bump-class — the seam kills existing JWTs in the
+        # same commit and invalidates all cache entries with the fresh version.
+        await self.invalidate_sessions(
             db_user,
-            bump_token_version=should_bump_token_version(InvalidationReason.DEACTIVATION),
-            reason=InvalidationReason.DEACTIVATION,
+            InvalidationReason.DEACTIVATION,
+            tenant_id=get_user_attr(db_user, "tenant_id"),
+            commit=True,
         )
         return {"message": f"User {get_user_attr(db_user, 'name')} {'activated' if is_active else 'deactivated'}"}
 
@@ -877,27 +935,16 @@ class UserService:
             commit=False,
         )
 
-        # SECURITY FIX: honor the docstring contract — bump token_version so
+        # 1B: honor the docstring contract — the seam bumps token_version so
         # existing JWTs (which embed tier claims for zero-DB rate limiting)
-        # are invalidated promptly. Previously the bump was missing, so a
-        # downgraded user kept premium tier claims/rate limits until the
-        # access token expired.
-        from sqlalchemy import update as sa_update
-
-        await self.db.execute(sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
-        await self.db.commit()
-        # Invalidate cached profile/auth data. Explicit version keeps the
-        # cache in lock-step with the DB even though the bump already happened;
-        # this lets us pass the honest TIER_CHANGE reason instead of PROFILE_EDIT.
-        db_user = await self.crud.get(db=self.db, id=user_id, is_deleted=False)
-        if db_user is not None:
-            new_version = get_user_attr(db_user, "token_version")
-            await self._invalidate_user_cache(
-                db_user,
-                bump_token_version=True,
-                reason=InvalidationReason.TIER_CHANGE,
-                explicit_token_version=new_version,
-            )
+        # are invalidated promptly, with the fresh version passed through to
+        # the cache. The tier_id update staged above commits atomically with
+        # the seam's bump.
+        await self.invalidate_sessions(
+            user_id,
+            InvalidationReason.TIER_CHANGE,
+            commit=True,
+        )
         return cast(int | None, free_tier_id)
 
     async def get_with_rate_limits(self, username: str) -> dict[str, Any]:

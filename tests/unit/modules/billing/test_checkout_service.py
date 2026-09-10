@@ -74,7 +74,7 @@ async def test_create_session_no_api_key(db_session, tenant):
             data = CheckoutCreate(
                 plan_id=1, billing_interval="monthly", success_url=f"{frontend}/x", cancel_url=f"{frontend}/x"
             )
-            from src.app.modules._base.exceptions import StripeError
+            from src.app.shared.exceptions import StripeError
 
             with pytest.raises(StripeError) as exc:
                 await service.create_session(1, "x", data)

@@ -20,14 +20,13 @@ from src.app.core.db.tenant_crud import scoped_query
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.monitoring.r1_unified_metrics import record_rbac_cache_hit, record_rbac_cache_miss
 from src.app.core.rbac.dependencies import (
-    invalidate_user_permissions_cache,
     invalidate_users_permissions_cache_batch,
 )
-from src.app.modules._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 from src.app.modules.rbac.crud import crud_associations, crud_permissions, crud_roles
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
 from src.app.modules.rbac.schemas import RoleCreate, RoleUpdate
 from src.app.modules.users.session_invalidation import InvalidationReason
+from src.app.shared.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -507,13 +506,15 @@ class RoleService:
         """
         await self.get_role(role_id)  # Verify role exists and belongs to tenant
 
-        # Verify user belongs to the same tenant (P1 fix: tenant isolation)
-        from src.app.modules.users.models import User
+        # Verify user belongs to the same tenant (P1 fix: tenant isolation).
+        # Membership seam (not the active gate): role bookkeeping must also
+        # work for inactive users (onboarding: assign-then-activate; cleanup:
+        # strip roles from deactivated users). Enforces is_deleted=False +
+        # tenant scope in one place instead of a hand-rolled scoped_query.
+        from src.app.modules.users.service import UserService
 
-        user_stmt = scoped_query(User, self.tenant_id).where(User.id == user_id)
-        user_result = await self.db.execute(user_stmt)
-        user_record = user_result.scalar_one_or_none()
-        if not user_record:
+        user_record = await UserService(self.db).get_tenant_user(id=user_id, tenant_id=self.tenant_id)
+        if user_record is None:
             raise ModelNotFoundError("User", user_id)
 
         # Check if already assigned
@@ -527,50 +528,59 @@ class RoleService:
             tenant_id=self.tenant_id,
             role_id=role_id,
         )
-        self.db.add(user_role)
-
-        # SECURITY FIX: Increment token_version to invalidate active JWTs on role change
-        await crud_associations.bump_user_token_version(self.db, user_id)
+        # Idempotent-concurrent-assign handling scoped to a savepoint: a
+        # full-session rollback here would silently discard unrelated staged
+        # changes sharing this AsyncSession.
         try:
-            await self.db.commit()
+            async with self.db.begin_nested():
+                self.db.add(user_role)
+                await self.db.flush()
         except IntegrityError:
-            await self.db.rollback()
             return  # Already assigned concurrently, idempotent
 
-        # Cache-only invalidation: SQL token_version bump already executed above.
-        # Do NOT route through invalidate_user_sessions here (it would bump twice).
-        from src.app.modules.users.service import UserService
+        # 1B: the seam owns the SQL bump + commit + cache + permission flush,
+        # so a role grant can never bump twice or diverge Redis from the DB.
+        # The flushed UserRole insert commits atomically with the seam's bump.
+        from src.app.modules.users.session_invalidation import invalidate_user_sessions
 
-        await UserService(self.db)._invalidate_user_cache(
-            user_record, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+        await invalidate_user_sessions(
+            self.db,
+            user_record,
+            InvalidationReason.CREDENTIAL_CHANGE,
+            tenant_id=self.tenant_id,
+            flush_permissions=True,
+            commit=True,
         )
-        await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
     async def remove_role_from_user(self, user_id: int, role_id: int) -> None:
         """Remove a role from a user within the current tenant.
 
         Security: Validates user belongs to the current tenant.
         """
-        # Verify user belongs to the same tenant (P1 fix: tenant isolation)
-        from src.app.modules.users.models import User
+        # Verify user belongs to the same tenant (P1 fix: tenant isolation).
+        # Same membership seam as the assign path — non-deleted,
+        # tenant-scoped, no active gate (cleanup must strip roles from
+        # deactivated users).
+        from src.app.modules.users.service import UserService
 
-        user_stmt = scoped_query(User, self.tenant_id).where(User.id == user_id)
-        user_result = await self.db.execute(user_stmt)
-        user_record = user_result.scalar_one_or_none()
-        if not user_record:
+        user_record = await UserService(self.db).get_tenant_user(id=user_id, tenant_id=self.tenant_id)
+        if user_record is None:
             raise ModelNotFoundError("User", user_id)
 
         removed = await crud_associations.remove_user_role(self.db, self.tenant_id, user_id, role_id)
         if removed:
-            await crud_associations.bump_user_token_version(self.db, user_id)
-            await self.db.commit()
-            from src.app.modules.users.service import UserService
-            from src.app.modules.users.session_invalidation import InvalidationReason
+            # 1B: the seam owns the SQL bump + commit + cache + permission
+            # flush. The DELETE staged above commits atomically with the bump.
+            from src.app.modules.users.session_invalidation import invalidate_user_sessions
 
-            await UserService(self.db)._invalidate_user_cache(
-                user_record, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+            await invalidate_user_sessions(
+                self.db,
+                user_record,
+                InvalidationReason.CREDENTIAL_CHANGE,
+                tenant_id=self.tenant_id,
+                flush_permissions=True,
+                commit=True,
             )
-            await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
     async def get_user_roles(self, user_id: int) -> Sequence[Role]:
         """Get all roles for a user within the current tenant."""

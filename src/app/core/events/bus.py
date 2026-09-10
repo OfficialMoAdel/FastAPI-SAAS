@@ -31,8 +31,14 @@ class EventBus:
     # (settings.events). Resolved per-instance in __init__ (workers may run
     # with different env than web). Class attr remains as documented default.
     RETRY_DELAYS: list[int] = [60, 300, 900]
-    # Redis key for DLQ list
-    DLQ_REDIS_KEY = "event_bus:dlq"
+    # Phase 1 DLQ unification: the single surviving queue is the monitor's
+    # ``arq:dlq`` (see src/app/core/job_monitoring.py DLQ_KEY). The legacy
+    # ``event_bus:dlq`` key is retired; every writer/reader below targets the
+    # unified key so admin GET /dlq sees bus failures too.
+    DLQ_REDIS_KEY = "arq:dlq"
+    # Retired bus-only key (pre-unification). Kept as a named constant so
+    # history/grep still resolves; nothing should read or write it.
+    LEGACY_DLQ_REDIS_KEY = "event_bus:dlq"
     # Redis key prefix for event sequence counters (per event type)
     SEQUENCE_KEY_PREFIX = "event_bus:seq:"
 
@@ -749,6 +755,13 @@ class EventBus:
     ) -> None:
         """Add failed event to dead-letter queue (Redis-backed).
 
+        Phase 1 DLQ unification: writes the monitor's surviving queue
+        (``arq:dlq``) in the monitor's JSON shape
+        (``{job_id, function/event_name, error, timestamp}``) extended with
+        the bus fields (``handler, data/payload, attempt_count, failed_at,
+        source``), so admin GET /dlq sees bus failures. Bounded-size
+        pipeline (LPUSH+LTRIM+LLEN) and alert-threshold semantics preserved.
+
         R1-UNIFIED P3-1: Added bounded size with LTRIM to prevent unbounded
         memory growth under sustained failure scenarios.
 
@@ -765,18 +778,28 @@ class EventBus:
             error: Error message
             attempt_count: Number of attempts made
         """
+        import time
         from datetime import datetime
 
         from src.app.core.config import settings
         from src.app.core.monitoring import update_dlq_size
 
         dlq_entry = {
+            # Monitor-compatible identity (admin DLQItemResponse fields).
+            # time_ns (not attempt_count) keeps the id unique under
+            # retries/fan-out where event+handler+attempt repeats.
+            "job_id": f"bus:{event_name}:{handler_name}:{time.time_ns()}",
+            "function": event_name,
+            "error": error,
+            "timestamp": time.time(),
+            # Bus context (preserved for retry/debugging).
             "event_name": event_name,
             "handler": handler_name,
             "data": data,
-            "error": error,
+            "payload": data,
             "attempt_count": attempt_count,
             "failed_at": datetime.now(UTC).isoformat(),
+            "source": "event_bus",
         }
 
         client = self.redis_client
@@ -831,11 +854,21 @@ class EventBus:
             error=error,
         )
 
-    async def get_dlq_entries(self, limit: int = 100) -> list[dict]:
-        """Get dead-letter queue entries from Redis.
+    async def get_dlq_entries(self, limit: int = 100, source: str | None = None) -> list[dict]:
+        """Get dead-letter queue entries from Redis (unified ``arq:dlq`` queue).
+
+        Thin wrapper over the surviving monitor queue so scripts
+        (e.g. scripts/r1_unified_baseline.py) keep working; admin reads the
+        same key via JobMonitoringService.get_dead_letter_queue().
+
+        The unified key mixes two failure domains (ARQ job entries and bus
+        entries tagged ``source="event_bus"``). Pass ``source`` to read one
+        domain only — ``"event_bus"`` for bus failures, ``"arq"`` for ARQ
+        job failures (ARQ entries carry no ``source`` field).
 
         Args:
             limit: Maximum number of entries to return
+            source: Optional failure-domain filter (``"event_bus"`` / ``"arq"``)
 
         Returns
         -------
@@ -846,10 +879,13 @@ class EventBus:
             return []
 
         entries = await client.lrange(self.DLQ_REDIS_KEY, 0, limit - 1)
-        return [_pkg.json_loads(entry) for entry in entries]
+        parsed = [_pkg.json_loads(entry) for entry in entries]
+        if source is not None:
+            parsed = [e for e in parsed if isinstance(e, dict) and e.get("source", "arq") == source]
+        return parsed
 
     async def get_dlq_size(self) -> int:
-        """Get the number of entries in the DLQ.
+        """Get the number of entries in the unified DLQ (``arq:dlq``).
 
         Returns
         -------
@@ -860,8 +896,15 @@ class EventBus:
             return 0
         return cast(int, await client.llen(self.DLQ_REDIS_KEY))
 
-    async def retry_dlq_entry(self) -> dict | None:
-        """Remove and return the oldest DLQ entry for retry (FIFO).
+    async def retry_dlq_entry(self, source: str | None = None) -> dict | None:
+        """Remove and return the oldest unified-DLQ entry for retry (FIFO).
+
+        With ``source`` set, removes the oldest entry of that failure domain
+        instead of whatever happens to be oldest — an ARQ job dict must never
+        be returned as a bus retry (type confusion across the two domains).
+
+        Args:
+            source: Optional failure-domain filter (``"event_bus"`` / ``"arq"``)
 
         Returns
         -------
@@ -871,14 +914,36 @@ class EventBus:
         if not client:
             return None
 
-        # Use rpop (FIFO) to ensure we retry oldest entries
-        entry = await client.rpop(self.DLQ_REDIS_KEY)
-        if entry:
-            return cast("dict[Any, Any]", _pkg.json_loads(entry))
+        if source is None:
+            # Use rpop (FIFO) to ensure we retry oldest entries
+            entry = await client.rpop(self.DLQ_REDIS_KEY)
+            if entry:
+                return cast("dict[Any, Any]", _pkg.json_loads(entry))
+            return None
+
+        # Source-filtered pop: scan oldest-first for the first match and
+        # remove exactly that serialized element (LREM count=1).
+        raw_entries = await client.lrange(self.DLQ_REDIS_KEY, 0, -1)
+        for raw in reversed(raw_entries):
+            try:
+                parsed = _pkg.json_loads(raw)
+            except Exception:
+                continue
+            if isinstance(parsed, dict) and parsed.get("source", "arq") == source:
+                await client.lrem(self.DLQ_REDIS_KEY, 1, raw)
+                return cast("dict[Any, Any]", parsed)
         return None
 
-    async def clear_dlq(self) -> int:
-        """Clear all DLQ entries.
+    async def clear_dlq(self, source: str | None = None) -> int:
+        """Clear unified-DLQ entries (``arq:dlq``).
+
+        With ``source`` set, removes only that failure domain's entries so
+        clearing bus failures can never delete ARQ job failures (and vice
+        versa). Without ``source`` the whole key is deleted (legacy/admin
+        escape hatch — prefer source-scoped clears).
+
+        Args:
+            source: Optional failure-domain filter (``"event_bus"`` / ``"arq"``)
 
         Returns
         -------
@@ -888,9 +953,54 @@ class EventBus:
         if not client:
             return 0
 
-        count = await client.llen(self.DLQ_REDIS_KEY)
-        await client.delete(self.DLQ_REDIS_KEY)
-        return cast(int, count)
+        if source is None:
+            count = await client.llen(self.DLQ_REDIS_KEY)
+            await client.delete(self.DLQ_REDIS_KEY)
+            return cast(int, count)
+
+        raw_entries = await client.lrange(self.DLQ_REDIS_KEY, 0, -1)
+        cleared = 0
+        for raw in raw_entries:
+            try:
+                parsed = _pkg.json_loads(raw)
+            except Exception:
+                continue
+            if isinstance(parsed, dict) and parsed.get("source", "arq") == source:
+                await client.lrem(self.DLQ_REDIS_KEY, 1, raw)
+                cleared += 1
+        return cleared
+
+    async def drain_legacy_dlq(self) -> int:
+        """One-time drain of the retired ``event_bus:dlq`` key into ``arq:dlq``.
+
+        Entries written before the Phase 1 unification were orphaned on the
+        legacy key; this moves them onto the unified queue (tagging
+        ``source="event_bus"`` when missing) so they stay visible to the
+        admin DLQ view and the source-filtered readers above.
+
+        Returns
+        -------
+            Number of entries moved
+        """
+        client = self.redis_client
+        if not client:
+            return 0
+
+        moved = 0
+        while True:
+            raw = await client.rpop(self.LEGACY_DLQ_REDIS_KEY)
+            if not raw:
+                break
+            try:
+                parsed = _pkg.json_loads(raw)
+            except Exception:
+                continue
+            if isinstance(parsed, dict):
+                parsed.setdefault("source", "event_bus")
+                raw = _pkg.json_dumps(parsed, as_str=True)
+            await client.lpush(self.DLQ_REDIS_KEY, raw)
+            moved += 1
+        return moved
 
     def register_all_handlers(self) -> None:
         """Pre-register all event handlers during startup.

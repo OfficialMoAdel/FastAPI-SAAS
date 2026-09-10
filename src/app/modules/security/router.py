@@ -68,6 +68,11 @@ async def list_passkeys(
 
     This is a convenience endpoint that wraps /auth/passkey/credentials
     for backward compatibility with the old backend.
+
+    .. deprecated::
+        Legacy frontend compatibility shim around
+        ``GET /auth/passkey/credentials``. New clients should call the
+        canonical ``/auth`` endpoint directly.
     """
     return await passkey_svc.list_credentials(db=ctx.db, user_id=ctx.user_id)
 
@@ -82,6 +87,11 @@ async def delete_passkey(
 
     This is a convenience endpoint that wraps /auth/passkey/credentials/{credential_id}
     for backward compatibility with the old backend.
+
+    .. deprecated::
+        Legacy frontend compatibility shim around
+        ``DELETE /auth/passkey/credentials/{credential_id}``. New clients
+        should call the canonical ``/auth`` endpoint directly.
     """
     await passkey_svc.delete_credential(db=ctx.db, user_id=ctx.user_id, credential_id=passkey_id)
     return PasskeyDeleteResponse(message="Passkey deleted successfully")

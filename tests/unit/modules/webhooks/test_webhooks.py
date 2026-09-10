@@ -86,8 +86,8 @@ async def test_trigger_webhooks_bulk_insert_concurrency(webhook_service, mock_db
     # Mock retrieval
     webhook_service.get_active_endpoints = AsyncMock(return_value=endpoints)
 
-    # Mock internal helpers
-    webhook_service._generate_signature = MagicMock(return_value="sha256=sig")
+    # Fix #6: trigger time does not sign — no signature helper exists to mock.
+    assert not hasattr(webhook_service, "_generate_signature")
 
     # Mock decrypt and the delivery-module enqueue (what trigger calls)
     with (
@@ -159,7 +159,7 @@ def test_webhook_delivery_repr():
         webhook_endpoint_id=uuid4(),
         tenant_id=1,
         payload={},
-        signature="sig",
+        signature=None,
         event_type="test.event",
         status=WebhookDeliveryStatus.PENDING,
         attempt_count=0,

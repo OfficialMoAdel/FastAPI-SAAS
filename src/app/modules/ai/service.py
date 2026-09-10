@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.db.database import local_session
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_current_tenant
-from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.ai.crud import crud_ai_settings, crud_chat_messages, crud_chat_sessions
 from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings
@@ -26,6 +25,7 @@ from src.app.modules.ai.schemas import (
     ChatSessionUpdate,
 )
 from src.app.modules.ai.unified_errors import SessionLimitExceededError
+from src.app.shared.exceptions import ModelNotFoundError
 
 logger = get_logger(__name__)
 

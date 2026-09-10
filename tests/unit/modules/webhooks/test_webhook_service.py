@@ -64,7 +64,7 @@ def mock_webhook_delivery():
         tenant_id=uuid4(),
         event_type="user.created",
         payload={"user_id": 123},
-        signature="sha256=sig",
+        signature=None,
         status=WebhookDeliveryStatus.PENDING,
         attempt_count=0,
     )
@@ -154,34 +154,110 @@ class TestWebhookServiceTrigger:
         mock_db.commit.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_trigger_webhooks_decryption_failure_skips_endpoint(
+    async def test_trigger_webhooks_persists_null_signature(
         self, webhook_service, mock_webhook_endpoint, mock_db
     ):
-        """Test that decryption failures skip the endpoint but continue."""
-        # Mock get_active_endpoints
+        """Live contract: trigger time does NOT sign — rows persist signature=None.
+
+        The wire signature is computed at SEND time per attempt in delivery.py
+        (Stripe-style t=,v1= over the canonical bytes).
+        """
+        from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus
+
         webhook_service.get_active_endpoints = AsyncMock(return_value=[mock_webhook_endpoint])
 
-        # Mock decrypt_data to fail
-        with patch("src.app.modules.webhooks.delivery.decrypt_data", side_effect=Exception("Decrypt fail")):
+        mock_delivery = MagicMock(spec=WebhookDelivery)
+        mock_delivery.id = uuid4()
+        mock_delivery.status = WebhookDeliveryStatus.PENDING
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_delivery]
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        with patch("src.app.modules.webhooks.delivery.enqueue", new_callable=AsyncMock):
             result = await webhook_service.trigger_webhooks(
                 tenant_id=mock_webhook_endpoint.tenant_id, event_type="user.created", payload={"id": 1}
             )
 
-        # Should return empty list because the only endpoint failed decryption
-        assert result == []
+        assert len(result) == 1
+        # Bulk insert carries no trigger-time signature value on the wire:
+        # the bound signature param is NULL and no legacy sha256= digest
+        # appears among the bound values. (No literal_binds: JSONB payloads
+        # have no literal renderer.)
+        insert_stmt = mock_db.execute.call_args[0][0]
+        bound_params = insert_stmt.compile().params
+        assert None in bound_params.values()
+        assert not any(isinstance(v, str) and "sha256=" in v for v in bound_params.values())
 
     @pytest.mark.asyncio
-    async def test_trigger_endpoint_decryption_error(self, webhook_service, mock_webhook_endpoint):
-        """Test trigger fails if secret decryption fails."""
+    async def test_trigger_webhooks_does_not_decrypt_secrets(
+        self, webhook_service, mock_webhook_endpoint, mock_db
+    ):
+        """Trigger time never touches endpoint secrets — decryption happens at send time.
+
+        Even a failing decrypt must not skip the endpoint or break the trigger.
+        """
+        from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus
+
+        webhook_service.get_active_endpoints = AsyncMock(return_value=[mock_webhook_endpoint])
+
+        mock_delivery = MagicMock(spec=WebhookDelivery)
+        mock_delivery.id = uuid4()
+        mock_delivery.status = WebhookDeliveryStatus.PENDING
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_delivery]
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        with (
+            patch(
+                "src.app.modules.webhooks.service.decrypt_data",
+                side_effect=Exception("Decrypt fail"),
+            ),
+            patch("src.app.modules.webhooks.delivery.enqueue", new_callable=AsyncMock),
+        ):
+            result = await webhook_service.trigger_webhooks(
+                tenant_id=mock_webhook_endpoint.tenant_id, event_type="user.created", payload={"id": 1}
+            )
+
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_trigger_endpoint_persists_null_signature(
+        self, webhook_service, mock_webhook_endpoint, mock_db
+    ):
+        """Live contract: trigger_endpoint persists signature=None (send-time signing)."""
+        from src.app.modules.webhooks.models import WebhookDelivery
+
+        captured: dict = {}
+
+        def _fake_add(delivery: WebhookDelivery) -> None:
+            captured["delivery"] = delivery
+
+        mock_db.add.side_effect = _fake_add
+        webhook_service._enqueue_delivery = AsyncMock()
+
+        delivery = await webhook_service.trigger_endpoint(
+            endpoint=mock_webhook_endpoint, event_type="user.created", payload={"id": 1}
+        )
+
+        assert delivery.signature is None
+        assert captured["delivery"].signature is None
+
+    @pytest.mark.asyncio
+    async def test_trigger_endpoint_undecryptable_secret_still_triggers(
+        self, webhook_service, mock_webhook_endpoint
+    ):
+        """An undecryptable secret must not fail the trigger — send time handles it."""
         mock_webhook_endpoint.secret = "bad_secret"
+        webhook_service._enqueue_delivery = AsyncMock()
 
-        with patch("src.app.modules.webhooks.delivery.decrypt_data", side_effect=Exception("Decrypt fail")):
-            with pytest.raises(ValueError) as exc:
-                await webhook_service.trigger_endpoint(
-                    endpoint=mock_webhook_endpoint, event_type="user.created", payload={"id": 1}
-                )
+        with patch("src.app.modules.webhooks.service.decrypt_data", side_effect=Exception("Decrypt fail")):
+            delivery = await webhook_service.trigger_endpoint(
+                endpoint=mock_webhook_endpoint, event_type="user.created", payload={"id": 1}
+            )
 
-            assert "Cannot decrypt webhook secret" in str(exc.value)
+        assert delivery.signature is None
 
     @pytest.mark.asyncio
     async def test_enqueue_delivery_no_pool(self, webhook_service):
@@ -478,13 +554,15 @@ class TestWebhookServiceDelivery:
         assert service.db == mock_db
 
     def test_service_has_required_methods(self, webhook_service) -> None:
-        """Test service has all expected methods."""
+        """Test service has all expected methods (dead signing surface removed)."""
         assert hasattr(webhook_service, "create_endpoint")
         assert hasattr(webhook_service, "get_active_endpoints")
         assert hasattr(webhook_service, "trigger_webhooks")
         assert hasattr(webhook_service, "deliver_webhook")
-        assert hasattr(webhook_service, "verify_signature")
         assert hasattr(webhook_service, "get_delivery_history")
+        # Fix #6: trigger-time legacy signing is dead — these must stay gone.
+        assert not hasattr(webhook_service, "_generate_signature")
+        assert not hasattr(webhook_service, "verify_signature")
 
     @pytest.mark.asyncio
     async def test_get_delivery_history(self, webhook_service, mock_db, mock_webhook_delivery):
@@ -503,167 +581,144 @@ class TestWebhookServiceDelivery:
 
 
 class TestWebhookServiceSignatures:
-    """Tests for HMAC signature generation and verification."""
+    """Live-contract tests for webhook signing (fix #6).
 
-    def test_webhook_signature_uses_stdlib_json(self, webhook_service) -> None:
-        """Test that _generate_signature uses stdlib json, NOT orjson.
+    The wire signature is the send-time Stripe-style ``t=,v1=`` header
+    produced by ``signer.sign_payload`` in delivery.py — NOT a persisted
+    trigger-time value. These tests pin that contract:
+    - canonical bytes use stdlib json with sort_keys (signer-owned)
+    - the send-time header verifies via the signer
+    - trigger paths persist signature=None
+    """
 
-        CRITICAL: This test enforces the constraint that webhook signatures
-        MUST use stdlib json to maintain compatibility with existing consumers.
-        Changing to orjson would break all webhook integrations.
+    def test_canonical_contract_uses_stdlib_json(self) -> None:
+        """The signer canonical bytes use stdlib json, NOT orjson.
 
-        See: SECURITY.md for full explanation.
+        HMAC is byte-sensitive: stdlib produces '{"key": "value"}' (spaces)
+        while orjson produces '{"key":"value"}'. Changing libraries would
+        break every consumer. The contract lives in signer.py now.
         """
         import ast
         import inspect
-        import textwrap
 
-        # Get the source code of _generate_signature
-        source = inspect.getsource(webhook_service._generate_signature)
+        from src.app.modules.webhooks import signer as signer_module
 
-        # Dedent the source to remove leading whitespace
-        source = textwrap.dedent(source)
+        tree = ast.parse(inspect.getsource(signer_module))
 
-        # Parse the source code into an AST
-        tree = ast.parse(source)
-
-        # Find all import statements
-        imports = []
+        imports: list[str] = []
+        calls: list[str] = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     imports.append(alias.name)
             elif isinstance(node, ast.ImportFrom):
-                imports.append(node.module)
+                if node.module:
+                    imports.append(node.module)
+            elif isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                    calls.append(f"{node.func.value.id}.{node.func.attr}")
 
-        # Verify stdlib json is imported
         assert "json" in imports, "Must import stdlib json"
-
-        # Verify orjson is NOT imported
         assert "orjson" not in imports, "Must NOT import orjson for webhook signatures"
-
-        # Find all function calls
-        calls = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Attribute):
-                    # Handle module.function calls like json.dumps or orjson.dumps
-                    if isinstance(node.func.value, ast.Name):
-                        calls.append(f"{node.func.value.id}.{node.func.attr}")
-
-        # Verify json.dumps is called
-        assert "json.dumps" in calls, "Must use json.dumps for signature generation"
-
-        # Verify orjson.dumps is NOT called
+        assert "json.dumps" in calls, "Must use json.dumps for the canonical form"
         assert "orjson.dumps" not in calls, "Must NOT use orjson.dumps"
 
-    def test_signature_has_spaces_after_colons(self, webhook_service) -> None:
-        """Test that signature uses stdlib json formatting (spaces after colons).
 
-        CRITICAL: This test verifies the exact byte format that webhook consumers
-        expect. stdlib json produces {"key": "value"} with spaces, while orjson
-        produces {"key":"value"} without spaces.
+    def test_canonical_bytes_have_spaces_after_colons(self) -> None:
+        """The exact byte format consumers verify: stdlib json with spaces.
 
-        Different formatting = different bytes = different HMAC signature = broken webhooks.
-
+        Different formatting = different bytes = different HMAC = broken webhooks.
         See: SECURITY.md for full explanation.
         """
         import json
 
+        from src.app.modules.webhooks.signer import canonical_payload_bytes
+
         payload = {"user_id": "123", "event": "created"}
-        secret = "test-secret"
 
-        # Generate signature using the service
-        signature = webhook_service._generate_signature(payload, secret)
+        assert canonical_payload_bytes(payload) == json.dumps(payload, sort_keys=True).encode("utf-8")
 
-        # Manually calculate what the signature SHOULD be using stdlib json
-        payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
-        import hashlib
-        import hmac
-
-        expected_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-        expected_signature = f"sha256={expected_sig}"
-
-        # Verify they match (proving stdlib json is used)
-        assert signature == expected_signature, "Signature must match stdlib json formatting"
-
-        # Verify the JSON string has spaces after colons (stdlib json format)
         json_str = json.dumps(payload, sort_keys=True)
         assert ": " in json_str, "stdlib json must have spaces after colons"
 
-    def test_generate_signature_format(self, webhook_service) -> None:
-        """Test that signature has correct format (sha256=...)."""
+    def test_send_time_header_format(self) -> None:
+        """The live wire header is Stripe-style t=<unix>,v1=<hex>."""
+        import time
+
+        from src.app.modules.webhooks.signer import sign_payload
+
         payload = {"user_id": "123", "event": "created"}
         secret = "test-secret"
 
-        signature = webhook_service._generate_signature(payload, secret)
+        header = sign_payload(payload, secret, int(time.time()))
 
-        assert signature.startswith("sha256=")
-        assert len(signature) > 10  # sha256= + hexdigest
+        assert header.startswith("t=")
+        assert ",v1=" in header
+        hex_part = header.split("v1=", 1)[1].split(",", 1)[0]
+        assert len(hex_part) == 64
+        assert all(c in "0123456789abcdef" for c in hex_part)
 
-    def test_generate_signature_consistency(self, webhook_service) -> None:
-        """Test that same payload + secret produces same signature."""
+    def test_send_time_header_deterministic(self) -> None:
+        """Same payload + secret + timestamp produces the same header."""
+        from src.app.modules.webhooks.signer import sign_payload
+
         payload = {"user_id": "123", "event": "created"}
         secret = "test-secret"
+        timestamp = 1757328000
 
-        sig1 = webhook_service._generate_signature(payload, secret)
-        sig2 = webhook_service._generate_signature(payload, secret)
+        assert sign_payload(payload, secret, timestamp) == sign_payload(payload, secret, timestamp)
 
-        assert sig1 == sig2
+    def test_send_time_header_differs_with_different_secrets(self) -> None:
+        """Different secrets produce different wire headers."""
+        from src.app.modules.webhooks.signer import sign_payload
 
-    def test_generate_signature_different_secrets(self, webhook_service) -> None:
-        """Test that different secrets produce different signatures."""
         payload = {"user_id": "123", "event": "created"}
 
-        sig1 = webhook_service._generate_signature(payload, "secret1")
-        sig2 = webhook_service._generate_signature(payload, "secret2")
+        assert sign_payload(payload, "secret1", 1757328000) != sign_payload(payload, "secret2", 1757328000)
 
-        assert sig1 != sig2
+    def test_send_time_header_differs_with_different_payloads(self) -> None:
+        """Different payloads produce different wire headers."""
+        from src.app.modules.webhooks.signer import sign_payload
 
-    def test_generate_signature_different_payloads(self, webhook_service) -> None:
-        """Test that different payloads produce different signatures."""
         secret = "test-secret"
 
-        sig1 = webhook_service._generate_signature({"user_id": "123"}, secret)
-        sig2 = webhook_service._generate_signature({"user_id": "456"}, secret)
+        assert sign_payload({"user_id": "123"}, secret, 1757328000) != sign_payload(
+            {"user_id": "456"}, secret, 1757328000
+        )
 
-        assert sig1 != sig2
+    def test_send_time_header_verifies(self) -> None:
+        """A send-time header verifies via the signer (round trip)."""
+        import time
 
-    @pytest.mark.asyncio
-    async def test_verify_signature_valid(self, webhook_service) -> None:
-        """Test verifying a valid signature."""
+        from src.app.modules.webhooks.signer import sign_payload, verify_signature
+
         payload = {"user_id": "123", "event": "created"}
         secret = "test-secret"
-        signature = webhook_service._generate_signature(payload, secret)
+        header = sign_payload(payload, secret, int(time.time()))
 
-        result = await webhook_service.verify_signature(payload, signature, secret)
+        assert verify_signature(payload, secret, header) is True
+        assert verify_signature(payload, "wrong-secret", header) is False
 
-        assert result is True
+    def test_canonical_bytes_use_sorted_keys(self) -> None:
+        """Same payload in different key order signs identically."""
+        from src.app.modules.webhooks.signer import sign_payload
 
-    @pytest.mark.asyncio
-    async def test_verify_signature_invalid(self, webhook_service) -> None:
-        """Test verifying an invalid signature."""
-        payload = {"user_id": "123", "event": "created"}
-        secret = "test-secret"
-        wrong_signature = "sha256=invalid"
-
-        result = await webhook_service.verify_signature(payload, wrong_signature, secret)
-
-        assert result is False
-
-    def test_signature_uses_sorted_keys(self, webhook_service) -> None:
-        """Test that signature uses sorted keys for consistency."""
         secret = "test-secret"
 
-        # Same payload, different key order
-        sig1 = webhook_service._generate_signature({"b": 2, "a": 1}, secret)
-        sig2 = webhook_service._generate_signature({"a": 1, "b": 2}, secret)
-
-        assert sig1 == sig2
+        assert sign_payload({"b": 2, "a": 1}, secret, 1757328000) == sign_payload(
+            {"a": 1, "b": 2}, secret, 1757328000
+        )
 
 
 class TestWebhookServiceRetry:
     """Tests for webhook retry logic."""
+
+    def test_retry_schedule_is_canonical_delivery_schedule(self) -> None:
+        """Fix #6: the schedule lives in delivery.py; service only re-exports it."""
+        from src.app.modules.webhooks import delivery as delivery_module
+        from src.app.modules.webhooks import service as service_module
+
+        assert service_module.WEBHOOK_RETRY_DELAYS is delivery_module.WEBHOOK_RETRY_DELAYS
 
     def test_retry_schedule_values(self) -> None:
         """Test retry schedule has correct values (1m, 5m, 15m, 30m, 1h)."""

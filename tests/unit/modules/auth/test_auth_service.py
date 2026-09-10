@@ -16,6 +16,7 @@ import pytest
 from jwt.exceptions import PyJWTError as JWTError
 
 from src.app.modules.auth.service import AuthService
+from src.app.modules.users.session_invalidation import InvalidationReason
 
 
 @pytest.fixture
@@ -85,7 +86,7 @@ class TestAuthServiceLockout:
         self, auth_service, mock_db, mock_redis, mock_response, mock_request, mock_tenant
     ):
         """Test that account is locked after 5 failed login attempts."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         # Lua script returns -1 when account is locked
         mock_redis.eval = AsyncMock(return_value=-1)
@@ -112,7 +113,7 @@ class TestAuthServiceLockout:
         self, auth_service, mock_db, mock_redis, mock_response, mock_request
     ):
         """Test that failed login calls Lua script for atomic increment."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         # Lua script returns 1 (first attempt, not locked)
         mock_redis.eval = AsyncMock(return_value=1)
@@ -133,7 +134,7 @@ class TestAuthServiceLockout:
         self, auth_service, mock_db, mock_redis, mock_response, mock_request
     ):
         """Test that Lua script receives correct lockout duration (900 seconds)."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         mock_redis.eval = AsyncMock(return_value=1)
 
@@ -180,7 +181,7 @@ class TestAuthServiceLockout:
     @pytest.mark.asyncio
     async def test_lockout_at_exactly_5_attempts(self, auth_service, mock_db, mock_redis, mock_response, mock_request):
         """Test that lockout triggers at exactly 5 attempts."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         # Lua script returns 5 (5th attempt just recorded, not yet locked)
         mock_redis.eval = AsyncMock(return_value=5)
@@ -204,7 +205,7 @@ class TestAuthServiceLockout:
         Without the int() coercion fix, b'-1' != -1, causing lockout to silently
         fail and allowing infinite brute-force attempts.
         """
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         # Simulate raw Redis bytes response (happens when decode_responses=False)
         mock_redis.eval = AsyncMock(return_value=b"-1")
@@ -230,7 +231,7 @@ class TestAuthServiceLockout:
         self, auth_service, mock_db, mock_redis, mock_response, mock_request, mock_tenant
     ):
         """BUG FIX REGRESSION: Lockout must work even if redis.eval returns str '-1'."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         mock_redis.eval = AsyncMock(return_value="-1")
 
@@ -256,7 +257,7 @@ class TestAuthServiceTokenRefresh:
     @pytest.mark.asyncio
     async def test_refresh_with_missing_token_raises_error(self, auth_service, mock_db, mock_response):
         """Test that refresh with no token raises UnauthorizedException."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         with pytest.raises(UnauthorizedError) as exc_info:
             await auth_service.refresh_access_token(None, mock_response, mock_db)
@@ -266,7 +267,7 @@ class TestAuthServiceTokenRefresh:
     @pytest.mark.asyncio
     async def test_refresh_with_empty_string_token_raises_error(self, auth_service, mock_db, mock_response):
         """Test that refresh with empty string token raises UnauthorizedException."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         with pytest.raises(UnauthorizedError) as exc_info:
             await auth_service.refresh_access_token("", mock_response, mock_db)
@@ -276,7 +277,7 @@ class TestAuthServiceTokenRefresh:
     @pytest.mark.asyncio
     async def test_refresh_with_invalid_token_raises_error(self, auth_service, mock_db, mock_response):
         """Test that refresh with invalid/expired token raises UnauthorizedException."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         with patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify:
             mock_verify.return_value = None  # Token invalid or expired
@@ -362,7 +363,7 @@ class TestAuthServiceLogout:
     async def test_logout_without_refresh_token_raises_error(self, auth_service, mock_db, mock_response, mock_request):
         """A8: logout now accepts access-token-only clients. Only a call with
         NO tokens at all raises UnauthorizedException."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         with pytest.raises(UnauthorizedError) as exc_info:
             await auth_service.logout(None, None, mock_response, mock_request, mock_db)
@@ -387,7 +388,7 @@ class TestAuthServiceLogout:
     @pytest.mark.asyncio
     async def test_logout_with_invalid_jwt_raises_error(self, auth_service, mock_db, mock_response, mock_request):
         """Test that logout with JWT decode error raises UnauthorizedException."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         with patch("src.app.modules.auth.service.blacklist_tokens", new_callable=AsyncMock) as mock_blacklist:
             mock_blacklist.side_effect = JWTError("Invalid token")
@@ -419,8 +420,7 @@ class TestAuthServiceEmailFlows:
             patch("src.app.modules.auth.services.passwords.settings") as mock_settings,
         ):
             mock_user_service = MagicMock()
-            mock_user_service.crud = MagicMock()
-            mock_user_service.crud.get = AsyncMock(return_value=mock_user)
+            mock_user_service.get_active_user = AsyncMock(return_value=mock_user)
             mock_get_service.return_value = mock_user_service
             mock_settings.app.FRONTEND_URL = "http://test-frontend"
             mock_settings.FRONTEND_URL = "http://test-frontend"
@@ -437,10 +437,8 @@ class TestAuthServiceEmailFlows:
 
             await auth_service.request_password_reset("test@example.com", mock_db)
 
-            # Check user lookup
-            mock_user_service.crud.get.assert_called_once_with(
-                db=mock_db, email="test@example.com", is_deleted=False, is_active=True
-            )
+            # Check user lookup (active-gated named-lookup seam)
+            mock_user_service.get_active_user.assert_called_once_with(email="test@example.com")
 
             # Check token saved
             mock_db.add.assert_called()
@@ -519,6 +517,8 @@ class TestAuthServiceEmailFlows:
             mock_user_service.crud.get = AsyncMock(return_value=mock_user)
             mock_user_service.crud.update = AsyncMock()
             mock_user_service._invalidate_user_cache = AsyncMock()
+            # 1B: verify_email routes the bump through the seam.
+            mock_user_service.invalidate_sessions = AsyncMock()
             mock_get_service.return_value = mock_user_service
 
             # Create a mock token object returned by DB query
@@ -540,13 +540,18 @@ class TestAuthServiceEmailFlows:
             mock_user_service.crud.get.assert_called_once()
             mock_user_service.crud.update.assert_called_once()
             mock_db.delete.assert_called_once_with(mock_token)
-            mock_db.commit.assert_called()
+            # 1B: user update + token delete + SQL bump commit atomically
+            # inside the seam (mocked here), not via a direct db.commit.
+            mock_user_service.invalidate_sessions.assert_awaited_once()
+            seam_args, seam_kwargs = mock_user_service.invalidate_sessions.call_args
+            assert seam_args[1] == InvalidationReason.CREDENTIAL_CHANGE
+            assert seam_kwargs.get("commit") is True
             assert result == {"message": "Email verified successfully."}
 
     @pytest.mark.asyncio
     async def test_verify_email_invalid_token_raises_error(self, auth_service, mock_db):
         """Test verify_email raises error if token is invalid or missing."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
@@ -569,7 +574,7 @@ class TestAuthServiceSecurityBugFixes:
     @pytest.mark.asyncio
     async def test_a1_token_refresh_blocks_deleted_users(self, auth_service, mock_db, mock_response, mock_tenant):
         """A1 SECURITY: Token refresh must reject deleted users."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         mock_token_data = MagicMock()
         mock_token_data.username_or_email = "deleteduser"
@@ -605,7 +610,7 @@ class TestAuthServiceSecurityBugFixes:
     @pytest.mark.asyncio
     async def test_a1_token_refresh_blocks_nonexistent_users(self, auth_service, mock_db, mock_response, mock_tenant):
         """A1 SECURITY: Token refresh must reject users that no longer exist."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         mock_token_data = MagicMock()
         mock_token_data.username_or_email = "ghostuser"
@@ -793,3 +798,121 @@ class TestA2CachedAuthInfoFields:
         finally:
             clear_tenant_context()
         assert result["is_deleted"] is True, "A2 SECURITY: is_deleted=True must propagate"
+
+
+class TestGetUserWithTierEagerRequireActive:
+    """Pin the named-lookup seam: require_active gate + tenant behavior (fix #3)."""
+
+    def _mock_db_with_user(self, is_active: bool = True) -> AsyncMock:
+        from src.app.modules.users.crud import CRUDUser  # noqa: F401 (kept for symmetry with A2 tests)
+        from src.app.modules.users.models import User  # noqa: F401
+
+        mock_db = AsyncMock()
+        mock_user = MagicMock()
+        mock_user.id = 7
+        mock_user.created_at = MagicMock()
+        mock_user.updated_at = None
+        mock_user.name = "Seam User"
+        mock_user.username = "seamuser"
+        mock_user.email = "seam@example.com"
+        mock_user.hashed_password = "hashed"
+        mock_user.profile_image_url = None
+        mock_user.tier_id = 1
+        mock_user.tenant_id = 1
+        mock_user.is_superuser = False
+        mock_user.is_active = is_active
+        mock_user.is_deleted = False
+        mock_user.is_email_verified = True
+        mock_user.token_version = 3
+        mock_user.tier = None
+
+        mock_result = MagicMock()
+        mock_result.unique.return_value.scalar_one_or_none.return_value = mock_user
+        mock_db.execute = AsyncMock(return_value=mock_result)
+        return mock_db
+
+    @pytest.mark.asyncio
+    async def test_require_active_adds_is_active_filter(self):
+        """require_active=True must add the is_active predicate to the statement."""
+        import uuid as _uuid
+
+        from src.app.core.tenancy.context import TenantContext, clear_tenant_context, set_current_tenant
+        from src.app.modules.users.crud import CRUDUser
+        from src.app.modules.users.models import User
+
+        crud = CRUDUser(User)
+        mock_db = self._mock_db_with_user()
+
+        set_current_tenant(TenantContext(tenant_id=_uuid.uuid4(), tenant_slug="t", tenant_name="T", is_active=True))
+        try:
+            result = await crud.get_user_with_tier_eager(db=mock_db, username="seamuser", require_active=True)
+        finally:
+            clear_tenant_context()
+
+        assert result is not None
+        stmt = mock_db.execute.call_args.args[0]
+        # NOTE: the SELECT column list always contains users.is_active; the
+        # gate is the WHERE predicate "... IS true".
+        assert "users.is_active IS true" in str(stmt), "require_active=True must filter on is_active"
+
+    @pytest.mark.asyncio
+    async def test_default_omits_is_active_filter(self):
+        """Default (require_active=False) keeps hot-path behavior: no is_active predicate."""
+        import uuid as _uuid
+
+        from src.app.core.tenancy.context import TenantContext, clear_tenant_context, set_current_tenant
+        from src.app.modules.users.crud import CRUDUser
+        from src.app.modules.users.models import User
+
+        crud = CRUDUser(User)
+        mock_db = self._mock_db_with_user()
+
+        set_current_tenant(TenantContext(tenant_id=_uuid.uuid4(), tenant_slug="t", tenant_name="T", is_active=True))
+        try:
+            result = await crud.get_user_with_tier_eager(db=mock_db, username="seamuser")
+        finally:
+            clear_tenant_context()
+
+        assert result is not None
+        stmt = mock_db.execute.call_args.args[0]
+        assert "users.is_active IS true" not in str(stmt), "default seam must not gate on is_active"
+        assert "users.is_deleted IS false" in str(stmt), "seam always filters soft-deleted users"
+
+    @pytest.mark.asyncio
+    async def test_fail_closed_without_tenant(self):
+        """No context + no explicit tenant must fail closed (usernames are per-tenant)."""
+        from src.app.core.exceptions.http_exceptions import TenantContextError
+        from src.app.core.tenancy.context import clear_tenant_context
+        from src.app.modules.users.crud import CRUDUser
+        from src.app.modules.users.models import User
+
+        crud = CRUDUser(User)
+        mock_db = self._mock_db_with_user()
+
+        clear_tenant_context()
+        with pytest.raises(TenantContextError):
+            await crud.get_user_with_tier_eager(db=mock_db, username="seamuser")
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_explicit_tenant_id_worker_path(self):
+        """Explicit tenant_id covers worker paths without an active context."""
+        import uuid as _uuid
+
+        from src.app.core.tenancy.context import clear_tenant_context
+        from src.app.modules.users.crud import CRUDUser
+        from src.app.modules.users.models import User
+
+        crud = CRUDUser(User)
+        mock_db = self._mock_db_with_user()
+        worker_tenant = _uuid.uuid4()
+
+        clear_tenant_context()
+        result = await crud.get_user_with_tier_eager(
+            db=mock_db, id=7, require_active=True, tenant_id=worker_tenant
+        )
+
+        assert result is not None
+        assert result["id"] == 7
+        stmt = mock_db.execute.call_args.args[0]
+        assert "users.is_active IS true" in str(stmt)

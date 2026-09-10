@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.utils.user_utils import get_user_attr
-from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
+from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.{{ module_name }}.crud import crud_{{ module_name }}
 from src.app.modules.{{ module_name }}.models import {{ ModelName }}

@@ -80,7 +80,7 @@ async def get_{{ module_name }}(
         schema_to_select={{ ModelName }}Read,  # type: ignore[arg-type]
     )
     if not result:
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         raise ModelNotFoundError("{{ ModelName }}", id)
     return {{ ModelName }}Read.model_validate(result)

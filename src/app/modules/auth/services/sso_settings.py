@@ -8,7 +8,7 @@ from src.app.core.redis_provider import get_redis
 
 logger = get_logger(__name__)
 
-from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
+from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 # sso-cache FIX: single source of truth for the provider-settings cache TTL,
 # used by both the startup warmer and the read write-through path.

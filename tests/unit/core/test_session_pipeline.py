@@ -66,7 +66,6 @@ class TestSessionPipelineOptimization:
         mock_redis.evalsha = _mock_eval_success(final_count=4, evicted_data=evicted_data)
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.SESSION_USE_PIPELINE_EVICTION = True
             mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction") as mock_record:
@@ -87,7 +86,6 @@ class TestSessionPipelineOptimization:
         """Test that no eviction happens when under session limit."""
         # Default mock_redis.eval returns success with no evictions
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.SESSION_USE_PIPELINE_EVICTION = True
             mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             result = await session_manager.register_session(
@@ -106,7 +104,6 @@ class TestSessionPipelineOptimization:
         mock_redis.evalsha = _mock_eval_success(final_count=5, evicted_data=evicted_data)
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.SESSION_USE_PIPELINE_EVICTION = True
             mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction"):
@@ -157,7 +154,6 @@ class TestSessionEvictionMetrics:
         manager._redis_client = mock_redis_at_limit
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.SESSION_USE_PIPELINE_EVICTION = True
             mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction") as mock_record:
@@ -197,7 +193,6 @@ class TestSessionFeatureFlagToggle:
         manager._redis_client = mock_redis_simple
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.SESSION_USE_PIPELINE_EVICTION = True
             mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction"):
@@ -218,7 +213,6 @@ class TestSessionFeatureFlagToggle:
         manager._redis_client = mock_redis_simple
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.SESSION_USE_PIPELINE_EVICTION = False
             mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction"):

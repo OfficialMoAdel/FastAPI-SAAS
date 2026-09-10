@@ -194,7 +194,13 @@ def upgrade() -> None:
         sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("event_type", sa.String(length=100), nullable=False),
         sa.Column("payload", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("signature", sa.String(length=255), nullable=False, server_default=""),
+        sa.Column(
+            "signature",
+            sa.String(length=255),
+            nullable=True,
+            comment="Deprecated artifact: trigger-time legacy HMAC no longer written; "
+            "live signature is computed at send time and never persisted",
+        ),
         sa.Column("status", sa.String(length=20), nullable=False, server_default=sa.text("'pending'")),
         sa.Column("response_status", sa.SmallInteger(), nullable=True),
         sa.Column("response_status_code", sa.Integer(), nullable=True),

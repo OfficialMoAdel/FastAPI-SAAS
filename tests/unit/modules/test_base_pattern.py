@@ -204,7 +204,7 @@ class TestBaseExceptions:
 
     def test_model_not_found_error(self):
         """Test ModelNotFoundError exception."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         error = ModelNotFoundError("User", 123)
 
@@ -215,7 +215,7 @@ class TestBaseExceptions:
 
     def test_validation_error(self):
         """Test ValidationError exception."""
-        from src.app.modules._base.exceptions import ValidationError
+        from src.app.shared.exceptions import ValidationError
 
         error = ValidationError("Invalid email format")
 
@@ -224,7 +224,7 @@ class TestBaseExceptions:
 
     def test_duplicate_error(self):
         """Test DuplicateError exception."""
-        from src.app.modules._base.exceptions import DuplicateError
+        from src.app.shared.exceptions import DuplicateError
 
         error = DuplicateError("email", "test@example.com")
 

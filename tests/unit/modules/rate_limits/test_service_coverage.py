@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.app.core.utils import cache as cache_module
-from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules.rate_limits.schemas import RateLimitCreate, RateLimitUpdate
 from src.app.modules.rate_limits.service import RateLimitService
+from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 
 def _make_service() -> tuple[RateLimitService, AsyncMock]:

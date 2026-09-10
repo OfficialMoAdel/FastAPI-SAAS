@@ -1,4 +1,7 @@
-class CacheException(Exception):
+from src.app.shared.exceptions import AppException
+
+
+class CacheException(AppException):
     """Base exception for all cache-related errors."""
 
     pass

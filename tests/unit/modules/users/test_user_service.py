@@ -16,10 +16,10 @@ import pytest
 import sqlalchemy.event
 
 from src.app.core.exceptions.http_exceptions import ForbiddenException
-from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules.users.schemas import UserCreate, UserTierUpdate, UserUpdate
 from src.app.modules.users.service import UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
+from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 
 @pytest.fixture(autouse=True)
@@ -628,7 +628,7 @@ class TestSetUserStatus:
 
     @pytest.mark.asyncio
     async def test_deactivate_bumps_token_version_and_invalidates(self, user_service, mock_existing_user):
-        """Deactivation flips is_active, bumps token_version, invalidates with DEACTIVATION reason."""
+        """Deactivation flips is_active and routes through the seam with DEACTIVATION reason."""
         mock_existing_user.is_active = True
 
         with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
@@ -636,8 +636,8 @@ class TestSetUserStatus:
 
             with patch.object(user_service.crud, "update", new_callable=AsyncMock) as mock_update:
                 with patch.object(
-                    user_service, "_invalidate_user_cache", new_callable=AsyncMock
-                ) as mock_invalidate:
+                    user_service, "invalidate_sessions", new_callable=AsyncMock
+                ) as mock_seam:
                     result = await user_service.set_user_status("testuser", is_active=False)
 
                     assert "deactivated" in result["message"]
@@ -645,46 +645,44 @@ class TestSetUserStatus:
                     mock_update.assert_awaited_once()
                     update_kwargs = mock_update.call_args[1]
                     assert update_kwargs["object"] == {"is_active": False}
-                    # token_version bumped in same transaction (sa_update via db.execute)
-                    user_service.db.execute.assert_awaited()
-                    user_service.db.commit.assert_awaited()
-                    # DEACTIVATION-class invalidation (bump=True)
-                    invalidate_kwargs = mock_invalidate.call_args[1]
-                    assert invalidate_kwargs["reason"] == InvalidationReason.DEACTIVATION
-                    assert invalidate_kwargs["bump_token_version"] is True
+                    # 1B: SQL bump + commit + cache are owned by the seam.
+                    mock_seam.assert_awaited_once()
+                    seam_args, seam_kwargs = mock_seam.call_args
+                    assert seam_args[1] == InvalidationReason.DEACTIVATION
+                    assert seam_kwargs.get("commit") is True
 
     @pytest.mark.asyncio
     async def test_activate_bumps_token_version(self, user_service, mock_existing_user):
-        """Activation (False→True) also bumps — status flips are security-affecting."""
+        """Activation (False→True) also routes through the seam — status flips are security-affecting."""
         mock_existing_user.is_active = False
 
         with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_existing_user
 
             with patch.object(user_service.crud, "update", new_callable=AsyncMock):
-                with patch.object(user_service, "_invalidate_user_cache", new_callable=AsyncMock) as mock_invalidate:
+                with patch.object(user_service, "invalidate_sessions", new_callable=AsyncMock) as mock_seam:
                     result = await user_service.set_user_status("testuser", is_active=True)
 
                     assert "activated" in result["message"]
-                    invalidate_kwargs = mock_invalidate.call_args[1]
-                    assert invalidate_kwargs["reason"] == InvalidationReason.DEACTIVATION
-                    assert invalidate_kwargs["bump_token_version"] is True
+                    seam_args, seam_kwargs = mock_seam.call_args
+                    assert seam_args[1] == InvalidationReason.DEACTIVATION
+                    assert seam_kwargs.get("commit") is True
 
     @pytest.mark.asyncio
     async def test_noop_when_status_unchanged(self, user_service, mock_existing_user):
-        """Same-status call is a no-op: no update, no bump, no invalidation."""
+        """Same-status call is a no-op: no update, no seam call."""
         mock_existing_user.is_active = True
 
         with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_existing_user
 
             with patch.object(user_service.crud, "update", new_callable=AsyncMock) as mock_update:
-                with patch.object(user_service, "_invalidate_user_cache", new_callable=AsyncMock) as mock_invalidate:
+                with patch.object(user_service, "invalidate_sessions", new_callable=AsyncMock) as mock_seam:
                     result = await user_service.set_user_status("testuser", is_active=True)
 
                     assert "already active" in result["message"]
                     mock_update.assert_not_awaited()
-                    mock_invalidate.assert_not_awaited()
+                    mock_seam.assert_not_awaited()
                     user_service.db.execute.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -695,3 +693,71 @@ class TestSetUserStatus:
 
             with pytest.raises(ModelNotFoundError):
                 await user_service.set_user_status("ghost", is_active=False)
+
+
+class TestGetActiveUser:
+    """Pin UserService.get_active_user: the auth-gated named-lookup seam (fix #3)."""
+
+    @pytest.mark.asyncio
+    async def test_delegates_to_seam_with_active_gate(self, user_service):
+        """get_active_user forwards id/username/email with require_active=True."""
+        payload = {"id": 1, "username": "testuser", "is_active": True, "is_deleted": False}
+        with patch.object(
+            user_service.crud, "get_user_with_tier_eager", new_callable=AsyncMock
+        ) as mock_seam:
+            mock_seam.return_value = payload
+
+            result = await user_service.get_active_user(username="testuser")
+
+            assert result == payload
+            mock_seam.assert_awaited_once_with(
+                db=user_service.db,
+                id=None,
+                username="testuser",
+                email=None,
+                require_active=True,
+                tenant_id=None,
+            )
+
+    @pytest.mark.asyncio
+    async def test_id_and_email_routing(self, user_service):
+        """id and email lookups route through the same active-gated seam."""
+        import uuid as _uuid
+
+        tenant_id = _uuid.uuid4()
+        with patch.object(
+            user_service.crud, "get_user_with_tier_eager", new_callable=AsyncMock
+        ) as mock_seam:
+            mock_seam.return_value = {"id": 9}
+
+            await user_service.get_active_user(id=9, tenant_id=tenant_id)
+            mock_seam.assert_awaited_once_with(
+                db=user_service.db,
+                id=9,
+                username=None,
+                email=None,
+                require_active=True,
+                tenant_id=tenant_id,
+            )
+
+            mock_seam.reset_mock()
+            mock_seam.return_value = {"id": 10}
+            await user_service.get_active_user(email="a@example.com")
+            mock_seam.assert_awaited_once_with(
+                db=user_service.db,
+                id=None,
+                username=None,
+                email="a@example.com",
+                require_active=True,
+                tenant_id=None,
+            )
+
+    @pytest.mark.asyncio
+    async def test_none_passthrough(self, user_service):
+        """No active user in scope surfaces as None (callers raise 404)."""
+        with patch.object(
+            user_service.crud, "get_user_with_tier_eager", new_callable=AsyncMock
+        ) as mock_seam:
+            mock_seam.return_value = None
+
+            assert await user_service.get_active_user(username="ghost") is None

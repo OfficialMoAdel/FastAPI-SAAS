@@ -4,7 +4,6 @@ This module provides utility functions for webhook signature verification,
 intended for use by webhook consumers to validate incoming webhook payloads.
 """
 
-import hashlib
 import hmac
 from datetime import UTC, date, datetime
 
@@ -13,7 +12,14 @@ from fastapi import HTTPException, status
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.security.url_validator import SSRFProtectionError, validate_webhook_url
-from src.app.modules.webhooks.signer import canonical_bytes_from_raw, is_timestamp_fresh
+from src.app.modules.webhooks.signer import (
+    canonical_bytes_from_raw,
+    hmac_sha256_hex,
+    is_timestamp_fresh,
+)
+from src.app.modules.webhooks.signer import (
+    verify_signature_raw as signer_verify_signature_raw,
+)
 
 logger = get_logger(__name__)
 
@@ -88,21 +94,25 @@ def verify_webhook_signature(
     # bare `sha256=<hex over payload>` format is only accepted during the
     # S-M1 sunset window (see _LEGACY_SIGNATURE_SUNSET_DATE); its replay
     # protection relies solely on the header timestamp freshness check below.
-    # Freshness + canonicalization are signer-owned primitives (candidate 5):
-    # ONE implementation of the replay window and the canonical-bytes
-    # contract shared by producer (signer.sign_payload) and this consumer
-    # verifier.
+    # Freshness + canonicalization are signer-owned primitives: the signed
+    # scheme delegates entirely to signer.verify_signature_raw (the adapter
+    # pattern) — dict, list-valued, and non-JSON raw bodies all verify through
+    # that single implementation, including rotation headers with multiple
+    # v1= segments. This module carries zero local HMAC for the signed scheme.
     if not is_timestamp_fresh(timestamp, tolerance):
         return False
 
     payload_bytes = canonical_bytes_from_raw(payload)
 
-    def _hmac_hex(data: bytes) -> str:
-        return hmac.new(secret.encode("utf-8"), data, hashlib.sha256).hexdigest()
+    # Scheme 1 (preferred): timestamp-bound signature — the HMAC covers the
+    # timestamp, so a captured pair cannot be replayed with a refreshed stamp.
+    # The signer enforces the signed-timestamp freshness against `tolerance`.
+    if signer_verify_signature_raw(payload_bytes, secret, signature, max_age_seconds=tolerance):
+        return True
 
     # Collect (format, digest) candidates from the comma-separated header
+    # for the legacy fallback below.
     candidates: list[tuple[str, str]] = []
-    signed_ts: int | None = None
     for part in signature.split(","):
         part = part.strip()
         if part.startswith("sha256="):
@@ -110,24 +120,6 @@ def verify_webhook_signature(
         elif part and "=" not in part:
             # Bare hex digest (no prefix) — accepted by the previous verifier.
             candidates.append(("bare", part))
-        elif part.startswith("v1="):
-            candidates.append(("signed", part[3:]))
-        elif part.startswith("t="):
-            try:
-                signed_ts = int(part[2:])
-            except ValueError:
-                pass
-
-    # Scheme 1 (preferred): timestamp-bound signature — the HMAC covers the
-    # timestamp, so a captured pair cannot be replayed with a refreshed stamp.
-    signed_digests = [d for fmt, d in candidates if fmt == "signed"]
-    if signed_digests and signed_ts is not None:
-        if not is_timestamp_fresh(signed_ts, tolerance):
-            return False
-        expected_signed = _hmac_hex(f"{signed_ts}.".encode() + payload_bytes)
-        for digest in signed_digests:
-            if hmac.compare_digest(digest, expected_signed):
-                return True
 
     # Scheme 2 (legacy fallback, DEPRECATED — S-M1): payload-only signature.
     # The digest covers only the payload, so its replay protection relies on
@@ -144,7 +136,7 @@ def verify_webhook_signature(
                 sunset_date=_LEGACY_SIGNATURE_SUNSET_DATE.isoformat(),
             )
             return False
-        expected_legacy = _hmac_hex(payload_bytes)
+        expected_legacy = hmac_sha256_hex(secret, payload_bytes)
         for digest in legacy_candidates:
             if hmac.compare_digest(digest, expected_legacy):
                 logger.warning(

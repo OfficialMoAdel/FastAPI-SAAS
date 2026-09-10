@@ -201,6 +201,12 @@ class UserCacheInvalidator:
         once, then logged at error with a poison-key marker so a later
         reader/ops sweep can detect the user whose cache could not be
         invalidated.
+
+        1B: when ``bump_token_version`` is True the caller MUST supply
+        ``explicit_token_version`` (the fresh post-bump value owned by the
+        ``invalidate_user_sessions`` seam). Guessing ``old + 1`` from the
+        possibly-stale ``user`` payload silently diverges Redis from the DB
+        under concurrent bumps — route through the seam instead.
         """
         if bump_token_version != should_bump_token_version(reason):
             raise ValueError(
@@ -211,6 +217,14 @@ class UserCacheInvalidator:
         client = get_redis()
         if client is None:
             return
+
+        if bump_token_version and explicit_token_version is None:
+            raise ValueError(
+                "bump_token_version=True requires explicit_token_version. "
+                "Do not guess old+1 from a possibly-stale user payload — route "
+                "through src.app.modules.users.session_invalidation.invalidate_user_sessions, "
+                "which supplies the fresh post-bump version."
+            )
 
         try:
             # Handle both ORM object and dict
@@ -242,12 +256,13 @@ class UserCacheInvalidator:
                         if explicit_token_version is not None:
                             new_version = explicit_token_version
                         else:
+                            # bump_token_version=True without an explicit version
+                            # raises above; reaching here means no bump, so the
+                            # current version is written through unchanged.
                             if isinstance(user, dict):
-                                current_version = user.get("token_version", 0)
+                                new_version = user.get("token_version", 0)
                             else:
-                                current_version = getattr(user, "token_version", 0)
-
-                            new_version = current_version + 1 if bump_token_version else current_version
+                                new_version = getattr(user, "token_version", 0)
 
                         async with client.pipeline(transaction=False) as pipe:
                             for key in token_keys:
@@ -284,8 +299,16 @@ class UserCacheInvalidator:
         users: Sequence[Any],
         bump_token_version: bool = False,
         reason: InvalidationReason | None = None,
+        explicit_token_versions: dict[Any, int] | None = None,
     ) -> None:
-        """Invalidate cache entries for many users in ONE Redis pipeline."""
+        """Invalidate cache entries for many users in ONE Redis pipeline.
+
+        1B: when ``bump_token_version`` is True and ``explicit_token_versions``
+        maps user id -> fresh post-bump version (supplied by the
+        ``invalidate_user_sessions`` seam), the explicit value wins over the
+        ``old + 1`` fallback so concurrent bumps cannot diverge Redis from
+        the DB.
+        """
         if reason is not None and bump_token_version != should_bump_token_version(reason):
             raise ValueError(
                 f"bump_token_version={bump_token_version} does not match should_bump_token_version(reason={reason!r})."
@@ -296,7 +319,7 @@ class UserCacheInvalidator:
 
         tenant_context = get_current_tenant()
         delete_keys: list[str] = []
-        token_sets: list[tuple[str, int]] = []
+        token_sets: list[tuple[str, int, bool]] = []
 
         for user in users:
             try:
@@ -327,11 +350,24 @@ class UserCacheInvalidator:
                 # handled by build_user_invalidation_keys.
                 norm_email = str(email).strip() or None if email is not None else None
                 norm_username = str(username).strip() or None if username is not None else None
+                if user_id is None:
+                    logger.warning("Skipping batch-invalidation entry without user id")
+                    continue
 
                 u_del_keys, u_tok_keys = build_user_invalidation_keys(user_id, norm_username, norm_email, tenant_id)
                 delete_keys.extend(u_del_keys)
                 for tk in u_tok_keys:
-                    token_sets.append((tk, current_version))
+                    has_explicit = (
+                        bump_token_version
+                        and explicit_token_versions is not None
+                        and user_id in explicit_token_versions
+                    )
+                    if has_explicit:
+                        # Seam-supplied fresh post-bump value: already resolved,
+                        # must NOT be incremented again below.
+                        token_sets.append((tk, explicit_token_versions[user_id], True))  # type: ignore[index]
+                    else:
+                        token_sets.append((tk, current_version, False))
             except Exception as e:
                 logger.warning("Failed to build batch-invalidation keys for user", error=e)
 
@@ -342,8 +378,8 @@ class UserCacheInvalidator:
             async with client.pipeline(transaction=False) as pipe:
                 if delete_keys:
                     pipe.delete(*delete_keys)
-                for key, version in token_sets:
-                    new_version = version + 1 if bump_token_version else version
+                for key, version, is_explicit in token_sets:
+                    new_version = version if is_explicit else (version + 1 if bump_token_version else version)
                     pipe.set(key, str(new_version), ex=300)
                 await pipe.execute()
         except Exception as e:

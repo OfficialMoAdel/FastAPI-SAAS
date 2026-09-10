@@ -24,7 +24,6 @@ from structlog import get_logger
 from src.app.core.config import settings
 from src.app.core.events import EventPriority
 from src.app.core.redis_provider import get_redis
-from src.app.modules._base.exceptions import ServiceUnavailableError, UnauthorizedError, ValidationError
 from src.app.modules.audit_logs import audit
 from src.app.modules.auth.crud import crud_mfa_methods
 from src.app.modules.auth.models import MFAMethod
@@ -32,6 +31,7 @@ from src.app.modules.auth.schemas import (
     MFAEnableRequest,
     MFAVerifyRequest,
 )
+from src.app.shared.exceptions import ServiceUnavailableError, UnauthorizedError, ValidationError
 
 logger = get_logger(__name__)
 
@@ -112,7 +112,7 @@ class MFAService:
         try:
             from src.app.modules.users.crud import crud_users
 
-            user = await crud_users.get(db=db, id=user_id)
+            user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
             tenant_id = user.get("tenant_id") if user else None
             await audit(
                 action=MFA_ACTION_SETUP,
@@ -232,7 +232,7 @@ class MFAService:
         try:
             from src.app.modules.users.crud import crud_users
 
-            user = await crud_users.get(db=db, id=user_id)
+            user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
             tenant_id = user.get("tenant_id") if user else None
             await audit(
                 action=MFA_ACTION_ENABLE,
@@ -378,7 +378,7 @@ class MFAService:
                 try:
                     from src.app.modules.users.crud import crud_users
 
-                    user = await crud_users.get(db=db, id=user_id)
+                    user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
                     tenant_id = user.get("tenant_id") if user else None
                     await audit(
                         action=MFA_ACTION_VERIFY_SUCCESS,
@@ -401,7 +401,7 @@ class MFAService:
         try:
             from src.app.modules.users.crud import crud_users
 
-            user = await crud_users.get(db=db, id=user_id)
+            user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
             tenant_id = user.get("tenant_id") if user else None
             await audit(
                 action=MFA_ACTION_VERIFY_FAILED,
@@ -509,7 +509,7 @@ class MFAService:
             try:
                 from src.app.modules.users.crud import crud_users
 
-                user = await crud_users.get(db=db, id=user_id)
+                user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
                 tenant_id = user.get("tenant_id") if user else None
                 await audit(
                     action=MFA_ACTION_BACKUP_CODE_USED,
@@ -555,10 +555,10 @@ class MFAService:
             UnauthorizedException: If verification fails.
         """
         from src.app.core.security import verify_password
-        from src.app.modules.users.crud import crud_users
+        from src.app.modules.users.service import UserService
 
-        # Verify user exists and password is correct
-        user = await crud_users.get(db=db, id=user_id, is_deleted=False)
+        # Verify user exists and password is correct (auth-gated read seam)
+        user = await UserService(db).get_active_user(id=user_id)
         if not user:
             raise UnauthorizedError("Invalid credentials")
 
@@ -676,10 +676,10 @@ class MFAService:
             UnauthorizedException: If verification fails.
         """
         from src.app.core.security import verify_password
-        from src.app.modules.users.crud import crud_users
+        from src.app.modules.users.service import UserService
 
-        # Verify user exists and password is correct
-        user = await crud_users.get(db=db, id=user_id, is_deleted=False)
+        # Verify user exists and password is correct (auth-gated read seam)
+        user = await UserService(db).get_active_user(id=user_id)
         if not user:
             raise UnauthorizedError("Invalid credentials")
 

@@ -142,7 +142,7 @@ class MagicLinkService:
             )
         except Exception as e:
             logger.error("Failed to store magic link in DB", exc_info=True)
-            from src.app.modules._base.exceptions import ServiceUnavailableError
+            from src.app.shared.exceptions import ServiceUnavailableError
 
             raise ServiceUnavailableError("Magic link setup is currently unavailable.") from e
 
@@ -274,21 +274,7 @@ class MagicLinkService:
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], self.db)
 
         if mfa_enabled:
-            from src.app.core.security import get_mfa_pending_token_manager
-            from src.app.core.security.tokens import TokenGenerator
-
-            # Generate MFA pending token
-            mfa_token_store = get_mfa_pending_token_manager(self.redis)
-            mfa_token = TokenGenerator.generate_magic_link_token()
-            await mfa_token_store.create(
-                token=mfa_token,
-                data={
-                    "user_id": user["id"],
-                    "username": str(user.get("username") or user.get("email") or ""),
-                    "ip_address": ip_address,
-                    "scope": "mfa_pending",
-                },
-            )
+            mfa_response = await TokenIssuer.issue_mfa_pending(user, redis=self.redis, ip_address=ip_address)
 
             logger.info(
                 "Magic link verified, MFA required",
@@ -298,12 +284,7 @@ class MagicLinkService:
                 },
             )
 
-            return LoginMFAResponse(
-                mfa_required=True,
-                mfa_token=mfa_token,
-                expires_in=int(settings.auth.MFA_PENDING_EXPIRY_SECONDS),
-                message="MFA verification required",
-            )
+            return LoginMFAResponse(**mfa_response)
 
         # Create auth tokens
         tokens = await self._create_auth_tokens(user)

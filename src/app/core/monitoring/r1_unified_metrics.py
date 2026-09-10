@@ -84,6 +84,7 @@ class R1UnifiedMetrics:
             "r1_lua_script_executions_total": 0,
             "r1_lua_script_fallbacks_total": 0,
             "r1_security_fail_open_total": 0,
+            "r1_tenant_l1_publish_failed_total": 0,
         }
 
         # Gauges
@@ -337,6 +338,15 @@ def record_circuit_breaker_transition(to_state: str) -> None:
         metrics.inc_counter("r1_circuit_breaker_closes_total")
     update_circuit_breaker_state(to_state)
 
+
+
+def record_tenant_l1_publish_failed() -> None:
+    """Record a failed cross-worker tenant L1 invalidation publish.
+
+    The L1 cache stays stale up to its 60s TTL when this fires; the counter
+    makes the failure visible during incidents instead of a bare log line.
+    """
+    get_r1_metrics().inc_counter("r1_tenant_l1_publish_failed_total")
 
 
 def record_fail_open(operation: str) -> None:

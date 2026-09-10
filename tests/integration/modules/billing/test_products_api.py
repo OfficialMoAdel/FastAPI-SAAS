@@ -161,7 +161,7 @@ class TestProductDetailEndpoint:
 
     def test_get_product_not_found(self, client_auth) -> None:
         """GET /billing/products/{id} should return 404 for non-existent product."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch(
             "src.app.modules.billing.service.ProductService.get_product_with_pricing",
@@ -207,7 +207,7 @@ class TestProductUpdateEndpoint:
 
     def test_update_product_not_found(self, client_auth) -> None:
         """PATCH /billing/products/{id} should return 404 for non-existent product."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch(
             "src.app.modules.billing.service.ProductService.update_product",
@@ -272,7 +272,7 @@ class TestProductPricingEndpoint:
 
     def test_add_pricing_to_nonexistent_product(self, client_auth) -> None:
         """POST /billing/products/{id}/pricing should return 404 for non-existent product."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         pricing_data = {
             "name": "Monthly Plan",

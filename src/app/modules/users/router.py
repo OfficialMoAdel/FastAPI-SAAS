@@ -19,7 +19,6 @@ from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.core.security import oauth2_scheme
 from src.app.core.utils.user_utils import get_user_attr
-from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules.users.schemas import (
     UserCreate,
     UserDeleteResponse,
@@ -33,6 +32,7 @@ from src.app.modules.users.schemas import (
     UserUpdateResponse,
 )
 from src.app.modules.users.service import UserService
+from src.app.shared.exceptions import ModelNotFoundError
 
 router = APIRouter(prefix="/users", tags=["users"])
 

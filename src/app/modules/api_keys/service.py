@@ -16,11 +16,11 @@ from src.app.core.logger import get_logger
 logger = get_logger(__name__)
 from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.redis_provider import get_redis
-from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.api_keys.models import APIKey
 from src.app.modules.api_keys.schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
 from src.app.modules.audit_logs import audit
+from src.app.shared.exceptions import ModelNotFoundError
 
 MAX_GRACE_PERIOD_DAYS: int = 90
 __all__ = ["APIKeyService", "MAX_GRACE_PERIOD_DAYS"]

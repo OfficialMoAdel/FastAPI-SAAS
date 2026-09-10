@@ -165,7 +165,6 @@ class TestFeatureFlagsE2E:
 
         flags_true = {
             "EVENT_BUS_USE_LUA_IDEMPOTENCY": settings.EVENT_BUS_USE_LUA_IDEMPOTENCY,
-            "SESSION_USE_PIPELINE_EVICTION": settings.SESSION_USE_PIPELINE_EVICTION,
             "RBAC_USE_REDIS_CACHE": settings.RBAC_USE_REDIS_CACHE,
             "DLQ_USE_BOUNDED_SIZE": settings.DLQ_USE_BOUNDED_SIZE,
             "PASSKEY_USE_COLUMN_SELECT": settings.PASSKEY_USE_COLUMN_SELECT,
@@ -209,24 +208,6 @@ class TestFileIndexE2E:
         assert columns == ["tenant_id", "mime_type"]
 
         logger.info("✅ PASSED: MIME type index defined correctly")
-
-
-class TestSessionPipelineE2E:
-    """End-to-end tests for session pipeline optimization."""
-
-    @pytest.mark.asyncio
-    async def test_session_pipeline_flag_enabled(self, log_section):
-        """E2E: Verify session pipeline eviction flag is enabled."""
-        log_section("Session Pipeline Eviction")
-
-        from src.app.core.config import settings
-
-        flag_value = settings.SESSION_USE_PIPELINE_EVICTION
-        logger.info(f"SESSION_USE_PIPELINE_EVICTION: {flag_value}")
-
-        assert flag_value is True, "Pipeline eviction should be enabled"
-
-        logger.info("✅ PASSED: Session pipeline eviction enabled")
 
 
 class TestCacheConfigE2E:

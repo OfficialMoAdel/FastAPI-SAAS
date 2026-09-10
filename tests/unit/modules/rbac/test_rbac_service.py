@@ -4,12 +4,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.modules._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 from src.app.modules.rbac.crud import crud_associations
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
 from src.app.modules.rbac.schemas import RoleCreate, RoleUpdate
 from src.app.modules.rbac.service import RoleService
 from src.app.modules.users.session_invalidation import InvalidationReason
+from src.app.shared.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 from tests.conftest import MockUser
 
 
@@ -19,6 +19,10 @@ def mock_db():
     db = AsyncMock()
     # add is synchronous in SQLAlchemy AsyncSession
     db.add = MagicMock()
+    # begin_nested() returns a (sync) context manager in SQLAlchemy, not a
+    # coroutine — an AsyncMock child would break `async with` in the
+    # idempotent-assign savepoint, so wire a mock CM explicitly.
+    db.begin_nested = MagicMock(return_value=AsyncMock())
     return db
 
 
@@ -395,12 +399,13 @@ class TestRoleServicePermissions:
         mock_users_result.all.return_value = projected_rows
 
         # execute order: permission, existing link, affected user ids,
-        # projected user columns, token_version UPDATE
+        # projected user columns, token_version UPDATE, fresh-version read
         mock_db.execute.side_effect = [
             mock_result_perm,
             mock_result_link,
             mock_affected_result,
             mock_users_result,
+            MagicMock(),
             MagicMock(),
         ]
 
@@ -416,7 +421,10 @@ class TestRoleServicePermissions:
         ):
             await role_service.add_permission_to_role(1, "users:read")
         mock_batch.assert_awaited_once_with(
-            projected_rows, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+            projected_rows,
+            bump_token_version=True,
+            reason=InvalidationReason.CREDENTIAL_CHANGE,
+            explicit_token_versions={},
         )
 
         users_stmt = mock_db.execute.call_args_list[3].args[0]
@@ -435,44 +443,72 @@ class TestRoleServiceUserAssignment:
 
     @pytest.mark.asyncio
     async def test_assign_role_success(self, role_service, mock_db, mock_role):
-        """Test assigning role to user."""
+        """Test assigning role to user (1B: single seam call owns bump+commit+cache+perm flush)."""
         role_service.get_role = AsyncMock(return_value=mock_role)
 
-        # Mock user query result (user exists)
-        mock_user_result = MagicMock()
-        mock_user_result.scalar_one_or_none.return_value = MagicMock(id=123, tenant_id=MockUser.DEFAULT_TENANT_ID)
+        # Membership check goes through the user membership seam
+        # (non-deleted, tenant-scoped, no active gate).
+        mock_user_record = {"id": 123, "tenant_id": MockUser.DEFAULT_TENANT_ID}
 
         # Mock existing assignment query (None - not assigned yet)
         mock_assignment_result = MagicMock()
         mock_assignment_result.scalar_one_or_none.return_value = None
 
-        # Mock token_version UPDATE result (no return value needed)
-        mock_update_result = MagicMock()
-
-        # Calls: (1) user check, (2) assignment check, (3) token_version UPDATE
-        mock_db.execute = AsyncMock(side_effect=[mock_user_result, mock_assignment_result, mock_update_result])
+        # Calls: (1) assignment check. The user check runs through
+        # UserService.get_tenant_user (mocked); the SQL bump + fresh
+        # read + commit are owned by the invalidate_user_sessions seam.
+        mock_db.execute = AsyncMock(return_value=mock_assignment_result)
 
         # Mock add to accept sync call
         mock_db.add = MagicMock()
 
-        with patch(
-            "src.app.modules.rbac.service.invalidate_user_permissions_cache", new_callable=AsyncMock
-        ) as mock_cache:
+        with (
+            patch("src.app.modules.users.service.UserService") as mock_user_service_cls,
+            patch(
+                "src.app.modules.users.session_invalidation.invalidate_user_sessions", new_callable=AsyncMock
+            ) as mock_seam,
+        ):
+            mock_user_service_cls.return_value.get_tenant_user = AsyncMock(return_value=mock_user_record)
             await role_service.assign_role_to_user(user_id=123, role_id=mock_role.id)
 
+            mock_user_service_cls.return_value.get_tenant_user.assert_awaited_once_with(
+                id=123, tenant_id=MockUser.DEFAULT_TENANT_ID
+            )
             mock_db.add.assert_called_once()
-            # One commit: both UserRole insert and token_version update happen in same transaction
-            assert mock_db.commit.call_count == 1
-            mock_cache.assert_called_once_with(123, MockUser.DEFAULT_TENANT_ID)
+            # ONE seam call replaces bump + commit + cache + perm flush.
+            mock_seam.assert_awaited_once_with(
+                mock_db,
+                mock_user_record,
+                InvalidationReason.CREDENTIAL_CHANGE,
+                tenant_id=MockUser.DEFAULT_TENANT_ID,
+                flush_permissions=True,
+                commit=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_assign_role_user_not_found(self, role_service, mock_db, mock_role):
+        """Test assigning role when the user seam finds no tenant user in scope."""
+        role_service.get_role = AsyncMock(return_value=mock_role)
+
+        with patch("src.app.modules.users.service.UserService") as mock_user_service_cls:
+            mock_user_service_cls.return_value.get_tenant_user = AsyncMock(return_value=None)
+
+            with pytest.raises(ModelNotFoundError):
+                await role_service.assign_role_to_user(user_id=999, role_id=mock_role.id)
+
+            mock_user_service_cls.return_value.get_tenant_user.assert_awaited_once_with(
+                id=999, tenant_id=MockUser.DEFAULT_TENANT_ID
+            )
+            mock_db.add.assert_not_called()
+            mock_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_assign_role_already_exists(self, role_service, mock_db, mock_role):
         """Test assigning already assigned role."""
         role_service.get_role = AsyncMock(return_value=mock_role)
 
-        # Mock user query result (user exists)
-        mock_user_result = MagicMock()
-        mock_user_result.scalar_one_or_none.return_value = MagicMock(id=123, tenant_id=MockUser.DEFAULT_TENANT_ID)
+        # Membership check goes through the user membership seam.
+        mock_user_record = {"id": 123, "tenant_id": MockUser.DEFAULT_TENANT_ID}
 
         # Mock existing assignment query (Found)
         mock_assignment_result = MagicMock()
@@ -482,12 +518,15 @@ class TestRoleServiceUserAssignment:
             tenant_id=MockUser.DEFAULT_TENANT_ID,
         )
 
-        # First call: user check, Second call: assignment check
-        mock_db.execute = AsyncMock(side_effect=[mock_user_result, mock_assignment_result])
+        # Only call: assignment check (user check is mocked via the seam).
+        mock_db.execute = AsyncMock(return_value=mock_assignment_result)
 
-        await role_service.assign_role_to_user(user_id=123, role_id=mock_role.id)
+        with patch("src.app.modules.users.service.UserService") as mock_user_service_cls:
+            mock_user_service_cls.return_value.get_tenant_user = AsyncMock(return_value=mock_user_record)
 
-        mock_db.add.assert_not_called()
+            await role_service.assign_role_to_user(user_id=123, role_id=mock_role.id)
+
+            mock_db.add.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_user_roles(self, role_service, mock_db, mock_role):
@@ -503,29 +542,52 @@ class TestRoleServiceUserAssignment:
 
     @pytest.mark.asyncio
     async def test_remove_role_success(self, role_service, mock_db):
-        """Test removing role from user (single-statement atomic delete)."""
-        # Mock user tenant-isolation check (user exists in tenant)
-        mock_user_result = MagicMock()
-        mock_user_result.scalar_one_or_none.return_value = MagicMock(id=123, tenant_id=MockUser.DEFAULT_TENANT_ID)
-        mock_db.execute = AsyncMock(return_value=mock_user_result)
+        """Test removing role from user (1B: single seam call owns bump+commit+cache+perm flush)."""
+        # Membership check goes through the user membership seam
+        # (non-deleted, tenant-scoped, no active gate).
+        mock_user_record = {"id": 123, "tenant_id": MockUser.DEFAULT_TENANT_ID}
 
         with (
+            patch("src.app.modules.users.service.UserService") as mock_user_service_cls,
             patch.object(
                 crud_associations, "remove_user_role", new_callable=AsyncMock, return_value=True
             ) as mock_remove,
-            patch.object(crud_associations, "bump_user_token_version", new_callable=AsyncMock),
             patch(
-                "src.app.modules.rbac.service.invalidate_user_permissions_cache", new_callable=AsyncMock
-            ) as mock_cache,
-            patch("src.app.modules.users.service.UserService") as mock_user_service_cls,
+                "src.app.modules.users.session_invalidation.invalidate_user_sessions", new_callable=AsyncMock
+            ) as mock_seam,
         ):
-            mock_user_service_cls.return_value._invalidate_user_cache = AsyncMock()
-
+            mock_user_service_cls.return_value.get_tenant_user = AsyncMock(return_value=mock_user_record)
             await role_service.remove_role_from_user(user_id=123, role_id=1)
 
+            mock_user_service_cls.return_value.get_tenant_user.assert_awaited_once_with(
+                id=123, tenant_id=MockUser.DEFAULT_TENANT_ID
+            )
             # Atomic path: single DELETE statement, no loaded-object db.delete.
             mock_remove.assert_awaited_once_with(mock_db, role_service.tenant_id, 123, 1)
             mock_db.delete.assert_not_called()
-            # Single commit after delete + token_version update
-            assert mock_db.commit.call_count == 1
-            mock_cache.assert_called_once()
+            # ONE seam call replaces bump + commit + cache + perm flush.
+            mock_seam.assert_awaited_once_with(
+                mock_db,
+                mock_user_record,
+                InvalidationReason.CREDENTIAL_CHANGE,
+                tenant_id=MockUser.DEFAULT_TENANT_ID,
+                flush_permissions=True,
+                commit=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_remove_role_user_not_found(self, role_service, mock_db):
+        """Test removing a role when the user seam finds no tenant user in scope."""
+        with (
+            patch("src.app.modules.users.service.UserService") as mock_user_service_cls,
+            patch.object(crud_associations, "remove_user_role", new_callable=AsyncMock) as mock_remove,
+        ):
+            mock_user_service_cls.return_value.get_tenant_user = AsyncMock(return_value=None)
+
+            with pytest.raises(ModelNotFoundError):
+                await role_service.remove_role_from_user(user_id=999, role_id=1)
+
+            mock_user_service_cls.return_value.get_tenant_user.assert_awaited_once_with(
+                id=999, tenant_id=MockUser.DEFAULT_TENANT_ID
+            )
+            mock_remove.assert_not_called()

@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from src.app.modules._base.exceptions import ModelNotFoundError, ValidationError
 from src.app.modules.api_keys.service import APIKeyService
 from src.app.modules.auth.models import MFAMethod
 from src.app.modules.auth.schemas import MFAEnableRequest
 from src.app.modules.auth.services.lockout import LoginLockoutPolicy
 from src.app.modules.auth.services.mfa import MFAService
 from src.app.modules.webhooks.signer import is_timestamp_fresh
+from src.app.shared.exceptions import ModelNotFoundError, ValidationError
 
 
 class TestP1HighPriorityRegressions:

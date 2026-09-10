@@ -15,6 +15,14 @@ class EventSettings(BaseSettings):
 
     Overridable via ``EVENT_BUS_RETRY_DELAYS='[30,120,600]'`` style JSON.
     """
+    EVENT_BUS_REQUIRE_STRICT_ORDERING: bool = False
+    """Gate per-event sequence numbers behind an explicit opt-in.
+
+    When False (default, preserves current behavior) publish() skips the
+    Redis INCR and injects sequence=0; set True to require strict ordering
+    via get_next_sequence(). Declared here so the flat settings accessor
+    resolves it instead of relying on getattr defaults at the call site.
+    """
 
 
 class R1UnifiedSettings(BaseSettings):
@@ -35,9 +43,6 @@ class R1UnifiedSettings(BaseSettings):
 
     EVENT_BUS_USE_BATCH_ENQUEUE: bool = True
     """Use batched Redis pipeline for event handler enqueueing (P3-3)."""
-
-    SESSION_USE_PIPELINE_EVICTION: bool = True
-    """Use Redis pipeline for session eviction (P2-1)."""
 
     XFETCH_USE_LUA_SCRIPT: bool = False
     """Use Lua script for atomic GET+TTL in XFetch (P2-2). (Off by default due to performance)"""

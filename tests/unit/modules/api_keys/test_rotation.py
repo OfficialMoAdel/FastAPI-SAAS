@@ -14,9 +14,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.exceptions.http_exceptions import ForbiddenException
-from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules.api_keys.models import APIKey
 from src.app.modules.api_keys.service import APIKeyService
+from src.app.shared.exceptions import ModelNotFoundError
 
 
 class TestAPIKeyValidFromValidation:

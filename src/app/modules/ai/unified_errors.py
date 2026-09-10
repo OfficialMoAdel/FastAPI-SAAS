@@ -11,6 +11,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from src.app.modules.ai.providers import AIProviderError
+from src.app.shared.exceptions import AppException
 
 
 class AIAuthenticationError(AIProviderError):
@@ -221,7 +222,7 @@ class AIProviderUnavailableError(AIProviderError):
         self.original_error = original_error
 
 
-class SessionLimitExceededError(Exception):
+class SessionLimitExceededError(AppException):
     """Raised when a tenant has reached the maximum number of concurrent sessions.
 
     Attributes:
@@ -248,6 +249,7 @@ class SessionLimitExceededError(Exception):
         self.limit = limit
         self.current_count = current_count
         self.message = f"Session limit exceeded. Maximum {limit} concurrent sessions allowed per tenant."
+        self.detail = self.message
         super().__init__(self.message)
 
 

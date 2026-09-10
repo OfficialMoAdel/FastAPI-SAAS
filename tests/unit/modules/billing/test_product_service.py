@@ -132,7 +132,7 @@ class TestProductService:
     @pytest.mark.asyncio
     async def test_get_product_not_found(self, mock_db_session):
         """Test retrieving a non-existent product raises error."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         product_id = 999
 
@@ -324,8 +324,8 @@ class TestProductPricingService:
     @pytest.mark.asyncio
     async def test_add_pricing_to_nonexistent_product(self, mock_db_session, pricing_data):
         """Test adding pricing to non-existent product raises error."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.billing.schemas import PricingCreate
+        from src.app.shared.exceptions import ModelNotFoundError
 
         product_id = 999
 

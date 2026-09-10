@@ -102,7 +102,6 @@ uv run pytest tests/unit/r1_unified/ --cov=src/app --cov-report=term-missing --c
 - Pipeline path: ZRANGE + HGET batch + DELETE batch = 3 roundtrips
 - Legacy path: ZPOPMIN + HGET + DELETE per session = n*3 roundtrips
 - Batch size limit prevents memory exhaustion
-- Feature flag `SESSION_USE_PIPELINE_EVICTION` controls behavior
 
 ---
 
@@ -279,7 +278,6 @@ All optimizations are controlled by feature flags in `settings.r1_unified`:
 | Flag | Default | Optimization |
 |------|---------|--------------|
 | `EVENT_BUS_USE_LUA_IDEMPOTENCY` | `True` | P1-1: Event idempotency Lua script |
-| `SESSION_USE_PIPELINE_EVICTION` | `True` | P2-1: Session pipeline eviction |
 | `XFETCH_USE_LUA_SCRIPT` | `True` | P2-2: XFetch Lua script |
 | `RBAC_USE_REDIS_CACHE` | `True` | P2-3: RBAC Redis cache |
 | `DLQ_USE_BOUNDED_SIZE` | `True` | P3-1: DLQ bounded size |

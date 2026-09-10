@@ -19,8 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_current_tenant
-from src.app.modules._base import ModelNotFoundError, ValidationError
 from src.app.modules.storage.service import StorageAdminService
+from src.app.shared.exceptions import AppException, ModelNotFoundError, ValidationError
 
 StorageSettingsService = StorageAdminService
 from src.app.modules.user_preferences.crud import crud_user_preferences
@@ -38,14 +38,16 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 
 
-class StorageError(Exception):
+class StorageError(AppException):
     """Raised when storage operations fail."""
 
     def __init__(self, operation: str, detail: str):
         self.operation = operation
-        self.detail = detail
         self.message = f"Storage {operation} failed: {detail}"
         super().__init__(self.message)
+        # Keep behavior: ``detail`` stays the raw backend detail, not the
+        # composed message (AppException.__init__ mirrors message into detail).
+        self.detail = detail
 
 
 class PreferencesService:

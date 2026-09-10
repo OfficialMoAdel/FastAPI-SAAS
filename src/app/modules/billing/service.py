@@ -92,13 +92,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.app.core.config import settings
+from src.app.core.exceptions.http_exceptions import TenantContextError
 from src.app.core.logger import get_logger
 from src.app.core.security.encryption import CredentialEncryption
 from src.app.core.tenancy.context import get_current_tenant, require_active_tenant
-from src.app.modules._base.exceptions import (
-    ModelNotFoundError,
-    TenantContextError,
-)
+from src.app.shared.exceptions import ModelNotFoundError
 
 logger = get_logger(__name__)
 

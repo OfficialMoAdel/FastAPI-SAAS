@@ -130,7 +130,7 @@ class TestSessionDeletion:
     @pytest.mark.asyncio
     async def test_delete_session_not_found(self, mock_db_session, mock_user, mock_tenant):
         """Test deleting a non-existent session raises error."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         session_id = 999
 
@@ -153,7 +153,7 @@ class TestSessionDeletion:
     @pytest.mark.asyncio
     async def test_delete_session_wrong_user(self, mock_db_session, mock_user, mock_tenant):
         """Test deleting another user's session raises error."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         session_id = 1
         other_user_id = 999

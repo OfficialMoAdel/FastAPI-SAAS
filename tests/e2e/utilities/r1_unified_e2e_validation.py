@@ -242,7 +242,6 @@ class R1UnifiedE2EValidator:
             manager._redis_client = mock_redis
 
             settings_mock = MagicMock()
-            settings_mock.SESSION_USE_PIPELINE_EVICTION = True
             settings_mock.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.settings", settings_mock):
@@ -610,7 +609,6 @@ class R1UnifiedE2EValidator:
                 "XFETCH_USE_LUA_SCRIPT",
                 "RBAC_USE_REDIS_CACHE",
                 "RBAC_CACHE_TTL_SECONDS",
-                "SESSION_USE_PIPELINE_EVICTION",
                 "SESSION_MAX_EVICTION_BATCH_SIZE",
                 "DLQ_USE_BOUNDED_SIZE",
                 "DLQ_MAX_SIZE",

@@ -31,7 +31,7 @@ class MyModelUpdate(BaseUpdate):
 ```python
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..._base.service import BaseService
-from ..._base.exceptions import ModelNotFoundError, DuplicateError
+from ...shared.exceptions import ModelNotFoundError, DuplicateError
 from .models import MyModel
 
 class MyModelService(BaseService[MyModel]):
@@ -78,10 +78,10 @@ async def get_item(id: int, service: MyModelServiceDep):
     return await service.get_item(id)
 ```
 
-### Exceptions (`exceptions.py`)
+### Exceptions (`src/app/shared/exceptions.py`)
 
 ```python
-from ..._base.exceptions import ModelNotFoundError, DuplicateError, ValidationError
+from ...shared.exceptions import ModelNotFoundError, DuplicateError, ValidationError
 
 # Use directly - no need to subclass
 raise ModelNotFoundError("User", user_id)
@@ -166,5 +166,5 @@ Use standalone class when:
 
 1. **Don't force BaseService** - If your service has mostly custom methods, standalone is cleaner
 2. **Consistency within pattern** - Follow the pattern conventions (DI factories, exception handling)
-3. **Use `_base` exceptions** - Both patterns should use `ModelNotFoundError`, `DuplicateError`, etc.
+3. **Use shared exceptions** - Both patterns should use `ModelNotFoundError`, `DuplicateError`, etc. from `src.app.shared.exceptions`.
 4. **Document choice** - Add a docstring explaining why the pattern was chosen

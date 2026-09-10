@@ -198,10 +198,14 @@ class WebhookDelivery(Base, UUIDMixin):
         nullable=False,
         comment="Event data payload",
     )
-    signature: Mapped[str] = mapped_column(
+    signature: Mapped[str | None] = mapped_column(
         String(255),
-        nullable=False,
-        comment="HMAC-SHA256 signature for verification",
+        nullable=True,
+        default=None,
+        comment="DEPRECATED trigger-time HMAC-SHA256 signature (dead on the wire; "
+        "the live send-time t=,v1= signature is computed in delivery.py and sent "
+        "as a header, never persisted). Nullable for new rows; kept (not dropped) "
+        "so existing delivery history is preserved.",
     )
 
     # Delivery Status

@@ -15,78 +15,61 @@ Performance Optimization (R2-HYBRID MED-1):
   which re-apply context to every connection acquired during the request.
 """
 
-import asyncio
 import re
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from typing import Any
 
-from cachetools import TTLCache
 from fastapi import Request, status
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from src.app.core.cache.invalidation_channel import InvalidationChannel
 from src.app.core.config import settings
 from src.app.core.db.database import local_session
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
-from src.app.core.tenancy.cache import TENANT_CACHE_TTL
+from src.app.core.tenancy.cache import (
+    _L1_INVALIDATION_CHANNEL,
+    _L1_TENANT_CACHE,
+    _TENANT_LOCKS,
+    TENANT_CACHE_TTL,
+    _get_tenant_lock,
+    _publish_tenant_l1_invalidation,
+    _start_l1_invalidation_listener,
+    _tenant_invalidation_channel,
+    invalidate_tenant_l1,
+    stop_l1_invalidation_listener,
+)
 from src.app.core.tenancy.context import NO_TENANT, TenantContext, clear_tenant_context, set_current_tenant
 from src.app.modules.tenants.models import Tenant
 
 logger = get_logger(__name__)
 
-# L1 In-Memory Cache for tenant resolution
-_L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=60.0)
+# L1 ownership lives in src.app.core.tenancy.cache; the names above are
+# re-exported here so existing test/script importers
+# (``from src.app.middleware.tenant import _L1_TENANT_CACHE`` etc.) keep
+# working during migration. New code must import from core directly.
 
-# Cache stampede protection - track lock waiters to prevent memory leaks
-_TENANT_LOCKS: dict[str, dict] = {}
-
-# T9 FIX: cross-worker L1 invalidation channel. Suspending/deleting a tenant
-# publishes here so every web process drops its in-process TTLCache entry
-# immediately instead of serving stale is_active=True for up to ttl seconds.
-_L1_INVALIDATION_CHANNEL = "tenant:l1_invalidate"
-
-
-def invalidate_tenant_l1(slug: str | None = None) -> None:
-    """Drop one (or all) entries from this process's L1 tenant cache."""
-    if slug is None or slug == "*":
-        _L1_TENANT_CACHE.clear()
-    else:
-        _L1_TENANT_CACHE.pop(slug, None)
-
-
-_tenant_invalidation_channel = InvalidationChannel(
-    channel=_L1_INVALIDATION_CHANNEL,
-    on_message=lambda msg: invalidate_tenant_l1(None if msg == "*" else msg),
-    logger_name="tenant_l1",
-)
-
-_publish_tenant_l1_invalidation = _tenant_invalidation_channel.publish
-_start_l1_invalidation_listener = _tenant_invalidation_channel.start
-stop_l1_invalidation_listener = _tenant_invalidation_channel.stop
+__all__ = [
+    "ADMIN_EXEMPT_PREFIX",
+    "TENANT_CACHE_TTL",
+    "TENANT_EXEMPT_PATHS",
+    "TENANT_EXEMPT_PREFIXES",
+    "TENANT_HEADER",
+    "TenantMiddleware",
+    "_L1_INVALIDATION_CHANNEL",
+    "_L1_TENANT_CACHE",
+    "_TENANT_LOCKS",
+    "_get_tenant_lock",
+    "_publish_tenant_l1_invalidation",
+    "_start_l1_invalidation_listener",
+    "_tenant_invalidation_channel",
+    "invalidate_tenant_l1",
+    "is_path_exempt",
+    "stop_l1_invalidation_listener",
+]
 
 # P4: slug validation regex compiled once at import
 _SLUG_RE = re.compile(r"^[a-z0-9\-]+$")
-
-
-@asynccontextmanager
-async def _get_tenant_lock(slug: str) -> AsyncGenerator[asyncio.Lock, None]:
-    """Get an asyncio.Lock for the given slug, cleaning up when unused."""
-    lock_info = _TENANT_LOCKS.get(slug)
-    if lock_info is None:
-        lock_info = {"lock": asyncio.Lock(), "waiters": 0}
-        _TENANT_LOCKS[slug] = lock_info
-
-    lock_info["waiters"] += 1
-    try:
-        yield lock_info["lock"]
-    finally:
-        lock_info["waiters"] -= 1
-        if lock_info["waiters"] == 0:
-            _TENANT_LOCKS.pop(slug, None)
 
 
 # P2-7: use the shared common set; tenant adds /api/v1/app_configuration

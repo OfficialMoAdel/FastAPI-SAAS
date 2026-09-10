@@ -9,11 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.pagination import build_keyset_response, paginate_keyset
 from src.app.core.utils.user_utils import get_user_attr
-from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.posts.models import Post
 from src.app.modules.posts.schemas import PostCreate, PostCreateInternal, PostRead, PostUpdate
-from src.app.shared.exceptions import ForbiddenError
+from src.app.shared.exceptions import ForbiddenError, ModelNotFoundError
 
 
 class PostService(BaseService[Post]):

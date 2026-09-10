@@ -14,10 +14,13 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import Request, Response
+from redis.asyncio import Redis
 
 from src.app.core.config import settings
-from src.app.core.security import create_access_token, create_refresh_token
+from src.app.core.security import create_access_token, create_refresh_token, get_mfa_pending_token_manager
 from src.app.core.security.login_helpers import register_login_session
+from src.app.core.security.tokens import TokenGenerator
+from src.app.shared.exceptions import ServiceUnavailableError
 
 
 @dataclass(frozen=True)
@@ -177,3 +180,48 @@ class TokenIssuer:
         )
 
         return IssuedSession(access_token=access_token, refresh_token=refresh_token)
+
+    @staticmethod
+    async def issue_mfa_pending(
+        user: dict[str, Any],
+        *,
+        redis: Redis | None,
+        ip_address: str | None = None,
+    ) -> dict[str, Any]:
+        """Issue an MFA-pending token for a user with MFA enabled.
+
+        Single seam for the MFA-required branch shared by every login door
+        (password, magic-link, passkey, SSO): token generation, pending-token
+        storage, and response shape are defined here exactly once.
+
+        Args:
+            user: Authenticated user dict (needs ``id``; ``username``/``email``
+                feed the stored display name).
+            redis: Async Redis client for the MFA pending token store.
+                ``None`` fails closed with 503 — the pending token cannot be
+                stored, so MFA cannot proceed safely.
+            ip_address: Client IP recorded with the pending token, if known.
+
+        Returns:
+            dict with ``mfa_required``, ``mfa_token``, ``expires_in`` and
+            ``message``.
+        """
+        if redis is None:
+            raise ServiceUnavailableError("Authentication service unavailable")
+        mfa_token_store = get_mfa_pending_token_manager(redis)
+        mfa_token = TokenGenerator.generate_magic_link_token()
+        await mfa_token_store.create(
+            token=mfa_token,
+            data={
+                "user_id": user["id"],
+                "username": str(user.get("username") or user.get("email") or ""),
+                "ip_address": ip_address,
+                "scope": "mfa_pending",
+            },
+        )
+        return {
+            "mfa_required": True,
+            "mfa_token": mfa_token,
+            "expires_in": int(settings.auth.MFA_PENDING_EXPIRY_SECONDS),
+            "message": "MFA verification required",
+        }

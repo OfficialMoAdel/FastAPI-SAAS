@@ -5,8 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.core.events.notifications import request_notification
-from src.app.modules.notifications.email_provider import (
+from src.app.clients.notifications import (
     EmailMessage,
     InMemoryEmailProvider,
     SMTPProvider,
@@ -14,6 +13,7 @@ from src.app.modules.notifications.email_provider import (
     reset_email_provider,
     set_email_provider,
 )
+from src.app.core.events.notifications import request_notification
 from src.app.modules.notifications.models import NotificationStatus
 from src.app.modules.notifications.service import (
     handle_notification_request_event,

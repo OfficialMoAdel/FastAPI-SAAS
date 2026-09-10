@@ -6,13 +6,13 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.modules._base.exceptions import ServiceUnavailableError, UnauthorizedError, ValidationError
 from src.app.modules.auth.errors import InvalidMagicLinkError, MagicLinkAlreadyUsedError
 from src.app.modules.auth.schemas import MFAEnableRequest, MFAVerifyRequest
 from src.app.modules.auth.services.magic_link import MagicLinkService
 from src.app.modules.auth.services.mfa import MFAService
 from src.app.modules.auth.services.passkey import PasskeyService
 from src.app.modules.auth.services.tokens import TokenIssuer
+from src.app.shared.exceptions import ServiceUnavailableError, UnauthorizedError, ValidationError
 
 
 class TestTOTPReplayProtection:

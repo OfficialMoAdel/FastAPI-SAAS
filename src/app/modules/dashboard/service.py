@@ -21,6 +21,15 @@ from src.app.modules.dashboard.schemas import (
 )
 from src.app.modules.users.models import User
 
+# Audit-writer contract for login metrics (must match the `action` /
+# `details["success"]` shape written by AuthService._publish_login_audit and
+# the SSO login audit in sso.py): login rows use these action names with a
+# JSONB boolean `details.success`. `->>` text extraction covers both a JSON
+# boolean false and a string "false"; coalesce keeps rows with missing
+# details from silently flipping the count.
+LOGIN_ACTIONS: tuple[str, str] = ("auth.login", "auth.sso_login")
+FAILED_AUTH_SUCCESS_TEXT = func.coalesce(AuditLog.details["success"].astext, "true")
+
 
 class DashboardService:
     """Service for generating dashboard metrics."""
@@ -109,7 +118,7 @@ class DashboardService:
                 tenant_scope(AuditLog, tenant_id),
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
-                AuditLog.action == "login",
+                AuditLog.action.in_(LOGIN_ACTIONS),
             )
             .scalar_subquery()
         )
@@ -229,7 +238,7 @@ class DashboardService:
                 tenant_scope(AuditLog, tenant_id),
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
-                AuditLog.action == "login",
+                AuditLog.action.in_(LOGIN_ACTIONS),
             )
             .scalar_subquery()
         )
@@ -252,7 +261,8 @@ class DashboardService:
                 tenant_scope(AuditLog, tenant_id),
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
-                AuditLog.action.in_(["login_failed", "authentication_failed"]),
+                AuditLog.action == "auth.login",
+                FAILED_AUTH_SUCCESS_TEXT == "false",
             )
             .scalar_subquery()
         )

@@ -12,12 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
+from src.app.clients.notifications import EmailMessage, SMTPProvider, get_email_provider  # noqa: F401
 from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.redis_provider import get_redis
 from src.app.core.utils.rate_limit import rate_limiter
 from src.app.core.utils.retry import with_retry
-from src.app.modules.notifications.email_provider import EmailMessage, SMTPProvider, get_email_provider  # noqa: F401
 from src.app.modules.notifications.models import EmailTemplateOverride, Notification, NotificationStatus
 
 logger = get_logger(__name__)
@@ -199,7 +199,7 @@ class NotificationService:
                 # for skipped notifications.
                 return None
 
-        from src.app.modules._base.exceptions import RateLimitExceededError
+        from src.app.shared.exceptions import RateLimitExceededError
 
         # Rate limiting check (T105)
         # 100 emails/minute per tenant, 1000 emails/hour per tenant.
@@ -782,7 +782,7 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
                         return
 
                 # Rate limiting check (T105)
-                from src.app.modules._base.exceptions import RateLimitExceededError
+                from src.app.shared.exceptions import RateLimitExceededError
 
                 rate_limit_key_min = f"notif:min:{tenant_id}" if tenant_id else f"notif:min:global:{to_email}"
                 rate_limit_key_hour = f"notif:hour:{tenant_id}" if tenant_id else f"notif:hour:global:{to_email}"

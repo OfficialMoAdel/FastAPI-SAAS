@@ -156,7 +156,7 @@ async def test_send_email_skipped_by_prefs(service, mock_db):
 @pytest.mark.asyncio
 @patch("src.app.modules.notifications.service.rate_limiter")
 async def test_send_email_rate_limit_exceeded(mock_rate_limiter, service, mock_db):
-    from src.app.modules._base.exceptions import RateLimitExceededError
+    from src.app.shared.exceptions import RateLimitExceededError
 
     t_id = uuid4()
     mock_rate_limiter.check_rate_limit = AsyncMock(return_value=(True, {}))
@@ -299,7 +299,7 @@ async def test_create_template_override(mock_redis, service, mock_db):
 @pytest.mark.asyncio
 @patch("src.app.core.db.database.async_session_maker")
 async def test_send_email_task(mock_session_maker):
-    from src.app.modules.notifications.email_provider import reset_email_provider, set_email_provider
+    from src.app.clients.notifications import reset_email_provider, set_email_provider
 
     mock_db = AsyncMock()
     mock_session_maker.return_value.__aenter__.return_value = mock_db

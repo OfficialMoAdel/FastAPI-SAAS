@@ -165,54 +165,37 @@ Measured overhead: < 10% for typical queries (baseline vs RLS-enabled). See `tes
 ## Database Circuit Breaker
 
 ### Purpose
-Protects the database from cascading failures during outages or high load. Automatically stops sending queries when failure threshold is reached and fails fast or serves cached/fallback data.
+Protects the database from cascading failures during outages or high load. The
+`db_circuit_guard()` context manager fails fast with HTTPException(503) when the
+failure threshold is reached, instead of piling queries onto a struggling database.
 
 ### Key Features
-- **Fail Fast**: Stops waiting for timeouts when DB is known to be down.
-- **Cache Fallback**: Serves stale data from Redis if DB is unavailable.
-- **Static Fallback**: Returns default values (empty lists, safe defaults) if configured.
-- **Transaction Retries**: Automatically retries transient transaction failures with exponential backoff.
-- **Read-Only Mode**: Helpers to detect degraded state and prevent write operations.
+- **Fail Fast**: Raises HTTPException(503) when the circuit is OPEN — no waiting on timeouts.
+- **Infra-only tripping**: Only infrastructure errors (OperationalError, timeouts,
+  disconnects) count toward the threshold. Business-logic errors (IntegrityError,
+  404s, validation) never trip the circuit.
+- **HALF_OPEN probing**: Allows one test request through per recovery window.
 - **Admin Control**: Reset circuit breakers via API (`/admin/circuit-breakers`).
 
 ### Usage Patterns
 
-**1. Basic Query with Cache Fallback**
-Use for read-heavy data where eventual consistency is acceptable (dashboards, lists).
+**1. Guard a Query**
+Wrap any database operation — the guard handles state checks and outcome recording.
 ```python
-from src.app.core.resilience import execute_query_with_circuit_breaker
+from src.app.core.resilience import db_circuit_guard
 
-results = await execute_query_with_circuit_breaker(
-    db=db,
-    query="SELECT * FROM users WHERE tenant_id = :tid",
-    params={"tid": tenant_id},
-    cache_key=f"users:list:{tenant_id}",
-    cache_ttl=300  # 5 minutes
-)
+async with db_circuit_guard():
+    result = await db.execute(stmt)
 ```
 
-**2. Critical Transaction with Retry**
-Use for writes that must succeed but might fail transiently (deadlocks, connection blips).
-```python
-from src.app.core.resilience import execute_transaction_with_circuit_breaker
-
-async def update_balance(session):
-    await session.execute(...)
-
-await execute_transaction_with_circuit_breaker(
-    db=db,
-    operations=[update_balance],
-    max_retries=3
-)
-```
-
-**3. Graceful Degradation (Read-Only)**
+**2. Graceful Degradation (Read-Only)**
 Check circuit state before attempting complex writes.
 ```python
-from src.app.core.resilience import db_circuit, get_read_only_fallback, CircuitState
+from src.app.core.resilience import db_circuit
+from src.app.core.utils.circuit_breaker import CircuitState
 
 if db_circuit.state == CircuitState.OPEN:
-    return get_read_only_fallback()
+    return {"status": "degraded", "mode": "read-only"}
 ```
 
 ### Testing

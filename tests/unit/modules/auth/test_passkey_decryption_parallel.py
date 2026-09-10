@@ -290,7 +290,7 @@ class TestParallelDecryptionForEmail:
     """Test parallel decryption in _get_credentials_for_email."""
 
     @pytest.mark.asyncio
-    @patch("src.app.modules.users.crud.crud_users.get")
+    @patch("src.app.modules.users.crud.crud_users.get_user_with_tier_eager")
     @patch("src.app.modules.auth.services.passkey.crud_passkey_credentials.get_by_user")
     @patch("src.app.core.security.encryption.get_encryption")
     @patch("src.app.modules.auth.services.passkey.asyncio.to_thread")
@@ -337,7 +337,7 @@ class TestParallelDecryptionForEmail:
             assert descriptor.transports == ["usb", "nfc"]
 
     @pytest.mark.asyncio
-    @patch("src.app.modules.users.crud.crud_users.get")
+    @patch("src.app.modules.users.crud.crud_users.get_user_with_tier_eager")
     async def test_email_not_found_returns_empty(
         self,
         mock_get_user,

@@ -9,7 +9,7 @@ import asyncio
 import random
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
@@ -17,11 +17,11 @@ from src.app.core.config import settings
 from src.app.core.events import EventPriority
 from src.app.core.security import get_password_hash, verify_password
 from src.app.core.security.tokens import hash_token
-from src.app.modules._base.exceptions import UnauthorizedError, ValidationError
 from src.app.modules.audit_logs import audit
 from src.app.modules.auth.models import PasswordResetToken, generate_reset_token
 from src.app.modules.users.service import UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
+from src.app.shared.exceptions import UnauthorizedError, ValidationError
 
 logger = get_logger(__name__)
 
@@ -45,7 +45,7 @@ class PasswordLifecycleService:
         # SECURITY FIX: Only active users can change their password
         # Ensure we properly fallback to False when checking active status in cached payload manually
         user_service = UserService(db)
-        user = await user_service.crud.get(db=db, id=user_id, is_deleted=False, is_active=True)
+        user = await user_service.get_active_user(id=user_id)
         if not user:
             raise UnauthorizedError("User not found.")
 
@@ -65,20 +65,18 @@ class PasswordLifecycleService:
         new_hashed = await get_password_hash(new_password)
         await user_service.crud.update(db=db, id=user_id, object={"hashed_password": new_hashed}, commit=False)
 
-        # SECURITY FIX: Invalidate ALL user sessions
-        await self.invalidate_all_user_sessions(user, db)
-
-        # Commit the combined transaction of password change + token version increment
-        await db.commit()
-
-        # Invalidate auth cache so new password works immediately, AFTER commit
-        # to prevent race condition where concurrent reads see old DB value and re-cache it.
-        # Password change is CREDENTIAL_CHANGE; bump token_version to force
-        # re-auth of every active session.
-        user_service = UserService(db)
-        await user_service._invalidate_user_cache(
-            user, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+        # 1B: the seam owns the SQL bump + commit + cache in one place, so the
+        # password change and the session invalidation commit atomically and
+        # the SQL bump happens exactly once. Cache is written post-commit
+        # inside the seam to prevent re-caching the old DB value.
+        tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+        await user_service.invalidate_sessions(
+            user,
+            InvalidationReason.CREDENTIAL_CHANGE,
+            tenant_id=tenant_id,
+            commit=True,
         )
+
         await self.delete_user_token_cache(user)
         # SECURITY FIX: Add audit log for password change (H-13)
         try:
@@ -103,18 +101,25 @@ class PasswordLifecycleService:
         When token_version is incremented in the DB, all previously issued tokens
         (which contain the old version) will be rejected by verify_token().
 
-        NOTE: Cache invalidation (via :meth:`delete_user_token_cache`) should be called
-        separately AFTER the DB transaction is committed to prevent race conditions.
-        """
-        user_id = user.get("id")
+        1B: the SQL bump is owned by the ``invalidate_user_sessions`` seam so
+        it happens exactly once and stays tenant-scoped.
 
+        NOTE: Cache invalidation happens inside the seam. Callers that need
+        the cache written AFTER their own commit should call the seam (via
+        ``UserService.invalidate_sessions``) with ``commit=True`` directly
+        instead of this no-commit helper.
+        """
         user_service = UserService(db)
-        User = user_service.model
-        # Update DB - increment token_version
-        await db.execute(update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
+        tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+        await user_service.invalidate_sessions(
+            user,
+            InvalidationReason.CREDENTIAL_CHANGE,
+            tenant_id=tenant_id,
+            commit=False,
+        )
         # Note: We do NOT commit here to allow callers to manage their own transactions (e.g. change_password)
 
-        logger.info("invalidated_all_user_sessions_in_db", user_id=user_id)
+        logger.info("invalidated_all_user_sessions_in_db", user_id=user.get("id"))
 
     async def delete_user_token_cache(self, user: dict[str, Any]) -> None:
         """Delete token_version cache keys for a user.
@@ -172,7 +177,7 @@ class PasswordLifecycleService:
         # BUG FIX: Also require is_active=True to prevent inactive accounts from
         # resetting their password without going through account reactivation.
         user_service = UserService(db)
-        user = await user_service.crud.get(db=db, email=email, is_deleted=False, is_active=True)
+        user = await user_service.get_active_user(email=email)
 
         # S5 FIX: Block password reset for SSO-only accounts
         if user:
@@ -300,17 +305,17 @@ class PasswordLifecycleService:
             db=db, id=reset_token.user_id, object={"hashed_password": new_hashed}, commit=False
         )
 
-        # Invalidate ALL user sessions after password reset
-        await self.invalidate_all_user_sessions(user, db)
-
-        await db.commit()
-        # Invalidate auth cache AFTER commit. Password reset is a
-        # CREDENTIAL_CHANGE; bump token_version to force re-auth of every
-        # active session and prevent the lost-password attacker from reusing
-        # a captured JWT.
-        user_service = UserService(db)
-        await user_service._invalidate_user_cache(
-            user, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+        # 1B: the seam owns the SQL bump + commit + cache, so the token-use
+        # marking, password update, and session invalidation commit atomically
+        # and the SQL bump happens exactly once. Password reset is a
+        # CREDENTIAL_CHANGE; the bump forces re-auth of every active session
+        # and prevents the lost-password attacker from reusing a captured JWT.
+        tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+        await user_service.invalidate_sessions(
+            user,
+            InvalidationReason.CREDENTIAL_CHANGE,
+            tenant_id=tenant_id,
+            commit=True,
         )
         await self.delete_user_token_cache(user)
 

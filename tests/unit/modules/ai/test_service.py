@@ -45,9 +45,9 @@ class TestChatSessionService:
     @pytest.mark.asyncio
     async def test_create_session_raises_without_tenant(self, mock_db):
         """Test that create_session raises ModelNotFoundError without tenant context."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.ai.schemas import ChatSessionCreate
         from src.app.modules.ai.service import ChatSessionService
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch("src.app.modules.ai.service.get_current_tenant", return_value=None):
             service = ChatSessionService(mock_db)
@@ -59,8 +59,8 @@ class TestChatSessionService:
     @pytest.mark.asyncio
     async def test_get_session_verifies_ownership(self, mock_db):
         """Test that get_session checks user ownership."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.ai.service import ChatSessionService
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud:
             mock_crud.get = AsyncMock(return_value={"id": 1, "user_id": 2})  # Different user
@@ -102,8 +102,8 @@ class TestChatSessionService:
     @pytest.mark.asyncio
     async def test_delete_session_verifies_ownership(self, mock_db):
         """Test that delete_session checks user ownership."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.ai.service import ChatSessionService
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud:
             mock_crud.get = AsyncMock(return_value={"id": 1, "user_id": 2})

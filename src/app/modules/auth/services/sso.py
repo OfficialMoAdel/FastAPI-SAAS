@@ -5,16 +5,10 @@ from uuid import UUID
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.config import settings
 from src.app.core.events import EventPriority
 from src.app.core.logger import get_logger
 from src.app.core.security.tokens import get_sso_state_manager
 from src.app.core.tenancy.context import get_current_tenant, set_current_tenant
-from src.app.modules._base.exceptions import (
-    ModelNotFoundError,
-    UnauthorizedError,
-    ValidationError,
-)
 from src.app.modules.audit_logs import audit
 from src.app.modules.auth.crud import crud_user_sso_connections
 from src.app.modules.auth.providers.apple import AppleProvider
@@ -32,6 +26,11 @@ from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.schemas import UserCreate
 from src.app.modules.users.service import UserService
+from src.app.shared.exceptions import (
+    ModelNotFoundError,
+    UnauthorizedError,
+    ValidationError,
+)
 
 logger = get_logger(__name__)
 
@@ -377,32 +376,18 @@ class SSOService:
 
             if mfa_enabled:
                 from src.app.core.redis_provider import get_redis
-                from src.app.core.security import get_mfa_pending_token_manager
-                from src.app.core.security.tokens import TokenGenerator
+                from src.app.core.utils.ip_utils import get_client_ip
 
                 mfa_redis_client = get_redis()
-                from src.app.core.utils.ip_utils import get_client_ip
 
                 if not mfa_redis_client:
                     raise ValidationError("Authentication service unavailable")
 
-                mfa_token_store = get_mfa_pending_token_manager(mfa_redis_client)
-                mfa_token = TokenGenerator.generate_magic_link_token()
-                await mfa_token_store.create(
-                    token=mfa_token,
-                    data={
-                        "user_id": normalized_user["id"],
-                        "username": normalized_user.get("username") or normalized_user.get("email"),
-                        "ip_address": get_client_ip(request),
-                        "scope": "mfa_pending",
-                    },
+                return await TokenIssuer.issue_mfa_pending(
+                    normalized_user,
+                    redis=mfa_redis_client,
+                    ip_address=get_client_ip(request),
                 )
-                return {
-                    "mfa_required": True,
-                    "mfa_token": mfa_token,
-                    "expires_in": int(settings.auth.MFA_PENDING_EXPIRY_SECONDS),
-                    "message": "MFA verification required",
-                }
 
             # Legacy SSO tokens carried extra id/email claims; kept via
             # extra_claims so existing consumers of those tokens are unaffected.

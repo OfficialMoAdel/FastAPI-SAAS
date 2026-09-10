@@ -161,8 +161,8 @@ class TestPasskeyAuthenticationVerification:
     @pytest.mark.asyncio
     async def test_verify_authentication_validates_challenge(self):
         """Verify authentication validates the stored challenge."""
-        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
+        from src.app.shared.exceptions import ValidationError
 
         service = PasskeyService()
         mock_db = AsyncMock()
@@ -184,8 +184,8 @@ class TestPasskeyAuthenticationVerification:
     @pytest.mark.asyncio
     async def test_verify_authentication_finds_credential(self):
         """Verify authentication finds the credential by ID."""
-        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
+        from src.app.shared.exceptions import ValidationError
 
         service = PasskeyService()
         mock_db = AsyncMock()
@@ -222,8 +222,8 @@ class TestPasskeyAuthenticationVerification:
     @pytest.mark.asyncio
     async def test_verify_authentication_checks_counter(self):
         """Verify authentication checks counter to prevent replay attacks."""
-        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
+        from src.app.shared.exceptions import ValidationError
 
         service = PasskeyService()
         mock_db = AsyncMock()
@@ -529,8 +529,8 @@ class TestPasskeyAuthenticationHelpers:
 @pytest.mark.asyncio
 async def test_verify_authentication_credential_required():
     """Test verify_authentication requires credential."""
-    from src.app.modules._base.exceptions import ValidationError
     from src.app.modules.auth.services.passkey import PasskeyService
+    from src.app.shared.exceptions import ValidationError
 
     service = PasskeyService()
 
@@ -548,8 +548,8 @@ async def test_verify_authentication_credential_required():
 @pytest.mark.asyncio
 async def test_verify_authentication_challenge_id_required():
     """Test verify_authentication requires challenge_id."""
-    from src.app.modules._base.exceptions import ValidationError
     from src.app.modules.auth.services.passkey import PasskeyService
+    from src.app.shared.exceptions import ValidationError
 
     service = PasskeyService()
 
@@ -567,8 +567,8 @@ async def test_verify_authentication_challenge_id_required():
 @pytest.mark.asyncio
 async def test_verify_authentication_raw_id_required():
     """Test verify_authentication requires rawId or id in credential."""
-    from src.app.modules._base.exceptions import ValidationError
     from src.app.modules.auth.services.passkey import PasskeyService
+    from src.app.shared.exceptions import ValidationError
 
     service = PasskeyService()
 
@@ -592,8 +592,8 @@ async def test_verify_authentication_raw_id_required():
 @pytest.mark.asyncio
 async def test_verify_authentication_user_not_found():
     """Test verify_authentication fails when user not found for credential."""
-    from src.app.modules._base.exceptions import ValidationError
     from src.app.modules.auth.services.passkey import PasskeyService
+    from src.app.shared.exceptions import ValidationError
 
     service = PasskeyService()
     mock_db = AsyncMock()
@@ -629,8 +629,8 @@ async def test_verify_authentication_user_not_found():
 @pytest.mark.asyncio
 async def test_verify_registration_exception_handling():
     """Test verify_registration handles exceptions from webauthn."""
-    from src.app.modules._base.exceptions import ValidationError
     from src.app.modules.auth.services.passkey import PasskeyService
+    from src.app.shared.exceptions import ValidationError
 
     service = PasskeyService()
     mock_db = AsyncMock()
@@ -663,8 +663,8 @@ async def test_verify_registration_exception_handling():
 @pytest.mark.asyncio
 async def test_verify_authentication_exception_handling():
     """Test verify_authentication handles exceptions from webauthn."""
-    from src.app.modules._base.exceptions import ValidationError
     from src.app.modules.auth.services.passkey import PasskeyService
+    from src.app.shared.exceptions import ValidationError
 
     service = PasskeyService()
     mock_db = AsyncMock()

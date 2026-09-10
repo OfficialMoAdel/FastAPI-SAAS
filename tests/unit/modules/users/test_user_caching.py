@@ -403,44 +403,34 @@ class TestDowngradeToFreeTierTokenVersion:
 
     @pytest.mark.asyncio
     async def test_downgrade_bumps_token_version(self, user_service: Any, mock_db_session: AsyncMock) -> None:
-        """Downgrade must issue token_version = token_version + 1 and commit."""
-
-        from sqlalchemy import Update
-
-        from src.app.modules.users.models import User
+        """Downgrade stages the tier update and routes the bump through the seam."""
 
         mock_tier_svc = MagicMock()
         mock_tier_svc.get_tier = AsyncMock(return_value={"id": 1, "name": "free"})
         user_service.crud = MagicMock()
         user_service.crud.update = AsyncMock()
-        user_service.crud.get = AsyncMock(return_value=None)
-        user_service._invalidate_user_cache = AsyncMock()
 
         with (
             patch("src.app.modules.users.service.TierService", return_value=mock_tier_svc),
-            patch("src.app.modules.users.cache.get_redis", return_value=None),
+            patch.object(user_service, "invalidate_sessions", new_callable=AsyncMock) as mock_seam,
         ):
+            from src.app.modules.users.session_invalidation import InvalidationReason
+
             result = await user_service.downgrade_to_free_tier(user_id=42)
 
         assert result == 1
         user_service.crud.update.assert_awaited_once()
-
-        # Exactly one execute(): the token_version bump UPDATE.
-        mock_db_session.execute.assert_awaited_once()
-        stmt = mock_db_session.execute.await_args.args[0]
-        assert isinstance(stmt, Update)
-        assert stmt.table.name == User.__tablename__
-        # The SET clause must bump token_version (verify via compiled SQL).
-        from sqlalchemy.dialects import sqlite
-
-        compiled_sql = str(stmt.compile(dialect=sqlite.dialect()))
-        assert "token_version" in compiled_sql
-        mock_db_session.commit.assert_awaited_once()
+        # 1B: SQL bump + commit + cache are owned by the seam (TIER_CHANGE).
+        mock_seam.assert_awaited_once()
+        seam_args, seam_kwargs = mock_seam.call_args
+        assert seam_args[0] == 42
+        assert seam_args[1] == InvalidationReason.TIER_CHANGE
+        assert seam_kwargs.get("commit") is True
 
     @pytest.mark.asyncio
     async def test_downgrade_no_free_tier_returns_none(self, user_service: Any, mock_db_session: AsyncMock) -> None:
         """No free tier configured -> None, no update, no bump, no commit."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         mock_tier_svc = MagicMock()
         mock_tier_svc.get_tier = AsyncMock(side_effect=ModelNotFoundError("Tier", "free"))

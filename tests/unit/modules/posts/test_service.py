@@ -125,8 +125,8 @@ class TestPostServiceGet:
     @pytest.mark.asyncio
     async def test_get_post_not_found_raises_404(self, mock_db, mock_user):
         """Test that non-existent post raises ModelNotFoundError."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.posts.service import PostService
+        from src.app.shared.exceptions import ModelNotFoundError
 
         service = PostService(mock_db)
 

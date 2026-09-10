@@ -10,9 +10,9 @@ from src.app.core.exceptions.http_exceptions import (
     NotFoundException,
 )
 from src.app.main import app
-from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules.users import router as users_router
 from src.app.modules.users.service import UserService
+from src.app.shared.exceptions import ModelNotFoundError
 
 # Test tenant header for middleware
 TEST_TENANT_HEADER = {"X-Tenant-ID": "1"}

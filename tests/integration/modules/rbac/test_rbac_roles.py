@@ -10,7 +10,7 @@ from uuid import UUID
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.app.modules._base.exceptions import ModelNotFoundError
+from src.app.shared.exceptions import ModelNotFoundError
 
 # Test user-agent to avoid IP filter blocking
 TEST_USER_AGENT = "TestClient/1.0"

@@ -69,11 +69,12 @@ class TestInvalidateCacheReasonGuard:
         service = UserService(db=AsyncMock())
         mock_client = AsyncMock()
         with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
-            # must not raise
+            # must not raise (1B: bump-class reasons carry the seam's explicit version)
             await service._invalidate_user_cache(
                 _user(),
                 bump_token_version=should_bump_token_version(reason),
                 reason=reason,
+                explicit_token_version=1 if should_bump_token_version(reason) else None,
             )
 
     @pytest.mark.asyncio
@@ -122,10 +123,11 @@ class TestInvalidateCacheReasonGuard:
         ],
     )
     async def test_credential_change_writes_bumped_token_version(self, reason, expected_bump):
-        """Regression: a password reset (CREDENTIAL_CHANGE) MUST write current+1 to the
-        token_version cache, not current. A PROFILE_EDIT MUST write current.
+        """Regression: a password reset (CREDENTIAL_CHANGE) MUST write the seam's
+        fresh explicit version to the token_version cache, not a stale guess.
+        A PROFILE_EDIT MUST write current unchanged.
 
-        Pins the (current_version, bump) -> new_version contract that the rate-limit
+        Pins the (explicit_version, bump) -> new_version contract that the rate-limit
         middleware and auth deps rely on for token-version verification.
         """
         from unittest.mock import AsyncMock, MagicMock, patch
@@ -157,6 +159,8 @@ class TestInvalidateCacheReasonGuard:
                 _user(token_version=5),
                 bump_token_version=should_bump_token_version(reason),
                 reason=reason,
+                # 1B: bump-class reasons require the seam's fresh version.
+                explicit_token_version=6 if expected_bump else None,
             )
 
         expected_version = 6 if expected_bump else 5
@@ -166,6 +170,23 @@ class TestInvalidateCacheReasonGuard:
             assert value == str(expected_version), (
                 f"reason={reason}: wrote token_version={value}, expected {expected_version}"
             )
+
+    @pytest.mark.asyncio
+    async def test_bump_without_explicit_version_raises(self):
+        """1B: bump=True without explicit_token_version must raise and point
+        the caller at the invalidate_user_sessions seam (no stale old+1)."""
+        from unittest.mock import AsyncMock, patch
+
+        from src.app.modules.users.service import UserService
+
+        service = UserService(db=AsyncMock())
+        with patch("src.app.modules.users.cache.get_redis", return_value=AsyncMock()):
+            with pytest.raises(ValueError, match="explicit_token_version"):
+                await service._invalidate_user_cache(
+                    _user(token_version=5),
+                    bump_token_version=True,
+                    reason=InvalidationReason.CREDENTIAL_CHANGE,
+                )
 
 
 
@@ -190,14 +211,17 @@ class TestInvalidateUserSessions:
                 commit=True,
             )
 
-        # Verified: SQL update executed, committed, and cache invalidator called with bump=True
-        mock_db.execute.assert_awaited_once()
+        # Verified: SQL bump + fresh-version read executed, committed, and
+        # cache invalidator called with bump=True. The AsyncMock DB yields no
+        # readable fresh rows, so the seam's degraded fallback derives the
+        # explicit version from the caller payload (2 + 1 = 3).
+        assert mock_db.execute.await_count == 2
         mock_db.commit.assert_awaited_once()
         mock_inv.assert_awaited_once_with(
             user,
             bump_token_version=True,
             reason=InvalidationReason.CREDENTIAL_CHANGE,
-            explicit_token_version=None,
+            explicit_token_version=3,
         )
 
     @pytest.mark.asyncio
@@ -252,8 +276,8 @@ class TestInvalidateUserSessions:
                 commit=True,
             )
 
-        # Projection select + sa_update were both executed
-        assert mock_db.execute.await_count == 2
+        # Projection select + sa_update + fresh-version read were all executed
+        assert mock_db.execute.await_count == 3
         mock_db.commit.assert_awaited_once()
         mock_batch.assert_awaited_once()
 

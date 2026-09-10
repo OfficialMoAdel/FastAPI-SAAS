@@ -156,8 +156,8 @@ class TestSubscriptionPlanService:
     @pytest.mark.asyncio
     async def test_get_plan_raises_not_found(self, mock_db):
         """Test that get_plan raises ModelNotFoundError when plan doesn't exist."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.billing.subscription_service import SubscriptionPlanService
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch("src.app.modules.billing.subscription_service.crud_subscription_plans") as mock_crud:
             mock_crud.get = AsyncMock(return_value=None)
@@ -243,8 +243,8 @@ class TestProductService:
     @pytest.mark.asyncio
     async def test_get_product_raises_not_found(self, mock_db):
         """Test that get_product raises ModelNotFoundError when product doesn't exist."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.billing.service import ProductService
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch("src.app.modules.billing.service.crud_products") as mock_crud:
             mock_crud.get = AsyncMock(return_value=None)
@@ -295,8 +295,8 @@ class TestUserSubscriptionService:
     @pytest.mark.asyncio
     async def test_cancel_subscription_raises_not_found(self, mock_db):
         """Test that cancel_subscription raises ModelNotFoundError when subscription doesn't exist."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.billing.subscription_service import UserSubscriptionService
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch("src.app.modules.billing.subscription_service.crud_user_subscriptions") as mock_crud:
             mock_crud.get = AsyncMock(return_value=None)

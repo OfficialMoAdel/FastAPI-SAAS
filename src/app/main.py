@@ -258,7 +258,7 @@ async def _teardown_security_listeners() -> None:
 
     from src.app.core.security.auto_ban import stop_ban_l1_invalidation_listener
     from src.app.core.security.rate_limit_cache import stop_policy_invalidation_listener
-    from src.app.middleware.tenant import stop_l1_invalidation_listener
+    from src.app.core.tenancy.cache import stop_l1_invalidation_listener
 
     await stop_ban_l1_invalidation_listener()
     await stop_l1_invalidation_listener()

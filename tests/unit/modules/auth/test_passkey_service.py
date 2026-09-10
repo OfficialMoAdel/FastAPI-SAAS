@@ -177,8 +177,8 @@ class TestPasskeyServiceMaxLimit:
     @pytest.mark.asyncio
     async def test_rejects_registration_when_at_limit(self):
         """Verify registration fails when user has 10 passkeys."""
-        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
+        from src.app.shared.exceptions import ValidationError
 
         service = PasskeyService()
         mock_db = AsyncMock()
@@ -243,8 +243,8 @@ class TestPasskeyServiceVerification:
     @pytest.mark.asyncio
     async def test_verify_registration_validates_challenge(self):
         """Verify registration validates the stored challenge."""
-        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
+        from src.app.shared.exceptions import ValidationError
 
         service = PasskeyService()
         mock_db = AsyncMock()
@@ -411,8 +411,8 @@ class TestPasskeyServiceCredentialDeletion:
     @pytest.mark.asyncio
     async def test_delete_credential_verifies_ownership(self):
         """Verify delete checks that credential belongs to user."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.auth.services.passkey import PasskeyService
+        from src.app.shared.exceptions import ModelNotFoundError
 
         service = PasskeyService()
         mock_db = AsyncMock()
@@ -546,8 +546,8 @@ class TestPasskeyServiceAuthentication:
     @pytest.mark.asyncio
     async def test_verify_authentication_replay_attack(self):
         """Verify replay attack detection (counter check)."""
-        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
+        from src.app.shared.exceptions import ValidationError
 
         service = PasskeyService()
         mock_db = AsyncMock()
@@ -575,8 +575,8 @@ class TestPasskeyServiceAuthentication:
     @pytest.mark.asyncio
     async def test_verify_authentication_invalid_challenge(self):
         """Verify fails when challenge is invalid or expired."""
-        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
+        from src.app.shared.exceptions import ValidationError
 
         service = PasskeyService()
 
@@ -593,8 +593,8 @@ class TestPasskeyServiceAuthentication:
     @pytest.mark.asyncio
     async def test_verify_authentication_credential_not_found(self):
         """Verify fails when credential not found in DB."""
-        from src.app.modules._base.exceptions import ValidationError
         from src.app.modules.auth.services.passkey import PasskeyService
+        from src.app.shared.exceptions import ValidationError
 
         service = PasskeyService()
 

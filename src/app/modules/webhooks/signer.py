@@ -45,21 +45,22 @@ def sign_payload(payload: dict, secret: str, timestamp: int) -> str:
     return f"t={timestamp},v1={digest}"
 
 
-def verify_signature(
-    payload: dict,
+def hmac_sha256_hex(secret: str, data: bytes) -> str:
+    """Single HMAC-SHA256 implementation owned by the signer.
+
+    Both the ``t=,v1=`` scheme and the deprecated legacy payload-only digest
+    go through this function so consumer verifiers never carry a local replica.
+    """
+    return hmac.new(secret.encode("utf-8"), data, hashlib.sha256).hexdigest()
+
+
+def _verify_canonical_bytes(
+    canonical: bytes,
     secret: str,
     header: str,
     max_age_seconds: int = DEFAULT_SIGNATURE_MAX_AGE_SECONDS,
 ) -> bool:
-    """Verify a ``t=...,v1=...`` header produced by :func:`sign_payload`.
-
-    Parses ``t`` from the header, rejects stale/future timestamps outside
-    ``max_age_seconds`` (P0-1: a captured header previously replayed forever),
-    then recomputes the expected signature. Supports rotation headers with
-    multiple ``v1=`` signatures (e.g. ``t=<ts>,v1=<active>,v1=<old>``) — any
-    match accepts. Returns ``False`` on malformed headers or expired
-    timestamps.
-    """
+    """Verify a ``t=...,v1=...`` header against pre-canonicalized bytes."""
     # P0-2: parse outside the try-block; only int conversion and header
     # parsing failures are expected here. Anything else (crypto errors,
     # attribute bugs) must propagate instead of being masked as
@@ -81,9 +82,42 @@ def verify_signature(
     if not is_timestamp_fresh(ts, max_age_seconds=max_age_seconds):
         return False
 
-    expected = sign_payload(payload, secret, ts)
-    exp_v1 = expected.split("v1=", 1)[1]
-    return any(hmac.compare_digest(exp_v1, c) for c in v1_sigs)
+    expected = hmac_sha256_hex(secret, f"{ts}.".encode() + canonical)
+    return any(hmac.compare_digest(expected, c) for c in v1_sigs)
+
+
+def verify_signature(
+    payload: dict,
+    secret: str,
+    header: str,
+    max_age_seconds: int = DEFAULT_SIGNATURE_MAX_AGE_SECONDS,
+) -> bool:
+    """Verify a ``t=...,v1=...`` header produced by :func:`sign_payload`.
+
+    Parses ``t`` from the header, rejects stale/future timestamps outside
+    ``max_age_seconds`` (P0-1: a captured header previously replayed forever),
+    then recomputes the expected signature. Supports rotation headers with
+    multiple ``v1=`` signatures (e.g. ``t=<ts>,v1=<active>,v1=<old>``) — any
+    match accepts. Returns ``False`` on malformed headers or expired
+    timestamps.
+    """
+    return _verify_canonical_bytes(canonical_payload_bytes(payload), secret, header, max_age_seconds)
+
+
+def verify_signature_raw(
+    payload: bytes,
+    secret: str,
+    header: str,
+    max_age_seconds: int = DEFAULT_SIGNATURE_MAX_AGE_SECONDS,
+) -> bool:
+    """Verify a ``t=...,v1=...`` header against raw request-body bytes.
+
+    Canonicalizes via :func:`canonical_bytes_from_raw` (the same normalization
+    the producer applies), so dict, list-valued, and non-JSON bodies all verify
+    through this single implementation — consumer adapters must not carry their
+    own HMAC replica.
+    """
+    return _verify_canonical_bytes(canonical_bytes_from_raw(payload), secret, header, max_age_seconds)
 
 
 def is_timestamp_fresh(

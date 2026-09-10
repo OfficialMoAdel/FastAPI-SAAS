@@ -1,6 +1,6 @@
 """Notification module for managing email and system notifications."""
 
-from src.app.modules.notifications.email_provider import (
+from src.app.clients.notifications import (
     EmailAttachment,
     EmailMessage,
     EmailProvider,

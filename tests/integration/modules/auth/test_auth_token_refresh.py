@@ -64,7 +64,7 @@ class TestTokenRefreshWithCaching:
     @pytest.mark.asyncio
     async def test_a1_deleted_user_blocked_with_real_cache(self, auth_service, real_redis, mock_response):
         """A1 SECURITY: Verify deleted user cannot refresh token even with valid cache."""
-        from src.app.modules._base.exceptions import UnauthorizedError
+        from src.app.shared.exceptions import UnauthorizedError
 
         # Setup: Cache contains deleted user
         cache_key = "auth:user:deleteduser"

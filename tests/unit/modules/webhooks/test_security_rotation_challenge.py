@@ -68,8 +68,15 @@ async def test_rotate_signing_secret_saves_old(webhook_service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_trigger_webhooks_dual_signature_generation(webhook_service, mock_db):
-    """Test that trigger_webhooks generates dual signatures when within grace period."""
+async def test_trigger_webhooks_persists_null_signature_during_grace_period(webhook_service, mock_db):
+    """Fix #6: trigger time never signs — rows persist NULL even within rotation grace.
+
+    The rotation dual-signature (t=,v1=<active>,v1=<old>) is produced at SEND
+    time in delivery.py; this test pins that live header against the consumer
+    verifier for both secrets.
+    """
+    from src.app.modules.webhooks.signer import sign_payload
+
     tenant_id = uuid4()
     event_type = "test.event"
     payload = {"foo": "bar"}
@@ -108,25 +115,38 @@ async def test_trigger_webhooks_dual_signature_generation(webhook_service, mock_
     res = await webhook_service.trigger_webhooks(tenant_id, event_type, payload)
     assert len(res) == 1
 
-    # Verify dual signature matches expected: sha256={active_sig},sha256={old_sig}
-    import hashlib
-    import hmac
+    # Trigger-time INSERT carries no signature value on the wire: the bound
+    # signature param is NULL and no legacy sha256= digest appears among the
+    # bound values. (No literal_binds: JSONB payloads have no literal renderer.)
+    insert_stmt = mock_db.execute.call_args[0][0]
+    bound_params = insert_stmt.compile().params
+    assert None in bound_params.values()
+    assert not any(isinstance(v, str) and "sha256=" in v for v in bound_params.values())
+
+    # Live rotation contract: send-time header t=,v1=<active>,v1=<old> verifies
+    # under BOTH secrets via the consumer adapter, and fails under a wrong one.
     import json
 
+    timestamp = int(time.time())
+    active_header = sign_payload(payload, active_secret, timestamp)
+    old_digest = sign_payload(payload, old_secret, timestamp).split("v1=", 1)[1]
+    rotation_header = f"{active_header},v1={old_digest}"
     payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
-    expected_active_sig = hmac.new(active_secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-    expected_old_sig = hmac.new(old_secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-    expected_dual_sig = f"sha256={expected_active_sig},sha256={expected_old_sig}"
 
-    # Verify signature format in helper/utils
-    assert verify_webhook_signature(payload_bytes, expected_dual_sig, int(time.time()), active_secret) is True
-    assert verify_webhook_signature(payload_bytes, expected_dual_sig, int(time.time()), old_secret) is True
-    assert verify_webhook_signature(payload_bytes, expected_dual_sig, int(time.time()), "wrong_secret") is False
+    assert verify_webhook_signature(payload_bytes, rotation_header, timestamp, active_secret) is True
+    assert verify_webhook_signature(payload_bytes, rotation_header, timestamp, old_secret) is True
+    assert verify_webhook_signature(payload_bytes, rotation_header, timestamp, "wrong_secret") is False
 
 
 @pytest.mark.asyncio
-async def test_trigger_webhooks_single_signature_after_expiration(webhook_service, mock_db):
-    """Test that trigger_webhooks generates single signature when old secret is expired."""
+async def test_trigger_webhooks_persists_null_signature_after_expiration(webhook_service, mock_db):
+    """Fix #6: expired rotation changes nothing at trigger time (still NULL).
+
+    At send time only the active secret signs; the resulting single-v1 header
+    verifies under the active secret and fails under the expired old secret.
+    """
+    from src.app.modules.webhooks.signer import sign_payload
+
     tenant_id = uuid4()
     event_type = "test.event"
     payload = {"foo": "bar"}
@@ -164,16 +184,17 @@ async def test_trigger_webhooks_single_signature_after_expiration(webhook_servic
 
     await webhook_service.trigger_webhooks(tenant_id, event_type, payload)
 
-    # The signature should only be the active signature because old has expired
-    # Verify via manual check:
-    import hashlib
-    import hmac
+    insert_stmt = mock_db.execute.call_args[0][0]
+    bound_params = insert_stmt.compile().params
+    assert None in bound_params.values()
+    assert not any(isinstance(v, str) and "sha256=" in v for v in bound_params.values())
+
+    # Live single-secret contract: active-only header.
     import json
 
+    timestamp = int(time.time())
+    single_header = sign_payload(payload, active_secret, timestamp)
     payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
-    expected_active_sig = hmac.new(active_secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-    expected_single_sig = f"sha256={expected_active_sig}"
 
-    # Verify signature format in helper/utils
-    assert verify_webhook_signature(payload_bytes, expected_single_sig, int(time.time()), active_secret) is True
-    assert verify_webhook_signature(payload_bytes, expected_single_sig, int(time.time()), old_secret) is False
+    assert verify_webhook_signature(payload_bytes, single_header, timestamp, active_secret) is True
+    assert verify_webhook_signature(payload_bytes, single_header, timestamp, old_secret) is False

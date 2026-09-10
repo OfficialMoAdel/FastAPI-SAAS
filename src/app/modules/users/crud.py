@@ -1,4 +1,5 @@
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,14 @@ from src.app.modules.users.schemas import UserCreateInternal, UserDelete, UserRe
 
 class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateInternal, UserDelete, UserRead]):
     async def get_user_with_tier_eager(
-        self, db: AsyncSession, *, id: int | None = None, username: str | None = None, email: str | None = None
+        self,
+        db: AsyncSession,
+        *,
+        id: int | None = None,
+        username: str | None = None,
+        email: str | None = None,
+        require_active: bool = False,
+        tenant_id: int | str | UUID | None = None,
     ) -> dict[str, Any] | None:
         """Get user with tier in single query using LEFT JOIN.
 
@@ -25,6 +33,12 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
             id: User ID to look up
             username: Username to look up (mutually exclusive with email and id)
             email: Email to look up (mutually exclusive with username and id)
+            require_active: When True, also require ``User.is_active`` (auth-gated
+                reads). Defaults to False so the auth hot paths that enforce
+                activity downstream keep their current behavior.
+            tenant_id: Explicit tenant scope for worker paths without an active
+                tenant context. Ignored when a context tenant is active
+                (context always wins — see ``tenant_scope``).
 
         Returns:
             User dict with tier included, or None if not found
@@ -48,7 +62,9 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
         # context itself and is fail-closed without one (usernames/emails
         # are only unique per-tenant — no global lookup without a tenant).
         stmt = select(User).options(joinedload(User.tier)).where(lookup_clause, User.is_deleted.is_(False))
-        stmt = stmt.where(tenant_scope(User))
+        if require_active:
+            stmt = stmt.where(User.is_active.is_(True))
+        stmt = stmt.where(tenant_scope(User, tenant_id))
 
         result = await db.execute(stmt)
         user = result.unique().scalar_one_or_none()

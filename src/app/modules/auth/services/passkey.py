@@ -40,10 +40,10 @@ from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.utils.lua_manager import get_lua_manager
 from src.app.core.utils.user_utils import get_user_attr
-from src.app.modules._base.exceptions import ModelNotFoundError, ServiceUnavailableError, ValidationError
 from src.app.modules.auth.crud import crud_passkey_credentials
 from src.app.modules.auth.schemas import PasskeyCredentialCreate
 from src.app.modules.auth.services.tokens import TokenIssuer
+from src.app.shared.exceptions import ModelNotFoundError, ServiceUnavailableError, ValidationError
 
 logger = get_logger(__name__)
 
@@ -224,7 +224,7 @@ class PasskeyService:
 
         tenant = get_current_tenant()
         if tenant:
-            user = await crud_users.get(db=db, id=user_id)
+            user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
             if user and user.get("tenant_id") != tenant.id:
                 raise ModelNotFoundError("PasskeyCredential", user_id, message="Passkey credentials not found.")
 
@@ -237,7 +237,7 @@ class PasskeyService:
 
         tenant = get_current_tenant()
         if tenant:
-            user = await crud_users.get(db=db, id=user_id)
+            user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
             if user and user.get("tenant_id") != tenant.id:
                 raise ModelNotFoundError("PasskeyCredential", credential_id, message="Passkey credential not found.")
 
@@ -373,33 +373,12 @@ class PasskeyService:
 
         if mfa_enabled:
             from src.app.core.redis_provider import get_redis
-            from src.app.core.security import get_mfa_pending_token_manager
-            from src.app.core.security.tokens import TokenGenerator
 
-            redis_client = get_redis()
+            redis_client = redis if redis is not None else get_redis()
 
             if redis_client is None:
                 raise RuntimeError("Redis client is not initialized")
-            mfa_token_store = get_mfa_pending_token_manager(redis_client)
-            mfa_token = TokenGenerator.generate_magic_link_token()
-            await mfa_token_store.create(
-                token=mfa_token,
-                data={
-                    # P1-2 FIX: keep user_id as int — the other three mfa_pending
-                    # flows (auth/service.py, sso.py, magic_link.py) store int;
-                    # PendingTokenStore orjson-serializes ints natively. A str
-                    # here reached crud_mfa_methods.get(user_id="42") on MFA
-                    # completion → asyncpg DataError against the Integer column.
-                    "user_id": user["id"],
-                    "username": user.get("username", ""),
-                    "scope": "mfa_pending",
-                },
-            )
-            return {
-                "mfa_required": True,
-                "mfa_token": mfa_token,
-                "message": "MFA verification required",
-            }
+            return await TokenIssuer.issue_mfa_pending(user, redis=redis_client)
 
         tokens = await self._generate_auth_tokens(user)
 
@@ -584,7 +563,7 @@ class PasskeyService:
         from src.app.modules.users.crud import crud_users
 
         # Find user by email
-        user = await crud_users.get(db=db, email=email)
+        user = await crud_users.get_user_with_tier_eager(db=db, email=email)
         if not user:
             return []
 

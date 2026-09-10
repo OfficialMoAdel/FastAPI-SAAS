@@ -257,29 +257,28 @@ The context-vs-argument precedence, NO_TENANT rejection, and the explicit
 - Cache Exceptions: `src/app/core/exceptions/cache_exceptions.py` - Cache-related exceptions
 
 ### Resilience Patterns
-✅ DO: Use database circuit breaker for fault tolerance
+✅ DO: Guard database operations with `db_circuit_guard` for fault tolerance
 ```python
 # src/app/core/resilience/db_circuit_breaker.py
-from src.app.core.resilience import execute_query_with_circuit_breaker
+from src.app.core.resilience import db_circuit_guard
 
-results = await execute_query_with_circuit_breaker(
-    db=db,
-    query="SELECT * FROM users WHERE tenant_id = :tid",
-    params={"tid": tenant_id},
-    cache_key=f"users:list:{tenant_id}",
-    cache_ttl=300
-)
+async with db_circuit_guard():
+    result = await db.execute(stmt)
 ```
+The guard fails fast with HTTPException(503) when the circuit is OPEN,
+records only infrastructure errors (timeouts, disconnects, OperationalError),
+and ignores business-logic errors (IntegrityError, 404s, validation).
 
 ✅ DO: Use centralized registry for circuit breaker management
 ```python
 # src/app/core/resilience/registry.py
 from src.app.core.resilience import get_registry
+from src.app.core.utils.circuit_breaker import CircuitState
 
 registry = get_registry()
 breaker = registry.get("database")
-if breaker.is_open:
-    return get_fallback_response()
+if breaker is not None and breaker.state == CircuitState.OPEN:
+    raise HTTPException(status_code=503, detail="Database temporarily degraded")
 ```
 
 ### Multi-Tenancy

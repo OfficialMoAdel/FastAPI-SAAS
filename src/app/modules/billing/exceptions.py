@@ -7,10 +7,13 @@ T079: HTTP 402 PaymentError response handling
 
 from __future__ import annotations
 
-from src.app.shared.exceptions import StripeError  # noqa: F401  (re-export; canonical home is shared)
+from src.app.shared.exceptions import (
+    AppException,
+    StripeError,  # noqa: F401  (re-export; canonical home is shared)
+)
 
 
-class PaymentRequiredError(Exception):
+class PaymentRequiredError(AppException):
     """Raised when payment is required or payment has failed.
 
     Used to return HTTP 402 Payment Required responses.
@@ -37,10 +40,11 @@ class PaymentRequiredError(Exception):
         self.message = message
         self.error_code = error_code
         self.decline_code = decline_code
+        self.detail = message
         super().__init__(self.message)
 
 
-class SubscriptionRequiredError(Exception):
+class SubscriptionRequiredError(AppException):
     """Raised when an active subscription is required to access a feature.
 
     Attributes:
@@ -57,22 +61,25 @@ class SubscriptionRequiredError(Exception):
         """
         self.message = message
         self.required_plan = required_plan
+        self.detail = message
         super().__init__(self.message)
 
 
-class WebhookVerificationError(Exception):
+class WebhookVerificationError(AppException):
     """Raised when Stripe webhook payload or signature verification fails."""
 
     def __init__(self, message: str = "Webhook verification failed"):
         self.message = message
+        self.detail = message
         super().__init__(self.message)
 
 
-class WebhookNotConfiguredError(Exception):
+class WebhookNotConfiguredError(AppException):
     """Raised when Stripe webhook secret is not configured in environment."""
 
     def __init__(self, message: str = "Webhook secret not configured"):
         self.message = message
+        self.detail = message
         super().__init__(self.message)
 
 __all__ = [

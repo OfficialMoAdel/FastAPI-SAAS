@@ -49,6 +49,25 @@ logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Retry schedule — canonical home (single place that decides DEAD vs PENDING).
+# Values come from settings.webhooks.WEBHOOK_RETRY_DELAYS so operators can
+# override them; the fallback is 1m, 5m, 15m, 30m, 1h (5 retries over 1 hour).
+# service.py re-exports these names for backward compatibility.
+# ---------------------------------------------------------------------------
+
+RETRY_DELAY_1_MINUTE = 60
+RETRY_DELAY_5_MINUTES = 300
+RETRY_DELAY_15_MINUTES = 900
+RETRY_DELAY_30_MINUTES = 1800
+RETRY_DELAY_1_HOUR = 3600
+
+WEBHOOK_RETRY_DELAYS: list[int] = list(
+    getattr(settings.webhooks, "WEBHOOK_RETRY_DELAYS", None)
+    or [RETRY_DELAY_1_MINUTE, RETRY_DELAY_5_MINUTES, RETRY_DELAY_15_MINUTES, RETRY_DELAY_30_MINUTES, RETRY_DELAY_1_HOUR]
+)
+
+
+# ---------------------------------------------------------------------------
 # Lock helper (R1-17)
 # ---------------------------------------------------------------------------
 
@@ -407,8 +426,6 @@ async def _handle_failure(db: Any, delivery: WebhookDelivery, override_delay: fl
     The retry schedule lives here — the single place that decides
     DEAD vs PENDING.
     """
-    from src.app.modules.webhooks.service import WEBHOOK_RETRY_DELAYS
-
     attempt_idx = delivery.attempt_count - 1
     if attempt_idx >= 0 and attempt_idx < len(WEBHOOK_RETRY_DELAYS):
         # Schedule retry
@@ -496,4 +513,10 @@ __all__ = [
     "deliver",
     "enqueue",
     "recover_stuck_deliveries",
+    "WEBHOOK_RETRY_DELAYS",
+    "RETRY_DELAY_1_MINUTE",
+    "RETRY_DELAY_5_MINUTES",
+    "RETRY_DELAY_15_MINUTES",
+    "RETRY_DELAY_30_MINUTES",
+    "RETRY_DELAY_1_HOUR",
 ]

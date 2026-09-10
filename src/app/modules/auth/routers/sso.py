@@ -12,19 +12,19 @@ from src.app.api.deps import RequestContextDep
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_loads
-from src.app.modules._base.exceptions import (
-    ModelNotFoundError as _DomainNotFoundError,
-)
-from src.app.modules._base.exceptions import (
-    UnauthorizedError as _DomainUnauthorizedError,
-)
-from src.app.modules._base.exceptions import (
-    ValidationError as _DomainValidationError,
-)
 from src.app.modules.auth.crud import crud_user_sso_connections
 from src.app.modules.auth.rate_limit import check_auth_rate_limit
 from src.app.modules.auth.schemas import AuthTokenResponse, SSOProvider, SSOProviderRead, SSOProvidersResponse
 from src.app.modules.auth.services.sso import SSOService, get_sso_service
+from src.app.shared.exceptions import (
+    ModelNotFoundError as _DomainNotFoundError,
+)
+from src.app.shared.exceptions import (
+    UnauthorizedError as _DomainUnauthorizedError,
+)
+from src.app.shared.exceptions import (
+    ValidationError as _DomainValidationError,
+)
 
 router = APIRouter(prefix="/account/sso", tags=["sso"])
 

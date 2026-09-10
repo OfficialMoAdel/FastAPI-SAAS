@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
-from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.rate_limits.models import RateLimit, Tier
 from src.app.modules.rate_limits.schemas import (
@@ -22,6 +21,7 @@ from src.app.modules.rate_limits.schemas import (
     TierRead,
     TierUpdate,
 )
+from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 logger = get_logger(__name__)
 

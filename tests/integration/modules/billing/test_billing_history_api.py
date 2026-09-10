@@ -173,7 +173,7 @@ class TestBillingRecordDetailEndpoint:
 
     def test_billing_record_detail_not_found(self, client_auth) -> None:
         """GET /billing/records/{record_id} should return 404 for non-existent record."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch(
             "src.app.modules.billing.subscription_service.BillingRecordService.get_record",

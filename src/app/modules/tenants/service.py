@@ -12,11 +12,11 @@ from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
 from src.app.core.tenancy.cache import TENANT_CACHE_TTL, get_tenant_cache_key
 from src.app.core.utils.cache_guard import cache_guard
-from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.tenants.crud import crud_tenants
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.tenants.schemas import TenantCreate, TenantResponse, TenantUpdate
+from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 logger = get_logger(__name__)
 

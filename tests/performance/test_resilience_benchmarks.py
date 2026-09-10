@@ -51,59 +51,49 @@ def test_registry_health_summary_overhead(benchmark, populated_registry):
 
 
 def test_db_circuit_overhead_closed_sync(benchmark):
-    """Sync wrapper to benchmark async db circuit breaker overhead."""
+    """Sync wrapper to benchmark db_circuit_guard overhead (closed circuit)."""
     # Setup
     cb = CircuitBreaker(name="db_bench", failure_threshold=5, recovery_timeout=30)
-    mock_db = AsyncMock()
-    mock_db.execute.return_value = MagicMock(
-        scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=["result"])))
-    )
-    mock_db.execute.return_value.fetchall.return_value = [MagicMock(_mapping={"id": 1, "name": "test"})]
-    mock_redis = AsyncMock()
-    mock_redis.get.return_value = b'{"data": "cached"}'
 
     original_cb = db_circuit_breaker.db_circuit
     db_circuit_breaker.db_circuit = cb
 
     async def _work():
-        await db_circuit_breaker.execute_query_with_circuit_breaker(mock_db, "SELECT * FROM users", fallback_data=[])
+        async with db_circuit_breaker.db_circuit_guard():
+            pass
 
     def _run():
         asyncio.run(_work())
 
-    with patch("src.app.core.utils.cache.client", mock_redis):
-        try:
-            benchmark(_run)
-        finally:
-            db_circuit_breaker.db_circuit = original_cb
+    try:
+        benchmark(_run)
+    finally:
+        db_circuit_breaker.db_circuit = original_cb
 
 
 def test_db_circuit_overhead_open_fallback_sync(benchmark):
-    """Sync wrapper to benchmark async db circuit breaker fallback overhead."""
+    """Sync wrapper to benchmark db_circuit_guard fail-fast overhead (open circuit)."""
     # Setup
     cb = CircuitBreaker(name="db_bench", failure_threshold=5, recovery_timeout=30)
     cb._open()
 
-    mock_db = AsyncMock()
-    mock_redis = AsyncMock()
-    mock_redis.get.return_value = b'{"data": "cached"}'
-
     original_cb = db_circuit_breaker.db_circuit
     db_circuit_breaker.db_circuit = cb
 
     async def _work():
-        await db_circuit_breaker.execute_query_with_circuit_breaker(
-            mock_db, "SELECT * FROM users", fallback_data=[{"status": "fallback"}]
-        )
+        try:
+            async with db_circuit_breaker.db_circuit_guard():
+                pass
+        except Exception:
+            pass
 
     def _run():
         asyncio.run(_work())
 
-    with patch("src.app.core.utils.cache.client", mock_redis):
-        try:
-            benchmark(_run)
-        finally:
-            db_circuit_breaker.db_circuit = original_cb
+    try:
+        benchmark(_run)
+    finally:
+        db_circuit_breaker.db_circuit = original_cb
 
 
 # --- Job Monitoring Benchmarks ---

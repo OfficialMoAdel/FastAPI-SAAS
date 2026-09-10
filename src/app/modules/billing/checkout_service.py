@@ -12,13 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import require_active_tenant
-from src.app.modules._base.exceptions import (
-    StripeError,
-    ValidationError,
-)
 from src.app.modules.billing.schemas import CheckoutCreate, CheckoutSession
 from src.app.modules.billing.service import StripeSettingsService
 from src.app.modules.billing.subscription_service import SubscriptionPlanService
+from src.app.shared.exceptions import (
+    StripeError,
+    ValidationError,
+)
 
 logger = get_logger(__name__)
 

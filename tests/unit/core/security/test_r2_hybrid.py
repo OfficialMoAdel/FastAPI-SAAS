@@ -260,7 +260,6 @@ class TestFeatureFlagsEnabled:
         flags_true = [
             ("EVENT_BUS_USE_LUA_IDEMPOTENCY", True),
             ("EVENT_BUS_USE_BATCH_ENQUEUE", True),
-            ("SESSION_USE_PIPELINE_EVICTION", True),
             ("RBAC_USE_REDIS_CACHE", True),
         ]
 

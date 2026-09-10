@@ -128,33 +128,40 @@ async def get_user(self, id: int) -> UserRead:
 ```
 
 ### Error Handling Pattern
-✅ DO: Raise the plain domain exceptions from `_base` — HTTP mapping is central
+✅ DO: Raise plain domain exceptions — HTTP mapping is central
 ```python
-# src/app/modules/_base/exceptions.py — PLAIN Exception subclasses (NOT HTTPException)
-class DuplicateError(Exception): ...
-class ModelNotFoundError(Exception): ...
-class ForbiddenError(Exception): ...
-class ServiceUnavailableError(Exception): ...
+# src/app/shared/exceptions.py — AppException subclasses (NOT HTTPException)
+class DuplicateError(AppException): ...
+class ModelNotFoundError(AppException): ...
+class ForbiddenError(AppException): ...
+class ServiceUnavailableError(AppException): ...
 
 # In service — raise the domain error, never an HTTP status:
-from src.app.modules._base.exceptions import DuplicateError
+from src.app.shared.exceptions import DuplicateError
 if email_exists:
     raise DuplicateError("email", values.email)
 ```
 
-The HTTP translation lives in ONE place: `src/app/core/errors.py` registers
-FastAPI exception handlers (`duplicate_error_handler`, `model_not_found_handler`,
-...) that map each domain exception to a JSONResponse with its status code.
-Services stay HTTP-free; routers don't catch anything.
+Every domain base derives from `AppException` (`src/app/shared/exceptions.py`):
+`AuthError` (auth), the billing errors, `StorageError` (storage),
+`AIProviderError` + `SessionLimitExceededError` (ai), `CacheException` (core).
+The old `modules/_base/exceptions.py` shim is deleted — never import it.
+
+The HTTP translation lives in ONE place: `src/app/core/errors.py` builds the
+`EXCEPTION_HANDLERS` table (`build_exception_table`, deferred H7 imports) and
+registers each row via the `_make_table_handler` factory, mapping every domain
+exception to a JSONResponse with its status code. Services stay HTTP-free;
+routers don't catch anything.
 
 `core/exceptions/http_exceptions.py` is a SEPARATE tree (FastCRUD-derived
-HTTPException subclasses like `DuplicateValueException`) used by modules that
-raise HTTP-shaped errors directly (e.g. sso, billing routers). When adding a
-new module: prefer the `_base` plain exceptions + let the handlers translate.
+HTTPException subclasses like `DuplicateValueException`, plus the HTTP-shaped
+`TenantContextError`) used by modules that raise HTTP-shaped errors directly
+(e.g. sso, billing routers). When adding a new module: prefer the shared
+`AppException` errors + let the table translate.
 
-❌ DON'T: claim `_base/exceptions` are HTTPException-based (they are not), or
-hand-roll `HTTPException(409, ...)` in a service — that bypasses the central
-mapping and the error-code contract.
+❌ DON'T: re-create a `_base/exceptions` module, claim shared errors are
+HTTPException-based (they are not), or hand-roll `HTTPException(409, ...)`
+in a service — that bypasses the central mapping and the error-code contract.
 
 ## Touch Points / Key Files
 

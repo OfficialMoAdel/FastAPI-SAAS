@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import SecretStr
 
-from src.app.modules.notifications.email_provider import EmailAttachment, EmailMessage, SMTPProvider
+from src.app.clients.notifications import EmailAttachment, EmailMessage, SMTPProvider
 
 
 @pytest.fixture

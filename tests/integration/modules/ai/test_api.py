@@ -403,7 +403,7 @@ class TestAITenantIsolation:
 
     def test_cannot_access_other_user_session(self, client, regular_user_token_headers) -> None:
         """Should not be able to access another user's session."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with (
             patch(

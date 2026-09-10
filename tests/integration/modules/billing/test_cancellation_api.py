@@ -43,7 +43,7 @@ class TestCancellationEndpoint:
 
     def test_cancel_subscription_not_found(self, client_auth) -> None:
         """POST /billing/subscriptions/{id}/cancel should return 404 for non-existent subscription."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch(
             "src.app.modules.billing.subscription_service.UserSubscriptionService.cancel_subscription",

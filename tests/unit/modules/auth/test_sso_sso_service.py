@@ -4,9 +4,9 @@ from uuid import uuid4
 import pytest
 from fastapi import Request
 
-from src.app.modules._base.exceptions import ValidationError
 from src.app.modules.auth.schemas import SSOProvider
 from src.app.modules.auth.services.sso import SSOService
+from src.app.shared.exceptions import ValidationError
 
 
 @pytest.fixture

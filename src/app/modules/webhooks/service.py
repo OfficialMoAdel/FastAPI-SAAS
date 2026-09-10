@@ -8,8 +8,6 @@ This module provides:
 """
 
 import asyncio
-import hashlib
-import hmac
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
@@ -23,11 +21,44 @@ from src.app.core.logger import get_logger
 from src.app.core.security.encryption import decrypt_data, encrypt_data
 from src.app.modules._base import ModelNotFoundError
 from src.app.modules.webhooks import delivery as delivery_module
+from src.app.modules.webhooks.delivery import (
+    RETRY_DELAY_1_HOUR as RETRY_DELAY_1_HOUR,
+)
+from src.app.modules.webhooks.delivery import (
+    RETRY_DELAY_1_MINUTE as RETRY_DELAY_1_MINUTE,
+)
+from src.app.modules.webhooks.delivery import (
+    RETRY_DELAY_5_MINUTES as RETRY_DELAY_5_MINUTES,
+)
+from src.app.modules.webhooks.delivery import (
+    RETRY_DELAY_15_MINUTES as RETRY_DELAY_15_MINUTES,
+)
+from src.app.modules.webhooks.delivery import (
+    RETRY_DELAY_30_MINUTES as RETRY_DELAY_30_MINUTES,
+)
+from src.app.modules.webhooks.delivery import (
+    WEBHOOK_RETRY_DELAYS as WEBHOOK_RETRY_DELAYS,
+)
 from src.app.modules.webhooks.models import (
     WebhookDelivery,
     WebhookDeliveryStatus,
     WebhookEndpoint,
 )
+
+# Fix #6: the retry schedule canonically lives in delivery.py (the single
+# place that decides DEAD vs PENDING). These names are re-exported here for
+# backward compatibility with existing importers.
+__all__ = [
+    "RETRY_DELAY_1_HOUR",
+    "RETRY_DELAY_1_MINUTE",
+    "RETRY_DELAY_5_MINUTES",
+    "RETRY_DELAY_15_MINUTES",
+    "RETRY_DELAY_30_MINUTES",
+    "WEBHOOK_RETRY_DELAYS",
+    "WebhookService",
+    "handle_webhook_trigger_event",
+    "webhook_event_adapter",
+]
 
 if TYPE_CHECKING:
     from src.app.api.deps.auth import AuthenticatedUser
@@ -99,23 +130,6 @@ def _deserialize_endpoint(data: dict[str, Any]) -> WebhookEndpoint:
     if data.get("old_secret_expires_at"):
         ep.old_secret_expires_at = datetime.fromisoformat(data["old_secret_expires_at"])
     return ep
-
-
-# Retry schedule in seconds: 1m, 5m, 15m, 30m, 1h (5 retries over 1 hour)
-RETRY_DELAY_1_MINUTE = 60
-RETRY_DELAY_5_MINUTES = 300
-RETRY_DELAY_15_MINUTES = 900
-RETRY_DELAY_30_MINUTES = 1800
-RETRY_DELAY_1_HOUR = 3600
-
-# INFO-W-config FIX: schedule now comes from settings.webhooks.WEBHOOK_RETRY_DELAYS
-# (previously this module-level list was hardcoded and the config field was dead).
-from src.app.core.config import settings as _settings  # noqa: E402
-
-WEBHOOK_RETRY_DELAYS: list[int] = list(
-    getattr(_settings.webhooks, "WEBHOOK_RETRY_DELAYS", None)
-    or [RETRY_DELAY_1_MINUTE, RETRY_DELAY_5_MINUTES, RETRY_DELAY_15_MINUTES, RETRY_DELAY_30_MINUTES, RETRY_DELAY_1_HOUR]
-)
 
 
 class WebhookService:
@@ -395,56 +409,14 @@ class WebhookService:
         if not endpoints:
             return []
 
-        # Prepare deliveries for bulk insert
+        # Prepare deliveries for bulk insert.
+        # NOTE: the signature is computed at SEND time per attempt in
+        # delivery.py (Stripe-style `t=,v1=` over the canonical bytes) and
+        # persisted rows intentionally leave `signature` unset (NULL) — the
+        # column is a deprecated trigger-time artifact, not the wire value.
         deliveries_data = []
 
         for endpoint in endpoints:
-            # Prefer signing_secret (per-endpoint) over legacy encrypted secret
-            secret = ""
-            if endpoint.signing_secret:
-                try:
-                    secret = decrypt_data(endpoint.signing_secret)
-                except Exception as e:
-                    logger.error(
-                        "webhook_signing_secret_decryption_failed",
-                        endpoint_id=str(endpoint.id),
-                        error=str(e),
-                    )
-                    continue
-            elif endpoint.secret:
-                try:
-                    secret = decrypt_data(endpoint.secret)
-                except Exception as e:
-                    logger.error(
-                        "webhook_secret_decryption_failed",
-                        endpoint_id=str(endpoint.id),
-                        error=str(e),
-                    )
-                    # Skip this endpoint but continue with others
-                    continue
-
-            signature = self._generate_signature(payload, secret)
-            if (
-                endpoint.old_signing_secret
-                and endpoint.old_secret_expires_at
-                and isinstance(endpoint.old_secret_expires_at, datetime)
-            ):
-                now_utc = datetime.now(UTC)
-                expires_at = endpoint.old_secret_expires_at
-                if expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=UTC)
-                if expires_at > now_utc:
-                    try:
-                        old_secret = decrypt_data(endpoint.old_signing_secret)
-                        active_sig_full = self._generate_signature(payload, secret)
-                        old_sig_full = self._generate_signature(payload, old_secret)
-                        signature = f"{active_sig_full},{old_sig_full}"
-                    except Exception as old_sig_err:
-                        logger.error(
-                            "webhook_old_signing_secret_decryption_failed",
-                            endpoint_id=str(endpoint.id),
-                            error=str(old_sig_err),
-                        )
             now = datetime.now(UTC)
 
             deliveries_data.append(
@@ -454,7 +426,7 @@ class WebhookService:
                     "tenant_id": endpoint.tenant_id,
                     "event_type": event_type,
                     "payload": payload,
-                    "signature": signature,
+                    "signature": None,
                     "status": WebhookDeliveryStatus.PENDING,
                     "attempt_count": 0,
                     "created_at": now,
@@ -498,61 +470,17 @@ class WebhookService:
         event_type: str,
         payload: dict[str, Any],
     ) -> WebhookDelivery:
-        """Trigger a specific webhook endpoint (e.g., for testing)."""
-        # Prefer signing_secret (per-endpoint) over legacy encrypted secret
-        secret = ""
-        if endpoint.signing_secret:
-            try:
-                secret = decrypt_data(endpoint.signing_secret)
-            except Exception as e:
-                logger.error(
-                    "webhook_signing_secret_decryption_failed",
-                    endpoint_id=str(endpoint.id),
-                    error=str(e),
-                )
-                raise ValueError(f"Cannot decrypt webhook signing_secret for endpoint {endpoint.id}.") from e
-        elif endpoint.secret:
-            try:
-                secret = decrypt_data(endpoint.secret)
-            except Exception as e:
-                logger.error(
-                    "webhook_secret_decryption_failed",
-                    endpoint_id=str(endpoint.id),
-                    error=str(e),
-                )
-                raise ValueError(
-                    f"Cannot decrypt webhook secret for endpoint {endpoint.id}. The encryption key may have changed."
-                ) from e
+        """Trigger a specific webhook endpoint (e.g., for testing).
 
-        signature = self._generate_signature(payload, secret)
-        if (
-            endpoint.old_signing_secret
-            and endpoint.old_secret_expires_at
-            and isinstance(endpoint.old_secret_expires_at, datetime)
-        ):
-            now_utc = datetime.now(UTC)
-            expires_at = endpoint.old_secret_expires_at
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=UTC)
-            if expires_at > now_utc:
-                try:
-                    old_secret = decrypt_data(endpoint.old_signing_secret)
-                    active_sig_full = self._generate_signature(payload, secret)
-                    old_sig_full = self._generate_signature(payload, old_secret)
-                    signature = f"{active_sig_full},{old_sig_full}"
-                except Exception as old_sig_err:
-                    logger.error(
-                        "webhook_old_signing_secret_decryption_failed",
-                        endpoint_id=str(endpoint.id),
-                        error=str(old_sig_err),
-                    )
-
+        The delivery row is persisted with `signature` unset (NULL); the wire
+        signature is computed at send time in delivery.py.
+        """
         delivery = WebhookDelivery(
             webhook_endpoint_id=endpoint.id,
             tenant_id=endpoint.tenant_id,
             event_type=event_type,
             payload=payload,
-            signature=signature,
+            signature=None,
             status=WebhookDeliveryStatus.PENDING,
             attempt_count=0,
         )
@@ -603,29 +531,6 @@ class WebhookService:
         if is_limited:
             raise RateLimitExceededError(f"Rate limit exceeded: {limit} tests per {period} seconds", retry_after=period)
 
-    def _generate_signature(self, payload: dict[str, Any], secret: str) -> str:
-        """Generate HMAC-SHA256 signature for webhook payload.
-
-        CRITICAL: This method MUST use stdlib json, NOT orjson or other JSON libraries.
-
-        Why: The HMAC signature is calculated from the exact byte representation of the
-        JSON payload. Different JSON libraries produce different formatting:
-        - stdlib json.dumps: {"key": "value"}  (space after colon)
-        - orjson.dumps:      {"key":"value"}   (no space)
-
-        Changing the JSON library would produce different bytes → different HMAC signature
-        → ALL existing webhook consumers would fail signature validation.
-
-        This is intentional and correct behavior. Do not "optimize" this to orjson.
-        See: SECURITY.md for full explanation.
-        """
-        import json
-
-        payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
-        signature = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-
-        return f"sha256={signature}"
-
     # ------------------------------------------------------------------
     # Delivery lifecycles live in webhooks/delivery.py (enqueue/deliver/
     # recover). These thin delegates keep the historical service surface.
@@ -638,15 +543,6 @@ class WebhookService:
     async def _enqueue_delivery(self, delivery_id: UUID, defer_by: int = 0, tenant_id: UUID | None = None) -> None:
         """Enqueue webhook delivery task (delegates to the delivery module)."""
         await delivery_module.enqueue(delivery_id, defer_by=defer_by, tenant_id=tenant_id)
-
-    async def verify_signature(self, payload: dict[str, Any], signature: str, secret: str) -> bool:
-        """Verify webhook signature supporting multi-sig rotation grace periods.
-
-        Used by webhook receivers to validate requests.
-        """
-        expected_signature = self._generate_signature(payload, secret)
-        signatures = [s.strip() for s in signature.split(",") if s.strip()]
-        return any(hmac.compare_digest(sig, expected_signature) for sig in signatures)
 
     async def retry_delivery(self, delivery_id: UUID) -> WebhookDelivery:
         """Retry a failed delivery."""

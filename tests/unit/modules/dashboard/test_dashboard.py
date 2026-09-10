@@ -534,5 +534,69 @@ class TestDashboardMetricsResponse:
         assert isinstance(response.activity, ActivityMetrics)
 
 
+class TestDashboardAuditVocabulary:
+    """Fix #4: dashboard must query the audit action strings producers emit.
+
+    Producers (verified, do not regress):
+    - src/app/modules/auth/service.py::_publish_login_audit emits
+      action="auth.login" with details={"success": bool, ...}
+    - src/app/modules/auth/services/sso.py emits action="auth.sso_login"
+    Zero producers emit bare "login" / "login_failed" / "authentication_failed".
+    """
+
+    PRODUCER_LOGIN_ACTIONS = {"auth.login", "auth.sso_login"}
+
+    def _compiled_sql(self, stmt) -> str:
+        """Compile a captured statement with literal binds for assertion."""
+        from sqlalchemy.dialects import postgresql
+
+        return str(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+
+    @pytest.mark.asyncio
+    async def test_user_metrics_queries_producer_login_actions(self):
+        """Active-users query must intersect producer action strings."""
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.one.return_value = (100, 10, 50, 5)
+        db_mock.execute = AsyncMock(return_value=mock_result)
+
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+
+        await dashboard_service._get_user_metrics(db_mock, start, end, "tenant")
+
+        sql = self._compiled_sql(db_mock.execute.call_args[0][0])
+        for action in self.PRODUCER_LOGIN_ACTIONS:
+            assert action in sql
+        assert "'login'" not in sql
+
+    @pytest.mark.asyncio
+    async def test_activity_metrics_queries_producer_login_actions(self):
+        """Total-logins query must intersect producer strings; failed-auth
+        must use auth.login + details success=false (never dead literals)."""
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.one.return_value = (100, 5000, 10, 25)
+        db_mock.execute = AsyncMock(return_value=mock_result)
+
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+
+        await dashboard_service._get_activity_metrics(db_mock, start, end, "tenant")
+
+        sql = self._compiled_sql(db_mock.execute.call_args[0][0])
+        for action in self.PRODUCER_LOGIN_ACTIONS:
+            assert action in sql
+        assert "'login'" not in sql
+        assert "login_failed" not in sql
+        assert "authentication_failed" not in sql
+        assert "success" in sql
+        assert "'false'" in sql
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

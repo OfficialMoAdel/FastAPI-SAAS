@@ -1,22 +1,33 @@
-"""Tenant L1 cache coordinator (P2-6).
+"""Tenant L1/L2 cache ownership module (canonical owner).
 
-Lives outside the HTTP middleware layer so domain services can depend on it
-without an upward import (DIP). The L1 TTLCache itself stays in
-``src.app.middleware.tenant`` because it is read on every request by the
-tenant resolution hot path; moving the cache out would add an import to
-every request just to satisfy a layering rule. This module owns the
-*coordination* (publish + invalidate + listener) instead, which is what
-service-layer callers need.
+Owns the L1 in-process tenant cache and its cross-worker invalidation
+coordination:
+
+- L1: ``_L1_TENANT_CACHE`` (``TTLCache``, 60s) — hot-path tenant resolution.
+- L2: ``TENANT_CACHE_TTL`` (300s) — Redis ``tenant:slug:{slug}`` entries.
+- Cross-worker invalidation via ``InvalidationChannel`` (ADR-0004).
+
+NOTE — L1 vs L2 TTLs are intentionally distinct: L1 is a 60.0s in-process
+TTLCache for hot tenants; L2 is a 300s Redis TTL bounding the stale
+``is_active`` window across writers (B4). Do NOT conflate them.
+
+``src.app.middleware.tenant`` is a consumer/importer of this module (it
+re-exports these names for backward compatibility with existing
+test/script importers). Single canonical literal for the invalidation
+channel lives here: ``_L1_INVALIDATION_CHANNEL``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from uuid import UUID
 
-from cachetools import TTLCache  # noqa: F401 — re-exported for typing
+from cachetools import TTLCache
 
+from src.app.core.cache.invalidation_channel import InvalidationChannel
 from src.app.core.redis_provider import get_redis
 
 logger = logging.getLogger(__name__)
@@ -30,34 +41,58 @@ logger = logging.getLogger(__name__)
 # stale-is_active window to five minutes across all writers.
 TENANT_CACHE_TTL = 300
 
-# Channel name shared with the listener in src.app.middleware.tenant.
-# Keep the literal in one place so middleware and service cannot drift.
+# L1 in-memory cache for tenant resolution (hot path). Distinct 60.0s TTL —
+# see module docstring; do not unify with TENANT_CACHE_TTL (L2, 300s).
+_L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=60.0)
+
+# Cache stampede protection - track lock waiters to prevent memory leaks
+_TENANT_LOCKS: dict[str, dict] = {}
+
+# T9 FIX: cross-worker L1 invalidation channel. Suspending/deleting a tenant
+# publishes here so every web process drops its in-process TTLCache entry
+# immediately instead of serving stale is_active=True for up to ttl seconds.
 _L1_INVALIDATION_CHANNEL = "tenant:l1_invalidate"
-
-# The cache itself stays in middleware for hot-path locality; this module
-# exposes a non-resetting view so service callers can invalidate without
-# re-importing the middleware module.
-_l1_invalidation_task: asyncio.Task | None = None
-def get_tenant_cache_key(tenant_id: UUID | str) -> str:
-    """Generate Redis cache key for tenant."""
-    return f"tenant:{tenant_id}"
-
-
 
 
 def invalidate_tenant_l1(slug: str | None = None) -> None:
-    """Drop one (or all) entries from this process's L1 tenant cache.
+    """Drop one (or all) entries from this process's L1 tenant cache."""
+    if slug is None or slug == "*":
+        _L1_TENANT_CACHE.clear()
+    else:
+        _L1_TENANT_CACHE.pop(slug, None)
 
-    Delegates to the middleware's cache; kept here so domain services can
-    depend on a stable coordinator import without reaching into HTTP-layer
-    internals.
-    """
-    # Late import to avoid a circular dependency at module load
-    # (middleware.tenant imports this module for the listener wiring; this
-    # module imports middleware.tenant for the cache reference).
-    from src.app.middleware.tenant import invalidate_tenant_l1 as _invalidate
 
-    _invalidate(slug)
+_tenant_invalidation_channel = InvalidationChannel(
+    channel=_L1_INVALIDATION_CHANNEL,
+    on_message=lambda msg: invalidate_tenant_l1(None if msg == "*" else msg),
+    logger_name="tenant_l1",
+)
+
+_publish_tenant_l1_invalidation = _tenant_invalidation_channel.publish
+_start_l1_invalidation_listener = _tenant_invalidation_channel.start
+stop_l1_invalidation_listener = _tenant_invalidation_channel.stop
+
+
+@asynccontextmanager
+async def _get_tenant_lock(slug: str) -> AsyncGenerator[asyncio.Lock, None]:
+    """Get an asyncio.Lock for the given slug, cleaning up when unused."""
+    lock_info = _TENANT_LOCKS.get(slug)
+    if lock_info is None:
+        lock_info = {"lock": asyncio.Lock(), "waiters": 0}
+        _TENANT_LOCKS[slug] = lock_info
+
+    lock_info["waiters"] += 1
+    try:
+        yield lock_info["lock"]
+    finally:
+        lock_info["waiters"] -= 1
+        if lock_info["waiters"] == 0:
+            _TENANT_LOCKS.pop(slug, None)
+
+
+def get_tenant_cache_key(tenant_id: UUID | str) -> str:
+    """Generate Redis cache key for tenant."""
+    return f"tenant:{tenant_id}"
 
 
 async def publish_tenant_l1_invalidation(slug: str | None) -> None:
@@ -69,22 +104,24 @@ async def publish_tenant_l1_invalidation(slug: str | None) -> None:
         await redis_client.publish(_L1_INVALIDATION_CHANNEL, slug or "*")
     except Exception as e:  # noqa: BLE001 - invalidation must never break requests
         logger.warning("Failed to publish tenant L1 invalidation: %s", e)
+        from src.app.core.monitoring.r1_unified_metrics import record_tenant_l1_publish_failed
+
+        record_tenant_l1_publish_failed()
 
 
 def start_l1_invalidation_listener() -> None:
-    """Start (once per event loop) a background subscriber applying invalidations.
-
-    Wraps the middleware's listener so service code that wants the listener
-    started alongside (e.g. tests) can call this without importing HTTP
-    internals.
-    """
-    from src.app.middleware.tenant import _start_l1_invalidation_listener
-
+    """Start (once per event loop) a background subscriber applying invalidations."""
     _start_l1_invalidation_listener()
 
 
-async def stop_l1_invalidation_listener() -> None:
-    """Cancel the L1 invalidation listener on application shutdown."""
-    from src.app.middleware.tenant import stop_l1_invalidation_listener as _stop
-
-    await _stop()
+# NOTE: underscore-prefixed names stay importable (middleware/tenant.py and
+# existing test importers use explicit imports) but are intentionally NOT
+# exported — the public surface is the six names below.
+__all__ = [
+    "TENANT_CACHE_TTL",
+    "get_tenant_cache_key",
+    "invalidate_tenant_l1",
+    "publish_tenant_l1_invalidation",
+    "start_l1_invalidation_listener",
+    "stop_l1_invalidation_listener",
+]

@@ -129,7 +129,7 @@ class TestDisconnectProviderService:
     @pytest.mark.asyncio
     async def test_disconnect_fails_if_last_auth_method(self):
         """Verify disconnect fails if provider is user's only authentication method."""
-        from src.app.modules._base.exceptions import ValidationError
+        from src.app.shared.exceptions import ValidationError
 
         service = SSOService()
         mock_db = AsyncMock()

@@ -9,13 +9,9 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.exceptions.http_exceptions import TenantContextError
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_current_tenant, require_active_tenant
-from src.app.modules._base.exceptions import (
-    ModelNotFoundError,
-    StripeError,
-    TenantContextError,
-)
 from src.app.modules._base.service import BaseService
 from src.app.modules.billing.crud import (
     crud_billing_records,
@@ -40,7 +36,7 @@ from src.app.modules.billing.schemas import (
     UserSubscriptionRead,
     UserSubscriptionUpdate,
 )
-from src.app.shared.exceptions import ForbiddenError
+from src.app.shared.exceptions import ForbiddenError, ModelNotFoundError, StripeError
 
 logger = get_logger(__name__)
 

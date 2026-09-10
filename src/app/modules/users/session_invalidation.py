@@ -165,26 +165,119 @@ async def _invalidate_caches_delegate(
     bump: bool,
     reason: InvalidationReason,
     explicit_token_version: int | None,
+    fresh_token_versions: dict[Any, int] | None = None,
 ) -> None:
-    """Delegate cache invalidation to UserService directly without reflection probes."""
+    """Delegate cache invalidation to UserService directly without reflection probes.
+
+    1B: ``fresh_token_versions`` maps user id -> post-bump DB value, read by
+    the seam after its atomic SQL bump. The single-user path forwards the
+    fresh value as ``explicit_token_version`` (caller-supplied explicit wins);
+    the batch path forwards the whole map so Redis can never be seeded with a
+    stale ``old + 1`` guess.
+    """
     from typing import cast
 
     from src.app.modules.users.service import UserService
 
     user_svc = UserService(db)
     if len(users_list) == 1 and not is_raw_id:
+        resolved_explicit = explicit_token_version
+        if bump and resolved_explicit is None:
+            if fresh_token_versions:
+                uid = (
+                    users_list[0].get("id") if isinstance(users_list[0], dict) else getattr(users_list[0], "id", None)
+                )
+                resolved_explicit = fresh_token_versions.get(uid)
+            if resolved_explicit is None:
+                # Loud degraded fallback: the SQL bump already committed, so
+                # failing here would leave DB bumped with Redis stale. Derive
+                # old+1 from the caller payload as a last resort, but log at
+                # error level so the divergence risk is visible in monitoring.
+                # Production always resolves via the fresh read above.
+                logger.error(
+                    "session_invalidation_fresh_version_missed",
+                    user_id=users_list[0].get("id")
+                    if isinstance(users_list[0], dict)
+                    else getattr(users_list[0], "id", None),
+                )
+                known = _known_token_version(users_list[0])
+                if known is not None:
+                    resolved_explicit = known + 1
         await user_svc._invalidate_user_cache(
             cast(Any, users_list[0]),
             bump_token_version=bump,
             reason=reason,
-            explicit_token_version=explicit_token_version,
+            explicit_token_version=resolved_explicit,
         )
     else:
+        if bump and explicit_token_version is None and not fresh_token_versions:
+            # Same loud-degraded contract as the single-user path above:
+            # the SQL bump committed, so the cache layer's old+1 fallback
+            # applies — log at error level so the divergence risk is visible.
+            logger.error(
+                "session_invalidation_fresh_version_missed_batch",
+                user_count=len(extracted_users),
+            )
         await user_svc._invalidate_user_cache_batch(
             extracted_users,
             bump_token_version=bump,
             reason=reason,
+            explicit_token_versions=fresh_token_versions,
         )
+
+
+def _known_token_version(user: Any) -> int | None:
+    """Best-effort read of the caller payload's token_version (degraded fallback only)."""
+    if isinstance(user, dict):
+        raw: Any = user.get("token_version", 0)
+    else:
+        raw = getattr(user, "token_version", None)
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    try:
+        return int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+async def _fetch_fresh_token_versions(
+    db: AsyncSession,
+    affected_ids: list[Any],
+    tenant_id: Any,
+) -> dict[Any, int]:
+    """Read the post-bump token_version for each affected user.
+
+    Best-effort: returns whatever rows are readable (empty on failure so
+    test doubles without real rows do not break the seam; the cache layer
+    then applies its own explicit-or-raise contract).
+    """
+    from src.app.modules.users.models import User
+
+    try:
+        stmt = select(User.id, User.token_version).where(User.id.in_(affected_ids))
+        if tenant_id is not None:
+            from src.app.core.db.tenant_crud import tenant_scope
+
+            stmt = stmt.where(tenant_scope(User, tenant_id))
+        result = await db.execute(stmt)
+        rows = result.all()
+        fresh: dict[Any, int] = {}
+        for row in rows:
+            try:
+                fresh[row[0]] = int(row[1])
+            except (IndexError, TypeError, ValueError):
+                uid = getattr(row, "id", None)
+                ver = getattr(row, "token_version", None)
+                if uid is not None and isinstance(ver, int) and not isinstance(ver, bool):
+                    fresh[uid] = ver
+        return fresh
+    except Exception as e:
+        logger.warning("session_invalidation_fresh_version_read_failed", error=str(e))
+        return {}
+
+
 async def invalidate_user_sessions(
     db: AsyncSession,
     users: Any,
@@ -225,6 +318,7 @@ async def invalidate_user_sessions(
     # 1. SQL bump if credential/security affecting
     bump = should_bump_token_version(reason)
 
+    fresh_token_versions: dict[Any, int] | None = None
     if bump and affected_ids:
         from src.app.modules.users.models import User
 
@@ -240,12 +334,19 @@ async def invalidate_user_sessions(
         result = await db.execute(update_stmt)
         # Rowcount guard: a 0-row bump (wrong tenant / deleted user) must not
         # proceed to cache-invalidate, or Redis and DB silently diverge.
+        # Never rollback the caller's session or return silent success here:
+        # callers staged domain writes (commit=False) before this seam, so a
+        # silent return would report success while discarding their write.
         rowcount = getattr(result, "rowcount", None)
         if isinstance(rowcount, int) and rowcount == 0:
+            from src.app.shared.exceptions import ModelNotFoundError
+
             logger.warning("session_invalidation_zero_row_bump", affected_ids=affected_ids)
-            if commit:
-                await db.rollback()
-            return
+            raise ModelNotFoundError("User", affected_ids[0] if len(affected_ids) == 1 else affected_ids)
+        # 1B: read back the fresh post-bump versions so the cache delegate
+        # never seeds Redis with a stale old+1 guess.
+        if explicit_token_version is None:
+            fresh_token_versions = await _fetch_fresh_token_versions(db, affected_ids, tenant_id)
 
     # 2. Atomic DB commit if requested
     if commit:
@@ -263,6 +364,7 @@ async def invalidate_user_sessions(
         bump,
         reason,
         explicit_token_version,
+        fresh_token_versions,
     )
 
 __all__ = [

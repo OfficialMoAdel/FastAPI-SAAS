@@ -15,20 +15,19 @@ from src.app.core.security import (
     TokenType,
     blacklist_token,
     blacklist_tokens,
-    get_mfa_pending_token_manager,
     get_password_hash,
     needs_rehash,
     verify_password,
     verify_token,
 )
 from src.app.core.utils.ip_utils import get_client_ip
-from src.app.modules._base.exceptions import ServiceUnavailableError, UnauthorizedError
 from src.app.modules.audit_logs import audit
 from src.app.modules.auth.services.email_verification import EmailVerificationService
 from src.app.modules.auth.services.lockout import LoginLockoutPolicy
 from src.app.modules.auth.services.passwords import PasswordLifecycleService
 from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.users.service import UserService
+from src.app.shared.exceptions import ServiceUnavailableError, UnauthorizedError
 
 logger = get_logger(__name__)
 __all__ = ["AuthService", "get_auth_service"]
@@ -188,7 +187,7 @@ class AuthService:
             # fail_closed: Raise exception and block operation (security focused, compliance)
             # Note: fail_closed requires ServiceUnavailableException to be defined
             if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "fail_open") == "fail_closed":
-                from src.app.modules._base.exceptions import ServiceUnavailableError
+                from src.app.shared.exceptions import ServiceUnavailableError
 
                 raise ServiceUnavailableError("Service temporarily unavailable") from e
 
@@ -277,20 +276,7 @@ class AuthService:
         if mfa_enabled:
             client_ip = ip_address or (get_client_ip(request) if request else None)
 
-            # Generate MFA pending token
-            from src.app.core.security.tokens import TokenGenerator
-
-            mfa_token_store = get_mfa_pending_token_manager(redis)
-            mfa_token = TokenGenerator.generate_magic_link_token()
-            await mfa_token_store.create(
-                token=mfa_token,
-                data={
-                    "user_id": user["id"],
-                    "username": user["username"],
-                    "ip_address": client_ip,
-                    "scope": "mfa_pending",
-                },
-            )
+            mfa_response = await TokenIssuer.issue_mfa_pending(user, redis=redis, ip_address=client_ip)
 
             # Return partial authentication response
             await self._publish_login_audit(
@@ -303,12 +289,7 @@ class AuthService:
                 user_agent=user_agent,
             )
 
-            return {
-                "mfa_required": True,
-                "mfa_token": mfa_token,
-                "expires_in": int(settings.auth.MFA_PENDING_EXPIRY_SECONDS),
-                "message": "MFA verification required",
-            }
+            return mfa_response
 
         return await self._generate_auth_tokens(
             user, response, request, username, ip_address=ip_address, user_agent=user_agent

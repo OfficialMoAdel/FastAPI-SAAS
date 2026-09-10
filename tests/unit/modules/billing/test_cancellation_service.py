@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules.billing.subscription_service import UserSubscriptionService
+from src.app.shared.exceptions import ModelNotFoundError
 
 
 @pytest.fixture

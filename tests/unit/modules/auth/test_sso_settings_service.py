@@ -77,7 +77,7 @@ class TestSSOSettingsServiceCreate:
     @pytest.mark.asyncio
     async def test_create_settings_rejects_duplicate_provider(self):
         """Verify DuplicateError raised for existing provider."""
-        from src.app.modules._base.exceptions import DuplicateError
+        from src.app.shared.exceptions import DuplicateError
 
         service = SSOSettingsService()
         mock_db = AsyncMock()
@@ -127,7 +127,7 @@ class TestSSOSettingsServiceGetDecrypted:
     @pytest.mark.asyncio
     async def test_get_decrypted_settings_raises_not_found(self):
         """Verify ModelNotFoundError raised for missing provider."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         service = SSOSettingsService()
         mock_db = AsyncMock()
@@ -224,7 +224,7 @@ class TestSSOSettingsServiceDelete:
     @pytest.mark.asyncio
     async def test_delete_settings_raises_not_found(self):
         """Verify ModelNotFoundError raised for missing provider."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         service = SSOSettingsService()
         mock_db = AsyncMock()

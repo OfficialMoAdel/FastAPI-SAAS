@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules.api_keys.schemas import APIKeyCreate, APIKeyResponse
 from src.app.modules.api_keys.service import APIKeyService
+from src.app.shared.exceptions import ModelNotFoundError
 
 
 def _make_service() -> tuple[APIKeyService, AsyncMock]:

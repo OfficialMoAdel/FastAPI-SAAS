@@ -15,10 +15,10 @@ from uuid import UUID
 from structlog import get_logger
 
 from src.app.core.config import settings
-from src.app.modules._base.exceptions import ValidationError
 from src.app.modules.billing.exceptions import WebhookNotConfiguredError
 from src.app.modules.billing.webhook.client import verify_webhook_signature
 from src.app.modules.billing.webhook.dispatch import handle_webhook_event
+from src.app.shared.exceptions import ValidationError
 
 logger = get_logger(__name__)
 

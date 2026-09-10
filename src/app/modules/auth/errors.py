@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from src.app.shared.exceptions import AppException
 
-class AuthError(Exception):
+
+class AuthError(AppException):
     """Base exception for authentication operations (plain domain exception)."""
 
     def __init__(

@@ -123,7 +123,7 @@ class TestSessionDetailEndpoint:
 
     def test_get_session_not_found(self, client_auth) -> None:
         """GET /ai/sessions/{id} should return 404 for non-existent session."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch(
             "src.app.modules.ai.service.ChatSessionService.get_session",
@@ -169,7 +169,7 @@ class TestSessionUpdateEndpoint:
 
     def test_update_session_not_found(self, client_auth) -> None:
         """PATCH /ai/sessions/{id} should return 404 for non-existent session."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch(
             "src.app.modules.ai.service.ChatSessionService.update_session",
@@ -204,7 +204,7 @@ class TestSessionDeleteEndpoint:
 
     def test_delete_session_not_found(self, client_auth) -> None:
         """DELETE /ai/sessions/{id} should return 404 for non-existent session."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch(
             "src.app.modules.ai.service.ChatSessionService.delete_session",
@@ -302,7 +302,7 @@ class TestSessionOwnershipValidation:
 
     def test_cannot_access_other_user_session(self, client_auth) -> None:
         """Should not be able to access another user's session."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         # Session belongs to different user
         with patch(
@@ -315,7 +315,7 @@ class TestSessionOwnershipValidation:
 
     def test_cannot_delete_other_user_session(self, client_auth) -> None:
         """Should not be able to delete another user's session."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch(
             "src.app.modules.ai.service.ChatSessionService.delete_session",
@@ -327,7 +327,7 @@ class TestSessionOwnershipValidation:
 
     def test_cannot_update_other_user_session(self, client_auth) -> None:
         """Should not be able to update another user's session."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
+        from src.app.shared.exceptions import ModelNotFoundError
 
         with patch(
             "src.app.modules.ai.service.ChatSessionService.update_session",

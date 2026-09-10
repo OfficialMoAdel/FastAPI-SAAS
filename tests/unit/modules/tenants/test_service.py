@@ -88,8 +88,8 @@ class TestTenantServiceCreate:
     @pytest.mark.asyncio
     async def test_create_tenant_duplicate_slug_raises_conflict(self, mock_db, tenant_create):
         """Test that duplicate slug raises DuplicateError."""
-        from src.app.modules._base.exceptions import DuplicateError
         from src.app.modules.tenants.service import TenantService
+        from src.app.shared.exceptions import DuplicateError
 
         tenant_service = TenantService(mock_db)
 
@@ -124,8 +124,8 @@ class TestTenantServiceGet:
     @pytest.mark.asyncio
     async def test_get_tenant_not_found_raises_404(self, mock_db):
         """Test that non-existent tenant raises ModelNotFoundError."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.tenants.service import TenantService
+        from src.app.shared.exceptions import ModelNotFoundError
 
         tenant_service = TenantService(mock_db)
 
@@ -186,8 +186,8 @@ class TestTenantServiceUpdate:
     @pytest.mark.asyncio
     async def test_update_tenant_not_found_raises_404(self, mock_db, tenant_update):
         """Test that updating non-existent tenant raises ModelNotFoundError."""
-        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.tenants.service import TenantService
+        from src.app.shared.exceptions import ModelNotFoundError
 
         tenant_service = TenantService(mock_db)
 

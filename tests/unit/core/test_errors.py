@@ -6,21 +6,19 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.app.core.errors import (
     ErrorCode,
+    build_exception_table,
     create_error_response,
     setup_exception_handlers,
 )
-from src.app.modules._base.exceptions import (
-    DuplicateError,
-    ForbiddenError,
-    ModelNotFoundError,
-    RateLimitExceededError,
-    ServiceUnavailableError,
-    StripeError,
-    TenantContextError,
-    ValidationError,
-)
+from src.app.core.exceptions.cache_exceptions import CacheException
+from src.app.core.exceptions.http_exceptions import TenantContextError
 from src.app.modules.ai.unified_errors import SessionLimitExceededError
-from src.app.modules.billing.exceptions import PaymentRequiredError
+from src.app.modules.auth.errors import AuthError, InvalidMagicLinkError
+from src.app.modules.billing.exceptions import (
+    PaymentRequiredError,
+    WebhookNotConfiguredError,
+    WebhookVerificationError,
+)
 from src.app.modules.storage.errors import (
     FileEntityNotFoundError,
     FileTypeNotAllowedError,
@@ -28,6 +26,16 @@ from src.app.modules.storage.errors import (
     QuotaExceededError,
     StorageBackendError,
     StorageNotConfiguredError,
+)
+from src.app.shared.exceptions import (
+    DuplicateError,
+    ForbiddenError,
+    ModelNotFoundError,
+    RateLimitExceededError,
+    ServiceUnavailableError,
+    StripeError,
+    UnauthorizedError,
+    ValidationError,
 )
 
 
@@ -102,6 +110,30 @@ async def route_validation():
 @app.get("/test/session-limit")
 async def route_session_limit():
     raise SessionLimitExceededError(tenant_id="ten-1", limit=10, current_count=11)
+
+@app.get("/test/unauthorized")
+async def route_unauthorized():
+    raise UnauthorizedError("Missing credentials")
+
+@app.get("/test/auth-error")
+async def route_auth_error():
+    raise AuthError(detail="Bad credentials", status_code=401)
+
+@app.get("/test/auth-magic-link-invalid")
+async def route_auth_magic_link_invalid():
+    raise InvalidMagicLinkError()
+
+@app.get("/test/webhook-verification")
+async def route_webhook_verification():
+    raise WebhookVerificationError("Bad signature")
+
+@app.get("/test/webhook-not-configured")
+async def route_webhook_not_configured():
+    raise WebhookNotConfiguredError()
+
+@app.get("/test/cache-error")
+async def route_cache_error():
+    raise CacheException("redis down")
 
 @app.get("/test/generic")
 async def route_generic():
@@ -284,3 +316,89 @@ def test_storage_invalid_credentials_handler():
     data = response.json()
     assert data["error"]["code"] == ErrorCode.INVALID_INPUT
     assert data["error"]["message"] == "Invalid storage provider credentials."
+
+
+def test_unauthorized_error_handler():
+    """Shared UnauthorizedError must map to 401."""
+    response = client.get("/test/unauthorized")
+    assert response.status_code == 401
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.UNAUTHORIZED
+    assert data["error"]["message"] == "Missing credentials"
+
+
+def test_auth_error_handler():
+    """AuthError carries its own status; 401 maps to UNAUTHORIZED."""
+    response = client.get("/test/auth-error")
+    assert response.status_code == 401
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.UNAUTHORIZED
+    assert data["error"]["message"] == "Bad credentials"
+
+
+def test_auth_subclass_uses_base_table_row():
+    """Weakened-form check: MagicLink subclasses dispatch via the AuthError row."""
+    response = client.get("/test/auth-magic-link-invalid")
+    assert response.status_code == 400
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.INVALID_INPUT
+    assert data["error"]["message"] == "Invalid or expired magic link token"
+
+
+def test_webhook_verification_handler():
+    """WebhookVerificationError must map to 400."""
+    response = client.get("/test/webhook-verification")
+    assert response.status_code == 400
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.INVALID_INPUT
+    assert data["error"]["message"] == "Bad signature"
+
+
+def test_webhook_not_configured_handler():
+    """WebhookNotConfiguredError must map to 501 NOT_IMPLEMENTED (not 503)."""
+    response = client.get("/test/webhook-not-configured")
+    assert response.status_code == 501
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.NOT_IMPLEMENTED
+
+
+def test_cache_exception_handler():
+    """CacheException (framework handler) must map to 500 without leaking detail."""
+    response = client.get("/test/cache-error")
+    assert response.status_code == 500
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.INTERNAL_ERROR
+    assert data["error"]["message"] == "Internal Server Error"
+
+
+def test_exception_table_status_mapping():
+    """Phase 2: every domain error maps to its expected HTTP status via the table."""
+    by_class = {spec.exc_class: spec for spec in build_exception_table()}
+    expected_static: dict[type, int] = {
+        ModelNotFoundError: 404,
+        DuplicateError: 409,
+        ForbiddenError: 403,
+        ValidationError: 400,
+        RateLimitExceededError: 429,
+        TenantContextError: 403,
+        ServiceUnavailableError: 503,
+        UnauthorizedError: 401,
+        PaymentRequiredError: 402,
+        WebhookVerificationError: 400,
+        WebhookNotConfiguredError: 501,
+        FileEntityNotFoundError: 404,
+        StorageNotConfiguredError: 400,
+        FileTypeNotAllowedError: 400,
+        QuotaExceededError: 507,
+        StorageBackendError: 502,
+        InvalidCredentialsError: 400,
+        SessionLimitExceededError: 429,
+    }
+    assert set(by_class) == set(expected_static) | {StripeError, AuthError}
+    for exc_class, expected_status in expected_static.items():
+        spec = by_class[exc_class]
+        assert not callable(spec.status)
+        assert spec.status == expected_status
+    # Dynamic-status rows resolve from the instance (covered over HTTP above).
+    assert callable(by_class[StripeError].status)
+    assert callable(by_class[AuthError].status)

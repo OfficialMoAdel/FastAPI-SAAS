@@ -5,8 +5,10 @@ Typed domain errors for file operations and storage configuration.
 
 from __future__ import annotations
 
+from src.app.shared.exceptions import AppException
 
-class StorageError(Exception):
+
+class StorageError(AppException):
     """Base exception for all storage-related errors."""
 
     pass
