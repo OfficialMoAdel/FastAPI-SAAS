@@ -1,415 +1,130 @@
 # FastAPI SaaS Core Infrastructure - Agent Guidance
 
 ## Package Identity
-Core infrastructure layer providing configuration, security, database, utilities, and background job processing for the FastAPI SaaS application.
+
+Shared infrastructure layer: grouped settings, async database, security services, cache, event bus, resilience, tenancy, RBAC, background worker, and observability. Everything here is framework-adjacent and reusable by all modules.
+
+## Structure
+
+```
+src/app/core/
+├── setup.py            # create_application(), lifespan_factory(), pool/cache init (composition root helpers)
+├── config/             # Grouped Pydantic Settings namespaces
+│   ├── __init__.py         # Exports `settings`, `Settings`, `EnvironmentOption`
+│   ├── app.py, auth.py, cache.py, crypt.py, database.py, environment.py,
+│   ├── integrations.py, performance.py, security.py, services.py
+├── db/                 # Engine, sessions, RLS, token blacklist DB  → [db/AGENTS.md](db/AGENTS.md)
+├── security/           # JWT, passwords, blacklist cache, ban, encryption → [security/AGENTS.md](security/AGENTS.md)
+├── cache/              # Redis cache client, deps, invalidation channel, warmer
+├── events/             # Internal event bus + DLQ
+├── exceptions/         # FastCRUD-derived HTTP-shaped exceptions (http_exceptions.py, cache_exceptions.py)
+├── monitoring/         # Metrics collection
+├── observability/      # structlog config, log sanitizer
+├── rbac/               # Permission checking (requires_permission)
+├── resilience/         # Circuit breakers (db_circuit_guard), retry policies
+├── tenancy/            # Tenant context (contextvars) helpers
+├── utils/              # cache (client slots), queue, and other pure utilities
+├── worker/             # ARQ worker: main.py, functions.py, rls_context.py, settings.py
+├── env_validator.py    # EnvironmentValidator (refuses bad prod env)
+├── errors.py           # EXCEPTION_HANDLERS table + setup_exception_handlers(app)
+├── health.py           # Health check helpers
+├── job_monitoring.py   # Background job status/health tracking
+├── json_utils.py       # ORJSON helpers
+├── logger.py           # get_logger / setup_logging (structlog + sanitizer)
+├── middleware_exempt.py# is_path_exempt — single source of exempt paths
+├── pagination.py       # Keyset/offset pagination primitives
+├── redis_provider.py   # THE Redis seam: get_redis / get_redis_pool / close_redis_pool
+└── schemas.py          # Shared core schemas
+```
+
+Note: the app-level event bus entry point is `src/app/events.py` (initializes `core/events`).
 
 ## Setup & Run
+
 ```bash
-# No core-specific setup - integrated with main application
-# Core components are auto-imported and configured
+# Test core
+uv run pytest tests/unit/core/ -v
 
-# Test core components
-uv run pytest tests/test_core.py -v
-
-# Type check core
+# Type check core (strict — disallow_untyped_defs is ON for core.*)
 uv run mypy src/app/core/
 ```
 
 ## Patterns & Conventions
 
-### Configuration Management
-✅ DO: Use Pydantic Settings with environment validation
+### Configuration — grouped namespaces
+✅ DO: Access settings through the namespace that owns it
 ```python
-# src/app/core/config.py (lines 1-50)
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        env_ignore_empty=True,
-    )
-    
-    SECRET_KEY: str = Field(..., min_length=32)
-    POSTGRES_SERVER: str = Field(..., description="Database server address")
+from src.app.core.config import settings
+
+settings.app.APP_NAME
+settings.env.ENVIRONMENT
+settings.cors.CORS_ORIGINS
 ```
+❌ DON'T: Hardcode configuration values or add new flat fields — add a field to the matching namespace file in `core/config/`.
 
-❌ DON'T: Hardcode configuration values
+### Redis — the ONE seam
+✅ DO: Acquire the Redis client through the provider or DI
 ```python
-# Never do this
-SECRET_KEY = "hardcoded-secret"
+from src.app.core.redis_provider import get_redis            # call-time
+redis: Annotated[Redis, Depends(async_get_redis)]            # router (from core.utils.cache)
 ```
+❌ DON'T: Construct `redis.Redis(...)` directly in services or read module-level globals.
 
-### Security Patterns
-✅ DO: Use bcrypt for password hashing
+### Error handling — central translation
+Domain exceptions derive from `AppException` (`src/app/shared/exceptions.py`). `core/errors.py` builds the `EXCEPTION_HANDLERS` table (`build_exception_table` + `_make_table_handler`) and registers it via `setup_exception_handlers(app)` in `core/setup.py::create_application`. Services stay HTTP-free; routers don't catch anything.
+❌ DON'T: Raise raw `HTTPException(409, ...)` from a service, or re-create `_base/exceptions` (deleted). HTTP-shaped exceptions (`core/exceptions/http_exceptions.py`) are the exception for routers that need them directly.
+
+### Resilience
+Wrap DB operations with the circuit guard:
 ```python
-# src/app/core/security.py (lines 1-15)
-def get_password_hash(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
-```
-
-✅ DO: JWT with access/refresh token pattern
-```python
-# src/app/core/security.py (lines 20-50)
-def create_access_token(
-    subject: Union[str, Any], expires_delta: Union[timedelta, None] = None
-) -> str:
-    if expires_delta is None:
-        expires_delta = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    
-    expire = datetime.now(timezone.utc) + expires_delta
-    to_encode = {"exp": expire, "sub": str(subject), "type": "access"}
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    return encoded_jwt
-```
-
-### Database Patterns
-✅ DO: Use async SQLAlchemy with proper session management
-```python
-# src/app/core/db/database.py (lines 1-30)
-async_engine = create_async_engine(
-    str(settings.POSTGRES_URI),
-    echo=settings.DB_ECHO,
-    pool_size=settings.DB_POOL_SIZE,
-    max_overflow=settings.DB_MAX_OVERFLOW,
-)
-
-async_session_maker = async_sessionmaker(
-    bind=async_engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
-```
-
-✅ DO: Use dependency injection for database sessions
-```python
-# src/app/core/db/database.py (lines 40-50)
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    async with async_session_maker() as session:
-        try:
-            yield session
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
-```
-
-### Exception Handling
-✅ DO: Use custom HTTP exceptions
-```python
-# src/app/core/exceptions/http_exceptions.py (lines 1-20)
-class DuplicateValueException(HTTPException):
-    def __init__(self, detail: str = "Duplicate value found", status_code: int = 409):
-        super().__init__(status_code=status_code, detail=detail)
-
-class NotFoundException(HTTPException):
-    def __init__(self, detail: str = "Resource not found", status_code: int = 404):
-        super().__init__(status_code=status_code, detail=detail)
-```
-
-### Background Job Patterns
-✅ DO: Use ARQ for async background processing
-```python
-# src/app/core/worker/functions.py (lines 1-30)
-async def send_email(ctx: dict, recipient: str, subject: str, body: str) -> None:
-    """Send email via background job."""
-    # Email sending logic here
-    logger.info(f"Email sent to {recipient}: {subject}")
-```
-
-### Job Monitoring (Phase 2)
-✅ DO: Use JobMonitor for background job observability
-```python
-# src/app/core/jobs/monitor.py (lines 10-30)
-from src.app.core.job_monitoring import get_job_monitor
-
-monitor = get_job_monitor()
-await monitor.track_job_start(
-    job_id=ctx["job_id"],
-    function_name="process_data",
-    tenant_id=tenant_id
-)
-try:
-    # ... job logic ...
-    await monitor.track_job_complete(job_id=ctx["job_id"], status="success")
-except Exception as e:
-    await monitor.track_job_complete(
-        job_id=ctx["job_id"], 
-        status="failed", 
-        error=str(e)
-    )
-```
-
-### Caching Patterns
-✅ DO: Use Redis for caching with proper serialization
-```python
-# src/app/core/utils/cache.py (lines 1-20)
-async def cache_get(key: str) -> Optional[Any]:
-    """Get value from Redis cache."""
-    try:
-        cached = await redis_client.get(key)
-        if cached:
-            return json.loads(cached)
-    except Exception as e:
-        logger.error(f"Cache get error: {e}")
-    return None
-```
-
-### Multi-Tenancy Patterns
-✅ DO: Use ContextVar for async-safe tenant context
-```python
-# src/app/core/tenancy/context.py
-from contextvars import ContextVar
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from src.app.modules.tenants.models import Tenant
-
-_current_tenant: ContextVar["Tenant | None"] = ContextVar("current_tenant", default=None)
-
-def get_tenant_context() -> "Tenant | None":
-    return _current_tenant.get()
-
-def set_tenant_context(tenant: "Tenant | None") -> None:
-    _current_tenant.set(tenant)
-
-def clear_tenant_context() -> None:
-    _current_tenant.set(None)  # Call in finally block
-```
-
-✅ DO: Clear tenant context in middleware finally block
-```python
-# src/app/middleware/tenant.py
-async def dispatch(self, request, call_next):
-    try:
-        # ... validate and set tenant context
-        set_tenant_context(tenant)
-        response = await call_next(request)
-        return response
-    finally:
-        clear_tenant_context()  # Prevents context leakage
-```
-
-✅ DO: Use dependency for tenant access in routes
-```python
-# src/app/api/dependencies.py
-def get_current_tenant() -> Tenant:
-    tenant = get_tenant_context()
-    if tenant is None:
-        raise HTTPException(status_code=500, detail="Tenant context not available")
-    return tenant
-```
-
-❌ DON'T: Access tenant context without middleware setup
-❌ DON'T: Forget to clear context in finally block
-
-### Tenant-Scoped Queries (the ONE seam)
-✅ DO: Build every tenant-scoped query through `tenant_scope()` / `scoped_query()`
-```python
-from src.app.core.db.tenant_crud import scoped_query, tenant_scope
-
-# Plain tenant-scoped select (request path — context wins, fail-closed without one):
-stmt = scoped_query(User).where(User.is_active == True)
-
-# Criterion form — composes onto your own select / update / count:
-stmt = select(User).options(joinedload(User.tier)).where(User.id == uid)
-stmt = stmt.where(tenant_scope(User))
-
-# Explicit tenant (worker path — context var unset, service holds its own tenant_id):
-stmt = scoped_query(Role, self.tenant_id).where(Role.id == role_id)
-```
-
-❌ DON'T: Hand-roll `select(M).where(M.tenant_id == tid)` in services —
-that re-implements the invariant per call site and drifts (see
-`inject_tenant_filter` history: M-4 override, B1 sentinel, B6 flag-leak).
-The context-vs-argument precedence, NO_TENANT rejection, and the explicit
-`allow_unscoped` escape hatch live in `tenant_scope()` — one place.
-
-## Touch Points / Key Files
-
-### Configuration
-- Settings: `src/app/core/config.py` - Pydantic settings with validation
-- Environment: `.env.local` - Local development secrets
-
-### Security
-- Security: `src/app/core/security.py` - JWT, password hashing, token validation
-- Token Blacklist: `src/app/core/db/token_blacklist.py` - Redis-based token blacklisting
-
-### Database
-- Database: `src/app/core/db/database.py` - Async SQLAlchemy setup
-- Models: `src/app/core/db/models.py` - Base model classes
-- CRUD Token: `src/app/core/db/crud_token_blacklist.py` - Token blacklist CRUD
-
-### Utilities
-- Cache: `src/app/core/utils/cache.py` - Redis caching utilities
-- Queue: `src/app/core/utils/queue.py` - Background job queue utilities
-- Rate Limit: `src/app/core/utils/rate_limit.py` - Rate limiting logic
-
-### Background Jobs
-- Worker Settings: `src/app/core/worker/settings.py` - ARQ worker configuration
-- Worker Functions: `src/app/core/worker/functions.py` - Background job definitions
-
-### Exceptions
-- HTTP Exceptions: `src/app/core/exceptions/http_exceptions.py` - Custom HTTP exceptions
-- Cache Exceptions: `src/app/core/exceptions/cache_exceptions.py` - Cache-related exceptions
-
-### Resilience Patterns
-✅ DO: Guard database operations with `db_circuit_guard` for fault tolerance
-```python
-# src/app/core/resilience/db_circuit_breaker.py
 from src.app.core.resilience import db_circuit_guard
-
 async with db_circuit_guard():
     result = await db.execute(stmt)
 ```
-The guard fails fast with HTTPException(503) when the circuit is OPEN,
-records only infrastructure errors (timeouts, disconnects, OperationalError),
-and ignores business-logic errors (IntegrityError, 404s, validation).
 
-✅ DO: Use centralized registry for circuit breaker management
-```python
-# src/app/core/resilience/registry.py
-from src.app.core.resilience import get_registry
-from src.app.core.utils.circuit_breaker import CircuitState
+### Tenancy & RLS
+Tenant context lives in contextvars (`core/tenancy/context.py` — always `clear_tenant_context()` in `finally`); Postgres RLS scoping via `core/db/rls.py` (`set_rls_context`, `rls_context`, `bypass_rls`). Background jobs use `core/worker/rls_context.py`.
 
-registry = get_registry()
-breaker = registry.get("database")
-if breaker is not None and breaker.state == CircuitState.OPEN:
-    raise HTTPException(status_code=503, detail="Database temporarily degraded")
-```
+## Touch Points
 
-### Multi-Tenancy
-- Tenant Context: `src/app/core/tenancy/context.py` - ContextVar for async-safe tenant isolation
-- Tenant Middleware: `src/app/middleware/tenant.py` - X-Tenant-ID header validation
-- Tenant Dependency: `src/app/api/dependencies.py` - `get_current_tenant()` dependency
-
-### Observability
-- Log Sanitizer: `src/app/core/observability/log_sanitizer.py` - Strips sensitive data from logs
-- Structlog Config: `src/app/core/observability/logger.py` - Logging configuration with sanitizer integration
-- Job Monitoring: `src/app/core/job_monitoring.py` - Background job status and health tracking
-
-## Observability Module
-Location: src/app/core/observability/
-
-### Log Sanitizer
-Purpose: Strips sensitive data from logs before output to prevent credential leakage.
-
-Key files:
-- `log_sanitizer.py`: LogSanitizer class, SanitizingProcessor
-
-Patterns detected and redacted:
-- JWTs (eyJ pattern)
-- API keys (api_key, Api-Key, X-API-Key)
-- Database URLs (postgresql://, mysql://, mongodb://)
-- Email addresses (user@domain.com → u***@domain.com)
-- Credit card numbers (Luhn algorithm validation)
-- Cloud provider keys (AWS, GCP, Azure patterns)
-- Bearer tokens
-- Session tokens
-
-Usage patterns:
-```python
-# Add to structlog processor chain
-from src.app.core.observability.log_sanitizer import SanitizingProcessor
-
-shared_processors = [
-    SanitizingProcessor(),
-    # ... other processors
-]
-
-structlog.configure(
-    processors=shared_processors + [
-        structlog.processors.JSONRenderer()
-    ]
-)
-```
-
-Integration with logger.py:
-- SanitizingProcessor added to shared_processors
-- Runs before JSON/Console renderer
-- Sanitizes all log event dict values recursively
-- Preserves log structure while redacting sensitive content
+- Composition root: `main.py` + `core/setup.py::create_application` / `lifespan_factory`
+- Error translation: `core/errors.py::setup_exception_handlers`
+- Redis: `core/redis_provider.py`
+- Logger: `core/logger.py::get_logger` + `core/observability/log_sanitizer.py` (redacts JWTs, API keys, DB URLs, emails, cards, bearer/session tokens)
+- Exempt paths: `core/middleware_exempt.py::is_path_exempt`
+- Pagination: `core/pagination.py` (keyset pagination is the default for list endpoints)
+- Worker: `core/worker/main.py` + `functions.py` (ARQ tasks)
 
 ## JIT Index Hints
 
-### Core Component Searches
 ```bash
-# Find configuration settings
-rg -n "class.*Settings" src/app/core/
-
-# Find security functions
-rg -n "def (create_|verify_|get_)" src/app/core/security.py
-
-# Find database setup
-rg -n "async_engine|async_session_maker" src/app/core/db/
+# Find settings fields
+rg -n "^[A-Z_]+:" src/app/core/config/
 
 # Find exception classes
-rg -n "class.*Exception" src/app/core/exceptions/
+rg -n "class .*Error|class .*Exception" src/app/core/ src/app/shared/
 
-# Find background jobs
-rg -n "async def.*ctx:" src/app/core/worker/
-```
+# Find Redis usage
+rg -n "get_redis|async_get_redis" src/app/
 
-### Configuration Searches
-```bash
-# Find all environment variables
-rg -n "^[A-Z_]+:" src/app/core/config.py
+# Find circuit guard usage
+rg -n "db_circuit_guard" src/app/
 
-# Find secret configuration
-rg -n "SECRET|PASSWORD|TOKEN" src/app/core/config.py
+# Find ARQ job functions
+rg -n "async def .*ctx" src/app/core/worker/functions.py
 ```
 
 ## Common Gotchas
 
-### Environment Variables
-✅ DO: Use `.env.local` for local development secrets
-❌ DON'T: Commit secrets to version control
-
-### Database Sessions
-✅ DO: Use dependency injection for sessions
-❌ DON'T: Create sessions manually in routes
-
-### Async/Await
-✅ DO: All database operations must be async
-❌ DON'T: Use sync database operations
-
-### JWT Tokens
-✅ DO: Include token type in JWT payload
-```python
-to_encode = {"exp": expire, "sub": str(subject), "type": "access"}
-```
-
-❌ DON'T: Create tokens without type verification
-
-### Error Handling
-✅ DO: Use custom HTTP exceptions with proper status codes
-❌ DON'T: Return generic error responses
+- **Strict typing**: `core.*` runs with `disallow_untyped_defs = true` (mypy override) — type every function.
+- **Sessions**: always via DI (`async_get_db`); never construct sessions in routes.
+- **Async only**: no blocking I/O; bcrypt/DB hashing already run in executors.
+- **UTC**: use `datetime.now(UTC)`, never `datetime.utcnow()`.
+- **RLS bypass** requires an explicit reason and is audited — reserve for admin ops.
+- **create_all gate**: outside `local`, startup `create_all` requires explicit `settings.app.CREATE_TABLES_ON_STARTUP=true` (tables created this way lack RLS policies).
 
 ## Pre-PR Checks
 
-### Core Testing
 ```bash
-# Test core components
-uv run pytest tests/ -k "test_core" -v
-
-# Type check core
-uv run mypy src/app/core/
-
-# Lint core
-uv run ruff check src/app/core/
-
-# Test database connection
-uv run pytest tests/test_database.py -v
-```
-
-### Configuration Validation
-```bash
-# Test configuration loading
-uv run python -c "from src.app.core.config import settings; print(settings.model_dump())"
-
-# Test database connection
-uv run python -c "from src.app.core.db.database import async_engine; import asyncio; asyncio.run(async_engine.dispose())"
+uv run mypy src/app/core/ && uv run ruff check src/app/core/ && uv run pytest tests/unit/core/ -v
 ```

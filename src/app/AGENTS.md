@@ -15,72 +15,60 @@ uv run uvicorn src.app.main:app --reload
 uv run uvicorn src.app.main:app --host 0.0.0.0 --port 8000
 
 # Test application startup
-uv run pytest tests/test_app_startup.py -v
+uv run python -c "from src.app.main import app; print('App loaded successfully')"
 ```
 
 ## Patterns & Conventions
 
-### Application Factory Pattern
-✅ DO: Configure all components in main.py
+### Composition Root Pattern
+✅ DO: Keep main.py thin — all wiring is delegated
 ```python
-# src/app/main.py (lines 1-50)
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+# src/app/main.py (condensed)
+from src.app.core.setup import create_application, lifespan_factory
 
-from .api import api_router
-from .admin import create_admin_interface
-from .core.config import settings
+async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
+    # phases: logging → env validation → default lifespan → redis init →
+    # rate limiting/security → cache warmup → admin mount → teardown
+    ...
 
-app = FastAPI(
-    title=settings.PROJECT_NAME,
-    description=settings.PROJECT_DESCRIPTION,
-    version=settings.VERSION,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json"
+app = create_application(
+    router=get_router(),
+    settings=settings,
+    lifespan=lifespan_with_admin,
+    default_response_class=ORJSONResponse,
 )
 
-# Configure middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.ALLOWED_HOSTS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Register routes
-app.include_router(api_router)
-
-# Add admin interface
-admin_app = create_admin_interface()
-if admin_app:
-    app.mount("/admin", admin_app)
+# Middleware stack (LIFO - last added runs first on request)
+app.add_middleware(RequestIDMiddleware)   # Innermost - accurate tracing
+app.add_middleware(AttackDetectionMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(TenantMiddleware)
+# ... GZip outermost; full ordering documented inline in main.py
 ```
+❌ DON'T: Add setup logic (routes, handlers, admin mount) directly to main.py — extend `core/setup.py` or a lifespan phase.
 
 ### Admin Interface Configuration
 ✅ DO: Use configurable admin panel with proper security
 ```python
-# src/app/admin/initialize.py (lines 10-50)
-def create_admin_interface() -> Optional[CRUDAdmin]:
-    if not settings.CRUD_ADMIN_ENABLED:
+# src/app/admin/initialize.py (condensed)
+def create_admin_interface() -> CRUDAdmin | None:
+    if not settings.admin.CRUD_ADMIN_ENABLED:
         return None
 
     admin = CRUDAdmin(
-        session=async_get_db,
+        session=_get_db_session,
         SECRET_KEY=settings.SECRET_KEY.get_secret_value(),
-        mount_path=settings.CRUD_ADMIN_MOUNT_PATH,
-        session_backend="redis" if settings.CRUD_ADMIN_REDIS_ENABLED else "memory",
-        allowed_ips=settings.CRUD_ADMIN_ALLOWED_IPS_LIST,
-        secure_cookies=settings.SESSION_SECURE_COOKIES,
-        enforce_https=settings.ENVIRONMENT == EnvironmentOption.PRODUCTION,
-        initial_admin={
-            "username": settings.ADMIN_USERNAME,
-            "password": settings.ADMIN_PASSWORD,
-        }
+        mount_path=settings.admin.CRUD_ADMIN_MOUNT_PATH,
+        session_backend="redis" if settings.admin.CRUD_ADMIN_REDIS_ENABLED else "memory",
+        allowed_ips=settings.admin.CRUD_ADMIN_ALLOWED_IPS_LIST or None,
+        secure_cookies=settings.admin.SESSION_SECURE_COOKIES,
+        enforce_https=settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION,
+        initial_admin={...},
     )
-    
     register_admin_views(admin)
     return admin
 ```
+Admin settings live in the `settings.admin` namespace (`src/app/core/config/services.py`); initial superuser creds in `settings.first_user`. The admin DB session bypasses RLS with an audited `bypass_rls` reason. Admin mounting happens inside the lifespan, not at import time.
 
 ❌ DON'T: Hardcode admin credentials or security settings
 
@@ -102,70 +90,52 @@ class ClientCacheMiddleware(BaseHTTPMiddleware):
 ```
 
 ### Schema Organization
-✅ DO: Organize schemas by domain
+✅ DO: Keep schemas in their module — `src/app/modules/{module}/schemas.py`, inheriting base DTOs
 ```python
-# src/app/schemas/user.py (lines 1-30)
-from pydantic import BaseModel, EmailStr
-from typing import Optional
+# src/app/modules/posts/schemas.py
+from src.app.modules._base.schemas import BaseCreate, BaseRead, BaseUpdate
 
-class UserBase(BaseModel):
-    email: EmailStr
-    username: str
-
-class UserCreate(UserBase):
-    password: str
-
-class UserRead(UserBase):
-    id: int
-    is_active: bool
-    created_at: datetime
-
-class UserUpdate(BaseModel):
-    username: Optional[str] = None
-    email: Optional[EmailStr] = None
+class PostCreate(BaseCreate): ...
+class PostRead(BaseRead): ...     # or BaseReadUUID for UUID PKs
+class PostUpdate(BaseUpdate): ...
 ```
+Only cross-cutting schemas live at `src/app/schemas/` (currently `job.py`).
 
 ### Global Exception Handling
-✅ DO: Handle all exceptions in main.py
+✅ DO: Rely on the central error translation — services raise domain errors, HTTP happens in one place
 ```python
-# src/app/main.py (lines 25-40)
-@app.exception_handler(DuplicateValueException)
-async def duplicate_value_exception_handler(request: Request, exc: DuplicateValueException) -> JSONResponse:
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": exc.detail},
-    )
-
-@app.exception_handler(NotFoundException)
-async def not_found_exception_handler(request: Request, exc: NotFoundException) -> JSONResponse:
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": exc.detail},
-    )
+# Domain errors: src/app/shared/exceptions.py (all derive from AppException)
+# HTTP translation table: src/app/core/errors.py (EXCEPTION_HANDLERS + _make_table_handler)
+# Registered once in core/setup.py::create_application → setup_exception_handlers(app)
 ```
+❌ DON'T: Register per-route `@app.exception_handler` blocks in main.py or raise raw `HTTPException` from services.
 
 ## Touch Points / Key Files
 
 ### Main Application
-- Main App: `src/app/main.py` - FastAPI application factory, route registration, middleware setup
-- App Init: `src/app/__init__.py` - Application initialization
+- Composition root: `src/app/main.py` — `create_application()` from `core/setup.py`, `lifespan_with_admin`, LIFO middleware stack, `setup_custom_openapi`
+- Setup helpers: `src/app/core/setup.py` — app factory, lifespan factory, CORS, docs control
 
 ### Admin Interface
-- Admin Init: `src/app/admin/initialize.py` - CRUDAdmin configuration
+- Admin Init: `src/app/admin/initialize.py` - CRUDAdmin configuration (mounted inside lifespan)
 - Admin Views: `src/app/admin/views.py` - Admin panel view registration
 
 ### Middleware
-- Cache Middleware: `src/app/middleware/client_cache_middleware.py` - Client-side caching headers
+- Stack: `src/app/middleware/` → [see src/app/middleware/AGENTS.md](middleware/AGENTS.md)
 
 ### Schemas
-- User Schemas: `src/app/schemas/user.py` - User-related Pydantic schemas
-- Job Schemas: `src/app/schemas/job.py` - Background job schemas
+- Job Schemas: `src/app/schemas/job.py` - Background job schemas (module schemas live in `modules/{m}/schemas.py`)
 
-### CRUD Base
-- CRUD Base: `src/app/crud/__init__.py` - Base CRUD operations and utilities
+### Outbound Adapters
+- Clients: `src/app/clients/{billing,notifications,storage}/` - Vendor SDK adapters (Stripe, SMTP, Azure Blob); services never import vendor SDKs directly
+- Delivery seams: `src/app/transport/` - inbound webhook/event intake
+
+### Shared
+- Domain exceptions: `src/app/shared/exceptions.py` - `AppException` hierarchy
+- App-level events: `src/app/events.py` - event bus initialization
 
 ### Models Base
-- Models Base: `src/app/models/__init__.py` - Base model definitions
+- Models Base: `src/app/models/__init__.py` - Alembic model discovery registry
 
 ## JIT Index Hints
 
@@ -199,23 +169,16 @@ rg -n "exception_handler" src/app/main.py
 ### Configuration Searches
 ```bash
 # Find admin settings
-rg -n "CRUD_ADMIN_" src/app/core/config.py
+rg -n "CRUD_ADMIN_" src/app/core/config/
 
 # Find CORS settings
-rg -n "ALLOWED_HOSTS|CORS" src/app/core/config.py
+rg -n "CORS" src/app/core/config/
 ```
 
 ## Common Gotchas
 
 ### Admin Security
-✅ DO: Use environment-based admin configuration
-```python
-initial_admin={
-    "username": settings.ADMIN_USERNAME,
-    "password": settings.ADMIN_PASSWORD,
-}
-```
-
+✅ DO: Use environment-based admin configuration (`settings.admin`, `settings.first_user`)
 ❌ DON'T: Hardcode admin credentials
 
 ### Middleware Order
@@ -250,10 +213,10 @@ class UserCreate(BaseModel):
 uv run python -c "from src.app.main import app; print('App loaded successfully')"
 
 # Test admin interface
-uv run pytest tests/test_admin.py -v
+uv run pytest tests/unit/admin/ -v
 
 # Test middleware
-uv run pytest tests/test_middleware.py -v
+uv run pytest tests/unit/middleware/ -v
 
 # Type check app layer
 uv run mypy src/app/

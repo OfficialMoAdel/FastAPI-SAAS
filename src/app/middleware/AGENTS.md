@@ -2,13 +2,29 @@
 
 ## Package Identity
 
-FastAPI middleware components for tenant isolation, rate limiting, CORS, and request processing. Uses Starlette middleware pattern.
+Starlette middleware stack for tenant isolation, rate limiting, security hardening, and request observability. All middleware is registered in `src/app/main.py` — nowhere else.
+
+## Module Structure
+
+```
+src/app/middleware/
+├── __init__.py            # Exports all middleware
+├── attack_detection.py    # SQLi/XSS/path-traversal detection (log/block/ban modes)
+├── body_limit.py          # RequestBodyLimitMiddleware (MAX_BODY_SIZE)
+├── gzip_filter.py         # GZip with content-type filter (exempts SSE/binary)
+├── ip_filter.py           # IP whitelist/blacklist (Redis-backed, CIDR support)
+├── query_profiler.py      # Dev-mode DB query profiling (disabled in production)
+├── rate_limit.py          # GCRA user/tier-based rate limiting
+├── request_id.py          # X-Request-ID propagation (innermost)
+├── security_headers.py    # XSS-prevention headers
+└── tenant.py              # Tenant context extraction (header → validation → RLS)
+```
 
 ## Setup & Run
 
 ```bash
-# No separate setup - middleware auto-registered in main.py
-uv run pytest tests/integration/test_tenant_middleware.py -v
+# No separate setup - middleware registered in main.py
+uv run pytest tests/unit/middleware/ -v
 ```
 
 ## Patterns & Conventions
@@ -29,67 +45,43 @@ class MyMiddleware(BaseHTTPMiddleware):
 ### DON'T: Skip tenant context cleanup
 
 ```python
-# GOOD - Always clear context
 from src.app.core.tenancy.context import clear_tenant_context
 
 finally:
     clear_tenant_context()
 ```
 
-### DO: Exempt health check paths
+### DO: Use the central exempt-path helper
 
 ```python
-EXEMPT_PATHS = frozenset(["/docs", "/redoc", "/openapi.json", "/api/v1/health"])
-
-def is_exempt(path: str) -> bool:
-    return path in EXEMPT_PATHS or path.startswith("/api/v1/tenants")
+# src/app/core/middleware_exempt.py — single source of truth for exempt paths
+from src.app.core.middleware_exempt import is_path_exempt
 ```
 
-### DO: Set proper CORS origins
+## Registration Order (from `src/app/main.py`)
 
-```python
-# In config.py - be restrictive in production
-CORS_ORIGINS: list[str] = ["https://trusted-domain.com"]
-CORS_ALLOW_CREDENTIALS: bool = True
-```
-
-## Module Structure
+Middleware is LIFO — last added runs first on request:
 
 ```
-src/app/middleware/
-├── __init__.py           # Exports all middleware
-├── tenant.py             # Tenant validation middleware
-└── rate_limit.py         # Rate limiting middleware
+Request flow:
+  GZip → QueryProfiler → IPFilter → BodyLimit → AttackDetection
+    → SecurityHeaders → Tenant → RateLimit → RequestID → Handler
 ```
+
+Key decisions (documented inline in main.py):
+- **RequestID**: first added = innermost, closest to handler for accurate tracing
+- **RateLimit** before expensive processing; **AttackDetection** after body limit so a cheap 429 rejects oversized payloads first
+- **IPFilter** runs early and sets `ip_whitelisted` state consumed by RateLimit
+- **GZip** last = outermost, compresses all responses including errors
 
 ## Touch Points / Key Files
 
-### Security Middleware (New)
-- **Attack Detection**: `src/app/middleware/attack_detection.py` - Detects SQL injection, XSS, path traversal
-  - Config: `ATTACK_DETECTION_ENABLED`, `ATTACK_DETECTION_MODE` (log/block/ban), `ATTACK_DETECTION_LOG_FULL_REQUEST`
-  - Patterns: SQL keywords, XSS payloads, directory traversal sequences
-  - Modes: log=record only, block=403 response, ban=add to IP blacklist
-  
-- **IP Filter**: `src/app/middleware/ip_filter.py` - IP whitelisting/blacklisting
-  - Uses Redis for persistent storage
-  - Supports CIDR notation and exact matches
-  - Integrates with attack detection for auto-banning
-  
-- **Rate Limit**: `src/app/middleware/rate_limit.py` - Request rate limiting
-  - Per-endpoint and global limits
-  - Redis-backed sliding window
-  - Customizable burst allowances
-  
-- **Query Profiler**: `src/app/middleware/query_profiler.py` - Database query monitoring
-  - Tracks query count and execution time per request
-  - Identifies N+1 queries and slow queries
-  - Adds X-Query-Count and X-Query-Time headers
-  - Config: `QUERY_PROFILER_ENABLED`, `QUERY_PROFILER_SLOW_THRESHOLD_MS`
-
-### Standard Middleware
-- Cache Middleware: `src/app/middleware/client_cache_middleware.py` - Client-side caching headers
-- Audit Log: `src/app/middleware/audit_log.py` - Request audit logging
-- Bad Bot: `src/app/middleware/bad_bot.py` - User agent filtering
+- Attack detection: `attack_detection.py` — config `ATTACK_DETECTION_ENABLED`, `ATTACK_DETECTION_MODE` (log/block/ban), `ATTACK_DETECTION_LOG_FULL_REQUEST`
+- IP filter: `ip_filter.py` — Redis-backed, CIDR + exact matches, auto-ban integration
+- Rate limit: `rate_limit.py` — GCRA (Redis), per-user/tier limits
+- Query profiler: `query_profiler.py` — `QUERY_PROFILER_ENABLED`, `QUERY_PROFILER_SLOW_THRESHOLD_MS`; adds `X-Query-Count`/`X-Query-Time` headers
+- Tenant: `tenant.py` — header validation → tenant context → RLS session variables
+- Exempt paths: `src/app/core/middleware_exempt.py`
 
 ## JIT Index Hints
 
@@ -98,10 +90,10 @@ src/app/middleware/
 rg -n "class.*Middleware" src/app/middleware/
 
 # Find middleware registration
-rg -n "add_middleware" src/app/
+rg -n "add_middleware" src/app/main.py
 
 # Find tenant context usage
-rg -n "tenant_context" src/app/
+rg -n "tenant_context|clear_tenant_context" src/app/
 
 # Find rate limit checks
 rg -n "rate_limit" src/app/middleware/
@@ -109,15 +101,14 @@ rg -n "rate_limit" src/app/middleware/
 
 ## Common Gotchas
 
-- **Order matters**: Middleware executes in registration order (reverse for response)
-- **Tenant context**: Must be cleared in finally block to prevent leakage
-- **Exempt paths**: Health checks and auth endpoints should be exempt
-- **Rate limiting**: Applied per-tenant based on tier configuration
+- **Order matters**: registration order = reverse execution order; see the flow diagram in `main.py` before inserting a new middleware
+- **Tenant context**: must be cleared in `finally` blocks to prevent cross-request leakage
+- **CORS**: applied in `core/setup.py::create_application` (from `settings.cors`), NOT in main.py
+- **Rate limiting**: applied per-user/tier via Redis GCRA; health/auth paths are exempt
 - **CORS preflight**: OPTIONS requests bypass most middleware
 
 ## Pre-PR Checks
 
 ```bash
-uv run pytest tests/integration/test_tenant_middleware.py -v && \
-uv run ruff check src/app/middleware/
+uv run pytest tests/unit/middleware/ -v && uv run ruff check src/app/middleware/ && uv run mypy src/app/middleware/
 ```

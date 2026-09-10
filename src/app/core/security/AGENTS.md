@@ -2,16 +2,42 @@
 
 ## Package Identity
 
-JWT authentication, password hashing (bcrypt), token blacklisting, and OAuth2 utilities. Uses python-jose for JWT and bcrypt for password hashing.
+Core security services: JWT issuing/verification (PyJWT), async bcrypt password hashing, token blacklisting (Redis L1 + DB fallback), IP auto-ban, credential encryption, session management, SSRF protection, and rate-limit policy resolution.
+
+> JWT library is **PyJWT** (`pyjwt>=2.8.0`) — not python-jose.
+
+## Module Structure
+
+```
+src/app/core/security/
+├── __init__.py                # Facade exports
+├── password.py                # async get_password_hash / verify_password (bcrypt via executor)
+├── jwt_service.py             # create_access_token, create_refresh_token, verify_token,
+│                              # is_token_revoked, blacklist_tokens (authoritative)
+├── jwt_utils.py               # decode helpers, cached JWT claims on request.state
+├── tokens.py                  # TokenGenerator, hash_token, SSO/magic-link pending stores
+├── token_blacklist_cache.py   # Redis L1 blacklist cache (+ Lua), warm_cache_from_db
+├── auth_prefetch.py           # execute_composite_auth_prefetch (user+tenant in 1 RTT)
+├── session_manager.py         # SessionManager (login session registry)
+├── login_helpers.py           # refresh-cookie helpers (set/get/clear, cookie names)
+├── pending_token_store.py     # PendingTokenStore (MFA/SSO/magic-link pending tokens)
+├── auto_ban.py                # IP auto-ban: violations, ban/unban, L1 invalidation
+├── rate_policy.py             # resolve_rate_limits, evaluate_rate_policy, rate keys
+├── rate_limit_cache.py        # tier rate-policy cache warm/invalidate
+├── encryption.py              # CredentialEncryption (Fernet/MultiFernet key rotation)
+├── url_validator.py           # SSRF protection for webhook URLs
+├── logging.py                 # SecurityEvent types + log_security_event
+└── rbac.py → moved            # RBAC checks live in src/app/core/rbac/
+```
 
 ## Setup & Run
 
 ```bash
-# Verify security config
-uv run python -c "from src.app.core.security import SECRET_KEY; print('Security module loaded')"
+# Run auth/security tests
+uv run pytest tests/unit/ -k "security or jwt or token" -v
 
-# Run auth tests
-uv run pytest tests/integration/test_auth_api.py -v
+# Type check security
+uv run mypy src/app/core/security/
 ```
 
 ## Patterns & Conventions
@@ -21,99 +47,74 @@ uv run pytest tests/integration/test_auth_api.py -v
 ```python
 from src.app.core.security import get_password_hash, verify_password
 
-async def create_user(password: str):
-    hashed = await get_password_hash(password)
-    return hashed
-
-async def authenticate(password: str, hashed: str):
-    return await verify_password(password, hashed)
+hashed = await get_password_hash(password)          # bcrypt runs in a thread executor
+ok = await verify_password(plain, hashed)
 ```
 
 ### DON'T: Use synchronous bcrypt in async context
 
 ```python
-# BAD - Blocking call
+# BAD - blocks the event loop
 import bcrypt
-hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())  # Blocks event loop!
+hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
 ```
 
-### DO: Use token blacklisting for logout
+### DO: Use the JWT service for token lifecycle
 
 ```python
-from src.app.core.security import blacklist_tokens
-
-async def logout(access_token: str, refresh_token: str, db: AsyncSession):
-    await blacklist_tokens(access_token, refresh_token, db)
-```
-
-### DO: Set proper cookie attributes
-
-```python
-response.set_cookie(
-    key="refresh_token",
-    value=refresh_token,
-    httponly=True,      # Prevents XSS
-    secure=True,        # HTTPS only
-    samesite="lax",
-    max_age=max_age,
+from src.app.core.security.jwt_service import (
+    create_access_token, create_refresh_token, verify_token, blacklist_tokens, TokenType,
 )
+
+token = await create_access_token({"sub": user.username, "type": TokenType.ACCESS})
+await verify_token(token, expected_token_type=TokenType.ACCESS, db=db)
+await blacklist_tokens(access_token, refresh_token, db)   # logout: blacklist BOTH
 ```
 
-### DO: Use proper JWT claims
+Token verification checks: signature → type → revocation (Redis L1 → DB fallback) → token-version bump.
+
+### DO: Set proper cookie attributes (see `login_helpers.py`)
 
 ```python
-await create_access_token(data={
-    "sub": user["username"],
-    "tenant_id": str(tenant_id),
-    "role": "admin"
-})
-```
-
-## Module Structure
-
-```
-src/app/core/security/
-├── __init__.py           # Main exports: bcrypt, JWT, token functions
-├── rbac.py               # RBAC permission checking
-├── dependencies.py       # FastAPI dependencies for auth
-└── oauth2.py             # OAuth2 scheme configurations
+response.set_cookie(key="refresh_token", value=..., httponly=True, secure=True, samesite="lax")
 ```
 
 ## Touch Points
 
-- **Password hashing**: `core/security/__init__.py::get_password_hash`
-- **Token creation**: `core/security/__init__.py::create_access_token`
-- **Token verification**: `core/security/__init__.py::verify_token`
-- **RBAC checks**: `core/security/rbac.py::requires_permission`
+- **Password hashing**: `password.py::get_password_hash` / `verify_password` (also `needs_rehash`)
+- **Token issue/verify**: `jwt_service.py::create_access_token`, `verify_token`
+- **Revocation**: `jwt_service.py::is_token_blacklisted` + `token_blacklist_cache.py`
+- **SSO/magic-link pending state**: `tokens.py::get_sso_state_manager`, `get_magic_link_manager`
+- **FastAPI auth deps**: `src/app/api/deps/auth.py` (consumes this package)
+- **Token blacklist DB side**: `src/app/core/db/crud_token_blacklist.py`
 
 ## JIT Index Hints
 
 ```bash
 # Find JWT token creation
-rg -n "create_access_token" src/app/
+rg -n "create_access_token|create_refresh_token" src/app/
 
 # Find password hashing
-rg -n "get_password_hash\|verify_password" src/app/
+rg -n "get_password_hash|verify_password" src/app/
 
 # Find token blacklisting
 rg -n "blacklist" src/app/core/security/
 
-# Find permission checks
-rg -n "requires_permission" src/app/
+# Find security events
+rg -n "log_security_event|SecurityEventType" src/app/
 ```
 
 ## Common Gotchas
 
-- **Password hashing**: Always use bcrypt with proper salt rounds
-- **Token expiry**: Access tokens short (15min), refresh tokens longer (7 days)
-- **Cookie security**: Set `httponly=True`, `secure=True` in production
-- **Token blacklisting**: Required for proper logout functionality
-- **Superuser bypass**: Check `is_superuser` before permission checks
+- **Password hashing**: always `await` the async wrappers — never call bcrypt inline in request paths
+- **Token expiry**: short access tokens, longer refresh tokens; claims include token `type` and `jti`
+- **Logout**: must blacklist both access and refresh tokens
+- **Token-version bump** (password change / global logout) invalidates all issued tokens — don't bypass
+- **Cache warmup**: blacklist cache is warmed at startup (`main.py::_warm_token_blacklist_cache`), capped by `settings.app.TOKEN_BLACKLIST_WARMUP_LIMIT` (0 disables); warmup failure is fail-closed in production
+- **SSRF**: all outbound webhook URLs pass `url_validator.validate_webhook_url`
 
 ## Pre-PR Checks
 
 ```bash
-uv run pytest tests/integration/test_auth_api.py -v && \
-uv run mypy src/app/core/security/ && \
-uv run ruff check src/app/core/security/
+uv run pytest tests/unit/ -k "security or jwt or token" -v && uv run mypy src/app/core/security/ && uv run ruff check src/app/core/security/
 ```

@@ -1,102 +1,78 @@
 # FastAPI SaaS API Layer - Agent Guidance
 
 ## Package Identity
-Manages API versioning and routing aggregation for the FastAPI SaaS platform. Routers are defined within feature modules and aggregated here.
+
+API versioning, dependency injection seams, OpenAPI customization, and route aggregation. Routers live in feature modules; this package aggregates them and provides shared FastAPI dependencies.
+
+## Structure
+
+```
+src/app/api/
+├── __init__.py        # get_router() — wires v1 router into the app
+├── deps/              # Shared dependency injection seams
+│   ├── auth.py            # get_current_user, get_current_superuser, optional auth
+│   ├── core.py            # DB session, pagination, common deps
+│   ├── request_context.py # RequestContext resolution (principal/tenant seams)
+│   └── tenant.py          # Tenant-scoping dependencies
+├── monitoring.py      # API monitoring endpoints
+├── openapi.py         # setup_custom_openapi(app) — single OpenAPI wiring point
+└── v1/
+    ├── __init__.py    # v1 router: aggregates ALL module routers under /v1
+    └── admin/         # Superuser-protected admin endpoints
+        ├── circuit_breakers.py
+        └── jobs.py
+```
 
 ## Patterns & Conventions
 
-### API Versioning
-✅ DO: Use versioned API structure with aggregation
+### Route Registration
+✅ DO: Register new module routers in `src/app/api/v1/__init__.py` (one import + one `include_router`)
 ```python
-# src/app/api/v1/api.py (lines 1-30)
-from fastapi import APIRouter
-from src.app.modules.users.router import router as user_router
-from src.app.modules.tiers.router import router as tier_router
-
-api_router = APIRouter()
-api_router.include_router(user_router, prefix="/users", tags=["users"])
-api_router.include_router(tier_router, prefix="/tiers", tags=["tiers"])
+# src/app/api/v1/__init__.py
+from src.app.modules.posts.router import router as posts_router
+router.include_router(posts_router)
 ```
+❌ DON'T: Create endpoint files under `v1/` — there are none today (only `admin/`); endpoints belong in `src/app/modules/{module}/router.py`.
 
-### Thin Router Pattern
-✅ DO: Keep routers thin - delegate all logic to service layer
+### Dependencies
+✅ DO: Import deps from the package facade, not internals
 ```python
-# src/app/modules/users/router.py (lines 10-20)
-@router.post("/", response_model=UserRead)
-async def create_user(
-    user: UserCreate,
-    db: Annotated[AsyncSession, Depends(async_get_db)]
-) -> UserRead:
-    """Create a new user."""
-    user_service = UserService(db)
-    return await user_service.create(user=user)
+from src.app.api.deps import get_current_superuser, get_current_user
 ```
-
-❌ DON'T: Put business logic or validation in the router
-```python
-# Wrong - no hashing or validation here
-@router.post("/")
-async def create_user(user: UserCreate, db: AsyncSession):
-    user_dict = user.model_dump()
-    user_dict["hashed_password"] = hash_password(...)  # Bad!
-    return await crud.create(db=db, object=user_dict)
-```
-
-### Dependency Injection
 ✅ DO: Use `Annotated` for clean dependency injection
 ```python
-# src/app/api/dependencies.py (lines 1-30)
-async def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    db: Annotated[AsyncSession, Depends(async_get_db)]
-) -> UserRead:
-    """Get current authenticated user from JWT token."""
-    # ... decode and validate token ...
-    return user
-
-# In router
 @router.get("/me")
-async def get_me(
-    current_user: Annotated[UserRead, Depends(get_current_user)]
-) -> UserRead:
+async def get_me(current_user: Annotated[UserRead, Depends(get_current_user)]) -> UserRead:
     return current_user
+```
+❌ DON'T: Re-implement auth/tenant resolution inside a module router — the seams live in `deps/`.
+
+### Thin Router Pattern
+✅ DO: Keep routers thin — delegate all logic to the module service
+```python
+@router.post("/", response_model=PostRead)
+async def create_post(
+    post: PostCreate,
+    request_context: Annotated[RequestContext, Depends(get_request_context)],
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> PostRead:
+    return await PostService(db).create(post=post, ctx=request_context)
 ```
 
 ### Response Models
-✅ DO: Always specify `response_model` for automatic serialization
-```python
-# Good - automatic validation and serialization
-@router.get("/{id}", response_model=UserRead)
-async def get_user(id: int) -> UserRead:
-    # ... fetch user ...
-    return user
-
-# Bad - returns raw data without schema validation
-@router.get("/{id}")
-async def get_user(id: int):
-    return {"id": id, "name": "John"}  # Not validated!
-```
+✅ DO: Always specify `response_model` for automatic serialization.
+❌ DON'T: Return raw dicts from endpoints.
 
 ## Touch Points / Key Files
 
-### API Aggregation
-- API Router: `src/app/api/v1/api.py` - Aggregates all module routers
-
-### Dependencies
-- Common Dependencies: `src/app/api/dependencies.py` - Auth, pagination, tenant context
-
-### Module Routers
-- Auth Router: `src/app/modules/auth/router.py` - Authentication endpoints
-- Users Router: `src/app/modules/users/router.py` - User management
-- Tiers Router: `src/app/modules/tiers/router.py` - Subscription tiers
-
-### Admin Routers (Phase 2)
-- Circuit Breakers: `src/app/api/v1/admin/circuit_breakers.py` - Circuit breaker monitoring and control
-- Jobs Admin: `src/app/api/v1/admin/jobs.py` - Background job monitoring and DLQ management
+- Router aggregation: `src/app/api/v1/__init__.py` (prefix `/v1`; admin routers protected with `Depends(get_current_superuser)`)
+- App-level wiring: `src/app/api/__init__.py::get_router`
+- OpenAPI schema: `src/app/api/openapi.py::setup_custom_openapi` (wired once in `main.py`)
+- Deps: `src/app/api/deps/auth.py`, `core.py`, `request_context.py`, `tenant.py`
+- Admin endpoints: `src/app/api/v1/admin/circuit_breakers.py`, `jobs.py`
 
 ## JIT Index Hints
 
-### Find API Routes
 ```bash
 # Find all router definitions
 rg -n "router = APIRouter" src/app/modules/
@@ -104,71 +80,22 @@ rg -n "router = APIRouter" src/app/modules/
 # Find endpoint decorators
 rg -n "@router\.(get|post|put|delete)" src/app/modules/
 
-# Find routes with specific response models
-rg -n "response_model=" src/app/modules/
-```
+# Find dependency functions
+rg -n "^async def get_" src/app/api/deps/
 
-### Find Dependencies
-```bash
-# Find all dependency injection functions
-rg -n "async def get_" src/app/api/
+# Verify route registration
+uv run python -c "from src.app.main import app; print([r.path for r in app.routes])"
 ```
 
 ## Common Gotchas
 
-### Route Prefixes
-✅ DO: Apply consistent prefixes when aggregating
-```python
-# In api.py - define prefix once
-api_router.include_router(user_router, prefix="/users", tags=["users"])
-
-# In module router - define routes relative to prefix
-@router.get("/{id}")  # Becomes /api/v1/users/{id}
-```
-
-❌ DON'T: Double-prefix routes
-```python
-# Wrong - prefix defined in both places
-@router.get("/users/{id}")  # Becomes /api/v1/users/users/{id}
-```
-
-### Response Validation
-✅ DO: Use `response_model` for all endpoints
-❌ DON'T: Return unvalidated data
-
-### Service Usage
-✅ DO: Inject service into router or create it per request
-```python
-# Option 1: Create per request
-@router.get("/{id}")
-async def get_user(id: int, db: AsyncSession) -> UserRead:
-    user_service = UserService(db)
-    return await user_service.get(id=id)
-
-# Option 2: Dependency injection (for shared state)
-def get_user_service(db: AsyncSession) -> UserService:
-    return UserService(db)
-
-@router.get("/{id}")
-async def get_user(
-    id: int,
-    user_service: Annotated[UserService, Depends(get_user_service)]
-) -> UserRead:
-    return await user_service.get(id=id)
-```
+- **Prefixes:** The `/v1` prefix is applied once in `v1/__init__.py`. Module routers define routes relative to their own prefix — never double-prefix.
+- **Admin protection:** Everything under `v1/admin/` requires superuser via `dependencies=[Depends(get_current_superuser)]` — keep it that way.
+- **Single OpenAPI hook:** Customize schemas in `api/openapi.py`, not by patching `app.openapi` elsewhere.
+- **Optional auth:** Some endpoints accept anonymous requests — use the optional-auth dep from `deps/auth.py` rather than hand-rolling token parsing.
 
 ## Pre-PR Checks
 
 ```bash
-# Type check API layer
-uv run mypy src/app/api/
-
-# Lint API layer
-uv run ruff check src/app/api/
-
-# Test API endpoints
-uv run pytest tests/api/ -v
-
-# Verify route registration
-uv run python -c "from src.app.main import app; print([r.path for r in app.routes])"
+uv run mypy src/app/api/ && uv run ruff check src/app/api/ && uv run pytest tests/contract/ -v
 ```

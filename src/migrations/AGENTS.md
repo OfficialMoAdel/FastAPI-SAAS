@@ -3,6 +3,8 @@
 ## Package Identity
 Database migration management for the FastAPI SaaS application using Alembic with async SQLAlchemy 2.0 and PostgreSQL.
 
+> **Migrations are consolidated into 8 named origin layers** (`01_foundation.py` … `08_enable_rls_policies.py`) — not date-stamped revisions. New schema changes should extend the relevant layer's `upgrade()`/`downgrade()` rather than stacking a new dated revision, unless the layer is already applied in production. `setup.py::_resolve_create_tables_on_start` notes that `create_all`-created tables silently lack the migration 08 RLS policies.
+
 ## Setup & Run
 ```bash
 # Generate new migration

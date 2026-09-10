@@ -24,12 +24,15 @@ tests/
 ├── contract/           # Contract tests - API contract validation
 ├── performance/        # Performance tests - benchmarks and profiling
 ├── benchmarks/         # Micro-benchmarks - fine-grained performance metrics
+├── benchmark/          # Benchmark scenarios (pytest-benchmark based)
 ├── load_testing/       # Load testing - stress and capacity testing
 ├── core/               # Core functionality tests
 ├── fixtures/           # Shared test fixtures
 ├── factories/          # Test data factories
 └── helpers/            # Test utility functions
 ```
+
+Root-level support files: `conftest.py` (global fixtures), `pytest_plugin.py` (custom pytest plugin), `perf_baseline_r1_opus.json` (performance baseline).
 
 ---
 

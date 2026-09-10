@@ -157,10 +157,15 @@ uv run python -m src.scripts.create_module products --force
 - Infrastructure: `src/app/core/` → [see src/app/core/AGENTS.md](src/app/core/AGENTS.md)
   - Security: `src/app/core/security/` → [see src/app/core/security/AGENTS.md](src/app/core/security/AGENTS.md)
   - Database: `src/app/core/db/` → [see src/app/core/db/AGENTS.md](src/app/core/db/AGENTS.md)
-- API layer: `src/app/api/` → [see src/app/api/AGENTS.md](src/app/api/AGENTS.md)
-- Middleware: `src/app/middleware/` → [see src/app/middleware/AGENTS.md](src/app/middleware/AGENTS.md)
+- API layer (versioning, deps): `src/app/api/` → [see src/app/api/AGENTS.md](src/app/api/AGENTS.md)
+- Outbound client adapters (billing/notifications/storage): `src/app/clients/`
+- Shared domain exceptions: `src/app/shared/exceptions.py` (all domain errors derive from `AppException`; translated to HTTP in `src/app/core/errors.py`)
+- Inbound delivery seams (webhook/event intake): `src/app/transport/`
+- Admin panel (CRUDAdmin mount): `src/app/admin/`
+- Middleware stack: `src/app/middleware/` → [see src/app/middleware/AGENTS.md](src/app/middleware/AGENTS.md)
 - Test suite: `tests/` → [see tests/AGENTS.md](tests/AGENTS.md)
 - Database migrations: `src/migrations/` → [see src/migrations/AGENTS.md](src/migrations/AGENTS.md)
+- Ops/perf scripts: `scripts/` (deploy, health-check, benchmarks); setup scripts: `src/scripts/` (superuser, tier, module generator)
 
 ### Module Documentation
 
@@ -205,6 +210,13 @@ All 21 feature modules are documented (20 have dedicated AGENTS.md files; `dashb
 - Find module structure: `tree src/app/modules/{module_name}`
 - Search module services: `rg -n "class.*Service" src/app/modules/`
 - Find CRUD operations: `rg -n "FastCRUD" src/app/modules/`
+
+## Architecture Snapshot
+
+- **Modular monolith.** `src/app/main.py` is a thin composition root: it calls `create_application()` from `src/app/core/setup.py`, wires `lifespan_with_admin`, adds the middleware stack (LIFO order documented inline in main.py), and registers exception handlers. Do NOT add setup logic to main.py — extend `core/setup.py` or the lifespan phases.
+- **Outbound integrations** (Stripe, SMTP, storage) live behind adapters in `src/app/clients/`; services never import vendor SDKs directly.
+- **Errors:** domain exceptions derive from `AppException` (`src/app/shared/exceptions.py`) and are translated to HTTP centrally in `src/app/core/errors.py`. Services stay HTTP-free.
+- Full architecture guide: [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ## Definition of Done
 

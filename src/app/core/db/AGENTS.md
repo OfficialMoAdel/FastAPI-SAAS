@@ -75,10 +75,17 @@ __table_args__ = (
 
 ```
 src/app/core/db/
-├── __init__.py           # Exports async_get_db, local_session
-├── database.py           # Engine, sessionmaker, Base
-├── models.py             # UUIDMixin, TimestampMixin
-└── rls.py                # Row Level Security helpers
+├── __init__.py              # Exports async_get_db, local_session, Base
+├── database.py              # Engine, sessionmaker, Base, get_async_engine
+├── models.py                # UUIDMixin, TimestampMixin
+├── pk.py                    # Primary key type helpers
+├── rls.py                   # Row Level Security helpers
+├── tenant_crud.py           # Tenant-scoped CRUD helpers
+├── tenant_mixin.py          # TenantMixin (tenant_id FK mixin)
+├── crud_token_blacklist.py  # DB CRUD for blacklisted tokens
+├── token_blacklist.py       # Token blacklist model
+├── profiler.py              # Query profiling support
+└── QUERY_OPTIMIZATION.md    # Query/index optimization guide
 ```
 
 ## Row Level Security (RLS) Module
@@ -139,7 +146,7 @@ async with bypass_rls(session, reason="System maintenance"):
 ```
 
 ### Tables Protected
-See migration `20250128_000011_enable_rls_policies.py` for full list. All tables with `tenant_id` foreign key are protected:
+See migration `src/migrations/versions/08_enable_rls_policies.py` for full list. All tables with `tenant_id` foreign key are protected:
 - users
 - tenants
 - posts
