@@ -17,6 +17,7 @@ from src.app.api.deps.auth import (
     get_optional_user,
     get_user_by_api_key,
 )
+from src.app.api.deps.request_context import get_request_context
 from src.app.core.config import settings
 
 
@@ -59,7 +60,14 @@ def build_custom_openapi(app: FastAPI) -> dict[str, Any]:
     # HARDENED: compare against CANONICAL callables imported from their owning modules
     protected: set[tuple[str, str]] = set()
     auth_callables = {
-        id(fn) for fn in (get_current_user, get_current_superuser, get_optional_user, get_user_by_api_key)
+        id(fn)
+        for fn in (
+            get_current_user,
+            get_current_superuser,
+            get_optional_user,
+            get_user_by_api_key,
+            get_request_context,
+        )
     }
 
     for route in app.routes:

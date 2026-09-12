@@ -1,21 +1,20 @@
-"""Tiers module (composed over rate_limits; re-exports for backward compatibility).
+"""Tiers module — canonical home of the Tier model, schemas, and service.
 
-A-M2: the Tier model now lives here canonically. Q-M6: TierService
-composes RateLimitService (no inheritance). The rate-limits rule layer
-remains in ``modules/rate_limits``.
+P1-18: single ownership complete. The rate-limits rule layer remains in
+``modules/rate_limits`` (which composes ``TierService`` for tier-shaped
+operations).
 
-Import-order note: ``rate_limits/models.py`` re-imports ``tiers/models``
-(the deprecated Tier re-export), so this package __init__ must NOT eagerly
-import ``tiers/service.py`` — the service reaches back into
-``rate_limits/models.py`` for RateLimit and would close a circular import
-when a caller imports rate_limits first. The service is therefore resolved
-lazily via __getattr__ (mirrors the storage module's lazy-service pattern).
+Import-order note: importing any ``tiers.*`` submodule executes this
+package __init__ first, so it must NOT eagerly import ``tiers/router``
+— the router needs ``src.app.api.deps`` (which transitively imports
+``users.service`` → ``tiers.models``). ``get_tier_service`` therefore
+stays lazy; everything else imports directly (verified cycle-free in
+both tiers-first and rate_limits-first orders).
 """
 
 from typing import Any
 
 from src.app.modules.tiers.models import Tier
-from src.app.modules.tiers.schemas import Tier as TierSchema
 from src.app.modules.tiers.schemas import (
     TierBase,
     TierCreate,
@@ -25,6 +24,7 @@ from src.app.modules.tiers.schemas import (
     TierUpdate,
     TierUpdateInternal,
 )
+from src.app.modules.tiers.service import TierService
 
 __all__ = [
     "Tier",
@@ -33,7 +33,6 @@ __all__ = [
     "TierCreateInternal",
     "TierDelete",
     "TierRead",
-    "TierSchema",
     "TierService",
     "TierUpdate",
     "TierUpdateInternal",
@@ -42,11 +41,7 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
-    """Lazily resolve the service exports to keep model imports cycle-free."""
-    if name == "TierService":
-        from src.app.modules.tiers import service as _service
-
-        return _service.TierService
+    """Lazily resolve the router factory to keep package import cycle-free."""
     if name == "get_tier_service":
         from src.app.modules.tiers import router as _router
 

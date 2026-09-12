@@ -172,10 +172,15 @@ class UserCreate(UserBase, BaseCreate):
     @field_validator("password")
     @classmethod
     def validate_password_complexity(cls, v: str) -> str:
-        """Validate password contains required character types.
+        """Validate password length and required character types.
 
-        Uses pre-compiled regex patterns for better performance.
+        Length floor lives here (not only in Field constraints) so every
+        server-side path that calls this validator (register, change,
+        reset) enforces it. Uses pre-compiled regex patterns for
+        better performance.
         """
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
         if not _PASSWORD_LOWERCASE_RE.search(v):
             raise ValueError("Password must contain at least one lowercase letter")
         if not _PASSWORD_UPPERCASE_RE.search(v):

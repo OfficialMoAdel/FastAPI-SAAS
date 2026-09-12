@@ -9,6 +9,7 @@ Tests cover:
 - Logout edge cases
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -916,3 +917,96 @@ class TestGetUserWithTierEagerRequireActive:
         assert result["id"] == 7
         stmt = mock_db.execute.call_args.args[0]
         assert "users.is_active IS true" in str(stmt)
+
+
+class TestP21RefreshHardening:
+    """P2-1: refresh-reuse family revocation + refresh-to-user tenant binding."""
+
+    @pytest.mark.asyncio
+    async def test_replayed_rotated_token_rejects_and_revokes_family(
+        self, auth_service, mock_db, mock_response
+    ):
+        """A rotated refresh token presented again → 401 + family revoked, same message (no oracle)."""
+        from src.app.shared.exceptions import UnauthorizedError
+
+        marker = json.dumps(
+            {"user_id": 1, "sid": "sid-1", "new_jti": "new-jti-1", "new_exp": 9999999999.0}
+        )
+        mock_redis_client = AsyncMock()
+        mock_redis_client.get = AsyncMock(return_value=marker)
+
+        with (
+            patch("src.app.core.redis_provider.get_redis", return_value=mock_redis_client),
+            patch(
+                "src.app.core.security.jwt_utils.extract_jti_unverified", return_value="old-jti-1"
+            ),
+            patch(
+                "src.app.core.security.session_manager.session_manager.invalidate_session",
+                new_callable=AsyncMock,
+            ) as mock_invalidate,
+            patch(
+                "src.app.core.security.token_blacklist_cache.add_token_to_blacklist",
+                new_callable=AsyncMock,
+            ) as mock_blacklist_new,
+            patch("src.app.modules.auth.service.audit", new_callable=AsyncMock) as mock_audit,
+        ):
+            with pytest.raises(UnauthorizedError) as exc_info:
+                await auth_service.refresh_access_token(
+                    "replayed_old_token", mock_response, mock_db
+                )
+
+            assert "Invalid refresh token" in str(exc_info.value.detail)
+            mock_invalidate.assert_awaited_once_with(1, "sid-1")
+            mock_blacklist_new.assert_awaited_once()
+            assert mock_blacklist_new.call_args.args[0] == "jti:new-jti-1"
+            mock_audit.assert_awaited_once()
+            assert mock_audit.call_args.kwargs["action"] == "auth.refresh_token_reuse_detected"
+
+    @pytest.mark.asyncio
+    async def test_refresh_with_mismatched_tenant_claim_rejected(
+        self, auth_service, mock_db, mock_response, mock_tenant
+    ):
+        """A refresh token whose tenant claim differs from the user's tenant → 401."""
+        from uuid import uuid4
+
+        from src.app.shared.exceptions import UnauthorizedError
+
+        user_tenant = uuid4()
+        token_tenant = uuid4()
+        assert user_tenant != token_tenant
+
+        mock_token_data = MagicMock()
+        mock_token_data.username_or_email = "testuser"
+        mock_token_data.absolute_exp = None
+        mock_token_data.token_version = 0
+
+        with (
+            patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
+            patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
+            patch(
+                "src.app.core.security.jwt_utils.decode_jwt_token", new_callable=AsyncMock
+            ) as mock_decode,
+            patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
+        ):
+            mock_verify.return_value = mock_token_data
+            mock_decode.return_value = {"tenant_id": str(token_tenant)}
+
+            mock_user_service = MagicMock()
+            mock_user_service.get_user_auth_info = AsyncMock(
+                return_value={
+                    "id": 1,
+                    "username": "testuser",
+                    "tenant_id": user_tenant,
+                    "is_deleted": False,
+                    "is_active": True,
+                    "token_version": 0,
+                }
+            )
+            mock_get_user_service.return_value = mock_user_service
+
+            with pytest.raises(UnauthorizedError) as exc_info:
+                await auth_service.refresh_access_token(
+                    "cross_tenant_refresh_token", mock_response, mock_db
+                )
+
+            assert "Invalid refresh token" in str(exc_info.value.detail)

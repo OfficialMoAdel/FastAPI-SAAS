@@ -38,8 +38,9 @@ all_users = await crud_users.get_multi(db=db)  # Returns all tenants' users!
 ### DO: Use user_service for business logic
 
 ```python
-from src.app.modules.users.service import user_service
+from src.app.modules.users import UserService
 
+user_service = UserService(db)
 user = await user_service.get_user(username=username, db=db)
 ```
 

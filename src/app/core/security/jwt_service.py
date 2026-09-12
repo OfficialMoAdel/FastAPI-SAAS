@@ -16,7 +16,7 @@ from redis.asyncio import Redis
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.config import settings
+from src.app.core.config import EnvironmentOption, settings
 from src.app.core.db.crud_token_blacklist import crud_token_blacklist
 from src.app.core.db.token_blacklist import TokenBlacklist
 from src.app.core.logger import get_logger
@@ -78,10 +78,7 @@ def reset_jwt_security_lookups() -> None:
     TEST-ONLY: guarded to non-production environments to prevent accidental
     unwiring in production (P0 fail-open fix).
     """
-    import os
-
-    env = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "local")).lower()
-    if env in ("production", "prod"):
+    if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
         raise RuntimeError("reset_jwt_security_lookups is test-only and blocked in production")
     global _token_version_lookup, _user_tenant_lookup
     _token_version_lookup = None

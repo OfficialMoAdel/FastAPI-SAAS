@@ -130,6 +130,9 @@ def _format_extra_data(to_invalidate_extra: dict[str, str], kwargs: dict[str, An
 async def _delete_keys_by_pattern(pattern: str) -> None:
     """Delete keys from Redis that match a given pattern using the SCAN command.
 
+    NOTE (P1-12): no longer called from the cache-write invalidation path —
+    kept for explicit/admin use only (plus its benchmark and unit tests).
+
     This function iteratively scans the Redis key space for keys that match a specific pattern
     and deletes them. It uses the SCAN command to efficiently find keys, which is more
     performance-friendly compared to the KEYS command, especially for large datasets.
@@ -390,7 +393,18 @@ def cache(  # noqa: C901
                     raise InvalidRequestError
 
                 # P3-2: read-through path extracted to _try_get_cached.
-                cached_data = await _try_get_cached(client, cache_key, request, expiration)
+                # P2-4: fail OPEN on cache-read failure (e.g. Redis down):
+                # a freshly computed response is always correct, so serve
+                # it instead of 500ing. The next request re-caches.
+                try:
+                    cached_data = await _try_get_cached(client, cache_key, request, expiration)
+                except Exception as e:
+                    _state.stampede_logger.warning(
+                        "Cache read failed; serving fresh without caching",
+                        error=str(e),
+                        cache_key=cache_key,
+                    )
+                    cached_data = None
                 if cached_data is not None:
                     # P6: Skip re-parse - return raw JSON bytes directly
                     return Response(content=cached_data, media_type="application/json")
@@ -443,41 +457,50 @@ def cache(  # noqa: C901
 
                 # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder
                 serialized_data = _state.json_dumps(to_serialize)
-                async with client.pipeline(transaction=False) as pipe:
-                    pipe.setex(cache_key, expiration, serialized_data)
+                # P2-4: fail OPEN on cache-write failure (e.g. Redis down):
+                # serve the fresh payload without caching instead of 500ing.
+                try:
+                    async with client.pipeline(transaction=False) as pipe:
+                        pipe.setex(cache_key, expiration, serialized_data)
 
-                    # Pattern-based invalidation registration
-                    if invalidation_patterns:
-                        formatted_patterns = [_format_prefix(p, kwargs) for p in invalidation_patterns]
-                        for pattern in formatted_patterns:
-                            idx_key = _state._pattern_index_key(pattern)
-                            pipe.sadd(idx_key, cache_key)
-                            pipe.expire(idx_key, expiration)
+                        # Pattern-based invalidation registration
+                        if invalidation_patterns:
+                            formatted_patterns = [_format_prefix(p, kwargs) for p in invalidation_patterns]
+                            for pattern in formatted_patterns:
+                                idx_key = _state._pattern_index_key(pattern)
+                                pipe.sadd(idx_key, cache_key)
+                                pipe.expire(idx_key, expiration)
 
-                    # ISSUE 2 FIX: Register tenant-scoped keys for invalidate_tenant_cache()
-                    if cache_key.startswith("tenant:"):
-                        parts = cache_key.split(":", 3)
-                        if len(parts) >= 2:
-                            tenant_id = parts[1]
-                            pipe.sadd(_state._tenant_index_key(tenant_id), cache_key)
-                            pipe.expire(_state._tenant_index_key(tenant_id), expiration * 2)
+                        # ISSUE 2 FIX: Register tenant-scoped keys for invalidate_tenant_cache()
+                        if cache_key.startswith("tenant:"):
+                            parts = cache_key.split(":", 3)
+                            if len(parts) >= 2:
+                                tenant_id = parts[1]
+                                pipe.sadd(_state._tenant_index_key(tenant_id), cache_key)
+                                pipe.expire(_state._tenant_index_key(tenant_id), expiration * 2)
 
-                            # Also add to prefix-sharded index.
-                            # NOTE: shard by the business prefix (key_prefix), NOT parts[2] —
-                            # for user_scoped keys parts[2] is "user", which would make
-                            # invalidate_tenant_cache(tenant_id, prefix="...") find nothing.
-                            sharded_idx_key = _state._tenant_prefix_index_key(
-                                tenant_id, _format_prefix(key_prefix, kwargs)
-                            )
-                            pipe.sadd(sharded_idx_key, cache_key)
-                            pipe.expire(sharded_idx_key, expiration * 2)
+                                # Also add to prefix-sharded index.
+                                # NOTE: shard by the business prefix (key_prefix), NOT parts[2] —
+                                # for user_scoped keys parts[2] is "user", which would make
+                                # invalidate_tenant_cache(tenant_id, prefix="...") find nothing.
+                                sharded_idx_key = _state._tenant_prefix_index_key(
+                                    tenant_id, _format_prefix(key_prefix, kwargs)
+                                )
+                                pipe.sadd(sharded_idx_key, cache_key)
+                                pipe.expire(sharded_idx_key, expiration * 2)
 
-                    # Release refresh lock if we acquired it
-                    refresh_lock_key = getattr(request.state, "cache_refresh_lock_key", None)
-                    if refresh_lock_key:
-                        pipe.delete(refresh_lock_key)
+                        # Release refresh lock if we acquired it
+                        refresh_lock_key = getattr(request.state, "cache_refresh_lock_key", None)
+                        if refresh_lock_key:
+                            pipe.delete(refresh_lock_key)
 
-                    await pipe.execute()
+                        await pipe.execute()
+                except Exception as e:
+                    _state.stampede_logger.warning(
+                        "Cache write failed; serving fresh without caching",
+                        error=str(e),
+                        cache_key=cache_key,
+                    )
 
                 return Response(content=serialized_data, media_type="application/json")
 
@@ -490,10 +513,19 @@ def cache(  # noqa: C901
                         keys_to_delete.append(f"{prefix}:{id}")
 
                 if keys_to_delete:
-                    async with client.pipeline() as pipe:
-                        for key in keys_to_delete:
-                            pipe.delete(key)
-                        await pipe.execute()
+                    # P2-4: fail OPEN — the mutation above already succeeded;
+                    # a dead cache backend must not 500 the request.
+                    # (Reads may be briefly stale; they revalidate on TTL.)
+                    try:
+                        async with client.pipeline() as pipe:
+                            for key in keys_to_delete:
+                                pipe.delete(key)
+                            await pipe.execute()
+                    except Exception as e:
+                        _state.stampede_logger.warning(
+                            "Cache invalidation failed; serving mutated result",
+                            error=str(e),
+                        )
 
                 if pattern_to_invalidate_extra is not None:
                     # Recompute the authorized principal (mirrors _build_cache_key)
@@ -514,24 +546,34 @@ def cache(  # noqa: C901
                             formatted_pattern = f"user:{_user_id}:{formatted_pattern}"
                         scoped_pattern = _state.build_tenant_key(formatted_pattern, _tenant_id)
 
-                        # P4 FIX: prefer the O(1) pattern-index (populated when
-                        # cached GETs declare matching `invalidation_patterns`).
-                        # Fall back to SCAN only when the index is empty — e.g.
-                        # keys written before this registration existed.
+                        # P1-12: O(1) pattern-index only. The old SCAN fallback
+                        # was O(N) over the whole keyspace on every write
+                        # whose index was empty (e.g. a GET endpoint missing
+                        # `invalidation_patterns`) — up to
+                        # MAX_SCAN_ITERATIONS round-trips per mutating
+                        # request. An empty index means no registered keys
+                        # to delete; a recurring miss means the GET side is
+                        # missing `invalidation_patterns`, so log it (same
+                        # event name as before) and fix the registration
+                        # instead of scanning. _delete_keys_by_pattern
+                        # remains available for explicit/admin use but is no
+                        # longer on the write hot path.
                         from src.app.core.utils.cache.patterns import invalidate_by_pattern as _invalidate_by_pattern
 
-                        deleted = await _invalidate_by_pattern(scoped_pattern)
+                        # P2-4: fail OPEN (see above).
+                        try:
+                            deleted = await _invalidate_by_pattern(scoped_pattern)
+                        except Exception as e:
+                            _state.stampede_logger.warning(
+                                "cache_invalidation_scan_fallback",
+                                extra={"pattern": scoped_pattern, "error": str(e)},
+                            )
+                            continue
                         if not deleted:
-                            # R1-03: the SCAN fallback is O(N) over the whole
-                            # keyspace. It must not be silent — a recurring
-                            # fallback means the GET endpoint is missing
-                            # `invalidation_patterns` and every write pays an
-                            # O(N) scan. Log it so the gap gets fixed.
                             _state.stampede_logger.warning(
                                 "cache_invalidation_scan_fallback",
                                 extra={"pattern": scoped_pattern},
                             )
-                            await _delete_keys_by_pattern(scoped_pattern)
 
             return result
 

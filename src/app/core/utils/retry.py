@@ -44,6 +44,8 @@ async def with_retry(
     backoff_factor: float = 2.0,
     exceptions: tuple[type[Exception], ...] = (Exception,),
     on_retry: Callable[[Exception, int], None] | None = None,
+    retry_after_attr: str | None = None,
+    max_retry_after: float = 120.0,
 ) -> T:
     """Execute function with exponential backoff retry.
 
@@ -54,6 +56,11 @@ async def with_retry(
         backoff_factor: Multiplier for delay on each retry
         exceptions: Tuple of exceptions to catch and retry
         on_retry: Optional callback on each retry (exception, attempt_number)
+        retry_after_attr: Optional attribute name read off the caught
+            exception for a server-directed wait (e.g. parsed `Retry-After`).
+            Honored when it is a positive number, capped at max_retry_after;
+            otherwise the computed exponential delay is used.
+        max_retry_after: Upper bound for a server-directed wait (seconds).
 
     Returns:
         Result from fn
@@ -86,7 +93,17 @@ async def with_retry(
                     delay=delay,
                 )
 
-            await asyncio.sleep(delay)
+            wait = delay
+            if retry_after_attr is not None:
+                server_wait = getattr(e, retry_after_attr, None)
+                if isinstance(server_wait, int | float) and server_wait > 0:
+                    wait = min(float(server_wait), max_retry_after)
+                    logger.debug(
+                        "Honoring server-directed retry wait",
+                        retry_after=wait,
+                    )
+
+            await asyncio.sleep(wait)
             delay *= backoff_factor
 
     if last_exception:

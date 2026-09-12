@@ -6,7 +6,7 @@ All endpoints require MANAGE_STORAGE_SETTINGS permission.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,7 @@ from src.app.modules.storage.schemas import (
     StorageSettingsUpdate,
 )
 from src.app.modules.storage.service import StorageAdminService
+from src.app.shared.exceptions import DuplicateError, ValidationError
 
 router = APIRouter(prefix="/storage", tags=["storage"])
 
@@ -54,10 +55,7 @@ async def get_storage_settings(
     tenant = ctx.require_tenant()
     storage_settings = await service.get_settings(tenant.tenant_id)
     if not storage_settings:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Storage settings not configured for this tenant",
-        )
+        raise StorageNotConfiguredError("Storage settings not configured for this tenant")
 
     return service.to_read_schema(storage_settings)
 
@@ -77,9 +75,10 @@ async def create_storage_settings(
     tenant = ctx.require_tenant()
     existing = await service.get_settings(tenant.tenant_id)
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Storage settings already exist for this tenant. Use PATCH to update.",
+        raise DuplicateError(
+            "storage_settings",
+            str(tenant.tenant_id),
+            message="Storage settings already exist for this tenant. Use PATCH to update.",
         )
 
     try:
@@ -87,22 +86,19 @@ async def create_storage_settings(
         return service.to_read_schema(storage_settings)
 
     except InvalidCredentialsError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Storage provider credentials are invalid or could not be validated.",
-        )
+        # Straight-through: the central table maps it to 400.
+        raise
 
-    except IntegrityError:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Storage settings already exist for this tenant. Use PATCH to update.",
-        )
+    except IntegrityError as e:
+        # Create race: a concurrent request inserted first.
+        raise DuplicateError(
+            "storage_settings",
+            str(tenant.tenant_id),
+            message="Storage settings already exist for this tenant. Use PATCH to update.",
+        ) from e
 
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid storage settings payload.",
-        )
+    except ValueError as e:
+        raise ValidationError("Invalid storage settings payload.") from e
 
 
 @router.patch(
@@ -123,22 +119,15 @@ async def update_storage_settings(
         return service.to_read_schema(storage_settings)
 
     except StorageNotConfiguredError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Storage settings not configured for this tenant",
-        )
+        # Straight-through: the central table maps it to 400.
+        raise
 
     except InvalidCredentialsError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Storage provider credentials are invalid or could not be validated.",
-        )
+        # Straight-through: the central table maps it to 400.
+        raise
 
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid storage settings payload.",
-        )
+    except ValueError as e:
+        raise ValidationError("Invalid storage settings payload.") from e
 
 
 __all__ = [

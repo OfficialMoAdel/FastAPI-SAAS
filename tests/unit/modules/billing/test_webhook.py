@@ -182,10 +182,10 @@ async def test_handle_webhook_event_invoice_payment_succeeded():
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
-        patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create,
-        patch(
-            "src.app.modules.billing.webhook.crud_billing_records.exists", new_callable=AsyncMock, return_value=False
-        ) as mock_exists,
+            patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create,
+            patch(
+                "src.app.modules.billing.webhook.crud_billing_records.get", new_callable=AsyncMock, return_value=None
+            ) as mock_get,
         patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock, return_value=None),
     ):
         # Mock bypass db session and subscription finding
@@ -220,7 +220,7 @@ async def test_handle_webhook_event_invoice_payment_succeeded():
 
         # Verify tenant context used for creation
         mock_tenant_ctx.assert_called_once_with(tenant_id)
-        mock_exists.assert_called_once()
+        mock_get.assert_called_once_with(db=mock_tenant_db, stripe_invoice_id="in_test")
         mock_create.assert_called_once()
         mock_tenant_db.commit.assert_called_once()
 
@@ -433,11 +433,14 @@ async def test_handle_webhook_event_charge_refunded():
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
         patch("src.app.modules.billing.webhook.crud_billing_records.exists", new_callable=AsyncMock) as mock_exists,
         patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create,
-        patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread,
-        patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock, return_value=None),
+            patch("src.app.modules.billing.gateway.get_payment_gateway") as mock_gateway_factory,
+            patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock, return_value=None),
     ):
         mock_exists.return_value = False
-        mock_to_thread.return_value = mock_invoice
+        # P1-9: invoice lookup goes through the PaymentGateway seam, not asyncio.to_thread.
+        mock_gateway = MagicMock()
+        mock_gateway.retrieve_invoice = AsyncMock(return_value=mock_invoice)
+        mock_gateway_factory.return_value = mock_gateway
 
         # Mock bypass db
         mock_bypass_db = AsyncMock()

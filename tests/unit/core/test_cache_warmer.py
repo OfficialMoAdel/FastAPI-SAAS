@@ -63,7 +63,6 @@ class TestWarmAllExecution:
         result = await test_warmer.warm_all(mock_session)
 
         assert result.tenants_cached == 10
-        assert result.tiers_cached == 5
         assert result.errors is None
 
     async def test_warm_all_handles_errors(self):
@@ -134,7 +133,6 @@ class TestWarmAllExecution:
         result = await test_warmer.warm_all(mock_session)
 
         assert result.tenants_cached == 0
-        assert result.tiers_cached == 0
         assert result.errors is None
 
 
@@ -157,7 +155,6 @@ class TestWarmSpecific:
         result = await test_warmer.warm_specific("tenant", mock_session)
 
         assert result.tenants_cached == 10
-        assert result.tiers_cached == 0
 
     async def test_warm_specific_unknown_warmer(self):
         """Test that warm_specific returns error for unknown warmer."""
@@ -257,7 +254,7 @@ class TestWarmingObservability:
         with patch("src.app.core.cache.warmer.logger") as mock_logger:
             await test_warmer.warm_all(mock_session)
 
-        assert any("[COMPLETE]" in call[0][0] and call[0][4] == 1 for call in mock_logger.info.call_args_list)
+        assert any("[COMPLETE]" in call[0][0] and call[0][3] == 1 for call in mock_logger.info.call_args_list)
 
     async def test_warm_all_logs_start_time(self):
         """Test that warm_all logs start time."""
@@ -286,3 +283,23 @@ class TestWarmingObservability:
             await test_warmer.warm_all(mock_session)
 
         assert any("[COMPLETE]" in call[0][0] for call in mock_logger.info.call_args_list)
+
+
+def test_p24_no_tier_warmer_registered() -> None:
+    """P2-4: the dead tier:name writer was removed — no 'tier' in the registry."""
+    from src.app.core.cache.warmer import warmer
+
+    assert not warmer.has_warmer("tier")
+    assert "tier" not in warmer.list_warmers()
+
+
+def test_p24_main_does_not_double_warm() -> None:
+    """P2-4: lifespan warms only the auth-critical blacklist; bulk warming
+    lives in the setup.py background task (single warmer)."""
+    import inspect
+
+    from src.app import main
+
+    source = inspect.getsource(main)
+    assert "_warm_application_caches" not in source
+    assert "warmer.warm_all" not in source

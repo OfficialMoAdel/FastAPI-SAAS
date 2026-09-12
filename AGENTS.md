@@ -160,8 +160,7 @@ uv run python -m src.scripts.create_module products --force
 - API layer (versioning, deps): `src/app/api/` → [see src/app/api/AGENTS.md](src/app/api/AGENTS.md)
 - Outbound client adapters (billing/notifications/storage): `src/app/clients/`
 - Shared domain exceptions: `src/app/shared/exceptions.py` (all domain errors derive from `AppException`; translated to HTTP in `src/app/core/errors.py`)
-- Inbound delivery seams (webhook/event intake): `src/app/transport/`
-- Admin panel (CRUDAdmin mount): `src/app/admin/`
+- Admin panel (CRUDAdmin mount): `src/app/admin/` → [see src/app/admin/AGENTS.md](src/app/admin/AGENTS.md)
 - Middleware stack: `src/app/middleware/` → [see src/app/middleware/AGENTS.md](src/app/middleware/AGENTS.md)
 - Test suite: `tests/` → [see tests/AGENTS.md](tests/AGENTS.md)
 - Database migrations: `src/migrations/` → [see src/migrations/AGENTS.md](src/migrations/AGENTS.md)

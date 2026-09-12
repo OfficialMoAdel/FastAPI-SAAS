@@ -14,6 +14,7 @@ from src.app.modules.{{ module_name }}.schemas import (
     {{ ModelName }}Update,
 )
 from src.app.modules.{{ module_name }}.service import {{ ModelName }}Service, get_{{ module_name }}_service
+from src.app.shared.exceptions import ModelNotFoundError
 
 router = APIRouter(prefix="/{{ module_name }}s", tags=["{{ module_name }}s"])
 
@@ -80,8 +81,6 @@ async def get_{{ module_name }}(
         schema_to_select={{ ModelName }}Read,  # type: ignore[arg-type]
     )
     if not result:
-        from src.app.shared.exceptions import ModelNotFoundError
-
         raise ModelNotFoundError("{{ ModelName }}", id)
     return {{ ModelName }}Read.model_validate(result)
 

@@ -13,6 +13,7 @@ streaming responses (SSE, large downloads) are not buffered into memory.
 """
 
 import time
+from urllib.parse import urlparse
 
 from fastapi import Request, status
 from starlette.datastructures import MutableHeaders
@@ -21,6 +22,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from src.app.core.config import settings
 from src.app.core.errors import ErrorCode, create_error_response
 from src.app.core.logger import get_logger
+from src.app.core.middleware_exempt import is_path_exempt
 from src.app.core.security.auto_ban import BanInfo, check_and_auto_ban, check_ban_and_rate_limit, get_ban_info
 from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
 from src.app.core.security.logging import SecurityEvent, SecurityEventType, log_security_event
@@ -92,6 +94,65 @@ class RateLimitMiddleware:
     def __init__(self, app: ASGIApp):
         self.app = app
 
+    async def _maybe_skip_rate_limit(
+        self,
+        request: Request,
+        client_ip: str,
+        norm_path: str,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> bool:
+        """Zero-Redis-cost skips: OPTIONS preflight, exempt paths, refresh.
+
+        Returns True when the request was fully handled (passed through or
+        ban-rejected) and the caller must return without touching Redis.
+        """
+        # P1-3: CORS preflight (OPTIONS) never carries credentials and
+        # browsers emit one per cross-origin write — rate-limiting it burns
+        # anonymous budget and risks 429ing legit traffic. Ban boundary
+        # preserved (B3 precedent) via the cheap cached lookup.
+        if request.method == "OPTIONS":
+            return await self._passthrough_unless_banned(request, client_ip, scope, receive, send)
+
+        # P1-3: health/live/ready + docs + webhook receivers are exempt from
+        # rate limiting via the shared helper (single source of truth in
+        # core/middleware_exempt.py). Full passthrough with NO ban check:
+        # ip_filter deliberately exempts these same paths from blacklist
+        # enforcement so orchestrator probes and Stripe deliveries never 403.
+        # Side effect: Stripe webhook retries can no longer be 429'd either.
+        if is_path_exempt(norm_path):
+            await self.app(scope, receive, send)
+            return True
+
+        # R5-5: refresh endpoint has its own strict dependency-level rate
+        # limit. B3: the skip must not bypass the ban boundary (see helper).
+        if norm_path in ("/api/v1/auth/refresh", "/api/v1/account/refresh"):
+            return await self._passthrough_unless_banned(request, client_ip, scope, receive, send)
+
+        return False
+
+    async def _passthrough_unless_banned(
+        self,
+        request: Request,
+        client_ip: str,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> bool:
+        """Pass the request through, enforcing the ban boundary first.
+
+        The ban check rides get_ban_info's 5s negative cache, so the common
+        clean-IP case costs zero Redis ops. Returns True always (handled).
+        """
+        if settings.security.AUTO_BAN_ENABLED:
+            ban_info = await get_ban_info(client_ip)
+            if ban_info.is_banned:
+                await _reject_banned_ip(client_ip, request, ban_info, scope, receive, send)
+                return True
+        await self.app(scope, receive, send)
+        return True
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Process request with tier-aware rate limiting and auto-ban."""
         if scope["type"] != "http":
@@ -102,28 +163,13 @@ class RateLimitMiddleware:
         client_ip = getattr(request.state, "client_ip", None) or get_client_ip(request)
 
         # SECURITY + H-3: ban check and GCRA rate limit are merged into ONE
-        # Redis Lua round-trip below (was 2 sequential RTTs). The refresh-path
-        # skip must happen BEFORE the combined call so skipped requests cost
-        # zero Redis ops.
+        # Redis Lua round-trip below (was 2 sequential RTTs). All skips must
+        # happen BEFORE the combined call so skipped requests cost zero ops.
 
-        # R5-5: Skip middleware rate limiting for refresh endpoint as it has a strict dependency-level rate limit
-        # H5 FIX: normalize path (strip slash/query/case) so /api/v1/auth/refresh/?foo=1 not missed
-        from urllib.parse import urlparse as _urlparse
-
-        _parsed = _urlparse(str(request.url))
-        _norm_path = _parsed.path.rstrip("/").lower() or "/"
-        if _norm_path in ("/api/v1/auth/refresh", "/api/v1/account/refresh"):
-            # B3: the refresh skip must not bypass the ban boundary. On
-            # origin/feature the ban check ran first on every path; the H-3
-            # re-ordering let banned IPs reach the refresh endpoint. Enforce
-            # the ban here with the cheap status-only lookup (5s negative
-            # cache in get_ban_info keeps the common case at zero Redis ops).
-            if settings.security.AUTO_BAN_ENABLED:
-                ban_info = await get_ban_info(client_ip)
-                if ban_info.is_banned:
-                    await _reject_banned_ip(client_ip, request, ban_info, scope, receive, send)
-                    return
-            await self.app(scope, receive, send)
+        # P1-3: normalize path once (strip slash/query/case) so
+        # /api/v1/auth/refresh/?foo=1 is not missed (was H5 inline import).
+        norm_path = urlparse(str(request.url)).path.rstrip("/").lower() or "/"
+        if await self._maybe_skip_rate_limit(request, client_ip, norm_path, scope, receive, send):
             return
 
         # Check if IP is whitelisted and should bypass rate limiting

@@ -306,6 +306,21 @@ class EventBus:
                 event_id="user-created-12345-abc"
             )
         """
+        # P2-7: resolve handlers BEFORE opening the OTel span. Handler-less
+        # publishes skip the span, the idempotency peek, and the envelope
+        # build below — all pure cost when nobody subscribes. Logs and the
+        # None return are preserved verbatim.
+        handlers = self._handlers.get(event_name, [])
+
+        if not handlers:
+            if not self._registration_complete:
+                _pkg.logger.error(
+                    "Event published before handler registration completed; event may be silently dropped",
+                    event_name=event_name,
+                )
+            _pkg.logger.debug("Event published no handlers", event_name=event_name)
+            return
+
         with _pkg.trace_span(
             "event_bus_publish",
             attributes={"event_name": event_name, "priority": priority.value, "event_id": event_id or "none"},
@@ -327,16 +342,8 @@ class EventBus:
                     )
                     return
 
-            handlers = self._handlers.get(event_name, [])
-
-            if not handlers:
-                if not self._registration_complete:
-                    _pkg.logger.error(
-                        "Event published before handler registration completed; event may be silently dropped",
-                        event_name=event_name,
-                    )
-                _pkg.logger.debug("Event published no handlers", event_name=event_name)
-                return
+            # Handlers resolved above (P2-7 fast path); the no-handlers case
+            # already returned before the span opened.
 
             # R5-10: Gate get_next_sequence behind a setting or consumer check
             # Avoids hitting Redis on every single event unless strict ordering is explicitly required

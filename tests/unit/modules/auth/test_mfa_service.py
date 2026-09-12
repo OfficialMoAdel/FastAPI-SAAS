@@ -738,3 +738,86 @@ class TestBackupCodeUsage:
 
         assert mock_model.last_used_at is not None
         assert isinstance(mock_model.last_used_at, datetime)
+
+
+class TestTotpReplayProtection:
+    """P1-6: used-code markers must outlive the code's validity window."""
+
+    @pytest.mark.asyncio
+    async def test_replay_marker_ttl_covers_validity_window(self, mfa_service, mock_db, mock_user_id):
+        """Marker TTL must cover (2*SKEW+1) intervals + margin (was 30s: ~60s replay)."""
+        from src.app.modules.auth.crud import crud_mfa_methods
+        from src.app.modules.auth.schemas import MFAVerifyRequest
+        from src.app.modules.auth.services.mfa import TOTP_INTERVAL, TOTP_REPLAY_MARKER_TTL, TOTP_SKEW
+
+        assert TOTP_REPLAY_MARKER_TTL >= (2 * TOTP_SKEW + 1) * TOTP_INTERVAL
+
+        mfa_method = {
+            "id": "test-id",
+            "user_id": mock_user_id,
+            "secret": "encrypted_secret",
+            "backup_codes": [],
+        }
+        mock_client = AsyncMock()
+        mock_client.set.return_value = True
+
+        with (
+            patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method),
+            patch.object(mfa_service, "_decrypt_secret", new_callable=AsyncMock, return_value="JBSWY3DPEHPK3PXP"),
+            patch("src.app.modules.auth.services.mfa.pyotp.TOTP") as mock_totp,
+            patch.object(mfa_service, "_check_mfa_lockout", new_callable=AsyncMock),
+            patch.object(mfa_service, "_reset_mfa_lockout", new_callable=AsyncMock),
+            patch("src.app.modules.auth.services.mfa.get_redis", return_value=mock_client),
+        ):
+            mock_totp_instance = Mock()
+            mock_totp_instance.verify.return_value = True
+            mock_totp.return_value = mock_totp_instance
+
+            request = MFAVerifyRequest(totp_token="123456", backup_code=None)
+            result = await mfa_service.verify_totp_token(
+                user_id=mock_user_id,
+                request=request,
+                db=mock_db,
+                prevent_replay=True,
+            )
+
+        assert result["valid"] is True
+        mock_client.set.assert_awaited_once_with(
+            f"mfa_used:{mock_user_id}:123456", "1", nx=True, ex=TOTP_REPLAY_MARKER_TTL
+        )
+
+    @pytest.mark.asyncio
+    async def test_replayed_code_rejected(self, mfa_service, mock_db, mock_user_id):
+        """Second use of the same code raises even though TOTP still verifies."""
+        from src.app.modules.auth.crud import crud_mfa_methods
+        from src.app.modules.auth.schemas import MFAVerifyRequest
+        from src.app.shared.exceptions import ValidationError
+
+        mfa_method = {
+            "id": "test-id",
+            "user_id": mock_user_id,
+            "secret": "encrypted_secret",
+            "backup_codes": [],
+        }
+        mock_client = AsyncMock()
+        mock_client.set.return_value = None  # NX lost: code already used
+
+        with (
+            patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method),
+            patch.object(mfa_service, "_decrypt_secret", new_callable=AsyncMock, return_value="JBSWY3DPEHPK3PXP"),
+            patch("src.app.modules.auth.services.mfa.pyotp.TOTP") as mock_totp,
+            patch.object(mfa_service, "_check_mfa_lockout", new_callable=AsyncMock),
+            patch("src.app.modules.auth.services.mfa.get_redis", return_value=mock_client),
+        ):
+            mock_totp_instance = Mock()
+            mock_totp_instance.verify.return_value = True
+            mock_totp.return_value = mock_totp_instance
+
+            request = MFAVerifyRequest(totp_token="123456", backup_code=None)
+            with pytest.raises(ValidationError, match="already been used"):
+                await mfa_service.verify_totp_token(
+                    user_id=mock_user_id,
+                    request=request,
+                    db=mock_db,
+                    prevent_replay=True,
+                )

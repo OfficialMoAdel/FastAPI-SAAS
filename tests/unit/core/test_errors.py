@@ -209,6 +209,14 @@ def test_rate_limit_handler():
     assert data["error"]["message"] == "Too many requests"
 
 
+def test_rate_limit_handler_sets_retry_after_header():
+    # P2-E regression: domain 429s carry Retry-After from the exception
+    # (headers hook in the EXCEPTION_HANDLERS table row).
+    response = client.get("/test/rate-limit")
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "60"
+
+
 def test_tenant_context_handler():
     response = client.get("/test/tenant-context")
     assert response.status_code == 403

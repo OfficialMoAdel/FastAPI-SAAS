@@ -63,6 +63,11 @@ class CacheClient(Protocol):
         """Serialize and set JSON value at ``key`` with optional TTL."""
         ...  # pragma: no cover - Protocol
 
+# P2-4: fail-safe default TTL (5 min, the TENANT-cache convention) so a
+# missing ttl can never create a non-expiring key (unbounded growth).
+_DEFAULT_TTL = 300
+
+
 class RedisCacheAdapter:
     """Adapter over the shared Redis client from ``redis_provider``.
 
@@ -80,16 +85,16 @@ class RedisCacheAdapter:
             return None
         return cast("str | None", await client.get(key))
 
-    async def set(self, key: str, value: str, ttl: int | None = None) -> None:
+    async def set(self, key: str, value: str, ttl: int | None = _DEFAULT_TTL) -> None:
         from src.app.core.redis_provider import get_redis
 
         client = get_redis()
         if client is None:
             return
-        if ttl is not None:
-            await client.set(key, value, ex=ttl)
-        else:
-            await client.set(key, value)
+        # P2-B: an explicit ttl=None is coerced to the fail-safe default —
+        # a missing ttl must never create a non-expiring key (unbounded
+        # growth). There is no persistent-key path on this adapter.
+        await client.set(key, value, ex=ttl if ttl is not None else _DEFAULT_TTL)
 
     async def delete(self, *keys: str) -> int:
         from src.app.core.redis_provider import get_redis
@@ -131,7 +136,7 @@ class RedisCacheAdapter:
             _get_logger(__name__).debug("cache_json_decode_failed", key=key, error=str(e))
             return None
 
-    async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None:
+    async def set_json(self, key: str, value: Any, ttl: int | None = _DEFAULT_TTL) -> None:
         from src.app.core.json_utils import json_dumps
 
         serialized = json_dumps(value, as_str=True)

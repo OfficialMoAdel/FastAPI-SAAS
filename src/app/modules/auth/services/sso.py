@@ -24,9 +24,10 @@ from src.app.modules.auth.schemas import (
 )
 from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.tenants.models import Tenant
+from src.app.modules.users import UserService
 from src.app.modules.users.schemas import UserCreate
-from src.app.modules.users.service import UserService
 from src.app.shared.exceptions import (
+    ForbiddenError,
     ModelNotFoundError,
     UnauthorizedError,
     ValidationError,
@@ -316,11 +317,31 @@ class SSOService:
                             "link this provider in your account settings."
                         )
                     else:
+                        # P1-4: S-M2 signup-gate parity with /account/register.
+                        # While AUTH_OPEN_REGISTRATION is False, a new SSO user
+                        # may only bootstrap a tenant's FIRST account; joining
+                        # an existing tenant requires an admin-created account.
+                        # Checked BEFORE the personal-tenant auto-create below
+                        # so a rejected signup leaves no orphan tenant behind.
+                        from src.app.modules.auth.services.registration_gate import (
+                            is_self_registration_allowed,
+                        )
+
+                        if not await is_self_registration_allowed(db):
+                            logger.warning(
+                                "registration_gate_rejected",
+                                path="/account/sso/callback",
+                                provider=provider,
+                            )
+                            raise ForbiddenError(
+                                "Registration is closed for this tenant. "
+                                "Ask an administrator to create your account."
+                            )
                         current_tenant = get_current_tenant()
                         if not current_tenant:
                             # Auto-create a personal tenant for organic SSO signups
+                            from src.app.modules.tenants import get_tenant_service
                             from src.app.modules.tenants.models import Tenant as TenantModel
-                            from src.app.modules.tenants.router import get_tenant_service
                             from src.app.modules.tenants.schemas import TenantCreate
 
                             tenant_svc = get_tenant_service(db)

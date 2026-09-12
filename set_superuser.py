@@ -7,6 +7,7 @@ sys.path.append(os.getcwd())
 
 # Import necessary modules
 from sqlalchemy import select, update
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.app.core.db.database import async_session_maker
 from src.app.modules.tenants.models import Tenant
@@ -39,7 +40,7 @@ async def main():
                 print("User updated successfully")
             else:
                 print(f"User {email} not found")
-    except Exception as e:
+    except SQLAlchemyError as e:
         print(f"Error: {e}")
 
 

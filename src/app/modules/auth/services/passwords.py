@@ -19,7 +19,7 @@ from src.app.core.security import get_password_hash, verify_password
 from src.app.core.security.tokens import hash_token
 from src.app.modules.audit_logs import audit
 from src.app.modules.auth.models import PasswordResetToken, generate_reset_token
-from src.app.modules.users.service import UserService
+from src.app.modules.users import UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
 from src.app.shared.exceptions import UnauthorizedError, ValidationError
 

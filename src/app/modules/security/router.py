@@ -19,18 +19,22 @@ Admin Endpoints:
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
+from structlog import get_logger
 
 from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.api.deps.auth import AuthenticatedUser
 from src.app.core.config import settings
+from src.app.core.events import EventPriority
+from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
 from src.app.core.security.auto_ban import (
     ban_ip,
     get_all_banned_ips,
     get_violation_stats,
     unban_ip,
 )
+from src.app.modules.audit_logs import audit
 from src.app.modules.auth.schemas import (
-    PasskeyCredentialResponse,
+    PasskeyCredentialList,
     PasskeyDeleteResponse,
 )
 from src.app.modules.auth.services.passkey import PasskeyService, get_passkey_service
@@ -53,18 +57,21 @@ from src.app.modules.security.service import ip_filter_service
 
 router = APIRouter(prefix="/security", tags=["security"])
 
+logger = get_logger(__name__)
+
 
 # ============================================================================
 # User-facing Endpoints (Passkey Management)
 # ============================================================================
 
 
-@router.get("/passkeys", response_model=list[PasskeyCredentialResponse])
+@router.get("/passkeys", response_model=PasskeyCredentialList)
 async def list_passkeys(
     ctx: RequestContextDep,
     passkey_svc: Annotated[PasskeyService, Depends(get_passkey_service)],
+    pagination: Annotated[PaginationParams, Depends(get_pagination_params)],
 ):
-    """List user's passkey credentials.
+    """List user's passkey credentials (paginated).
 
     This is a convenience endpoint that wraps /auth/passkey/credentials
     for backward compatibility with the old backend.
@@ -74,7 +81,12 @@ async def list_passkeys(
         ``GET /auth/passkey/credentials``. New clients should call the
         canonical ``/auth`` endpoint directly.
     """
-    return await passkey_svc.list_credentials(db=ctx.db, user_id=ctx.user_id)
+    credentials = await passkey_svc.list_credentials(db=ctx.db, user_id=ctx.user_id)
+    start = pagination.offset
+    page_items = credentials[start : start + pagination.limit]
+    return build_paginated_response(
+        items=page_items, total=len(credentials), page=pagination.page, per_page=pagination.per_page
+    )
 
 
 @router.delete("/passkeys/{passkey_id}", response_model=PasskeyDeleteResponse)
@@ -307,7 +319,7 @@ async def get_ip_filter_config(
 )
 async def update_ip_filter_config(
     config_update: IPFilterConfigUpdate,
-    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],
 ) -> IPFilterConfig:
     """Update IP filter configuration.
 
@@ -339,6 +351,20 @@ async def update_ip_filter_config(
         updates["IP_WHITELIST_BYPASS_RATE_LIMIT"] = config_update.whitelist_bypass_rate_limit
 
     await update_runtime_config(updates)
+
+    # P2-1: security-config mutations are audited (superuser actor).
+    try:
+        await audit(
+            action="security.ip_filter_config_updated",
+            entity_type="security_config",
+            entity_id="ip_filter",
+            tenant_id=None,
+            user_id=current_user.id,
+            details={"updates": updates},
+            priority=EventPriority.NORMAL,
+        )
+    except Exception as e:
+        logger.error("failed to audit ip filter config update", error=str(e))
 
     return IPFilterConfig(
         whitelist_enabled=settings.security.IP_WHITELIST_ENABLED,
@@ -382,7 +408,7 @@ async def get_auto_ban_config(
 )
 async def update_auto_ban_config(
     config_update: AutoBanConfigUpdate,
-    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],
 ) -> AutoBanConfig:
     """Update auto-ban configuration.
 
@@ -415,6 +441,20 @@ async def update_auto_ban_config(
         updates["AUTO_BAN_ESCALATION"] = config_update.escalation
 
     await update_runtime_config(updates)
+
+    # P2-1: security-config mutations are audited (superuser actor).
+    try:
+        await audit(
+            action="security.auto_ban_config_updated",
+            entity_type="security_config",
+            entity_id="auto_ban",
+            tenant_id=None,
+            user_id=current_user.id,
+            details={"updates": updates},
+            priority=EventPriority.NORMAL,
+        )
+    except Exception as e:
+        logger.error("failed to audit auto-ban config update", error=str(e))
 
     return AutoBanConfig(
         enabled=settings.security.AUTO_BAN_ENABLED,

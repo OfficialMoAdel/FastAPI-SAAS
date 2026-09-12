@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 
 from src.app.api.deps.request_context import RequestContext
 from src.app.core.tenancy.context import TenantContext
@@ -19,6 +18,7 @@ from src.app.modules.auth.routers.sso_settings import (
 from src.app.modules.auth.routers.sso_settings import (
     router as sso_router_inst,
 )
+from src.app.shared.exceptions import ModelNotFoundError, ValidationError
 
 
 class _RouterShim:
@@ -65,9 +65,8 @@ async def test_create_sso_settings_success(ctx):
 
 async def test_create_sso_settings_duplicate(ctx):
     with patch.object(crud_sso_settings, "exists", AsyncMock(return_value=True)):
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(ValidationError, match="already exist"):
             await sso_router.create_sso_settings(request=MagicMock(), settings=MagicMock(provider="google"), ctx=ctx)
-    assert exc.value.status_code == 400
 
 
 async def test_list_sso_settings(ctx):
@@ -94,9 +93,8 @@ async def test_get_sso_settings_success(ctx):
 async def test_get_sso_settings_not_found(ctx):
     with patch("src.app.modules.auth.services.sso_settings.sso_settings_service") as svc:
         svc.get_decrypted_settings = AsyncMock(return_value=None)
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(ModelNotFoundError, match="not found"):
             await sso_router.get_sso_settings(request=MagicMock(), provider="google", ctx=ctx)
-    assert exc.value.status_code == 404
 
 
 async def test_update_sso_settings_success(ctx):
@@ -113,9 +111,8 @@ async def test_update_sso_settings_success(ctx):
 
 async def test_update_sso_settings_not_found(ctx):
     with patch.object(crud_sso_settings, "exists", AsyncMock(return_value=False)):
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(ModelNotFoundError, match="not found"):
             await sso_router.update_sso_settings(request=MagicMock(), provider="google", values=MagicMock(), ctx=ctx)
-    assert exc.value.status_code == 404
 
 
 async def test_delete_sso_settings_success(ctx):
@@ -130,9 +127,8 @@ async def test_delete_sso_settings_success(ctx):
 
 async def test_delete_sso_settings_not_found(ctx):
     with patch.object(crud_sso_settings, "exists", AsyncMock(return_value=False)):
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(ModelNotFoundError, match="not found"):
             await sso_router.delete_sso_settings(request=MagicMock(), provider="google", ctx=ctx)
-    assert exc.value.status_code == 404
 
 
 async def test_update_sso_settings_passes_ctx_user_id(ctx):

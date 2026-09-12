@@ -41,8 +41,6 @@ def mock_ctx(mock_db, mock_tenant, mock_user):
 # Since using `client` requires dealing with JWTs and real app setup, and we want unit tests,
 # it is much faster and more isolated to just call the router functions directly!
 
-from fastapi import HTTPException
-
 from src.app.modules.audit_logs.router import (
     export_audit_logs,
     get_audit_log,
@@ -50,6 +48,7 @@ from src.app.modules.audit_logs.router import (
     list_audit_logs,
     list_available_actions,
 )
+from src.app.shared.exceptions import ModelNotFoundError, ValidationError
 
 
 @pytest.mark.asyncio
@@ -121,10 +120,8 @@ async def test_get_audit_log_not_found(mock_ctx):
     mock_result.scalar_one_or_none.return_value = None
     mock_ctx.db.execute = AsyncMock(return_value=mock_result)
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ModelNotFoundError, match="Audit log"):
         await get_audit_log(log_id=uuid4(), ctx=mock_ctx)
-
-    assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -168,7 +165,7 @@ async def test_export_audit_logs_too_many(mock_service_cls, mock_ctx):
     mock_service.export_count = AsyncMock(return_value=150000)
     mock_service_cls.return_value = mock_service
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ValidationError, match="Export exceeds maximum"):
         await export_audit_logs(
             ctx=mock_ctx,
             format="csv",
@@ -178,9 +175,6 @@ async def test_export_audit_logs_too_many(mock_service_cls, mock_ctx):
             start_date=None,
             end_date=None,
         )
-
-    assert exc.value.status_code == 400
-    assert "Export exceeds maximum" in str(exc.value.detail)
 
 
 @pytest.mark.asyncio

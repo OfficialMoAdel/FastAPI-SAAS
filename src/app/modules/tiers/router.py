@@ -1,4 +1,4 @@
-"""Tier API router - delegates to deep RateLimitService."""
+"""Tier API router - served by the canonical TierService."""
 
 from typing import Annotated, Any
 
@@ -9,9 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.deps import get_current_superuser
 from src.app.core.db.database import async_get_db
 from src.app.core.schemas import MessageResponse
-from src.app.modules.rate_limits.router import get_rate_limit_service
-from src.app.modules.rate_limits.schemas import TierCreate, TierRead, TierUpdate
-from src.app.modules.rate_limits.service import RateLimitService
+from src.app.modules.tiers.schemas import TierCreate, TierRead, TierUpdate
 from src.app.modules.tiers.service import TierService
 
 router = APIRouter(tags=["tiers"])
@@ -34,7 +32,7 @@ def get_tier_service(db: AsyncSession = Depends(async_get_db)) -> TierService:
 async def write_tier(
     request: Request,
     tier: TierCreate,
-    service: Annotated[RateLimitService, Depends(get_rate_limit_service)],
+    service: Annotated[TierService, Depends(get_tier_service)],
 ) -> Any:
     """Create a new tier (superuser only)."""
     return await service.create_tier(tier)
@@ -43,7 +41,7 @@ async def write_tier(
 @router.get("/tiers", response_model=PaginatedListResponse[TierRead])
 async def read_tiers(
     request: Request,
-    service: Annotated[RateLimitService, Depends(get_rate_limit_service)],
+    service: Annotated[TierService, Depends(get_tier_service)],
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(10, ge=1, le=100, description="Items per page"),
 ) -> Any:
@@ -55,7 +53,7 @@ async def read_tiers(
 async def read_tier(
     request: Request,
     name: str,
-    service: Annotated[RateLimitService, Depends(get_rate_limit_service)],
+    service: Annotated[TierService, Depends(get_tier_service)],
 ) -> Any:
     """Get tier by name."""
     return await service.get_tier(name)
@@ -66,7 +64,7 @@ async def patch_tier(
     request: Request,
     name: str,
     values: TierUpdate,
-    service: Annotated[RateLimitService, Depends(get_rate_limit_service)],
+    service: Annotated[TierService, Depends(get_tier_service)],
 ) -> Any:
     """Update a tier (superuser only)."""
     return await service.update_tier(name, values)
@@ -76,7 +74,7 @@ async def patch_tier(
 async def erase_tier(
     request: Request,
     name: str,
-    service: Annotated[RateLimitService, Depends(get_rate_limit_service)],
+    service: Annotated[TierService, Depends(get_tier_service)],
 ) -> Any:
     """Delete a tier (superuser only)."""
     return await service.delete_tier(name)

@@ -12,7 +12,7 @@ src/app/middleware/
 ├── attack_detection.py    # SQLi/XSS/path-traversal detection (log/block/ban modes)
 ├── body_limit.py          # RequestBodyLimitMiddleware (MAX_BODY_SIZE)
 ├── gzip_filter.py         # GZip with content-type filter (exempts SSE/binary)
-├── ip_filter.py           # IP whitelist/blacklist (Redis-backed, CIDR support)
+├── ip_filter.py           # IP whitelist/blacklist (Redis-backed, exact-key matching)
 ├── query_profiler.py      # Dev-mode DB query profiling (disabled in production)
 ├── rate_limit.py          # GCRA user/tier-based rate limiting
 ├── request_id.py          # X-Request-ID propagation (innermost)
@@ -60,24 +60,28 @@ from src.app.core.middleware_exempt import is_path_exempt
 
 ## Registration Order (from `src/app/main.py`)
 
-Middleware is LIFO — last added runs first on request:
+Middleware is LIFO — last added runs first on request. Pinned by
+`tests/unit/test_middleware_order.py` (R1-16: the order is a security
+contract — a reorder fails CI):
 
 ```
 Request flow:
-  GZip → QueryProfiler → IPFilter → BodyLimit → AttackDetection
-    → SecurityHeaders → Tenant → RateLimit → RequestID → Handler
+  GZip → QueryProfiler → IPFilter → BodyLimit → SecurityHeaders
+    → RateLimit → Tenant → AttackDetection → RequestID → CORS → Handler
 ```
 
 Key decisions (documented inline in main.py):
 - **RequestID**: first added = innermost, closest to handler for accurate tracing
-- **RateLimit** before expensive processing; **AttackDetection** after body limit so a cheap 429 rejects oversized payloads first
+- **RateLimit** runs before Tenant so a cheap 429 never pays the tenant lookup (P1-15), and before AttackDetection's expensive body scan so 429s reject first (R4)
+- **AttackDetection** runs after BodyLimit, so oversized payloads are rejected by 413 before the scan buffers them
 - **IPFilter** runs early and sets `ip_whitelisted` state consumed by RateLimit
 - **GZip** last = outermost, compresses all responses including errors
+- **CORS** innermost (added first inside `create_application`, not main.py)
 
 ## Touch Points / Key Files
 
 - Attack detection: `attack_detection.py` — config `ATTACK_DETECTION_ENABLED`, `ATTACK_DETECTION_MODE` (log/block/ban), `ATTACK_DETECTION_LOG_FULL_REQUEST`
-- IP filter: `ip_filter.py` — Redis-backed, CIDR + exact matches, auto-ban integration
+- IP filter: `ip_filter.py` — Redis-backed, exact-key IP allowlist/blocklist (no CIDR ranges), auto-ban integration
 - Rate limit: `rate_limit.py` — GCRA (Redis), per-user/tier limits
 - Query profiler: `query_profiler.py` — `QUERY_PROFILER_ENABLED`, `QUERY_PROFILER_SLOW_THRESHOLD_MS`; adds `X-Query-Count`/`X-Query-Time` headers
 - Tenant: `tenant.py` — header validation → tenant context → RLS session variables

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from src.app.core.utils import cache as cache_module
 from src.app.modules.rate_limits.schemas import RateLimitCreate, RateLimitUpdate
 from src.app.modules.rate_limits.service import RateLimitService
+from src.app.modules.tiers.schemas import TierRead
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 
@@ -27,7 +29,9 @@ def _patch_tier():
     return patch.object(
         RateLimitService,
         "get_tier",
-        AsyncMock(return_value={"id": 5, "name": "free"}),
+        AsyncMock(
+            return_value=TierRead(id=5, name="free", created_at=datetime(2025, 1, 1, tzinfo=UTC))
+        ),
     )
 
 

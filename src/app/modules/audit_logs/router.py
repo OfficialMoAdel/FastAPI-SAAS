@@ -8,9 +8,8 @@ from collections.abc import AsyncGenerator
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
 
 from src.app.api.deps import RequestContextDep
 from src.app.core.json_utils import json_dumps
@@ -22,7 +21,8 @@ from src.app.modules.audit_logs.schemas import (
     AuditLogResponse,
     ExportCountResponse,
 )
-from src.app.modules.audit_logs.service import EXPORT_MAX_RECORDS, AuditLogService, _AuditFilter, _compose_filters
+from src.app.modules.audit_logs.service import EXPORT_MAX_RECORDS, AuditLogService, _AuditFilter
+from src.app.shared.exceptions import ModelNotFoundError, ValidationError
 
 router = APIRouter(prefix="/audit-logs", tags=["audit-logs"])
 
@@ -163,13 +163,12 @@ async def export_audit_logs(
     service = AuditLogService(db)
     f = _AuditFilter(action=action, user_id=user_id, entity_type=entity_type, start_date=start_date, end_date=end_date)
 
-    stmt = _compose_filters(select(AuditLog), tenant_id, f)
+    stmt = service.export_stmt(tenant_id, f)
     count = await service.export_count(tenant_id, f)
 
     if count > EXPORT_MAX_RECORDS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Export exceeds maximum of {EXPORT_MAX_RECORDS} records. "
+        raise ValidationError(
+            f"Export exceeds maximum of {EXPORT_MAX_RECORDS} records. "
             f"Found {count} records. Use date filtering to reduce the export size.",
         )
 
@@ -322,6 +321,6 @@ async def get_audit_log(
     service = AuditLogService(ctx.db)
     log = await service.get_log(log_id=log_id, tenant_id=ctx.tenant_id)
     if not log:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audit log not found")
+        raise ModelNotFoundError("Audit log", log_id)
 
     return log

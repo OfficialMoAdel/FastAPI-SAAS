@@ -35,6 +35,7 @@ from src.app.modules.storage.errors import (
     StorageNotConfiguredError,
 )
 from src.app.modules.storage.interfaces import StorageProvider
+from src.app.modules.storage.local_storage import LocalStorage
 from src.app.modules.storage.metrics import storage_metrics
 from src.app.modules.storage.models import File, StorageProviderType, StorageSettings
 from src.app.modules.storage.schemas import (
@@ -297,7 +298,16 @@ class StorageAdminService:
     ) -> None:
         storage = self._create_provider(provider, credentials)
         try:
-            await storage.exists("__connection_test__")
+            if provider == StorageProviderType.LOCAL:
+                # P2-5: writability probe — exists() cannot catch read-only
+                # mounts, and LocalStorage.validate_connection() had no callers.
+                probe = getattr(storage, "validate_connection", None)
+                if probe is None or not await probe():
+                    raise InvalidCredentialsError(
+                        f"Local storage path is not writable: {credentials.get('base_path', '?')}"
+                    )
+            else:
+                await storage.exists("__connection_test__")
         except Exception as e:
             logger.error("Credential validation failed", provider=provider.value, error=str(e))
             raise InvalidCredentialsError(f"Failed to validate {provider.value} credentials: {e}") from e
@@ -675,11 +685,21 @@ class StorageService:
         expires_in: int = 3600,
         user_id: int | None = None,
     ) -> str:
-        """Generate a presigned access URL."""
+        """Generate a presigned access URL.
+
+        P1-10: the local provider cannot mint bearer-capable expiring URLs —
+        its direct ``{base_url}/{path}`` link neither expires nor resolves to
+        a serving endpoint. For local storage return the authenticated in-API
+        download path instead (``/api`` + ``/v1`` + files router prefix): it
+        requires FILES_READ, so the URL grants nothing to unauthenticated
+        holders — no indefinite-share bearer token.
+        """
         storage_svc = getattr(self, "_storage_service", self.admin)
         file = await self.get_file_or_raise(tenant_id, file_id, user_id)
         settings = await storage_svc.get_settings_or_raise(tenant_id)
         provider = storage_svc.get_provider_for_settings(settings)
+        if isinstance(provider, LocalStorage):
+            return f"/api/v1/files/{file.id}"
         return await provider.get_url(file.storage_path, expires_in)
 
     get_signed_url = get_presigned_url

@@ -1,6 +1,8 @@
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.responses import JSONResponse
 
 from src.app.api.monitoring import (
     check_cache_metrics,
@@ -222,14 +224,18 @@ async def test_readiness_probe_ready() -> None:
 async def test_readiness_probe_not_ready() -> None:
     with patch("src.app.api.monitoring.check_database", new_callable=AsyncMock, return_value={"status": "unhealthy"}):
         res = await readiness_probe()
-        assert res == {"status": "not_ready", "reason": "database_unhealthy"}
+        assert isinstance(res, JSONResponse)
+        assert res.status_code == 503
+        assert json.loads(bytes(res.body)) == {"status": "not_ready", "reason": "database_unhealthy"}
 
 
 @pytest.mark.asyncio
 async def test_readiness_probe_exception() -> None:
     with patch("src.app.api.monitoring.check_database", new_callable=AsyncMock, side_effect=Exception("DB Error")):
         res = await readiness_probe()
-        assert res == {"status": "not_ready", "reason": "health_check_failed"}
+        assert isinstance(res, JSONResponse)
+        assert res.status_code == 503
+        assert json.loads(bytes(res.body)) == {"status": "not_ready", "reason": "health_check_failed"}
 
 
 @pytest.mark.asyncio

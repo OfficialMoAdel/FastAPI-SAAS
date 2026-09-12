@@ -24,31 +24,31 @@ class TestTokenEstimation:
 
     def test_estimate_tokens_short_text(self):
         """Test token estimation for short text."""
-        # 8 chars / 4 = 2 tokens
-        assert estimate_tokens("12345678") == 2
+        # P2-6: tiktoken cl100k_base ("123","456","78") = 3 tokens
+        assert estimate_tokens("12345678") == 3
 
     def test_estimate_tokens_exact_multiple(self):
         """Test token estimation for exact multiple of 4."""
-        # 16 chars / 4 = 4 tokens
+        # P2-6: tiktoken cl100k_base chunks repeated 'a's = 2 tokens
         text = "a" * 16
-        assert estimate_tokens(text) == 4
+        assert estimate_tokens(text) == 2
 
     def test_estimate_tokens_not_exact_multiple(self):
         """Test token estimation when not exact multiple of 4."""
-        # 17 chars / 4 = 4 tokens (integer division)
+        # P2-6: tiktoken cl100k_base = 3 tokens
         text = "a" * 17
-        assert estimate_tokens(text) == 4
+        assert estimate_tokens(text) == 3
 
     def test_estimate_tokens_long_text(self):
         """Test token estimation for longer text."""
-        # 400 chars / 4 = 100 tokens
+        # P2-6: tiktoken cl100k_base = 50 tokens
         text = "a" * 400
-        assert estimate_tokens(text) == 100
+        assert estimate_tokens(text) == 50
 
     def test_estimate_tokens_realistic_text(self):
         """Test token estimation for realistic message."""
         text = "Hello, how are you doing today?"  # 31 chars
-        assert estimate_tokens(text) == 7  # 31 // 4 = 7
+        assert estimate_tokens(text) == 8  # P2-6: tiktoken cl100k_base
 
 
 class TestEstimateMessagesTokens:

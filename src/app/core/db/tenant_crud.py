@@ -13,6 +13,11 @@ Usage:
     crud_users = CRUDUser(User)
 """
 
+# NOTE (P2-E): the ``type: ignore`` comments in this file are deliberate —
+# FastCRUD's base methods are typed against non-tenant-generic signatures;
+# these overrides narrow them for tenant-aware models and mypy cannot reconcile
+# the variance without them.
+
 import uuid
 from typing import Any, Generic, TypeVar, cast
 from uuid import UUID

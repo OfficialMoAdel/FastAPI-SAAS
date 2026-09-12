@@ -87,7 +87,7 @@ async def s1_get_multi_query_count(engine) -> None:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from src.app.core.tenancy.context import TenantContext, set_current_tenant
-    from src.app.modules.posts.service import PostService
+    from src.app.modules.posts import PostService
 
     conn = await asyncpg.connect(
         host=os.environ["POSTGRES_SERVER"],

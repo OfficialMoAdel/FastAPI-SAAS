@@ -90,6 +90,14 @@ class AuditLogService:
         count: int = result.scalar_one()
         return int(count)
 
+    def export_stmt(self, tenant_id, f: _AuditFilter):
+        """P2-2: export SELECT statement; keeps query assembly in the service layer.
+
+        The router orders/executes the returned statement but never composes
+        filter criteria itself.
+        """
+        return _compose_filters(select(AuditLog), tenant_id, f)
+
     async def create_log(
         self,
         tenant_id: UUID,
@@ -326,6 +334,9 @@ async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None =
         try:
             tenant_id_val = UUID(str(log_data["tenant_id"]))
         except (ValueError, TypeError):
+            # P2-2: garbage tenant IDs fall back to SYSTEM (audit must never
+            # crash the request), but log loudly so misconfig surfaces.
+            logger.warning("audit_tenant_id_unparseable", raw_tenant_id=str(log_data["tenant_id"])[:64])
             tenant_id_val = SYSTEM_TENANT_ID
 
     user_id_val = None

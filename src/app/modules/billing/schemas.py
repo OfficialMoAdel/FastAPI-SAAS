@@ -22,7 +22,8 @@ class StripeSettingsCreate(BaseCreate):
 
     stripe_customer_id: str | None = None
     stripe_account_id: str | None = None
-    webhook_secret: str | None = None
+    # P1-8: per-tenant webhook_secret removed — verification uses the GLOBAL
+    # platform secret (STRIPE_WEBHOOK_SECRET); see webhook/ingest.py.
     is_active: bool = False
 
 
@@ -32,16 +33,13 @@ class StripeSettingsCreateInternal(StripeSettingsCreate):
     tenant_id: UUID
     # BUG FIX: encrypt_column returns a hex-encoded str, not bytes.
     encrypted_secret_key: str | None = None
-    encrypted_webhook_secret: str | None = None
     updated_at: datetime | None = None
-    webhook_secret: str | None = Field(default=None, exclude=True)
 
 
 class StripeSettingsUpdate(BaseUpdate):
     """Schema for updating Stripe settings."""
 
     stripe_secret_key: Annotated[str | None, Field(min_length=1, max_length=255)] = None
-    webhook_secret: Annotated[str | None, Field(min_length=1, max_length=255)] = None
     is_active: bool | None = None
 
 
@@ -51,14 +49,13 @@ class StripeSettingsRead(BaseRead):
     stripe_customer_id: str | None
     stripe_account_id: str | None
     is_active: bool
-    # Note: encrypted_secret_key and webhook_secret are NOT exposed
+    # Note: encrypted_secret_key is NOT exposed
 
 
 class StripeSettingsReadFull(StripeSettingsRead):
     """Schema for reading Stripe settings with masked secret presence."""
 
     has_secret_key: bool = False
-    has_webhook_secret: bool = False
 
 
 # =============================================================================
@@ -417,6 +414,24 @@ class ProductPage(BaseCreate):
 
 class BillingRecordList(BaseList[BillingRecordRead]):
     """Standardized paginated billing record list response.
+
+    Inherits from BaseList: items, total, page, per_page, has_next, has_previous
+    """
+
+    pass
+
+
+class UserSubscriptionList(BaseList[UserSubscriptionRead]):
+    """Standardized paginated user subscription list response.
+
+    Inherits from BaseList: items, total, page, per_page, has_next, has_previous
+    """
+
+    pass
+
+
+class PricingList(BaseList[PricingRead]):
+    """Standardized paginated pricing list response.
 
     Inherits from BaseList: items, total, page, per_page, has_next, has_previous
     """

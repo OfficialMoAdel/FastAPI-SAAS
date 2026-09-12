@@ -321,6 +321,42 @@ webhook_circuit = CircuitBreaker(
     success_threshold=2,
 )
 
+# P2-B: per-endpoint webhook breakers. The single ``webhook_circuit`` above
+# is shared by every tenant and receiver URL: one dead receiver trips it
+# and every other tenant's deliveries start skipping (plus failures
+# accumulate across unrelated endpoints — the W3 reset only papers over
+# it). Scoped breakers isolate blast radius to the failing endpoint.
+# Bounded so a tenant/endpooint-cardinality explosion cannot grow this
+# without limit; oldest scope is evicted past the cap.
+_WEBHOOK_BREAKER_MAX_SCOPES = 1024
+_webhook_breakers: dict[str, CircuitBreaker] = {}
+
+
+def get_webhook_breaker(scope: str | None = None) -> CircuitBreaker:
+    """Return the circuit breaker for a webhook delivery scope.
+
+    Args:
+        scope: Endpoint identifier (e.g. the endpoint id). ``None``
+            returns the legacy process-global ``webhook_circuit``.
+
+    Returns:
+        The scoped breaker, creating it on first use.
+    """
+    if scope is None:
+        return webhook_circuit
+    breaker = _webhook_breakers.get(scope)
+    if breaker is None:
+        if len(_webhook_breakers) >= _WEBHOOK_BREAKER_MAX_SCOPES:
+            _webhook_breakers.pop(next(iter(_webhook_breakers)))
+        breaker = CircuitBreaker(
+            name=f"webhook:{scope}",
+            failure_threshold=5,
+            recovery_timeout=60.0,
+            success_threshold=2,
+        )
+        _webhook_breakers[scope] = breaker
+    return breaker
+
 email_circuit = CircuitBreaker(
     name="email",
     failure_threshold=3,
@@ -367,3 +403,8 @@ def reset_all_circuit_breakers() -> None:
     for breaker in (webhook_circuit, email_circuit, arq_circuit, db_circuit):
         breaker.reset()
         breaker.reset_lock()
+    # P2-B: scoped webhook breakers are test-isolation state too.
+    for breaker in _webhook_breakers.values():
+        breaker.reset()
+        breaker.reset_lock()
+    _webhook_breakers.clear()

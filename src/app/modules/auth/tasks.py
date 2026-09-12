@@ -24,5 +24,5 @@ async def send_magic_link_email_task(
         tenant_id=None,
         user_id=user_id,
     )
-    logger.info("magic_link_email_requested", user_id=user_id, email=email)
+    logger.info("magic_link_email_requested", user_id=user_id)
     return f"Magic link email sent to {email}"

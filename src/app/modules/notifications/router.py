@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
 from src.app.api.deps import RequestContextDep
 from src.app.core.rbac.dependencies import requires_permission
@@ -19,6 +19,7 @@ from src.app.modules.notifications.schemas import (
     NotificationSendRequest as SendEmailRequest,
 )
 from src.app.modules.notifications.service import NotificationService
+from src.app.shared.exceptions import ModelNotFoundError
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -164,7 +165,7 @@ async def delete_template_override(
     deleted = await service.delete_template_override(ctx.tenant_id, template_name)
 
     if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template override not found")
+        raise ModelNotFoundError("Email template override", template_name)
 
 
 @router.get(
@@ -185,6 +186,6 @@ async def get_notification(
     )
 
     if not notification:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
+        raise ModelNotFoundError("Notification", notification_id)
 
     return notification

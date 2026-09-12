@@ -6,11 +6,13 @@ from typing import Literal
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
-# C-1 leaked-secret blocklist. Provenance (verified via
-# `git log -p -- .env.txt src/.env.local`):
+# C-1 leaked-secret blocklist. Provenance:
 # - `de2132a4...be1c8` — SECRET_KEY committed in 6cbc8a56/af450c42/9119f7fd
 #   (`src/.env.local` + `.env.txt`). ENCRYPTION_KEY was always empty in
 #   history, so there is no historical ENCRYPTION_KEY value to block.
+# - `953843cd...0fb61`, `db210482...f291e` — shipped as SECRET_KEY in the
+#   tracked `scripts/*/.env.example` files (P0-3). Published in the repo =
+#   leaked: anyone with repo access knows them, so they can never be used.
 # - `mypassword` (POSTGRES_PASSWORD, same commits) is blocklisted in
 #   `database.KNOWN_LEAKED_POSTGRES_PASSWORDS`; `Str1ngst!`
 #   (ADMIN_PASSWORD) in `auth.KNOWN_LEAKED_ADMIN_PASSWORDS`.
@@ -19,6 +21,8 @@ from pydantic_settings import BaseSettings
 KNOWN_LEAKED_SECRET_KEYS: frozenset[str] = frozenset(
     {
         "de2132a4a3a029d6a93a2aefcb519f0219990f92ca258a7c5ed938a444dbe1c8",
+        "953843cd400d99a039698e7feb46ca1b3e33c44fee2c24c6d88cf0f0b290fb61",
+        "db210482bea9aae930b00b17f3449a21340c281ac7e1f2a4e33e2c5cd77f291e",
     }
 )
 

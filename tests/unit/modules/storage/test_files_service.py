@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.app.modules.storage.local_storage import LocalStorage
 from src.app.modules.storage.schemas import FileUpdate
 from src.app.modules.storage.service import (
     FileEntityNotFoundError,
@@ -364,6 +365,49 @@ async def test_get_signed_url(file_service, mock_storage_service):
 
     assert url == "https://signed.url"
     mock_provider.get_url.assert_called_once_with("path", 3600)
+
+
+@pytest.mark.asyncio
+async def test_get_signed_url_local_returns_auth_gated_path(
+    file_service, mock_storage_service
+):
+    """P1-10: local provider must not mint non-expiring direct URLs."""
+    tenant_id = uuid4()
+
+    mock_file = MagicMock()
+    mock_file.id = 42
+    mock_file.storage_path = "tenants/x/42.bin"
+    file_service.get_file_or_raise = AsyncMock(return_value=mock_file)
+
+    local_provider = LocalStorage(base_path="/tmp/p1-10-test")
+    mock_storage_service.get_provider_for_settings.return_value = local_provider
+
+    url = await file_service.get_signed_url(tenant_id, 42, 3600)
+
+    # Auth-gated in-API download path (requires FILES_READ) — grants
+    # nothing to unauthenticated holders, unlike the old direct link.
+    assert url == "/api/v1/files/42"
+
+
+@pytest.mark.asyncio
+async def test_get_signed_url_local_never_calls_provider_get_url(
+    file_service, mock_storage_service
+):
+    """P1-10: local branch must not touch provider.get_url at all."""
+    tenant_id = uuid4()
+
+    mock_file = MagicMock()
+    mock_file.id = 7
+    mock_file.storage_path = "tenants/x/7.bin"
+    file_service.get_file_or_raise = AsyncMock(return_value=mock_file)
+
+    local_provider = MagicMock(spec=LocalStorage)
+    mock_storage_service.get_provider_for_settings.return_value = local_provider
+
+    url = await file_service.get_signed_url(tenant_id, 7, 60)
+
+    assert url == "/api/v1/files/7"
+    local_provider.get_url.assert_not_called()
 
 
 @pytest.mark.asyncio

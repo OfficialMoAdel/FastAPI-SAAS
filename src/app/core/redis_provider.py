@@ -23,6 +23,8 @@ logger = get_logger(__name__)
 
 __all__ = ["get_arq", "get_redis", "get_redis_pool", "require_redis", "set_clients", "shutdown"]
 
+_shared_pool: ConnectionPool | None = None
+
 
 async def get_redis_pool() -> ConnectionPool:
     """Create (or return) the shared raw Redis connection pool.
@@ -32,10 +34,11 @@ async def get_redis_pool() -> ConnectionPool:
     (core/cache/manager.py, zero module callers beyond this delegation)
     was deleted; this is the same pool-config logic, relocated.
     """
+    global _shared_pool
     from src.app.core.config import settings
 
-    if not hasattr(get_redis_pool, "_pool") or get_redis_pool._pool is None:  # type: ignore[attr-defined]
-        get_redis_pool._pool = ConnectionPool.from_url(  # type: ignore[attr-defined]
+    if _shared_pool is None:
+        _shared_pool = ConnectionPool.from_url(
             settings.redis_cache.REDIS_CACHE_URL,
             max_connections=settings.redis_cache.REDIS_CACHE_MAX_CONNECTIONS,
             socket_timeout=settings.redis_cache.REDIS_CACHE_SOCKET_TIMEOUT,
@@ -43,15 +46,15 @@ async def get_redis_pool() -> ConnectionPool:
             retry_on_timeout=True,
             decode_responses=False,
         )
-    return cast(ConnectionPool, get_redis_pool._pool)  # type: ignore[attr-defined]
+    return cast(ConnectionPool, _shared_pool)
 
 
 async def close_redis_pool() -> None:
     """Close the shared pool (lifespan teardown path)."""
-    pool = getattr(get_redis_pool, "_pool", None)
-    if pool is not None:
-        await pool.disconnect()
-        get_redis_pool._pool = None  # type: ignore[attr-defined]
+    global _shared_pool
+    if _shared_pool is not None:
+        await _shared_pool.disconnect()
+        _shared_pool = None
 
 
 def get_redis() -> Redis | None:

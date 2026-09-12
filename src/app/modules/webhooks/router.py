@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
 from src.app.api.deps import RequestContextDep
 from src.app.core.rbac import Permission, requires_permission
@@ -23,6 +23,7 @@ from src.app.modules.webhooks.schemas import (
     WebhookTestRequest,
 )
 from src.app.modules.webhooks.service import WebhookService
+from src.app.shared.exceptions import ModelNotFoundError, ValidationError
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -167,7 +168,7 @@ async def get_webhook_endpoint(
         tenant_id=ctx.tenant_id,
     )
     if not endpoint:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
+        raise ModelNotFoundError("Webhook endpoint", endpoint_id)
 
     return endpoint
 
@@ -192,7 +193,7 @@ async def update_webhook_endpoint(
     )
 
     if not endpoint:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
+        raise ModelNotFoundError("Webhook endpoint", endpoint_id)
 
     # Update fields via service layer
     update_data = request.model_dump(exclude_unset=True)
@@ -217,7 +218,7 @@ async def delete_webhook_endpoint(
     )
 
     if not endpoint:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
+        raise ModelNotFoundError("Webhook endpoint", endpoint_id)
 
     await service.delete_endpoint(endpoint)
 
@@ -240,7 +241,7 @@ async def get_webhook_delivery(
     )
 
     if not delivery:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook delivery not found")
+        raise ModelNotFoundError("Webhook delivery", delivery_id)
 
     return delivery
 
@@ -267,10 +268,10 @@ async def retry_webhook_delivery(
     )
 
     if not delivery:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook delivery not found")
+        raise ModelNotFoundError("Webhook delivery", delivery_id)
 
     if delivery.status != WebhookDeliveryStatus.FAILED:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only failed deliveries can be retried")
+        raise ValidationError("Only failed deliveries can be retried")
 
     # Reset status and enqueue for retry
     await service.retry_delivery(delivery.id)
@@ -305,7 +306,7 @@ async def test_webhook_endpoint(
     )
 
     if not endpoint:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
+        raise ModelNotFoundError("Webhook endpoint", endpoint_id)
 
     delivery = await service.trigger_endpoint(
         endpoint=endpoint,
@@ -340,7 +341,7 @@ async def get_signing_secret(
     )
 
     if not result["signing_secret"]:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No signing secret found for this endpoint")
+        raise ModelNotFoundError("Webhook signing secret", endpoint_id)
 
     secret_value = result["signing_secret"]
     masked = f"{secret_value[:6]}…{secret_value[-4:]}" if len(secret_value) > 12 else "******"

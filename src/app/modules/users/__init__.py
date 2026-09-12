@@ -1,26 +1,38 @@
 """Users module - user account management.
 
 Components are imported lazily to avoid circular imports.
-Direct imports:
-    from src.app.modules.users.service import get_user_service
-    from src.app.modules.users.router import router as users_router
+Cross-module imports MUST use the package root (P1-20: ruff TID252 bans
+deep `users.service` / `users.router` imports outside this package):
+    from src.app.modules.users import UserService, get_user_service
+    from src.app.modules.users import router as users_router
     from src.app.modules.users.crud import crud_users
 """
 
 __all__ = [
     "User",
+    "UserService",
     "crud_users",
     "get_user_service",
     "users_router",
 ]
 
 # Register user domain security lookups with core.security (DIP seam / PR-12)
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.app.core.security.jwt_service import (
     register_token_version_lookup,
     register_user_tenant_lookup,
 )
+
+if TYPE_CHECKING:
+    # Static-only re-exports: gives mypy real classes for the lazy
+    # __getattr__ facade below (P1-20). Never executed at runtime,
+    # so no circular-import cost.
+    from src.app.modules.users.crud import crud_users as crud_users
+    from src.app.modules.users.models import User as User
+    from src.app.modules.users.router import get_user_service as get_user_service
+    from src.app.modules.users.router import router as users_router
+    from src.app.modules.users.service import UserService as UserService
 
 
 async def _users_token_version_lookup(username_or_email: str) -> int | None:
@@ -69,6 +81,10 @@ def __getattr__(name: str):
         from src.app.modules.users.router import get_user_service
 
         return get_user_service
+    if name == "UserService":
+        from src.app.modules.users.service import UserService
+
+        return UserService
     if name == "crud_users":
         from src.app.modules.users.crud import crud_users
 

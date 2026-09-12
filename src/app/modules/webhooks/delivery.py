@@ -179,7 +179,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
     # original is still in flight). A short-lived Redis lock ensures only one
     # worker performs the HTTP call; others skip and return the current state.
     from src.app.core.redis_provider import get_redis
-    from src.app.core.utils.circuit_breaker import CircuitBreakerOpen, webhook_circuit
+    from src.app.core.utils.circuit_breaker import CircuitBreakerOpen, get_webhook_breaker
 
     _redis = get_redis()
     _lock_key = f"webhook:deliver_lock:{delivery_id}"
@@ -215,14 +215,17 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
     if not endpoint:
         raise ModelNotFoundError("WebhookEndpoint", delivery.webhook_endpoint_id)
     # Check circuit breaker before attempting delivery
-    if not webhook_circuit.is_closed:
+    # P2-B: scoped per endpoint — one dead receiver must not trip deliveries
+    # for every other tenant/endpoint sharing the process.
+    breaker = get_webhook_breaker(str(endpoint.id))
+    if not breaker.is_closed:
         import time
 
         current_time = time.time()
         # Clamp at 0: a breaker opened without a recorded _last_failure_time
         # (or clock adjustments) otherwise yields a hugely negative window,
         # scheduling next_retry_at in the past.
-        recovery_time = max(0.0, webhook_circuit.recovery_timeout - (current_time - webhook_circuit._last_failure_time))
+        recovery_time = max(0.0, breaker.recovery_timeout - (current_time - breaker._last_failure_time))
         logger.warning(
             "Circuit breaker open for webhooks, skipping delivery %s | recovery_in=%.1fs",
             delivery_id,
@@ -377,7 +380,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
 
         if 200 <= response.status_code < 300:  # HTTP success range
             # Success - record with circuit breaker
-            await webhook_circuit.record_success()
+            await breaker.record_success()
             delivery.status = WebhookDeliveryStatus.DELIVERED
             # Note: delivered_at tracked via updated_at timestamp
             logger.info(
@@ -387,7 +390,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
             )
         else:
             # HTTP error - record failure and retry if attempts remain
-            await webhook_circuit.record_failure(Exception(f"HTTP {response.status_code}"))
+            await breaker.record_failure(Exception(f"HTTP {response.status_code}"))
 
             # SECURITY FIX: Do not retry non-transient 4xx errors (e.g. 400, 422)
             if 400 <= response.status_code < 500 and response.status_code not in (408, 429):
@@ -410,7 +413,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
     elif http_error is not None:
         # Network/timeout error - record failure and retry
         logger.error("Webhook delivery failed", delivery_id=delivery_id, http_error=http_error)
-        await webhook_circuit.record_failure(http_error)
+        await breaker.record_failure(http_error)
         delivery.attempt_count += 1
         delivery.response_body = str(http_error)[:1000]
         await _handle_failure(db, delivery)

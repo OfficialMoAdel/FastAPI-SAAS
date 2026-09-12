@@ -141,10 +141,11 @@ class TestMicrosoftProvider:
 
     @pytest.mark.asyncio
     async def test_microsoft_get_user_info_email_verified_from_id_token(self):
-        """M10: email_verified follows the id_token `email_verified` claim."""
-        import base64
-        import json
+        """M10: email_verified follows the id_token `email_verified` claim.
 
+        P2-1: id_token signature is verified via JWKS (_verify_id_token).
+        Tests mock the verification seam instead of crafting unsigned tokens.
+        """
         from src.app.modules.auth.providers.microsoft import MicrosoftProvider
 
         provider = MicrosoftProvider(
@@ -154,26 +155,54 @@ class TestMicrosoftProvider:
         )
         mock_user_data = {"id": "abc", "mail": "test@example.com"}
 
-        def _id_token(claims: dict) -> str:
-            def _b64(obj: dict) -> str:
-                return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+        async def _claims(claims: dict) -> dict:
+            return claims
 
-            return f"{_b64({'alg': 'RS256', 'typ': 'JWT'})}.{_b64(claims)}.sig"
-
-        with patch.object(provider, "_http_get", new_callable=AsyncMock, return_value=mock_user_data):
-            verified = await provider.get_user_info(
-                "tok", id_token=_id_token({"email_verified": True})
-            )
-            explicit_false = await provider.get_user_info(
-                "tok", id_token=_id_token({"email_verified": False})
-            )
-            omitted = await provider.get_user_info(
-                "tok", id_token=_id_token({"email": "x@y.z"})
-            )
+        with (
+            patch.object(provider, "_http_get", new_callable=AsyncMock, return_value=mock_user_data),
+            patch.object(
+                provider,
+                "_verify_id_token",
+                new_callable=AsyncMock,
+                side_effect=[
+                    {"email_verified": True},
+                    {"email_verified": False},
+                    {"email": "x@y.z"},
+                ],
+            ),
+        ):
+            verified = await provider.get_user_info("tok", id_token="signed.jwt.here")
+            explicit_false = await provider.get_user_info("tok", id_token="signed.jwt.here")
+            omitted = await provider.get_user_info("tok", id_token="signed.jwt.here")
 
         assert verified.email_verified is True   # M10: explicit true only
         assert explicit_false.email_verified is False  # M10: explicit false fails closed
         assert omitted.email_verified is False  # M10: omitted claim defaults False
+
+    @pytest.mark.asyncio
+    async def test_microsoft_get_user_info_unverified_signature_fails_closed(self):
+        """P2-1: forged id_token (verification failure) -> email_verified False."""
+        from src.app.modules.auth.providers.microsoft import MicrosoftProvider
+
+        provider = MicrosoftProvider(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="http://localhost/callback",
+        )
+        mock_user_data = {"id": "abc", "mail": "test@example.com"}
+
+        with (
+            patch.object(provider, "_http_get", new_callable=AsyncMock, return_value=mock_user_data),
+            patch.object(
+                provider,
+                "_verify_id_token",
+                new_callable=AsyncMock,
+                side_effect=ValueError("Invalid id_token: Signature verification failed"),
+            ),
+        ):
+            user_info = await provider.get_user_info("tok", id_token="forged.jwt.here")
+
+        assert user_info.email_verified is False
 
     @pytest.mark.asyncio
     async def test_microsoft_get_user_info_uses_userprincipalname_fallback(self):

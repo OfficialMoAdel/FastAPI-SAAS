@@ -156,12 +156,12 @@ def test_passkey_login_flow(
 
 
 @pytest.mark.integration
-def test_passkey_login_with_email_hint(
+def test_passkey_login_ignores_email_hint(
     client: TestClient,
     regular_user_token_headers: dict[str, str],
 ):
-    """Test passkey login with email hint to filter credentials."""
-    # Start login with email hint - requires tenant header
+    """P2-A: email hint is ignored — response identical, no allowCredentials oracle."""
+    # Start login with a (now ignored) email hint - requires tenant header
     response = client.post(
         "/api/v1/auth/passkey/login",
         json={"email": "test@example.com"},
@@ -170,7 +170,17 @@ def test_passkey_login_with_email_hint(
     assert response.status_code == 200
     options = response.json()
     assert "publicKey" in options
-    # allowCredentials may be empty if no credentials exist for that email
+    # Usernameless flow: must never leak per-account credential state
+    # (webauthn serializes allow_credentials=None as an empty list)
+    assert not options["publicKey"].get("allowCredentials")
+
+    # Same shape without any body
+    response_no_body = client.post(
+        "/api/v1/auth/passkey/login",
+        headers=regular_user_token_headers,
+    )
+    assert response_no_body.status_code == 200
+    assert not response_no_body.json()["publicKey"].get("allowCredentials")
 
 
 @pytest.mark.integration

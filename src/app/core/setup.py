@@ -196,7 +196,7 @@ def lifespan_factory(
                             logger.debug("Another worker is handling cache warmup, skipping.")
                     else:
                         await warm_caches()
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - P1-17: background warming is best-effort by design
                     logger.warning("Cache warming failed: %s", e)
 
             # Fire and forget with safe error handling and hard reference

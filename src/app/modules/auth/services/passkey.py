@@ -253,35 +253,35 @@ class PasskeyService:
 
     async def generate_authentication_challenge(
         self,
-        db: AsyncSession,
         redis: Redis | None = None,
-        email: str | None = None,
     ) -> tuple[dict[str, Any], str]:
         """Generate WebAuthn authentication options (challenge) for login.
 
+        P2-A: Usernameless (discoverable-credential) flow. The former email
+        hint was removed: returning per-email `allowCredentials` let
+        unauthenticated callers distinguish accounts with registered passkeys
+        (list populated) from unknown or credential-less accounts (list
+        omitted) — an account-enumeration oracle. Options now never carry
+        `allowCredentials`; verification resolves the user from the asserted
+        credential ID server-side (see `verify_authentication`).
+
         Args:
-            db: Database session.
             redis: Redis client for storing challenge.
-            email: Optional email hint to filter allowed credentials (for discoverable credentials).
 
         Returns:
             tuple: (WebAuthn authentication options dict, challenge_id for verification).
         """
         import uuid
 
-        # 1. Get allowed credentials if email provided
-        allowed_credentials: list[PublicKeyCredentialDescriptor] = []
-        if email:
-            allowed_credentials = await self._get_credentials_for_email(db, email)
-
-        # 2. Generate authentication options
+        # 1. Generate authentication options without allowCredentials
+        # (usernameless flow — the authenticator offers discoverable credentials)
         options: PublicKeyCredentialRequestOptions = generate_authentication_options(
             rp_id=_get_rp_id(),
             user_verification=UserVerificationRequirement.REQUIRED,  # M3: 2FA semantics
-            allow_credentials=allowed_credentials if allowed_credentials else None,
+            allow_credentials=None,
         )
 
-        # 3. Store challenge in Redis with unique challenge_id (fail-closed if Redis unavailable)
+        # 2. Store challenge in Redis with unique challenge_id (fail-closed if Redis unavailable)
         if not redis:
             raise ServiceUnavailableError("Passkey authentication is temporarily unavailable.")
 
@@ -553,45 +553,6 @@ class PasskeyService:
     # ============================================================================
     # Authentication Helpers (T079, T080)
     # ============================================================================
-
-    async def _get_credentials_for_email(self, db: AsyncSession, email: str) -> list[PublicKeyCredentialDescriptor]:
-        """Get passkey credentials for a user by email with parallel decryption."""
-        from sqlalchemy import select
-
-        from src.app.core.config import settings
-        from src.app.modules.auth.models import PasskeyCredential
-        from src.app.modules.users.crud import crud_users
-
-        # Find user by email
-        user = await crud_users.get_user_with_tier_eager(db=db, email=email)
-        if not user:
-            return []
-
-        user_id = user["id"]
-
-        # P3-2 Optimization: Column-specific SELECT for credential_id and transports only
-
-        if settings.r1_unified.PASSKEY_USE_COLUMN_SELECT:
-            stmt = (
-                select(PasskeyCredential.credential_id, PasskeyCredential.transports)
-                .where(PasskeyCredential.user_id == user_id)
-                .order_by(PasskeyCredential.created_at.desc())
-                .limit(settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER)
-            )
-            result = await db.execute(stmt)
-            # Format: list of (id, transports)
-            creds_to_decrypt = [(row[0], row[1]) for row in result.fetchall()]
-        else:
-            # Fallback path
-            creds = await crud_passkey_credentials.get_by_user(db=db, user_id=user_id)
-            if len(creds) > settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER:
-                creds = creds[: settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER]
-
-            # Format: list of (id, transports)
-            creds_to_decrypt = [(c.credential_id, c.transports if c.transports else None) for c in creds]
-
-        # Use shared helper
-        return await self._decrypt_credentials_parallel(creds_to_decrypt, email)
 
     async def _store_auth_challenge(self, redis: Redis, challenge_id: str, challenge: bytes) -> None:
         """Store authentication challenge in Redis, keyed by unique challenge_id."""

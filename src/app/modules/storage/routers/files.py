@@ -184,7 +184,7 @@ async def get_file_info(
 async def get_signed_url(
     ctx: RequestContextDep,
     file_id: int,
-    expires_in: int = Query(3600, ge=60, le=86400, description="Expiration in seconds"),
+    expires_in: int = Query(3600, ge=60, le=3600, description="Expiration in seconds"),
     service: StorageService = Depends(get_storage),
 ) -> Any:
     """Get a signed URL for file access."""

@@ -32,6 +32,7 @@ from src.app.modules.billing.schemas import (
     SubscriptionPlanList,
     SubscriptionPlanRead,
     SubscriptionPlanUpdate,
+    UserSubscriptionList,
     UserSubscriptionRead,
     WebhookResponse,
 )
@@ -96,14 +97,12 @@ async def get_stripe_settings(
             "stripe_account_id": None,
             "is_active": False,
             "has_secret_key": False,
-            "has_webhook_secret": False,
             "created_at": None,
             "updated_at": None,
         }
     return {
         **stripe_settings,
         "has_secret_key": bool(stripe_settings.get("encrypted_secret_key")),
-        "has_webhook_secret": bool(stripe_settings.get("encrypted_webhook_secret")),
     }
 
 
@@ -275,15 +274,17 @@ async def add_product_pricing(
 # =============================================================================
 
 
-@router.get("/subscriptions/me", response_model=list[UserSubscriptionRead])
+@router.get("/subscriptions/me", response_model=UserSubscriptionList)
 async def get_my_subscriptions(
     ctx: RequestContextDep,
-) -> list[UserSubscriptionRead]:
-    """Get current user's subscriptions."""
+    pagination: Annotated[PaginationParams, Depends(get_pagination_params)],
+) -> Any:
+    """Get current user's subscriptions (paginated)."""
     service = get_user_subscription_service(ctx.db)
-    result = await service.get_user_subscriptions(ctx.user_id)
-    data: list[Any] = result.get("data", [])
-    return data
+    result = await service.get_user_subscriptions(ctx.user_id, page=pagination.page, limit=pagination.limit)
+    data = result.get("data", [])
+    total = result.get("total_count", len(data))
+    return build_paginated_response(items=data, total=total, page=pagination.page, per_page=pagination.per_page)
 
 
 @router.post("/subscriptions/{subscription_id}/cancel", response_model=UserSubscriptionRead)

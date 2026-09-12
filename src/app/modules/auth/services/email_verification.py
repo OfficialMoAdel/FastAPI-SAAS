@@ -16,7 +16,7 @@ from src.app.core.config import settings
 from src.app.core.security.tokens import hash_token
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.auth.models import EmailVerificationToken, generate_verification_token
-from src.app.modules.users.service import UserService
+from src.app.modules.users import UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
 from src.app.shared.exceptions import UnauthorizedError
 

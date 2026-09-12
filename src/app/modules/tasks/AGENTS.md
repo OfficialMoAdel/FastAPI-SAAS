@@ -33,11 +33,13 @@ uv run ruff check src/app/modules/tasks/
 async def create_task(self, message: str) -> dict[str, str]:
     """Create a new background task."""
     if queue.pool is None:
-        raise HTTPException(status_code=503, detail="Queue is not available")
+        # QueueUnavailableError derives from ServiceUnavailableError —
+        # the central EXCEPTION_HANDLERS table maps it to 503.
+        raise QueueUnavailableError("Queue is not available")
 
     job = await queue.pool.enqueue_job("sample_background_task", message)
     if job is None:
-        raise HTTPException(status_code=500, detail="Failed to create task")
+        raise ValueError("Failed to create task")
 
     return {"id": job.job_id}
 ```

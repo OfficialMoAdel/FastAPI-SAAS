@@ -21,14 +21,9 @@ class TestAuditTrailInterface:
         assert str(SYSTEM_TENANT_ID) == "00000000-0000-0000-0000-000000000000"
 
     def test_resolve_tenant_id_explicit(self) -> None:
-        """Verify explicit tenant_id resolution with UUID, string, int, and '0'."""
+        """P2-C: UUID is the sole tenant type — explicit UUID passes through."""
         test_uuid = UUID("11111111-1111-1111-1111-111111111111")
         assert _resolve_tenant_id(test_uuid) == test_uuid
-        assert _resolve_tenant_id("11111111-1111-1111-1111-111111111111") == test_uuid
-        assert _resolve_tenant_id("0") == SYSTEM_TENANT_ID
-        assert _resolve_tenant_id("") == SYSTEM_TENANT_ID
-        assert _resolve_tenant_id(0) == SYSTEM_TENANT_ID
-        assert _resolve_tenant_id("invalid-uuid-string") == SYSTEM_TENANT_ID
 
     def test_resolve_tenant_id_from_context(self) -> None:
         """Verify tenant_id resolution from TenantContext when not explicitly passed."""

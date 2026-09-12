@@ -4,7 +4,6 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 
 from src.app.api.deps.auth import AuthenticatedUser
 from src.app.modules.ai.router import chat_completion
@@ -12,6 +11,7 @@ from src.app.modules.ai.service import ChatCompletionError
 from src.app.modules.audit_logs.service import AuditLogService
 from src.app.modules.auth.crud import crud_passkey_credentials, crud_user_sso_connections
 from src.app.modules.notifications.service import NotificationService
+from src.app.shared.exceptions import ServiceUnavailableError
 
 
 class TestP3CodeQualityRegressions:
@@ -78,7 +78,7 @@ class TestP3CodeQualityRegressions:
 
     @pytest.mark.asyncio
     async def test_p3_3_ai_router_error_envelope_format(self):
-        """P3-3: chat_completion raises HTTPException with flat detail string on ChatCompletionError."""
+        """P3-3: chat_completion raises ServiceUnavailableError (central 503 mapping) on ChatCompletionError."""
         mock_db = AsyncMock()
         mock_service = AsyncMock()
         mock_service.complete.side_effect = ChatCompletionError(
@@ -88,12 +88,11 @@ class TestP3CodeQualityRegressions:
         )
 
         with patch("src.app.modules.ai.router.get_chat_completion_service", return_value=mock_service):
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(ServiceUnavailableError) as exc_info:
                 await chat_completion(
                     session_id=1,
                     request=MagicMock(),
                     current_user=AuthenticatedUser(id=1, email="u@e.com"),
                     db=mock_db,
                 )
-            assert exc_info.value.status_code == 503
-            assert exc_info.value.detail == "Provider service unavailable"
+            assert exc_info.value.message == "Provider service unavailable"

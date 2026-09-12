@@ -84,11 +84,13 @@ async def chat_completion(
 ```python
 from src.app.modules.ai.service import ChatCompletionError
 from src.app.modules.ai.unified_errors import AIRateLimitError
+from src.app.shared.exceptions import ServiceUnavailableError
 
 try:
     response = await completion_service.complete(session_id, user_id, request)
 except ChatCompletionError as e:
-    raise HTTPException(503, {"detail": e.message, "error_code": e.error_code})
+    # Domain error — the central EXCEPTION_HANDLERS table maps it to 503.
+    raise ServiceUnavailableError(e.message) from e
 ```
 
 ### DO: Use user settings for defaults

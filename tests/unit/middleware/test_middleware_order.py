@@ -1,7 +1,11 @@
 """Unit Tests: Middleware Order and Tenant-Aware Rate Limiting.
 
-Tests validate P2-5 middleware reordering ensures TenantMiddleware
-runs before RateLimitMiddleware for proper tenant context access.
+Tests validate P1-15 middleware reordering: RateLimitMiddleware runs
+before TenantMiddleware so a cheap 429 rejects before the tenant lookup
+(L1+L2+DB). The old P2-5 Tenant-first rationale is stale — the rate-limit
+request path resolves tenant_id from JWT claims/request.state and never
+reads the tenant ContextVar (dep-layer ``is_rate_limited`` still sees the
+context because TenantMiddleware runs before the handler regardless).
 """
 
 from unittest.mock import MagicMock
@@ -10,10 +14,10 @@ import pytest
 
 
 class TestMiddlewareOrder:
-    """Test middleware ordering for P2-5 optimization."""
+    """Test middleware ordering for P1-15 optimization."""
 
     def test_middleware_stack_order_in_main(self):
-        """Verify middleware is added in correct order for tenant-aware rate limiting."""
+        """Verify middleware is added in correct order for pre-tenant rate limiting."""
         import inspect
 
         from src.app import main
@@ -36,27 +40,27 @@ class TestMiddlewareOrder:
         assert rate_limit_pos > 0, "RateLimitMiddleware not found"
         assert request_id_pos > 0, "RequestIDMiddleware not found"
 
-        # P2-5: Tenant must be added AFTER RateLimit (LIFO)
-        # Because we want Tenant to run BEFORE RateLimit on the request path.
-        # Request -> Tenant -> RateLimit.
-        # To run first, it must be added last.
-        # So Tenant added AFTER RateLimit.
-        assert tenant_pos > rate_limit_pos, (
-            "P2-5: TenantMiddleware must be added after RateLimitMiddleware "
-            "so it runs before RateLimitMiddleware (LIFO) and provides tenant context"
+        # P1-15: RateLimit must be added AFTER Tenant (LIFO) so it runs
+        # BEFORE Tenant on the request path: Request -> RateLimit -> Tenant.
+        # A 429 then rejects before the tenant lookup (L1+L2+DB) runs. To run
+        # first, it must be added last. So RateLimit added AFTER Tenant.
+        assert rate_limit_pos > tenant_pos, (
+            "P1-15: RateLimitMiddleware must be added after TenantMiddleware "
+            "so it runs before TenantMiddleware (LIFO) and 429s skip the "
+            "tenant lookup"
         )
 
         # Verify logical ordering (LIFO means later additions run first on request)
-        # Execution Order: GZip -> Security -> BodyLimit -> Tenant -> RateLimit -> RequestID
-        # Addition Order: RequestID -> RateLimit -> Tenant -> Security -> BodyLimit -> GZip
-        assert request_id_pos < rate_limit_pos, "RequestID added before RateLimit"
-        assert rate_limit_pos < tenant_pos, "RateLimit added before Tenant"
-        assert tenant_pos < security_pos, "Tenant added before Security"
+        # Execution Order: GZip -> Security -> BodyLimit -> RateLimit -> Tenant -> RequestID
+        # Addition Order: RequestID -> Tenant -> RateLimit -> Security -> BodyLimit -> GZip
+        assert request_id_pos < tenant_pos, "RequestID added before Tenant"
+        assert tenant_pos < rate_limit_pos, "Tenant added before RateLimit"
+        assert rate_limit_pos < security_pos, "RateLimit added before Security"
         assert security_pos < body_limit_pos, "Security added before BodyLimit"
         assert body_limit_pos < gzip_pos, "BodyLimit added before GZip"
 
-    def test_p2_5_comment_documents_ordering(self):
-        """Verify P2-5 optimization is documented in code."""
+    def test_p1_15_comment_documents_ordering(self):
+        """Verify P1-15 optimization is documented in code."""
         import inspect
 
         from src.app import main
@@ -64,8 +68,8 @@ class TestMiddlewareOrder:
         source = inspect.getsource(main)
 
         # Check for documentation of the ordering decision
-        assert "P2-5" in source or "tenant context" in source.lower(), (
-            "Middleware ordering should document P2-5 tenant-aware rate limiting"
+        assert "P1-15" in source, (
+            "Middleware ordering should document P1-15 pre-tenant rate limiting"
         )
 
 

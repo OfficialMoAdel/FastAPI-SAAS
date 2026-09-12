@@ -66,33 +66,53 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
     )
 
     async with _pkg.job_tenant_context(tenant_id) as db:
-        # Check if billing record with stripe_invoice_id already exists to prevent duplicate inserts
+        # P2-3: a failed row for this invoice may already exist (retried
+        # payment that later succeeded). Fetch instead of a bare exists check
+        # so a prior failed record is promoted to succeeded rather than
+        # skipped — otherwise history shows only "failed" forever. Refund
+        # rows never collide here (P0-2 stores stripe_invoice_id=None).
         invoice_id = invoice["id"]
-        exists_record = await _pkg.crud_billing_records.exists(
+        existing_record = await _pkg.crud_billing_records.get(
             db=db,
             stripe_invoice_id=invoice_id,
         )
-        if exists_record:
+        if existing_record is None:
+            try:
+                await _pkg.crud_billing_records.create(
+                    db=db,
+                    object=billing_record,
+                )
+            except IntegrityError:
+                # Concurrent redelivery inside the dedup window already inserted the
+                # record (unique constraint on stripe_invoice_id). Skip duplicate.
+                await db.rollback()
+                _pkg.logger.info(
+                    "Billing record with stripe_invoice_id already exists (race), skipping duplicate insert",
+                    stripe_invoice_id=invoice_id,
+                )
+                return
+        elif existing_record["status"] == "succeeded":
             _pkg.logger.info(
-                "Billing record with stripe_invoice_id already exists, skipping duplicate insert",
+                "Billing record with stripe_invoice_id already succeeded, skipping duplicate insert",
                 stripe_invoice_id=invoice_id,
             )
             return
-
-        try:
-            await _pkg.crud_billing_records.create(
+        else:
+            await _pkg.crud_billing_records.update(
                 db=db,
-                object=billing_record,
+                object={
+                    "status": "succeeded",
+                    "amount_cents": invoice["amount_paid"],
+                    "stripe_payment_intent_id": invoice.get("payment_intent"),
+                    "description": "Invoice payment for subscription",
+                },
+                id=existing_record["id"],
+                commit=False,
             )
-        except IntegrityError:
-            # Concurrent redelivery inside the dedup window already inserted the
-            # record (unique constraint on stripe_invoice_id). Skip duplicate.
-            await db.rollback()
             _pkg.logger.info(
-                "Billing record with stripe_invoice_id already exists (race), skipping duplicate insert",
+                "Promoted failed billing record to succeeded on retried payment",
                 stripe_invoice_id=invoice_id,
             )
-            return
 
         # P1.7: A successful payment must restore a past_due subscription to
         # active. Otherwise the user stays past_due (and locked out of paid

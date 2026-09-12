@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep, get_current_superuser
@@ -14,6 +14,7 @@ from src.app.modules.auth.schemas import (
     SSOSettingsRead,
     SSOSettingsUpdate,
 )
+from src.app.shared.exceptions import ModelNotFoundError, ValidationError
 
 if TYPE_CHECKING:
     from src.app.modules.auth.services.sso_settings import SSOSettingsService
@@ -48,10 +49,7 @@ async def create_sso_settings(
 
     existing = await crud_sso_settings.exists(db=ctx.db, provider=settings.provider)
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"SSO settings for provider {settings.provider} already exist",
-        )
+        raise ValidationError(f"SSO settings for provider {settings.provider} already exist")
 
     result = await sso_settings_service.create_settings(ctx.db, settings, user_id=ctx.user_id)
     return result
@@ -125,10 +123,7 @@ async def get_sso_settings(
 
     settings = await sso_settings_service.get_decrypted_settings(ctx.db, provider)
     if not settings:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"SSO settings for provider {provider} not found",
-        )
+        raise ModelNotFoundError("SSO settings", provider, message=f"SSO settings for provider {provider} not found")
     return settings
 
 
@@ -148,10 +143,7 @@ async def update_sso_settings(
 
     existing = await crud_sso_settings.exists(db=ctx.db, provider=provider)
     if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"SSO settings for provider {provider} not found",
-        )
+        raise ModelNotFoundError("SSO settings", provider, message=f"SSO settings for provider {provider} not found")
 
     result = await sso_settings_service.update_settings(ctx.db, provider, values, user_id=ctx.user_id)
     return result
@@ -172,10 +164,7 @@ async def delete_sso_settings(
 
     existing = await crud_sso_settings.exists(db=ctx.db, provider=provider)
     if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"SSO settings for provider {provider} not found",
-        )
+        raise ModelNotFoundError("SSO settings", provider, message=f"SSO settings for provider {provider} not found")
 
     await sso_settings_service.delete_settings(ctx.db, provider, user_id=ctx.user_id)
     return {"message": f"SSO settings for provider {provider} deleted successfully"}

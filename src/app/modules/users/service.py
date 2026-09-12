@@ -15,19 +15,16 @@ from src.app.core.events import EventPriority, event_bus
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.logger import get_logger
 from src.app.core.security import blacklist_token, get_password_hash
-from src.app.core.tenancy.context import get_current_tenant
-from src.app.modules.audit_logs import audit
-from src.app.modules.rate_limits.models import Tier
-from src.app.modules.rate_limits.service import RateLimitService
-from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
-
-# TierService is absorbed into RateLimitService; alias retained for call-site & test-patch compatibility
-TierService = RateLimitService
+from src.app.core.tenancy.context import get_current_tenant, require_tenant_match
 from src.app.core.utils.user_utils import get_user_attr
+from src.app.modules.audit_logs import audit
+from src.app.modules.tiers.models import Tier
+from src.app.modules.tiers.service import TierService
 from src.app.modules.users.crud import CRUDUser, crud_users
 from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
 from src.app.modules.users.session_invalidation import InvalidationReason, should_bump_token_version
+from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 if TYPE_CHECKING:
     from src.app.api.deps.auth import AuthenticatedUser
@@ -551,7 +548,7 @@ class UserService:
         # Try cache first - return cached data directly to avoid DB query
         cached = await self._get_cached_user(_user_email_cache_key(email))
         if cached:
-            logger.debug("Cache hit for user email", email=email)
+            logger.debug("Cache hit for user email")
             return cached
 
         user = await self.crud.get(db=self.db, email=email, is_deleted=False)
@@ -600,13 +597,9 @@ class UserService:
             raise ModelNotFoundError("User", username)
         db_username = get_user_attr(db_user, "username")
         db_email = get_user_attr(db_user, "email")
-        # SECURITY FIX: Cross-tenant check matching delete
-        from src.app.core.tenancy.context import get_current_tenant
-
-        current_tenant = get_current_tenant()
-        user_tenant_id = get_user_attr(db_user, "tenant_id")
-        if current_tenant is not None and user_tenant_id is not None and str(user_tenant_id) != str(current_tenant.id):
-            raise ModelNotFoundError("User", username)
+        # P2-C: cross-tenant ownership via the tenancy seam (soft-404 — a
+        # cross-tenant username stays invisible instead of leaking existence).
+        require_tenant_match(get_user_attr(db_user, "tenant_id"), resource="User", key=username)
 
         # Ownership check (superusers bypass)
         if db_username != get_user_attr(current_user, "username") and not get_user_attr(current_user, "is_superuser"):
@@ -686,14 +679,9 @@ class UserService:
         if not db_user:
             raise ModelNotFoundError("User", username)
 
-        # SECURITY FIX: Cross-Tenant IDOR check - confirm the user belongs to the current tenant.
-        # Without this check, a superuser from Tenant A could delete a same-username user in Tenant B.
-        from src.app.core.tenancy.context import get_current_tenant
-
-        current_tenant = get_current_tenant()
-        user_tenant_id = get_user_attr(db_user, "tenant_id")
-        if current_tenant is not None and user_tenant_id != current_tenant.id:
-            raise ModelNotFoundError("User", username)
+        # P2-C: same-username users in other tenants stay invisible — without
+        # this check a superuser from Tenant A could delete Tenant B's user.
+        require_tenant_match(get_user_attr(db_user, "tenant_id"), resource="User", key=username)
 
         if username != get_user_attr(current_user, "username") and not get_user_attr(current_user, "is_superuser"):
             raise ForbiddenException("You do not have permission to delete this user.")
@@ -777,16 +765,9 @@ class UserService:
         if not db_user:
             raise ModelNotFoundError("User", username)
 
-        # SECURITY FIX: Ensure the user belongs to the current tenant if one exists
-        from src.app.core.tenancy.context import get_current_tenant
-
-        current_tenant = get_current_tenant()
-        if current_tenant:
-            db_tenant_id = get_user_attr(db_user, "tenant_id")
-            if db_tenant_id and str(db_tenant_id) != str(current_tenant.id):
-                from src.app.core.exceptions.http_exceptions import ForbiddenException
-
-                raise ForbiddenException("You do not have permission to delete this user.")
+        # P2-C: cross-tenant hard-delete stays invisible (soft-404, same as
+        # update/delete) so existence is never leaked via 403.
+        require_tenant_match(get_user_attr(db_user, "tenant_id"), resource="User", key=username)
 
         # SECURITY FIX: Delete user BEFORE invalidating cache
         # Prevents stale cache if DB operation fails
@@ -985,7 +966,6 @@ class UserService:
         # SECURITY FIX: Filter by tenant to prevent cross-tenant data exposure.
         # Without this, a superuser could query any user across all tenants by username.
         from src.app.core.db.tenant_crud import tenant_scope
-        from src.app.core.tenancy.context import get_current_tenant
 
         tenant = get_current_tenant()
         stmt = stmt.where(tenant_scope(User, tenant.id if tenant else None, allow_unscoped=True))

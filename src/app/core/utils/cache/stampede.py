@@ -169,7 +169,7 @@ async def get_with_stampede_protection(
     lock_token = await _acquire_lock(client, lock_key, 5)
     if lock_token is not None:
         try:
-            return await _refresh_cache(key, fetch_func, ttl)
+            return await _refresh_cache(key, fetch_func, ttl, client)
         finally:
             await _release_lock(client, lock_key, lock_token)
     else:
@@ -206,9 +206,9 @@ async def _refresh_cache_with_lock(
             await _release_lock(client, lock_key, lock_token)
 
 
-async def _refresh_cache(key: str, fetch_func: Callable[[], Any], ttl: int) -> Any:
+async def _refresh_cache(key: str, fetch_func: Callable[[], Any], ttl: int, client: Any | None = None) -> Any:
     """Refresh cache with fresh data."""
-    client = _state.client
+    client = client if client is not None else _state.client
     if client is None:
         return await fetch_func()
 
@@ -227,6 +227,7 @@ async def get_with_lock(
     base_delay: float = 0.05,
     max_delay: float = 1.0,
     jitter: float = 0.25,
+    client: Any | None = None,
 ) -> Any:
     """Get cached value with lock-based stampede protection.
 
@@ -243,12 +244,15 @@ async def get_with_lock(
         base_delay: Initial wait delay in seconds (default: 50ms)
         max_delay: Maximum wait delay in seconds (default: 1s)
         jitter: Jitter factor (0-1) to randomize wait time (default: 0.25)
+        client: Explicit Redis client (default: the ``utils.cache.client``
+            global). Lets callers on the provider seam (``get_redis()``)
+            keep their seam instead of the module global.
 
     Returns
     -------
         Cached or freshly fetched value
     """
-    client = _state.client
+    client = client if client is not None else _state.client
     if client is None:
         return await fetch_func()
 

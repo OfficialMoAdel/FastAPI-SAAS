@@ -1,15 +1,22 @@
 import json
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from src.app.modules.rate_limits.schemas import RateLimitCreate, RateLimitUpdate
 from src.app.modules.rate_limits.service import RateLimitService
+from src.app.modules.tiers.schemas import TierRead
 
 # Constants
 TIER_ID = 1
 CACHE_KEY = f"rate_limits:tier:{TIER_ID}"
 RATE_LIMITS_DATA = [{"id": 1, "name": "test:limit", "limit": 100, "period": 60}]
+
+
+def _tier_data() -> TierRead:
+    """P2-C: the tier seam returns TierRead objects, not dicts."""
+    return TierRead(id=TIER_ID, name="Free", created_at=datetime(2025, 1, 1, tzinfo=UTC))
 
 
 @pytest.fixture
@@ -41,8 +48,11 @@ async def test_get_rate_limits_by_tier_id_cache_miss(service):
             # Verify result
             assert result == RATE_LIMITS_DATA
 
-            # Verify Redis interactions
-            mock_redis.get.assert_called_once_with(CACHE_KEY)
+            # Verify Redis interactions (P2-B: get_with_lock reads once, then
+            # re-reads after acquiring the refresh lock — double-checked
+            # locking, so a miss costs exactly two GETs)
+            assert mock_redis.get.call_count == 2
+            mock_redis.get.assert_called_with(CACHE_KEY)
             mock_redis.setex.assert_called_once()
 
             # Verify args
@@ -87,11 +97,12 @@ async def test_get_rate_limits_by_tier_id_cache_hit(service):
 async def test_invalidate_cache_on_create(service):
     """Test that creating a rate limit invalidates the cache."""
     tier_name = "Free"
-    tier_data = {"id": TIER_ID}
+    tier_data = _tier_data()
 
-    # Mock Redis - patch at the module level where it's imported
+    # Mock Redis in the tiers.service namespace (P1-18: invalidation
+    # lives in the canonical TierService).
     mock_redis = AsyncMock()
-    with patch("src.app.modules.rate_limits.service.get_redis", return_value=mock_redis):
+    with patch("src.app.modules.tiers.service.get_redis", return_value=mock_redis):
 
         # Mock internal methods
         service._get_tier_or_404 = AsyncMock(return_value=tier_data)
@@ -114,11 +125,12 @@ async def test_invalidate_cache_on_create(service):
 async def test_invalidate_cache_on_update(service):
     """Test that updating a rate limit invalidates the cache."""
     tier_name = "Free"
-    tier_data = {"id": TIER_ID}
+    tier_data = _tier_data()
 
-    # Mock Redis - patch at the module level where it's imported
+    # Mock Redis in the tiers.service namespace (P1-18: invalidation
+    # lives in the canonical TierService).
     mock_redis = AsyncMock()
-    with patch("src.app.modules.rate_limits.service.get_redis", return_value=mock_redis):
+    with patch("src.app.modules.tiers.service.get_redis", return_value=mock_redis):
 
         # Mock internal methods
         service._get_tier_or_404 = AsyncMock(return_value=tier_data)
@@ -141,11 +153,12 @@ async def test_invalidate_cache_on_update(service):
 async def test_invalidate_cache_on_delete(service):
     """Test that deleting a rate limit invalidates the cache."""
     tier_name = "Free"
-    tier_data = {"id": TIER_ID}
+    tier_data = _tier_data()
 
-    # Mock Redis - patch at the module level where it's imported
+    # Mock Redis in the tiers.service namespace (P1-18: invalidation
+    # lives in the canonical TierService).
     mock_redis = AsyncMock()
-    with patch("src.app.modules.rate_limits.service.get_redis", return_value=mock_redis):
+    with patch("src.app.modules.tiers.service.get_redis", return_value=mock_redis):
 
         # Mock internal methods
         service._get_tier_or_404 = AsyncMock(return_value=tier_data)

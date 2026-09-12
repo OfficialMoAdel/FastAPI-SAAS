@@ -47,7 +47,12 @@ async def check_rate_limit_dependency(
         return current_user
 
     except RateLimitError as e:
-        # T100: Return HTTP 429 with Retry-After header
+        # T100: Return HTTP 429 with Retry-After header.
+        # P1-19: sanctioned HTTPException — this is a FastAPI Depends
+        # dependency (native HTTPException support), and the Retry-After /
+        # X-RateLimit-* headers plus the structured {error, retry_after}
+        # detail have no domain-table equivalent (RateLimitExceededError
+        # maps to a bare 429 with no headers).
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail={

@@ -86,7 +86,7 @@ class WebhookService:
 
             await asyncio.sleep(0.1)
             await self.circuit.record_success()
-        except Exception as e:
+        except (TimeoutError, OSError) as e:
             print(f"Webhook failed: {e}")
             await self.circuit.record_failure(e)
 

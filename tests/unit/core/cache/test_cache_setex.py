@@ -53,7 +53,14 @@ class TestSetexUsage:
         rl_path = Path(__file__).parents[4] / "src" / "app" / "modules" / "rate_limits" / "service.py"
         source = rl_path.read_text()
 
-        assert "setex" in source
+        # P2-B: the tier-list read path delegates writes to get_with_lock
+        # (lock-based stampede protection); the atomic SETEX itself lives in
+        # stampede._refresh_cache — the single writer for that key.
+        assert "get_with_lock" in source
+        stampede_path = (
+            Path(__file__).parents[4] / "src" / "app" / "core" / "utils" / "cache" / "stampede.py"
+        )
+        assert "setex" in stampede_path.read_text()
 
 
 class TestSetexAtomicity:

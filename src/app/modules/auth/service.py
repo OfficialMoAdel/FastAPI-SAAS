@@ -1,5 +1,6 @@
 """Auth service layer - encapsulates all authentication business logic."""
 
+import json
 from typing import Any, cast
 from uuid import UUID
 
@@ -26,7 +27,7 @@ from src.app.modules.auth.services.email_verification import EmailVerificationSe
 from src.app.modules.auth.services.lockout import LoginLockoutPolicy
 from src.app.modules.auth.services.passwords import PasswordLifecycleService
 from src.app.modules.auth.services.tokens import TokenIssuer
-from src.app.modules.users.service import UserService
+from src.app.modules.users import UserService
 from src.app.shared.exceptions import ServiceUnavailableError, UnauthorizedError
 
 logger = get_logger(__name__)
@@ -154,7 +155,7 @@ class AuthService:
         request: Any = None,
         username: str = "",
         success: bool = False,
-        tenant_id: int | UUID | None = None,
+        tenant_id: UUID | None = None,
         user_id: int | None = None,
         reason: str | None = None,
         *,
@@ -340,6 +341,76 @@ class AuthService:
             "refresh_token": issued.refresh_token,
         }
 
+    async def _reject_reused_refresh_token(
+        self,
+        refresh_token: str,
+        *,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        """Kill the token family if a rotated refresh token is replayed.
+
+        Every successful rotation stores ``refresh_rotated:{old_jti}``. A
+        token whose jti carries that marker was already rotated once, so
+        presenting it again means the old token was stolen: invalidate the
+        session, blacklist the replacement token, audit, and reject with the
+        same message as an invalid token (no oracle).
+        """
+        from src.app.core.redis_provider import get_redis
+        from src.app.core.security.jwt_utils import extract_jti_unverified
+
+        redis_client = get_redis()
+        if redis_client is None:
+            return  # fail-closed downstream: verify/blacklist require Redis
+        old_jti = extract_jti_unverified(refresh_token)
+        if not old_jti:
+            return  # unverifiable here; verify_token below rejects it
+        try:
+            raw = await redis_client.get(f"refresh_rotated:{old_jti}")
+        except Exception as e:
+            logger.debug("refresh reuse-marker lookup failed", error=str(e))
+            return
+        if not raw:
+            return
+        try:
+            marker = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
+            user_id = marker["user_id"]
+            session_id = marker["sid"]
+            new_jti = marker["new_jti"]
+            new_exp = float(marker["new_exp"])
+        except (ValueError, KeyError, TypeError, AttributeError) as e:
+            logger.warning("malformed refresh rotation marker", jti=old_jti, error=str(e))
+            return
+
+        # Reuse confirmed — revoke the family best-effort, then reject.
+        try:
+            from datetime import UTC
+            from datetime import datetime as dt
+
+            from src.app.core.security.session_manager import session_manager as global_session_manager
+            from src.app.core.security.token_blacklist_cache import add_token_to_blacklist
+
+            if session_id:
+                await global_session_manager.invalidate_session(user_id, session_id)
+            await add_token_to_blacklist(f"jti:{new_jti}", dt.fromtimestamp(new_exp, tz=UTC))
+        except Exception as e:
+            logger.warning("refresh-reuse family revocation best-effort failed", error=str(e))
+        try:
+            await audit(
+                action="auth.refresh_token_reuse_detected",
+                entity_type="session",
+                entity_id=str(session_id),
+                tenant_id=None,
+                user_id=user_id,
+                details={"rotated_jti": old_jti, "revoked_jti": new_jti},
+                ip_address=ip_address,
+                user_agent=user_agent,
+                priority=EventPriority.CRITICAL,
+            )
+        except Exception as e:
+            logger.error("failed to audit refresh token reuse", error=str(e))
+        raise UnauthorizedError("Invalid refresh token.")
+
     async def refresh_access_token(
         self,
         refresh_token: str | None,
@@ -359,6 +430,12 @@ class AuthService:
             raise ServiceUnavailableError("Database session is required")
         if not refresh_token:
             raise UnauthorizedError("Refresh token missing.")
+
+        # P2-1: refresh-reuse detection — a rotated token presented again
+        # means theft; revoke the whole family before any other check.
+        await self._reject_reused_refresh_token(
+            refresh_token, ip_address=ip_address, user_agent=user_agent
+        )
 
         user_data = await verify_token(refresh_token, TokenType.REFRESH, db)
         if not user_data:
@@ -384,6 +461,21 @@ class AuthService:
         if not db_user or db_user.get("is_deleted", False) or not db_user.get("is_active", False):
             raise UnauthorizedError("User account is no longer active.")
 
+        # A2/A3: recover the OLD refresh payload so rotation can carry forward
+        # absolute_exp, original iat and the stable sid. The token string has
+        # already been signature-verified by verify_token() above; this decode
+        # is a local operation to surface claims TokenData does not expose.
+        from src.app.core.security.jwt_utils import decode_jwt_token
+
+        old_refresh_payload = await decode_jwt_token(refresh_token) or {}
+
+        # P2-1: bind the refresh token to the user's tenant. Enforced only
+        # when both sides carry a tenant (legacy tokens may lack the claim).
+        payload_tenant = old_refresh_payload.get("tenant_id")
+        user_tenant = db_user.get("tenant_id")
+        if payload_tenant is not None and user_tenant is not None and str(payload_tenant) != str(user_tenant):
+            raise UnauthorizedError("Invalid refresh token.")
+
         # SECURITY FIX: Check token version to enforce password change/all-session invalidation
         # `user_data.token_version` is pulled from the refresh token by `verify_token`
         current_token_version = db_user.get("token_version", 0)
@@ -394,14 +486,6 @@ class AuthService:
         # SECURITY FIX: Include token_version for session invalidation
         # SECURITY FIX: Include tenant_id for tenant isolation during token refresh
         token_data = TokenIssuer.build_token_data(subject=user_data.username_or_email, user=db_user or {})
-
-        # A2/A3: recover the OLD refresh payload so rotation can carry forward
-        # absolute_exp, original iat and the stable sid. The token string has
-        # already been signature-verified by verify_token() above; this decode
-        # is a local operation to surface claims TokenData does not expose.
-        from src.app.core.security.jwt_utils import decode_jwt_token
-
-        old_refresh_payload = await decode_jwt_token(refresh_token) or {}
 
         # Create new tokens FIRST to ensure atomicity. If this fails, the user is not left locked out.
         from src.app.core.redis_provider import get_redis
@@ -421,6 +505,36 @@ class AuthService:
             # Blacklist the used refresh token (Rotation) AFTER new tokens are successfully generated
             # We don't pass the payload here so that blacklist_token decodes it fully to get the 'exp' claim
             await blacklist_token(token=refresh_token, db=db)
+
+            # P2-1: plant a rotation marker so a replayed old token is
+            # detectable as theft (refresh-reuse → family revocation).
+            try:
+                from datetime import UTC
+                from datetime import datetime as dt
+
+                now_ts = dt.now(UTC).timestamp()
+                marker_ttl = int(
+                    min(
+                        max(60, float(old_refresh_payload.get("exp", now_ts + 60)) - now_ts),
+                        settings.crypt.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+                    )
+                )
+                new_payload = await decode_jwt_token(new_refresh_token) or {}
+                if redis_client and user_data.jti and new_payload.get("jti"):
+                    await redis_client.setex(
+                        f"refresh_rotated:{user_data.jti}",
+                        marker_ttl,
+                        json.dumps(
+                            {
+                                "user_id": db_user["id"],
+                                "sid": user_data.sid,
+                                "new_jti": new_payload["jti"],
+                                "new_exp": new_payload.get("exp", now_ts + marker_ttl),
+                            }
+                        ),
+                    )
+            except Exception as e:
+                logger.debug("failed to plant refresh rotation marker", error=str(e))
         finally:
             if redis_client and lock_key:
                 try:

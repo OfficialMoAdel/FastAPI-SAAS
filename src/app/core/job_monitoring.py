@@ -1,3 +1,6 @@
+# NOTE (P2-E): the ~10 ``type: ignore`` comments below are deliberate —
+# the redis-py async client returns untyped ``Any`` for get/scan/pipeline
+# results, and these call sites re-shape into typed containers immediately.
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -48,7 +51,7 @@ class JobMonitoringService:
             parsed_data: dict[str, Any] = json_loads(blob)  # type: ignore[arg-type]
             if not isinstance(parsed_data, dict):
                 return {"status": "unknown", "job_id": job_id, "raw": str(blob)[:500]}
-        except Exception:
+        except Exception:  # noqa: BLE001 - P1-17: corrupt payload falls back to unknown status
             logger.warning("Failed to deserialize arq job payload", job_id=job_id)
             return {"status": "unknown", "job_id": job_id, "raw": str(blob)[:500]}
 
@@ -220,7 +223,7 @@ class JobMonitoringService:
                             parsed_items.append({"raw": item_str, "error": "parse_error"})
                     else:
                         parsed_items.append({"raw": item_str, "error": "parse_error"})
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - P1-17: unparsable item kept as raw, never breaks listing
                 logger.error("Failed to parse DLQ item. Item: %s | Error: %s", item_str, e)
                 parsed_items.append({"raw": item_str, "error": str(e)})
 

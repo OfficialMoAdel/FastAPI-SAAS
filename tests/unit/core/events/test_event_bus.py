@@ -408,3 +408,13 @@ class TestCriticalFailureDLQ:
         await asyncio.sleep(0)
 
         assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_publish_no_handlers_returns_none(self, fresh_event_bus) -> None:
+        """P2-7: handler-less publishes take the fast path (no span) and return None."""
+        result = await fresh_event_bus.publish(
+            "unknown.event",
+            {"some": "data"},
+            priority=EventPriority.NORMAL,
+        )
+        assert result is None

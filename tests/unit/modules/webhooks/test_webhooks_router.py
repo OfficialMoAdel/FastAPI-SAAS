@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 
 from src.app.modules.webhooks.models import WebhookDeliveryStatus
 from src.app.modules.webhooks.router import (
@@ -25,6 +24,7 @@ from src.app.modules.webhooks.schemas import (
     WebhookEndpointUpdate,
     WebhookTestRequest,
 )
+from src.app.shared.exceptions import ModelNotFoundError, ValidationError
 
 
 @pytest.fixture
@@ -170,9 +170,8 @@ async def test_get_webhook_endpoint_not_found(mock_db, mock_tenant, mock_user):
     mock_result.scalar_one_or_none.return_value = None
     mock_db.execute.return_value = mock_result
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ModelNotFoundError, match="Webhook endpoint"):
         await get_webhook_endpoint(endpoint_id=uuid4(), ctx=_make_ctx(mock_db, mock_tenant, mock_user))
-    assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -279,11 +278,10 @@ async def test_retry_webhook_delivery_not_failed(mock_db, mock_tenant, mock_user
     mock_result.scalar_one_or_none.return_value = mock_delivery
     mock_db.execute.return_value = mock_result
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ValidationError, match="Only failed deliveries can be retried"):
         await retry_webhook_delivery(
             delivery_id=uuid4(), ctx=_make_ctx(mock_db, mock_tenant, mock_user)
         )
-    assert exc.value.status_code == 400
 
 
 @pytest.mark.asyncio

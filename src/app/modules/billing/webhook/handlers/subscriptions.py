@@ -117,7 +117,7 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
 
         # M-04: Explicitly downgrade user to free tier if canceled/expired
         if new_status in ("canceled", "expired"):
-            from src.app.modules.users.service import UserService
+            from src.app.modules.users import UserService
 
             await UserService(db).downgrade_to_free_tier(user_id)
             _pkg.logger.info(
@@ -187,6 +187,24 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
             )
             return
 
+        # P2-3: guard out-of-order delivery (mirrors the S2-02 guard in
+        # handle_subscription_updated) — a delayed subscription.deleted must
+        # not rewrite a terminal EXPIRED subscription back to canceled, nor
+        # re-downgrade the user.
+        current_status = getattr(db_subscription_locked, "status", None)
+        if (
+            isinstance(current_status, str)
+            and current_status != "canceled"
+            and not is_valid_transition(current_status, "canceled")
+        ):
+            _pkg.logger.info(
+                "Skipping invalid subscription transition (out-of-order webhook)",
+                stripe_subscription_id=stripe_subscription_id,
+                current_status=current_status,
+                target_status="canceled",
+            )
+            return
+
         await _pkg.crud_user_subscriptions.update(
             db=db,
             object=update_data,
@@ -194,7 +212,7 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
         )
 
         # M-04: Explicitly downgrade user to free tier
-        from src.app.modules.users.service import UserService
+        from src.app.modules.users import UserService
 
         await UserService(db).downgrade_to_free_tier(db_subscription.user_id)
 

@@ -42,6 +42,11 @@ MFA_LOCKOUT_DURATION_SECONDS: int = 300  # phantom knob: no Settings field
 TOTP_INTERVAL = 30  # 30 seconds
 TOTP_DIGITS = 6
 TOTP_SKEW = 1  # Allow 1 interval before/after
+# P1-6: used-code markers must outlive a code's full validity window
+# ((2*SKEW+1) intervals) plus one interval of clock-drift margin — otherwise
+# a code verified early can be replayed after the marker expires (ex=30 left
+# a ~60s replay window on /complete-login).
+TOTP_REPLAY_MARKER_TTL = (2 * TOTP_SKEW + 2) * TOTP_INTERVAL  # 120 seconds
 BACKUP_CODE_COUNT = 10
 BACKUP_CODE_LENGTH = 10  # Characters after 'BC-' prefix
 BACKUP_CODE_PREFIX = "BC-"
@@ -360,7 +365,8 @@ class MFAService:
                     client = get_redis()
                     if client is not None:
                         used_key = f"mfa_used:{user_id}:{request.totp_token}"
-                        is_fresh = await client.set(used_key, "1", nx=True, ex=30)
+                        # P1-6: marker TTL covers the code's full validity window.
+                        is_fresh = await client.set(used_key, "1", nx=True, ex=TOTP_REPLAY_MARKER_TTL)
                         if not is_fresh:
                             raise ValidationError("TOTP token has already been used. Please wait for a new code.")
 
@@ -555,7 +561,7 @@ class MFAService:
             UnauthorizedException: If verification fails.
         """
         from src.app.core.security import verify_password
-        from src.app.modules.users.service import UserService
+        from src.app.modules.users import UserService
 
         # Verify user exists and password is correct (auth-gated read seam)
         user = await UserService(db).get_active_user(id=user_id)
@@ -676,7 +682,7 @@ class MFAService:
             UnauthorizedException: If verification fails.
         """
         from src.app.core.security import verify_password
-        from src.app.modules.users.service import UserService
+        from src.app.modules.users import UserService
 
         # Verify user exists and password is correct (auth-gated read seam)
         user = await UserService(db).get_active_user(id=user_id)

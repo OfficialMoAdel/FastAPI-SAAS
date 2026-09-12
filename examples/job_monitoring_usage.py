@@ -50,7 +50,7 @@ async def main():
         try:
             # Simulate error
             raise ValueError("Connection timeout")
-        except Exception as e:
+        except ValueError as e:
             print(f"[4] Job {job_id_fail} failed: {e}")
             await service.record_job_failure(job_id_fail, function_name, str(e))
 

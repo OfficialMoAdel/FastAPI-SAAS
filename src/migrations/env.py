@@ -1,7 +1,4 @@
 import asyncio
-import importlib
-import importlib.util
-import pkgutil
 from logging.config import fileConfig
 
 from alembic import context
@@ -9,20 +6,12 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# R3-04: dynamic model discovery — replaces the manual 20-import list so new
-# modules are auto-registered for autogenerate without editing this file.
-# Each module's ``models`` (if present) is imported for its Base.metadata
-# side-effect; import failures for modules without models are ignored.
-import src.app.modules as _modules_pkg
+# Canonical model registry (A-M6): one import wires every model into
+# Base.metadata for autogenerate — no per-module discovery loop.
+import src.app.models  # noqa: F401
 from src.app.core.config import settings
 from src.app.core.db.database import Base
 from src.app.core.db.token_blacklist import TokenBlacklist  # noqa: F401
-
-for _mod in pkgutil.iter_modules(_modules_pkg.__path__):
-    _name = f"src.app.modules.{_mod.name}.models"
-    if importlib.util.find_spec(_name) is None:
-        continue
-    importlib.import_module(_name)
 
 # Debug: Print registered tables
 # print("Registered tables:", Base.metadata.tables.keys())
@@ -41,10 +30,6 @@ config.set_main_option(
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Note: We don't import app.models here because it causes duplicate table
-# registration errors due to circular imports and multiple import paths.
-# For autogenerate, models need to be imported. For simple migrations,
-# the migration scripts themselves define the schema changes.
 target_metadata = Base.metadata
 
 

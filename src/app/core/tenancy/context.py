@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from src.app.core.exceptions.http_exceptions import TenantContextError  # noqa: F401  # H3: re-exported canonical class
+from src.app.shared.exceptions import ModelNotFoundError
 
 if TYPE_CHECKING:
     from src.app.modules.tenants.models import Tenant
@@ -146,3 +147,37 @@ def require_active_tenant() -> "TenantContext":
     if not tenant.is_active:
         raise TenantContextError("Tenant is not active")
     return tenant
+
+
+def require_tenant_match(
+    resource_tenant_id: UUID | None,
+    *,
+    resource: str = "resource",
+    key: str | int | UUID | None = None,
+) -> None:
+    """Enforce cross-tenant ownership — the ONE soft-404 encoding.
+
+    P2-C: replaces the four divergent per-call-site tenant comparisons
+    (``str(a) != str(b)`` vs ``a != b``; 404 vs 403) with a single seam.
+    A resource whose tenant differs from the current context tenant —
+    including a missing (``None``) resource tenant — raises
+    ``ModelNotFoundError`` (404), never 403, so cross-tenant existence is
+    never leaked (enumeration-safe). In-tenant ownership stays 403 via
+    ``RequestContext.require_ownership`` / ``ForbiddenException``.
+    Tenant-less paths (no current tenant, e.g. worker/system flows) skip
+    the check, preserving existing system behavior.
+
+    Args:
+        resource_tenant_id: Tenant UUID owning the resource (UUID sole type).
+        resource: Model name for the 404 error (e.g. ``"User"``).
+        key: Lookup key for the 404 error (e.g. username).
+
+    Raises:
+        ModelNotFoundError: If a tenant is bound and the resource belongs
+            to a different tenant (or to none).
+    """
+    current = get_current_tenant()
+    if current is None:
+        return
+    if resource_tenant_id != current.tenant_id:
+        raise ModelNotFoundError(resource, key)

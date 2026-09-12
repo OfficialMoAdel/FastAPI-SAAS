@@ -6,8 +6,6 @@ Limits the maximum size of request bodies to prevent:
 - Chunked transfer encoding bypass attacks
 """
 
-from collections.abc import AsyncIterator
-
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from structlog import get_logger
 
@@ -21,31 +19,6 @@ class BodySizeLimitExceeded(Exception):
     """Raised when request body size exceeds the configured limit."""
 
     pass
-
-
-class LimitedBodyStream:
-    """Wrapper that enforces size limits during streaming reads.
-
-    This handles chunked transfer encoding attacks where Content-Length
-    is missing or spoofed.
-    """
-
-    def __init__(self, stream: AsyncIterator[bytes], max_size: int):
-        self._stream = stream
-        self._max_size = max_size
-        self._bytes_read = 0
-
-    async def __anext__(self) -> bytes:
-        chunk = await self._stream.__anext__()
-        self._bytes_read += len(chunk)
-
-        if self._bytes_read > self._max_size:
-            raise BodySizeLimitExceeded(f"Request body exceeded limit of {self._max_size} bytes")
-
-        return chunk
-
-    def __aiter__(self) -> "LimitedBodyStream":
-        return self
 
 
 class RequestBodyLimitMiddleware:

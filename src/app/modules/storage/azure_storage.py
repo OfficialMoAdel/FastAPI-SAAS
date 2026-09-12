@@ -195,6 +195,9 @@ class AzureBlobStorage(StorageProvider):
             account_key=self._account_key,
             permission=BlobSasPermissions(read=True),
             expiry=datetime.now(UTC) + timedelta(seconds=expires_in),
+            # P2-5: force download — bearer SAS URLs must not render
+            # tenant-controlled content (e.g. SVG) inline.
+            content_disposition="attachment",
         )
 
         return f"{blob_client.url}?{sas_token}"

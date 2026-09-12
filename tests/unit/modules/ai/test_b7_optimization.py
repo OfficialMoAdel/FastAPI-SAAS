@@ -35,18 +35,20 @@ logger = logging.getLogger(__name__)
 
 
 class TestB7ParallelReads:
-    """Tests for asyncio.gather optimization on reads."""
+    """Tests for single-session sequential pre-LLM reads (P1-13).
+
+    Previously these ran via asyncio.gather over 3 short-lived sessions
+    (4-5 checkouts per request). Now they run sequentially on the
+    request-scoped session: one checkout for all pre-LLM reads.
+    """
 
     @pytest.mark.asyncio
-    async def test_complete_uses_gather_for_reads(self) -> None:
-        """Verify that the 3 reads are executed in parallel via asyncio.gather.
+    async def test_complete_reads_share_request_session(self) -> None:
+        """Verify that the 3 pre-LLM reads share the request-scoped session.
 
-        The original code executed these sequentially:
-        1. get_session()
-        2. get_or_create_settings()
-        3. get_session_messages()
-
-        After B7, these should run in parallel, reducing latency.
+        P1-13: instead of 3 parallel local_session() checkouts, complete()
+        must construct ChatSessionService / AISettingsService /
+        ChatMessageService with the request db (self.db).
         """
         # Arrange
         mock_db = AsyncMock()
@@ -108,13 +110,18 @@ class TestB7ParallelReads:
         mock_settings_inst.get_or_create_settings.assert_called_once_with(1)
         mock_msg_inst.get_session_messages.assert_called_once_with(1, limit=50)
 
-        logger.info("Verified: All 3 reads were called (parallel execution via gather)")
+        # P1-13: all 3 read services must share the request-scoped session
+        MockSessionService.assert_called_once_with(mock_db)
+        MockSettingsService.assert_called_once_with(mock_db)
+        MockMsgService.assert_any_call(mock_db)
+
+        logger.info("Verified: All 3 reads share the request-scoped session")
 
     @pytest.mark.asyncio
-    async def test_gather_exception_handling(self) -> None:
+    async def test_read_exception_handling(self) -> None:
         """Verify that if any read fails, the exception propagates correctly.
 
-        asyncio.gather should fail fast and propagate the first exception.
+        Sequential reads fail fast and propagate the first exception.
         """
         mock_db = AsyncMock()
         service = ChatCompletionService(db=mock_db)

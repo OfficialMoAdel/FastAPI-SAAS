@@ -57,6 +57,14 @@ async def ingest_webhook(
     secret first. The tenant identity is derived from the *verified* event
     payload afterwards — never from a query param or unverified body metadata.
 
+    P1-8 NOTE: verification is GLOBAL-only by design. The platform exposes a
+    single webhook endpoint, so per-tenant endpoint secrets cannot participate:
+    the tenant is unknown until after verification, and a global-verify pass
+    already authenticates Stripe as the sender. The per-tenant
+    ``encrypted_webhook_secret`` column was omitted as unwired dead weight
+    (P1-8). Per-tenant endpoint URLs (Connect-style) would be a separate
+    feature, not a column.
+
     verify_fn is sync-only by contract (runs in executor); async functions
     are awaited directly for test convenience.
     """

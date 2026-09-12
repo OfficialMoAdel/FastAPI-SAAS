@@ -4,13 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-import pytest
-
-from src.app.middleware.body_limit import (
-    BodySizeLimitExceeded,
-    LimitedBodyStream,
-    RequestBodyLimitMiddleware,
-)
+from src.app.middleware.body_limit import RequestBodyLimitMiddleware
 
 DEFAULT_MAX = 10 * 1024 * 1024
 
@@ -96,27 +90,3 @@ async def test_invalid_content_length_falls_through_to_stream() -> None:
     send_calls = []
     await _run_middleware(middleware, scope, [b"ok"], send_calls)
     app.assert_awaited_once()
-
-
-async def test_limited_body_stream_raises_on_exceed() -> None:
-    async def fake_stream():
-        yield b"x" * 5
-        yield b"x" * 5
-        yield b"x" * 5  # total 15 > 10
-
-    stream = LimitedBodyStream(fake_stream(), max_size=10)
-    with pytest.raises(BodySizeLimitExceeded):
-        async for _ in stream:
-            pass
-
-
-async def test_limited_body_stream_ok_within_limit() -> None:
-    async def fake_stream():
-        yield b"x" * 3
-        yield b"x" * 3
-
-    stream = LimitedBodyStream(fake_stream(), max_size=10)
-    total = 0
-    async for chunk in stream:
-        total += len(chunk)
-    assert total == 6

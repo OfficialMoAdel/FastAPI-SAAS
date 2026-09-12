@@ -65,6 +65,11 @@ class CheckoutService:
         if not price_id:
             raise ValidationError(f"Plan does not have a {data.billing_interval} price configured")
 
+        # P1-14: release the pooled connection before the Stripe network call
+        # below. All inputs (price_id, customer_id, metadata) are materialized
+        # into locals above, so no re-fetch is needed after the commit.
+        await self.db.commit()
+
         try:
             # Create Stripe Session - build kwargs conditionally to satisfy type checker
             session_kwargs: dict[str, Any] = {
@@ -151,6 +156,10 @@ class CheckoutService:
             raise ValidationError("No Stripe customer ID found for this tenant")
 
         customer_id = stripe_settings["stripe_customer_id"]
+
+        # P1-14: release the pooled connection before the Stripe network call
+        # below (same rationale as create_session above).
+        await self.db.commit()
 
         try:
             session = await gateway.create_portal_session(

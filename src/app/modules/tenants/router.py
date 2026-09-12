@@ -12,8 +12,8 @@ from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.core.utils.user_utils import get_user_attr
+from src.app.modules.tenants import TenantService
 from src.app.modules.tenants.schemas import TenantCreate, TenantList, TenantResponse, TenantUpdate
-from src.app.modules.tenants.service import TenantService
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 

@@ -16,8 +16,8 @@ from typing import Any
 # Disable bad bot filter for tests (httpx is used by test clients)
 # MUST be set before importing settings, which reads env vars at module load
 os.environ["BAD_BOT_FILTER_ENABLED"] = "false"
-# Disable attack detection middleware for tests (BaseHTTPMiddleware body consumption issue)
-os.environ["ATTACK_DETECTION_ENABLED"] = "false"
+# P0-1 fixed: attack detection no longer consumes request bodies, so the
+# middleware stays enabled in tests (see tests/conftest.py).
 
 import pytest
 from cryptography.fernet import Fernet

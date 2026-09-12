@@ -57,8 +57,10 @@ load_dotenv("src/.env", override=False)
 
 # Disable bad bot filter for tests (httpx is used by test clients)
 os.environ["BAD_BOT_FILTER_ENABLED"] = "false"
-# Disable attack detection middleware for tests (BaseHTTPMiddleware body consumption issue)
-os.environ["ATTACK_DETECTION_ENABLED"] = "false"
+# P0-1 fixed: attack detection no longer consumes request bodies
+# (reads via Request.body(), replayed downstream by Starlette), so the
+# middleware stays enabled in tests. ATTACK_DETECTION_MODE defaults to
+# "block" — keep test payloads free of attack patterns or override per-test.
 # Enable test mode to use NullPool and prevent event loop closed errors
 os.environ["TESTING"] = "1"
 
@@ -1728,7 +1730,7 @@ async def init_real_redis_async(request):
     # Also reset GCRA rate limiter which caches script SHAs per connection
     cache.client = None
     cache.pool = None
-    redis_factory.get_redis_pool._pool = None  # type: ignore[attr-defined]
+    redis_factory._shared_pool = None  # type: ignore[attr-defined]
     session_manager.set_redis_client(None)
 
     # Reset GCRA rate limiter to force fresh initialization
@@ -1767,7 +1769,7 @@ async def init_real_redis_async(request):
     # (the event loop may be closing and we can't operate on closed loops)
     cache.client = None
     cache.pool = None
-    redis_factory.get_redis_pool._pool = None  # type: ignore[attr-defined]
+    redis_factory._shared_pool = None  # type: ignore[attr-defined]
     gcra_module.gcra_rate_limiter = None
     session_manager.set_redis_client(None)
 

@@ -1,12 +1,13 @@
 """Notification service for sending emails with template support."""
 
 import asyncio
+import hashlib
 from datetime import UTC, datetime, time
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from jinja2 import FileSystemLoader
+from jinja2 import FileSystemLoader, Template
 from jinja2.sandbox import SandboxedEnvironment
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +35,14 @@ AUTH_CRITICAL_TEMPLATES: frozenset[str] = frozenset(
 TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates" / "email"
 # Use SandboxedEnvironment to prevent SSTI attacks from user-supplied templates
 jinja_env = SandboxedEnvironment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=True)
+
+# P2-7: compiled-template cache for render_template(). get_template() has a
+# loader-level cache, but from_string() compiles on every call and DB-backed
+# tenant overrides bypass the loader entirely. Keyed by content hash so tenant
+# edits invalidate automatically. Plain-dict FIFO — benign races (same key
+# compiled twice) are harmless; rendering holds no locks.
+_MAX_CACHED_TEMPLATES = 256
+_COMPILED_TEMPLATE_CACHE: dict[str, Template] = {}
 
 
 class NotificationService:
@@ -155,7 +164,15 @@ class NotificationService:
 
         # Render with context using the sandboxed environment
         # This prevents execution of unsafe code if the template comes from user input
-        template = jinja_env.from_string(template_content)
+        # P2-7: from_string() compiles on every call — serve from the
+        # content-hash-keyed cache (see _COMPILED_TEMPLATE_CACHE above).
+        cache_key = hashlib.sha256(template_content.encode("utf-8")).hexdigest()
+        template = _COMPILED_TEMPLATE_CACHE.get(cache_key)
+        if template is None:
+            template = jinja_env.from_string(template_content)
+            if len(_COMPILED_TEMPLATE_CACHE) >= _MAX_CACHED_TEMPLATES:
+                _COMPILED_TEMPLATE_CACHE.pop(next(iter(_COMPILED_TEMPLATE_CACHE)))
+            _COMPILED_TEMPLATE_CACHE[cache_key] = template
         rendered_html = template.render(**context)
 
         return subject, rendered_html
@@ -251,7 +268,6 @@ class NotificationService:
                 logger.info(
                     "email_queued",
                     notification_id=str(notification.id),
-                    to_email=to_email,
                     template=template_name,
                 )
             except Exception as e:
@@ -267,7 +283,6 @@ class NotificationService:
             logger.warning(
                 "arq_queue_not_available",
                 notification_id=str(notification.id),
-                to_email=to_email,
             )
             notification.status = NotificationStatus.FAILED
             notification.error_message = "ARQ queue not available"
@@ -328,7 +343,8 @@ class NotificationService:
         from sqlalchemy import func
 
         total_col = func.count().over().label("total")
-        query = select(Notification, total_col).where(Notification.tenant_id == tenant_id)
+        # P2-2: tenant criterion via the tenant_scope() seam.
+        query = select(Notification, total_col).where(tenant_scope(Notification, tenant_id))
 
         enum_status = None
         if status:
@@ -357,7 +373,7 @@ class NotificationService:
             return 0, []
 
         # Out-of-range page fallback
-        count_query = select(func.count()).select_from(Notification).where(Notification.tenant_id == tenant_id)
+        count_query = select(func.count()).select_from(Notification).where(tenant_scope(Notification, tenant_id))
         if user_id:
             count_query = count_query.where(Notification.user_id == user_id)
         if enum_status is not None:
@@ -604,13 +620,12 @@ async def send_email_task(
 
                 # Mark as sent (inside context = RLS enforced)
                 await service.mark_sent(UUID(notification_id))
-                logger.info("email_sent_success", notification_id=notification_id, to_email=to_email)
+                logger.info("email_sent_success", notification_id=notification_id)
 
             except Exception as e:
                 logger.error(
                     "email_send_failed",
                     notification_id=notification_id,
-                    to_email=to_email,
                     error=str(e),
                     exc_info=True,
                 )
@@ -674,7 +689,6 @@ async def handle_notification_send_event(data: dict[str, Any]) -> None:
             logger.debug(
                 "email_task_enqueued",
                 notification_id=notification_id,
-                to_email=to_email,
             )
         except Exception as e:
             logger.error(
@@ -688,7 +702,6 @@ async def handle_notification_send_event(data: dict[str, Any]) -> None:
         logger.warning(
             "arq_queue_not_available",
             notification_id=notification_id,
-            to_email=to_email,
         )
         # BUG FIX: Mark notification as FAILED so it doesn't stay stuck in PENDING
         await _mark_notification_failed(notification_id, tenant_id, "ARQ queue not available")

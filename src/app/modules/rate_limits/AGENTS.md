@@ -37,9 +37,14 @@ MAX_REQUESTS = 1000  # Don't do this
 ### DO: Apply rate limit middleware
 
 ```python
-# In middleware - rate limits are checked per request
+from src.app.shared.exceptions import RateLimitExceededError
+
+# In middleware - rate limits are checked per request.
+# Raise the domain error — the central table maps it to 429.
+# (FastAPI Depends dependencies that must attach Retry-After headers
+# are the sanctioned exception: see ai/middleware.py.)
 if await rate_limiter.is_rate_limited(tenant_id, endpoint):
-    raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    raise RateLimitExceededError("Rate limit exceeded", retry_after=60)
 ```
 
 ### DO: Track rate limit headers
@@ -59,13 +64,13 @@ src/app/modules/rate_limits/
 ├── router.py             # /tiers/{tier_name}/rate-limits endpoints
 ├── models.py             # RateLimit and Tier models
 ├── schemas.py            # RateLimit and Tier schemas
-└── service.py            # RateLimitService (absorbs tier CRUD and rate limits)
+└── service.py            # RateLimitService (composes TierService for tier ops)
 
 ## Touch Points
 
 - **CRUD operations**: `modules/rate_limits/service.py::RateLimitService` (rate limits & tiers)
 - **Models**: `modules/rate_limits/models.py::{RateLimit, Tier}`
-- **Tier integration**: Deep module owning tier definitions and rate limit rules
+- **Tier integration**: Tier model/schemas/service live in `modules/tiers/`; this module composes TierService for tier-shaped operations
 
 ## JIT Index Hints
 

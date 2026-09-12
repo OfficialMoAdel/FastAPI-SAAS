@@ -31,6 +31,9 @@ def _make_request(method="GET", path="/", query="", headers=None, body=b""):
         return {"type": "http.disconnect"}
 
     request.stream = MagicMock(return_value=_async_iter(chunks))
+    # P0-1: _detect_attack_patterns reads via `await request.body()`
+    # (Starlette replays it downstream); mock it alongside stream().
+    request.body = AsyncMock(return_value=body)
     request.scope = scope
     return request
 
@@ -176,3 +179,69 @@ async def test_dispatch_no_attack_passes_through(middleware):
     req = _make_request(method="GET", path="/home")
     await middleware.dispatch(req, app)
     assert called.get("yes")
+
+
+def test_body_passthrough_end_to_end():
+    """P0-1 regression: middleware must not consume the request body.
+
+    Previously ``_detect_attack_patterns`` drained ``request.stream()`` and
+    rebuilt a ``Request`` object that Starlette's ``BaseHTTPMiddleware``
+    discarded (``call_next`` ignores its argument), so every POST/PUT/PATCH
+    handler received ``b""``. Now the body is read via ``Request.body()``,
+    which Starlette's ``_CachedRequest`` replays downstream.
+    """
+    import json as _json
+
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+    from starlette.testclient import TestClient
+
+    async def echo(request):
+        body = await request.body()
+        return JSONResponse({"body": body.decode("utf-8")})
+
+    app = Starlette(routes=[Route("/echo", echo, methods=["POST"])])
+    app.add_middleware(AttackDetectionMiddleware)
+    client = TestClient(app)
+    response = client.post("/echo", json={"hello": "world"})
+    assert response.status_code == 200
+    assert _json.loads(response.json()["body"]) == {"hello": "world"}
+
+
+class TestP17RegexTightening:
+    """P1-7: tightened xss_event / sql_comment must catch real payloads and
+    ignore benign inputs. Runs against the production COMBINED_ATTACK_RE via
+    the middleware's own _check_for_patterns seam (not the stale test mirror).
+    """
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            b"<img src=x onerror=alert(1)>",
+            b"<svg/onload=alert(1)>",
+            b"<body onload=evil()>",
+            b"admin'--",
+            b"1; DROP TABLE x; --",
+        ],
+    )
+    def test_true_positives_still_detected(self, middleware, payload: bytes) -> None:
+        attacks: list[dict] = []
+        middleware._check_for_patterns(payload, "request_body", attacks)
+        assert attacks, f"missed real attack payload: {payload!r}"
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            b"only=5&sort=asc",  # bare on*= query/form param, no tag context
+            b"<div>price only=$5</div>",  # on-word outside any tag
+            b"data-only=x",  # hyphenated attr name, not an event handler
+            b"em-dash note -- done",  # prose double-dash, no SQL context
+            b"select an option from the list -- thanks",  # keywords, no quote/semicolon
+            b"--boundary1234567890",  # multipart boundary
+        ],
+    )
+    def test_false_positives_ignored(self, middleware, payload: bytes) -> None:
+        attacks: list[dict] = []
+        middleware._check_for_patterns(payload, "request_body", attacks)
+        assert not attacks, f"false positive on benign input: {payload!r} -> {attacks}"

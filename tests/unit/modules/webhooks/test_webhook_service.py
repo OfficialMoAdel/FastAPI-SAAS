@@ -326,14 +326,20 @@ class TestWebhookServiceDelivery:
         mock_db.get.return_value = mock_webhook_delivery
         mock_webhook_delivery.next_retry_at = None
 
-        # Mock circuit breaker to be open
+        # Mock scoped circuit breaker to be open (P2-B: deliver() uses the
+        # per-endpoint breaker from get_webhook_breaker, not the legacy
+        # process-global webhook_circuit)
+        mock_circuit = MagicMock()
+        type(mock_circuit).is_closed = PropertyMock(return_value=False)
+        mock_circuit.recovery_timeout = 60
+        mock_circuit._last_failure_time = 0  # stale/absent timestamp -> clamped to 0s
         with (
-            patch("src.app.core.utils.circuit_breaker.webhook_circuit") as mock_circuit,
+            patch(
+                "src.app.core.utils.circuit_breaker.get_webhook_breaker",
+                return_value=mock_circuit,
+            ),
             patch("src.app.modules.webhooks.delivery._handle_failure", new_callable=AsyncMock) as patch_handle,
         ):
-            type(mock_circuit).is_closed = PropertyMock(return_value=False)
-            mock_circuit.recovery_timeout = 60
-            mock_circuit._last_failure_time = 0  # stale/absent timestamp -> clamped to 0s
 
             result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
 
@@ -412,13 +418,18 @@ class TestWebhookServiceDelivery:
                 mock_client.post.side_effect = Exception("Network error")
                 mock_client_fn.return_value = mock_client
 
-                # Mock circuit breaker record_failure
+                # Mock scoped circuit breaker (P2-B: network failures record
+                # on the per-endpoint breaker from get_webhook_breaker)
+                mock_circuit = MagicMock()
+                mock_circuit.is_closed = True
+                mock_circuit.record_failure = AsyncMock()
                 with patch(
-                    "src.app.core.utils.circuit_breaker.webhook_circuit.record_failure", new_callable=AsyncMock
-                ) as mock_record:
+                    "src.app.core.utils.circuit_breaker.get_webhook_breaker",
+                    return_value=mock_circuit,
+                ):
                     await webhook_service.deliver_webhook(mock_webhook_delivery.id)
 
-                    mock_record.assert_called_once()
+                    mock_circuit.record_failure.assert_called_once()
                     patch_handle.assert_called_once()
 
     @pytest.mark.asyncio
@@ -444,11 +455,15 @@ class TestWebhookServiceDelivery:
             mock_client.post.return_value = mock_response
 
             with patch("src.app.modules.webhooks.delivery.get_webhook_http_client", return_value=mock_client):
-                # Also mock the circuit breaker (imported inside deliver_webhook method)
-                with patch("src.app.core.utils.circuit_breaker.webhook_circuit") as mock_circuit:
-                    mock_circuit.is_closed = True
-                    mock_circuit.record_success = AsyncMock()
-
+                # Also mock the scoped circuit breaker (P2-B: per-endpoint
+                # breaker from get_webhook_breaker)
+                mock_circuit = MagicMock()
+                mock_circuit.is_closed = True
+                mock_circuit.record_success = AsyncMock()
+                with patch(
+                    "src.app.core.utils.circuit_breaker.get_webhook_breaker",
+                    return_value=mock_circuit,
+                ):
                     result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
 
                     assert result.status == WebhookDeliveryStatus.DELIVERED
@@ -480,10 +495,13 @@ class TestWebhookServiceDelivery:
             mock_client.post.return_value = mock_response
 
             with patch("src.app.modules.webhooks.delivery.get_webhook_http_client", return_value=mock_client):
-                with patch("src.app.core.utils.circuit_breaker.webhook_circuit") as mock_circuit:
-                    mock_circuit.is_closed = True
-                    mock_circuit.record_failure = AsyncMock()
-
+                mock_circuit = MagicMock()
+                mock_circuit.is_closed = True
+                mock_circuit.record_failure = AsyncMock()
+                with patch(
+                    "src.app.core.utils.circuit_breaker.get_webhook_breaker",
+                    return_value=mock_circuit,
+                ):
                     mock_webhook_delivery.attempt_count = 0
 
                     result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
@@ -513,10 +531,13 @@ class TestWebhookServiceDelivery:
 
             # Attempt 5 (max is 5, index 4)
             with patch("src.app.modules.webhooks.delivery.get_webhook_http_client", return_value=mock_client):
-                with patch("src.app.core.utils.circuit_breaker.webhook_circuit") as mock_circuit:
-                    mock_circuit.is_closed = True
-                    mock_circuit.record_failure = AsyncMock()
-
+                mock_circuit = MagicMock()
+                mock_circuit.is_closed = True
+                mock_circuit.record_failure = AsyncMock()
+                with patch(
+                    "src.app.core.utils.circuit_breaker.get_webhook_breaker",
+                    return_value=mock_circuit,
+                ):
                     mock_webhook_delivery.attempt_count = 5
                     result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
 

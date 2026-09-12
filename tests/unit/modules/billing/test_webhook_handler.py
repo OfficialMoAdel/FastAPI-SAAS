@@ -6,8 +6,10 @@ import pytest
 from src.app.modules.billing.webhook import (
     _db_idempotency_check,
     _try_acquire_event_lock,
+    handle_charge_refunded,
     handle_checkout_session_completed,
     handle_invoice_payment_succeeded,
+    handle_subscription_deleted,
     handle_subscription_updated,
     handle_webhook_event,
     verify_webhook_signature,
@@ -205,7 +207,7 @@ async def test_handle_invoice_payment_succeeded(
     mock_db.execute = AsyncMock(return_value=mock_result)
 
     mock_crud_billing.create = AsyncMock()
-    mock_crud_billing.exists = AsyncMock(return_value=False)
+    mock_crud_billing.get = AsyncMock(return_value=None)
 
     await handle_invoice_payment_succeeded(event)
 
@@ -309,7 +311,7 @@ async def test_db_idempotency_check_duplicate():
 @pytest.mark.asyncio
 async def test_db_idempotency_check_failure_fails_closed():
     """Test DB idempotency check fails closed when DB also fails (lines 92-100)."""
-    from fastapi import HTTPException
+    from src.app.shared.exceptions import ServiceUnavailableError
 
     mock_db = AsyncMock()
     mock_db.commit = AsyncMock(side_effect=Exception("DB connection failed"))
@@ -324,10 +326,8 @@ async def test_db_idempotency_check_failure_fails_closed():
             mock_db.add = AsyncMock()
 
             # Should fail closed - raise 503 to allow Stripe to retry
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(ServiceUnavailableError, match="idempotency check"):
                 await _db_idempotency_check("evt_error")
-
-            assert exc_info.value.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -524,7 +524,7 @@ async def test_invoice_payment_succeeded_no_resurrection_of_canceled(
 
     mock_crud_subs.update = AsyncMock()
     mock_crud_billing.create = AsyncMock()
-    mock_crud_billing.exists = AsyncMock(return_value=False)
+    mock_crud_billing.get = AsyncMock(return_value=None)
 
     await handle_invoice_payment_succeeded(_make_invoice_event())
 
@@ -565,7 +565,7 @@ async def test_invoice_payment_succeeded_restores_past_due(
 
     mock_crud_subs.update = AsyncMock()
     mock_crud_billing.create = AsyncMock()
-    mock_crud_billing.exists = AsyncMock(return_value=False)
+    mock_crud_billing.get = AsyncMock(return_value=None)
 
     await handle_invoice_payment_succeeded(_make_invoice_event())
 
@@ -574,3 +574,323 @@ async def test_invoice_payment_succeeded_restores_past_due(
     assert mock_crud_subs.update.call_args[1]["db"] is tenant_db
     assert mock_crud_subs.update.call_args[1]["object"] == {"status": "active"}
     tenant_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.job_bypass_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+@patch("src.app.modules.billing.webhook.crud_billing_records")
+async def test_invoice_payment_succeeded_promotes_failed_to_succeeded(
+    mock_crud_billing, mock_crud_subs, mock_bypass_ctx, mock_tenant_ctx
+):  # noqa: E501
+    """P2-3: a prior failed row for a retried invoice must be promoted to
+    succeeded, not skipped — otherwise history shows only "failed" forever."""
+    bypass_db = AsyncMock()
+    tenant_db = AsyncMock()
+    mock_bypass_ctx.return_value = AsyncContextManagerMock(bypass_db)
+    mock_tenant_ctx.return_value = AsyncContextManagerMock(tenant_db)
+    mock_crud_subs.model = UserSubscription
+
+    bypass_result = MagicMock()
+    bypass_result.scalar_one_or_none.return_value = _make_mock_sub()
+    bypass_db.execute = AsyncMock(return_value=bypass_result)
+
+    lock_result = MagicMock()
+    lock_result.scalar_one_or_none.return_value = _make_mock_sub()
+    tenant_db.execute = AsyncMock(return_value=lock_result)
+
+    mock_crud_billing.get = AsyncMock(return_value={"id": 7, "status": "failed"})
+    mock_crud_billing.create = AsyncMock()
+    mock_crud_billing.update = AsyncMock()
+
+    await handle_invoice_payment_succeeded(_make_invoice_event())
+
+    mock_crud_billing.create.assert_not_awaited()
+    mock_crud_billing.update.assert_awaited_once()
+    assert mock_crud_billing.update.call_args[1]["id"] == 7
+    assert mock_crud_billing.update.call_args[1]["object"]["status"] == "succeeded"
+    tenant_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch(
+    "src.app.modules.billing.crud.crud_subscription_plans.get",
+    new_callable=AsyncMock,
+)
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+@patch(
+    "src.app.modules.billing.gateway.StripeGateway.retrieve_subscription",
+    new_callable=AsyncMock,
+)
+async def test_checkout_session_completed_maps_stripe_status(
+    mock_retrieve, mock_crud, mock_tenant_context, mock_plan_get, mock_stripe_event, mock_db
+):  # noqa: E501
+    """P2-3: checkout must persist the real Stripe subscription status
+    (e.g. trialing), not hardcode active."""
+    from uuid import UUID as _UUID
+
+    from src.app.modules.billing import webhook as _webhook_pkg
+
+    event_tenant_id = _UUID(mock_stripe_event["data"]["object"]["metadata"]["tenant_id"])
+    mock_plan_get.return_value = {"id": 2, "tenant_id": event_tenant_id}
+
+    _real_bypass = _webhook_pkg.job_bypass_context
+    _user_row = MagicMock()
+    _user_row.scalar_one_or_none.return_value = event_tenant_id
+    _user_db = AsyncMock()
+    _user_db.execute = AsyncMock(return_value=_user_row)
+
+    def _bypass(label, *args, **kwargs):
+        if label == "Checkout user/tenant membership check":
+            return AsyncContextManagerMock(_user_db)
+        return _real_bypass(label, *args, **kwargs)
+
+    mock_retrieve.return_value = {
+        "status": "trialing",
+        "current_period_start": 1600000000,
+        "current_period_end": 1602592000,
+        "cancel_at_period_end": False,
+        "items": {"data": [{"price": {"recurring": {"interval": "month"}}}]},
+    }
+
+    mock_crud.exists = AsyncMock(return_value=False)
+    mock_crud.create = AsyncMock()
+
+    with patch("src.app.modules.billing.webhook.job_bypass_context", side_effect=_bypass):
+        await handle_checkout_session_completed(mock_stripe_event)
+
+    mock_crud.create.assert_awaited_once()
+    assert mock_crud.create.call_args[1]["object"].status == "trialing"
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.job_bypass_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+async def test_subscription_deleted_skips_invalid_transition(
+    mock_crud_subs, mock_bypass_ctx, mock_tenant_ctx
+):  # noqa: E501
+    """P2-3: a delayed subscription.deleted must not rewrite a terminal
+    EXPIRED subscription back to canceled (nor re-downgrade the user)."""
+    bypass_db = AsyncMock()
+    tenant_db = AsyncMock()
+    mock_bypass_ctx.return_value = AsyncContextManagerMock(bypass_db)
+    mock_tenant_ctx.return_value = AsyncContextManagerMock(tenant_db)
+    mock_crud_subs.model = UserSubscription
+
+    bypass_result = MagicMock()
+    bypass_result.scalar_one_or_none.return_value = _make_mock_sub()
+    bypass_db.execute = AsyncMock(return_value=bypass_result)
+
+    expired_sub = _make_mock_sub()
+    expired_sub.status = "expired"
+    lock_result = MagicMock()
+    lock_result.scalar_one_or_none.return_value = expired_sub
+    tenant_db.execute = AsyncMock(return_value=lock_result)
+
+    mock_crud_subs.update = AsyncMock()
+
+    event = {
+        "id": "evt_sub_deleted",
+        "type": "customer.subscription.deleted",
+        "data": {"object": {"id": "sub_123", "canceled_at": 1600000000}},
+    }
+    await handle_subscription_deleted(event)
+
+    mock_crud_subs.update.assert_not_awaited()
+    tenant_db.commit.assert_not_awaited()
+
+
+def _make_charge_refunded_event(**overrides) -> dict:
+    charge = {
+        "id": "ch_123",
+        "invoice": "in_123",
+        "payment_intent": "pi_123",
+        "currency": "usd",
+        "amount_refunded": 500,
+    }
+    charge.update(overrides)
+    return {
+        "id": "evt_charge_refunded",
+        "type": "charge.refunded",
+        "data": {"object": charge},
+    }
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.job_bypass_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+@patch("src.app.modules.billing.webhook.crud_billing_records")
+async def test_charge_refunded_delta_never_writes_invoice_id(
+    mock_crud_billing, mock_crud_subs, mock_bypass_ctx, mock_tenant_ctx, mock_get_gateway
+):
+    """P0-2 regression: refund rows must not carry stripe_invoice_id.
+
+    uq_billing_records_stripe_invoice allows exactly one row per invoice
+    (owned by the succeeded/failed row). Writing it on the refund row
+    raised IntegrityError -> 500 -> Stripe retry storm.
+    """
+    mock_get_gateway.return_value.retrieve_invoice = AsyncMock(return_value={"subscription": "sub_123"})
+    bypass_db = AsyncMock()
+    tenant_db = AsyncMock()
+    mock_bypass_ctx.return_value = AsyncContextManagerMock(bypass_db)
+    mock_tenant_ctx.return_value = AsyncContextManagerMock(tenant_db)
+    mock_crud_subs.model = UserSubscription
+
+    bypass_result = MagicMock()
+    bypass_result.scalar_one_or_none.return_value = _make_mock_sub()
+    bypass_db.execute = AsyncMock(return_value=bypass_result)
+
+    # No refunds recorded yet for this payment_intent.
+    sum_result = MagicMock()
+    sum_result.scalar_one.return_value = 0
+    tenant_db.execute = AsyncMock(return_value=sum_result)
+
+    mock_crud_billing.create = AsyncMock()
+
+    await handle_charge_refunded(_make_charge_refunded_event())
+
+    mock_crud_billing.create.assert_awaited_once()
+    created = mock_crud_billing.create.call_args[1]["object"]
+    assert created.status == "refunded"
+    assert created.amount_cents == -500
+    assert created.stripe_payment_intent_id == "pi_123"
+    assert created.stripe_invoice_id is None
+    tenant_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.job_bypass_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+@patch("src.app.modules.billing.webhook.crud_billing_records")
+async def test_charge_refunded_itemized_never_writes_invoice_id(
+    mock_crud_billing, mock_crud_subs, mock_bypass_ctx, mock_tenant_ctx, mock_get_gateway
+):
+    """P0-2 regression (itemized branch): per-refund rows link via
+    stripe_refund_id, never via stripe_invoice_id."""
+    mock_get_gateway.return_value.retrieve_invoice = AsyncMock(return_value={"subscription": "sub_123"})
+    bypass_db = AsyncMock()
+    tenant_db = AsyncMock()
+    mock_bypass_ctx.return_value = AsyncContextManagerMock(bypass_db)
+    mock_tenant_ctx.return_value = AsyncContextManagerMock(tenant_db)
+    mock_crud_subs.model = UserSubscription
+
+    bypass_result = MagicMock()
+    bypass_result.scalar_one_or_none.return_value = _make_mock_sub()
+    bypass_db.execute = AsyncMock(return_value=bypass_result)
+
+    mock_crud_billing.exists = AsyncMock(return_value=False)
+    mock_crud_billing.create = AsyncMock()
+
+    event = _make_charge_refunded_event(refunds={"data": [{"id": "re_1", "amount": 200}]})
+    await handle_charge_refunded(event)
+
+    mock_crud_billing.create.assert_awaited_once()
+    created = mock_crud_billing.create.call_args[1]["object"]
+    assert created.stripe_refund_id == "re_1"
+    assert created.amount_cents == -200
+    assert created.stripe_invoice_id is None
+    tenant_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.job_bypass_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+@patch("src.app.modules.billing.webhook.crud_billing_records")
+async def test_charge_refunded_uses_gateway_seam_not_raw_sdk(
+    mock_crud_billing, mock_crud_subs, mock_bypass_ctx, mock_tenant_ctx, mock_get_gateway
+):
+    """P1-9: the invoice lookup must route through the PaymentGateway seam
+    (tenant key resolution + with_retry), not raw stripe.Invoice.retrieve."""
+    mock_gateway = MagicMock()
+    mock_gateway.retrieve_invoice = AsyncMock(return_value={"subscription": "sub_123"})
+    mock_get_gateway.return_value = mock_gateway
+
+    bypass_db = AsyncMock()
+    tenant_db = AsyncMock()
+    mock_bypass_ctx.return_value = AsyncContextManagerMock(bypass_db)
+    mock_tenant_ctx.return_value = AsyncContextManagerMock(tenant_db)
+    mock_crud_subs.model = UserSubscription
+
+    bypass_result = MagicMock()
+    bypass_result.scalar_one_or_none.return_value = _make_mock_sub()
+    bypass_db.execute = AsyncMock(return_value=bypass_result)
+
+    sum_result = MagicMock()
+    sum_result.scalar_one.return_value = 0
+    tenant_db.execute = AsyncMock(return_value=sum_result)
+
+    mock_crud_billing.create = AsyncMock()
+
+    await handle_charge_refunded(_make_charge_refunded_event())
+
+    mock_gateway.retrieve_invoice.assert_awaited_once_with("in_123")
+    mock_crud_billing.create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.job_bypass_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+@patch("src.app.modules.billing.webhook.crud_billing_records")
+async def test_charge_refunded_gateway_failure_still_raises_for_retry(
+    mock_crud_billing, mock_crud_subs, mock_bypass_ctx, mock_tenant_ctx, mock_get_gateway
+):
+    """P1-9: a gateway failure must still surface as ValueError (5xx) so
+    Stripe redelivers — the old raw-call contract is preserved."""
+    from src.app.shared.exceptions import StripeError
+
+    mock_gateway = MagicMock()
+    mock_gateway.retrieve_invoice = AsyncMock(side_effect=StripeError("stripe down"))
+    mock_get_gateway.return_value = mock_gateway
+
+    with pytest.raises(ValueError, match="Failed to retrieve invoice in_123"):
+        await handle_charge_refunded(_make_charge_refunded_event())
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.job_bypass_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+@patch("src.app.modules.billing.webhook.crud_billing_records")
+async def test_charge_refunded_integrity_error_skips_not_500s(
+    mock_crud_billing, mock_crud_subs, mock_bypass_ctx, mock_tenant_ctx, mock_get_gateway
+):
+    """P0-2 regression: a concurrent redelivery that loses the dedup race
+    must skip (rollback + return), not raise into a 500/endpoint-disable."""
+    from sqlalchemy.exc import IntegrityError
+
+    mock_get_gateway.return_value.retrieve_invoice = AsyncMock(return_value={"subscription": "sub_123"})
+    bypass_db = AsyncMock()
+    tenant_db = AsyncMock()
+    mock_bypass_ctx.return_value = AsyncContextManagerMock(bypass_db)
+    mock_tenant_ctx.return_value = AsyncContextManagerMock(tenant_db)
+    mock_crud_subs.model = UserSubscription
+
+    bypass_result = MagicMock()
+    bypass_result.scalar_one_or_none.return_value = _make_mock_sub()
+    bypass_db.execute = AsyncMock(return_value=bypass_result)
+
+    sum_result = MagicMock()
+    sum_result.scalar_one.return_value = 0
+    tenant_db.execute = AsyncMock(return_value=sum_result)
+
+    mock_crud_billing.create = AsyncMock(
+        side_effect=IntegrityError("INSERT INTO billing_records", {}, Exception("uq_billing_records_stripe_invoice"))
+    )
+
+    # Must not raise.
+    await handle_charge_refunded(_make_charge_refunded_event())
+
+    tenant_db.rollback.assert_awaited_once()
+    tenant_db.commit.assert_not_awaited()

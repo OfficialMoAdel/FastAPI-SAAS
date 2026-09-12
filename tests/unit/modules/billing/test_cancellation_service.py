@@ -215,7 +215,9 @@ class TestCancellationWithStripe:
             with patch(
                 "src.app.modules.billing.crud.crud_stripe_settings.get",
                 new_callable=AsyncMock,
-                return_value={"encrypted_secret_key": "dummy_key"},
+                # Full-row shape: tenant_id is non-nullable and always present
+                # in a real FastCRUD get; the gateway asserts ownership on it.
+                return_value={"tenant_id": 1, "encrypted_secret_key": "dummy_key"},
             ):
                 with patch(
                     "src.app.core.security.encryption.CredentialEncryption.decrypt_column",

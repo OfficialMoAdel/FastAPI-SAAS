@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.cache.client import cache_client
 from src.app.core.db.tenant_crud import tenant_scope
 from src.app.modules.audit_logs.models import AuditLog
 from src.app.modules.billing.models import BillingRecord, SubscriptionPlan, UserSubscription
@@ -33,6 +34,11 @@ FAILED_AUTH_SUCCESS_TEXT = func.coalesce(AuditLog.details["success"].astext, "tr
 
 class DashboardService:
     """Service for generating dashboard metrics."""
+
+    # P1-11: dashboard aggregates are expensive (4 heavy aggregate queries
+    # per load). Cache per (tenant, range) for 60s; cache failures fail
+    # open (miss → recompute) via the adapter's Redis-down behavior.
+    METRICS_CACHE_TTL = 60
 
     async def _get_date_range(
         self, db: AsyncSession, time_range: TimeRange, tenant_id: str
@@ -267,14 +273,18 @@ class DashboardService:
             .scalar_subquery()
         )
 
-        # Webhook deliveries - Count from Audit logs where action implies webhook
+        # Webhook deliveries - webhook audit actions live in the dotted
+        # `webhook.*` namespace (e.g. webhook.ssrf_blocked). Prefix LIKE
+        # keeps the match set identical to `%webhook%` while using the
+        # idx_audit_tenant_action (tenant_id, action) btree range scan
+        # instead of a sequential scan.
         webhook_sub = (
             select(func.count(AuditLog.id))
             .where(
                 tenant_scope(AuditLog, tenant_id),
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
-                AuditLog.action.like("%webhook%"),
+                AuditLog.action.like("webhook.%"),
             )
             .scalar_subquery()
         )
@@ -303,6 +313,11 @@ class DashboardService:
         Returns:
             DashboardMetricsResponse with all metrics
         """
+        cache_key = cache_client.tenant_key(f"dashboard:metrics:{time_range.value}", tenant_id)
+        cached = await cache_client.get_json(cache_key)
+        if cached is not None:
+            return DashboardMetricsResponse.model_validate(cached)
+
         start_date, end_date = await self._get_date_range(db, time_range, tenant_id)
 
         # Fetch metrics sequentially (AsyncSession does not support concurrent ops)
@@ -310,7 +325,7 @@ class DashboardService:
         revenue_metrics = await self._get_revenue_metrics(db, start_date, end_date, tenant_id)
         activity_metrics = await self._get_activity_metrics(db, start_date, end_date, tenant_id)
 
-        return DashboardMetricsResponse(
+        response = DashboardMetricsResponse(
             time_range=time_range,
             start_date=start_date,
             end_date=end_date,
@@ -318,6 +333,8 @@ class DashboardService:
             revenue=revenue_metrics,
             activity=activity_metrics,
         )
+        await cache_client.set_json(cache_key, response.model_dump(mode="json"), ttl=self.METRICS_CACHE_TTL)
+        return response
 
 
 # Singleton instance

@@ -103,9 +103,10 @@ class TestRedisAdapterDelegation:
         _redis_mock.set.assert_awaited_once_with("k", "v", ex=30)
 
     @pytest.mark.asyncio
-    async def test_set_without_ttl_no_ex(self, _redis_mock):
+    async def test_set_without_ttl_uses_default_ex(self, _redis_mock):
+        # P2-4: fail-safe default TTL — a missing ttl must still expire.
         await cache_client.set("k", "v")
-        _redis_mock.set.assert_awaited_once_with("k", "v")
+        _redis_mock.set.assert_awaited_once_with("k", "v", ex=300)
 
     @pytest.mark.asyncio
     async def test_delete_delegates(self, _redis_mock):

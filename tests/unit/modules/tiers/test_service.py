@@ -1,19 +1,24 @@
 """Unit tests for tiers/service.py.
 
-Q-M6: TierService now COMPOSES RateLimitService instead of inheriting, so
-the tier business behavior (validation, duplicate guards, not-found
-mapping) is exercised through the composed service's tier_crud — the
-single implementation — while these tests assert the TierService
-delegation contract end-to-end.
+P1-18: TierService is the canonical home of tier business logic
+(validation, duplicate guards, not-found mapping) with its own
+tier_crud — these tests exercise that single implementation directly.
 """
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.app.core.schemas import MessageResponse
 from src.app.modules.tiers.router import get_tier_service
+from src.app.modules.tiers.schemas import TierRead
 from src.app.modules.tiers.service import TierService
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
+
+
+def _tier_read(tier_id: int = 1, name: str = "pro") -> TierRead:
+    return TierRead(id=tier_id, name=name, created_at=datetime(2025, 1, 1, tzinfo=UTC))
 
 
 def _make_service():
@@ -25,7 +30,7 @@ async def test_create_tier_success():
     service, db = _make_service()
     tier = MagicMock()
     tier.model_dump.return_value = {"name": "pro"}
-    with patch.object(service._rate_limits, "tier_crud") as crud:
+    with patch.object(service, "tier_crud") as crud:
         crud.exists = AsyncMock(return_value=False)
         crud.create = AsyncMock(return_value={"id": 1, "name": "pro"})
         result = await service.create_tier(tier)
@@ -36,7 +41,7 @@ async def test_create_tier_duplicate():
     service, db = _make_service()
     tier = MagicMock()
     tier.model_dump.return_value = {"name": "pro"}
-    with patch.object(service._rate_limits, "tier_crud") as crud:
+    with patch.object(service, "tier_crud") as crud:
         crud.exists = AsyncMock(return_value=True)
         with pytest.raises(DuplicateError):
             await service.create_tier(tier)
@@ -46,7 +51,7 @@ async def test_create_tier_not_created():
     service, db = _make_service()
     tier = MagicMock()
     tier.model_dump.return_value = {"name": "pro"}
-    with patch.object(service._rate_limits, "tier_crud") as crud:
+    with patch.object(service, "tier_crud") as crud:
         crud.exists = AsyncMock(return_value=False)
         crud.create = AsyncMock(return_value=None)
         with pytest.raises(ModelNotFoundError):
@@ -56,8 +61,8 @@ async def test_create_tier_not_created():
 async def test_get_tiers():
     service, db = _make_service()
     with (
-        patch.object(service._rate_limits, "tier_crud") as crud,
-        patch("src.app.modules.rate_limits.service.paginated_response") as paginated,
+        patch.object(service, "tier_crud") as crud,
+        patch("src.app.modules.tiers.service.paginated_response") as paginated,
     ):
         crud.get_multi = AsyncMock(return_value={"data": []})
         paginated.return_value = {"items": []}
@@ -69,7 +74,7 @@ async def test_get_tiers():
 
 async def test_get_tier_by_id_success():
     service, db = _make_service()
-    with patch.object(service._rate_limits, "tier_crud") as crud:
+    with patch.object(service, "tier_crud") as crud:
         crud.get = AsyncMock(return_value={"id": 1})
         result = await service.get_tier_by_id(1)
     assert result == {"id": 1}
@@ -77,7 +82,7 @@ async def test_get_tier_by_id_success():
 
 async def test_get_tier_by_id_not_found():
     service, db = _make_service()
-    with patch.object(service._rate_limits, "tier_crud") as crud:
+    with patch.object(service, "tier_crud") as crud:
         crud.get = AsyncMock(return_value=None)
         with pytest.raises(ModelNotFoundError):
             await service.get_tier_by_id(1)
@@ -85,7 +90,7 @@ async def test_get_tier_by_id_not_found():
 
 async def test_get_tier_by_name_success():
     service, db = _make_service()
-    with patch.object(service._rate_limits, "tier_crud") as crud:
+    with patch.object(service, "tier_crud") as crud:
         crud.get = AsyncMock(return_value={"id": 1, "name": "pro"})
         result = await service.get_tier("pro")
     assert result == {"id": 1, "name": "pro"}
@@ -93,7 +98,7 @@ async def test_get_tier_by_name_success():
 
 async def test_get_tier_by_name_not_found():
     service, db = _make_service()
-    with patch.object(service._rate_limits, "tier_crud") as crud:
+    with patch.object(service, "tier_crud") as crud:
         crud.get = AsyncMock(return_value=None)
         with pytest.raises(ModelNotFoundError):
             await service.get_tier("pro")
@@ -101,16 +106,16 @@ async def test_get_tier_by_name_not_found():
 
 async def test_update_tier_success():
     service, db = _make_service()
-    with patch.object(service._rate_limits, "tier_crud") as crud:
+    with patch.object(service, "tier_crud") as crud:
         crud.get = AsyncMock(return_value={"name": "pro"})
         crud.update = AsyncMock()
         result = await service.update_tier("pro", MagicMock())
-    assert result == {"message": "Tier updated"}
+    assert result == MessageResponse(message="Tier updated")
 
 
 async def test_update_tier_not_found():
     service, db = _make_service()
-    with patch.object(service._rate_limits, "tier_crud") as crud:
+    with patch.object(service, "tier_crud") as crud:
         crud.get = AsyncMock(return_value=None)
         with pytest.raises(ModelNotFoundError):
             await service.update_tier("pro", MagicMock())
@@ -120,18 +125,18 @@ async def test_delete_tier_success():
     service, db = _make_service()
     db.execute = AsyncMock(return_value=MagicMock(scalar_one=MagicMock(return_value=0)))
     with (
-        patch.object(service._rate_limits, "tier_crud") as crud,
-        patch("src.app.modules.rate_limits.service.get_redis", return_value=None),
+        patch.object(service, "tier_crud") as crud,
+        patch("src.app.modules.tiers.service.get_redis", return_value=None),
     ):
-        crud.get = AsyncMock(return_value={"name": "pro", "id": 1})
+        crud.get = AsyncMock(return_value=_tier_read(1, "pro"))
         crud.delete = AsyncMock()
         result = await service.delete_tier("pro")
-    assert result == {"message": "Tier deleted"}
+    assert result == MessageResponse(message="Tier deleted")
 
 
 async def test_delete_tier_not_found():
     service, db = _make_service()
-    with patch.object(service._rate_limits, "tier_crud") as crud:
+    with patch.object(service, "tier_crud") as crud:
         crud.get = AsyncMock(return_value=None)
         with pytest.raises(ModelNotFoundError):
             await service.delete_tier("pro")
@@ -143,21 +148,36 @@ def test_get_tier_service_factory():
     assert isinstance(result, TierService)
 
 
-# Q-M6: composition (not inheritance) — the domain direction is tiers ->
-# rate_limits. A TierService must NOT be a RateLimitService, and the two
-# services keep independent crud handles (P0-1 decoupling contract).
-def test_tier_service_composes_not_inherits():
-    import src.app.modules.rate_limits.service as rl_service_mod
-
-    assert not issubclass(TierService, rl_service_mod.RateLimitService)
+# P1-18: single ownership — TierService owns tier logic outright (no
+# composed RateLimitService, no delegation). Its crud handles stay
+# tier-primary (P0-1 decoupling contract).
+def test_tier_service_single_ownership():
     svc, _ = _make_service()
-    assert isinstance(svc._rate_limits, rl_service_mod.RateLimitService)
+    assert not hasattr(svc, "_rate_limits")
     assert svc.crud.model is svc.tier_crud.model
     from src.app.modules.rate_limits.models import RateLimit
     from src.app.modules.tiers.models import Tier
 
     assert svc.tier_crud.model is Tier
     assert svc.rate_limit_crud.model is RateLimit
+
+
+async def test_delete_tier_fails_closed_on_db_error():
+    """P1-3 regression: real DB query error during reference check raises RuntimeError (never deletes)."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    fake_session = MagicMock(spec=AsyncSession)
+    fake_session.execute = AsyncMock(side_effect=ConnectionError("Database offline"))
+    service = TierService(fake_session)
+
+    with patch.object(service, "tier_crud") as mock_tier_crud:
+        mock_tier_crud.get = AsyncMock(return_value=_tier_read(1, "doomed"))
+        mock_tier_crud.delete = AsyncMock()
+
+        with pytest.raises(RuntimeError, match="Failed to check referential integrity"):
+            await service.delete_tier("doomed")
+
+        mock_tier_crud.delete.assert_not_called()
 
 
 # B12: the warm_tiers cache warmer was removed - it wrote `tier:{name}` keys

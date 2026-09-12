@@ -9,10 +9,9 @@ Fail-closed: if both fail, the event is rejected so Stripe retries later
 rather than risking duplicate side effects.
 """
 
-from fastapi import HTTPException
-
 from src.app.core.redis_provider import get_redis
 from src.app.modules.billing import webhook as _pkg
+from src.app.shared.exceptions import ServiceUnavailableError
 
 
 async def _is_event_processed(event_id: str) -> bool:
@@ -126,7 +125,7 @@ async def _db_idempotency_check(event_id: str) -> bool:
             event_id=event_id,
             error=str(db_err),
         )
-        raise HTTPException(status_code=503, detail="Service unavailable for idempotency check. Please retry.")
+        raise ServiceUnavailableError("Service unavailable for idempotency check. Please retry.")
 
 
 async def mark_event_processed(event_id: str) -> None:

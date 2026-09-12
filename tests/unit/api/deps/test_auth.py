@@ -20,6 +20,8 @@ from src.app.api.deps.auth import (
     _create_auth_context,
     _is_token_blacklisted_with_fallback,
     _verify_optional_bearer_token,
+    api_key_scope_allows,
+    enforce_api_key_scope,
     get_auth_context,
     get_current_superuser,
     get_current_user,
@@ -37,6 +39,8 @@ from src.app.core.tenancy.context import TenantContext
 def _make_request(headers: dict[str, str] | None = None, state: Any = None) -> MagicMock:
     request = MagicMock(spec=Request)
     request.headers = headers or {}
+    request.method = "GET"
+    request.url.path = "/"
     request.app = MagicMock()
     request.app.dependency_overrides = {}
     request.state = state if state is not None else MagicMock()
@@ -799,7 +803,7 @@ async def test_get_optional_api_key_invalid() -> None:
 
 async def test_get_optional_api_key_valid() -> None:
     request = _make_request(headers={"X-API-Key": "key"})
-    api_user = AuthenticatedUser(id=1, email="a@b.com")
+    api_user = AuthenticatedUser(id=1, email="a@b.com", api_key_id="k1", api_key_scopes=["read", "write"])
     with (
         patch("src.app.api.deps.auth.get_user_by_api_key", new=AsyncMock(return_value=api_user)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
@@ -974,3 +978,77 @@ async def test_resolve_principal_optional_success() -> None:
         result = await resolve_principal(request, _make_db(), token="valid_tok", strict=False)
     assert result is not None
     assert result.user.id == 10
+
+
+# ---------------------------------------------------------------------------
+# P1-1: API-key scope enforcement at the resolve-principal seam
+# ---------------------------------------------------------------------------
+
+
+def test_scope_allows_coarse_read_write() -> None:
+    assert api_key_scope_allows(["read"], "GET", "/v1/posts") is True
+    assert api_key_scope_allows(["read"], "POST", "/v1/posts") is False
+    assert api_key_scope_allows(["write"], "POST", "/v1/posts") is True
+    # "write" implies "read" for safe methods; "read" never implies "write".
+    assert api_key_scope_allows(["write"], "GET", "/v1/posts") is True
+
+
+def test_scope_allows_admin_wildcard_and_denies_empty() -> None:
+    assert api_key_scope_allows(["admin"], "DELETE", "/v1/users/1") is True
+    assert api_key_scope_allows([], "GET", "/v1/posts") is False
+    assert api_key_scope_allows(None, "GET", "/v1/posts") is False
+    assert api_key_scope_allows(None, "POST", "/v1/posts") is False
+
+
+def test_scope_allows_resource_qualified() -> None:
+    assert api_key_scope_allows(["read:posts"], "GET", "/v1/posts/1") is True
+    assert api_key_scope_allows(["read:posts"], "GET", "/v1/users") is False
+    assert api_key_scope_allows(["read:posts"], "POST", "/v1/posts") is False
+    assert api_key_scope_allows(["write:posts"], "POST", "/api/v1/posts") is True
+    # Version prefix is skipped; a non-version first segment is the resource.
+    assert api_key_scope_allows(["read:posts"], "GET", "/posts/1") is True
+    assert api_key_scope_allows(["read:vault"], "GET", "/v1/vault/x") is True
+
+
+async def test_seam_denies_unscoped_key_even_on_get() -> None:
+    request = _make_request(headers={"X-API-Key": "key"})
+    api_user = AuthenticatedUser(id=1, email="a@b.com", api_key_id="k1", api_key_scopes=[])
+    with (
+        patch("src.app.api.deps.auth.get_user_by_api_key", new=AsyncMock(return_value=api_user)),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+    ):
+        with pytest.raises(ForbiddenException, match="missing required scope"):
+            await get_optional_auth_context(request, _make_db(), None)
+
+
+async def test_seam_denies_read_key_on_write() -> None:
+    request = _make_request(headers={"X-API-Key": "key"})
+    request.method = "POST"
+    api_user = AuthenticatedUser(id=1, email="a@b.com", api_key_id="k1", api_key_scopes=["read"])
+    with (
+        patch("src.app.api.deps.auth.get_user_by_api_key", new=AsyncMock(return_value=api_user)),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+    ):
+        with pytest.raises(ForbiddenException, match="missing required scope"):
+            await get_optional_auth_context(request, _make_db(), None)
+
+
+async def test_seam_allows_scoped_key() -> None:
+    request = _make_request(headers={"X-API-Key": "key"})
+    request.url.path = "/v1/posts/1"
+    api_user = AuthenticatedUser(
+        id=1, email="a@b.com", api_key_id="k1", api_key_scopes=["read:posts"]
+    )
+    with (
+        patch("src.app.api.deps.auth.get_user_by_api_key", new=AsyncMock(return_value=api_user)),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+    ):
+        ctx = await get_optional_auth_context(request, _make_db(), None)
+    assert ctx is not None
+    assert ctx.user.id == 1
+
+
+async def test_enforce_rejects_unverifiable_request_shape() -> None:
+    user = AuthenticatedUser(id=1, email="a@b.com", api_key_id="k1", api_key_scopes=["admin"])
+    with pytest.raises(ForbiddenException):
+        enforce_api_key_scope(user, None)

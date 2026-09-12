@@ -111,20 +111,20 @@ class PasswordChangeRequest(BaseModel):
     """Password change request schema."""
 
     current_password: str
-    new_password: str = Field(..., max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 
 class PasswordResetRequest(BaseModel):
     """Password reset request schema (forgot password)."""
 
-    email: str
+    email: EmailStr
 
 
 class PasswordResetConfirm(BaseModel):
     """Password reset confirmation schema."""
 
     token: str
-    new_password: str
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 
 class EmailVerificationRequest(BaseModel):
@@ -299,10 +299,6 @@ class PasskeyCredentialList(BaseList[PasskeyCredentialResponse]):
 
 class PasskeyDeleteResponse(BaseModel):
     message: str = Field(..., description="Success message")
-
-
-class PasskeyLoginRequest(BaseModel):
-    email: str | None = None
 
 
 class PasskeyLoginVerifyRequest(BaseModel):
@@ -578,7 +574,6 @@ __all__ = [
     "PasskeyCredentialResponse",
     "PasskeyCredentialList",
     "PasskeyDeleteResponse",
-    "PasskeyLoginRequest",
     "PasskeyLoginVerifyRequest",
     "PasskeyAuthenticationOptionsResponse",
     "PasskeyCredentialCreate",

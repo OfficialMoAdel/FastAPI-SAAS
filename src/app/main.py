@@ -16,7 +16,6 @@ from redis.exceptions import RedisError  # P1-4
 
 from src.app.admin.initialize import create_admin_interface
 from src.app.api import get_router
-from src.app.core.cache.warmer import warmer
 from src.app.core.config import EnvironmentOption, settings
 from src.app.core.logger import get_logger
 from src.app.core.setup import create_application, lifespan_factory
@@ -79,37 +78,6 @@ async def _warm_token_blacklist_cache() -> None:
         logger.warning("Continuing with cold blacklist cache (non-production)")
 
 
-async def _warm_application_caches() -> None:
-    """Warm application caches on startup.
-
-    Uses CacheWarmer registry to warm all registered caches including:
-    - Feature flags
-    - Tiers
-    - SSO settings
-    """
-    if not settings.app.CACHE_WARMING_ENABLED:
-        logger.info("Cache warming is disabled")
-        return
-
-    from src.app.core.db.database import async_session_maker
-
-    try:
-        async with async_session_maker() as session:
-            logger.info("Starting cache warming", warmer_count=len(warmer.list_warmers()))
-            result = await warmer.warm_all(session)
-
-            if result.errors:
-                logger.warning("Cache warming completed with errors", errors=result.errors)
-            else:
-                logger.info(
-                    "Cache warming successful",
-                    tenants_cached=result.tenants_cached,
-                    tiers_cached=result.tiers_cached,
-                )
-    except Exception as e:
-        logger.error("Failed to warm application caches", error=str(e))
-
-
 def _init_pool_metrics() -> None:
     """Initialize database pool metrics collection."""
     from src.app.core.db.database import get_async_engine
@@ -118,7 +86,7 @@ def _init_pool_metrics() -> None:
     try:
         async_engine = get_async_engine()
         setup_pool_metrics(async_engine)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - P1-17: observability only; metrics must not block boot
         logger.warning("Pool metrics setup failed", error=str(e))
 
 
@@ -137,7 +105,7 @@ def _init_event_bus_and_queue(redis_client: Any) -> None:
                     logger.info("ARQ queue initialized for async event dispatch (reusing shared pool)")
                 else:
                     logger.warning("Shared ARQ queue pool not initialized, events will run synchronously")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - P1-17: sync dispatch is the designed degraded mode
                 logger.warning("ARQ queue initialization failed, events will run synchronously", error=str(e))
         else:
             logger.info("ARQ background tasks are disabled, events will run synchronously")
@@ -218,11 +186,17 @@ async def _load_security_runtime_config() -> None:
 
 
 async def _warm_startup_caches() -> None:
-    """Warm application and token blacklist caches concurrently on startup."""
+    """Warm the token blacklist cache on startup.
+
+    P2-4: application caches (tenants/tiers/feature flags) are warmed
+    exactly once by the setup.py background task (cross-worker Redis
+    lock). Warming them here too doubled DB + Redis load on every boot,
+    so this lifespan phase now covers only the auth-critical blacklist.
+    """
     logger.info("Starting application cache warming...")
     try:
         await asyncio.wait_for(
-            asyncio.gather(_warm_token_blacklist_cache(), _warm_application_caches()),
+            _warm_token_blacklist_cache(),
             timeout=15.0,
         )
     except TimeoutError:
@@ -238,7 +212,7 @@ async def _init_admin() -> None:
         try:
             await admin.initialize()
             logger.info("Admin interface initialized successfully")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - P1-17: admin is optional; API must boot without it
             logger.error("Failed to initialize admin interface", error=str(e))
 
 
@@ -253,7 +227,7 @@ async def _teardown_security_listeners() -> None:
 
             src.app.core.security._bcrypt_executor = None
             logger.info("Bcrypt thread pool shutdown successfully")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - P1-17: teardown must not mask shutdown
         logger.error("Failed to shutdown bcrypt thread pool", error=str(e))
 
     from src.app.core.security.auto_ban import stop_ban_l1_invalidation_listener
@@ -267,7 +241,7 @@ async def _teardown_security_listeners() -> None:
         from src.app.modules.auth.http_client import close_sso_http_client
 
         await close_sso_http_client()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - P1-17: teardown must not mask shutdown
         logger.error("Failed to close SSO HTTP client", error=str(e))
 
 
@@ -312,18 +286,28 @@ app = create_application(
 
 # Middleware stack (LIFO - last added runs first on request)
 # Request flow:
-#   GZip → QueryProfiler → IPFilter → BodyLimit → AttackDetection
-#     → SecurityHeaders → Tenant → RateLimit → RequestID → Handler
+#   GZip → QueryProfiler → IPFilter → BodyLimit → SecurityHeaders
+#     → RateLimit → Tenant → AttackDetection → RequestID → CORS → Handler
 # Response flow:
-#   Handler → RequestID → RateLimit → Tenant → SecurityHeaders
-#     → AttackDetection → BodyLimit → IPFilter → QueryProfiler → GZip
+#   Handler → CORS → RequestID → AttackDetection → Tenant → RateLimit
+#     → SecurityHeaders → BodyLimit → IPFilter → QueryProfiler → GZip
+#
+# Pinned by tests/unit/test_middleware_order.py (R1-16 security contract).
 #
 # Key ordering decisions:
 # - RequestID: Added first = innermost (closest to handler for accurate tracing)
-# - RateLimit: Rate limiting before expensive processing
+# - RateLimit: Runs before Tenant so a cheap 429 never pays the tenant
+#   lookup (L1+L2+DB). Safe: the middleware resolves tenant_id from JWT
+#   claims/request.state, never from the tenant ContextVar (P1-15; the old
+#   P2-5 Tenant-first rationale is stale — nothing in the rate-limit request
+#   path reads get_current_tenant; dep-layer is_rate_limited still sees the
+#   context because TenantMiddleware runs before the handler regardless).
 # - Tenant: Extract tenant context for multi-tenant features
 # - SecurityHeaders: Add security headers to all responses
-# - AttackDetection: Detect attacks after body limit to prevent large payload parsing attacks
+# - AttackDetection: Registered before RateLimit so it runs AFTER it in LIFO —
+#   the expensive body-buffering scan never runs for requests a cheap 429
+#   rejects (R4). On the request path it sits after BodyLimit, so oversized
+#   payloads are rejected by 413 before the scan buffers them.
 # - BodyLimit: Reject oversized requests early
 # - IPFilter: Block unwanted IPs early, sets ip_whitelisted state for RateLimit
 # - GZip: Added last = outermost (compresses ALL responses including 4xx/5xx errors)
@@ -333,8 +317,10 @@ app.add_middleware(RequestIDMiddleware)  # Innermost - must be first for accurat
 # body-buffering scan ran first on every request, including ones a cheap
 # 429 would have rejected immediately.
 app.add_middleware(AttackDetectionMiddleware)  # Detect SQLi, XSS, path traversal
-app.add_middleware(RateLimitMiddleware)  # User/tier-based rate limiting
 app.add_middleware(TenantMiddleware)  # Tenant context for multi-tenant features
+# P1-15: RateLimit added AFTER Tenant so it runs FIRST on the request path
+# (LIFO) — 429s reject before the tenant lookup, not after it.
+app.add_middleware(RateLimitMiddleware)  # User/tier-based rate limiting
 app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
 app.add_middleware(
     RequestBodyLimitMiddleware, max_body_size=settings.app.MAX_BODY_SIZE
@@ -342,7 +328,10 @@ app.add_middleware(
 app.add_middleware(IPFilterMiddleware)  # Block unwanted IPs, sets ip_whitelisted state
 app.add_middleware(QueryProfilerMiddleware)  # Dev-mode query profiling (disabled in production)
 # Setup GZip with a content-type filter (exempts SSE and binary)
-app.add_middleware(GZipFilterMiddleware, minimum_size=500, compresslevel=6)
+# P2-7: compresslevel 4 over zlib's default 6 — roughly 2x faster compression
+# for a small size penalty; the right trade for a JSON API serving many small
+# bodies where CPU per request matters more than bytes on the wire.
+app.add_middleware(GZipFilterMiddleware, minimum_size=500, compresslevel=4)
 
 # Admin mounting moved to lifespan
 

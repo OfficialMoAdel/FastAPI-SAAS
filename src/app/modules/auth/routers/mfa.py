@@ -34,7 +34,7 @@ from src.app.modules.auth.schemas import (
 )
 from src.app.modules.auth.services.mfa import MFAService, get_mfa_service
 from src.app.modules.auth.services.tokens import TokenIssuer
-from src.app.modules.users.router import get_user_service
+from src.app.modules.users import get_user_service
 
 router = APIRouter(prefix="/mfa", tags=["mfa"])
 
@@ -42,10 +42,19 @@ router = APIRouter(prefix="/mfa", tags=["mfa"])
 MFA_VERIFY_LIMIT = 5  # attempts per minute
 MFA_VERIFY_PERIOD = 60  # seconds (1 minute)
 
+# P1-5: separate namespace for MFA state mutations (disable / backup-code
+# regeneration). Same 5/min budget, but a distinct key so a user burning
+# verify attempts cannot starve — or be starved by — mutation attempts.
+MFA_MUTATE_LIMIT = 5  # attempts per minute
+MFA_MUTATE_PERIOD = 60  # seconds (1 minute)
+
 
 async def check_mfa_rate_limit(
     request: Request,
     identifier: str | None = None,
+    key_prefix: str = "mfa_verify",
+    limit: int = MFA_VERIFY_LIMIT,
+    period: int = MFA_VERIFY_PERIOD,
 ) -> None:
     """Check rate limit for MFA verification attempts.
 
@@ -54,6 +63,9 @@ async def check_mfa_rate_limit(
     Args:
         request: FastAPI request object.
         identifier: Optional identifier (user_id, IP, etc.) for rate limiting.
+        key_prefix: Rate-limit key namespace (verify vs mutate budgets).
+        limit: Max attempts per period.
+        period: Window in seconds.
 
     Raises:
         RateLimitException: If rate limit is exceeded.
@@ -66,17 +78,38 @@ async def check_mfa_rate_limit(
         identifier = client_ip
 
     # Build rate limit key
-    key = f"mfa_verify:{identifier}"
+    key = f"{key_prefix}:{identifier}"
 
     # Check rate limit
     is_limited, current_count = await rate_limiter.check_rate_limit(
-        key, limit=MFA_VERIFY_LIMIT, period=MFA_VERIFY_PERIOD
+        key, limit=limit, period=period
     )
 
     if is_limited:
         raise RateLimitException(
-            f"Too many MFA verification attempts. Please try again in {MFA_VERIFY_PERIOD} seconds."
+            f"Too many MFA verification attempts. Please try again in {period} seconds."
         )
+
+
+async def check_mfa_mutate_rate_limit(
+    request: Request,
+    user_id: int | str,
+) -> None:
+    """Rate-limit MFA state mutations (disable, backup-code regeneration).
+
+    P1-5: these endpoints verify password (+TOTP/backup code) inside the
+    service with no attempt cap — an authenticated session (or stolen token)
+    could brute-force the password or second factor indefinitely. Keyed on
+    user_id: the caller is authenticated, so IP-keying would let an attacker
+    rotate IPs to dodge the limit.
+    """
+    await check_mfa_rate_limit(
+        request,
+        identifier=str(user_id),
+        key_prefix="mfa_mutate",
+        limit=MFA_MUTATE_LIMIT,
+        period=MFA_MUTATE_PERIOD,
+    )
 
 
 @router.post("/setup", response_model=MFASetupResponse)
@@ -165,10 +198,12 @@ async def disable_mfa(
     request: MFADisableRequest,
     ctx: RequestContextDep,
     service: Annotated[MFAService, Depends(get_mfa_service)],
+    fastapi_request: Request,
 ) -> dict[str, str]:
     """Disable MFA for the current user.
 
     Requires a valid MFA token for security verification.
+    Rate limited to 5 mutation attempts per minute per user (P1-5).
 
     Args:
         request: Disable request containing verification token.
@@ -177,9 +212,13 @@ async def disable_mfa(
         Dict with success message.
 
     Raises:
+        RateLimitException: If too many mutation attempts.
         BadRequestException: If MFA not enabled.
         UnauthorizedException: If verification fails.
     """
+    # P1-5: cap password/second-factor guessing behind an authenticated session.
+    await check_mfa_mutate_rate_limit(fastapi_request, ctx.user_id)
+
     return await service.disable_mfa(
         user_id=ctx.user_id,
         password=request.password,
@@ -214,12 +253,14 @@ async def regenerate_backup_codes(
     request: MFADisableRequest,  # Reuse disable request schema (password + optional totp)
     ctx: RequestContextDep,
     service: Annotated[MFAService, Depends(get_mfa_service)],
+    fastapi_request: Request,
 ) -> MFABackupCodesResponse:
     """Generate new backup codes.
 
     Replaces existing backup codes with a new set.
     Requires password verification. Optionally accepts TOTP token
     for additional security.
+    Rate limited to 5 mutation attempts per minute per user (P1-5).
 
     Args:
         request: Request containing password and optional TOTP token.
@@ -228,9 +269,13 @@ async def regenerate_backup_codes(
         MFABackupCodesResponse with new backup codes.
 
     Raises:
+        RateLimitException: If too many mutation attempts.
         BadRequestException: If MFA not enabled.
         UnauthorizedException: If verification fails.
     """
+    # P1-5: cap password/second-factor guessing behind an authenticated session.
+    await check_mfa_mutate_rate_limit(fastapi_request, ctx.user_id)
+
     result = await service.regenerate_backup_codes(
         user_id=ctx.user_id,
         password=request.password,

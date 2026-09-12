@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Request, Response
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.deps import RequestContextDep
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException
+from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
 from src.app.core.utils.cache import async_get_redis
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.rate_limit import rate_limiter
@@ -12,8 +15,8 @@ from src.app.modules.auth.schemas import (
     LoginMFAResponse,
     LoginTokenResponse,
     PasskeyAuthenticationOptionsResponse,
+    PasskeyCredentialList,
     PasskeyCredentialResponse,
-    PasskeyLoginRequest,
     PasskeyLoginVerifyRequest,
     PasskeyRegistrationOptionsResponse,
     PasskeyRegistrationRequest,
@@ -89,12 +92,18 @@ async def register_complete(
     return credential
 
 
-@router.get("/credentials", response_model=list[PasskeyCredentialResponse])
+@router.get("/credentials", response_model=PasskeyCredentialList)
 async def list_credentials(
     ctx: RequestContextDep,
+    pagination: Annotated[PaginationParams, Depends(get_pagination_params)],
 ):
-    """List user's passkey credentials."""
-    return await passkey_service.list_credentials(db=ctx.db, user_id=ctx.user_id)
+    """List user's passkey credentials (paginated)."""
+    credentials = await passkey_service.list_credentials(db=ctx.db, user_id=ctx.user_id)
+    start = pagination.offset
+    page_items = credentials[start : start + pagination.limit]
+    return build_paginated_response(
+        items=page_items, total=len(credentials), page=pagination.page, per_page=pagination.per_page
+    )
 
 
 @router.delete("/credentials/{credential_id}", status_code=204)
@@ -117,20 +126,19 @@ async def delete_credential(
     dependencies=[Depends(passkey_login_rate_limit)],
 )
 async def login_begin(
-    request: PasskeyLoginRequest | None = None,
-    db: AsyncSession = Depends(async_get_db),
     redis: Redis = Depends(async_get_redis),
 ):
     """Start passkey authentication process (generate challenge).
 
-    Optionally accepts an email hint for discoverable credentials.
+    P2-A: Usernameless flow — no email hint is accepted, so the response is
+    identical for every caller and cannot be used to enumerate accounts with
+    registered passkeys. The authenticator offers its discoverable
+    credentials; the user is resolved from the asserted credential at verify
+    time.
     Rate limited: 10 requests per minute per IP.
     """
-    email = request.email if request else None
     options, challenge_id = await passkey_service.generate_authentication_challenge(
-        db=db,
         redis=redis,
-        email=email,
     )
     return PasskeyAuthenticationOptionsResponse(publicKey=options, challenge_id=challenge_id)
 

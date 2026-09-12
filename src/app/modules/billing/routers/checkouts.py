@@ -6,7 +6,7 @@ Delegates to billing module's CheckoutService and UserSubscriptionService.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import get_current_user
@@ -22,6 +22,7 @@ from src.app.modules.billing.schemas import (
     CheckoutSession as CheckoutSessionSchema,
 )
 from src.app.modules.billing.subscription_service import get_user_subscription_service
+from src.app.shared.exceptions import ForbiddenError, ModelNotFoundError
 
 router = APIRouter(prefix="/checkouts", tags=["checkouts"])
 logger = get_logger(__name__)
@@ -101,7 +102,8 @@ async def cancel_current_subscription(
         Updated subscription details
 
     Raises:
-        HTTPException: If no active subscription found or user not authorized
+        ModelNotFoundError: If no active subscription found
+        ForbiddenError: If the user is not authorized to cancel the subscription
     """
     service = get_user_subscription_service(db)
 
@@ -112,10 +114,7 @@ async def cancel_current_subscription(
         active_subs = [s for s in subscriptions if s.get("status") in {"active", "trialing", "past_due"}]
 
         if not active_subs:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No active subscription found",
-            )
+            raise ModelNotFoundError("UserSubscription", message="No active subscription found")
 
         subscription_id = active_subs[0]["id"]
 
@@ -123,9 +122,6 @@ async def cancel_current_subscription(
     subscription = await service.get_subscription(subscription_id)
 
     if subscription["user_id"] != current_user.id or str(subscription.get("tenant_id")) != str(current_user.tenant_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to cancel this subscription",
-        )
+        raise ForbiddenError("Not authorized to cancel this subscription")
 
     return await service.cancel_subscription(subscription_id)

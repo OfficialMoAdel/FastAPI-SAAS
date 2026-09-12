@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +35,7 @@ from src.app.modules.ai.service import (
     ChatSessionService,
     get_chat_completion_service,
 )
+from src.app.shared.exceptions import ServiceUnavailableError
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -234,10 +235,7 @@ async def chat_completion(
     try:
         return await service.complete(session_id, current_user.id, request)
     except ChatCompletionError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=e.message,
-        ) from e
+        raise ServiceUnavailableError(e.message) from e
 
 
 @router.post(

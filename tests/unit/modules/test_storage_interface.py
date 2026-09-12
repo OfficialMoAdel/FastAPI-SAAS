@@ -292,6 +292,18 @@ class TestS3Storage:
         mock_s3_client.generate_presigned_url.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_s3_get_url_forces_attachment(self, mock_s3_client):
+        """P2-5: presigned URLs must force download, not inline render."""
+        from src.app.modules.storage.s3_storage import S3Storage
+
+        storage = S3Storage(s3_client=mock_s3_client, bucket="test-bucket")
+
+        await storage.get_url("uploads/test.txt")
+
+        params = mock_s3_client.generate_presigned_url.call_args.kwargs["Params"]
+        assert params["ResponseContentDisposition"] == "attachment"
+
+    @pytest.mark.asyncio
     async def test_s3_get_url_failure(self, mock_s3_client):
         """Test S3 signed URL generation failure."""
         from src.app.modules.storage.s3_storage import S3Storage

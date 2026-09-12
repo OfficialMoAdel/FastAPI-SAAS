@@ -253,11 +253,9 @@ class StripeSettingsService:
             # encrypt_column returns a string, store as-is (not .encode())
             update_data["encrypted_secret_key"] = encrypted
 
-        # Encrypt the webhook secret if provided
-        if "webhook_secret" in update_data and update_data["webhook_secret"]:
-            encrypted_ws = self._encryption.encrypt_column(update_data.pop("webhook_secret"))
-            update_data["encrypted_webhook_secret"] = encrypted_ws
-
+        # P1-8: per-tenant webhook_secret removed — verification uses the GLOBAL
+        # platform secret (STRIPE_WEBHOOK_SECRET). The field is gone from
+        # StripeSettingsUpdate, so it can no longer arrive via model_dump.
         update_data["updated_at"] = datetime.now(UTC)
 
         if stripe_settings_record is None:
@@ -275,13 +273,6 @@ class StripeSettingsService:
             await crud_stripe_settings.update(db=self.db, object=update_data, id=stripe_settings_record["id"])
             stripe_settings_record.update(update_data)
             return dict(stripe_settings_record)
-
-    async def get_webhook_secret(self, tenant_id: UUID) -> str | None:
-        """Get the decrypted Stripe webhook secret for a specific tenant."""
-        record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant_id)
-        if not record or not record.get("encrypted_webhook_secret"):
-            return None
-        return self._encryption.decrypt_column(record["encrypted_webhook_secret"])
 
 
 class ProductService:

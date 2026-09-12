@@ -16,7 +16,10 @@ from src.app.modules._base.schemas import BaseCreate, BaseList, BaseRead, BaseUp
 # =============================================================================
 
 
-AIModelType = Literal["gemma3", "llama3", "mistral", "codellama", "phi3"]
+# P2-6: widened from Literal to str — providers pass model names raw to
+# the vendor API, and the Literal 422'd any non-Ollama name (gpt-4, claude-*).
+# Length bounds keep the early-422 behavior for empty/absurd values.
+AIModelType = Annotated[str, Field(min_length=1, max_length=128)]
 MessageRole = Literal["user", "assistant", "system"]
 
 

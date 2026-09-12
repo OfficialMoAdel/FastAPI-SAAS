@@ -157,6 +157,44 @@ async def test_update_auto_ban_config() -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_ip_filter_config_audits() -> None:
+    """P2-1: mutating the IP filter config must emit an audit trail with the actor."""
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
+    update = IPFilterConfigUpdate(whitelist_enabled=False)
+
+    old_setting = settings.IP_WHITELIST_ENABLED
+    try:
+        with patch("src.app.modules.security.router.audit", new_callable=AsyncMock) as mock_audit:
+            await update_ip_filter_config(update, current_user)  # type: ignore[arg-type]
+
+            mock_audit.assert_awaited_once()
+            kwargs = mock_audit.call_args.kwargs
+            assert kwargs["action"] == "security.ip_filter_config_updated"
+            assert kwargs["user_id"] == 1
+    finally:
+        settings.IP_WHITELIST_ENABLED = old_setting
+
+
+@pytest.mark.asyncio
+async def test_update_auto_ban_config_audits() -> None:
+    """P2-1: mutating the auto-ban config must emit an audit trail with the actor."""
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
+    update = AutoBanConfigUpdate(enabled=not settings.AUTO_BAN_ENABLED)
+
+    old_setting = settings.AUTO_BAN_ENABLED
+    try:
+        with patch("src.app.modules.security.router.audit", new_callable=AsyncMock) as mock_audit:
+            await update_auto_ban_config(update, current_user)  # type: ignore[arg-type]
+
+            mock_audit.assert_awaited_once()
+            kwargs = mock_audit.call_args.kwargs
+            assert kwargs["action"] == "security.auto_ban_config_updated"
+            assert kwargs["user_id"] == 1
+    finally:
+        settings.AUTO_BAN_ENABLED = old_setting
+
+
+@pytest.mark.asyncio
 async def test_list_banned_ips() -> None:
     current_user = AuthenticatedUser(id=1, email="admin@e.com")
     with patch("src.app.modules.security.router.get_all_banned_ips", new_callable=AsyncMock) as mock_get:
@@ -246,12 +284,16 @@ async def test_get_ip_violation_stats_none() -> None:
 
 @pytest.mark.asyncio
 async def test_passkey_routes() -> None:
+    from src.app.core.pagination import PaginationParams
+
     mock_db = AsyncMock()
     mock_ctx = type("Ctx", (), {"db": mock_db, "user_id": 1, "user": {"id": 1}})()
     mock_svc = AsyncMock()
     mock_svc.list_credentials.return_value = []
-    res = await list_passkeys(mock_ctx, mock_svc)
-    assert res == []
+    pagination = PaginationParams(page=1, per_page=20)
+    res = await list_passkeys(mock_ctx, mock_svc, pagination)  # type: ignore[arg-type]
+    assert res["items"] == []
+    assert res["total"] == 0
     mock_svc.list_credentials.assert_awaited_once_with(db=mock_db, user_id=1)
 
     await delete_passkey(123, mock_ctx, mock_svc)

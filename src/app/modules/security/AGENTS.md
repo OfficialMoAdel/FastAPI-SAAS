@@ -15,7 +15,7 @@ List all passkey credentials for the current user.
 
 **Authentication:** Required (JWT token)  
 **Tenant Header:** Required  
-**Response:** `list[PasskeyCredentialResponse]`
+**Response:** `PasskeyCredentialList` (paginated envelope)
 
 ```bash
 # Example request

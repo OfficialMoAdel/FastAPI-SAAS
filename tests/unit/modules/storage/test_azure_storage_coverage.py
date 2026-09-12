@@ -132,6 +132,19 @@ async def test_get_url_with_sas(mocked_storage) -> None:
     assert url.endswith("?sig=token")
 
 
+async def test_get_url_forces_attachment_disposition(mocked_storage) -> None:
+    """P2-5: SAS URLs must force download, not inline render."""
+    from unittest.mock import MagicMock
+
+    storage, _ = mocked_storage
+    with patch(
+        "src.app.modules.storage.azure_storage.generate_blob_sas",
+        MagicMock(return_value="sig=token"),
+    ) as mock_sas:
+        await storage.get_url("path/blob.txt")
+    assert mock_sas.call_args.kwargs["content_disposition"] == "attachment"
+
+
 async def test_validate_connection_success(mocked_storage) -> None:
     storage, _ = mocked_storage
     assert await storage.validate_connection() is True

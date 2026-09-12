@@ -130,11 +130,9 @@ class TestPasskeyFailClosed:
     @pytest.mark.asyncio
     async def test_authentication_challenge_fails_closed_without_redis(self) -> None:
         service = PasskeyService()
-        mock_db = AsyncMock()
 
         with pytest.raises(ServiceUnavailableError, match="temporarily unavailable"):
             await service.generate_authentication_challenge(
-                db=mock_db,
                 redis=None,
             )
 

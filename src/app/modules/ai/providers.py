@@ -26,12 +26,21 @@ logger = get_logger(__name__)
 class AIProviderError(AppException):
     """Base exception for AI provider errors."""
 
-    def __init__(self, message: str, error_code: str, provider: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        error_code: str,
+        provider: str | None = None,
+        retry_after: float | None = None,
+    ):
         super().__init__(message)
         self.message = message
         self.detail = message
         self.error_code = error_code
         self.provider = provider
+        # P2-6: server-directed wait (parsed `Retry-After` on 429), honored
+        # by with_retry(retry_after_attr="retry_after"). None = use backoff.
+        self.retry_after = retry_after
 
 
 class AITokenUsage(BaseModel):
@@ -176,10 +185,23 @@ class AIProvider(ABC):
 
             status_code = str(error.response.status_code)
             logger.error(f"{provider_title} API error:", error_msg=error_msg)
+            # P2-6: surface `Retry-After` on 429 so the retry layer can honor
+            # it. Only delta-seconds parse; HTTP-date form falls back to None
+            # (computed backoff). Capped by with_retry, not here.
+            retry_after: float | None = None
+            if error.response.status_code == 429:
+                raw_retry_after = error.response.headers.get("retry-after")
+                if raw_retry_after is not None:
+                    try:
+                        parsed = float(raw_retry_after)
+                        retry_after = parsed if parsed > 0 else None
+                    except (TypeError, ValueError):
+                        retry_after = None
             return AIProviderError(
                 f"{provider_title} API error: {error_msg}",
                 error_code=status_code,
                 provider=self.provider_name,
+                retry_after=retry_after,
             )
 
         if isinstance(error, RequestError):

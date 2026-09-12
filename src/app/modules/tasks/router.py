@@ -1,11 +1,12 @@
 """Task API router - HTTP handlers delegating to service layer."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 
 from src.app.api.deps import RequestContextDep, rate_limiter_dependency
 from src.app.core.logger import get_logger
 from src.app.modules.tasks.schemas import Job, TaskCreate, TaskStatus
-from src.app.modules.tasks.service import QueueUnavailableError, task_service
+from src.app.modules.tasks.service import task_service
+from src.app.shared.exceptions import ModelNotFoundError
 
 logger = get_logger(__name__)
 
@@ -31,20 +32,10 @@ async def create_task(
 
     Returns
     -------
-    dict[str, str]
-        A dictionary containing the ID of the created task.
+    Job
+        The created task.
     """
-    try:
-        result = await task_service.create_task(body.message, tenant_id=str(ctx.tenant_id))
-        return Job(**result)
-    except QueueUnavailableError:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Queue is not available")
-    except ValueError as e:
-        logger.error("Task creation failed", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An internal error occurred while creating the task",
-        )
+    return await task_service.create_task(body, tenant_id=ctx.tenant_id)
 
 
 @router.get("/task/{task_id}", response_model=TaskStatus)
@@ -62,17 +53,14 @@ async def get_task(
     Returns
     -------
     TaskStatus
-        A dictionary containing information about the task.
+        Information about the task.
 
     Raises
     ------
-    HTTPException
+    ModelNotFoundError
         404 if task not found.
     """
-    try:
-        result = await task_service.get_task(task_id, tenant_id=str(ctx.tenant_id))
-        if result is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-        return TaskStatus(**result)
-    except QueueUnavailableError:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Queue is not available")
+    result = await task_service.get_task(task_id, tenant_id=ctx.tenant_id)
+    if result is None:
+        raise ModelNotFoundError("Task", task_id)
+    return result

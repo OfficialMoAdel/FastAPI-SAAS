@@ -7,8 +7,6 @@ intended for use by webhook consumers to validate incoming webhook payloads.
 import hmac
 from datetime import UTC, date, datetime
 
-from fastapi import HTTPException, status
-
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.security.url_validator import SSRFProtectionError, validate_webhook_url
@@ -20,6 +18,7 @@ from src.app.modules.webhooks.signer import (
 from src.app.modules.webhooks.signer import (
     verify_signature_raw as signer_verify_signature_raw,
 )
+from src.app.shared.exceptions import ValidationError
 
 logger = get_logger(__name__)
 
@@ -44,15 +43,12 @@ async def validate_url_ssrf(url: str) -> None:
     WEBHOOK_ALLOW_INTERNAL_URLS is True (non-default), only the
     private-IP/hostname checks are skipped.
 
-    Raises HTTPException(400) if the URL fails validation.
+    Raises ValidationError if the URL fails validation.
     """
     try:
         await validate_webhook_url(url, allow_internal=settings.app.WEBHOOK_ALLOW_INTERNAL_URLS)
     except SSRFProtectionError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid URL: {str(e)}",
-        )
+        raise ValidationError(f"Invalid URL: {str(e)}")
 
 
 def verify_webhook_signature(

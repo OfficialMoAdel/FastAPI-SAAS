@@ -80,7 +80,8 @@ def test_list_endpoint_supports_filters():
             call_kwargs = mock_instance.list_prices.call_args.kwargs
             assert call_kwargs.get("product_id") == 1
             assert call_kwargs.get("is_active") is True
-            assert call_kwargs.get("limit") == 100
+            assert call_kwargs.get("page") == 1
+            assert call_kwargs.get("limit") == 20
             assert call_kwargs.get("tenant_id") == "test-tenant-id"
 
             # Clean up overrides
@@ -116,7 +117,7 @@ def test_route_count():
 
 def test_response_models():
     """Test that endpoints have correct response models."""
-    from src.app.modules.billing.schemas import PricingRead
+    from src.app.modules.billing.schemas import PricingList, PricingRead
 
     # Find routes and check response models
     for route in prices_router.routes:
@@ -124,8 +125,8 @@ def test_response_models():
             # Create endpoint should return PricingRead
             assert route.response_model == PricingRead
         elif route.path == "/prices" and "GET" in route.methods:
-            # List endpoint should return list[PricingRead]
-            assert route.response_model == list[PricingRead]
+            # List endpoint should return PricingList
+            assert route.response_model == PricingList
         elif route.path == "/prices/{price_id}" and "GET" in route.methods:
             # Get endpoint should return PricingRead
             assert route.response_model == PricingRead

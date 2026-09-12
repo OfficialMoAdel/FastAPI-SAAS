@@ -22,7 +22,6 @@ from src.app.core.db.database import Base
 from src.app.core.schemas import TokenBlacklistCreate
 from src.app.core.security.auto_ban import BanInfo
 from src.app.core.utils.rate_limit import reset_rate_limiter
-from src.app.main import app
 from src.app.middleware.rate_limit import RateLimitMiddleware
 
 # =============================================================================
@@ -121,6 +120,79 @@ def test_unbanned_ip_skips_rate_limit_on_refresh_path(mock_ban_info, client):
     assert response.status_code == 404
     mock_ban_info.assert_awaited_once()
 
+
+# =============================================================================
+# Unit Tests: P1-3 OPTIONS / exempt-path skips
+# =============================================================================
+
+
+@patch("src.app.middleware.rate_limit.settings.security.AUTO_BAN_ENABLED", True)
+@patch("src.app.middleware.rate_limit.get_ban_info", new_callable=AsyncMock)
+@patch("src.app.middleware.rate_limit.rate_limiter")
+@patch("src.app.middleware.rate_limit.check_ban_and_rate_limit")
+def test_options_skips_rate_limit(mock_combined, mock_limiter, mock_ban_info, client):
+    """P1-3: CORS preflight must not burn rate-limit budget. Even with the
+    combined seam armed to 429, OPTIONS passes through with zero Redis RTT."""
+    mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10))
+    mock_ban_info.return_value = BanInfo(is_banned=False)
+
+    response = client.options("/")
+
+    # 405 comes from the bare fixture app's router (it registers GET-only),
+    # which proves the request passed THROUGH the middleware untouched
+    # instead of being 429'd.
+    assert response.status_code == 405
+    mock_combined.assert_not_awaited()
+    mock_ban_info.assert_awaited_once()
+
+
+@patch("src.app.middleware.rate_limit.settings.security.AUTO_BAN_ENABLED", True)
+@patch("src.app.middleware.rate_limit.get_ban_info", new_callable=AsyncMock)
+def test_options_banned_ip_blocked(mock_ban_info, client):
+    """P1-3/B3: the OPTIONS skip preserves the ban boundary — a banned IP's
+    preflight gets 403, not a pass-through."""
+    mock_ban_info.return_value = BanInfo(
+        is_banned=True, reason="Auto-ban after 5 rate limit violations"
+    )
+
+    response = client.options("/")
+
+    assert response.status_code == 403
+    assert response.headers["X-Banned"] == "true"
+    mock_ban_info.assert_awaited_once()
+
+
+@patch("src.app.middleware.rate_limit.get_ban_info", new_callable=AsyncMock)
+@patch("src.app.middleware.rate_limit.rate_limiter")
+@patch("src.app.middleware.rate_limit.check_ban_and_rate_limit")
+def test_health_path_skips_rate_limit(mock_combined, mock_limiter, mock_ban_info, client):
+    """P1-3: orchestrator probes (/health) bypass rate limiting entirely —
+    full passthrough, not even the cheap ban lookup. The bare test app has
+    no /health route, so 404 proves pass-through instead of a 429."""
+    mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10))
+
+    response = client.get("/health")
+
+    assert response.status_code == 404
+    mock_combined.assert_not_awaited()
+    mock_ban_info.assert_not_awaited()
+
+
+@patch("src.app.middleware.rate_limit.get_ban_info", new_callable=AsyncMock)
+@patch("src.app.middleware.rate_limit.rate_limiter")
+@patch("src.app.middleware.rate_limit.check_ban_and_rate_limit")
+def test_exempt_subpath_skips_rate_limit(mock_combined, mock_limiter, mock_ban_info, client):
+    """P1-3: exempt sub-paths (/api/v1/health/live) inherit the skip via the
+    shared is_path_exempt prefix rule."""
+    mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10))
+
+    response = client.get("/api/v1/health/live")
+
+    assert response.status_code == 404
+    mock_combined.assert_not_awaited()
+    mock_ban_info.assert_not_awaited()
+
+
 # =============================================================================
 # Unit Tests: Rate Limit Blacklist
 # =============================================================================
@@ -204,6 +276,23 @@ class TestBlacklistIntegration:
 TEST_USER_AGENT = "TestClient/1.0"
 
 
+def _isolated_rate_limit_app() -> FastAPI:
+    """Bare app with ONLY RateLimitMiddleware (P1-15).
+
+    Full-app requests carry TenantMiddleware, which 400s header-less
+    requests (missing X-Tenant-Slug) before/after rate limiting depending
+    on order — so header/budget assertions need an isolated stack.
+    """
+    isolated = FastAPI()
+    isolated.add_middleware(RateLimitMiddleware)
+
+    @isolated.get("/")
+    async def home():
+        return {"message": "ok"}
+
+    return isolated
+
+
 @pytest.mark.asyncio
 async def test_rate_limit_headers(mock_redis):
     """Test rate limit headers are present."""
@@ -211,16 +300,14 @@ async def test_rate_limit_headers(mock_redis):
     mock_redis.store.clear()
 
     async with AsyncClient(
-        transport=ASGITransport(app=app),
+        transport=ASGITransport(app=_isolated_rate_limit_app()),
         base_url="http://test",
         headers={"User-Agent": TEST_USER_AGENT},
     ) as ac:
-        # Hit /openapi.json usually safe public endpoint
-        response = await ac.get("/openapi.json")
-
-        # Fallback if 404 (though openapi usually exists)
-        if response.status_code == 404:
-            response = await ac.get("/docs")
+        # P1-3: /openapi.json is EXEMPT from middleware rate limiting, so a
+        # full-app hit carries no rate-limit headers by design. Exercise the
+        # non-exempt / route on an isolated stack instead.
+        response = await ac.get("/")
 
         assert response.status_code == 200
 
@@ -242,17 +329,22 @@ async def test_rate_limit_exceeded(mock_redis):
     limit = 10
 
     async with AsyncClient(
-        transport=ASGITransport(app=app),
+        transport=ASGITransport(app=_isolated_rate_limit_app()),
         base_url="http://test",
         headers={"User-Agent": TEST_USER_AGENT},
     ) as ac:
-        # Use /api/v1/health endpoint which is rate-limited
+        # P1-3: /api/v1/health is EXEMPT from middleware rate limiting
+        # (orchestrator probes must never 429). P1-15: a full-app hit on a
+        # non-exempt endpoint without X-Tenant-Slug 400s at TenantMiddleware
+        # regardless of order, so budget exhaustion is exercised on an
+        # isolated stack: 10x200, then the 11th is 429'd in middleware.
         # Consume all (limit is 10)
         for i in range(limit):
-            await ac.get("/api/v1/health")
+            response = await ac.get("/")
+            assert response.status_code == 200
 
         # Next one should be rate limited
-        response = await ac.get("/api/v1/health")
+        response = await ac.get("/")
         assert response.status_code == 429
         assert "Too Many Requests" in response.text or response.status_code == 429
 

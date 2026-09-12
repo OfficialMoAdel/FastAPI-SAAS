@@ -12,7 +12,6 @@ dependencies = [
     "fastapi>=0.109.1",
     "uvicorn>=0.27.0",
     "httptools>=0.6.1",
-    
     "uuid6>=2024.1.12",
     "alembic>=1.13.1",
     "asyncpg>=0.29.0",
@@ -59,6 +58,7 @@ dependencies = [
     "anthropic>=0.20.0",
     "filetype>=1.2.0",
     "pytest-timeout>=2.4.0",
+    "tiktoken>=0.14.0",
 ]
 
 [project.optional-dependencies]
@@ -103,6 +103,11 @@ select = [
     "UP", # pyupgrade
     # https://docs.astral.sh/ruff/rules/#isort-i
     "I", # isort
+    # https://docs.astral.sh/ruff/rules/#flake8-tidy-imports-tid
+    "TID", # tidy-imports (P1-20: enforces the package-root boundary below)
+    # https://docs.astral.sh/ruff/rules/#flake8-blind-except-ble
+    "BLE", # blind-except (P1-17: enforced on the boot path only; the
+            # per-file-ignores below scope it until the repo-wide campaign)
 ]
 ignore = [
     # https://docs.astral.sh/ruff/rules/#pycodestyle-e-w
@@ -120,6 +125,27 @@ ignore = [
     "F403", # star imports
 ]
 "src/migrations/*" = ["E501"]
+# P1-17: BLE001 is enforced on the boot path only
+# (src/app/main.py, src/app/core/setup.py, src/app/api/monitoring.py,
+# src/app/core/job_monitoring.py). Everything below is deferred to the
+# repo-wide blind-except campaign — do NOT add new broad excepts here
+# without a justification; extend enforcement instead.
+"src/app/{modules,clients,middleware,admin,transport,models,schemas,shared,templates}/**" = ["BLE001"]
+"src/app/api/{deps,v1}/**" = ["BLE001"]
+"src/app/api/{__init__,openapi}.py" = ["BLE001"]
+"src/app/{__init__,events}.py" = ["BLE001"]
+"src/app/core/{cache,config,db,events,exceptions,monitoring,observability,rbac,resilience,security,tenancy,utils,worker}/**" = ["BLE001"]
+"src/app/core/{__init__,env_validator,errors,health,json_utils,logger,middleware_exempt,pagination,redis_provider,schemas}.py" = ["BLE001"]
+"src/{migrations,scripts}/**" = ["BLE001"]
+"tests/**" = ["BLE001", "TID"]
+# P1-20: TID (banned-api) per-file exemptions. The package-root rule
+# applies to cross-module production imports; these are sanctioned:
+# - api/v1/__init__.py is the composition root — it MUST import routers to mount them.
+# - modules/*/__init__.py are the facades — deep imports inside lazy __getattr__ ARE the seam.
+# (tests/** above: white-box tests pin internals + mock targets by design.)
+"src/app/api/v1/__init__.py" = ["TID"]
+"src/app/modules/*/__init__.py" = ["TID"]
+"scripts/**" = ["BLE001"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 24

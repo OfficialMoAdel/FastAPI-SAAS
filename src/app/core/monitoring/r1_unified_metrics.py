@@ -14,23 +14,12 @@ Usage:
 
 from __future__ import annotations
 
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from src.app.core.logger import get_logger
 
 logger = get_logger(__name__)
-
-
-@dataclass
-class MetricValue:
-    """Container for a single metric value with labels."""
-
-    name: str
-    value: float = 0.0
-    labels: dict[str, str] = field(default_factory=dict)
-    timestamp: float = field(default_factory=time.time)
 
 
 @dataclass
@@ -357,7 +346,6 @@ def record_fail_open(operation: str) -> None:
     """
     metrics = get_r1_metrics()
     metrics.inc_counter("r1_security_fail_open_total")
-    # Note: Operation label could be added if MetricValue supported it
-    # For now, relying on logs for details
+    # Operation detail is carried by structured logs; the counter is aggregate.
 
 

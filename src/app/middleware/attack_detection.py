@@ -14,6 +14,7 @@ Whitelist bypass: IPs in whitelist skip attack detection entirely.
 """
 
 import asyncio
+import posixpath
 import re
 import unicodedata
 from enum import Enum
@@ -81,17 +82,21 @@ _GROUP_TO_ATTACK: dict[str, tuple[str, AttackType]] = {
 
 # Combined bytes regex: single search() replaces 16 sequential pattern checks.
 # Compiled as bytes pattern for zero-copy scanning of request body.
+# P1-7 FP hardening: xss_event requires tag context (event handlers only
+# execute inside <tag ...> — bare "only=" query/form params must not match);
+# sql_comment requires SQL context (a quote or semicolon earlier on the same
+# line — bare trailing "--" in prose/markdown must not match).
 COMBINED_ATTACK_RE: re.Pattern[bytes] = re.compile(
     rb"(?P<sql_union>\bunion\b.*?\bselect\b)"
     rb"|(?P<sql_or>\bor\b\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+['\"]?)"
     rb"|(?P<sql_drop>\bdrop\b.*?\btable\b)"
     rb"|(?P<sql_delete>\bdelete\b.*?\bfrom\b)"
-    rb"|(?P<sql_comment>--\s*$)"
+    rb"|(?P<sql_comment>(?:'[^'\r\n]{0,200}|;[^\r\n]{0,200}?)--[^\r\n]*$)"
     rb"|(?P<sql_semicomment>;\s*--)"
     rb"|(?P<sql_exec>\bexec\b.*?\bxp_)"
     rb"|(?P<xss_script><script[\s>])"
     rb"|(?P<xss_jsuri>javascript\s*:)"
-    rb"|(?P<xss_event>\bon\w+\s*=)"
+    rb"|(?P<xss_event><[a-zA-Z][^<>]{0,512}?[\s/]on[a-zA-Z]+\s*=[\"']?)"
     rb"|(?P<xss_iframe_tag><iframe[\s>])"
     rb"|(?P<xss_object_tag><object[\s>])"
     rb"|(?P<path_dotdot>\.\.\/)"
@@ -113,6 +118,26 @@ _ZERO_WIDTH_RE = re.compile(
     "\ufeff"  # BOM / zero-width no-break space
     "\ufff9-\ufffb"  # Interlinear annotation anchors
     "]"
+)
+
+
+# P2-7: security-relevant headers scanned per request. Hoisted from a
+# per-request list literal in _detect_attack_patterns — the rebuild cost was
+# nanosecond-scale noise, but a module-level frozen tuple keeps the scanned
+# set visible in one place and avoids re-allocating on every request.
+_HEADERS_TO_CHECK: tuple[str, ...] = (
+    "user-agent",
+    "referer",
+    "x-requested-with",
+    "cookie",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+    "forwarded",
+    "origin",
+    "authorization",
+    "x-originating-ip",
 )
 
 
@@ -150,7 +175,6 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         attack scanning). Now we require either an exact match or a true sub-path
         (path starts with exempt + "/").
         """
-        import posixpath
         normalized_path = posixpath.normpath(path)
         # P2-7: delegate to the shared helper, which checks the common
         # exempt set first and any per-middleware extras via the
@@ -203,8 +227,10 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         character stripping before regex matching to prevent bypass attacks.
 
         Returns:
-            Tuple of (detected attacks list, possibly modified request).
-            The request may be replaced with a new one if body needs buffering.
+            Tuple of (detected attacks list, request). The request object is
+            returned unchanged; the body is read via ``Request.body()`` so
+            Starlette's ``_CachedRequest`` replays it downstream (P0-1: a
+            consumed ``request.stream()`` would make downstream see ``b""``).
         """
         detected_attacks: list[dict] = []
 
@@ -221,21 +247,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
             )
 
         # Check security-relevant headers (expanded from original 3)
-        headers_to_check = [
-            "user-agent",
-            "referer",
-            "x-requested-with",
-            "cookie",
-            "x-forwarded-for",
-            "x-forwarded-host",
-            "x-forwarded-proto",
-            "x-real-ip",
-            "forwarded",
-            "origin",
-            "authorization",
-            "x-originating-ip",
-        ]
-        for header_name in headers_to_check:
+        for header_name in _HEADERS_TO_CHECK:
             header_value = request.headers.get(header_name, "")
             if header_value:
                 self._check_for_patterns(
@@ -268,32 +280,18 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
             if not skip_body:
                 try:
-                    body_chunks: list[bytes] = []
-                    body_size = 0
-
-                    # Buffer the full body (bounded upstream by
-                    # RequestBodyLimitMiddleware at MAX_BODY_SIZE) so it can be
-                    # reinjected for downstream handlers after scanning.
-                    async for chunk in request.stream():
-                        body_chunks.append(chunk)
-                        body_size += len(chunk)
-
-                    body_to_scan = b"".join(body_chunks)
+                    # P0-1 FIX: read via Request.body(), NOT request.stream().
+                    # Starlette's BaseHTTPMiddleware wraps dispatch in a
+                    # _CachedRequest: body() caches the bytes and replays them
+                    # downstream via wrapped_receive, while a consumed stream()
+                    # makes downstream see b"" — and the rebuilt Request object
+                    # below was discarded anyway (call_next ignores its argument
+                    # and reuses the original scope + receive channel). Body size
+                    # is bounded upstream by RequestBodyLimitMiddleware.
+                    body_to_scan = await request.body()
+                    body_size = len(body_to_scan)
 
                     if body_to_scan:
-                        # SECURITY FIX: Avoid mutating private framework attributes like request._body.
-                        # Instead, create a new receive callable that yields the buffered body.
-                        body_returned = False
-
-                        async def receive() -> dict:
-                            nonlocal body_returned
-                            if not body_returned:
-                                body_returned = True
-                                return {"type": "http.request", "body": body_to_scan, "more_body": False}
-                            return {"type": "http.disconnect"}
-
-                        request = Request(request.scope, receive=receive)
-
                         # Consistent with the Content-Length pre-check above:
                         # bodies larger than MAX_SCAN_SIZE skip the pattern scan
                         # and continue. Rejecting here (413) would close no gap —

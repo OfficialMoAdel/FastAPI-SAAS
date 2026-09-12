@@ -7,7 +7,7 @@ Task: T077 [US8] Write unit tests for PasskeyService authentication
 Tests the PasskeyService for:
 - Authentication challenge generation (login initiation)
 - Assertion verification with counter check (replay prevention)
-- Credential lookup by user email
+- Credential resolution from the asserted credential ID (usernameless)
 - Sign count update after successful authentication
 """
 
@@ -33,7 +33,6 @@ class TestPasskeyAuthenticationChallengeGeneration:
         from src.app.modules.auth.services.passkey import PasskeyService
 
         service = PasskeyService()
-        mock_db = AsyncMock()
         mock_redis = AsyncMock()
 
         with (
@@ -45,7 +44,6 @@ class TestPasskeyAuthenticationChallengeGeneration:
 
             with patch.object(service, "_store_auth_challenge", new_callable=AsyncMock) as mock_store:
                 result = await service.generate_authentication_challenge(
-                    db=mock_db,
                     redis=mock_redis,
                 )
 
@@ -54,34 +52,15 @@ class TestPasskeyAuthenticationChallengeGeneration:
                 mock_store.assert_called()
 
     @pytest.mark.asyncio
-    async def test_generate_authentication_challenge_with_email_hint(self):
-        """Verify authentication challenge can use email hint to filter credentials."""
+    async def test_generate_authentication_challenge_has_no_email_hint(self):
+        """P2-A: email hint removed — signature accepts no email (oracle closed)."""
+        import inspect
+
         from src.app.modules.auth.services.passkey import PasskeyService
 
-        service = PasskeyService()
-        mock_db = AsyncMock()
-        mock_redis = AsyncMock()
-
-        with patch.object(service, "_get_credentials_for_email", new_callable=AsyncMock) as mock_get_creds:
-            mock_get_creds.return_value = []
-
-            with (
-                patch("src.app.modules.auth.services.passkey.generate_authentication_options") as mock_generate,
-                patch("src.app.modules.auth.services.passkey.options_to_json") as mock_to_json,
-            ):
-                mock_generate.return_value = MagicMock(challenge=b"test-challenge")
-                mock_to_json.return_value = '{"challenge": "test"}'
-
-                with patch.object(service, "_store_auth_challenge", new_callable=AsyncMock):
-                    result = await service.generate_authentication_challenge(
-                        db=mock_db,
-                        redis=mock_redis,
-                        email="test@example.com",
-                    )
-
-                    # Should have called get_credentials_for_email
-                    mock_get_creds.assert_called_once_with(mock_db, "test@example.com")
-                    assert result is not None
+        params = inspect.signature(PasskeyService.generate_authentication_challenge).parameters
+        assert "email" not in params
+        assert "db" not in params
 
     @pytest.mark.asyncio
     async def test_generate_authentication_challenge_stores_challenge(self):
@@ -89,7 +68,6 @@ class TestPasskeyAuthenticationChallengeGeneration:
         from src.app.modules.auth.services.passkey import PasskeyService
 
         service = PasskeyService()
-        mock_db = AsyncMock()
         mock_redis = AsyncMock()
 
         with (
@@ -102,7 +80,6 @@ class TestPasskeyAuthenticationChallengeGeneration:
 
             with patch.object(service, "_store_auth_challenge", new_callable=AsyncMock) as mock_store:
                 await service.generate_authentication_challenge(
-                    db=mock_db,
                     redis=mock_redis,
                 )
 
@@ -112,39 +89,28 @@ class TestPasskeyAuthenticationChallengeGeneration:
                 assert mock_store.call_args[0][2] == b"test-challenge"
 
     @pytest.mark.asyncio
-    async def test_generate_authentication_challenge_includes_allowed_credentials(self):
-        """Verify authentication options include allowCredentials when email provided."""
+    async def test_generate_authentication_challenge_omits_allow_credentials(self):
+        """P2-A: options never carry allowCredentials (usernameless — no oracle)."""
         from src.app.modules.auth.services.passkey import PasskeyService
 
         service = PasskeyService()
-        mock_db = AsyncMock()
         mock_redis = AsyncMock()
 
-        # Mock credentials for the user
-        mock_cred = MagicMock(
-            credential_id=b"test-cred-id",
-            transports=["internal"],
-        )
+        with (
+            patch("src.app.modules.auth.services.passkey.generate_authentication_options") as mock_generate,
+            patch("src.app.modules.auth.services.passkey.options_to_json") as mock_to_json,
+        ):
+            mock_generate.return_value = MagicMock(challenge=b"test-challenge")
+            mock_to_json.return_value = '{"challenge": "test"}'
 
-        with patch.object(service, "_get_credentials_for_email", new_callable=AsyncMock) as mock_get_creds:
-            mock_get_creds.return_value = [mock_cred]
+            with patch.object(service, "_store_auth_challenge", new_callable=AsyncMock):
+                result = await service.generate_authentication_challenge(
+                    redis=mock_redis,
+                )
 
-            with (
-                patch("src.app.modules.auth.services.passkey.generate_authentication_options") as mock_generate,
-                patch("src.app.modules.auth.services.passkey.options_to_json") as mock_to_json,
-            ):
-                mock_generate.return_value = MagicMock(challenge=b"test-challenge")
-                mock_to_json.return_value = '{"challenge": "test"}'
-
-                with patch.object(service, "_store_auth_challenge", new_callable=AsyncMock):
-                    result = await service.generate_authentication_challenge(
-                        db=mock_db,
-                        redis=mock_redis,
-                        email="test@example.com",
-                    )
-
-                    # Result should include allowed credentials
-                    assert result is not None
+                # Result should exist and options must omit allowCredentials
+                assert result is not None
+                assert mock_generate.call_args.kwargs.get("allow_credentials") is None
 
 
 class TestPasskeyAuthenticationVerification:
@@ -481,14 +447,6 @@ class TestPasskeyAuthenticationVerification:
 
 class TestPasskeyAuthenticationHelpers:
     """Tests for authentication helper methods."""
-
-    @pytest.mark.asyncio
-    async def test_get_credentials_for_email_method_exists(self):
-        """Verify _get_credentials_for_email method exists."""
-        from src.app.modules.auth.services.passkey import PasskeyService
-
-        service = PasskeyService()
-        assert hasattr(service, "_get_credentials_for_email")
 
     @pytest.mark.asyncio
     async def test_find_credential_by_id_method_exists(self):

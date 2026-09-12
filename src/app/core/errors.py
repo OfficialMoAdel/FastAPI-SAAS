@@ -235,6 +235,7 @@ class _HandlerSpec(NamedTuple):
     details: Callable[[Any], dict[str, Any] | None] | None
     log_message: str
     log_error: bool
+    headers: Callable[[Any], dict[str, str] | None] | None = None
 
 
 def _model_not_found_details(exc: Any) -> dict[str, Any]:
@@ -295,6 +296,7 @@ def _make_table_handler(spec: _HandlerSpec) -> Callable[[Request, Any], Coroutin
         resolved_code = code_spec(exc) if callable(code_spec) else code_spec
         resolved_message = message_spec(exc) if callable(message_spec) else message_spec
         resolved_details = spec.details(exc) if spec.details is not None else None
+        resolved_headers = spec.headers(exc) if spec.headers is not None else None
         log = logger.error if spec.log_error else logger.warning
         log(spec.log_message, error=str(exc), request_id=request_id, path=request.url.path)
         return create_error_response(
@@ -303,6 +305,7 @@ def _make_table_handler(spec: _HandlerSpec) -> Callable[[Request, Any], Coroutin
             status_code=resolved_status,
             details=resolved_details,
             request_id=request_id,
+            headers=resolved_headers,
         )
 
     return _handler
@@ -390,6 +393,7 @@ def build_exception_table() -> list[_HandlerSpec]:
             None,
             "Rate limit exceeded",
             False,
+            headers=lambda exc: {"Retry-After": str(getattr(exc, "retry_after", 60))},
         ),
         _HandlerSpec(
             TenantContextError,

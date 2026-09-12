@@ -9,7 +9,7 @@ username/tenant comparisons.
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep, get_current_superuser
@@ -19,6 +19,7 @@ from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.core.security import oauth2_scheme
 from src.app.core.utils.user_utils import get_user_attr
+from src.app.modules.users import UserService
 from src.app.modules.users.schemas import (
     UserCreate,
     UserDeleteResponse,
@@ -31,8 +32,7 @@ from src.app.modules.users.schemas import (
     UserUpdate,
     UserUpdateResponse,
 )
-from src.app.modules.users.service import UserService
-from src.app.shared.exceptions import ModelNotFoundError
+from src.app.shared.exceptions import UnauthorizedError
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -91,7 +91,7 @@ async def read_users_me(
     """
     user = await service.resolve_current_profile(ctx.user)
     if user is None:
-        raise HTTPException(status_code=401, detail="Invalid user context")
+        raise UnauthorizedError("Invalid user context")
     return user
 
 
@@ -111,10 +111,7 @@ async def read_user(
     # from a nonexistent one (404, not 403). ctx.require_tenant() enforces
     # that this is a tenant-bound path.
     ctx.require_tenant()
-    try:
-        user = await service.get_profile(user_id, tenant_id=ctx.tenant_id)
-    except ModelNotFoundError:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = await service.get_profile(user_id, tenant_id=ctx.tenant_id)
 
     # SECURITY: IDOR via the single ownership seam (superuser bypass included).
     ctx.require_ownership(get_user_attr(user, "id"))

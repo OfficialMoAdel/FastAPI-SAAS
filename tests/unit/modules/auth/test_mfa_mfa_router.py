@@ -390,3 +390,122 @@ class TestMFAEndpointRegistration:
 
         verify_endpoint = spec["paths"]["/api/v1/mfa/verify"]["post"]
         assert "mfa" in verify_endpoint["tags"]
+
+
+class TestMFAMutateRateLimiting:
+    """P1-5: /disable and /backup-codes must enforce a per-user mutation budget."""
+
+    def test_mutate_limiter_uses_separate_namespace(self):
+        """Mutate budget must not share keys with the verify budget."""
+        import asyncio
+
+        from src.app.modules.auth.routers import mfa as mfa_router
+
+        seen: dict = {}
+
+        async def fake_check(request, identifier=None, key_prefix="mfa_verify", limit=5, period=60):
+            seen.update(
+                {"identifier": identifier, "key_prefix": key_prefix, "limit": limit, "period": period}
+            )
+
+        with patch.object(mfa_router, "check_mfa_rate_limit", side_effect=fake_check):
+            asyncio.get_event_loop().run_until_complete(
+                mfa_router.check_mfa_mutate_rate_limit(Mock(), 42)
+            )
+
+        assert seen == {
+            "identifier": "42",
+            "key_prefix": "mfa_mutate",
+            "limit": mfa_router.MFA_MUTATE_LIMIT,
+            "period": mfa_router.MFA_MUTATE_PERIOD,
+        }
+
+    def test_disable_enforces_mutate_limit(self, client_with_rate_limit):
+        """Should return 429 when the mutate limiter trips on /disable."""
+        headers = {
+            "Authorization": "Bearer test-token",
+            "X-Tenant-ID": "test-tenant",
+        }
+
+        with patch(
+            "src.app.modules.auth.routers.mfa.check_mfa_mutate_rate_limit",
+            new_callable=AsyncMock,
+            side_effect=RateLimitException("Too many MFA mutation attempts."),
+        ):
+            response = client_with_rate_limit.post(
+                "/api/v1/mfa/disable",
+                json={"password": "test_password", "totp_token": "123456"},
+                headers=headers,
+            )
+            assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+
+    def test_disable_calls_mutate_limiter_then_service(self, client_with_rate_limit):
+        """Limiter runs before the service; service still reached when allowed."""
+        headers = {
+            "Authorization": "Bearer test-token",
+            "X-Tenant-ID": "test-tenant",
+        }
+
+        with (
+            patch(
+                "src.app.modules.auth.routers.mfa.check_mfa_mutate_rate_limit",
+                new_callable=AsyncMock,
+            ) as mock_limit,
+            patch(
+                "src.app.modules.auth.services.mfa.MFAService.disable_mfa",
+                new_callable=AsyncMock,
+                return_value={"message": "MFA disabled successfully"},
+            ),
+        ):
+            response = client_with_rate_limit.post(
+                "/api/v1/mfa/disable",
+                json={"password": "test_password", "totp_token": "123456"},
+                headers=headers,
+            )
+            assert response.status_code == status.HTTP_200_OK
+            mock_limit.assert_awaited_once()
+
+    def test_backup_codes_enforces_mutate_limit(self, client_with_rate_limit):
+        """Should return 429 when the mutate limiter trips on /backup-codes."""
+        headers = {
+            "Authorization": "Bearer test-token",
+            "X-Tenant-ID": "test-tenant",
+        }
+
+        with patch(
+            "src.app.modules.auth.routers.mfa.check_mfa_mutate_rate_limit",
+            new_callable=AsyncMock,
+            side_effect=RateLimitException("Too many MFA mutation attempts."),
+        ):
+            response = client_with_rate_limit.post(
+                "/api/v1/mfa/backup-codes",
+                json={"password": "test_password", "totp_token": "123456"},
+                headers=headers,
+            )
+            assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+
+    def test_backup_codes_calls_mutate_limiter_then_service(self, client_with_rate_limit):
+        """Limiter runs before the service; service still reached when allowed."""
+        headers = {
+            "Authorization": "Bearer test-token",
+            "X-Tenant-ID": "test-tenant",
+        }
+
+        with (
+            patch(
+                "src.app.modules.auth.routers.mfa.check_mfa_mutate_rate_limit",
+                new_callable=AsyncMock,
+            ) as mock_limit,
+            patch(
+                "src.app.modules.auth.services.mfa.MFAService.regenerate_backup_codes",
+                new_callable=AsyncMock,
+                return_value={"message": "New backup codes generated", "backup_codes": []},
+            ),
+        ):
+            response = client_with_rate_limit.post(
+                "/api/v1/mfa/backup-codes",
+                json={"password": "test_password", "totp_token": "123456"},
+                headers=headers,
+            )
+            assert response.status_code == status.HTTP_200_OK
+            mock_limit.assert_awaited_once()

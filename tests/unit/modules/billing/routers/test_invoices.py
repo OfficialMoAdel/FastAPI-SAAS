@@ -3,10 +3,10 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 
 from src.app.api.deps.auth import AuthenticatedUser
 from src.app.modules.billing.routers.invoices import get_invoice, list_invoices
+from src.app.shared.exceptions import ForbiddenError, ModelNotFoundError
 
 
 async def test_list_invoices():
@@ -69,9 +69,8 @@ async def test_get_invoice_not_found():
         "src.app.modules.billing.routers.invoices.get_billing_record_service",
         return_value=mock_service,
     ):
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(ModelNotFoundError, match="Invoice not found"):
             await get_invoice(invoice_id=5, current_user=AuthenticatedUser(id=1, email="u@e.com"), db=MagicMock())
-        assert exc.value.status_code == 404
 
 
 async def test_get_invoice_forbidden():
@@ -82,6 +81,5 @@ async def test_get_invoice_forbidden():
         "src.app.modules.billing.routers.invoices.get_billing_record_service",
         return_value=mock_service,
     ):
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(ForbiddenError, match="Access denied to this invoice"):
             await get_invoice(invoice_id=5, current_user=AuthenticatedUser(id=1, email="u@e.com"), db=MagicMock())
-        assert exc.value.status_code == 403

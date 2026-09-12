@@ -4,21 +4,22 @@ Starlette executes middleware in LIFO order (last added runs first on the
 request path). The stack in ``main.py`` is added in this order
 (innermost -> outermost):
 
-    RequestID, AttackDetection, RateLimit, Tenant, SecurityHeaders,
+    RequestID, AttackDetection, Tenant, RateLimit, SecurityHeaders,
     RequestBodyLimit, IPFilter, QueryProfiler, GZipFilter
 
 ``add_middleware`` inserts at position 0, so ``app.user_middleware`` is in
 REQUEST EXECUTION order (outermost first):
 
     GZip -> QueryProfiler -> IPFilter -> BodyLimit -> SecurityHeaders
-    -> Tenant -> RateLimit -> AttackDetection -> RequestID -> CORS
+    -> RateLimit -> Tenant -> AttackDetection -> RequestID -> CORS
 
 (CORSMiddleware is innermost: it is added first, inside create_application.)
 
 Reordering these silently changes trust boundaries (e.g. RateLimit must run
-before AttackDetection's expensive body scan; IPFilter sets the
-``ip_whitelisted`` state that RateLimit reads). This test pins the order so a
-reorder fails CI instead of shipping.
+before AttackDetection's expensive body scan AND before the Tenant lookup so
+429s skip it (P1-15); IPFilter sets the ``ip_whitelisted`` state that
+RateLimit reads). This test pins the order so a reorder fails CI instead of
+shipping.
 """
 
 import pytest
@@ -50,8 +51,8 @@ class TestMiddlewareOrder:
             IPFilterMiddleware,
             RequestBodyLimitMiddleware,
             SecurityHeadersMiddleware,
-            TenantMiddleware,
             RateLimitMiddleware,
+            TenantMiddleware,
             AttackDetectionMiddleware,
             RequestIDMiddleware,
             CORSMiddleware,  # innermost — added first in create_application
@@ -82,6 +83,25 @@ class TestMiddlewareOrder:
         assert registered.index(RateLimitMiddleware) < registered.index(AttackDetectionMiddleware), (
             "RateLimit must execute before AttackDetection on the request "
             "path (cheap 429 before expensive body-buffering scan)."
+        )
+
+    def test_rate_limit_runs_before_tenant_on_request(self):
+        """P1-15: RateLimit executes before TenantMiddleware on the request path.
+
+        A 429 must reject before the tenant lookup (L1+L2+DB) runs. Safe
+        because the middleware resolves tenant_id from JWT claims /
+        request.state and never reads the tenant ContextVar; dep-layer
+        ``is_rate_limited`` still sees the context since TenantMiddleware
+        runs before the handler regardless.
+        """
+        from src.app.main import app
+        from src.app.middleware.rate_limit import RateLimitMiddleware
+        from src.app.middleware.tenant import TenantMiddleware
+
+        registered = [m.cls for m in app.user_middleware]
+        assert registered.index(RateLimitMiddleware) < registered.index(TenantMiddleware), (
+            "RateLimit must execute before TenantMiddleware on the request "
+            "path so 429s skip the tenant lookup (P1-15)."
         )
 
 

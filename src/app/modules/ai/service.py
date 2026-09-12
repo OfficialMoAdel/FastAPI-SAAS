@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
 
+import tiktoken
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import local_session
@@ -36,18 +37,33 @@ DEFAULT_CONTEXT_WINDOW = 8192  # Default context window size in tokens
 MAX_SESSIONS_PER_TENANT = 100
 
 
-def estimate_tokens(text: str) -> int:
-    """Estimate token count using 4 chars per token approximation.
+# P2-6: cl100k_base is a good approximation for GPT/Claude-style BPE
+# tokenizers and far closer than len//4 for CJK/code. Lazily loaded once.
+_token_encoding: tiktoken.Encoding | None = None
 
-    T096: Implement token estimation (4 chars per token).
+
+def _get_token_encoding() -> tiktoken.Encoding:
+    global _token_encoding
+    if _token_encoding is None:
+        _token_encoding = tiktoken.get_encoding("cl100k_base")
+    return _token_encoding
+
+
+def estimate_tokens(text: str | None) -> int:
+    """Estimate token count with tiktoken, len//4 fallback.
 
     Args:
-        text: The text to estimate tokens for
+        text: The text to estimate tokens for (None/empty → 0)
 
     Returns:
         Estimated token count
     """
-    return len(text) // 4 if text else 0
+    if not text:
+        return 0
+    try:
+        return len(_get_token_encoding().encode(text))
+    except Exception:
+        return len(text) // 4
 
 
 def estimate_messages_tokens(messages: list[dict[str, str]]) -> int:
@@ -423,6 +439,10 @@ class ChatCompletionService:
             "message": res.content,
             "role": "assistant",
             "token_count": res.token_usage.total_tokens if res.token_usage else None,
+            # P2-6: keep the provider breakdown so cost logging doesn't
+            # have to re-derive it (stream chunks never carry usage).
+            "prompt_tokens": res.token_usage.prompt_tokens if res.token_usage else None,
+            "completion_tokens": res.token_usage.completion_tokens if res.token_usage else None,
             "model": res.model or model,
             "finish_reason": res.finish_reason,
         }
@@ -450,6 +470,31 @@ class ChatCompletionService:
                 yield {"content": chunk_str, "done": False, "token_count": None}
         yield {"content": "", "done": True, "token_count": None}
 
+    async def _persist_assistant_message(
+        self,
+        session_id: int,
+        content: str,
+        token_count: int | None,
+    ) -> None:
+        """Single-write assistant message persist.
+
+        P2-6: shared by complete() Phase 3 and the stream retry loop —
+        one implementation, no duplicated write logic.
+        """
+        async with local_session() as fresh_db:
+            message_service = ChatMessageService(fresh_db)
+            await message_service.add_message(
+                session_id=session_id,
+                data=ChatMessageCreate(role="assistant", content=content),
+                token_count=token_count,
+            )
+            await crud_chat_sessions.update(
+                db=fresh_db,
+                object={"updated_at": datetime.now(UTC)},
+                id=session_id,
+            )
+            await fresh_db.commit()
+
     async def complete(
         self,
         session_id: int,
@@ -471,25 +516,12 @@ class ChatCompletionService:
         """
         # M3: Removed verbose per-request logger.info to reduce logging overhead on hot path
 
-        # R5-7: Parallelize pre-LLM DB reads using dedicated short-lived DB sessions
-        # to avoid SQLAlchemy AsyncSession concurrency issues.
-        async def _fetch_session():
-            async with local_session() as db:
-                return await ChatSessionService(db).get_session(session_id, user_id)
-
-        async def _fetch_settings():
-            async with local_session() as db:
-                return await AISettingsService(db).get_or_create_settings(user_id)
-
-        async def _fetch_messages():
-            async with local_session() as db:
-                return await ChatMessageService(db).get_session_messages(session_id, limit=50)
-
-        session, user_settings, messages_result = await asyncio.gather(
-            _fetch_session(),
-            _fetch_settings(),
-            _fetch_messages(),
-        )
+        # P1-13: Sequential pre-LLM reads on the request-scoped session.
+        # One checkout instead of 3 parallel short-lived sessions. These are
+        # fast indexed lookups; serial latency is negligible next to the LLM call.
+        session = await ChatSessionService(self.db).get_session(session_id, user_id)
+        user_settings = await AISettingsService(self.db).get_or_create_settings(user_id)
+        messages_result = await ChatMessageService(self.db).get_session_messages(session_id, limit=50)
 
         model = request.model or session.get("model") or user_settings.get("model", "gemma3")
         temperature = request.temperature if request.temperature is not None else user_settings.get("temperature", 0.7)
@@ -529,9 +561,12 @@ class ChatCompletionService:
             try:
                 return await with_retry(
                     lambda: self._invoke_chat(self.provider, model, history, temperature, max_tokens, system_prompt),
-                    max_attempts=2,
-                    delay_seconds=0.05,
+                    # P2-6: real backoff (was one 50ms retry) + honor
+                    # provider-parsed Retry-After via AIProviderError.retry_after.
+                    max_attempts=3,
+                    delay_seconds=0.5,
                     exceptions=(AIProviderError,),
+                    retry_after_attr="retry_after",
                 )
             except Exception as e:
                 _last_err.append(e)
@@ -573,20 +608,29 @@ class ChatCompletionService:
             raise ChatCompletionError(err_msg, err_code, model) from e
 
         # Phase 3: Get fresh session for writing response
-        async with local_session() as fresh_db:
-            message_service = ChatMessageService(fresh_db)
-            await message_service.add_message(
-                session_id=session_id,
-                data=ChatMessageCreate(role="assistant", content=result["message"]),
-                token_count=result.get("token_count"),
-            )
+        await self._persist_assistant_message(
+            session_id=session_id,
+            content=result["message"],
+            token_count=result.get("token_count"),
+        )
 
-            await crud_chat_sessions.update(
-                db=fresh_db,
-                object={"updated_at": datetime.now(UTC)},
-                id=session_id,
+        # P2-6: cost controls are no longer decorative — log the provider
+        # breakdown on every successful completion (sync, no DB). Streaming
+        # cannot log: stream chunks never carry token usage. isinstance gate
+        # (not None-check) so mock/partial shapes never reach the logger.
+        if isinstance(result.get("prompt_tokens"), int) or isinstance(result.get("completion_tokens"), int):
+            from src.app.modules.ai.token_usage import log_token_usage
+
+            current_tenant = get_current_tenant()
+            log_token_usage(
+                provider=self.provider.provider_name,
+                model=result.get("model", model),
+                prompt_tokens=result.get("prompt_tokens") or 0,
+                completion_tokens=result.get("completion_tokens") or 0,
+                user_id=user_id,
+                tenant_id=getattr(current_tenant, "id", None),
+                session_id=session_id,
             )
-            await fresh_db.commit()
 
         return {
             "message": result["message"],
@@ -605,30 +649,17 @@ class ChatCompletionService:
         """Stream a chat completion for a session.
 
         C2: Releases DB connection during LLM streaming to prevent pool exhaustion.
-        P5: Uses asyncio.gather() for parallel data fetching.
+        P1-13: Pre-LLM reads run sequentially on the request-scoped session.
 
         Yields dicts with 'content', 'done', and optionally 'token_count'.
         """
 
-        # R5-7: Parallelize pre-LLM DB reads using dedicated short-lived DB sessions
-        # to avoid SQLAlchemy AsyncSession concurrency issues.
-        async def _fetch_session():
-            async with local_session() as db:
-                return await ChatSessionService(db).get_session(session_id, user_id)
-
-        async def _fetch_settings():
-            async with local_session() as db:
-                return await AISettingsService(db).get_or_create_settings(user_id)
-
-        async def _fetch_messages():
-            async with local_session() as db:
-                return await ChatMessageService(db).get_session_messages(session_id, limit=50)
-
-        session, user_settings, messages_result = await asyncio.gather(
-            _fetch_session(),
-            _fetch_settings(),
-            _fetch_messages(),
-        )
+        # P1-13: Sequential pre-LLM reads on the request-scoped session.
+        # One checkout instead of 3 parallel short-lived sessions. These are
+        # fast indexed lookups; serial latency is negligible next to the LLM call.
+        session = await ChatSessionService(self.db).get_session(session_id, user_id)
+        user_settings = await AISettingsService(self.db).get_or_create_settings(user_id)
+        messages_result = await ChatMessageService(self.db).get_session_messages(session_id, limit=50)
 
         model = request.model or session.get("model") or user_settings.get("model", "gemma3")
         temperature = request.temperature if request.temperature is not None else user_settings.get("temperature", 0.7)
@@ -723,19 +754,8 @@ class ChatCompletionService:
                                 from src.app.core.tenancy.context import set_current_tenant
 
                                 set_current_tenant(tenant_ctx)
-                            async with local_session() as fresh_db:
-                                message_service = ChatMessageService(fresh_db)
-                                await message_service.add_message(
-                                    session_id=session_id,
-                                    data=ChatMessageCreate(role="assistant", content=resp_content),
-                                    token_count=resp_tokens,
-                                )
-                                await crud_chat_sessions.update(
-                                    db=fresh_db,
-                                    object={"updated_at": datetime.now(UTC)},
-                                    id=session_id,
-                                )
-                                await fresh_db.commit()
+                            # P2-6: shared single-write helper (same as complete()).
+                            await self._persist_assistant_message(session_id, resp_content, resp_tokens)
                             break
                         except Exception as e:
                             if attempt < max_retries - 1:

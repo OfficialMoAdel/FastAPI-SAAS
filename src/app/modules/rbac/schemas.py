@@ -2,7 +2,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from src.app.modules._base.schemas import BaseCreate, BaseRead, BaseUpdate
+from src.app.modules._base.schemas import BaseCreate, BaseList, BaseRead, BaseUpdate
 
 
 class PermissionBase(BaseModel):
@@ -79,3 +79,12 @@ class UserRolesResponse(BaseModel):
 
     user_id: int
     roles: list[RoleRead] = []
+
+
+class PermissionList(BaseList[PermissionRead]):
+    """Standardized paginated permission list response.
+
+    Inherits from BaseList: items, total, page, per_page, has_next, has_previous
+    """
+
+    pass

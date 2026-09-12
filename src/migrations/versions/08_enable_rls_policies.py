@@ -44,6 +44,7 @@ TENANT_TABLES = [
     "ai_chat_messages",
     "ai_settings",
     "ai_token_usage",
+    "token_blacklist",  # P2-3: omitted in original 08, consolidated here
     "password_reset_tokens",
     "email_verification_tokens",
     "user_sso_connections",

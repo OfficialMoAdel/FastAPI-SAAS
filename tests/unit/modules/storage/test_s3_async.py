@@ -30,8 +30,15 @@ class TestS3AsyncUpload:
                 file = BytesIO(b"test content")
                 await storage.upload(file, "test-key.txt", "text/plain")
 
-                # Verify asyncio.to_thread wraps the streaming upload call
-                assert mock_to_thread.call_count == 1
+                # Verify asyncio.to_thread wraps the streaming upload call.
+                # P2-5: seek/tell size probing is also offloaded, so assert on
+                # the upload call itself rather than the total call count.
+                upload_calls = [
+                    c
+                    for c in mock_to_thread.call_args_list
+                    if c.args and c.args[0] is mock_client.upload_fileobj
+                ]
+                assert len(upload_calls) == 1
 
     @pytest.mark.asyncio
     async def test_event_loop_responsive_during_upload(self) -> None:

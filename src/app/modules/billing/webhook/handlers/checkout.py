@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID
 
 import stripe
@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from src.app.modules.billing import webhook as _pkg
 from src.app.modules.billing.lifecycle import extract_period_timestamps, map_stripe_status
 from src.app.modules.billing.schemas import (
+    SubscriptionStatus,
     UserSubscriptionCreateInternal,
 )
 
@@ -130,7 +131,9 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                 user_id=user_id,
                 subscription_plan_id=plan_id,
                 stripe_subscription_id=stripe_subscription_id,
-                status="active",
+                # P2-3: map the real Stripe status instead of hardcoding
+                # active — checkout can yield trialing/past_due subscriptions.
+                status=cast(SubscriptionStatus, map_stripe_status(stripe_sub.get("status", "active"))),
                 billing_interval=billing_interval,
                 current_period_start=current_period_start,
                 current_period_end=current_period_end,

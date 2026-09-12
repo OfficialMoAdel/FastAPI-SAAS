@@ -170,9 +170,12 @@ await update_feature_flag(db, tenant_id, "limits", {"max_users": 100})
 ### Missing Flags
 ✅ DO: Return `False` or `None` for non-existent flags
 ```python
-# In router - returns 404 for DELETE on non-existent flag
+# In router - the service raises a domain error; the central
+# EXCEPTION_HANDLERS table maps it to 404 for DELETE on non-existent flag
+from src.app.shared.exceptions import ModelNotFoundError
+
 if tenant.feature_flags is None or flag_name not in tenant.feature_flags:
-    raise HTTPException(status_code=404, detail="Feature flag not found")
+    raise ModelNotFoundError("FeatureFlag", flag_name)
 ```
 
 ### Admin Protection

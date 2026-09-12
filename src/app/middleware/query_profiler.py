@@ -31,7 +31,12 @@ logger = get_logger(__name__)
 # Default configuration
 DEFAULT_SLOW_QUERY_THRESHOLD_MS = 100  # Log queries slower than 100ms
 DEFAULT_N_PLUS_1_THRESHOLD = 3  # Warn if same query executed >3 times
-MAX_QUERIES_TO_LOG = 50  # Limit log spam for very chatty endpoints
+# P2-7: bound per-request query detail retention. QueryStats is
+# ContextVar-scoped (freed per request) and the middleware is disabled in
+# production, but a pathological request could still append unbounded detail
+# rows. Recording stops at the cap; total_query_count keeps counting so the
+# X-Query-Count header stays truthful.
+MAX_QUERIES_RECORDED = 1000
 
 
 class QueryStats:
@@ -40,6 +45,7 @@ class QueryStats:
     def __init__(self) -> None:
         self.queries: list[dict[str, Any]] = []
         self.total_time_ms: float = 0.0
+        self.total_query_count: int = 0  # P2-7: counts every query even past the record cap
         self.query_counts: dict[str, int] = defaultdict(int)
         self.slow_queries: list[dict[str, Any]] = []
 
@@ -55,8 +61,15 @@ class QueryStats:
             "duration_ms": round(duration_ms, 2),
         }
 
-        self.queries.append(query_info)
+        # P2-7: totals always accrue; per-query detail stops at
+        # MAX_QUERIES_RECORDED so a pathological request cannot grow these
+        # structures unboundedly. N+1/slow-query detection degrades
+        # gracefully — it operates on the recorded prefix.
+        self.total_query_count += 1
         self.total_time_ms += duration_ms
+        if self.total_query_count > MAX_QUERIES_RECORDED:
+            return
+        self.queries.append(query_info)
         self.query_counts[normalized[:200]] += 1
 
         # Track slow queries separately
@@ -166,7 +179,7 @@ class QueryProfilerMiddleware:
             async def send_with_profiling(message: Message) -> None:
                 if message["type"] == "http.response.start":
                     headers = list(message.get("headers", []))
-                    headers.append((b"x-query-count", str(len(stats.queries)).encode()))
+                    headers.append((b"x-query-count", str(stats.total_query_count).encode()))
                     headers.append((b"x-query-time", str(round(stats.total_time_ms, 3)).encode()))
                     if stats.slow_queries:
                         headers.append((b"x-slow-queries", str(len(stats.slow_queries)).encode()))
@@ -183,7 +196,7 @@ class QueryProfilerMiddleware:
         """Log query profiling results."""
         path = request.url.path
         method = request.method
-        query_count = len(stats.queries)
+        query_count = stats.total_query_count
 
         # Skip logging for health checks and static files
         if path in {"/health", "/health/live", "/health/ready", "/metrics"}:

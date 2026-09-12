@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from src.app.api.deps import get_current_superuser
@@ -27,15 +27,6 @@ class HealthCheckResponse(BaseModel):
     status: str
     timestamp: str
     checks: dict[str, dict[str, str | float | bool]]
-
-
-class ComponentHealth(BaseModel):
-    """Component health status."""
-
-    name: str
-    status: str
-    message: str | None = None
-    metrics: dict[str, float] | None = None
 
 
 async def check_database() -> dict[str, str | float | bool]:
@@ -76,7 +67,7 @@ async def check_redis() -> dict[str, str | float | bool]:
         await redis_client.ping()
         latency = time.perf_counter() - start_time
         return {"status": "healthy", "latency_ms": round(latency * 1000, 2)}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - P1-17: probes report degraded, never raise
         return {
             "status": "unhealthy",
             "error": str(e),
@@ -96,7 +87,7 @@ async def check_worker_queue() -> dict[str, str | float | bool]:
             "workers": settings.arq.ARQ_WORKERS,
             "max_jobs": settings.arq.ARQ_MAX_JOBS,
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - P1-17: probes report degraded, never raise
         return {"status": "unhealthy", "error": str(e), "queue_size": 0}
 
 
@@ -117,7 +108,7 @@ async def check_cache_metrics() -> dict[str, str | float | bool]:
             "xfetch_hit_rate": round(xfetch_hits / xfetch_total * 100, 2) if xfetch_total > 0 else 0,
             "rbac_hit_rate": round(rbac_hits / rbac_total * 100, 2) if rbac_total > 0 else 0,
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - P1-17: probes report degraded, never raise
         return {"status": "unhealthy", "error": str(e)}
 
 
@@ -134,7 +125,7 @@ async def check_dlq_size() -> dict[str, str | float | bool]:
             "dlq_size_pct": dlq_pct,
             "threshold_exceeded": dlq_pct > 90,
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - P1-17: probes report degraded, never raise
         return {"status": "unhealthy", "error": str(e)}
 
 
@@ -188,16 +179,20 @@ async def liveness_probe() -> dict[str, str]:
     return {"status": "alive"}
 
 
-@router.get("/health/ready")
-async def readiness_probe() -> dict[str, str]:
-    """Readiness probe - checks if the application is ready to serve traffic."""
+@router.get("/health/ready", response_model=None)
+async def readiness_probe() -> dict[str, str] | JSONResponse:
+    """Readiness probe - checks if the application is ready to serve traffic.
+
+    Not-ready is signaled with HTTP 503 so orchestrators can gate traffic on
+    the status code instead of parsing the body.
+    """
     try:
         db_status = await check_database()
         if db_status.get("status") == "healthy":
             return {"status": "ready"}
-        return {"status": "not_ready", "reason": "database_unhealthy"}
-    except Exception:
-        return {"status": "not_ready", "reason": "health_check_failed"}
+        return JSONResponse(status_code=503, content={"status": "not_ready", "reason": "database_unhealthy"})
+    except Exception:  # noqa: BLE001 - P1-17: readiness reports not_ready, never raises
+        return JSONResponse(status_code=503, content={"status": "not_ready", "reason": "health_check_failed"})
 
 
 @router.get("/metrics", response_class=PlainTextResponse, dependencies=[Depends(get_current_superuser)])
@@ -209,7 +204,7 @@ async def metrics_export() -> str:
     try:
         metrics = get_r1_metrics()
         return metrics.export_prometheus()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - P1-17: any export failure maps to 500, never leaks internals
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to export metrics: {e}")
 
 
@@ -222,5 +217,5 @@ async def metrics_json() -> dict[str, Any]:
     try:
         metrics = get_r1_metrics()
         return metrics.get_all_metrics()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - P1-17: any export failure maps to 500, never leaks internals
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to export metrics: {e}")

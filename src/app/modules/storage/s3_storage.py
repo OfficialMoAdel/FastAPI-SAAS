@@ -128,7 +128,7 @@ class S3Storage(StorageProvider):
             # path, and multipart handles both small and large files.
             # Reset file position to 0 (required for Starlette UploadFile wrapping SpooledTemporaryFile)
             if hasattr(file, "seek"):
-                file.seek(0)
+                await asyncio.to_thread(file.seek, 0)
 
             from botocore.config import TransferConfig
 
@@ -152,10 +152,10 @@ class S3Storage(StorageProvider):
             # otherwise derive it from the file object without disturbing its read position.
             size = getattr(file, "size", None)
             if size is None and hasattr(file, "seek"):
-                current_pos = file.tell()
-                file.seek(0, 2)
-                size = file.tell()
-                file.seek(current_pos)
+                current_pos = await asyncio.to_thread(file.tell)
+                await asyncio.to_thread(file.seek, 0, 2)
+                size = await asyncio.to_thread(file.tell)
+                await asyncio.to_thread(file.seek, current_pos)
 
             return StorageResult(
                 success=True,
@@ -286,6 +286,9 @@ class S3Storage(StorageProvider):
                 Params={
                     "Bucket": self.bucket,
                     "Key": path,
+                    # P2-5: force download — bearer presigned URLs must not
+                    # render tenant-controlled content (e.g. SVG) inline.
+                    "ResponseContentDisposition": "attachment",
                 },
                 ExpiresIn=expires_in,
             )

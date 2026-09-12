@@ -157,7 +157,7 @@ async def test_create_get_stripe_settings(db_session: AsyncSession, tenant):
     settings_in = StripeSettingsCreate(
         stripe_customer_id="cus_test_123",
         stripe_account_id="acct_test_123",
-        webhook_secret="whsec_test_123",
+        # P1-8: per-tenant webhook_secret removed; verification is global-only.
         is_active=True,
     )
 

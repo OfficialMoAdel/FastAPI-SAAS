@@ -13,7 +13,7 @@ from src.app.core.security import TokenType, api_key_scheme, oauth2_scheme, veri
 from src.app.core.security.jwt_utils import get_cached_jwt_payload
 from src.app.core.tenancy.context import TenantContext, get_current_tenant
 from src.app.core.utils.user_utils import get_user_attr
-from src.app.modules.users.service import UserService
+from src.app.modules.users import UserService
 
 logger = get_logger(__name__)
 
@@ -421,6 +421,65 @@ async def _resolve_optional_bearer_flow(
         return None
 
 
+# P1-1: API-key scope vocabulary, enforced at the resolve-principal seam.
+# Keys used to authenticate with the full user surface (requires_api_key_scope
+# had zero production call sites). Coarse scopes "read"/"write" cover HTTP
+# verbs ("write" implies "read" for safe methods); "admin" is a wildcard;
+# resource-qualified "read:<resource>"/"write:<resource>" narrow to one
+# top-level resource (first path segment after an optional vN prefix).
+# Keys with no scopes are denied everywhere (fail-closed).
+API_KEY_SCOPE_WILDCARD = "admin"
+_API_KEY_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _required_api_key_scope(method: str) -> str:
+    """Map an HTTP method to the coarse scope covering it."""
+    return "read" if method.upper() in _API_KEY_READ_METHODS else "write"
+
+
+def api_key_scope_allows(scopes: Any, method: str, path: str) -> bool:
+    """Pure policy check: does an API key's scope set cover this request?"""
+    if isinstance(scopes, str):
+        scopes = [scopes]
+    normalized = {s.lower() for s in (scopes or []) if isinstance(s, str)}
+    if API_KEY_SCOPE_WILDCARD in normalized:
+        return True
+    if not normalized:
+        return False
+    required = _required_api_key_scope(method)
+    if required in normalized:
+        return True
+    if required == "read" and "write" in normalized:
+        return True
+    segments = [seg for seg in path.split("/") if seg]
+    # Skip global prefixes ("/api", "/vN") — the resource is the first
+    # remaining segment, e.g. "posts" in "/api/v1/posts/1".
+    resource = ""
+    for seg in segments:
+        lowered = seg.lower()
+        if lowered == "api" or (lowered.startswith("v") and lowered[1:].isdigit()):
+            continue
+        resource = lowered
+        break
+    return bool(resource) and f"{required}:{resource}" in normalized
+
+
+def enforce_api_key_scope(user: AuthenticatedUser, request: Request | None) -> None:
+    """Fail-closed scope gate for API-key-authenticated principals.
+
+    Raises ForbiddenException when the key's scopes do not cover the
+    request. JWT principals never reach here (separate seam branch).
+    """
+    scopes = get_user_attr(user, "api_key_scopes", None)
+    method = getattr(request, "method", None)
+    url = getattr(request, "url", None)
+    path = getattr(url, "path", None)
+    if not isinstance(method, str) or not isinstance(path, str):
+        raise ForbiddenException("API key scope cannot be verified for this request.")
+    if not api_key_scope_allows(scopes, method, path):
+        raise ForbiddenException(f"API key missing required scope: {_required_api_key_scope(method)}")
+
+
 async def resolve_principal(
     request: Request,
     db: AsyncSession,
@@ -459,6 +518,10 @@ async def resolve_principal(
                 api_key_user = await get_user_by_api_key(api_key, db, request)
         if api_key_user is None:
             raise UnauthorizedException("Invalid API key.")
+        # P1-1: scope gate — a valid key with insufficient scopes is an
+        # authorization failure (403), not anonymous, in both strict and
+        # optional modes. Never degrade to anonymous here.
+        enforce_api_key_scope(api_key_user, request)
         return await _create_auth_context(api_key_user, None, current_tenant, db)
 
     # 2. Bearer Token extraction & length check

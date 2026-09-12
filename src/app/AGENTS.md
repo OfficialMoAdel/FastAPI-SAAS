@@ -128,7 +128,6 @@ Only cross-cutting schemas live at `src/app/schemas/` (currently `job.py`).
 
 ### Outbound Adapters
 - Clients: `src/app/clients/{billing,notifications,storage}/` - Vendor SDK adapters (Stripe, SMTP, Azure Blob); services never import vendor SDKs directly
-- Delivery seams: `src/app/transport/` - inbound webhook/event intake
 
 ### Shared
 - Domain exceptions: `src/app/shared/exceptions.py` - `AppException` hierarchy

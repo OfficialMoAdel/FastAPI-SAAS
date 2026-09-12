@@ -174,7 +174,7 @@ class TestMySubscriptionAPI:
         with patch(
             "src.app.modules.billing.subscription_service.UserSubscriptionService.get_user_subscriptions",
             new_callable=AsyncMock,
-            return_value=[mock_subscription],
+            return_value={"data": [mock_subscription], "total_count": 1},
         ):
             response = client_auth.get("/api/v1/billing/subscriptions/me")
             # 200 if subscription exists, 400 for tenant, 401 for auth, 404 if not found
@@ -185,7 +185,7 @@ class TestMySubscriptionAPI:
         with patch(
             "src.app.modules.billing.subscription_service.UserSubscriptionService.get_user_subscriptions",
             new_callable=AsyncMock,
-            return_value=[],
+            return_value={"data": [], "total_count": 0},
         ):
             response = client_auth.get("/api/v1/billing/subscriptions/me")
             # Should return 404 or empty result, 400 for tenant

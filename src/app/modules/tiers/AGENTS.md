@@ -28,7 +28,7 @@ from src.app.modules.tiers.service import TierService
 # not a module-global crud instance (crud.py was removed in the C4 refactor).
 tier_svc = TierService(db)
 tier = await tier_svc.get_tier(tier_name)
-max_users = tier["max_users"]
+max_users = tier.max_users
 ```
 
 ### DON'T: hardcode tier-specific logic
@@ -47,7 +47,7 @@ elif tier_name == "pro":
 # Rate limits are associated with tiers
 # Get tier's rate limits from rate_limits module (via its service)
 from src.app.modules.rate_limits.service import RateLimitService
-rate_limits = await RateLimitService(db).get_rate_limits_by_tier_id(tier["id"])
+rate_limits = await RateLimitService(db).get_rate_limits_by_tier_id(tier.id)
 ```
 
 ### DO: Use tier enum for comparisons
@@ -66,10 +66,10 @@ TIER_HIERARCHY = {
 ```
 src/app/modules/tiers/
 ├── __init__.py           # Re-exports Tier, TierService, schemas
-├── router.py             # /tiers endpoints (delegates to RateLimitService)
-├── service.py            # TierService (delegates to RateLimitService)
-├── models.py             # Re-exports Tier model from rate_limits.models
-└── schemas.py            # Re-exports Tier schemas from rate_limits.schemas
+├── router.py             # /tiers endpoints (served by TierService)
+├── service.py            # TierService (canonical tier business logic)
+├── models.py             # Canonical Tier model (rate_limits re-exports)
+└── schemas.py            # Canonical Tier schemas (rate_limits re-exports)
 ```
 ## Touch Points
 

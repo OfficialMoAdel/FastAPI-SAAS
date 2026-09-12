@@ -20,30 +20,20 @@ logger = get_logger(__name__)
 SYSTEM_TENANT_ID = UUID(int=0)
 
 
-def _resolve_tenant_id(tenant_id: str | int | UUID | None = None) -> UUID:
+def _resolve_tenant_id(tenant_id: UUID | None = None) -> UUID:
     """Resolve tenant ID from explicit argument, context, or fallback to SYSTEM_TENANT_ID.
 
+    P2-C: UUID is the sole tenant type — no str/int coercion. Audit must
+    never crash the request, so a missing tenant still falls back to SYSTEM.
+
     Args:
-        tenant_id: Optional explicit tenant ID (UUID, string, integer, or None)
+        tenant_id: Optional explicit tenant UUID (or None)
 
     Returns:
-        Validated UUID representing the tenant ID or SYSTEM_TENANT_ID
+        Explicit UUID, context tenant UUID, or SYSTEM_TENANT_ID
     """
     if tenant_id is not None:
-        if isinstance(tenant_id, UUID):
-            return tenant_id
-        if isinstance(tenant_id, int):
-            if tenant_id == 0:
-                return SYSTEM_TENANT_ID
-            return UUID(int=tenant_id)
-        if isinstance(tenant_id, str):
-            val = tenant_id.strip()
-            if not val or val == "0":
-                return SYSTEM_TENANT_ID
-            try:
-                return UUID(val)
-            except ValueError:
-                return SYSTEM_TENANT_ID
+        return tenant_id
 
     ctx_tenant = get_current_tenant()
     if ctx_tenant and ctx_tenant.tenant_id:
@@ -61,7 +51,7 @@ def _coerce_user_id(user_id: Any) -> str | None:
         return val if val else None
     if isinstance(user_id, dict) and "id" in user_id:
         return str(user_id["id"])
-    if hasattr(user_id, "id"):
+    if not isinstance(user_id, dict) and hasattr(user_id, "id"):
         return str(user_id.id)
     return str(user_id)
 
@@ -77,7 +67,7 @@ async def audit(
     action: str,
     entity_type: str | None = None,
     entity_id: Any = None,
-    tenant_id: str | int | UUID | None = None,
+    tenant_id: UUID | None = None,
     user_id: Any = None,
     details: dict[str, Any] | None = None,
     ip_address: str | None = None,
@@ -93,7 +83,7 @@ async def audit(
         action: Dot-delimited action name (e.g. 'auth.login', 'user.created', 'system.rls_bypass')
         entity_type: Type of the affected entity (e.g. 'user', 'api_key', 'mfa')
         entity_id: Identifier of the affected entity
-        tenant_id: Tenant UUID or identifier. If omitted, resolved from tenant context or SYSTEM_TENANT_ID
+        tenant_id: Tenant UUID. If omitted, resolved from tenant context or SYSTEM_TENANT_ID
         user_id: ID of the user performing the action (int, str, or model/dict)
         details: Additional context metadata dictionary (automatically sanitized for sensitive data)
         ip_address: Client IP address

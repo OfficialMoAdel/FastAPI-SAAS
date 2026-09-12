@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
-from fastapi import HTTPException, status
 
 from src.app.api.deps.request_context import RequestContext
 from src.app.core.tenancy.context import TenantContext
@@ -16,6 +15,10 @@ from src.app.modules.storage.routers.settings import (
     create_storage_settings,
     get_storage_settings,
     update_storage_settings,
+)
+from src.app.shared.exceptions import (
+    DuplicateError,
+    ValidationError,
 )
 
 
@@ -61,9 +64,8 @@ async def test_get_storage_settings_not_found():
     ctx = _make_ctx()
     service = _make_service()
     service.get_settings.return_value = None
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(StorageNotConfiguredError, match="not configured"):
         await ss_router.get_storage_settings(ctx=ctx, service=service)
-    assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
 
 async def test_create_storage_settings_success():
@@ -80,9 +82,8 @@ async def test_create_storage_settings_conflict():
     ctx = _make_ctx()
     service = _make_service()
     service.get_settings.return_value = MagicMock()
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(DuplicateError, match="already exist"):
         await ss_router.create_storage_settings(data=MagicMock(), ctx=ctx, service=service)
-    assert exc.value.status_code == status.HTTP_409_CONFLICT
 
 
 async def test_create_storage_settings_invalid_credentials():
@@ -90,9 +91,8 @@ async def test_create_storage_settings_invalid_credentials():
     service = _make_service()
     service.get_settings.return_value = None
     service.create_settings.side_effect = InvalidCredentialsError("bad creds")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(InvalidCredentialsError, match="bad creds"):
         await ss_router.create_storage_settings(data=MagicMock(), ctx=ctx, service=service)
-    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
 
 
 async def test_create_storage_settings_value_error():
@@ -100,9 +100,8 @@ async def test_create_storage_settings_value_error():
     service = _make_service()
     service.get_settings.return_value = None
     service.create_settings.side_effect = ValueError("invalid")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ValidationError, match="Invalid storage settings payload"):
         await ss_router.create_storage_settings(data=MagicMock(), ctx=ctx, service=service)
-    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
 
 
 async def test_update_storage_settings_success():
@@ -118,27 +117,24 @@ async def test_update_storage_settings_not_configured():
     ctx = _make_ctx()
     service = _make_service()
     service.update_settings.side_effect = StorageNotConfiguredError()
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(StorageNotConfiguredError):
         await ss_router.update_storage_settings(data=MagicMock(), ctx=ctx, service=service)
-    assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
 
 async def test_update_storage_settings_invalid_credentials():
     ctx = _make_ctx()
     service = _make_service()
     service.update_settings.side_effect = InvalidCredentialsError("bad")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(InvalidCredentialsError, match="bad"):
         await ss_router.update_storage_settings(data=MagicMock(), ctx=ctx, service=service)
-    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
 
 
 async def test_update_storage_settings_value_error():
     ctx = _make_ctx()
     service = _make_service()
     service.update_settings.side_effect = ValueError("invalid")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ValidationError, match="Invalid storage settings payload"):
         await ss_router.update_storage_settings(data=MagicMock(), ctx=ctx, service=service)
-    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
 
 
 async def test_get_storage_settings_requires_tenant():

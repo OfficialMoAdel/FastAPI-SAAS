@@ -242,18 +242,29 @@ class UserSubscriptionService(BaseService[UserSubscription]):
             raise ModelNotFoundError("UserSubscription", subscription_id)
         return cast(dict[str, Any], subscription)
 
-    async def get_user_subscriptions(self, user_id: int) -> dict[str, Any]:
-        """Get all subscriptions for a user."""
+    async def get_user_subscriptions(
+        self, user_id: int, page: int | None = None, limit: int | None = None
+    ) -> dict[str, Any]:
+        """Get subscriptions for a user, optionally paginated.
+
+        When page/limit are omitted the full list is returned (legacy
+        behavior for internal callers); pass both for a single page.
+        """
         filters: dict[str, Any] = {"user_id": user_id}
         tid = self.current_tenant_id
         if tid is not None:
             filters["tenant_id"] = tid
+        paging: dict[str, Any] = {}
+        if page is not None and limit is not None:
+            paging["offset"] = (page - 1) * limit
+            paging["limit"] = limit
         return cast(
             dict[str, Any],
             await crud_user_subscriptions.get_multi(
                 db=self.db,
                 schema_to_select=UserSubscriptionRead,
                 **filters,
+                **paging,
             ),
         )
 

@@ -598,5 +598,115 @@ class TestDashboardAuditVocabulary:
         assert "'false'" in sql
 
 
+class TestP111DashboardCache:
+    """P1-11: get_metrics must serve cached aggregates and use a prefix
+    LIKE for webhook actions (index-friendly, same match set)."""
+
+    def _metrics(self):
+        from src.app.modules.dashboard.schemas import (
+            ActivityMetrics,
+            RevenueMetrics,
+            UserMetrics,
+        )
+
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+        users = UserMetrics(total_users=100, active_users=80, new_users=10, deleted_users=2)
+        revenue = RevenueMetrics(
+            total_revenue=1000.0,
+            recurring_revenue=800.0,
+            average_revenue_per_user=12.5,
+            total_subscriptions=50,
+        )
+        activity = ActivityMetrics(
+            total_logins=500, api_calls=10000, webhook_deliveries=100, failed_authentications=5
+        )
+        return start, end, users, revenue, activity
+
+    @pytest.mark.asyncio
+    async def test_get_metrics_serves_cache_hit_without_db(self):
+        """Cache hit returns validated response; no aggregate queries run."""
+        from src.app.modules.dashboard.schemas import DashboardMetricsResponse, TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        start, end, users, revenue, activity = self._metrics()
+        cached = DashboardMetricsResponse(
+            time_range=TimeRange.MONTH,
+            start_date=start,
+            end_date=end,
+            users=users,
+            revenue=revenue,
+            activity=activity,
+        )
+        cache_mock = AsyncMock()
+        cache_mock.get_json = AsyncMock(return_value=cached.model_dump(mode="json"))
+
+        with (
+            patch("src.app.modules.dashboard.service.cache_client", cache_mock),
+            patch.object(dashboard_service, "_get_date_range", new_callable=AsyncMock) as date_mock,
+        ):
+            result = await dashboard_service.get_metrics(AsyncMock(), "tenant", TimeRange.MONTH)
+
+        assert result == cached
+        date_mock.assert_not_called()
+        cache_mock.set_json.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_metrics_miss_computes_and_stores_with_ttl(self):
+        """Cache miss computes aggregates and stores them for 60s."""
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        start, end, users, revenue, activity = self._metrics()
+        cache_mock = AsyncMock()
+        cache_mock.get_json = AsyncMock(return_value=None)
+        # tenant_key is sync on the real adapter — keep it sync on the mock.
+        cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
+
+        with (
+            patch("src.app.modules.dashboard.service.cache_client", cache_mock),
+            patch.object(dashboard_service, "_get_date_range", return_value=(start, end)),
+            patch.object(dashboard_service, "_get_user_metrics", return_value=users),
+            patch.object(dashboard_service, "_get_revenue_metrics", return_value=revenue),
+            patch.object(dashboard_service, "_get_activity_metrics", return_value=activity),
+        ):
+            result = await dashboard_service.get_metrics(AsyncMock(), "tenant-1", TimeRange.MONTH)
+
+        assert result.users == users
+        assert result.revenue == revenue
+        assert result.activity == activity
+        cache_mock.set_json.assert_awaited_once()
+        key, payload = cache_mock.set_json.call_args[0][:2]
+        kwargs = cache_mock.set_json.call_args[1]
+        assert "tenant-1" in key
+        assert "month" in key
+        assert kwargs.get("ttl") == 60
+        assert payload["users"]["total_users"] == 100
+
+    @pytest.mark.asyncio
+    async def test_webhook_subquery_uses_prefix_like(self):
+        """Webhook count must use prefix LIKE (btree-friendly), never %..%."""
+        from sqlalchemy.dialects import postgresql
+
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.one.return_value = (100, 5000, 10, 25)
+        db_mock.execute = AsyncMock(return_value=mock_result)
+
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+        await dashboard_service._get_activity_metrics(db_mock, start, end, "tenant")
+
+        sql = str(
+            db_mock.execute.call_args[0][0].compile(
+                dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+            )
+        )
+        assert "webhook.%" in sql
+        assert "%webhook%" not in sql
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

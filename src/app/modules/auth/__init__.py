@@ -11,7 +11,7 @@ Consolidated deep module providing:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 __all__ = [
     # Routers
@@ -44,6 +44,44 @@ __all__ = [
     "MagicLink",
     "MFAMethod",
 ]
+
+if TYPE_CHECKING:
+    # Static-only re-exports: gives mypy real classes for the lazy
+    # __getattr__ facade below (P1-20). Never executed at runtime.
+    from fastapi import APIRouter
+
+    from src.app.modules.auth import models as _models
+    from src.app.modules.auth import service as _service
+    from src.app.modules.auth.services.magic_link import MagicLinkService as MagicLinkService
+    from src.app.modules.auth.services.magic_link import get_magic_link_service as get_magic_link_service
+    from src.app.modules.auth.services.mfa import MFAService as MFAService
+    from src.app.modules.auth.services.mfa import get_mfa_service as get_mfa_service
+    from src.app.modules.auth.services.passkey import PasskeyService as PasskeyService
+    from src.app.modules.auth.services.passkey import get_passkey_service as get_passkey_service
+    from src.app.modules.auth.services.passkey import passkey_service as passkey_service
+    from src.app.modules.auth.services.sso import SSOService as SSOService
+    from src.app.modules.auth.services.sso import get_sso_service as get_sso_service
+    from src.app.modules.auth.services.sso_settings import SSOSettingsService as SSOSettingsService
+    from src.app.modules.auth.services.sso_settings import sso_settings_service as sso_settings_service
+
+    AuthService = _service.AuthService
+    get_auth_service = _service.get_auth_service
+    # Bare declarations (no attribute resolution): auth/router.py imports
+    # this package at runtime, so resolving its globals from here would be
+    # cyclic for mypy. The lazy __getattr__ below returns the real objects.
+    auth_router: APIRouter
+    sso_router: APIRouter
+    sso_settings_router: APIRouter
+    passkey_router: APIRouter
+    magic_link_router: APIRouter
+    mfa_router: APIRouter
+    PasswordResetToken = _models.PasswordResetToken
+    EmailVerificationToken = _models.EmailVerificationToken
+    SSOSettings = _models.SSOSettings
+    UserSSOConnection = _models.UserSSOConnection
+    PasskeyCredential = _models.PasskeyCredential
+    MagicLink = _models.MagicLink
+    MFAMethod = _models.MFAMethod
 
 
 def __getattr__(name: str) -> Any:

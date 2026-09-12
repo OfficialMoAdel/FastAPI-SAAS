@@ -2,9 +2,6 @@ from fastapi import APIRouter
 
 from src.app.api.monitoring import router as monitoring_router
 
-router = APIRouter(prefix="/api")
-router.include_router(monitoring_router, tags=["monitoring"])
-
 
 def get_router() -> APIRouter:
     """Get the main API router with v1 routes included.

@@ -17,11 +17,9 @@ import pytest
 
 from src.app.core.cache.warmer import (
     TENANT_CACHE_TTL,
-    TIER_CACHE_TTL,
     CacheWarmingResult,
     warm_caches,
     warm_tenant_cache,
-    warm_tier_cache,
 )
 
 
@@ -44,7 +42,6 @@ class TestP12CacheWarmingPrerequisites:
     def test_cache_warming_module_exports(self) -> None:
         """Verify cache warming module has all required exports."""
         assert warm_tenant_cache is not None
-        assert warm_tier_cache is not None
         assert warm_caches is not None
         assert CacheWarmingResult is not None
 
@@ -52,10 +49,8 @@ class TestP12CacheWarmingPrerequisites:
         """Verify cache TTL values are reasonable."""
         # TTL should be at least 1 minute
         assert TENANT_CACHE_TTL >= 60
-        assert TIER_CACHE_TTL >= 60
         # TTL should not exceed 24 hours
         assert TENANT_CACHE_TTL <= 86400
-        assert TIER_CACHE_TTL <= 86400
 
 
 class TestP12CacheWarmingVerification:
@@ -70,21 +65,12 @@ class TestP12CacheWarmingVerification:
         assert count >= 0
 
     @pytest.mark.asyncio
-    async def test_warm_tier_cache_returns_count(self, db_session) -> None:
-        """warm_tier_cache should return cached tier count."""
-        count = await warm_tier_cache(db_session)
-        # Should return 0 or positive integer
-        assert isinstance(count, int)
-        assert count >= 0
-
-    @pytest.mark.asyncio
     async def test_warm_caches_returns_result(self) -> None:
         """warm_caches should return CacheWarmingResult."""
         result = await warm_caches()
 
         assert isinstance(result, CacheWarmingResult)
         assert isinstance(result.tenants_cached, int)
-        assert isinstance(result.tiers_cached, int)
         assert isinstance(result.duration_ms, float)
         assert result.duration_ms >= 0
 

@@ -947,3 +947,70 @@ async def test_cache_non_get_pattern_invalidate_user_obj(client: MagicMock) -> N
     with patch("src.app.core.utils.cache.get_current_tenant", return_value=None):
         result = await handler(request, rid=1, current_user=U())
     assert result == {"done": True}
+
+
+async def test_p112_no_scan_fallback_on_empty_index(client: MagicMock) -> None:
+    """P1-12: an empty pattern index must not trigger a keyspace SCAN on writes.
+
+    The O(N) SCAN fallback was removed from the write invalidation path;
+    empty index means no registered keys. The miss is still logged (same
+    event name) so a GET side missing `invalidation_patterns` surfaces.
+    """
+    from fastapi import Request
+
+    client.smembers = AsyncMock(return_value=set())  # empty index
+    request = MagicMock(spec=Request)
+    request.method = "DELETE"
+    request.state = MagicMock()
+
+    @cache(
+        key_prefix="p",
+        resource_id_name="rid",
+        user_scoped=True,
+        pattern_to_invalidate_extra=["other:*"],
+    )
+    async def handler(request, rid, current_user):
+        return {"done": True}
+
+    with patch("src.app.core.utils.cache.get_current_tenant", return_value=None):
+        result = await handler(request, rid=1, current_user={"id": 7})
+    assert result == {"done": True}
+    client.scan.assert_not_awaited()
+
+
+async def test_p24_cache_read_serves_fresh_when_redis_down(client: MagicMock) -> None:
+    """P2-4: a Redis failure on the read path serves fresh instead of 500ing."""
+    from fastapi import Request
+
+    client.get = AsyncMock(side_effect=ConnectionError("redis down"))
+    request = MagicMock(spec=Request)
+    request.method = "GET"
+    request.state = MagicMock()
+    request.scope = {"route": None}
+
+    @cache(key_prefix="p", resource_id_name="rid")
+    async def handler(request, rid):
+        return {"fresh": True}
+
+    with patch("src.app.core.utils.cache.get_current_tenant", return_value=None):
+        resp = await handler(request, rid=1)
+    assert resp.body == b'{"fresh":true}'
+
+
+async def test_p24_cache_write_serves_fresh_when_redis_down(client: MagicMock) -> None:
+    """P2-4: a Redis failure on the write pipeline serves fresh without caching."""
+    from fastapi import Request
+
+    client.get = AsyncMock(return_value=None)
+    client.pipeline = MagicMock(side_effect=ConnectionError("redis down"))
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.state = MagicMock()
+
+    @cache(key_prefix="p", resource_id_name="rid")
+    async def handler(request, rid):
+        return {"done": True}
+
+    with patch("src.app.core.utils.cache.get_current_tenant", return_value=None):
+        result = await handler(request, rid=1)
+    assert result == {"done": True}

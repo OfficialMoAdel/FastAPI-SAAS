@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import SecretStr
@@ -159,3 +159,77 @@ async def test_create_session_has_tenant_metadata(db_session, tenant):
             assert "metadata" in call_kwargs["subscription_data"]
             assert call_kwargs["subscription_data"]["metadata"]["tenant_id"] == str(tenant.id)
             assert call_kwargs["subscription_data"]["metadata"]["user_id"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_create_session_commits_before_stripe_call(db_session, tenant):
+    """P1-14: pooled DB connection must be released before Stripe network I/O."""
+    events: list[str] = []
+
+    async def commit_spy(*args, **kwargs):
+        events.append("db.commit")
+
+    mock_stripe_session = MagicMock(url="https://checkout.stripe.com/...", id="cs_test_123", expires_at=1234567890)
+
+    def stripe_spy(**kwargs):
+        events.append("stripe.create")
+        return mock_stripe_session
+
+    with patch_setting("STRIPE_SECRET_KEY", SecretStr("sk_test_123")):
+        service = CheckoutService(db_session)
+        with (
+            patch("src.app.modules.billing.checkout_service.require_active_tenant", return_value=tenant),
+            patch(
+                "src.app.modules.billing.service.StripeSettingsService.get_settings",
+                return_value={"stripe_customer_id": "cus_123"},
+            ),
+            patch(
+                "src.app.modules.billing.subscription_service.SubscriptionPlanService.get_plan",
+                return_value={"stripe_price_id_monthly": "price_123"},
+            ),
+            patch.object(db_session, "commit", new=AsyncMock(side_effect=commit_spy)),
+            patch("stripe.checkout.Session.create", side_effect=stripe_spy),
+            patch("stripe.Account.retrieve", return_value=MagicMock()),
+        ):
+            from src.app.core.config import settings as app_settings
+
+            frontend = app_settings.FRONTEND_URL.rstrip("/") if app_settings.FRONTEND_URL else "https://example.com"
+            data = CheckoutCreate(
+                plan_id=1,
+                billing_interval="monthly",
+                success_url=f"{frontend}/success",
+                cancel_url=f"{frontend}/cancel",
+            )
+
+            await service.create_session(user_id=1, user_email="test@example.com", data=data)
+
+    assert events == ["db.commit", "stripe.create"]
+
+
+@pytest.mark.asyncio
+async def test_create_portal_session_commits_before_stripe_call(db_session, tenant):
+    """P1-14: portal flow releases the pooled connection before Stripe network I/O."""
+    events: list[str] = []
+
+    async def commit_spy(*args, **kwargs):
+        events.append("db.commit")
+
+    def portal_spy(**kwargs):
+        events.append("stripe.portal.create")
+        return MagicMock(url="https://billing.stripe.com/...")
+
+    with patch_setting("STRIPE_SECRET_KEY", SecretStr("sk_test_123")):
+        service = CheckoutService(db_session)
+        with (
+            patch("src.app.modules.billing.checkout_service.require_active_tenant", return_value=tenant),
+            patch(
+                "src.app.modules.billing.service.StripeSettingsService.get_settings",
+                return_value={"stripe_customer_id": "cus_123"},
+            ),
+            patch.object(db_session, "commit", new=AsyncMock(side_effect=commit_spy)),
+            patch("stripe.billing_portal.Session.create", side_effect=portal_spy),
+        ):
+            url = await service.create_portal_session(return_url="/dashboard")
+
+    assert url == "https://billing.stripe.com/..."
+    assert events == ["db.commit", "stripe.portal.create"]

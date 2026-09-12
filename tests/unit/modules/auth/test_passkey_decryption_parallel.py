@@ -286,36 +286,29 @@ class TestParallelDecryption:
         assert concurrent_task_completed, "Concurrent task should complete during decryption"
 
 
-class TestParallelDecryptionForEmail:
-    """Test parallel decryption in _get_credentials_for_email."""
+class TestParallelDecryptionForAuth:
+    """Test parallel decryption backing usernameless authentication (P2-A).
+
+    The per-email credential lookup was removed (enumeration oracle); these
+    tests now exercise `_decrypt_credentials_parallel` directly.
+    """
 
     @pytest.mark.asyncio
-    @patch("src.app.modules.users.crud.crud_users.get_user_with_tier_eager")
-    @patch("src.app.modules.auth.services.passkey.crud_passkey_credentials.get_by_user")
     @patch("src.app.core.security.encryption.get_encryption")
     @patch("src.app.modules.auth.services.passkey.asyncio.to_thread")
     @patch("src.app.core.config.settings")
-    async def test_email_decryption_uses_thread_pool(
+    async def test_auth_decryption_uses_thread_pool(
         self,
         mock_settings,
         mock_to_thread,
         mock_get_encryption,
-        mock_get_by_user,
-        mock_get_user,
         passkey_service,
-        mock_db,
         mock_credentials,
     ):
-        """Verify _get_credentials_for_email uses thread pool."""
-        # Arrange - disable optimized path
-        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
-        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        """Verify _decrypt_credentials_parallel uses thread pool."""
+        # Arrange
         mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
-        mock_user = MagicMock()
-        mock_user.id = 123
-        mock_get_user.return_value = mock_user
-        mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
         mock_get_encryption.return_value = mock_encryption
 
@@ -325,8 +318,10 @@ class TestParallelDecryptionForEmail:
 
         mock_to_thread.side_effect = mock_decrypt
 
+        creds_to_decrypt = [(c.credential_id, c.transports) for c in mock_credentials]
+
         # Act
-        result = await passkey_service._get_credentials_for_email(mock_db, email="test@example.com")
+        result = await passkey_service._decrypt_credentials_parallel(creds_to_decrypt, 123)
 
         # Assert
         assert len(result) == 5
@@ -337,19 +332,13 @@ class TestParallelDecryptionForEmail:
             assert descriptor.transports == ["usb", "nfc"]
 
     @pytest.mark.asyncio
-    @patch("src.app.modules.users.crud.crud_users.get_user_with_tier_eager")
-    async def test_email_not_found_returns_empty(
+    async def test_empty_credentials_returns_empty(
         self,
-        mock_get_user,
         passkey_service,
-        mock_db,
     ):
-        """Verify empty list returned when user not found."""
-        # Arrange
-        mock_get_user.return_value = None
-
+        """Verify empty list returned when no credentials to decrypt."""
         # Act
-        result = await passkey_service._get_credentials_for_email(mock_db, email="notfound@example.com")
+        result = await passkey_service._decrypt_credentials_parallel([], 123)
 
         # Assert
         assert result == []

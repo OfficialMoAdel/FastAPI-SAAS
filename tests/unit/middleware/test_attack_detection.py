@@ -32,7 +32,7 @@ ATTACK_PATTERNS: dict[AttackType, list[re.Pattern]] = {
         re.compile(r"(\bscript\b)", re.IGNORECASE),
         re.compile(r"(javascript:)", re.IGNORECASE),
         re.compile(r"(\biframe\b)", re.IGNORECASE),
-        re.compile(r"(on\w+\s*=)", re.IGNORECASE),
+        re.compile(r"(<[a-zA-Z][^<>]{0,512}?[\s/]on[a-zA-Z]+\s*=[\"']?)", re.IGNORECASE),
         re.compile(r"(<\s*script)", re.IGNORECASE),
     ],
     AttackType.PATH_TRAVERSAL: [
@@ -98,9 +98,9 @@ class TestXSSDetection:
             ("JAVASCRIPT:alert('xss')", AttackType.SQL_INJECTION),
             ("<iframe src='evil.com'>", AttackType.SQL_INJECTION),
             ("<IFRAME SRC='evil.com'>", AttackType.SQL_INJECTION),
-            ("onerror=alert('xss')", AttackType.SQL_INJECTION),
-            ("ONERROR=alert('xss')", AttackType.SQL_INJECTION),
-            ("onload=evil()", AttackType.SQL_INJECTION),
+            ("<img src=x onerror=alert('xss')>", AttackType.SQL_INJECTION),
+            ("<IMG SRC=x ONERROR=alert('xss')>", AttackType.SQL_INJECTION),
+            ("<body onload=evil()>", AttackType.SQL_INJECTION),
         ],
     )
     def test_xss_patterns_detected(self, payload: str, expected_type: AttackType) -> None:
@@ -155,6 +155,11 @@ class TestNoAttackDetection:
             "%20%2D%20encoded%20spaces",
             # URLs
             "https://example.com/api/users?page=1",
+            # P1-7: former false positives — bare on*= params and prose "--"
+            # must not match once the handler/comment patterns require context.
+            "https://example.com/api/users?page=1&only=5",
+            "em-dash note -- done",
+            "only=5&sort=asc",
             # JSON data
             '{"key": "value", "active": true}',
             # Email
@@ -296,7 +301,10 @@ class TestCombinedRegexSqlOr:
         """OR 1=1 variants must be caught by COMBINED_ATTACK_RE."""
         match = COMBINED_ATTACK_RE.search(payload)
         assert match is not None, f"sql_or pattern did not match: {payload!r}"
-        assert match.lastgroup == "sql_or"
+        # P1-7: a '--'-suffixed payload matches sql_comment first (leftmost
+        # win: the quote at index 1 precedes 'or'). Both map to SQL_INJECTION,
+        # so either winner is correct.
+        assert match.lastgroup in {"sql_or", "sql_comment"}
 
     def test_sql_or_mapping_exists(self) -> None:
         """Ensure _GROUP_TO_ATTACK has a valid entry for sql_or."""

@@ -177,7 +177,7 @@ async def _invalidate_caches_delegate(
     """
     from typing import cast
 
-    from src.app.modules.users.service import UserService
+    from src.app.modules.users import UserService
 
     user_svc = UserService(db)
     if len(users_list) == 1 and not is_raw_id:
@@ -240,6 +240,29 @@ def _known_token_version(user: Any) -> int | None:
         return int(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
+
+
+def _parse_returning_versions(result: Any) -> dict[Any, int] | None:
+    """Parse UPDATE..RETURNING rows into ``{user_id: fresh token_version}``.
+
+    Returns None when the result yields no fully readable rows (dialect
+    without RETURNING support, or a test double) so the caller falls back to
+    the legacy re-SELECT. A partially-readable row set is treated the same
+    way: correctness over partial optimization.
+    """
+    try:
+        rows = list(result.all())
+    except Exception:
+        return None
+    if not rows:
+        return None
+    fresh: dict[Any, int] = {}
+    for row in rows:
+        try:
+            fresh[row[0]] = int(row[1])
+        except (IndexError, TypeError, ValueError):
+            return None
+    return fresh
 
 
 async def _fetch_fresh_token_versions(
@@ -322,10 +345,14 @@ async def invalidate_user_sessions(
     if bump and affected_ids:
         from src.app.modules.users.models import User
 
+        # P2-D: RETURNING returns the post-bump values in the same round
+        # trip, eliminating the legacy re-SELECT below when the dialect
+        # (asyncpg, sqlite >= 3.35) supports it.
         update_stmt = (
             sa_update(User)
             .where(User.id.in_(affected_ids))
             .values(token_version=User.token_version + 1)
+            .returning(User.id, User.token_version)
         )
         if tenant_id is not None:
             from src.app.core.db.tenant_crud import tenant_scope
@@ -344,9 +371,14 @@ async def invalidate_user_sessions(
             logger.warning("session_invalidation_zero_row_bump", affected_ids=affected_ids)
             raise ModelNotFoundError("User", affected_ids[0] if len(affected_ids) == 1 else affected_ids)
         # 1B: read back the fresh post-bump versions so the cache delegate
-        # never seeds Redis with a stale old+1 guess.
+        # never seeds Redis with a stale old+1 guess. P2-D: the UPDATE
+        # RETURNing rows carry the fresh values; the legacy re-SELECT only
+        # runs when no rows were returned (dialect without RETURNING or
+        # test double).
         if explicit_token_version is None:
-            fresh_token_versions = await _fetch_fresh_token_versions(db, affected_ids, tenant_id)
+            fresh_token_versions = _parse_returning_versions(result)
+            if fresh_token_versions is None:
+                fresh_token_versions = await _fetch_fresh_token_versions(db, affected_ids, tenant_id)
 
     # 2. Atomic DB commit if requested
     if commit:

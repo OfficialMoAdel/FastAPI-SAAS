@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.db.database import local_session
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.cache import TENANT_CACHE_TTL as _TENANT_CACHE_TTL
-from src.app.modules.rate_limits.models import Tier
 from src.app.modules.tenants.models import Tenant
 
 logger = get_logger(__name__)
@@ -26,9 +25,8 @@ DEFAULT_TIMEOUT = 30.0
 # Cache TTLs (in seconds)
 # B4: tenant entries use the canonical 300s TTL (see core/tenancy/cache.py)
 # so a warm entry cannot outlive a concurrent deactivation's re-cache by an
-# hour. Tier entries keep their own 1h TTL.
+# hour.
 TENANT_CACHE_TTL = _TENANT_CACHE_TTL
-TIER_CACHE_TTL = 3600  # 1 hour
 
 
 @dataclass
@@ -36,7 +34,6 @@ class CacheWarmingResult:
     """Results from cache warming operation."""
 
     tenants_cached: int = 0
-    tiers_cached: int = 0
     duration_ms: float = 0.0
     errors: list[str] | None = None
 
@@ -141,17 +138,14 @@ class CacheWarmer:
             elif count is not None:
                 if name == "tenant":
                     result.tenants_cached = count
-                elif name == "tier":
-                    result.tiers_cached = count
 
         result.errors = errors if errors else None
         total_duration = time.time() - start_time
 
         logger.info(
-            "[COMPLETE] Cache warming finished | total_duration=%.2fs | tenants=%d | tiers=%d | errors=%d",
+            "[COMPLETE] Cache warming finished | total_duration=%.2fs | tenants=%d | errors=%d",
             total_duration,
             result.tenants_cached,
-            result.tiers_cached,
             len(errors) if errors else 0,
         )
 
@@ -187,8 +181,6 @@ class CacheWarmer:
 
             if name == "tenant":
                 result.tenants_cached = cached_count
-            elif name == "tier":
-                result.tiers_cached = cached_count
 
         except TimeoutError:
             duration = time.time() - start_time
@@ -279,41 +271,6 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
     return cached_count
 
 
-@warmer.register("tier")
-async def warm_tier_cache(session: AsyncSession) -> int:
-    """Preload all tier names into Redis cache."""
-    from src.app.core.redis_provider import get_redis
-
-    redis_client = get_redis()
-
-    if redis_client is None:
-        logger.warning("Redis client not available, skipping tier cache warming")
-        return 0
-
-    stmt = select(Tier)
-    result = await session.execute(stmt)
-    tiers = list(result.scalars().all())
-    # M4: cap unbounded warmer load
-    if len(tiers) > 1000:
-        logger.warning("Warmer tier fetch capped", total=len(tiers), cap=1000)
-        tiers = tiers[:1000]
-
-    cached_count = 0
-    try:
-        async with redis_client.pipeline() as pipe:
-            for tier in tiers:
-                cache_key = f"tier:name:{tier.id}"
-                pipe.setex(cache_key, TIER_CACHE_TTL, tier.name)
-            await pipe.execute()
-        cached_count = len(tiers)
-        logger.info("Tier cache warming completed: tiers", cached_count=cached_count)
-    except Exception as e:
-        logger.error("Tier cache warming failed", error=e)
-        return 0
-
-    return cached_count
-
-
 @warmer.register("feature_flags")
 async def warm_feature_flags_cache(session: AsyncSession) -> int:
     """Preload tenant feature-flag overrides into the cache."""
@@ -341,6 +298,5 @@ __all__ = [
     "warmer",
     "CacheWarmingResult",
     "warm_tenant_cache",
-    "warm_tier_cache",
     "warm_caches",
 ]

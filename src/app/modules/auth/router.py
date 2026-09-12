@@ -8,7 +8,6 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep
-from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.logger import get_logger
@@ -22,6 +21,7 @@ from src.app.core.security.session_manager import SessionManager
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.core.utils.cache import async_get_redis
 from src.app.core.utils.ip_utils import get_client_ip
+from src.app.modules.auth import AuthService
 from src.app.modules.auth.schemas import (
     EmailVerificationConfirm,
     EmailVerificationRequest,
@@ -40,10 +40,10 @@ from src.app.modules.auth.schemas import (
     SessionInfo,
     SessionListResponse,
 )
-from src.app.modules.auth.service import AuthService
-from src.app.modules.users.router import get_user_service as _get_user_service
+from src.app.modules.users import UserService
+from src.app.modules.users import get_user_service as _get_user_service
 from src.app.modules.users.schemas import UserCreate, UserReadPublic
-from src.app.modules.users.service import UserService
+from src.app.shared.exceptions import UnauthorizedError
 
 logger = get_logger(__name__)
 
@@ -115,28 +115,18 @@ async def register(
     ``X-Tenant-ID`` slug.
     """
     from src.app.modules.auth.services.email_verification import make_email_verifier
+    from src.app.modules.auth.services.registration_gate import is_self_registration_allowed
 
-    if not settings.auth.AUTH_OPEN_REGISTRATION:
+    if not await is_self_registration_allowed(db):
         tenant = get_current_tenant()
-        if tenant is not None and tenant.is_active:
-            # NO_TENANT (exempt paths) and inactive tenants fall through to
-            # the normal service path: the duplicate/tenant checks there are
-            # the honest failure for those requests.
-            from sqlalchemy import select
-
-            from src.app.modules.users.models import User
-
-            stmt = select(User.id).where(User.tenant_id == tenant.id, User.is_deleted.is_(False)).limit(1)
-            tenant_has_users = (await db.scalar(stmt)) is not None
-            if tenant_has_users:
-                logger.warning(
-                    "registration_gate_rejected",
-                    path="/account/register",
-                    tenant_id=str(tenant.id),
-                )
-                raise ForbiddenException(
-                    detail="Registration is closed for this tenant. Ask an administrator to create your account."
-                )
+        logger.warning(
+            "registration_gate_rejected",
+            path="/account/register",
+            tenant_id=str(tenant.id) if tenant is not None else None,
+        )
+        raise ForbiddenException(
+            detail="Registration is closed for this tenant. Ask an administrator to create your account."
+        )
 
     return await user_service.create(user, email_verifier=make_email_verifier(db))
 
@@ -151,9 +141,7 @@ async def refresh_access_token(
     """Refresh access token using refresh token from cookie."""
     refresh_token = get_refresh_cookie(request)
     if not refresh_token:
-        from fastapi import HTTPException, status
-
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token missing")
+        raise UnauthorizedError("Refresh token missing")
     result = await auth_service.refresh_access_token(
         refresh_token,
         response=response,

@@ -1,13 +1,12 @@
 """Feature Flags API Router."""
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep
 from src.app.core.db.database import async_get_db
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
-from src.app.modules._base import ModelNotFoundError
 from src.app.modules.feature_flags.schemas import (
     FeatureFlagBulkUpdateRequest,
     FeatureFlagCheckResponse,
@@ -95,13 +94,7 @@ async def update_feature_flag(
     # Determine value to set
     value = request.value if request.value is not None else request.enabled
 
-    try:
-        await service.update_tenant_flag(tenant_id, flag_name, value)
-    except ModelNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Feature flag not found.",
-        )
+    await service.update_tenant_flag(tenant_id, flag_name, value)
 
     return FeatureFlagCheckResponse(
         flag_name=flag_name,
@@ -127,13 +120,7 @@ async def delete_feature_flag(
     """
     tenant_id = ctx.require_tenant().tenant_id
 
-    try:
-        await service.delete_tenant_flag(tenant_id, flag_name)
-    except ModelNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Feature flag not found.",
-        )
+    await service.delete_tenant_flag(tenant_id, flag_name)
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -155,10 +142,7 @@ async def bulk_update_flags(
     """
     tenant_id = ctx.require_tenant().tenant_id
 
-    try:
-        await service.bulk_update_tenant_flags(tenant_id, request.feature_flags)
-    except ModelNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feature flag not found.")
+    await service.bulk_update_tenant_flags(tenant_id, request.feature_flags)
 
     # Return updated flags
     flags = await service.get_tenant_flags(tenant_id)

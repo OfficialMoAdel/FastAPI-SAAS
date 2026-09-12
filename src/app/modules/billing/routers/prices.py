@@ -12,9 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.deps import tenant_dependency
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
+from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
-from src.app.modules.billing.schemas import PricingCreate, PricingRead, PricingUpdate
+from src.app.modules.billing.schemas import PricingCreate, PricingList, PricingRead, PricingUpdate
 from src.app.modules.billing.service import PricingService
 
 router = APIRouter(prefix="/prices", tags=["prices"])
@@ -46,33 +47,37 @@ async def create_price(
     return await service.create_pricing(product_id, data)
 
 
-@router.get("", response_model=list[PricingRead])
+@router.get("", response_model=PricingList)
 async def list_prices(
     db: Annotated[AsyncSession, Depends(async_get_db)],
     current_tenant: Annotated[Any, Depends(tenant_dependency)],
+    pagination: Annotated[PaginationParams, Depends(get_pagination_params)],
     product_id: Annotated[int | None, Query(description="Filter by product ID")] = None,
     is_active: Annotated[bool | None, Query(description="Filter by active status")] = None,
-) -> list[dict]:
-    """List prices with optional filtering.
+) -> dict:
+    """List prices with optional filtering (paginated).
 
     Args:
         db: Database session
         current_tenant: Current tenant context
+        pagination: Standard page/per_page parameters
         product_id: Optional product ID filter
         is_active: Optional active status filter
 
     Returns:
-        List of prices
+        Paginated price list
     """
     service = PricingService(db)
     result = await service.list_prices(
-        limit=100,
+        page=pagination.page,
+        limit=pagination.limit,
         product_id=product_id,
         is_active=is_active,
         tenant_id=current_tenant.id if hasattr(current_tenant, "id") else current_tenant.get("id"),
     )
     data = result.get("data", [])
-    return list(data) if data else []
+    total = result.get("total_count", len(data))
+    return build_paginated_response(items=data, total=total, page=pagination.page, per_page=pagination.per_page)
 
 
 @router.get("/{price_id}", response_model=PricingRead)

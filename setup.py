@@ -86,7 +86,7 @@ def copy_files(deployment_type: str):
             shutil.copy2(source, dest)
             print(f"✅ Copied {source} → {dest}")
 
-        except Exception as e:
+        except OSError as e:
             print(f"❌ Failed to copy {source} → {dest}: {e}")
             success = False
 

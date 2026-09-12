@@ -70,9 +70,7 @@ class MicrosoftProvider(BaseOAuthProvider):
         email_verified = False
         if id_token:
             try:
-                import jwt
-
-                claims = jwt.decode(id_token, options={"verify_signature": False})
+                claims = await self._verify_id_token(id_token)
                 email_verified = claims.get("email_verified") is True
             except Exception:
                 email_verified = False
@@ -89,3 +87,31 @@ class MicrosoftProvider(BaseOAuthProvider):
                 self.picture = None
 
         return UserInfo(data, email_verified)
+
+    async def _verify_id_token(self, id_token: str) -> dict[str, Any]:
+        """Verify and decode Microsoft's OIDC id_token JWT.
+
+        Mirrors AppleProvider._verify_id_token: signature checked against
+        the Microsoft JWKS, audience pinned to our client_id, issuer
+        pinned to login.microsoftonline.com v2.0. Fail-closed: any
+        verification error raises, and the caller treats the token as
+        unverified (email_verified=False).
+        """
+        import jwt
+
+        jwks_client = jwt.PyJWKClient("https://login.microsoftonline.com/common/discovery/v2.0/keys")
+        signing_key = jwks_client.get_signing_key_from_jwt(id_token)
+
+        claims: dict[str, Any] = jwt.decode(
+            id_token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=self.client_id,
+            options={"verify_iss": False},
+        )
+        issuer = str(claims.get("iss", ""))
+        if not (
+            issuer.startswith("https://login.microsoftonline.com/") and issuer.endswith("/v2.0")
+        ):
+            raise ValueError(f"Unexpected id_token issuer: {issuer}")
+        return claims

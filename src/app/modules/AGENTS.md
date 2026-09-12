@@ -6,11 +6,16 @@ Contains the domain-specific business logic of the SaaS platform. Each module is
 ## Patterns & Conventions
 
 ### The Module Structure (CRITICAL)
-Every module MUST follow this standardized structure:
+Modules follow this standardized structure. `models.py` is required **only
+when the module owns database tables**; facade/worker/read-only modules omit
+it deliberately (today: `app_configuration`, `dashboard`, `health`, `security`
+— a thin passkey facade over `auth` — and `tasks`, which fronts the ARQ
+worker). The module generator (`src/scripts/create_module.py`) scaffolds all
+six files; delete `models.py` if the module owns no tables.
 ```
 src/app/modules/{module_name}/
 ├── __init__.py          # Empty file
-├── models.py            # SQLAlchemy database models
+├── models.py            # SQLAlchemy database models (only if the module owns tables)
 ├── schemas.py           # Pydantic data models
 ├── service.py           # Business logic layer
 ├── router.py            # API endpoint definitions
@@ -76,11 +81,31 @@ async def create_user(self, user: UserCreate) -> UserRead:
     await event_bus.publish("user_registered", {"user_id": user.id})
 ```
 
-❌ DON'T: Directly import other modules' services
+✅ DO: Import cross-module services via the module package root (P1-20)
+Ruff `TID` (flake8-tidy-imports `banned-api`) forbids deep `*.service` /
+`*.router` imports outside their own module (auth, users, tenants, posts).
+Every module facade (`modules/{module}/__init__.py`) lazy-exports its
+services, routers, models and crud via `__getattr__`, with an
+`if TYPE_CHECKING:` block so mypy still sees the real classes:
 ```python
-# Wrong - creates tight coupling
-from src.app.modules.notifications.service import NotificationService
-await NotificationService.send_welcome_email(user.email)
+from src.app.modules.users import UserService
+from src.app.modules.tenants import TenantService, get_tenant_service
+```
+Sanctioned seams (each documented where it lives): auth → `users.UserService`
+(identity lookup); rbac + billing webhooks → `users.UserService`
+(membership seam, tier downgrade); `api/deps` → `users.UserService` (request
+auth); user_preferences → storage service + users crud/cache (profile image,
+session invalidation); dashboard → audit/billing/users models (read-only
+aggregation); security → `auth.services.passkey` (thin facade); tenants ↔
+rate_limits models (TYPE_CHECKING relationship backrefs only).
+
+❌ DON'T: Directly import another module's `service.py`/`router.py` internals
+```python
+# Wrong - bypasses the facade; ruff TID251 flags this
+from src.app.modules.users.service import UserService
+
+# Right - package root (lazy, cycle-safe, type-checked)
+from src.app.modules.users import UserService
 ```
 
 ### Redis Acquisition (the ONE seam)

@@ -1,9 +1,15 @@
 """Email provider interface and SMTP / InMemory integration clients."""
 
+import asyncio
 from abc import ABC, abstractmethod
+from collections import deque
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from pydantic import SecretStr
+
+if TYPE_CHECKING:
+    from aiosmtplib import SMTP
 
 
 @dataclass
@@ -57,6 +63,76 @@ class EmailProvider(ABC):
         pass
 
 
+async def _close_quietly(conn: "SMTP") -> None:
+    """Close an SMTP connection, swallowing shutdown errors."""
+    try:
+        if conn.is_connected:
+            await conn.quit()
+    except Exception:
+        pass
+
+
+class _SMTPConnectionPool:
+    """Bounded pool of reusable authenticated SMTP connections.
+
+    P2-D: ``aiosmtplib.send()`` performs a fresh TCP connect + STARTTLS +
+    AUTH handshake for every email. The pool keeps up to ``max_idle`` live
+    connections so consecutive sends (bulk fan-out, worker bursts) reuse one
+    connection. Each connection is checked out for a single send
+    (acquire → send → release); a failed send discards the connection
+    because its session state is unknown.
+
+    Loop-safety: aiosmtplib transports bind to the event loop that created
+    them. When the running loop differs from the pool's loop (worker
+    restart, pytest function-scoped loops), all idle connections are closed.
+    """
+
+    def __init__(self, max_idle: int = 4) -> None:
+        self._max_idle = max_idle
+        self._idle: deque[SMTP] = deque()
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    async def acquire(self, provider: "SMTPProvider") -> "SMTP":
+        """Return a connected (and STARTTLS-secured) SMTP connection."""
+        from aiosmtplib import SMTP
+
+        loop = asyncio.get_running_loop()
+        if self._loop is not loop:
+            stale = list(self._idle)
+            self._idle.clear()
+            for conn in stale:
+                await _close_quietly(conn)
+            self._loop = loop
+
+        while self._idle:
+            conn = self._idle.popleft()
+            if conn.is_connected:
+                return conn
+            await _close_quietly(conn)
+
+        conn = SMTP(
+            hostname=provider.host,
+            port=provider.port,
+            username=provider.username or None,
+            password=provider.password.get_secret_value() if provider.password else None,
+        )
+        await conn.connect()
+        if provider.use_tls:
+            await conn.starttls()
+        return conn
+
+    async def release(self, conn: "SMTP") -> None:
+        """Return a healthy connection to the pool, or close it."""
+        if not conn.is_connected or len(self._idle) >= self._max_idle:
+            await _close_quietly(conn)
+            return
+        self._idle.append(conn)
+
+    async def discard(self, conn: "SMTP") -> None:
+        """Close a connection without returning it to the pool."""
+        await _close_quietly(conn)
+
+
 class SMTPProvider(EmailProvider):
     """SMTP email provider implementation."""
 
@@ -78,14 +154,13 @@ class SMTPProvider(EmailProvider):
         self.use_tls = use_tls
         self.from_email = from_email
         self.from_name = from_name
+        self._pool = _SMTPConnectionPool()
 
     async def send_email(self, message: EmailMessage) -> bool:
         """Send email via SMTP with circuit breaker protection."""
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
         from email.utils import formataddr
-
-        import aiosmtplib
 
         from src.app.core.logger import get_logger
         from src.app.core.utils.circuit_breaker import email_circuit
@@ -143,15 +218,17 @@ class SMTPProvider(EmailProvider):
                     part.add_header("Content-Disposition", "attachment", filename=safe_name)
                     msg.attach(part)
 
-            # Send via async SMTP (non-blocking)
-            await aiosmtplib.send(
-                msg,
-                hostname=self.host,
-                port=self.port,
-                username=self.username if self.username else None,
-                password=self.password.get_secret_value() if self.password else None,
-                start_tls=self.use_tls,
-            )
+            # P2-D: send over a pooled connection — reuses the TCP+STARTTLS+AUTH
+            # handshake across sends instead of re-handshaking per email.
+            # A failed send discards the connection (unknown session state);
+            # success returns it to the idle pool.
+            conn = await self._pool.acquire(self)
+            try:
+                await conn.send_message(msg)
+            except Exception:
+                await self._pool.discard(conn)
+                raise
+            await self._pool.release(conn)
 
             # Record success with circuit breaker
             await email_circuit.record_success()
@@ -229,6 +306,9 @@ class InMemoryEmailProvider(EmailProvider):
 
 
 _active_email_provider: EmailProvider | None = None
+# P2-D: cached default provider so its connection pool survives across calls;
+# a fresh SMTPProvider per call would re-handshake every email and defeat pooling.
+_default_smtp_provider: EmailProvider | None = None
 
 
 def get_email_provider() -> EmailProvider:
@@ -237,21 +317,23 @@ def get_email_provider() -> EmailProvider:
     Returns the explicitly configured provider if set.
     Otherwise resolves the default SMTPProvider from configuration.
     """
-    global _active_email_provider
+    global _active_email_provider, _default_smtp_provider
     if _active_email_provider is not None:
         return _active_email_provider
 
-    from src.app.core.config import settings
+    if _default_smtp_provider is None:
+        from src.app.core.config import settings
 
-    return SMTPProvider(
-        host=settings.email.SMTP_HOST,
-        port=settings.email.SMTP_PORT,
-        username=settings.email.SMTP_USER,
-        password=settings.email.SMTP_PASSWORD,
-        use_tls=settings.email.SMTP_USE_TLS,
-        from_email=settings.email.EMAIL_FROM_ADDRESS,
-        from_name=settings.email.EMAIL_FROM_NAME,
-    )
+        _default_smtp_provider = SMTPProvider(
+            host=settings.email.SMTP_HOST,
+            port=settings.email.SMTP_PORT,
+            username=settings.email.SMTP_USER,
+            password=settings.email.SMTP_PASSWORD,
+            use_tls=settings.email.SMTP_USE_TLS,
+            from_email=settings.email.EMAIL_FROM_ADDRESS,
+            from_name=settings.email.EMAIL_FROM_NAME,
+        )
+    return _default_smtp_provider
 
 
 def set_email_provider(provider: EmailProvider | None) -> None:

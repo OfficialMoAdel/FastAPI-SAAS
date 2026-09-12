@@ -28,7 +28,10 @@ def upgrade() -> None:
         sa.Column("stripe_customer_id", sa.String(length=255), nullable=True),
         sa.Column("stripe_account_id", sa.String(length=255), nullable=True),
         sa.Column("encrypted_secret_key", sa.Text(), nullable=True),
-        sa.Column("encrypted_webhook_secret", sa.Text(), nullable=True),
+        # P1-8: per-tenant webhook secret omitted — single platform endpoint
+        # verifies against the GLOBAL STRIPE_WEBHOOK_SECRET (H1 ordering:
+        # tenant is only derived from the *verified* payload, so a pre-verify
+        # tenant-secret lookup would break verification). See webhook/ingest.py.
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),

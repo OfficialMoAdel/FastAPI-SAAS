@@ -6,7 +6,7 @@ All business logic is handled by the billing module's BillingRecordService.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import get_current_user
@@ -15,6 +15,7 @@ from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
 from src.app.modules.billing.schemas import BillingRecordList, BillingRecordRead
 from src.app.modules.billing.subscription_service import get_billing_record_service
+from src.app.shared.exceptions import ForbiddenError, ModelNotFoundError
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 logger = get_logger(__name__)
@@ -71,16 +72,17 @@ async def get_invoice(
         Invoice details
 
     Raises:
-        HTTPException: 403 if invoice doesn't belong to current user
+        ModelNotFoundError: If the invoice does not exist
+        ForbiddenError: 403 if invoice doesn't belong to current user
     """
     service = get_billing_record_service(db)
     result = await service.get_record(invoice_id)
 
     if not result:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+        raise ModelNotFoundError("Billing record", invoice_id, message="Invoice not found")
 
     # SECURITY FIX: Verify invoice belongs to current user
     if result.get("user_id") != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to this invoice")
+        raise ForbiddenError("Access denied to this invoice")
 
     return dict(result)

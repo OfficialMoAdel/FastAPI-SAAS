@@ -17,6 +17,12 @@ from src.app.modules.auth.rate_limit import check_auth_rate_limit
 from src.app.modules.auth.schemas import AuthTokenResponse, SSOProvider, SSOProviderRead, SSOProvidersResponse
 from src.app.modules.auth.services.sso import SSOService, get_sso_service
 from src.app.shared.exceptions import (
+    DuplicateError as _DomainDuplicateError,
+)
+from src.app.shared.exceptions import (
+    ForbiddenError as _DomainForbiddenError,
+)
+from src.app.shared.exceptions import (
     ModelNotFoundError as _DomainNotFoundError,
 )
 from src.app.shared.exceptions import (
@@ -32,6 +38,8 @@ _DOMAIN_STATUS_CODES = {
     _DomainValidationError: status.HTTP_400_BAD_REQUEST,
     _DomainUnauthorizedError: status.HTTP_401_UNAUTHORIZED,
     _DomainNotFoundError: status.HTTP_404_NOT_FOUND,
+    # P1-4: closed-registration gate rejection mirrors /account/register (403).
+    _DomainForbiddenError: status.HTTP_403_FORBIDDEN,
 }
 
 
@@ -118,17 +126,13 @@ def _validate_redirect_uri(uri: str | None) -> None:
     # M6: WHATWG URL parsing treats '\' as '/', so '/\evil.com' would be a
     # protocol-relative redirect to evil.com. Reject any backslash outright.
     if "\\" in uri:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid redirect URI.",
-        )
+        raise _DomainValidationError("Invalid redirect URI.")
     # Allow relative paths or URLs matching the frontend domain
     if uri == settings.app.FRONTEND_URL or uri.startswith(settings.app.FRONTEND_URL + "/"):
         return
 
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Invalid redirect URI. Must be a relative path or match the permitted frontend domain.",
+    raise _DomainValidationError(
+        "Invalid redirect URI. Must be a relative path or match the permitted frontend domain."
     )
 
 
@@ -209,9 +213,8 @@ async def handle_callback(
 
     cookie_state = request.cookies.get("sso_state")
     if not cookie_state or not hmac.compare_digest(state or "", cookie_state or ""):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="State mismatch or missing session cookie (Login CSRF detection)",
+        raise _domain_error_with_cleared_cookie(
+            _DomainValidationError("State mismatch or missing session cookie (Login CSRF detection)")
         )
     try:
         tokens = await sso_service.process_callback(
@@ -227,10 +230,12 @@ async def handle_callback(
         headers["Set-Cookie"] = _get_clear_cookie_str()
         e.headers = headers
         raise e
-    except (_DomainValidationError, _DomainUnauthorizedError, _DomainNotFoundError) as e:
+    except (_DomainValidationError, _DomainUnauthorizedError, _DomainNotFoundError, _DomainForbiddenError) as e:
         raise _domain_error_with_cleared_cookie(e)
     except httpx.TimeoutException:
         headers = {"Set-Cookie": _get_clear_cookie_str()}
+        # P1-19: sanctioned HTTPException — provider-transport 504 with a
+        # Set-Cookie header has no domain-table equivalent.
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="Provider timeout.",
@@ -238,6 +243,8 @@ async def handle_callback(
         )
     except httpx.HTTPStatusError:
         headers = {"Set-Cookie": _get_clear_cookie_str()}
+        # P1-19: sanctioned HTTPException — provider-transport 502 with a
+        # Set-Cookie header has no domain-table equivalent.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Provider returned an error response.",
@@ -271,9 +278,8 @@ async def handle_post_callback(
 
     cookie_state = request.cookies.get("sso_state")
     if not cookie_state or not hmac.compare_digest(state or "", cookie_state or ""):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="State mismatch or missing session cookie (Login CSRF detection)",
+        raise _domain_error_with_cleared_cookie(
+            _DomainValidationError("State mismatch or missing session cookie (Login CSRF detection)")
         )
 
     try:
@@ -299,15 +305,19 @@ async def handle_post_callback(
         headers["Set-Cookie"] = _get_clear_cookie_str()
         e.headers = headers
         raise e
-    except (_DomainValidationError, _DomainUnauthorizedError, _DomainNotFoundError) as e:
+    except (_DomainValidationError, _DomainUnauthorizedError, _DomainNotFoundError, _DomainForbiddenError) as e:
         raise _domain_error_with_cleared_cookie(e)
     except httpx.TimeoutException:
+        # P1-19: sanctioned HTTPException — provider-transport 504 with a
+        # Set-Cookie header has no domain-table equivalent.
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="Provider timeout.",
             headers={"Set-Cookie": _get_clear_cookie_str()},
         )
     except httpx.HTTPStatusError:
+        # P1-19: sanctioned HTTPException — provider-transport 502 with a
+        # Set-Cookie header has no domain-table equivalent.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Provider returned an error response.",
@@ -330,7 +340,7 @@ async def connect_provider(
 
     tenant_id = ctx.tenant_id
     if not ctx.has_tenant:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant context not set")
+        raise _DomainValidationError("Tenant context not set")
 
     existing_connection = await crud_user_sso_connections.exists_for_user(
         db=ctx.db,
@@ -339,9 +349,10 @@ async def connect_provider(
         tenant_id=tenant_id,
     )
     if existing_connection:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Provider {provider.value} already connected to this account",
+        raise _DomainDuplicateError(
+            "provider",
+            provider.value,
+            message=f"Provider {provider.value} already connected to this account",
         )
 
     auth_url, state = await sso_service.get_authorization_url(
@@ -375,7 +386,7 @@ async def disconnect_provider(
     """Disconnect SSO provider from account."""
     tenant_id = ctx.tenant_id
     if not ctx.has_tenant:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant context not set")
+        raise _DomainValidationError("Tenant context not set")
 
     await sso_service.disconnect_provider(
         db=ctx.db,

@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import stripe
 from sqlalchemy import func as _func
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from src.app.modules.billing import webhook as _pkg
 from src.app.modules.billing.models import BillingRecord
 from src.app.modules.billing.schemas import (
     BillingRecordCreateInternal,
 )
+from src.app.shared.exceptions import StripeError
 
 
 async def handle_charge_refunded(event: stripe.Event) -> None:
@@ -20,6 +20,11 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
 
     Creates a billing record with refunded status.
     T077: charge.refunded webhook handler
+
+    Invariant (P0-2): refund rows never carry stripe_invoice_id — the
+    succeeded/failed row owns the per-invoice unique slot
+    (uq_billing_records_stripe_invoice). Refunds link via
+    stripe_payment_intent_id / stripe_refund_id.
     """
     charge = event["data"]["object"]
     _pkg.logger.info("Processing charge.refunded:", val=charge["id"])
@@ -40,14 +45,17 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
     stripe_subscription_id = None
     if stripe_invoice_id:
         try:
-            api_key = (
-                _pkg.settings.STRIPE_SECRET_KEY.get_secret_value()
-                if hasattr(_pkg.settings.STRIPE_SECRET_KEY, "get_secret_value")
-                else getattr(_pkg.settings, "STRIPE_SECRET_KEY", None)
-            )
-            invoice = await asyncio.to_thread(stripe.Invoice.retrieve, stripe_invoice_id, api_key=api_key)
+            from src.app.modules.billing.gateway import get_payment_gateway
+
+            # P1-9: route through the PaymentGateway seam (B15 pattern from
+            # handlers/checkout.py) — per-tenant key resolution plus
+            # with_retry on transient Stripe failures. The tenant is still
+            # unknown here (this lookup is what discovers it), so no
+            # tenant_id is passed and the gateway falls back to the platform
+            # key — the same key the raw call below used, minus the bypass.
+            invoice = await get_payment_gateway().retrieve_invoice(stripe_invoice_id)
             stripe_subscription_id = invoice.get("subscription")
-        except stripe.StripeError as e:
+        except StripeError as e:
             _pkg.logger.error("Error retrieving invoice", error=e)
             raise ValueError(f"Failed to retrieve invoice {stripe_invoice_id} from Stripe") from e
 
@@ -88,7 +96,12 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
             if stripe_payment_intent_id is not None:
                 scope_filters.append(BillingRecord.stripe_payment_intent_id == stripe_payment_intent_id)
             else:
-                scope_filters.append(BillingRecord.stripe_invoice_id == stripe_invoice_id)
+                # No payment_intent: fall back to subscription scope. Refund
+                # rows no longer carry stripe_invoice_id (see below), so an
+                # invoice-scoped sum would miss them. Subscription scope can
+                # over-count when sibling charges were refunded — that errs
+                # toward skipping (safe direction), never toward a 500.
+                scope_filters.append(BillingRecord.user_subscription_id == subscription_id)
 
             recorded_result = await db.execute(
                 select(_func.coalesce(_func.sum(BillingRecord.amount_cents), 0)).where(*scope_filters)
@@ -111,13 +124,29 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
                 user_id=user_id,
                 user_subscription_id=subscription_id,
                 stripe_payment_intent_id=stripe_payment_intent_id,
-                stripe_invoice_id=stripe_invoice_id,
+                # P0-2: refund rows must NOT carry stripe_invoice_id.
+                # uq_billing_records_stripe_invoice allows exactly one row per
+                # invoice (the succeeded/failed row owns it); writing it here
+                # raised IntegrityError -> 500 -> Stripe retry storm. The
+                # invoice stays recoverable via payment_intent + charge id
+                # in the description.
+                stripe_invoice_id=None,
                 amount_cents=-refund_amount,
                 currency=charge["currency"],
                 status="refunded",
                 description=f"Refund processed for charge {charge['id']}",
             )
-            await _pkg.crud_billing_records.create(db=db, object=billing_record)
+            try:
+                await _pkg.crud_billing_records.create(db=db, object=billing_record)
+            except IntegrityError:
+                # Concurrent redelivery already inserted the delta row.
+                # Roll back and skip instead of 500ing the webhook.
+                await db.rollback()
+                _pkg.logger.info(
+                    "Refund delta row already exists (race), skipping duplicate insert",
+                    val=charge["id"],
+                )
+                return
         else:
             for refund in refunds:
                 refund_id = refund["id"]
@@ -132,14 +161,27 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
                     user_id=user_id,
                     user_subscription_id=subscription_id,
                     stripe_payment_intent_id=stripe_payment_intent_id,
-                    stripe_invoice_id=stripe_invoice_id,
+                    # P0-2: see above — the succeeded/failed row owns the
+                    # invoice id; refund rows link via payment_intent +
+                    # stripe_refund_id (which has its own unique index).
+                    stripe_invoice_id=None,
                     stripe_refund_id=refund_id,
                     amount_cents=-refund["amount"],
                     currency=charge["currency"],
                     status="refunded",
                     description=f"Refund {refund_id} processed for charge {charge['id']}",
                 )
-                await _pkg.crud_billing_records.create(db=db, object=billing_record)
+                try:
+                    await _pkg.crud_billing_records.create(db=db, object=billing_record)
+                except IntegrityError:
+                    # Concurrent redelivery inside the stripe_refund_id dedup
+                    # window already inserted this refund. Skip it.
+                    await db.rollback()
+                    _pkg.logger.info(
+                        "Refund row already exists (race), skipping duplicate insert",
+                        val=refund_id,
+                    )
+                    continue
 
         await db.commit()
 

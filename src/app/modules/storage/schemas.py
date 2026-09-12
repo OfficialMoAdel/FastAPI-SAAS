@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.app.modules._base import BaseList, BaseRead, BaseUpdate
 
@@ -49,6 +50,18 @@ class LocalCredentials(BaseModel):
 
     base_path: Annotated[str, Field(min_length=1, max_length=512)]
     base_url: Annotated[str, Field(max_length=256)] = "/files"
+
+    @field_validator("base_path")
+    @classmethod
+    def _validate_base_path(cls, value: str) -> str:
+        # P2-5: tenant admins must not escape the uploads root via relative
+        # paths or parent traversal; the deployment default is absolute.
+        path = Path(value)
+        if not path.is_absolute():
+            raise ValueError("base_path must be an absolute path")
+        if ".." in path.parts:
+            raise ValueError("base_path must not contain parent '..' segments")
+        return value
 
 
 class StorageSettingsBase(BaseModel):

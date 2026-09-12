@@ -247,7 +247,26 @@ async def check_ban_and_rate_limit(
 
     redis_client = get_redis()
     if not redis_client:
-        return BanInfo(is_banned=False), (False, limit, 0)
+        # P2-4: honor RATE_LIMIT_FAIL_OPEN. The default (False) fails
+        # CLOSED: with no Redis the ban state is unknown, so treat the
+        # request as limited (the middleware maps this to 429), matching
+        # the standalone check_rate_limit_algorithm policy. Operators who
+        # prefer availability over enforcement can opt out via
+        # RATE_LIMIT_FAIL_OPEN=True.
+        if settings.rate_limit.RATE_LIMIT_FAIL_OPEN:
+            # P2-B: this fail-open was previously silent — a dead Redis
+            # means bans AND rate limits are unenforced, so log loudly and
+            # emit the fail-open metric for alerting.
+            from src.app.core.monitoring.r1_unified_metrics import record_fail_open
+
+            logger.warning(
+                "ban_and_rate_limit_fail_open_no_redis",
+                client_ip=client_ip,
+                rate_limit_key=rate_limit_key,
+            )
+            record_fail_open("ban_check")
+            return BanInfo(is_banned=False), (False, limit, 0)
+        return BanInfo(is_banned=False), (True, limit, 0)
 
     # R1-01 parity: honor the negative cache — a cached "not banned" from
     # this process within _BAN_NEGATIVE_TTL skips nothing here (the script

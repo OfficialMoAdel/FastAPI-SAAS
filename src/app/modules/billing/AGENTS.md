@@ -70,17 +70,14 @@ await lifecycle.cancel_subscription(subscription_id, cancel_at_period_end=True)
 
 ```python
 from src.app.modules.billing.exceptions import (
-    SubscriptionNotFoundError,
-    PaymentFailedError,
+    PaymentRequiredError,
     WebhookVerificationError,
 )
+from src.app.shared.exceptions import ModelNotFoundError
 
-try:
-    await billing_service.cancel_subscription(sub_id)
-except SubscriptionNotFoundError:
-    raise HTTPException(404, "Subscription not found")
-except PaymentFailedError as e:
-    raise HTTPException(402, str(e))
+# Domain errors propagate — the central EXCEPTION_HANDLERS table in
+# core/errors.py maps them (402 / 400 / 404). Never convert to HTTPException.
+await billing_service.cancel_subscription(sub_id)
 ```
 
 ## Module Structure & Service Charters

@@ -82,6 +82,16 @@ class StripeGateway:
             from src.app.modules.billing.crud import crud_stripe_settings
 
             record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant_id, _allow_unscoped=True)
+            if record is not None and not self._record_belongs_to_tenant(record, tenant_id):
+                # P1-2: without tenant context the _allow_unscoped escape hatch
+                # returns the table's first row regardless of tenant. Never use
+                # another tenant's key — fail closed to the global key instead.
+                logger.error(
+                    "stripe_key_tenant_mismatch",
+                    requested_tenant=str(tenant_id),
+                    returned_tenant=str(record.get("tenant_id")),
+                )
+                record = None
             if record and record.get("encrypted_secret_key"):
                 api_key = CredentialEncryption().decrypt_column(record["encrypted_secret_key"])
 
@@ -95,6 +105,17 @@ class StripeGateway:
                 )
                 api_key = val or None
         return api_key
+
+    @staticmethod
+    def _record_belongs_to_tenant(record: dict[str, Any], tenant_id: Any) -> bool:
+        """Verify a stripe_settings row belongs to the requesting tenant.
+
+        String comparison tolerates UUID-vs-str drift between the row value
+        and the caller's tenant id. A missing tenant_id on either side is a
+        mismatch (fail closed).
+        """
+        record_tenant = record.get("tenant_id")
+        return record_tenant is not None and tenant_id is not None and str(record_tenant) == str(tenant_id)
 
     async def _require_api_key(self, tenant_id: Any = None, provided_key: str | None = None) -> str:
         if provided_key:

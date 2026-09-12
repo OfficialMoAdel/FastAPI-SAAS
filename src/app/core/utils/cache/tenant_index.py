@@ -110,7 +110,15 @@ def _tenant_prefix_index_key(tenant_id: int | str, prefix: str) -> str:
     return f"tenant_index:{tenant_id}:{prefix}"
 
 
-async def add_to_tenant_index(tenant_id: int | str, cache_key: str, ttl: int | None = None) -> bool:
+# P2-B: index sets default to a 2h expiry — a missing ttl must never leave
+# a non-expiring index set behind (unbounded growth). Pass ttl=0/None
+# explicitly to opt out for a caller-managed lifecycle.
+_DEFAULT_INDEX_TTL = 7200
+
+
+async def add_to_tenant_index(
+    tenant_id: int | str, cache_key: str, ttl: int | None = _DEFAULT_INDEX_TTL
+) -> bool:
     """Add a cache key to the tenant's index set.
 
     Should be called whenever a tenant-scoped key is written to cache.
@@ -119,7 +127,8 @@ async def add_to_tenant_index(tenant_id: int | str, cache_key: str, ttl: int | N
     Args:
         tenant_id: Tenant identifier
         cache_key: The cache key to add to the index
-        ttl: Optional time-to-live for the index (seconds)
+        ttl: Time-to-live for the index sets in seconds
+            (defaults to 2h; pass 0/None to opt out)
 
     Returns
     -------

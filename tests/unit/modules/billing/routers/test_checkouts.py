@@ -90,7 +90,7 @@ async def test_cancel_subscription_finds_active():
 
 
 async def test_cancel_subscription_no_active_raises():
-    from fastapi import HTTPException
+    from src.app.shared.exceptions import ModelNotFoundError
 
     mock_service = MagicMock()
     mock_service.get_user_subscriptions = AsyncMock(return_value={"data": []})
@@ -100,13 +100,12 @@ async def test_cancel_subscription_no_active_raises():
         "src.app.modules.billing.routers.checkouts.get_user_subscription_service",
         return_value=mock_service,
     ):
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(ModelNotFoundError, match="No active subscription found"):
             await cancel_current_subscription(current_user=current_user, db=MagicMock(), subscription_id=None)
-        assert exc.value.status_code == 404
 
 
 async def test_cancel_subscription_unauthorized():
-    from fastapi import HTTPException
+    from src.app.shared.exceptions import ForbiddenError
 
     mock_service = MagicMock()
     mock_service.get_user_subscriptions = AsyncMock(return_value={"data": [{"id": 9, "status": "active"}]})
@@ -117,6 +116,5 @@ async def test_cancel_subscription_unauthorized():
         "src.app.modules.billing.routers.checkouts.get_user_subscription_service",
         return_value=mock_service,
     ):
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(ForbiddenError, match="Not authorized to cancel this subscription"):
             await cancel_current_subscription(current_user=current_user, db=MagicMock(), subscription_id=None)
-        assert exc.value.status_code == 403

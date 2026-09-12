@@ -16,6 +16,11 @@ inner app and GZipMiddleware) with ``Content-Encoding: identity`` so GZip
 skips them, and strips that synthetic header on the OUTSIDE so clients never
 see it. ``Content-Encoding: identity`` means "no encoding" and is never emitted
 for real responses in this app.
+
+NOTE (P2-E): the ``type: ignore`` comments below are deliberate — Starlette
+types ASGI messages as bare ``MutableMapping[str, Any]`` while this module
+works with typed event/message keys (``headers`` as list[tuple[bytes, bytes]]);
+the ignores mark exactly those message-shape accesses.
 """
 
 from fastapi.middleware.gzip import GZipMiddleware
@@ -73,7 +78,7 @@ class GZipFilterMiddleware:
 
     _EXEMPT_SCOPE_KEY = "gzip_filter_exempt"
 
-    def __init__(self, app: ASGIApp, minimum_size: int = 500, compresslevel: int = 6) -> None:
+    def __init__(self, app: ASGIApp, minimum_size: int = 500, compresslevel: int = 4) -> None:
         self.app = app
         self.minimum_size = minimum_size
         self.compresslevel = compresslevel

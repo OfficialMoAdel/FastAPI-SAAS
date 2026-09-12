@@ -648,3 +648,31 @@ class TestCheckBanAndRateLimit:
         assert is_limited is True
         assert remaining == 0
         assert retry_after == 60
+
+
+class TestP24NoClientPolicy:
+    """P2-4: no-Redis path of check_ban_and_rate_limit honors RATE_LIMIT_FAIL_OPEN."""
+
+    @pytest.mark.asyncio
+    @patch("src.app.core.security.auto_ban.get_redis", return_value=None)
+    async def test_no_client_fails_closed_by_default(self, _mock_get_redis, sample_ip):
+        from src.app.core.config import settings as real_settings
+
+        assert real_settings.rate_limit.RATE_LIMIT_FAIL_OPEN is False
+        ban_info, (is_limited, _remaining, _retry_after) = await check_ban_and_rate_limit(
+            sample_ip, "rate_limit:p24", 10, 60
+        )
+        assert ban_info.is_banned is False
+        assert is_limited is True
+
+    @pytest.mark.asyncio
+    @patch("src.app.core.security.auto_ban.get_redis", return_value=None)
+    async def test_no_client_fail_open_override(self, _mock_get_redis, sample_ip):
+        from src.app.core.config import settings as real_settings
+
+        with patch.object(real_settings.rate_limit, "RATE_LIMIT_FAIL_OPEN", True):
+            ban_info, (is_limited, _remaining, _retry_after) = await check_ban_and_rate_limit(
+                sample_ip, "rate_limit:p24", 10, 60
+            )
+        assert ban_info.is_banned is False
+        assert is_limited is False
