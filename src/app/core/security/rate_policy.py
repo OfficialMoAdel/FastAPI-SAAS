@@ -122,34 +122,34 @@ async def resolve_rate_limits(
     # 2. DB fallback if db session provided and cache missed. H-9: on hit,
     # write the full tier policy list back to the policy cache so subsequent
     # requests resolve from L1/Redis instead of repeating this DB query.
+    # P2: single get_multi (was: per-path get + full get_multi = 2 queries).
+    # The path match resolves in Python over the same row set, so the
+    # resolved (limit, period) and the write-back payload are identical.
     if (limit is None or period is None) and db is not None and tier_id is not None:
         try:
             from fastcrud import FastCRUD
 
             from src.app.modules.rate_limits.models import RateLimit
-            from src.app.modules.rate_limits.schemas import RateLimitRead
 
             crud: Any = FastCRUD(RateLimit)
             tier_id_val = int(tier_id)
-            rate_limit_rec = await crud.get(db=db, tier_id=tier_id_val, path=path, schema_to_select=RateLimitRead)
-            if rate_limit_rec:
-                limit = (
-                    rate_limit_rec.get("limit")
-                    if isinstance(rate_limit_rec, dict)
-                    else getattr(rate_limit_rec, "limit", None)
-                )
-                period = (
-                    rate_limit_rec.get("period")
-                    if isinstance(rate_limit_rec, dict)
-                    else getattr(rate_limit_rec, "period", None)
-                )
+            all_rows = await crud.get_multi(db=db, tier_id=tier_id_val, return_total_count=False)
+            raw_policies = all_rows.get("data") or [] if isinstance(all_rows, dict) else []
+            matched = False
+            for rec in raw_policies:
+                rec_path = rec.get("path") if isinstance(rec, dict) else getattr(rec, "path", None)
+                if rec_path != path:
+                    continue
+                limit = rec.get("limit") if isinstance(rec, dict) else getattr(rec, "limit", None)
+                period = rec.get("period") if isinstance(rec, dict) else getattr(rec, "period", None)
+                matched = True
+                break
+            if matched:
                 # H-9 write-back: refresh this tier's whole policy list in
                 # Redis + L1 so the next request is a zero-DB resolution.
                 try:
                     from src.app.core.security.rate_limit_cache import warm_policy_cache
 
-                    all_rows = await crud.get_multi(db=db, tier_id=tier_id_val, return_total_count=False)
-                    raw_policies = all_rows.get("data") or [] if isinstance(all_rows, dict) else []
                     policies = [dict(r) if not isinstance(r, dict) else r for r in raw_policies]
                     if policies:
                         await warm_policy_cache({tier_id_val: policies})

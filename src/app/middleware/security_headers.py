@@ -10,11 +10,18 @@ Adds standard security headers to all responses:
 - Permissions-Policy
 """
 
+from starlette.datastructures import MutableHeaders
 from structlog import get_logger
 
 from src.app.core.config import EnvironmentOption, settings
 
 logger = get_logger(__name__)
+
+# P2 micro: static header values built once at import, not per response.
+_PERMISSIONS_POLICY = (
+    "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
+    "magnetometer=(), microphone=(), payment=(), usb=()"
+)
 
 
 class SecurityHeadersMiddleware:
@@ -60,6 +67,8 @@ class SecurityHeadersMiddleware:
         self.enable_csp = enable_csp
         self.csp_policy = csp_policy or self.DEFAULT_CSP
         self.frame_options = frame_options
+        # P2 micro: HSTS value depends only on constructor args — build once.
+        self._hsts_value = f"max-age={hsts_max_age}; includeSubDomains; preload"
 
         # S-M6: enable HSTS in every non-local environment (staging included).
         # The previous `== PRODUCTION` gate left staging deployments without
@@ -73,8 +82,6 @@ class SecurityHeadersMiddleware:
 
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
-                from starlette.datastructures import MutableHeaders
-
                 headers = MutableHeaders(scope=message)
 
                 # XSS Prevention Headers
@@ -82,19 +89,13 @@ class SecurityHeadersMiddleware:
                 headers.setdefault("X-Frame-Options", self.frame_options)
                 headers.setdefault("X-XSS-Protection", "0")
                 headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-                headers.setdefault(
-                    "Permissions-Policy",
-                    "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
-                    "magnetometer=(), microphone=(), payment=(), usb=()",
-                )
+                headers.setdefault("Permissions-Policy", _PERMISSIONS_POLICY)
 
                 if self.enable_csp:
                     headers.setdefault("Content-Security-Policy", self.csp_policy)
 
                 if self.enable_hsts and self.enable_hsts_env:
-                    headers.setdefault(
-                        "Strict-Transport-Security", f"max-age={self.hsts_max_age}; includeSubDomains; preload"
-                    )
+                    headers.setdefault("Strict-Transport-Security", self._hsts_value)
 
             await send(message)
 

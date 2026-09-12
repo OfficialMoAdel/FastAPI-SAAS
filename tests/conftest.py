@@ -407,7 +407,7 @@ def reset_singletons():
     """
     # Import reset functions - these are added for test isolation
     from src.app.core.events import reset_event_bus
-    from src.app.core.security.jwt_utils import clear_jwt_key_cache
+    from src.app.core.security.jwt_utils import clear_decode_failure_cache, clear_jwt_key_cache
     from src.app.core.security.token_blacklist_cache import reset_token_blacklist_cache
     from src.app.core.utils.gcra_rate_limit import reset_gcra_rate_limiter
     from src.app.core.utils.rate_limit import reset_rate_limiter
@@ -418,6 +418,7 @@ def reset_singletons():
     reset_token_blacklist_cache()
     reset_event_bus()
     clear_jwt_key_cache()
+    clear_decode_failure_cache()
 
     yield
 
@@ -427,6 +428,7 @@ def reset_singletons():
     reset_token_blacklist_cache()
     reset_event_bus()
     clear_jwt_key_cache()
+    clear_decode_failure_cache()
 
 
 @pytest.fixture(autouse=True)
@@ -1132,6 +1134,11 @@ class FakeRedisPipeline:
         self._commands.append(("set", key, value, ex))
         return self
 
+    def setex(self, key, seconds, value):
+        """Queue a setex command (mapped onto the set+ex path)."""
+        self._commands.append(("set", key, value, seconds))
+        return self
+
     def hincrby(self, key, field, amount):
         """Queue a hincrby command."""
         self._commands.append(("hincrby", key, field, amount))
@@ -1455,6 +1462,86 @@ class FakeRedis:
         except Exception:
             pass
 
+        # --- Merged ban/blacklist+GCRA script (P0-2) ---
+        # KEYS[1]=neg_key, KEYS[2]=blacklist_zset, KEYS[3]=authed_gcra,
+        # KEYS[4]=ban_key, KEYS[5]=anon_gcra.
+        # ARGV = member, now_sec, neg_ttl, now_ms,
+        #        a_emit, a_lim, a_burst, a_per, n_emit, n_lim, n_burst, n_per.
+        # Returns [is_blacklisted, is_allowed, remaining, retry_after_ms,
+        #          is_banned, ban_reason, ban_ttl].
+        # Matched by SHA for the same reason as GETDEL above.
+        try:
+            from src.app.core.utils.lua_manager import get_lua_manager
+
+            if sha == get_lua_manager().get_script("ban_blacklist_gcra_check").sha1:
+                neg_key = keys_and_args[0]
+                blacklist_key = keys_and_args[1]
+                authed_gcra = keys_and_args[2]
+                ban_key = keys_and_args[3]
+                anon_gcra = keys_and_args[4]
+                member = keys_and_args[5]
+                now_sec = float(keys_and_args[6]) if len(keys_and_args) > 6 else 0
+                now_ms = int(float(keys_and_args[8])) if len(keys_and_args) > 8 else 0
+
+                # Blacklist leg (mirrors token_blacklist_check).
+                if neg_key in self.store:
+                    is_blacklisted = 0
+                else:
+                    zset = self.store.get(blacklist_key, {})
+                    if not isinstance(zset, dict):
+                        zset = {}
+                    score = zset.get(member)
+                    if score is None:
+                        self.store[neg_key] = "1"
+                        is_blacklisted = 0
+                    elif float(score) < now_sec:
+                        if member in zset:
+                            del zset[member]
+                        self.store[neg_key] = "1"
+                        is_blacklisted = 0
+                    else:
+                        is_blacklisted = 1
+
+                # GCRA leg on the selected candidate (counter emulation,
+                # mirroring the standalone GCRA branch below).
+                if is_blacklisted == 1:
+                    gcra_key = anon_gcra
+                    base = 13
+                else:
+                    gcra_key = authed_gcra
+                    base = 9
+                limit = int(float(keys_and_args[base + 1]))
+                period_ms = int(float(keys_and_args[base + 3]))
+                current = self.store.get(gcra_key, 0)
+                if isinstance(current, str):
+                    current = int(current)
+                if current >= limit:
+                    is_allowed, remaining = 0, 0
+                    retry_after_ms = period_ms
+                else:
+                    current += 1
+                    self.store[gcra_key] = current
+                    is_allowed, remaining = 1, limit - current
+                    retry_after_ms = 0
+
+                # Ban leg (mirrors ban_and_gcra_check: GET + TTL).
+                if ban_key in self.store:
+                    is_banned, ban_reason, ban_ttl = 1, str(self.store[ban_key] or ""), 300
+                else:
+                    is_banned, ban_reason, ban_ttl = 0, "", 0
+
+                return [
+                    is_blacklisted,
+                    is_allowed,
+                    remaining,
+                    retry_after_ms,
+                    is_banned,
+                    ban_reason,
+                    ban_ttl,
+                ]
+        except Exception:
+            pass
+
         # --- Token blacklist script ---
         # KEYS[1]=negative_key, KEYS[2]=blacklist_key, ARGV[1]=token, ARGV[2]=now, ARGV[3]=ttl
         if numkeys == 2 and len(keys_and_args) >= 5:
@@ -1662,10 +1749,11 @@ def mock_redis(request):
     from src.app.core.utils.ip_utils import _is_ip_in_trusted_networks
 
     # Clear L1 caches before test to ensure isolation
-    from src.app.middleware.tenant import _L1_TENANT_CACHE
+    from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
     from src.app.modules.rbac.service import _L1_RBAC_CACHE
 
     _L1_TENANT_CACHE.clear()
+    _L1_TENANT_PARSED.clear()
     _L1_RBAC_CACHE.clear()
     _token_cache_key.cache_clear()
     _is_ip_in_trusted_networks.cache_clear()
@@ -1693,6 +1781,7 @@ def mock_redis(request):
 
         # Clear L1 caches after test for cleanup
         _L1_TENANT_CACHE.clear()
+        _L1_TENANT_PARSED.clear()
         _L1_RBAC_CACHE.clear()
         _token_cache_key.cache_clear()
         _is_ip_in_trusted_networks.cache_clear()
@@ -1754,10 +1843,11 @@ async def init_real_redis_async(request):
         await cache.client.flushdb()
 
         # Clear L1 caches (in-memory caches that persist across tests)
-        from src.app.middleware.tenant import _L1_TENANT_CACHE
+        from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
         from src.app.modules.rbac.service import _L1_RBAC_CACHE
 
         _L1_TENANT_CACHE.clear()
+        _L1_TENANT_PARSED.clear()
         _L1_RBAC_CACHE.clear()
     except Exception as e:
         print(f"Warning: Failed to initialize real Redis: {e}")
@@ -1794,9 +1884,10 @@ async def cleanup_real_redis(request):
 
     # SETUP: Clear L1 caches BEFORE test (in-memory caches that persist across tests)
     try:
-        from src.app.middleware.tenant import _L1_TENANT_CACHE
+        from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
 
         _L1_TENANT_CACHE.clear()
+        _L1_TENANT_PARSED.clear()
     except ImportError:
         pass
     try:

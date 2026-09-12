@@ -144,8 +144,10 @@ class TestPostServiceGet:
         service = PostService(mock_db)
         mock_response = {"data": [mock_post], "total_count": 1}
 
-        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
-            mock_crud.get_multi.return_value = mock_response
+        with (
+            patch.object(service, "crud", new_callable=AsyncMock),
+            patch.object(PostService, "get_page_with_total", AsyncMock(return_value=mock_response)),
+        ):
 
             result = await service.get_posts(
                 user_id=mock_user["id"],

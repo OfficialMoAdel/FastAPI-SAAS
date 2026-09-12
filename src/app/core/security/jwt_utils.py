@@ -31,16 +31,18 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Union
 
 import jwt
+from cachetools import TTLCache
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey
 from cryptography.hazmat.primitives.asymmetric.ed448 import Ed448PublicKey
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
-from jwt.exceptions import PyJWTError
+from jwt.exceptions import DecodeError, ExpiredSignatureError, InvalidSignatureError, PyJWTError
 
 from src.app.core.config import settings
 from src.app.core.json_utils import json_loads
@@ -73,6 +75,42 @@ if not _raw_audience:
     _raw_audience = "fastapi-saas-api"
 JWT_AUDIENCE: str = _raw_audience
 REQUEST_STATE_KEY: str = "jwt_payload"
+
+# Decode-failure sentinel (P2 micro): repeated presentations of the same
+# permanently-invalid token skip the crypto decode entirely. Keyed by
+# sha256 so raw bearer material is never retained in-process.
+#
+# Only failures that can NEVER flip to success for the same token string
+# are cached: InvalidSignatureError / DecodeError (permanent for a given
+# token+key) and ExpiredSignatureError (time only moves forward).
+# Deliberately NOT cached: ImmatureSignatureError / InvalidIssuedAtError
+# (a future iat/nbf becomes valid with time) and InvalidIssuerError /
+# InvalidAudienceError (a config change could flip them). TTL 60s bounds
+# key-rotation lag; process restart — the documented rotation path
+# (see clear_jwt_key_cache) — drops the cache entirely.
+_DECODE_FAILURE_TTL_S = 60
+_DECODE_FAILURE_MAXSIZE = 4096
+_decode_failure_cache: TTLCache[tuple[str, bool], None] = TTLCache(
+    maxsize=_DECODE_FAILURE_MAXSIZE, ttl=_DECODE_FAILURE_TTL_S
+)
+
+
+def _decode_failure_key(token: str, verify_issuer: bool) -> tuple[str, bool]:
+    """Cache key for a decode failure: token hash + issuer-check flag.
+
+    The flag is part of the key because a token failing WITH issuer
+    validation (e.g. legacy unstamped token) may succeed WITHOUT it.
+    """
+    return (hashlib.sha256(token.encode("utf-8")).hexdigest(), verify_issuer)
+
+
+def clear_decode_failure_cache() -> None:
+    """Drop memoized decode failures.
+
+    Test isolation (wired into tests/conftest.py alongside
+    clear_jwt_key_cache); no production callers.
+    """
+    _decode_failure_cache.clear()
 
 
 def _get_algorithm() -> str:
@@ -263,6 +301,13 @@ async def decode_verified_token(
     if verify_issuer:
         kwargs["issuer"] = settings.crypt.JWT_ISSUER
 
+    failure_key = _decode_failure_key(token, verify_issuer)
+    if failure_key in _decode_failure_cache:
+        # Sentinel hit: same token already failed permanently — skip decode.
+        # (No debug log here by design: emitting an event would re-pay the
+        # structlog/sanitizer cost this fast path exists to avoid.)
+        return None
+
     try:
         alg = _get_algorithm()
         # Use pre-parsed key for better performance (especially RS256)
@@ -282,6 +327,10 @@ async def decode_verified_token(
                 **kwargs,
             )
         return payload  # type: ignore[no-any-return]
+    except (InvalidSignatureError, DecodeError, ExpiredSignatureError):
+        # Permanent for this (token, flag) — memoize, skip crypto next time.
+        _decode_failure_cache[failure_key] = None
+        return None
     except PyJWTError as e:
         logger.debug("JWT decode failed: %s", e)
         return None

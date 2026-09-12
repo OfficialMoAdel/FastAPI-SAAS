@@ -51,26 +51,23 @@ async def _warm_token_blacklist_cache() -> None:
 
     try:
         async with async_session_maker() as db:
-            tokens = await crud_token_blacklist.get_active_tokens(db)
             # P-M9: cap the warmup set — loading every active blacklisted
             # token made boot cost O(total sessions). Keep the N
             # longest-lived entries (they stay in the cache longest, so the
             # warm-up value per slot is highest); the rest fall back to the
             # on-demand DB check on first lookup. TOKEN_BLACKLIST_WARMUP_LIMIT
             # is env-tunable (APP_TOKEN_BLACKLIST_WARMUP_LIMIT); 0 disables
-            # warmup entirely.
+            # warmup entirely (and skips the query). P2: the cap is pushed
+            # into the DB (ORDER BY expires_at DESC + LIMIT) so boot is
+            # O(limit) even before the first row is read.
             limit = settings.app.TOKEN_BLACKLIST_WARMUP_LIMIT
             if limit == 0:
                 logger.info("Token blacklist warmup disabled by TOKEN_BLACKLIST_WARMUP_LIMIT=0")
             else:
-                capped = tokens if len(tokens) <= limit else sorted(tokens, key=lambda t: t[1], reverse=True)[:limit]
-                if capped:
-                    count = await warm_cache_from_db(capped)
-                    logger.info(
-                        "Token blacklist cache warmed",
-                        count=count,
-                        capped=len(tokens) - len(capped) if len(tokens) > len(capped) else 0,
-                    )
+                tokens = await crud_token_blacklist.get_active_tokens(db, limit=limit)
+                if tokens:
+                    count = await warm_cache_from_db(tokens)
+                    logger.info("Token blacklist cache warmed", count=count)
     except (RedisError, SQLAlchemyError, ServiceUnavailableError) as e:
         logger.error("Failed to warm token blacklist cache", error=str(e))
         if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:

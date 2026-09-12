@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.db.database import local_session
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_current_tenant
-from src.app.modules._base.service import BaseService
+from src.app.modules._base.service import BaseService, fetch_page_with_total
 from src.app.modules.ai.crud import crud_ai_settings, crud_chat_messages, crud_chat_sessions
 from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings
 from src.app.modules.ai.providers import AIProvider, AIProviderError
@@ -187,8 +187,13 @@ class ChatSessionService(BaseService[AIChatSession]):
         from src.app.modules.ai.schemas import ChatSessionRead
 
         offset = (page - 1) * limit
-        return await crud_chat_sessions.get_multi(
-            db=self.db, user_id=user_id, offset=offset, limit=limit, schema_to_select=ChatSessionRead
+        return await fetch_page_with_total(
+            crud_chat_sessions,
+            self.db,
+            user_id=user_id,
+            offset=offset,
+            limit=limit,
+            schema_to_select=ChatSessionRead,
         )
 
     async def update_session(self, session_id: int, user_id: int, data: ChatSessionUpdate) -> dict[str, Any]:
@@ -249,8 +254,13 @@ class ChatMessageService(BaseService[AIChatMessage]):
         from src.app.modules.ai.schemas import ChatMessageRead
 
         offset = (page - 1) * limit
-        return await crud_chat_messages.get_multi(
-            db=self.db, session_id=session_id, offset=offset, limit=limit, schema_to_select=ChatMessageRead
+        return await fetch_page_with_total(
+            crud_chat_messages,
+            self.db,
+            session_id=session_id,
+            offset=offset,
+            limit=limit,
+            schema_to_select=ChatMessageRead,
         )
 
 

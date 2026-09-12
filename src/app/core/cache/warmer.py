@@ -271,17 +271,6 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
     return cached_count
 
 
-@warmer.register("feature_flags")
-async def warm_feature_flags_cache(session: AsyncSession) -> int:
-    """Preload tenant feature-flag overrides into the cache."""
-    # Late import: the feature_flags service imports cache utils at module
-    # level, which import this registry — a top-level import here would be
-    # circular.
-    from src.app.modules.feature_flags.service import warm_feature_flags
-
-    return await warm_feature_flags(session)
-
-
 async def warm_caches() -> CacheWarmingResult:
     """Warm all caches on application startup."""
     try:

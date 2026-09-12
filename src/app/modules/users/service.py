@@ -17,6 +17,7 @@ from src.app.core.logger import get_logger
 from src.app.core.security import blacklist_token, get_password_hash
 from src.app.core.tenancy.context import get_current_tenant, require_tenant_match
 from src.app.core.utils.user_utils import get_user_attr
+from src.app.modules._base.service import fetch_page_with_total
 from src.app.modules.audit_logs import audit
 from src.app.modules.tiers.models import Tier
 from src.app.modules.tiers.service import TierService
@@ -107,8 +108,9 @@ class UserService:
         H-4: repository branch removed — inline the FastCRUD call directly.
         """
         offset = (page - 1) * per_page
-        result = await self.crud.get_multi(
-            db=self.db,
+        result = await fetch_page_with_total(
+            self.crud,
+            self.db,
             offset=offset,
             limit=per_page,
             is_deleted=is_deleted,

@@ -38,9 +38,9 @@ async def test_get_rate_limits_by_tier_id_cache_miss(service):
     with patch("src.app.modules.rate_limits.service.get_redis", return_value=mock_redis):
         mock_redis.get.return_value = None  # Cache miss
 
-        # Mock CRUD
-        with patch.object(service, "crud") as mock_crud:
-            mock_crud.get_multi = AsyncMock(return_value=RATE_LIMITS_DATA)
+        # Mock page fetch (P0-5: single-RTT windowed COUNT seam)
+        page_fetch = AsyncMock(return_value=RATE_LIMITS_DATA)
+        with patch.object(service, "get_page_with_total", page_fetch):
 
             # Execute
             result = await service.get_rate_limits_by_tier_id(TIER_ID)
@@ -61,7 +61,7 @@ async def test_get_rate_limits_by_tier_id_cache_miss(service):
             assert call_args[0][1] == 3600  # TTL
 
             # Verify DB called
-            mock_crud.get_multi.assert_called_once()
+            page_fetch.assert_awaited_once()
 
 
 @pytest.mark.asyncio

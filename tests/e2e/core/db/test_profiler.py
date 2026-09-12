@@ -53,9 +53,10 @@ class TestQueryProfilerE2E:
         await db_session.commit()
 
         # Clear tenant cache to ensure fresh lookups
-        from src.app.middleware.tenant import _L1_TENANT_CACHE
+        from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
 
         _L1_TENANT_CACHE.clear()
+        _L1_TENANT_PARSED.clear()
 
         # Generate tokens without hitting DB again
         from src.app.core.security import create_access_token

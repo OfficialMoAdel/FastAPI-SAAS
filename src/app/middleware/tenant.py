@@ -16,6 +16,7 @@ Performance Optimization (R2-HYBRID MED-1):
 """
 
 import re
+import uuid
 from typing import Any
 
 from fastapi import Request, status
@@ -30,6 +31,7 @@ from src.app.core.redis_provider import get_redis
 from src.app.core.tenancy.cache import (
     _L1_INVALIDATION_CHANNEL,
     _L1_TENANT_CACHE,
+    _L1_TENANT_PARSED,
     _TENANT_LOCKS,
     TENANT_CACHE_TTL,
     _get_tenant_lock,
@@ -58,6 +60,7 @@ __all__ = [
     "TenantMiddleware",
     "_L1_INVALIDATION_CHANNEL",
     "_L1_TENANT_CACHE",
+    "_L1_TENANT_PARSED",
     "_TENANT_LOCKS",
     "_get_tenant_lock",
     "_publish_tenant_l1_invalidation",
@@ -223,7 +226,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
             if slug in _L1_TENANT_CACHE:
                 cached_data = _L1_TENANT_CACHE[slug]
                 if cached_data is not None:
-                    return await self._get_tenant_from_cache_data(cached_data)
+                    return self._get_tenant_from_cache_data(slug, cached_data)
                 return None  # Negative cache hit
         except Exception as e:
             logger.warning("Tenant L1 cache read error: %s", e)
@@ -234,7 +237,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 # Double-check L1
                 if slug in _L1_TENANT_CACHE:
                     data = _L1_TENANT_CACHE[slug]
-                    return await self._get_tenant_from_cache_data(data) if data else None
+                    return self._get_tenant_from_cache_data(slug, data) if data else None
 
                 cache_key = f"tenant:slug:{slug}"
 
@@ -252,11 +255,13 @@ class TenantMiddleware(BaseHTTPMiddleware):
                         neg_exists, cached = await pipe.execute()
                         if neg_exists:
                             _L1_TENANT_CACHE[slug] = None
+                            _L1_TENANT_PARSED.pop(slug, None)
                             return None
                         if cached:
                             data = json_loads(cached)
                             _L1_TENANT_CACHE[slug] = data
-                            return await self._get_tenant_from_cache_data(data)
+                            _L1_TENANT_PARSED.pop(slug, None)
+                            return self._get_tenant_from_cache_data(slug, data)
                     except Exception as e:
                         logger.warning("Tenant L2 cache read error: %s", e)
 
@@ -299,6 +304,9 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     # Populate caches
                     try:
                         _L1_TENANT_CACHE[slug] = cache_data
+                        # P2 micro: dict overwritten → drop any parsed object
+                        # built from the previous entry (same as L2-fill pop).
+                        _L1_TENANT_PARSED.pop(slug, None)
                     except Exception as e:
                         logger.warning("Tenant L1 cache write error: %s", e)
 
@@ -327,17 +335,25 @@ class TenantMiddleware(BaseHTTPMiddleware):
                         return None
                     return TenantContext.from_model(tenant)
 
-    async def _get_tenant_from_cache_data(self, data: dict) -> TenantContext:
-        """Reconstruct TenantContext from cached dict."""
-        import uuid
+    def _get_tenant_from_cache_data(self, slug: str, data: dict) -> TenantContext:
+        """Reconstruct TenantContext from cached dict.
 
-        tenant_id = data["id"]
-        if isinstance(tenant_id, str):
-            tenant_id = uuid.UUID(tenant_id)
+        P2 micro: sync (zero awaits — coroutine overhead per L1 hit removed)
+        + frozen parsed-object memo (uuid.UUID re-parse skipped on repeat
+        hits). Every _L1_TENANT_CACHE write pairs with a parsed pop, and
+        invalidate_tenant_l1 drops both, so the memo tracks the dict cache.
+        """
+        parsed = _L1_TENANT_PARSED.get(slug)
+        if parsed is None:
+            tenant_id = data["id"]
+            if isinstance(tenant_id, str):
+                tenant_id = uuid.UUID(tenant_id)
 
-        return TenantContext(
-            tenant_id=tenant_id,
-            tenant_slug=data["slug"],
-            tenant_name=data.get("name", ""),
-            is_active=data["is_active"],
-        )
+            parsed = TenantContext(
+                tenant_id=tenant_id,
+                tenant_slug=data["slug"],
+                tenant_name=data.get("name", ""),
+                is_active=data["is_active"],
+            )
+            _L1_TENANT_PARSED[slug] = parsed
+        return parsed

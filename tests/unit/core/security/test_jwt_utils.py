@@ -15,7 +15,10 @@ import pytest
 
 from src.app.core.security.jwt_utils import (
     JWT_AUDIENCE,
+    _decode_failure_cache,
+    clear_decode_failure_cache,
     decode_jwt_token,
+    decode_verified_token,
     extract_jwt_claims_to_state,
     extract_token_from_header,
     get_cached_jwt_payload,
@@ -318,3 +321,117 @@ class TestJwtUtilsPerformance:
                     # Third call - still cached
                     await extract_jwt_claims_to_state(mock_request)
                     assert decode_count == 1
+
+
+# =============================================================================
+# DECODE-FAILURE SENTINEL TESTS (P2 micro)
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _clear_sentinel() -> None:
+    """Isolate the decode-failure sentinel per test (belt + suspenders:
+
+    tests/conftest.py already resets it, but these tests assert exact
+    jwt.decode call counts, so they must not depend on that).
+    """
+    clear_decode_failure_cache()
+
+
+class TestDecodeFailureSentinel:
+    """decode_verified_token memoizes permanent failures, skipping crypto."""
+
+    def _counting_decode(self, real_decode: Any) -> tuple[Any, list[int]]:
+        calls: list[int] = []
+
+        def counting_decode(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            calls.append(1)
+            return real_decode(*args, **kwargs)
+
+        return counting_decode, calls
+
+    @pytest.mark.asyncio
+    async def test_invalid_signature_cached(self, test_secret: str) -> None:
+        """Second presentation of a bad-signature token skips jwt.decode."""
+        bad_token = jwt.encode({"sub": "x", "aud": JWT_AUDIENCE}, "other-secret", algorithm="HS256")
+        counting_decode, calls = self._counting_decode(jwt.decode)
+        with (
+            patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret),
+            patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"),
+            patch("src.app.core.security.jwt_utils.jwt.decode", side_effect=counting_decode),
+        ):
+            assert await decode_verified_token(bad_token) is None
+            assert await decode_verified_token(bad_token) is None
+        assert len(calls) == 1
+        assert len(_decode_failure_cache) == 1
+
+    @pytest.mark.asyncio
+    async def test_expired_cached(self, expired_token: str, test_secret: str) -> None:
+        """Expired tokens are permanent failures — decoded once."""
+        counting_decode, calls = self._counting_decode(jwt.decode)
+        with (
+            patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret),
+            patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"),
+            patch("src.app.core.security.jwt_utils.jwt.decode", side_effect=counting_decode),
+        ):
+            assert await decode_verified_token(expired_token) is None
+            assert await decode_verified_token(expired_token) is None
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_malformed_cached(self, test_secret: str) -> None:
+        """Garbage tokens (DecodeError) are memoized, not re-parsed."""
+        counting_decode, calls = self._counting_decode(jwt.decode)
+        with (
+            patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret),
+            patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"),
+            patch("src.app.core.security.jwt_utils.jwt.decode", side_effect=counting_decode),
+        ):
+            assert await decode_verified_token("zzz.malformed.token") is None
+            assert await decode_verified_token("zzz.malformed.token") is None
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_immature_not_cached(self, test_secret: str) -> None:
+        """Future-iat tokens can become valid with time — never memoized."""
+        now = int(time.time())
+        future_token = jwt.encode(
+            {"sub": "x", "aud": JWT_AUDIENCE, "iat": now + 3600, "exp": now + 7200},
+            test_secret,
+            algorithm="HS256",
+        )
+        counting_decode, calls = self._counting_decode(jwt.decode)
+        with (
+            patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret),
+            patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"),
+            patch("src.app.core.security.jwt_utils.jwt.decode", side_effect=counting_decode),
+        ):
+            assert await decode_verified_token(future_token) is None
+            assert await decode_verified_token(future_token) is None
+        assert len(calls) == 2
+        assert len(_decode_failure_cache) == 0
+
+    @pytest.mark.asyncio
+    async def test_verify_issuer_flag_separates(self, test_secret: str) -> None:
+        """Issuer failures are not cached AND the flag partitions the key.
+
+        A legacy unstamped token fails WITH issuer check, then succeeds
+        WITHOUT it — the second call must decode again (different key).
+        """
+        now = int(time.time())
+        unstamped = jwt.encode(
+            {"sub": "x", "aud": JWT_AUDIENCE, "iat": now, "exp": now + 3600},
+            test_secret,
+            algorithm="HS256",
+        )
+        counting_decode, calls = self._counting_decode(jwt.decode)
+        with (
+            patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret),
+            patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"),
+            patch("src.app.core.security.jwt_utils.jwt.decode", side_effect=counting_decode),
+        ):
+            assert await decode_verified_token(unstamped, verify_issuer=True) is None
+            payload = await decode_verified_token(unstamped, verify_issuer=False)
+        assert payload is not None and payload["sub"] == "x"
+        assert len(calls) == 2
+        assert len(_decode_failure_cache) == 0

@@ -13,6 +13,7 @@ streaming responses (SSE, large downloads) are not buffered into memory.
 """
 
 import time
+from typing import Any, NamedTuple
 from urllib.parse import urlparse
 
 from fastapi import Request, status
@@ -23,10 +24,17 @@ from src.app.core.config import settings
 from src.app.core.errors import ErrorCode, create_error_response
 from src.app.core.logger import get_logger
 from src.app.core.middleware_exempt import is_path_exempt
-from src.app.core.security.auto_ban import BanInfo, check_and_auto_ban, check_ban_and_rate_limit, get_ban_info
+from src.app.core.security.auto_ban import (
+    BanInfo,
+    check_and_auto_ban,
+    check_ban_and_rate_limit,
+    check_ban_blacklist_and_rate_limit,
+    get_ban_info,
+)
 from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
 from src.app.core.security.logging import SecurityEvent, SecurityEventType, log_security_event
 from src.app.core.utils.ip_utils import get_client_ip
+from src.app.core.utils.path_utils import sanitize_path
 from src.app.core.utils.rate_limit import rate_limiter
 
 logger = get_logger(__name__)
@@ -79,6 +87,23 @@ async def _reject_banned_ip(
         headers=headers,
     )
     await response(scope, receive, send)
+
+
+class _RateLimitContext(NamedTuple):
+    """Identity context for rate-limit resolution (no Redis touched).
+
+    Produced by _get_rate_limit_config (JWT/state only); consumed either by
+    the P0-2 merged helper (authed hot path) or _resolve_legacy_config
+    (anonymous / auto-ban-disabled paths).
+    """
+
+    user_id: Any
+    tier_name: Any
+    tenant_id: Any
+    tier_id_raw: Any
+    token: str | None
+    jti: str | None
+    path: str
 
 
 class RateLimitMiddleware:
@@ -153,6 +178,56 @@ class RateLimitMiddleware:
         await self.app(scope, receive, send)
         return True
 
+    async def _check_authed_merged(
+        self,
+        request: Request,
+        ctx: _RateLimitContext,
+        client_ip: str,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> tuple[int, int, str, bool, int, int] | None:
+        """P0-2: blacklist + ban + GCRA for authenticated requests in ONE Lua RTT.
+
+        Returns None when the request was ban-rejected (caller must return);
+        otherwise (limit, period, key, is_limited, remaining, retry_after).
+        """
+        # Invariant: __call__ only routes here when AUTO_BAN is on AND both
+        # user_id and token are present.
+        assert ctx.token is not None
+        (
+            is_blacklisted,
+            limit,
+            period,
+            key,
+            ban_info,
+            (is_limited, remaining, retry_after),
+        ) = await check_ban_blacklist_and_rate_limit(
+            client_ip=client_ip,
+            token=ctx.token,
+            jti=ctx.jti,
+            user_id=ctx.user_id,
+            tier_name=ctx.tier_name,
+            tenant_id=ctx.tenant_id,
+            tier_id_raw=ctx.tier_id_raw,
+            anonymous_ip=client_ip,
+            path=ctx.path,
+        )
+        # Store tri-state in state so `auth.py` (deps) can reuse the result (R5-3):
+        # True = blacklisted, False = verified clean, None = unknown (Redis down).
+        # A1: deps must run its DB fallback on None; never collapse it to False.
+        request.state.is_token_blacklisted = is_blacklisted
+
+        if is_blacklisted is not False:
+            logger.info(
+                "Blacklisted/unknown token detected in rate limiter | user_id=%s | treating as anonymous",
+                ctx.user_id,
+            )
+        if ban_info.is_banned:
+            await _reject_banned_ip(client_ip, request, ban_info, scope, receive, send)
+            return None
+        return limit, period, key, is_limited, remaining, retry_after
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Process request with tier-aware rate limiting and auto-ban."""
         if scope["type"] != "http":
@@ -199,22 +274,34 @@ class RateLimitMiddleware:
                 await self.app(scope, receive, whitelisted_send)
                 return
 
-        # Determine rate limit key and limits
-        limit, period, key = await self._get_rate_limit_config(request)
+        # Determine identity context (JWT/state only — no Redis yet)
+        ctx = await self._get_rate_limit_config(request)
 
-        # H-3: ban check + rate limit in ONE Lua RTT (was: get_ban_info +
-        # check_rate_limit_algorithm = 2 sequential RTTs). When auto-ban is
-        # disabled or Redis is unavailable the combined helper degrades to
-        # the original sequential semantics.
-        if settings.security.AUTO_BAN_ENABLED:
-            ban_info, (is_limited, remaining, retry_after) = await check_ban_and_rate_limit(
-                client_ip, key, limit, period
-            )
-            if ban_info.is_banned:
-                await _reject_banned_ip(client_ip, request, ban_info, scope, receive, send)
+        # P0-2: authenticated hot path runs blacklist + ban + GCRA in ONE
+        # Lua RTT (was: is_token_blacklisted probe + check_ban_and_rate_limit
+        # = 2 sequential RTTs). Anonymous / auto-ban-disabled paths keep the
+        # original sequential flow below.
+        if settings.security.AUTO_BAN_ENABLED and ctx.user_id and ctx.token:
+            merged = await self._check_authed_merged(request, ctx, client_ip, scope, receive, send)
+            if merged is None:
                 return
+            limit, period, key, is_limited, remaining, retry_after = merged
         else:
-            is_limited, remaining, retry_after = await rate_limiter.check_rate_limit_algorithm(key, limit, period)
+            limit, period, key = await self._resolve_legacy_config(request, ctx)
+
+            # H-3: ban check + rate limit in ONE Lua RTT (was: get_ban_info +
+            # check_rate_limit_algorithm = 2 sequential RTTs). When auto-ban is
+            # disabled or Redis is unavailable the combined helper degrades to
+            # the original sequential semantics.
+            if settings.security.AUTO_BAN_ENABLED:
+                ban_info, (is_limited, remaining, retry_after) = await check_ban_and_rate_limit(
+                    client_ip, key, limit, period
+                )
+                if ban_info.is_banned:
+                    await _reject_banned_ip(client_ip, request, ban_info, scope, receive, send)
+                    return
+            else:
+                is_limited, remaining, retry_after = await rate_limiter.check_rate_limit_algorithm(key, limit, period)
 
         headers = {
             "X-RateLimit-Limit": str(limit),
@@ -291,14 +378,13 @@ class RateLimitMiddleware:
 
         await self.app(scope, receive, send_wrapper)
 
-    async def _get_rate_limit_config(self, request: Request) -> tuple[int, int, str]:
-        """Determine rate limit configuration based on request context.
+    async def _get_rate_limit_config(self, request: Request) -> _RateLimitContext:
+        """Extract identity context for rate-limit resolution (no Redis).
 
-        Security: Checks token blacklist to prevent revoked tokens from keeping premium limits.
-
-        Returns
-        -------
-            Tuple of (limit, period, key)
+        Steps 1-2 of the original resolver: request-state/JWT identity plus
+        the sanitized path. The blacklist probe + limit/key resolution happen
+        downstream — either in the P0-2 merged helper (authed hot path) or
+        _resolve_legacy_config (anonymous / auto-ban-disabled paths).
         """
         # 1. Check if user_id/tier_name/tenant_id are already in request state (e.g. from tests)
         user_id = getattr(request.state, "user_id", None)
@@ -330,16 +416,42 @@ class RateLimitMiddleware:
         if tier_id_raw is None and cached_payload:
             tier_id_raw = cached_payload.get("tier_id")
 
+        # Use JTI if available to avoid re-parsing token
+        jti = cached_payload.get("jti") if cached_payload else None
+
+        path = sanitize_path(request.url.path)
+        return _RateLimitContext(
+            user_id=user_id,
+            tier_name=tier_name,
+            tenant_id=tenant_id,
+            tier_id_raw=tier_id_raw,
+            token=token,
+            jti=jti,
+            path=path,
+        )
+
+    async def _resolve_legacy_config(
+        self, request: Request, ctx: _RateLimitContext
+    ) -> tuple[int, int, str]:
+        """Original steps 3-4: blacklist probe + downgrade + resolve + key.
+
+        Used by anonymous requests and when auto-ban is disabled. Behavior
+        matches the pre-P0-2 flow, including the tri-state state store and
+        the downgrade log line.
+        """
+        from src.app.core.security.rate_policy import build_rate_limit_key, resolve_rate_limits
+
+        user_id = ctx.user_id
+        tier_name = ctx.tier_name
+
         # 3. Security: Check if token is blacklisted (SECURITY-GAP-1 fix)
         # If token is blacklisted OR its status is unknown (fail-open during a
         # Redis outage), treat the user as anonymous to prevent premium rate-limit
         # abuse with a revoked/unknown token.
-        if user_id and token:
+        if user_id and ctx.token:
             from src.app.core.security.token_blacklist_cache import is_token_blacklisted
 
-            # Use JTI if available to avoid re-parsing token
-            jti = cached_payload.get("jti") if cached_payload else None
-            is_blacklisted = await is_token_blacklisted(token, jti=jti)
+            is_blacklisted = await is_token_blacklisted(ctx.token, jti=ctx.jti)
 
             # Store tri-state in state so `auth.py` (deps) can reuse the result (R5-3):
             # True = blacklisted, False = verified clean, None = unknown (Redis down).
@@ -355,16 +467,14 @@ class RateLimitMiddleware:
                 tier_name = None
 
         # 4. Resolve limits
-        from src.app.core.security.rate_policy import build_rate_limit_key, resolve_rate_limits
-        from src.app.core.utils.path_utils import sanitize_path
-
-        path = sanitize_path(request.url.path)
-        limit, period = await resolve_rate_limits(path, tier_id=tier_id_raw, tier_name=tier_name, user_id=user_id)
+        limit, period = await resolve_rate_limits(
+            ctx.path, tier_id=ctx.tier_id_raw, tier_name=tier_name, user_id=user_id
+        )
 
         raw_ip = getattr(request.state, "client_ip", None) if not user_id else None
         anonymous_ip = (
             raw_ip if isinstance(raw_ip, str) and raw_ip else (get_client_ip(request) if not user_id else None)
         )
-        key = build_rate_limit_key(path, user_id=user_id, tenant_id=tenant_id, anonymous_ip=anonymous_ip)
+        key = build_rate_limit_key(ctx.path, user_id=user_id, tenant_id=ctx.tenant_id, anonymous_ip=anonymous_ip)
 
         return limit, period, key

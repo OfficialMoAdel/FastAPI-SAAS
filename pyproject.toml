@@ -50,6 +50,8 @@ dependencies = [
     "xxhash>=3.6.0",
     "bitarray>=3.8.0",
     "cachetools>=6.2.4",
+    # Attack-scan prefilter (Aho-Corasick); pure-stdlib str.find fallback if absent
+    "pyahocorasick>=2.0.0",
     # MFA (Phase 3)
     "pyotp>=2.9.0",
     "qrcode[pil]>=7.4.0",

@@ -11,6 +11,7 @@ Bitmask Strategy:
 - Multiple role masks combined with OR
 """
 
+import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -33,6 +34,12 @@ logger = get_logger(__name__)
 
 # Cache TTL for user permissions (5 minutes)
 PERMISSIONS_CACHE_TTL = 300
+
+# P1-7: singleflight registry for bitmask recomputation. Concurrent cache
+# misses on the same (tenant, user) key share one 4-table join instead of
+# each firing their own; the winner alone performs the DB query + setex.
+_in_flight_bitmask: dict[str, asyncio.Task[int]] = {}
+_bitmask_lock = asyncio.Lock()
 # OAuth2 scheme - same as used in core/security/jwt_service.py
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login")
 
@@ -112,7 +119,33 @@ async def get_cached_permissions_bitmask(
                 error=str(e),
             )
 
-    # Query from database
+    # Query from database — singleflight: concurrent misses on this key
+    # share one join; only the winner queries + backfills the cache.
+    async with _bitmask_lock:
+        task = _in_flight_bitmask.get(cache_key)
+        if task is None:
+            task = asyncio.create_task(_compute_and_cache_bitmask(user_id, tenant_id, db, redis_client, cache_key))
+            _in_flight_bitmask[cache_key] = task
+    try:
+        return await task
+    finally:
+        async with _bitmask_lock:
+            if _in_flight_bitmask.get(cache_key) is task:
+                _in_flight_bitmask.pop(cache_key, None)
+
+
+async def _compute_and_cache_bitmask(
+    user_id: int,
+    tenant_id: int | UUID,
+    db: AsyncSession,
+    redis_client: Any,
+    cache_key: str,
+) -> int:
+    """Run the 4-table permission join and backfill the bitmask cache.
+
+    Only the singleflight winner runs this; concurrent waiters await its
+    task and receive the identical mask.
+    """
     permissions = await get_user_permissions(user_id, tenant_id, db)
 
     # Encode to bitmask

@@ -10,6 +10,22 @@ from uuid import uuid4
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _route_windowed_fetch_to_mocked_crud(monkeypatch):
+    """P0-5: services call fetch_page_with_total instead of crud.get_multi.
+
+    Wiring tests mock crud.get_multi; route the new seam to the configured
+    mock so service->response wiring stays verified. Query-shape equivalence
+    is covered by tests/unit/modules/_base/test_windowed_pagination.py.
+    """
+    import src.app.modules.billing.subscription_service as _svc_mod
+
+    async def _fake(crud, db, **kwargs):
+        return await crud.get_multi(db=db, **kwargs)
+
+    monkeypatch.setattr(_svc_mod, "fetch_page_with_total", _fake)
+
+
 class TestStripeSettingsService:
     """Test Stripe settings service operations."""
 

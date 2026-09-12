@@ -7,15 +7,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.middleware.tenant import _L1_TENANT_CACHE
+from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
 
 
 @pytest.fixture(autouse=True)
 def clear_l1_cache():
     """Clear L1 cache before each test."""
     _L1_TENANT_CACHE.clear()
+    _L1_TENANT_PARSED.clear()
     yield
     _L1_TENANT_CACHE.clear()
+    _L1_TENANT_PARSED.clear()
 
 
 class TestL1CacheDirectAccess:
@@ -157,3 +159,111 @@ class TestSlugValidation:
         assert result is None
         # Should not be cached
         assert long_slug not in _L1_TENANT_CACHE
+
+
+class TestParsedMemo:
+    """Test the frozen TenantContext memo (P2 micro: skips uuid re-parse)."""
+
+    @pytest.mark.asyncio
+    async def test_l1_repeat_hit_returns_same_object(self):
+        """Second L1 hit for the same slug reuses the memoized TenantContext."""
+        from src.app.middleware.tenant import _L1_TENANT_PARSED, TenantMiddleware
+
+        _L1_TENANT_CACHE["memo-tenant"] = {
+            "id": "00000000-0000-0000-0000-000000000003",
+            "slug": "memo-tenant",
+            "is_active": True,
+        }
+
+        middleware = TenantMiddleware(MagicMock())
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=AssertionError("Redis should not be called on L1 hit"))
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            first = await middleware._get_tenant_by_slug("memo-tenant")
+            second = await middleware._get_tenant_by_slug("memo-tenant")
+
+        assert first is second
+        assert "memo-tenant" in _L1_TENANT_PARSED
+
+    @pytest.mark.asyncio
+    async def test_invalidate_drops_parsed(self):
+        """invalidate_tenant_l1 drops the parsed entry alongside the dict."""
+        from src.app.core.tenancy.cache import invalidate_tenant_l1
+        from src.app.middleware.tenant import _L1_TENANT_PARSED, TenantMiddleware
+
+        _L1_TENANT_CACHE["inv-tenant"] = {
+            "id": "00000000-0000-0000-0000-000000000004",
+            "slug": "inv-tenant",
+            "is_active": True,
+        }
+
+        middleware = TenantMiddleware(MagicMock())
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=AssertionError("Redis should not be called on L1 hit"))
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            before = await middleware._get_tenant_by_slug("inv-tenant")
+
+        assert "inv-tenant" in _L1_TENANT_PARSED
+        invalidate_tenant_l1("inv-tenant")
+        assert "inv-tenant" not in _L1_TENANT_PARSED
+        assert "inv-tenant" not in _L1_TENANT_CACHE
+
+        # Re-seed and resolve: must build a fresh object, not the dropped one.
+        _L1_TENANT_CACHE["inv-tenant"] = {
+            "id": "00000000-0000-0000-0000-000000000004",
+            "slug": "inv-tenant",
+            "is_active": True,
+        }
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            after = await middleware._get_tenant_by_slug("inv-tenant")
+        assert after is not before
+        assert after == before
+
+    @pytest.mark.asyncio
+    async def test_l2_refill_after_dict_expiry_serves_fresh_data(self):
+        """Dict expired while parsed alive + L2 refill must not serve stale data.
+
+        Regression guard for the pop-on-every-write pairing: without the
+        parsed pop at the L2-fill site, the refill would return the TenantContext
+        built from the expired dict instead of the fresh L2 payload.
+        """
+        from src.app.middleware.tenant import _L1_TENANT_PARSED, TenantMiddleware
+
+        slug = "refill-tenant"
+        _L1_TENANT_CACHE[slug] = {
+            "id": "00000000-0000-0000-0000-000000000005",
+            "slug": slug,
+            "is_active": True,
+        }
+
+        middleware = TenantMiddleware(MagicMock())
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=AssertionError("Redis should not be called on L1 hit"))
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            stale = await middleware._get_tenant_by_slug(slug)
+        assert stale is not None
+        assert stale.tenant_name == ""
+
+        # Simulate dict TTL expiry while the parsed entry is still alive.
+        _L1_TENANT_CACHE.pop(slug, None)
+        assert slug in _L1_TENANT_PARSED
+
+        # L2 now holds a FRESH payload (renamed tenant).
+        fresh_json = (
+            '{"id": "00000000-0000-0000-0000-000000000005", '
+            '"slug": "refill-tenant", "name": "Refilled Inc", "is_active": true}'
+        )
+        mock_pipe = MagicMock()
+        mock_pipe.execute = AsyncMock(return_value=[False, fresh_json])
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            fresh = await middleware._get_tenant_by_slug(slug)
+
+        assert fresh is not None
+        assert fresh is not stale
+        assert fresh.tenant_name == "Refilled Inc"
+        assert _L1_TENANT_PARSED[slug] is fresh

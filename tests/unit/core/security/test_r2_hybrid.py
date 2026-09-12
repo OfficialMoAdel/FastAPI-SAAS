@@ -26,11 +26,13 @@ class TestL1TenantCacheComprehensive:
     @pytest.fixture(autouse=True)
     def clear_cache(self):
         """Clear L1 cache before/after each test."""
-        from src.app.middleware.tenant import _L1_TENANT_CACHE
+        from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
 
         _L1_TENANT_CACHE.clear()
+        _L1_TENANT_PARSED.clear()
         yield
         _L1_TENANT_CACHE.clear()
+        _L1_TENANT_PARSED.clear()
 
     def test_l1_cache_configuration(self):
         """Verify L1 cache has correct configuration."""

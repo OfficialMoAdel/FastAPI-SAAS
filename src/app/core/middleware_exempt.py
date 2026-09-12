@@ -11,6 +11,8 @@ in O(1) and union cheaply with their own.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 # Paths that are universally exempt from attack_detection, ip_filter, and
 # tenant resolution: docs/openapi (unauthenticated), health/live/ready
 # (orchestrator probes), and the well-known Stripe-style webhook receivers.
@@ -66,15 +68,22 @@ def is_path_exempt(
     Per-middleware modules call this with their own extra paths; the
     base set is checked once. Pass a narrower ``base`` (e.g.
     IP_FILTER_EXEMPT_PATHS) to exempt fewer common paths.
+
+    P2 micro: prefix checks run C-speed ``str.startswith(tuple)`` over
+    memoized ``prefix + "/"`` tuples (one entry per distinct set — all
+    in-repo callers pass module-level frozensets), replacing the
+    per-request f-string + Python loop.
     """
     if path in base or path in additional:
         return True
     # Common case: sub-paths of an exempt prefix (e.g. /metrics/foo).
     # Mirrors the existing prefix-startswith checks in the three middlewares.
-    for prefix in base:
-        if path.startswith(f"{prefix}/"):
-            return True
-    for prefix in additional:
-        if path.startswith(f"{prefix}/"):
-            return True
-    return False
+    if path.startswith(_prefix_tuple(base)):
+        return True
+    return bool(additional) and path.startswith(_prefix_tuple(additional))
+
+
+@lru_cache(maxsize=16)
+def _prefix_tuple(paths: frozenset[str]) -> tuple[str, ...]:
+    """Memoized ``prefix + "/"`` tuple for C-speed startswith checks."""
+    return tuple(f"{prefix}/" for prefix in paths)

@@ -86,9 +86,10 @@ async def setup_tenants_and_users(db_session):
     logger.info(f"Created {len(users_b)} users in Tenant B")
 
     # Clear tenant cache to ensure fresh lookups
-    from src.app.middleware.tenant import _L1_TENANT_CACHE
+    from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
 
     _L1_TENANT_CACHE.clear()
+    _L1_TENANT_PARSED.clear()
 
     return {
         "tenant_a": tenant_a,
@@ -602,9 +603,10 @@ class TestTenantIsolationE2E:
         logger.info(f"Created {len(tenants)} tenants with 10 users each (100 users total)")
 
         # Clear tenant cache
-        from src.app.middleware.tenant import _L1_TENANT_CACHE
+        from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
 
         _L1_TENANT_CACHE.clear()
+        _L1_TENANT_PARSED.clear()
 
         # Set up client
         app = get_test_app

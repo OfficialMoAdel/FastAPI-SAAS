@@ -55,6 +55,10 @@ logger = get_logger(__name__)
 AUDIT_LOG_BUFFER_KEY = "audit_log_buffer"
 AUDIT_LOG_BATCH_SIZE = 100
 AUDIT_LOG_MAX_FLUSH_PER_RUN = 1000
+# P2: bound the Redis buffer so a stalled flusher cannot grow it unbounded.
+# LTRIM keeps the newest MAXLEN entries (tail, where buffer_audit_log appends);
+# the flusher's head-side window (:414) is the opposite end, so both coexist.
+AUDIT_LOG_BUFFER_MAXLEN = 10000
 
 
 class AuditLogService:
@@ -317,7 +321,11 @@ async def buffer_audit_log(log_data: dict[str, Any], db: AsyncSession | None = N
         # BUG FIX: Push new items to the right side (tail) of the buffer list.
         # This converts the batch processor's execution behavior to strict FIFO, securely
         # preventing older events from starving endlessly natively under LPUSH + LTRIM bounds.
-        await client.rpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))  # type: ignore[misc]
+        # P2: bound the buffer in the same RTT (ltrim keeps newest MAXLEN at the tail).
+        pipe = client.pipeline()
+        pipe.rpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))
+        pipe.ltrim(AUDIT_LOG_BUFFER_KEY, -AUDIT_LOG_BUFFER_MAXLEN, -1)
+        await pipe.execute()  # type: ignore[misc]
     except RedisError as e:
         logger.warning("audit_log_buffer_failed", error=str(e), action="fallback_direct")
         await _direct_insert_log(log_data, db)

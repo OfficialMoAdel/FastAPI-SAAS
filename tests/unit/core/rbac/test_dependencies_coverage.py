@@ -1,5 +1,6 @@
 """Unit tests for RBAC permission dependencies (core/rbac/dependencies.py)."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -154,6 +155,34 @@ async def test_get_cached_permissions_bitmask_no_redis(mock_db):
     ):
         mask = await rbac_deps.get_cached_permissions_bitmask(1, TENANT_ID, mock_db)
     assert mask == 0
+
+
+async def test_get_cached_permissions_bitmask_concurrent_miss_singleflight(mock_db):
+    """P1-7: concurrent misses on one key share a single join + setex."""
+    fake_redis = AsyncMock()
+    fake_redis.get.return_value = None
+    gate = asyncio.Event()
+    calls = 0
+
+    async def _slow_query(*args):
+        nonlocal calls
+        calls += 1
+        await gate.wait()
+        return {"users:read"}
+
+    with (
+        patch.object(cache_module, "client", fake_redis),
+        patch.object(rbac_deps, "get_user_permissions", AsyncMock(side_effect=_slow_query)),
+    ):
+        tasks = [asyncio.create_task(rbac_deps.get_cached_permissions_bitmask(1, TENANT_ID, mock_db)) for _ in range(5)]
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert calls == 1
+        gate.set()
+        masks = await asyncio.gather(*tasks)
+    expected = PermissionBitmask.get_bit(Permission.USERS_READ.value)
+    assert masks == [expected] * 5
+    fake_redis.setex.assert_awaited_once()
 
 
 async def test_has_permission_cached(mock_db):

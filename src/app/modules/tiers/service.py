@@ -184,12 +184,9 @@ class TierService:
 
         await crud.update(db=self.db, object=values, name=name)
 
-        # Invalidate tier cache on mutation
-        keys = [f"tier:{name}"]
-        if new_name and new_name != name:
-            keys.append(f"tier:{new_name}")
-        await self._invalidate_tier_cache(keys, tier_name=name)
-
+        # P2 boot-waste: `tier:{name}` was never written by any reader/writer
+        # (get_tier/get_tiers hit the DB directly), so there is nothing to
+        # invalidate here. update_tier previously built only dead keys.
         return MessageResponse(message="Tier updated")
 
     async def _invalidate_tier_cache(self, keys: list[str], tier_name: str) -> None:
@@ -286,11 +283,14 @@ class TierService:
 
         await crud.delete(db=self.db, name=name)
 
-        # Invalidate tier and rate-limit caches
-        keys = [f"tier:{name}"]
+        # Invalidate rate-limit cache for the deleted tier. P2 boot-waste:
+        # `tier:{name}` was never written by any reader/writer, so only the
+        # live `rate_limits:tier:{id}` key is deleted.
+        keys = []
         if tier_id:
             keys.append(f"rate_limits:tier:{tier_id}")
-        await self._invalidate_tier_cache(keys, tier_name=name)
+        if keys:
+            await self._invalidate_tier_cache(keys, tier_name=name)
 
         # P2-B: the tier is gone, so its cached policy entry
         # (rate_limit:policy:tier:{id} + L1) must go too — otherwise the

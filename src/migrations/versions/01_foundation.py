@@ -141,6 +141,14 @@ def upgrade() -> None:
     op.create_index("ix_post_tenant_id", "post", ["tenant_id"])
     op.create_index("ix_post_uuid", "post", ["uuid"], unique=True)
     op.create_index("idx_posts_tenant_user_deleted", "post", ["tenant_id", "created_by_user_id", "is_deleted"])
+    # P2 keyset composite: equality prefix (tenant/user/deleted) + ordered
+    # scan for get_posts_keyset ORDER BY created_at DESC, id DESC.
+    op.create_index(
+        "idx_posts_tenant_user_created_id",
+        "post",
+        ["tenant_id", "created_by_user_id", "is_deleted", "created_at", "id"],
+        postgresql_ops={"created_at": "DESC", "id": "DESC"},
+    )
 
 
 def downgrade() -> None:

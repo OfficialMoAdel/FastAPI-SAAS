@@ -40,8 +40,11 @@ async def register_key_patterns(
         for pattern in patterns:
             idx_key = _pattern_index_key(pattern)
             pipe.sadd(idx_key, key)
-            # Set TTL on index key to ensure it expires if not explicitly invalidated
-            pipe.expire(idx_key, ttl)
+            # P1-9: index outlives the data key (tenant-index convention).
+            # An index expiring at-or-before the data key lets a later write
+            # find an empty index and miss still-live keys (stale reads);
+            # dead index members are harmless (deleting an expired key is a no-op).
+            pipe.expire(idx_key, ttl * 2)
         await pipe.execute()
 
 
@@ -110,7 +113,8 @@ async def set_cache_with_patterns(
             for pattern in patterns:
                 idx_key = _pattern_index_key(pattern)
                 pipe.sadd(idx_key, key)
-                pipe.expire(idx_key, ttl)
+                # P1-9: index TTL is 2x the data TTL (see register_key_patterns).
+                pipe.expire(idx_key, ttl * 2)
         await pipe.execute()
 
     return True

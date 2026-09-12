@@ -316,11 +316,14 @@ async def test_warm_feature_flags(mock_redis, mock_db):
     mock_result = MagicMock()
     mock_result.scalars().all.return_value = [mock_flag]
     mock_db.execute = AsyncMock(return_value=mock_result)
-    mock_redis.setex = AsyncMock()
+    mock_pipe = MagicMock()
+    mock_pipe.execute = AsyncMock()
+    mock_redis.pipeline = MagicMock(return_value=mock_pipe)
 
     count = await warm_feature_flags(mock_db)
     assert count == 1
-    mock_redis.setex.assert_awaited_once()
+    mock_pipe.setex.assert_called_once()
+    mock_pipe.execute.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -330,7 +333,9 @@ async def test_warm_feature_flags_exception(mock_redis, mock_db):
     mock_result = MagicMock()
     mock_result.scalars().all.return_value = [mock_flag]
     mock_db.execute = AsyncMock(return_value=mock_result)
-    mock_redis.setex = AsyncMock(side_effect=Exception("Redis error"))
+    mock_pipe = MagicMock()
+    mock_pipe.execute = AsyncMock(side_effect=Exception("Redis error"))
+    mock_redis.pipeline = MagicMock(return_value=mock_pipe)
 
     count = await warm_feature_flags(mock_db)
     assert count == 0

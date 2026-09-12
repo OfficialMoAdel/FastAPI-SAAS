@@ -55,6 +55,25 @@ def _is_sqlite(connection: Any) -> bool:
         return False
 
 
+def _mark_rls_dirty(connection: AsyncConnection) -> None:
+    """Flag the pooled connection's record info as RLS-dirty.
+
+    MUST be called BEFORE the GUC mutation it guards (fail-safe ordering):
+    if the mutation then fails, the flag stays set and the next checkout
+    re-asserts — an extra SELECT, never a stale-GUC skip.
+
+    The flag (and the skip that reads it) only exists when
+    ``connection.sync_connection.info`` is a real dict, which is exactly
+    when ``restore_rls_context`` can observe it: the skip requires
+    ``info["rls_tenant"] == <real tenant str>``, a comparison test doubles
+    (MagicMock ``.info``) can never satisfy. Non-dict info is therefore
+    left untouched — the checkout degrades to always-restore.
+    """
+    record_info = connection.sync_connection.info if connection.sync_connection is not None else None
+    if isinstance(record_info, dict):
+        record_info["rls_dirty"] = True
+
+
 def restore_rls_context(dbapi_connection: Any, connection_record: Any, connection_proxy: Any) -> None:
     """Restores RLS context when a connection is acquired from the pool.
 
@@ -63,13 +82,22 @@ def restore_rls_context(dbapi_connection: Any, connection_record: Any, connectio
     we can set a session-level config (`is_local=False`) that persists across all
     transactions on this connection checkout, until it is returned to the pool and checked out again.
 
-    SECURITY: ``set_config`` runs on EVERY checkout — there is no skip.
-    Session-level GUCs can be mutated outside this listener (``bypass_rls``,
-    ``set_rls_context``, ``clear_rls_context``) and ``connection_record.info``
-    is NOT reset on pool return, so a same-tenant skip shortcut could carry a
-    stale ``app.bypass_rls`` or tenant GUC into the next checkout: a
-    cross-tenant data leak / RLS-bypass leak. Re-asserting the tenant and
-    clearing bypass/user on every checkout is the fail-closed invariant.
+    SECURITY: ``set_config`` runs on every checkout UNLESS the dirty-flag
+    skip fires: ``connection_record.info["rls_tenant"]`` already equals this
+    checkout's tenant AND ``info["rls_dirty"]`` is unset. The skip is safe
+    because session-level GUCs persist on a pooled connection across
+    checkouts, and every out-of-listener GUC mutation in this module
+    (``set_rls_context``, ``clear_rls_context``, ``bypass_rls`` set) marks
+    ``info["rls_dirty"]`` BEFORE mutating (fail-safe ordering: a failed
+    mutation leaves the flag set, forcing re-assertion). A same-tenant skip
+    shortcut therefore cannot carry a stale ``app.bypass_rls`` or tenant GUC
+    into the next checkout. Re-asserting the tenant and clearing bypass/user
+    on every non-skipped checkout is the fail-closed invariant.
+    NOTE: the no-tenant branch never skips — an UNSET GUC (fresh pooled
+    connection) reads as NULL while an asserted-empty GUC reads as '', and
+    ``current_setting(..., true)`` NULL-vs-'' semantics differ per policy.
+    Unauthenticated/no-tenant checkouts are low-volume; the tenant branch
+    (every authed request) is where the skip pays.
     """
     tenant = get_current_tenant()
     tenant_id = str(tenant.id) if tenant else None
@@ -79,7 +107,14 @@ def restore_rls_context(dbapi_connection: Any, connection_record: Any, connectio
             # We use is_local=false so the config persists for the entire connection checkout.
             # When the connection is returned to the pool and checked out by another request,
             # this event will fire again and overwrite it.
+            record_info = connection_record.info if connection_record is not None else {}
             if tenant_id:
+                if not record_info.get("rls_dirty") and record_info.get("rls_tenant") == tenant_id:
+                    # P2 RLS dirty-flag skip: this pooled connection already
+                    # asserts this tenant's GUCs (set by a previous checkout's
+                    # restore) and no out-of-listener mutation happened since
+                    # (set/clear/bypass all mark rls_dirty first). 0 RTT.
+                    return
                 await conn.execute(
                     f"SELECT set_config('{RLS_TENANT_VAR}', $1, false), "
                     f"set_config('{RLS_USER_VAR}', '', false), "
@@ -88,6 +123,7 @@ def restore_rls_context(dbapi_connection: Any, connection_record: Any, connectio
                 )
                 if connection_record is not None:
                     connection_record.info["rls_tenant"] = tenant_id
+                    connection_record.info.pop("rls_dirty", None)
             else:
                 # No tenant context at pool checkout. Reset ALL RLS vars to empty so a
                 # previous connection's tenant context cannot leak into this checkout
@@ -144,6 +180,10 @@ async def set_rls_context(
         logger.debug("Skipping RLS context set (SQLite)")
         return
 
+    # P2 RLS dirty flag (fail-safe ordering: mark BEFORE mutating, so a
+    # failed set leaves the next checkout re-asserting instead of skipping).
+    _mark_rls_dirty(connection)
+
     try:
         # P2-2: Single roundtrip for all context variables using COALESCE
         if user_id:
@@ -189,6 +229,9 @@ async def clear_rls_context(connection: AsyncConnection) -> None:
     if _is_sqlite(connection):
         logger.debug("Skipping RLS context clear (SQLite)")
         return
+
+    # P2 RLS dirty flag (fail-safe ordering: mark BEFORE mutating).
+    _mark_rls_dirty(connection)
 
     try:
         # P2-2: Single roundtrip to reset all RLS variables
@@ -341,6 +384,11 @@ async def bypass_rls(
         logger.debug("Skipping RLS bypass (SQLite)")
         yield session
         return
+
+    # P2 RLS dirty flag (fail-safe ordering: mark BEFORE the bypass SET;
+    # the finally-clear deliberately leaves the flag set — any bypass during
+    # a checkout forces the next checkout to re-assert fail-closed).
+    _mark_rls_dirty(connection)
 
     try:
         # Store in session info for restoration upon new transactions

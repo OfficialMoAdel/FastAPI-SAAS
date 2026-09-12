@@ -274,3 +274,98 @@ def test_restore_rls_context_error():
 
         # Verify connection invalidation is still called to protect pool
         mock_conn.invalidate.assert_called_once()
+
+
+class TestRlsDirtyFlag:
+    """P2 RLS dirty-flag skip: 4-case checkout matrix + marking proofs.
+
+    Skip invariant: checkout runs 0 RTT iff ``record.info["rls_tenant"]``
+    already equals this checkout's tenant AND ``info["rls_dirty"]`` is
+    unset. Every out-of-listener GUC mutation marks dirty BEFORE mutating.
+    """
+
+    async def _run_restore(self, tenant_id_or_none, record):
+        """Drive restore_rls_context through its run_async capture."""
+        mock_dbapi = MagicMock()
+        mock_tenant = None if tenant_id_or_none is None else MagicMock(id=tenant_id_or_none)
+        with patch("src.app.core.db.rls.get_current_tenant", return_value=mock_tenant):
+            restore_rls_context(mock_dbapi, record, None)
+        async_func = mock_dbapi.run_async.call_args[0][0]
+        mock_conn = AsyncMock()
+        await async_func(mock_conn)
+        return mock_conn
+
+    @staticmethod
+    def _record(info):
+        record = MagicMock()
+        record.info = info
+        return record
+
+    @pytest.mark.asyncio
+    async def test_reuse_skip(self):
+        """Same tenant, clean flag → 0 RTT (the P2 win)."""
+        record = self._record({"rls_tenant": "T1"})
+        mock_conn = await self._run_restore("T1", record)
+        assert mock_conn.execute.await_count == 0
+        assert record.info == {"rls_tenant": "T1"}
+
+    @pytest.mark.asyncio
+    async def test_bypass_reassert(self):
+        """Same tenant but dirty (bypass/set/clear ran) → re-assert + clear flag."""
+        record = self._record({"rls_tenant": "T1", "rls_dirty": True})
+        mock_conn = await self._run_restore("T1", record)
+        assert mock_conn.execute.await_count == 1
+        assert record.info == {"rls_tenant": "T1"}
+
+    @pytest.mark.asyncio
+    async def test_switch_reassert(self):
+        """Different tenant → re-assert with the NEW tenant id."""
+        record = self._record({"rls_tenant": "T1"})
+        mock_conn = await self._run_restore("T2", record)
+        assert mock_conn.execute.await_count == 1
+        assert mock_conn.execute.call_args[0][1] == "T2"
+        assert record.info == {"rls_tenant": "T2"}
+
+    @pytest.mark.asyncio
+    async def test_missing_info_reassert(self):
+        """record=None (existing callers/tests) → today's always-restore behavior."""
+        mock_conn = await self._run_restore("T1", None)
+        assert mock_conn.execute.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_set_marks_dirty_before_mutation(self):
+        """Fail-safe ordering: execute fails → flag is STILL set (re-assert, never skip)."""
+        conn = AsyncMock(spec=AsyncConnection)
+        conn.sync_connection.info = {}
+        conn.execute.side_effect = Exception("DB error")
+        with pytest.raises(Exception, match="DB error"):
+            await set_rls_context(conn, "tenant-123")
+        assert conn.sync_connection.info == {"rls_dirty": True}
+
+    @pytest.mark.asyncio
+    async def test_set_marks_dirty_on_success(self):
+        conn = AsyncMock(spec=AsyncConnection)
+        conn.sync_connection.info = {}
+        await set_rls_context(conn, "tenant-123")
+        assert conn.sync_connection.info == {"rls_dirty": True}
+        assert conn.execute.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_clear_marks_dirty(self):
+        conn = AsyncMock(spec=AsyncConnection)
+        conn.sync_connection.info = {}
+        await clear_rls_context(conn)
+        assert conn.sync_connection.info == {"rls_dirty": True}
+        assert conn.execute.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_bypass_sqlite_path_does_not_mark(self):
+        """SQLite path mutates nothing → no flag (avoids pessimizing sqlite)."""
+        conn = AsyncMock(spec=AsyncConnection)
+        conn.dialect.name = "sqlite"
+        conn.sync_connection.info = {}
+        session = AsyncMock(spec=AsyncSession)
+        session.connection.return_value = conn
+        async with bypass_rls(session, reason="test"):
+            pass
+        assert conn.sync_connection.info == {}

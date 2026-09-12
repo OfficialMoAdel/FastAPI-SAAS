@@ -557,6 +557,11 @@ async def resolve_principal(
         # 5. Composite auth-prefetch & revocation enforcement
         from src.app.core.security.auth_prefetch import execute_composite_auth_prefetch
 
+        # P0-3: the middleware's Redis blacklist probe (stored tri-state on
+        # request.state) makes the composite's blacklist leg redundant when
+        # definite — skip it and save those ops. None (Redis down at
+        # middleware time) keeps the full composite check.
+        cached_blacklist = getattr(request.state, "is_token_blacklisted", None) if request is not None else None
         is_blacklisted, session_valid, bitmask = await execute_composite_auth_prefetch(
             token=token,
             jti=jti,
@@ -564,9 +569,9 @@ async def resolve_principal(
             session_id=session_id,
             tenant_id=user_tenant_id,
             check_bitmask=True,
+            check_blacklist=(cached_blacklist is None),
         )
 
-        cached_blacklist = getattr(request.state, "is_token_blacklisted", None) if request is not None else None
         await _enforce_token_not_revoked(request, token, jti, cached_blacklist, is_blacklisted, db)
         await _enforce_session_valid(session_id, session_valid, user_id, jwt_exp)
 

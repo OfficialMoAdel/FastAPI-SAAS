@@ -41,15 +41,16 @@ def _patch_crud(service: RateLimitService, crud: AsyncMock):
 
 async def test_get_rate_limits_by_tier_id_cache_miss() -> None:
     service, db = _make_service()
-    crud = AsyncMock()
-    crud.get_multi.return_value = {"data": [{"id": 1}]}
+    page = {"data": [{"id": 1}], "total_count": 1}
     with (
         patch.object(cache_module, "client", None),
-        _patch_crud(service, crud),
+        _patch_crud(service, AsyncMock()),
+        patch.object(
+            RateLimitService, "get_page_with_total", AsyncMock(return_value=page)
+        ),
     ):
         out = await service.get_rate_limits_by_tier_id(tier_id=5)
-    assert out == {"data": [{"id": 1}]}
-    crud.get_multi.assert_awaited_once()
+    assert out == page
 
 
 async def test_get_rate_limits_by_tier_id_cache_hit() -> None:
@@ -127,15 +128,14 @@ async def test_create_rate_limit_none_returned_raises() -> None:
 
 async def test_get_rate_limits_paginated() -> None:
     service, db = _make_service()
-    crud = AsyncMock()
-    crud.get_multi.return_value = {"data": [], "total": 0}
+    page = {"data": [], "total_count": 0}
     with (
         _patch_tier(),
-        _patch_crud(service, crud),
+        _patch_crud(service, AsyncMock()),
+        patch.object(RateLimitService, "get_page_with_total", AsyncMock(return_value=page)),
     ):
         out = await service.get_rate_limits("free", page=2, items_per_page=5)
     assert "data" in out
-    crud.get_multi.assert_awaited_once()
 
 
 async def test_get_rate_limit_found() -> None:

@@ -12,6 +12,7 @@ Redis Schema:
 import asyncio
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from cachetools import TTLCache
 
@@ -334,6 +335,172 @@ async def check_ban_and_rate_limit(
     import math
 
     return ban_info, (
+        is_limited,
+        int(float(remaining)),
+        int(math.ceil(float(retry_after_ms) / 1000.0)) if is_limited else 0,
+    )
+
+
+async def check_ban_blacklist_and_rate_limit(
+    *,
+    client_ip: str,
+    token: str,
+    jti: str | None,
+    user_id: str | None,
+    tier_name: str | None,
+    tenant_id: Any,
+    tier_id_raw: int | str | None,
+    anonymous_ip: str | None,
+    path: str,
+) -> tuple[bool | None, int, int, str, BanInfo, tuple[bool, int, int]]:
+    """P0-2: blacklist verdict + ban check + GCRA rate limit in ONE Redis Lua round-trip.
+
+    Merges the rate-limit middleware's sequential ``is_token_blacklisted``
+    probe + ``check_ban_and_rate_limit`` pair (2 RTTs) into a single
+    ``ban_blacklist_gcra_check`` script (1 RTT) on the authenticated hot
+    path. The GCRA key depends on the in-script blacklist verdict, so both
+    candidate (limit, period, key) triples are resolved up front
+    (L1/settings-backed, no Redis RTT on the warm path) and passed in; the
+    script consumes exactly one of them.
+
+    Semantics are identical to running the two helpers separately:
+    a ``is not False`` verdict downgrades to the anonymous candidate
+    (``tier_id`` still applies — only ``user_id``/``tier_name`` clear),
+    ``limit <= 0`` blocks without consuming budget, and the ban
+    negative-cache is written (not read) on a clean verdict.
+
+    Args:
+        client_ip: Client IP (ban key namespace).
+        token: Raw JWT (blacklist member source).
+        jti: Verified JTI claim, if available.
+        user_id: Authenticated user id (pre-downgrade).
+        tier_name: Tier name claim (pre-downgrade).
+        tenant_id: Tenant id claim (survives downgrade).
+        tier_id_raw: Tier id claim (survives downgrade).
+        anonymous_ip: IP to scope the anonymous candidate key.
+        path: Sanitized request path.
+
+    Returns:
+        (is_blacklisted, limit, period, key, BanInfo,
+        (is_limited, remaining, retry_after)) for the SELECTED candidate.
+        is_blacklisted is None only when Redis is unavailable.
+    """
+    from src.app.core.security.rate_policy import build_rate_limit_key, resolve_rate_limits
+    from src.app.core.security.token_blacklist_cache import (
+        BLACKLIST_KEY,
+        NEGATIVE_CACHE_KEY,
+        _circuit_breaker,
+        _extract_blacklist_member,
+        _get_available_redis_client_for_blacklist,
+        _token_cache_key,
+        is_token_blacklisted,
+    )
+    from src.app.core.utils.lua_manager import get_lua_manager
+
+    redis_client, fail_closed = _get_available_redis_client_for_blacklist()
+    if redis_client is None:
+        # Breaker open / Redis down: mirror is_token_blacklisted's
+        # no-client semantics (True if fail_closed else None → downgrade
+        # via `is not False`) and check_ban_and_rate_limit's no-Redis
+        # fail-open/fail-closed policy on the anonymous candidate.
+        verdict: bool | None = True if fail_closed else None
+        anon_key = build_rate_limit_key(path, user_id=None, tenant_id=tenant_id, anonymous_ip=anonymous_ip)
+        sel_limit, sel_period = await resolve_rate_limits(path, tier_id=tier_id_raw, tier_name=None, user_id=None)
+        if settings.rate_limit.RATE_LIMIT_FAIL_OPEN:
+            from src.app.core.monitoring.r1_unified_metrics import record_fail_open
+
+            logger.warning(
+                "ban_blacklist_and_rate_limit_fail_open_no_redis",
+                client_ip=client_ip,
+                rate_limit_key=anon_key,
+            )
+            record_fail_open("ban_check")
+            return verdict, sel_limit, sel_period, anon_key, BanInfo(is_banned=False), (False, sel_limit, 0)
+        return verdict, sel_limit, sel_period, anon_key, BanInfo(is_banned=False), (True, sel_limit, 0)
+
+    # Resolve BOTH candidates up front (L1/settings-backed, no extra RTT).
+    authed_limit, authed_period = await resolve_rate_limits(
+        path, tier_id=tier_id_raw, tier_name=tier_name, user_id=user_id
+    )
+    authed_key = build_rate_limit_key(path, user_id=user_id, tenant_id=tenant_id, anonymous_ip=None)
+    anon_limit, anon_period = await resolve_rate_limits(path, tier_id=tier_id_raw, tier_name=None, user_id=None)
+    anon_key = build_rate_limit_key(path, user_id=None, tenant_id=tenant_id, anonymous_ip=anonymous_ip)
+
+    def _selected(v: bool | None) -> tuple[str, int, int]:
+        if v is False:
+            return authed_key, authed_limit, authed_period
+        return anon_key, anon_limit, anon_period
+
+    if authed_limit <= 0 or anon_limit <= 0:
+        # P1-1 block-path: the merged script has no limit<=0 guard, so
+        # delegate to the sequential helpers (identical semantics; the
+        # get_ban_info leg usually rides the 5s negative cache).
+        seq_verdict = await is_token_blacklisted(token, jti=jti)
+        sel_key, sel_limit, sel_period = _selected(seq_verdict)
+        ban_info, rl = await check_ban_and_rate_limit(client_ip, sel_key, sel_limit, sel_period)
+        return seq_verdict, sel_limit, sel_period, sel_key, ban_info, rl
+
+    def _gcra_params(limit: int, period: int) -> tuple[int, int, int, int]:
+        period_ms = period * 1000
+        emission_interval_ms = max(1, round(period_ms / limit)) if limit > 0 else 0
+        return emission_interval_ms, limit, emission_interval_ms * limit, period_ms
+
+    now_s = time.time()
+    now_sec = int(now_s)
+    now_ms = int(now_s * 1000)
+    neg_ttl = getattr(settings.r1_unified, "TOKEN_NEGATIVE_CACHE_TTL", 60)
+    negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token, jti)}"
+    member = _extract_blacklist_member(token, jti)
+    ban_key = BAN_KEY_PREFIX.format(ip=client_ip)
+    a_emit, a_lim, a_burst, a_per = _gcra_params(authed_limit, authed_period)
+    n_emit, n_lim, n_burst, n_per = _gcra_params(anon_limit, anon_period)
+
+    try:
+        result = await get_lua_manager().execute(
+            redis_client,
+            "ban_blacklist_gcra_check",
+            keys=[negative_key, BLACKLIST_KEY, f"gcra:{authed_key}", ban_key, f"gcra:{anon_key}"],
+            args=[
+                member,
+                str(now_sec),
+                str(int(neg_ttl)),
+                str(float(now_ms)),
+                str(float(a_emit)),
+                str(int(a_lim)),
+                str(int(a_burst)),
+                str(float(a_per)),
+                str(float(n_emit)),
+                str(int(n_lim)),
+                str(int(n_burst)),
+                str(float(n_per)),
+            ],
+        )
+        raw_bl, is_allowed, remaining, retry_after_ms, is_banned, ban_reason, ban_ttl = result
+    except Exception as e:
+        logger.warning("Combined ban+blacklist+GCRA check failed, falling back to sequential", error=str(e))
+        seq_verdict = await is_token_blacklisted(token, jti=jti)
+        sel_key, sel_limit, sel_period = _selected(seq_verdict)
+        ban_info = await get_ban_info(client_ip)
+        from src.app.core.utils.rate_limit import rate_limiter as _rl
+
+        is_limited, remaining, retry_after = await _rl.check_rate_limit_algorithm(sel_key, sel_limit, sel_period)
+        return seq_verdict, sel_limit, sel_period, sel_key, ban_info, (is_limited, remaining, retry_after)
+
+    await _circuit_breaker.record_success()
+    merged_verdict = bool(int(raw_bl))
+    is_b = int(is_banned) == 1
+    ban_info = BanInfo(
+        is_banned=is_b,
+        reason=(ban_reason.decode() if isinstance(ban_reason, bytes) else str(ban_reason or "")) if is_b else None,
+        expires_at=(time.time() + int(ban_ttl)) if is_b and int(ban_ttl) > 0 else None,
+    )
+    if not is_b:
+        _ban_negative_cache[_ban_cache_key(client_ip)] = True
+    sel_key, sel_limit, sel_period = _selected(merged_verdict)
+    is_limited = int(is_allowed) == 0
+    import math
+
+    return merged_verdict, sel_limit, sel_period, sel_key, ban_info, (
         is_limited,
         int(float(remaining)),
         int(math.ceil(float(retry_after_ms) / 1000.0)) if is_limited else 0,

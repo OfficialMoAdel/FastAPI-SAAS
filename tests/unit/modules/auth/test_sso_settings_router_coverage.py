@@ -70,8 +70,9 @@ async def test_create_sso_settings_duplicate(ctx):
 
 
 async def test_list_sso_settings(ctx):
-    with patch.object(
-        crud_sso_settings, "get_multi", AsyncMock(return_value={"data": [{"provider": "google"}], "total_count": 1})
+    with patch(
+        "src.app.modules.auth.routers.sso_settings.fetch_page_with_total",
+        AsyncMock(return_value={"data": [{"provider": "google"}], "total_count": 1}),
     ):
         result = await sso_router.list_sso_settings(request=MagicMock(), ctx=ctx, page=1, per_page=10)
     assert result["items"] == [{"provider": "google"}]

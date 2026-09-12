@@ -537,12 +537,41 @@ class StorageService:
     async def download(self, tenant_id: UUID, file_id: int, user_id: int | None = None) -> Download:
         """Resolve a stored file for streaming download."""
         file = await self.get_file_or_raise(tenant_id, file_id, user_id)
+        storage_svc = getattr(self, "_storage_service", self.admin)
+        settings = await storage_svc.get_settings_or_raise(tenant_id)
         file_dto = FileRead.model_validate(file, from_attributes=True)
 
         def stream_factory() -> AsyncIterator[bytes]:
-            return self.download_file(tenant_id, file_id, user_id)
+            # P2: file row + settings already resolved above — the stream
+            # performs 0 DB RTTs before first byte (previously re-fetched
+            # both). Fail-fast bonus: misconfigured storage now 404s here
+            # instead of dying mid-stream after 200 headers.
+            return self._stream_from_prefetched(file, settings)
 
         return Download(file=file_dto, _stream_factory=stream_factory)
+
+    async def _stream_from_prefetched(
+        self,
+        file: File,
+        settings: StorageSettings,
+    ) -> AsyncGenerator[bytes, None]:
+        """Stream chunks for an already-resolved file row + settings."""
+        storage_svc = getattr(self, "_storage_service", self.admin)
+        provider = storage_svc.get_provider_for_settings(settings)
+
+        tid = str(file.tenant_id)
+        logger.info("file_download_started", file_id=file.id, tenant_id=tid, storage_path=file.storage_path)
+
+        with storage_metrics.measure_download(tid, settings.provider):
+            async for chunk in provider.download(file.storage_path):
+                yield chunk
+
+        storage_metrics.record_download(
+            tenant_id=tid,
+            provider=settings.provider,
+            size_bytes=file.size_bytes,
+            success=True,
+        )
 
     async def download_file(
         self,
@@ -554,20 +583,8 @@ class StorageService:
         storage_svc = getattr(self, "_storage_service", self.admin)
         file = await self.get_file_or_raise(tenant_id, file_id, user_id)
         settings = await storage_svc.get_settings_or_raise(tenant_id)
-        provider = storage_svc.get_provider_for_settings(settings)
-
-        logger.info("file_download_started", file_id=file.id, tenant_id=str(tenant_id), storage_path=file.storage_path)
-
-        with storage_metrics.measure_download(str(tenant_id), settings.provider):
-            async for chunk in provider.download(file.storage_path):
-                yield chunk
-
-        storage_metrics.record_download(
-            tenant_id=str(tenant_id),
-            provider=settings.provider,
-            size_bytes=file.size_bytes,
-            success=True,
-        )
+        async for chunk in self._stream_from_prefetched(file, settings):
+            yield chunk
 
     # ------------------------------------------------------------------------
     # Core Entry Point: delete()
@@ -638,14 +655,31 @@ class StorageService:
         if not user_id and not mime_type:
             file_count, _ = await self._get_quota_stats(tenant_id)
             total_count = file_count
+            query = query.order_by(File.created_at.desc()).offset(offset).limit(limit)
+            result = await self.db.execute(query)
+            files = result.scalars().all()
         else:
-            count_query = select(func.count()).select_from(query.subquery())
-            total_result = await self.db.execute(count_query)
-            total_count = total_result.scalar() or 0
+            # P2: single RTT via COUNT(*) OVER() over the identical filtered
+            # set (audit_logs pattern) instead of count-query + rows-query.
+            total_col = func.count().over().label("total")
+            windowed = select(File, total_col).where(tenant_scope(File, tenant_id))
+            if user_id:
+                windowed = windowed.where(File.user_id == user_id)
+            if mime_type:
+                windowed = windowed.where(File.mime_type == mime_type)
+            windowed = windowed.order_by(File.created_at.desc()).offset(offset).limit(limit)
+            result = await self.db.execute(windowed)
+            rows = result.all()
+            files = [row[0] for row in rows]
+            if rows:
+                total_count = rows[0][1]
+            elif offset == 0:
+                total_count = 0
+            else:
+                count_query = select(func.count()).select_from(query.subquery())
+                total_result = await self.db.execute(count_query)
+                total_count = total_result.scalar() or 0
 
-        query = query.order_by(File.created_at.desc()).offset(offset).limit(limit)
-        result = await self.db.execute(query)
-        files = result.scalars().all()
         items_list = [FileRead.model_validate(f, from_attributes=True) for f in files]
 
         return {

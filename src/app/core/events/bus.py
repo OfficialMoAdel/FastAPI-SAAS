@@ -951,6 +951,32 @@ class EventBus:
                 return cast("dict[Any, Any]", _pkg.json_loads(entry))
             return None
 
+        # P2: source-filtered pop runs server-side (single RTT) via the
+        # dlq_pop_filtered script; the Python scan below is the fallback.
+        raw = await _pkg.get_lua_manager().execute_or_fallback(
+            client,
+            "dlq_pop_filtered",
+            keys=[self.DLQ_REDIS_KEY],
+            args=[source],
+            fallback_fn=lambda: self._retry_dlq_entry_raw_scan(source),
+        )
+        if not raw or not isinstance(raw, str | bytes):
+            return None
+        try:
+            parsed = _pkg.json_loads(raw)
+        except Exception:
+            return None
+        if isinstance(parsed, dict):
+            return cast("dict[Any, Any]", parsed)
+        return None
+
+    async def _retry_dlq_entry_raw_scan(self, source: str) -> str | None:
+        """Python fallback for source-filtered DLQ pop: scan oldest-first for
+        the first match and remove exactly that serialized element (LREM
+        count=1). Only JSON objects participate; unparseable entries are
+        skipped. A missing ``source`` field counts as ``"arq"``."""
+        client = self.redis_client
+        assert client is not None
         # Source-filtered pop: scan oldest-first for the first match and
         # remove exactly that serialized element (LREM count=1).
         raw_entries = await client.lrange(self.DLQ_REDIS_KEY, 0, -1)
@@ -961,7 +987,7 @@ class EventBus:
                 continue
             if isinstance(parsed, dict) and parsed.get("source", "arq") == source:
                 await client.lrem(self.DLQ_REDIS_KEY, 1, raw)
-                return cast("dict[Any, Any]", parsed)
+                return cast(str, raw)
         return None
 
     async def clear_dlq(self, source: str | None = None) -> int:
@@ -988,6 +1014,24 @@ class EventBus:
             await client.delete(self.DLQ_REDIS_KEY)
             return cast(int, count)
 
+        # P2: source-filtered clear runs server-side (single RTT) via the
+        # dlq_clear_filtered script; the Python scan below is the fallback.
+        cleared = await _pkg.get_lua_manager().execute_or_fallback(
+            client,
+            "dlq_clear_filtered",
+            keys=[self.DLQ_REDIS_KEY],
+            args=[source],
+            fallback_fn=lambda: self._clear_dlq_scan(source),
+        )
+        return int(cleared or 0)
+
+    async def _clear_dlq_scan(self, source: str) -> int:
+        """Python fallback for source-filtered DLQ clear: head-to-tail scan,
+        one LREM count=1 per match. Only JSON objects participate;
+        unparseable entries are skipped. A missing ``source`` field counts
+        as ``"arq"``."""
+        client = self.redis_client
+        assert client is not None
         raw_entries = await client.lrange(self.DLQ_REDIS_KEY, 0, -1)
         cleared = 0
         for raw in raw_entries:

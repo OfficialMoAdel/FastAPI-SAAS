@@ -14,15 +14,19 @@ class TestAuditLogBatching:
 
     @pytest.mark.asyncio
     async def test_buffer_uses_rpush(self) -> None:
-        """Verify audit log buffering uses Redis RPUSH."""
+        """Verify audit log buffering uses Redis RPUSH (bounded via pipeline LTRIM)."""
         from src.app.modules.audit_logs.service import (
             AUDIT_LOG_BUFFER_KEY,
+            AUDIT_LOG_BUFFER_MAXLEN,
             buffer_audit_log,
         )
 
         mock_redis = MagicMock()
-        # BUG FIX: service now directly awaits rpush(), so mock must be AsyncMock
-        mock_redis.rpush = AsyncMock(return_value=1)
+        # P2: service pipelines rpush + ltrim in one RTT; the pipe commands
+        # are sync queue calls, only execute() is awaited.
+        mock_pipe = MagicMock()
+        mock_pipe.execute = AsyncMock(return_value=[1, True])
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
 
         with patch("src.app.modules.audit_logs.service.redis_cache") as mock_cache:
             mock_cache.client = mock_redis
@@ -36,9 +40,12 @@ class TestAuditLogBatching:
             await buffer_audit_log(log_data)
 
             # Verify RPUSH was called with buffer key
-            mock_redis.rpush.assert_called_once()
-            call_args = mock_redis.rpush.call_args
+            mock_pipe.rpush.assert_called_once()
+            call_args = mock_pipe.rpush.call_args
             assert call_args[0][0] == AUDIT_LOG_BUFFER_KEY
+            # P2: same RTT trims the buffer to the newest MAXLEN entries
+            mock_pipe.ltrim.assert_called_once_with(AUDIT_LOG_BUFFER_KEY, -AUDIT_LOG_BUFFER_MAXLEN, -1)
+            mock_pipe.execute.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_fallback_on_redis_error(self) -> None:
@@ -48,7 +55,10 @@ class TestAuditLogBatching:
         from src.app.modules.audit_logs.service import buffer_audit_log
 
         mock_redis = MagicMock()
-        mock_redis.rpush = AsyncMock(side_effect=RedisError("Connection failed"))
+        # P2: failure surfaces at pipeline execute(); pipe commands themselves queue.
+        mock_pipe = MagicMock()
+        mock_pipe.execute = AsyncMock(side_effect=RedisError("Connection failed"))
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
 
         with (
             patch("src.app.modules.audit_logs.service.redis_cache") as mock_cache,

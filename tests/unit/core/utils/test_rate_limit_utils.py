@@ -48,7 +48,9 @@ class TestRateLimiter:
         limiter._rate_limit_script_sha = "sha"
 
         with patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=mock_redis):
-            is_limited = await limiter.is_rate_limited(db=MagicMock(), user_id=1, path="/api", limit=10, period=60)
+            # P2: is_rate_limited takes a pre-sanitized path (single caller
+            # sanitizes for the tier-policy lookup first; re-sanitize dropped).
+            is_limited = await limiter.is_rate_limited(db=MagicMock(), user_id=1, path="api", limit=10, period=60)
 
         assert is_limited is False
 
@@ -63,6 +65,8 @@ class TestRateLimiter:
         limiter._rate_limit_script_sha = "sha"
 
         with patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=mock_redis):
-            is_limited = await limiter.is_rate_limited(db=MagicMock(), user_id=1, path="/api", limit=10, period=60)
+            # P2: is_rate_limited takes a pre-sanitized path (single caller
+            # sanitizes for the tier-policy lookup first; re-sanitize dropped).
+            is_limited = await limiter.is_rate_limited(db=MagicMock(), user_id=1, path="api", limit=10, period=60)
 
         assert is_limited is True

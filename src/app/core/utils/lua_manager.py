@@ -443,6 +443,127 @@ class LuaScriptManager:
                 return {1, remaining, 0, 0, '', 0}
             end
         """,
+        # P0-2: Blacklist + ban check + GCRA in ONE round-trip (authed hot path).
+        # Merges the middleware's sequential is_token_blacklisted Lua probe +
+        # ban_and_gcra_check script (2 RTTs) into a single script (1 RTT).
+        # The GCRA key depends on the in-script blacklist verdict, so the
+        # caller passes BOTH candidate keys/limits and the script consumes
+        # exactly one of them. Blacklist/ban/GCRA sections mirror the
+        # standalone token_blacklist_check and ban_and_gcra_check scripts.
+        "ban_blacklist_gcra_check": """
+            -- KEYS[1]: negative blacklist cache key (e.g. token:verified:{hash})
+            -- KEYS[2]: blacklist zset key (e.g. token:blacklist)
+            -- KEYS[3]: authed GCRA TAT key (e.g. gcra:rate_limit:user:{uid}:{path})
+            -- KEYS[4]: ban key (e.g. security:ban:{ip})
+            -- KEYS[5]: anonymous GCRA TAT key (e.g. gcra:rate_limit:anonymous:ip:{ip}:{path})
+            -- ARGV[1]: blacklist member (jti:{jti} or token), ARGV[2]: now (sec),
+            -- ARGV[3]: negative-cache TTL (sec), ARGV[4]: now_ms,
+            -- ARGV[5..8]: authed emission_interval_ms, limit, burst_tolerance_ms, period_ms
+            -- ARGV[9..12]: anonymous emission_interval_ms, limit, burst_tolerance_ms, period_ms
+            -- Returns: {is_blacklisted, is_allowed, remaining, retry_after_ms, is_banned, ban_reason, ban_ttl}
+            local is_blacklisted = 0
+            if redis.call('EXISTS', KEYS[1]) == 0 then
+                local score = redis.call('ZSCORE', KEYS[2], ARGV[1])
+                if not score then
+                    redis.call('SETEX', KEYS[1], ARGV[3], '1')
+                elseif tonumber(score) < tonumber(ARGV[2]) then
+                    redis.call('ZREM', KEYS[2], ARGV[1])
+                    redis.call('SETEX', KEYS[1], ARGV[3], '1')
+                else
+                    is_blacklisted = 1
+                end
+            end
+
+            local ban_reason = redis.call('GET', KEYS[4])
+            local is_banned = 0
+            local ban_ttl = 0
+            if ban_reason then
+                is_banned = 1
+                ban_ttl = redis.call('TTL', KEYS[4])
+            end
+
+            if is_banned == 1 then
+                return {is_blacklisted, 0, 0, 0, 1, ban_reason, ban_ttl}
+            end
+
+            local base = 5
+            local gcra_key = KEYS[3]
+            if is_blacklisted == 1 then
+                base = 9
+                gcra_key = KEYS[5]
+            end
+            local emission_interval_ms = tonumber(ARGV[base])
+            local limit = tonumber(ARGV[base + 1])
+            local burst_tolerance_ms = tonumber(ARGV[base + 2])
+            local period_ms = tonumber(ARGV[base + 3])
+            local now_ms = tonumber(ARGV[4])
+            local tat_ms = tonumber(redis.call('GET', gcra_key)) or now_ms
+            local new_tat_ms = math.max(now_ms, tat_ms) + emission_interval_ms
+            local allow_at_ms = new_tat_ms - burst_tolerance_ms
+
+            if allow_at_ms > now_ms then
+                return {is_blacklisted, 0, 0, allow_at_ms - now_ms, 0, '', 0}
+            else
+                redis.call('SET', gcra_key, new_tat_ms)
+                redis.call('PEXPIRE', gcra_key, math.ceil(period_ms + emission_interval_ms))
+                local remaining = 0
+                if emission_interval_ms > 0 then
+                    remaining = math.floor((now_ms + burst_tolerance_ms - new_tat_ms) / emission_interval_ms)
+                end
+                remaining = math.max(0, math.min(remaining, limit - 1))
+                return {is_blacklisted, 1, remaining, 0, 0, '', 0}
+            end
+        """,
+        # P2: DLQ source-filtered pop - server-side oldest-first scan + LREM.
+        "dlq_pop_filtered": """
+            -- KEYS[1]: DLQ list key (tail = oldest; RPUSH adds at head)
+            -- ARGV[1]: wanted source ("event_bus" or "arq"; missing field counts as "arq")
+            -- Returns: matched serialized element, or false when none matches.
+            -- Mirror of EventBus._retry_dlq_entry_raw_scan: only JSON objects
+            -- participate (raw must start with '{'), unparseable entries are
+            -- skipped, LREM count=1 removes the exact serialized element.
+            local entries = redis.call('LRANGE', KEYS[1], 0, -1)
+            for i = #entries, 1, -1 do
+                local raw = entries[i]
+                if string.match(raw, '^%s*{') then
+                    local ok, obj = pcall(cjson.decode, raw)
+                    if ok and type(obj) == 'table' then
+                        local src = obj['source']
+                        if src == nil then src = 'arq' end
+                        if src == ARGV[1] then
+                            redis.call('LREM', KEYS[1], 1, raw)
+                            return raw
+                        end
+                    end
+                end
+            end
+            return false
+        """,
+        # P2: DLQ source-filtered clear - server-side scan + per-match LREM.
+        "dlq_clear_filtered": """
+            -- KEYS[1]: DLQ list key
+            -- ARGV[1]: wanted source ("event_bus" or "arq"; missing field counts as "arq")
+            -- Returns: number of entries removed.
+            -- Mirror of EventBus._clear_dlq_scan: head-to-tail order, one
+            -- LREM count=1 per match, count incremented per match.
+            local entries = redis.call('LRANGE', KEYS[1], 0, -1)
+            local cleared = 0
+            for i = 1, #entries do
+                local raw = entries[i]
+                if string.match(raw, '^%s*{') then
+                    local ok, obj = pcall(cjson.decode, raw)
+                    if ok and type(obj) == 'table' then
+                        local src = obj['source']
+                        if src == nil then src = 'arq' end
+                        if src == ARGV[1] then
+                            redis.call('LREM', KEYS[1], 1, raw)
+                            cleared = cleared + 1
+                        end
+                    end
+                end
+            end
+            return cleared
+        """,
     }
 
     def __init__(self) -> None:

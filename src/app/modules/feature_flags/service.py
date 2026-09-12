@@ -554,8 +554,9 @@ async def warm_feature_flags(session: AsyncSession) -> int:
 
     cached_count = 0
     redis_client = get_redis()
-    if redis_client:
+    if redis_client and flags:
         try:
+            pipe = redis_client.pipeline()
             for flag in flags:
                 cache_key = f"feature_flag:{flag.key}"
                 flag_data = {
@@ -566,8 +567,9 @@ async def warm_feature_flags(session: AsyncSession) -> int:
                     "value_type": flag.value_type,
                     "is_system": flag.is_system,
                 }
-                await redis_client.setex(cache_key, CACHE_TTL, json_dumps(flag_data, as_str=True))
-                cached_count += 1
+                pipe.setex(cache_key, CACHE_TTL, json_dumps(flag_data, as_str=True))
+            await pipe.execute()
+            cached_count = len(flags)
 
             logger.info("Warmed cache for feature flags", cached_count=cached_count)
         except Exception as e:

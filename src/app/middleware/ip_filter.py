@@ -29,27 +29,32 @@ import re
 
 # Lazy bad bot regex - compiled on first use for testability
 _BAD_BOT_REGEX: re.Pattern[str] | None = None
+_BAD_BOT_KEY: tuple[str, ...] | None = None
 
 
 def _get_bad_bot_regex() -> re.Pattern[str] | None:
-    """Get compiled bad bot regex, rebuilding if settings changed."""
-    global _BAD_BOT_REGEX
-    if not settings.security.BAD_BOT_USER_AGENTS:
+    """Get compiled bad bot regex, rebuilding only if settings changed.
+
+    P2 micro: memoize on tuple(settings list) — tuple compare is C-speed,
+    so the hot path skips the per-request re.escape + join + .pattern
+    string compare entirely; recompile happens only on config change.
+    """
+    global _BAD_BOT_REGEX, _BAD_BOT_KEY
+    bots = settings.security.BAD_BOT_USER_AGENTS
+    if not bots:
         return None
-    if _BAD_BOT_REGEX is None:
-        _escaped_bots = [re.escape(bot) for bot in settings.security.BAD_BOT_USER_AGENTS]
-        _BAD_BOT_REGEX = re.compile("|".join(_escaped_bots), re.IGNORECASE)
-        return _BAD_BOT_REGEX
-    pattern = "|".join([re.escape(bot) for bot in settings.security.BAD_BOT_USER_AGENTS])
-    if _BAD_BOT_REGEX.pattern != pattern:
-        _BAD_BOT_REGEX = re.compile(pattern, re.IGNORECASE)
+    key = tuple(bots)
+    if _BAD_BOT_REGEX is None or _BAD_BOT_KEY != key:
+        _BAD_BOT_REGEX = re.compile("|".join(re.escape(bot) for bot in key), re.IGNORECASE)
+        _BAD_BOT_KEY = key
     return _BAD_BOT_REGEX
 
 
 def _reset_bad_bot_regex() -> None:
     """Reset cached regex. Use in test teardowns for isolation."""
-    global _BAD_BOT_REGEX
+    global _BAD_BOT_REGEX, _BAD_BOT_KEY
     _BAD_BOT_REGEX = None
+    _BAD_BOT_KEY = None
 
 
 class IPFilterMiddleware:

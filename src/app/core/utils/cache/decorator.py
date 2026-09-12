@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from fastapi import Request, Response
+from pydantic import TypeAdapter
 
 from src.app.core.exceptions.cache_exceptions import (
     InvalidRequestError,
@@ -16,6 +17,18 @@ from src.app.core.utils import cache as _state
 # ever response-model-filtered bytes). Pre-v2 entries may hold unfiltered
 # payloads and are never read again; they expire naturally via TTL.
 _CACHE_KEY_VERSION = "v2"
+
+
+@functools.lru_cache(maxsize=256)
+def _write_adapter(model: type, *, is_list: bool) -> TypeAdapter:
+    """Memoized validation adapter for the cache write path (P2 single pass).
+
+    Route response models are a fixed startup-time set, so the cache is
+    bounded. ``validate_python`` + ``dump_python`` use the same core
+    validation/serialization as the per-item
+    ``model_validate(...).model_dump(...)`` calls they replace.
+    """
+    return TypeAdapter(list[model] if is_list else model)  # type: ignore[valid-type]
 
 
 def _infer_resource_id(kwargs: dict[str, Any], resource_id_type: type | tuple[type, ...]) -> int | str:
@@ -433,15 +446,15 @@ def cache(  # noqa: C901
                 if response_model is not None:
                     try:
                         if hasattr(response_model, "model_validate"):
-                            if isinstance(result, list):
-                                to_serialize = [
-                                    response_model.model_validate(item).model_dump(mode="json", by_alias=True)
-                                    for item in result
-                                ]
-                            else:
-                                to_serialize = response_model.model_validate(result).model_dump(
-                                    mode="json", by_alias=True
-                                )
+                            # P2 single pass: memoized adapter validates +
+                            # dumps with the same model/mode/alias as the
+                            # per-item calls it replaces, so cached bytes
+                            # are identical; ValidationError still fails
+                            # closed below.
+                            adapter = _write_adapter(response_model, is_list=isinstance(result, list))
+                            to_serialize = adapter.dump_python(
+                                adapter.validate_python(result), mode="json", by_alias=True
+                            )
                         elif hasattr(response_model, "parse_obj"):
                             if isinstance(result, list):
                                 to_serialize = [response_model.parse_obj(item).dict(by_alias=True) for item in result]
@@ -475,7 +488,9 @@ def cache(  # noqa: C901
                             for pattern in formatted_patterns:
                                 idx_key = _state._pattern_index_key(pattern)
                                 pipe.sadd(idx_key, cache_key)
-                                pipe.expire(idx_key, expiration)
+                                # P1-9: index outlives the data key (tenant-index
+                                # convention at the tenant branches below).
+                                pipe.expire(idx_key, expiration * 2)
 
                         # ISSUE 2 FIX: Register tenant-scoped keys for invalidate_tenant_cache()
                         if cache_key.startswith("tenant:"):

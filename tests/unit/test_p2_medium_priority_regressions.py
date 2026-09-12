@@ -71,7 +71,12 @@ class TestP2MediumPriorityRegressions:
 
     @pytest.mark.asyncio
     async def test_p2_4_get_product_pricing_returns_total_count(self):
-        """P2-4: get_product_pricing must request total_count metadata."""
+        """P2-4: get_product_pricing must request total_count metadata.
+
+        P0-5: total_count now comes from fetch_page_with_total (single
+        COUNT(*) OVER() query); query-shape equivalence is covered by
+        tests/unit/modules/_base/test_windowed_pagination.py.
+        """
         mock_db = AsyncMock()
         service = PricingService(mock_db)
         mock_product = MagicMock(id=10)
@@ -80,15 +85,14 @@ class TestP2MediumPriorityRegressions:
         with (
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.crud_products.get", new_callable=AsyncMock) as mock_prod_get,
-            patch("src.app.modules.billing.service.crud_pricing.get_multi", new_callable=AsyncMock) as mock_get_multi,
+            patch("src.app.modules.billing.service.fetch_page_with_total", new_callable=AsyncMock) as mock_fetch,
         ):
             mock_prod_get.return_value = mock_product
-            mock_get_multi.return_value = {"data": [], "total_count": 0}
+            mock_fetch.return_value = {"data": [], "total_count": 0}
             res = await service.get_product_pricing(product_id=10)
 
             assert "total_count" in res
-            mock_get_multi.assert_called_once()
-            assert mock_get_multi.call_args.kwargs.get("return_total_count") is True
+            mock_fetch.assert_called_once()
 
     def test_p2_5_env_validator_ai_check_bounded(self):
         """P2-5: EnvironmentValidator._check_ai_providers handles unreachable host cleanly."""

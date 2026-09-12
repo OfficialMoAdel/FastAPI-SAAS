@@ -94,7 +94,7 @@ class PasswordResetToken(Base, kw_only=True):
     )
 
     # Relationship
-    user: Mapped[User] = relationship("User", init=False, lazy="selectin")
+    user: Mapped[User] = relationship("User", init=False, lazy="noload")
 
     def __repr__(self) -> str:
         return f"<PasswordResetToken(id={self.id}, user_id={self.user_id})>"
@@ -146,7 +146,7 @@ class EmailVerificationToken(Base, kw_only=True):
     )
 
     # Relationship
-    user: Mapped[User] = relationship("User", init=False, lazy="selectin")
+    user: Mapped[User] = relationship("User", init=False, lazy="noload")
 
     def __repr__(self) -> str:
         return f"<EmailVerificationToken(id={self.id}, user_id={self.user_id})>"
@@ -276,8 +276,8 @@ class UserSSOConnection(Base, kw_only=True):
     )
 
     # Relationships
-    user: Mapped[User] = relationship(init=False, lazy="selectin")
-    tenant: Mapped[Tenant] = relationship(init=False, lazy="selectin")
+    user: Mapped[User] = relationship(init=False, lazy="noload")
+    tenant: Mapped[Tenant] = relationship(init=False, lazy="noload")
 
 
 # ============================================================================
@@ -343,7 +343,7 @@ class PasskeyCredential(Base, kw_only=True):
     )
 
     # Relationships
-    user: Mapped[User] = relationship(init=False, lazy="selectin")
+    user: Mapped[User] = relationship(init=False, lazy="noload")
 
 
 # ============================================================================
@@ -400,7 +400,7 @@ class MagicLink(Base, kw_only=True):
     )
 
     # Relationships
-    user: Mapped[User] = relationship(init=False, lazy="selectin")
+    user: Mapped[User] = relationship(init=False, lazy="noload")
 
 
 # ============================================================================
@@ -437,7 +437,7 @@ class MFAMethod(Base, kw_only=True):
     )
 
     # Relationships
-    user: Mapped[User] = relationship(back_populates="mfa_methods", init=False, lazy="selectin")
+    user: Mapped[User] = relationship(back_populates="mfa_methods", init=False, lazy="noload")
 
 
 __all__ = [

@@ -122,7 +122,7 @@ class StorageSettings(Base):
     )
 
     # Relationship
-    tenant: Mapped[Tenant] = relationship(back_populates="storage_settings", init=False, lazy="selectin")
+    tenant: Mapped[Tenant] = relationship(back_populates="storage_settings", init=False, lazy="noload")
 
     def __repr__(self) -> str:
         return f"<StorageSettings(tenant_id={self.tenant_id}, provider={self.provider})>"
@@ -230,8 +230,8 @@ class File(Base):
     )
 
     # Relationships
-    tenant: Mapped[Tenant] = relationship(back_populates="files", init=False, lazy="selectin")
-    user: Mapped[User | None] = relationship(back_populates="files", init=False, lazy="selectin")
+    tenant: Mapped[Tenant] = relationship(back_populates="files", init=False, lazy="noload")
+    user: Mapped[User | None] = relationship(back_populates="files", init=False, lazy="noload")
 
     def __repr__(self) -> str:
         return f"<File(id={self.id}, name={self.original_name}, tenant_id={self.tenant_id})>"

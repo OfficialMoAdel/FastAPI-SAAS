@@ -120,7 +120,7 @@ class RateLimitService(BaseService[RateLimit]):
         from src.app.core.utils.cache import get_with_lock
 
         async def _fetch() -> dict[str, Any]:
-            data = await self.crud.get_multi(db=self.db, tier_id=tier_id)
+            data = await self.get_page_with_total(tier_id=tier_id)
             return cast(dict[str, Any], data)
 
         client = get_redis()
@@ -203,8 +203,7 @@ class RateLimitService(BaseService[RateLimit]):
         db_tier = await self._get_tier_or_404(tier_name)
 
         offset = compute_offset(page, items_per_page)
-        rate_limits_data = await self.crud.get_multi(
-            db=self.db,
+        rate_limits_data = await self.get_page_with_total(
             offset=offset,
             limit=items_per_page,
             schema_to_select=RateLimitRead,

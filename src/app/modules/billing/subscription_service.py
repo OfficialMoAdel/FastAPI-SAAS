@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.exceptions.http_exceptions import TenantContextError
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_current_tenant, require_active_tenant
-from src.app.modules._base.service import BaseService
+from src.app.modules._base.service import BaseService, fetch_page_with_total
 from src.app.modules.billing.crud import (
     crud_billing_records,
     crud_subscription_plans,
@@ -126,8 +126,9 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
             filters["is_active"] = is_active
         return cast(
             dict[str, Any],
-            await crud_subscription_plans.get_multi(
-                db=self.db,
+            await fetch_page_with_total(
+                crud_subscription_plans,
+                self.db,
                 offset=offset,
                 limit=limit,
                 sort_columns=["sort_order"],
@@ -260,8 +261,9 @@ class UserSubscriptionService(BaseService[UserSubscription]):
             paging["limit"] = limit
         return cast(
             dict[str, Any],
-            await crud_user_subscriptions.get_multi(
-                db=self.db,
+            await fetch_page_with_total(
+                crud_user_subscriptions,
+                self.db,
                 schema_to_select=UserSubscriptionRead,
                 **filters,
                 **paging,
@@ -451,8 +453,9 @@ class BillingRecordService(BaseService[BillingRecord]):
 
         return cast(
             dict[str, Any],
-            await crud_billing_records.get_multi(
-                db=self.db,
+            await fetch_page_with_total(
+                crud_billing_records,
+                self.db,
                 offset=offset,
                 limit=limit,
                 sort_columns=["created_at"],

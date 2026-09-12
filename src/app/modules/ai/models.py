@@ -44,8 +44,8 @@ class AIChatSession(Base):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(back_populates="ai_chat_sessions", init=False, lazy="selectin")
-    user: Mapped["User"] = relationship(back_populates="ai_chat_sessions", init=False, lazy="selectin")
+    tenant: Mapped["Tenant"] = relationship(back_populates="ai_chat_sessions", init=False, lazy="noload")
+    user: Mapped["User"] = relationship(back_populates="ai_chat_sessions", init=False, lazy="noload")
     ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(back_populates="session", init=False, lazy="noload")
     messages: Mapped[list["AIChatMessage"]] = relationship(
         back_populates="session",
@@ -85,7 +85,7 @@ class AIChatMessage(Base):
     )
 
     # Relationships
-    session: Mapped["AIChatSession"] = relationship(back_populates="messages", init=False, lazy="selectin")
+    session: Mapped["AIChatSession"] = relationship(back_populates="messages", init=False, lazy="noload")
 
 
 class AISettings(Base):
@@ -120,7 +120,7 @@ class AISettings(Base):
     )
 
     # Relationships
-    user: Mapped["User"] = relationship(back_populates="ai_settings", init=False, lazy="selectin")
+    user: Mapped["User"] = relationship(back_populates="ai_settings", init=False, lazy="noload")
 
 
 class AITokenUsage(Base):
@@ -168,6 +168,6 @@ class AITokenUsage(Base):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(back_populates="ai_token_usage", init=False, lazy="selectin")
-    user: Mapped["User"] = relationship(back_populates="ai_token_usage", init=False, lazy="selectin")
-    session: Mapped["AIChatSession"] = relationship(back_populates="ai_token_usage", init=False, lazy="selectin")
+    tenant: Mapped["Tenant"] = relationship(back_populates="ai_token_usage", init=False, lazy="noload")
+    user: Mapped["User"] = relationship(back_populates="ai_token_usage", init=False, lazy="noload")
+    session: Mapped["AIChatSession"] = relationship(back_populates="ai_token_usage", init=False, lazy="noload")

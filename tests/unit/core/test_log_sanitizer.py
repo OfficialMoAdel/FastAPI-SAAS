@@ -607,3 +607,149 @@ class TestPerformance:
 
         # Target: < 1ms average for typical log dict
         assert avg_time_ms < 1.0, f"Average time {avg_time_ms:.4f}ms exceeds 1ms target"
+
+
+class TestMaybeSensitiveGate:
+    """No-leak equivalence tests for the _maybe_sensitive substring fast path.
+
+    Core invariant: every string matchable by ANY SENSITIVE_PATTERNS entry
+    must trip the gate. A gate miss returns the message unsanitized, so a
+    false negative is a secret leak — these tests pin the invariant per
+    pattern family (including uppercase variants, since the gate lowercases).
+    False positives are harmless (the individual patterns just no-op).
+    """
+
+    # Each sample matches >= 1 SENSITIVE_PATTERNS entry.
+    SENSITIVE_SAMPLES: tuple[str, ...] = (
+        "token eyJhbGciOiJIUzI1NiJ9.eyJ0ZXN0Ijp0cnVlfQ.sig",  # JWT
+        "api_key=sk-abc123",  # api-key kv
+        "API_KEY = secret-value",  # api-key kv uppercase
+        "api-key=sk-abc123",  # api-key dash spelling (literal, not bare "api")
+        "apikey=sk-abc123",  # api-key joined spelling
+        "password=hunter2",  # secret kv
+        "PASSWORD=hunter2",  # secret kv uppercase
+        "passwd: x",
+        "pwd=x",
+        "PWD=x",
+        "token=abc",
+        "TOKEN=abc",
+        "secret=topsecret",
+        "SECRET=topsecret",
+        "bearer abc123",
+        "Bearer abc123",
+        "authorization: Bearer xyz",
+        "Authorization: xyz",
+        "postgresql://user:pass@host/db",
+        "postgresql+asyncpg://u:p@h/db",
+        "mysql://u:p@h/db",
+        "mysql+pymysql://u:p@h/db",
+        "redis://:pass@host:6379/0",
+        "mongodb://u:p@h/db",
+        "mongodb+srv://u:p@h/db",
+        "challenge=abc123",
+        "CHALLENGE=abc123",
+        "credential_id=xyz",
+        "public_key=xyz",
+        "signature=xyz",
+        "attestation_object=xyz",
+        "client_data_json=xyz",
+        "authenticator_data=xyz",
+        "user_handle=xyz",
+        "contact john.doe@example.com today",
+        "card 4111 1111 1111 1111",
+        "card 4111-1111-1111-1111",
+        "card 4111111111111111",
+        "ssn 123-45-6789",
+        "ssn 123 45 6789",
+        "key AKIAIOSFODNN7EXAMPLE",
+        "aws_secret_access_key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "sk_live_123456789012345678901234",
+        "pk_test_123456789012345678901234",
+        "rk_test_123456789012345678901234",
+    )
+
+    # No sample here matches any pattern (verified by
+    # test_clean_samples_match_no_pattern): sanitize_message must return them
+    # unchanged. Includes near-miss casing the case-sensitive patterns ignore
+    # (uppercase JWT/AKIA/stripe/scheme) and digit-heavy operational logs that
+    # must NOT trip _DIGIT_SHAPES.
+    CLEAN_SAMPLES: tuple[str, ...] = (
+        "request completed status=200 duration_ms=12",
+        "user_id=12345 logged in from 192.168.1.1",
+        "GET /api/v1/users?page=2 took 3ms",
+        "my secret is here",  # no key=value shape
+        "SECRET ABC",
+        "request with EYJHBGCIOIJIUZI1NIJ9.EYJ0ZXN0IJP0CNVLFQ.SIG token",
+        "key akiaiosfodnn7example",
+        "SK_LIVE_123456789012345678901234",
+        "POSTGRESQL://user:pass@host/db",
+        "200",
+        "12ms",
+        "",
+    )
+
+    # Documented gate-only false positives: trip _maybe_sensitive but match no
+    # pattern, so output is still identical. They prove extra gate hits are
+    # harmless (patterns no-op) rather than behavior changes.
+    GATE_FALSE_POSITIVES: tuple[str, ...] = (
+        "token bucket refilled",  # lone 'token' word, not kv-shaped
+        "user_handle_count=5",  # 'user_handle' only inside a longer identifier
+    )
+
+    def test_sensitive_samples_all_match_a_pattern(self) -> None:
+        """Guard the test corpus: every sensitive sample must match >= 1 pattern."""
+        for sample in self.SENSITIVE_SAMPLES:
+            matched = any(p.search(sample) for p, _ in LogSanitizer.SENSITIVE_PATTERNS)
+            assert matched, f"sensitive sample matches no pattern: {sample!r}"
+
+    def test_clean_samples_match_no_pattern(self) -> None:
+        """Guard the test corpus: no clean sample may match any pattern."""
+        for sample in self.CLEAN_SAMPLES:
+            matched = any(p.search(sample) for p, _ in LogSanitizer.SENSITIVE_PATTERNS)
+            assert not matched, f"clean sample unexpectedly matches: {sample!r}"
+
+    def test_gate_has_no_false_negatives(self) -> None:
+        """Every pattern-matchable string trips the gate (no-leak invariant)."""
+        for sample in self.SENSITIVE_SAMPLES:
+            assert LogSanitizer._maybe_sensitive(sample) is True, sample
+
+    def test_gate_covers_all_pattern_matches_property(self) -> None:
+        """Pattern match ==> gate hit, over both corpora plus tricky shapes."""
+        tricky = [
+            "Pwd=1",
+            "SeCrEt=1",
+            "  token =abc",
+            "x-bearer y",
+            "pre eyJh.e30.sig post",  # minimal JWT shape
+            "a@b.co",  # minimal email
+            "000-00-0000",  # SSN zeros
+            "0000-0000-0000-0000",  # card zeros
+            "BEARER abc",
+            " çek password=1",  # non-ASCII prefix, .lower() path
+        ]
+        for sample in (*self.SENSITIVE_SAMPLES, *self.CLEAN_SAMPLES, *tricky):
+            if any(p.search(sample) for p, _ in LogSanitizer.SENSITIVE_PATTERNS):
+                assert LogSanitizer._maybe_sensitive(sample) is True, sample
+
+    def test_sensitive_samples_are_redacted(self) -> None:
+        """Gate hit + pattern redaction => output differs from input."""
+        for sample in self.SENSITIVE_SAMPLES:
+            assert LogSanitizer.sanitize_message(sample) != sample, sample
+
+    def test_clean_samples_pass_through_unchanged(self) -> None:
+        """Behavior preservation: clean input returns byte-identical."""
+        for sample in (*self.CLEAN_SAMPLES, *self.GATE_FALSE_POSITIVES):
+            assert LogSanitizer.sanitize_message(sample) == sample, sample
+
+    def test_gate_false_positives_trip_gate_but_noop(self) -> None:
+        """Extra gate hits only cost the pattern pass; output is unchanged."""
+        for sample in self.GATE_FALSE_POSITIVES:
+            assert LogSanitizer._maybe_sensitive(sample) is True, sample
+            assert LogSanitizer.sanitize_message(sample) == sample, sample
+
+    def test_gate_misses_typical_operational_logs(self) -> None:
+        """Fast path is actually taken (gate False) for common log lines."""
+        assert LogSanitizer._maybe_sensitive("request completed status=200") is False
+        assert LogSanitizer._maybe_sensitive("duration_ms=12 user_id=12345") is False
+        assert LogSanitizer._maybe_sensitive("GET /api/v1/users?page=2 took 3ms") is False
+        assert LogSanitizer._maybe_sensitive("") is False

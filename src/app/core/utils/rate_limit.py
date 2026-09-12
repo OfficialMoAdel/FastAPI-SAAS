@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
 from src.app.core.utils.lua_manager import get_lua_manager
-from src.app.core.utils.path_utils import sanitize_path
 
 logger = get_logger(__name__)
 
@@ -117,7 +116,11 @@ class RateLimiter:
             return is_limited, remaining, 0
 
     async def is_rate_limited(self, db: AsyncSession, user_id: int | str, path: str, limit: int, period: int) -> bool:
-        sanitized_path = sanitize_path(path)
+        # P2 micro: callers pass sanitize_path() output (the single caller,
+        # api.deps.core.rate_limiter_dependency, sanitizes for the tier-policy
+        # lookup first). sanitize_path is idempotent — its output contains no
+        # "/" so a second pass is a proven no-op — hence no re-sanitize here.
+        sanitized_path = path
 
         # P2-7: Incorporate tenant isolation in rate limit key
         from src.app.core.tenancy.context import get_current_tenant

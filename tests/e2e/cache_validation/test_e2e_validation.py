@@ -43,10 +43,11 @@ class TestL1CacheE2E:
 
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        from src.app.middleware.tenant import _L1_TENANT_CACHE, TenantMiddleware
+        from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED, TenantMiddleware
 
         # Clear cache
         _L1_TENANT_CACHE.clear()
+        _L1_TENANT_PARSED.clear()
         redis_call_count = 0
         cached_payload = '{"id": "00000000-0000-0000-0000-000000000001", "slug": "test", "is_active": true}'
 

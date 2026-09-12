@@ -12,7 +12,22 @@ from src.app.core.db.database import Base
 class Post(Base):
     __tablename__ = "post"
 
-    __table_args__ = (Index("idx_posts_tenant_user_deleted", "tenant_id", "created_by_user_id", "is_deleted"),)
+    __table_args__ = (
+        Index("idx_posts_tenant_user_deleted", "tenant_id", "created_by_user_id", "is_deleted"),
+        # P2 keyset composite: covers get_posts_keyset WHERE
+        # (tenant_id, created_by_user_id, is_deleted) + ORDER BY
+        # created_at DESC, id DESC exactly (equality prefix + ordered scan).
+        # Declared here so autogenerate no longer emits DROP INDEX for it.
+        Index(
+            "idx_posts_tenant_user_created_id",
+            "tenant_id",
+            "created_by_user_id",
+            "is_deleted",
+            "created_at",
+            "id",
+            postgresql_ops={"created_at": "DESC", "id": "DESC"},
+        ),
+    )
 
     id: Mapped[int] = mapped_column("id", autoincrement=True, nullable=False, unique=True, primary_key=True, init=False)
     tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(

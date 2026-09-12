@@ -107,10 +107,12 @@ class PerformanceSettings(BaseSettings):
     FEATURE_REMOVE_WASTED_CONNECTION: bool = True
     """Remove wasted DB connection in tenant middleware (P0-1)."""
 
-    FEATURE_UPLOAD_TXN_SPLIT: bool = False
+    FEATURE_UPLOAD_TXN_SPLIT: bool = True
     """N1: commit the quota read-phase before the storage upload so the pooled
     connection is not held across network I/O; the metadata write runs in a
-    fresh short transaction after the upload."""
+    fresh short transaction after the upload. Default-on (P2): the flag-on
+    path is A/B-verified; pool (20+10) exhausts at ~30 concurrent uploads
+    with the connection held across network I/O."""
 
     LOG_SAMPLING_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
     """P10: keep-probability for INFO/DEBUG structlog events (1.0 = keep all).

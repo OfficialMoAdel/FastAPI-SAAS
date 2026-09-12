@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.core.db.database import async_get_db
+from src.app.modules._base.service import fetch_page_with_total
 from src.app.modules.auth.crud import crud_sso_settings
 from src.app.modules.auth.schemas import (
     SSOSettingsCreate,
@@ -68,8 +69,9 @@ async def list_sso_settings(
 ) -> Any:
     """List all SSO provider settings (superuser only)."""
     offset = (page - 1) * per_page
-    settings_data = await crud_sso_settings.get_multi(
-        db=ctx.db,
+    settings_data = await fetch_page_with_total(
+        crud_sso_settings,
+        ctx.db,
         offset=offset,
         limit=per_page,
         schema_to_select=SSOSettingsRead,

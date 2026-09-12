@@ -30,7 +30,8 @@ from contextlib import asynccontextmanager
 from typing import Any, Generic, TypeVar, cast
 
 from fastcrud import FastCRUD
-from sqlalchemy import select
+from fastcrud.crud.validation import validate_pagination_params
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -334,6 +335,97 @@ class BaseService(Generic[T]):
         async with self._circuit_guard():
             await self.crud.delete(db=self.db, id=id)
 
+    async def get_page_with_total(
+        self,
+        *,
+        offset: int = 0,
+        limit: int | None = 100,
+        schema_to_select: Any | None = None,
+        sort_columns: str | list[str] | None = None,
+        sort_orders: str | list[str] | None = None,
+        return_as_model: bool = False,
+        **filters: Any,
+    ) -> dict[str, Any]:
+        """Single-round-trip paginated fetch on this service's model/crud."""
+        return await fetch_page_with_total(
+            self.crud,
+            self.db,
+            offset=offset,
+            limit=limit,
+            schema_to_select=schema_to_select,
+            sort_columns=sort_columns,
+            sort_orders=sort_orders,
+            return_as_model=return_as_model,
+            **filters,
+        )
+
+
+_PAGE_TOTAL_LABEL = "__page_total"
+
+
+async def fetch_page_with_total(
+    crud: FastCRUD,
+    db: AsyncSession,
+    *,
+    offset: int = 0,
+    limit: int | None = 100,
+    schema_to_select: Any | None = None,
+    sort_columns: str | list[str] | None = None,
+    sort_orders: str | list[str] | None = None,
+    return_as_model: bool = False,
+    **filters: Any,
+) -> dict[str, Any]:
+    """P0-5: single-round-trip replacement for ``crud.get_multi(..., return_total_count=True)``.
+
+    FastCRUD's ``get_multi`` issues the page SELECT and then a second
+    sequential ``COUNT(*)``. This builds the *identical* filtered/sorted
+    statement via ``crud.select`` and fetches page + total in ONE query with
+    ``COUNT(*) OVER()`` (the window is evaluated over the filtered set before
+    LIMIT/OFFSET — same proven pattern as
+    ``audit_logs.query_logs_with_total``). Response shape matches
+    ``get_multi`` exactly: ``{"data": [...], "total_count": N}``.
+
+    Non-joined filters only (no ``get_multi_joined``). Tenant scoping is
+    applied via ``TenantAwareCRUD.inject_tenant_filter`` exactly as
+    ``get_multi`` does. Out-of-range pages pay one fallback COUNT (the total
+    is unknowable from an empty window); page 0 of an empty set returns
+    ``([], 0)`` with no second query. The whole fetch runs inside
+    ``db_circuit_guard`` (TenantAwareCRUD callers were guarded inside
+    ``get_multi`` before; plain-FastCRUD callers gain the same fail-fast
+    protection).
+    """
+    from src.app.core.resilience import db_circuit_guard
+
+    validate_pagination_params(offset, limit)
+    scoped = crud.inject_tenant_filter(dict(filters)) if isinstance(crud, TenantAwareCRUD) else dict(filters)
+
+    async with db_circuit_guard():
+        base = await crud.select(
+            schema_to_select=schema_to_select,
+            sort_columns=sort_columns,
+            sort_orders=sort_orders,
+            **scoped,
+        )
+        paged = base.add_columns(func.count().over().label(_PAGE_TOTAL_LABEL)).offset(offset)
+        if limit is not None:
+            paged = paged.limit(limit)
+        rows = (await db.execute(paged)).mappings().all()
+        if rows:
+            total = int(rows[0][_PAGE_TOTAL_LABEL])
+            data = [{k: v for k, v in dict(row).items() if k != _PAGE_TOTAL_LABEL} for row in rows]
+            if return_as_model:
+                if schema_to_select is None:
+                    raise ValueError("schema_to_select must be provided when return_as_model is True")
+                data = [schema_to_select(**row) for row in data]
+            return {"data": data, "total_count": total}
+        if offset == 0:
+            return {"data": [], "total_count": 0}
+        # Out-of-range page: the window yields no rows, so fall back to a
+        # cheap COUNT over the identical filtered set (ORDER BY stripped).
+        count_stmt = select(func.count()).select_from(base.order_by(None).subquery())
+        total = (await db.execute(count_stmt)).scalar() or 0
+        return {"data": [], "total_count": int(total)}
+
 
 def get_base_service(model: type[T]) -> Callable[[AsyncSession], BaseService[T]]:
     """Factory function for creating service instances via DI.
@@ -364,4 +456,4 @@ def get_base_service(model: type[T]) -> Callable[[AsyncSession], BaseService[T]]
     return factory
 
 
-__all__ = ["BaseService", "get_base_service", "_CRUD_CACHE"]
+__all__ = ["BaseService", "fetch_page_with_total", "get_base_service", "_CRUD_CACHE"]

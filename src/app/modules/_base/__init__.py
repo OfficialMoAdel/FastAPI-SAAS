@@ -34,7 +34,7 @@ Usage:
 
 from src.app.modules._base.models import Base
 from src.app.modules._base.schemas import BaseCreate, BaseList, BasePagination, BaseRead, BaseReadUUID, BaseUpdate
-from src.app.modules._base.service import BaseService, get_base_service
+from src.app.modules._base.service import BaseService, fetch_page_with_total, get_base_service
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError, ValidationError
 
 __all__ = [
@@ -49,6 +49,7 @@ __all__ = [
     "BasePagination",
     # Service
     "BaseService",
+    "fetch_page_with_total",
     "get_base_service",
     # Exceptions
     "ModelNotFoundError",

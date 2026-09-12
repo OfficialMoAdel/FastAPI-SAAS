@@ -27,15 +27,35 @@ async def test_resolve_rate_limits_from_cache():
 
 @pytest.mark.asyncio
 async def test_resolve_rate_limits_db_fallback():
+    """P2: DB fallback resolves via a single get_multi (was: get + get_multi).
+
+    The path match resolves in Python over the same row set; the write-back
+    reuses the already-fetched rows.
+    """
     mock_db = MagicMock()
-    mock_record = {"limit": 200, "period": 120}
+    mock_rows = {"data": [{"path": "/api/v1/custom", "limit": 200, "period": 120}]}
 
     with (
-        patch("fastcrud.FastCRUD.get", new=AsyncMock(return_value=mock_record)),
+        patch("fastcrud.FastCRUD.get_multi", new=AsyncMock(return_value=mock_rows)) as mock_get_multi,
+        patch("fastcrud.FastCRUD.get", new=AsyncMock()) as mock_get,
     ):
         limit, period = await resolve_rate_limits("/api/v1/custom", tier_id=2, db=mock_db)
     assert limit == 200
     assert period == 120
+    mock_get_multi.assert_awaited_once()
+    mock_get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_rate_limits_db_fallback_no_match():
+    """P2: get_multi rows without the path fall through to settings (no write-back)."""
+    mock_db = MagicMock()
+    mock_rows = {"data": [{"path": "/api/v1/other", "limit": 10, "period": 60}]}
+
+    with patch("fastcrud.FastCRUD.get_multi", new=AsyncMock(return_value=mock_rows)):
+        limit, period = await resolve_rate_limits("/api/v1/custom", tier_id=2, db=mock_db)
+    assert limit is not None
+    assert period is not None
 
 
 @pytest.mark.asyncio

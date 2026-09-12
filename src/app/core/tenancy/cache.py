@@ -29,6 +29,7 @@ from cachetools import TTLCache
 
 from src.app.core.cache.invalidation_channel import InvalidationChannel
 from src.app.core.redis_provider import get_redis
+from src.app.core.tenancy.context import TenantContext
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,16 @@ TENANT_CACHE_TTL = 300
 # see module docstring; do not unify with TENANT_CACHE_TTL (L2, 300s).
 _L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=60.0)
 
+# P2 micro: frozen parsed-object memo. TenantContext is frozen+slots
+# (tenancy/context.py), so sharing one instance across requests is safe and
+# skips the uuid.UUID re-parse (~1.33 us) on repeat L1 hits. Same
+# maxsize/TTL as the dict cache. Correctness contract: every write to
+# _L1_TENANT_CACHE in middleware/tenant.py pairs with a pop here, and
+# invalidate_tenant_l1 drops both — so a parsed entry can never survive the
+# dict entry it was built from (TTL expiry drops the earlier-written dict
+# first; the subsequent L2/L3 fill rewrites both).
+_L1_TENANT_PARSED: TTLCache[str, TenantContext] = TTLCache(maxsize=1000, ttl=60.0)
+
 # Cache stampede protection - track lock waiters to prevent memory leaks
 _TENANT_LOCKS: dict[str, dict] = {}
 
@@ -58,8 +69,10 @@ def invalidate_tenant_l1(slug: str | None = None) -> None:
     """Drop one (or all) entries from this process's L1 tenant cache."""
     if slug is None or slug == "*":
         _L1_TENANT_CACHE.clear()
+        _L1_TENANT_PARSED.clear()
     else:
         _L1_TENANT_CACHE.pop(slug, None)
+        _L1_TENANT_PARSED.pop(slug, None)
 
 
 _tenant_invalidation_channel = InvalidationChannel(

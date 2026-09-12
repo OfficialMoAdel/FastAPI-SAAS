@@ -15,7 +15,7 @@ from fastapi import Request, Response
 from starlette.datastructures import Headers
 
 from src.app.core.utils.ip_utils import get_client_ip
-from src.app.middleware.ip_filter import IPFilterMiddleware, _reset_bad_bot_regex
+from src.app.middleware.ip_filter import IPFilterMiddleware, _get_bad_bot_regex, _reset_bad_bot_regex
 from tests.conftest import patch_setting
 
 
@@ -506,3 +506,43 @@ class TestEdgeCases:
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)
+
+
+class TestBadBotRegexMemo:
+    """P2 micro: bad-bot regex recompiles only when the bot list changes."""
+
+    @pytest.fixture(autouse=True)
+    def reset_bad_bot_regex(self):
+        _reset_bad_bot_regex()
+        yield
+        _reset_bad_bot_regex()
+
+    def test_same_settings_returns_identical_object(self):
+        """Hot path skips re.escape + join + .pattern compare (tuple memo)."""
+        first = _get_bad_bot_regex()
+        if first is None:
+            pytest.skip("no bad-bot agents configured in test env")
+        assert _get_bad_bot_regex() is first
+
+    def test_settings_change_recompiles(self):
+        """A changed bot list rebuilds the pattern; new bot matches."""
+        import src.app.middleware.ip_filter as ip_filter_mod
+        from src.app.core.config import settings
+
+        original = list(settings.security.BAD_BOT_USER_AGENTS or [])
+        before = _get_bad_bot_regex()
+        assert before is not None
+        with patch_setting("BAD_BOT_USER_AGENTS", [*original, "definitely-not-a-real-bot-xyz"]):
+            _reset_bad_bot_regex()
+            recompiled = _get_bad_bot_regex()
+        assert recompiled is not None
+        assert recompiled is not before
+        assert recompiled.search("definitely-not-a-real-bot-xyz scanner") is not None
+        assert recompiled.search("sqlmap/1.0") is not None
+        assert ip_filter_mod._BAD_BOT_KEY == (*original, "definitely-not-a-real-bot-xyz")
+
+    def test_empty_list_returns_none(self):
+        """Empty bot list disables the check without compiling."""
+        with patch_setting("BAD_BOT_USER_AGENTS", []):
+            _reset_bad_bot_regex()
+            assert _get_bad_bot_regex() is None

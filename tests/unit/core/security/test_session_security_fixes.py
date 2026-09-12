@@ -377,7 +377,8 @@ class TestTriStateBlacklist:
             ),
             _patch("src.app.core.security.rate_limit_cache.get_tier_policy", new_callable=AsyncMock, return_value=[]),
         ):
-            await mw._get_rate_limit_config(request)
+            ctx = await mw._get_rate_limit_config(request)
+            await mw._resolve_legacy_config(request, ctx)
 
         assert request.state.is_token_blacklisted is None
 

@@ -112,10 +112,10 @@ class Notification(Base, UUIDMixin):
 
     # Relationships
     tenant: Mapped[Optional["Tenant"]] = relationship(  # type: ignore
-        "Tenant", back_populates="notifications", init=False, lazy="selectin"
+        "Tenant", back_populates="notifications", init=False, lazy="noload"
     )
     user: Mapped[Optional["User"]] = relationship(  # type: ignore
-        "User", back_populates="notifications", init=False, lazy="selectin"
+        "User", back_populates="notifications", init=False, lazy="noload"
     )
 
     # Composite Indexes for Performance
@@ -205,7 +205,7 @@ class EmailTemplateOverride(Base, UUIDMixin):
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(  # type: ignore
-        "Tenant", back_populates="email_template_overrides", init=False, lazy="selectin"
+        "Tenant", back_populates="email_template_overrides", init=False, lazy="noload"
     )
 
     # Constraints

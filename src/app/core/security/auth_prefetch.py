@@ -38,6 +38,7 @@ async def execute_composite_auth_prefetch(
     session_id: str | None = None,
     tenant_id: int | UUID | None = None,
     check_bitmask: bool = True,
+    check_blacklist: bool = True,
     redis_client: Redis | None = None,
 ) -> tuple[bool | None, bool | None, int | None]:
     """Execute composite auth prefetch in single Redis round-trip (1 RTT).
@@ -49,6 +50,10 @@ async def execute_composite_auth_prefetch(
         session_id: Session ID claim (sid or jti)
         tenant_id: Tenant UUID or ID (if resolved)
         check_bitmask: Whether to prefetch the RBAC permission bitmask
+        check_blacklist: Whether to run the blacklist leg. Set False when
+            the middleware already verified this token (request.state
+            tri-state is a definite True/False) — the Lua skips the leg
+            and returns -1 (parsed as None) for it.
         redis_client: Optional explicit Redis client instance
 
     Returns:
@@ -65,6 +70,14 @@ async def execute_composite_auth_prefetch(
 
     negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token, jti)}"
     blacklist_key = BLACKLIST_KEY
+    member = _extract_blacklist_member(token, jti)
+    if not check_blacklist:
+        # P0-3: middleware already verified this token — empty the
+        # blacklist leg. The Lua skips it (ARGV[1]/KEYS[2] empty) and
+        # returns -1, which parses to None below.
+        negative_key = ""
+        blacklist_key = ""
+        member = ""
     session_hash_key = f"{session_manager.SESSION_HASH_PREFIX}{user_id}" if user_id is not None else ""
     bitmask_key = (
         _get_bitmask_cache_key(user_id, tenant_id)
@@ -72,7 +85,6 @@ async def execute_composite_auth_prefetch(
         else ""
     )
 
-    member = _extract_blacklist_member(token, jti)
     now = int(time.time())
     neg_ttl = getattr(settings.r1_unified, "TOKEN_NEGATIVE_CACHE_TTL", NEGATIVE_CACHE_TTL)
 

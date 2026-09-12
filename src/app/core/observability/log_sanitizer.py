@@ -125,24 +125,73 @@ class LogSanitizer:
         ),
     ]
 
-    # Combined pre-check regex: single search to detect if ANY sensitive data
-    # might be present. >99% of log strings contain nothing sensitive, so this
-    # avoids running 15 individual patterns on the common no-match path.
-    # Uses re.IGNORECASE since this is a pre-check — false positives just trigger
-    # the individual patterns which do their own precise matching.
-    _ANY_SENSITIVE: re.Pattern[str] = re.compile(
-        r"eyJ[A-Za-z0-9\-_]+\."  # JWT prefix
-        r"|(?:api[_-]?key|secret|token|password|passwd|pwd|bearer|authorization)"  # key-value secrets
-        r"|(?:challenge|credential_id|public_key|signature|attestation_object|"
-        r"client_data_json|authenticator_data|user_handle)"  # passkey data
-        r"|(?:postgresql|mysql|redis|mongodb)(?:\+\w+)?://"  # DB connection strings
-        r"|AKIA[0-9A-Z]{16}"  # AWS access keys
-        r"|[sprk]k_(?:live|test)_"  # Stripe keys
-        r"|\b\d{3}[\s-]?\d{2}[\s-]?\d{4}\b"  # SSN
-        r"|\b(?:\d{4}[\s-]?){3}\d{4}\b"  # Credit card
-        r"|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",  # Email
-        re.IGNORECASE,
+    # Substring pre-filter for sanitize_message: lowercase once and scan these
+    # literals with `in` (~2-4us) instead of running one big IGNORECASE
+    # alternation regex (~28us) on every log string.
+    # INVARIANT (no-leak): every string matchable by SENSITIVE_PATTERNS must
+    # trip this gate. Each pattern family contributes a literal that survives
+    # .lower(): JWT -> "eyj", key-value secrets, passkey fields, DB schemes,
+    # "akia", stripe "sk_live"/..., email "@". The two digit-only shapes
+    # (SSN, credit card) carry no literal and are covered by _DIGIT_SHAPES.
+    # Extra hits are harmless (the individual patterns just no-op).
+    _SENSITIVE_SUBSTRINGS: tuple[str, ...] = (
+        "eyj",
+        # NOTE: bare "api" deliberately absent — it matches "/api/" URL paths
+        # in nearly every access log. The api-key pattern always contains one
+        # of these three exact spellings (case-insensitively).
+        "apikey",
+        "api_key",
+        "api-key",
+        "secret",
+        "token",
+        "password",
+        "passwd",
+        "pwd",
+        "bearer",
+        "authorization",
+        "challenge",
+        "credential_id",
+        "public_key",
+        "signature",
+        "attestation_object",
+        "client_data_json",
+        "authenticator_data",
+        "user_handle",
+        "postgresql",
+        "mysql",
+        "redis",
+        "mongodb",
+        "akia",
+        "sk_live",
+        "sk_test",
+        "pk_live",
+        "pk_test",
+        "rk_live",
+        "rk_test",
+        "@",
     )
+
+    # Digit-only sensitive shapes (SSN, credit card) — the only
+    # SENSITIVE_PATTERNS families without a stable literal. Keep in sync with
+    # the SSN/card entries above. Deliberately a plain two-branch pattern
+    # (no IGNORECASE, no alternation sprawl) so the clean-path scan is cheap.
+    _DIGIT_SHAPES: re.Pattern[str] = re.compile(
+        r"\b\d{3}[\s-]?\d{2}[\s-]?\d{4}\b|\b(?:\d{4}[\s-]?){3}\d{4}\b"
+    )
+
+    @classmethod
+    def _maybe_sensitive(cls, message: str) -> bool:
+        """
+        Cheap superset gate for sanitize_message.
+
+        Returns True for every string any SENSITIVE_PATTERNS entry could
+        match (see _SENSITIVE_SUBSTRINGS invariant); False means no pattern
+        can match and the caller may return the message unchanged.
+        """
+        lowered = message.lower()
+        if any(literal in lowered for literal in cls._SENSITIVE_SUBSTRINGS):
+            return True
+        return cls._DIGIT_SHAPES.search(message) is not None
 
     @classmethod
     def sanitize_message(cls, message: str) -> str:
@@ -150,8 +199,8 @@ class LogSanitizer:
         if not isinstance(message, str):
             return message
 
-        # Fast path: skip individual patterns if no sensitive data possible
-        if not cls._ANY_SENSITIVE.search(message):
+        # Fast path: cheap substring gate; >99% of log strings return here.
+        if not cls._maybe_sensitive(message):
             return message
 
         sanitized = message

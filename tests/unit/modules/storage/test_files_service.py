@@ -136,8 +136,12 @@ async def test_upload_file_txn_split_ends_read_txn_before_upload(file_service, m
 
 
 @pytest.mark.asyncio
-async def test_upload_file_default_keeps_single_txn(file_service, mock_db, mock_storage_service):
-    """Default (flag off): no mid-flow rollback — original single-transaction behavior."""
+async def test_upload_file_flag_off_keeps_single_txn(file_service, mock_db, mock_storage_service):
+    """Flag off: no mid-flow rollback — original single-transaction behavior."""
+    from unittest.mock import patch
+
+    from src.app.core.config import settings as app_settings
+
     tenant_id = uuid4()
     file_obj = io.BytesIO(b"test content")
 
@@ -162,12 +166,59 @@ async def test_upload_file_default_keeps_single_txn(file_service, mock_db, mock_
     mock_provider.upload = AsyncMock(return_value=mock_upload_result)
     mock_storage_service.get_provider_for_settings.return_value = mock_provider
 
+    with patch.object(app_settings.performance, "FEATURE_UPLOAD_TXN_SPLIT", False):
+        await file_service.upload_file(
+            tenant_id=tenant_id, user_id=1, file=file_obj, filename="test.txt", mime_type="text/plain", size_bytes=100
+        )
+
+    mock_db.rollback.assert_not_called()
+    mock_db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_upload_file_default_splits_txn(file_service, mock_db, mock_storage_service):
+    """P2 default-on: with no flag override, the read-phase transaction must
+    end (rollback) BEFORE the storage upload."""
+    tenant_id = uuid4()
+    file_obj = io.BytesIO(b"test content")
+
+    mock_settings = MagicMock()
+    mock_settings.max_file_size_mb = 10
+    mock_settings.allowed_file_types = ["text/plain"]
+    mock_settings.max_file_count = 100
+    mock_settings.storage_quota_bytes = 1024 * 1024 * 1024
+    mock_settings.provider = "local"
+    mock_storage_service.get_settings_or_raise.return_value = mock_settings
+
+    mock_result = MagicMock()
+    mock_row = MagicMock()
+    mock_row.file_count = 5
+    mock_row.storage_usage_bytes = 1000
+    mock_result.one_or_none.return_value = mock_row
+    mock_db.execute.return_value = mock_result
+
+    mock_provider = MagicMock()
+    mock_upload_result = MagicMock()
+    mock_upload_result.success = True
+    mock_provider.upload = AsyncMock(return_value=mock_upload_result)
+    mock_storage_service.get_provider_for_settings.return_value = mock_provider
+
+    order: list[str] = []
+
+    async def _upload(*args, **kwargs):
+        order.append("upload")
+        return mock_upload_result
+
+    mock_provider.upload = _upload
+    mock_db.rollback = AsyncMock(side_effect=lambda *a, **k: order.append("rollback"))
+    mock_db.commit = AsyncMock(side_effect=lambda *a, **k: order.append("commit"))
+
     await file_service.upload_file(
         tenant_id=tenant_id, user_id=1, file=file_obj, filename="test.txt", mime_type="text/plain", size_bytes=100
     )
 
-    mock_db.rollback.assert_not_called()
-    mock_db.commit.assert_called_once()
+    assert order[0] == "rollback"
+    assert order.index("rollback") < order.index("upload")
 
 
 @pytest.mark.asyncio
@@ -443,3 +494,85 @@ async def test_get_file_count_total_size(file_service, mock_db):
 
     size = await file_service._get_total_size(tenant_id)
     assert size == 1000
+
+
+@pytest.mark.asyncio
+async def test_list_files_filtered_single_query_windowed_total(file_service, mock_db):
+    """P2: filtered list_files uses one COUNT(*) OVER() query (1 RTT)."""
+    tenant_id = uuid4()
+
+    mock_file = MagicMock()
+    mock_file.id = 1
+    mock_file.size_bytes = 100
+    mock_file.tenant_id = tenant_id
+    mock_file.user_id = 1
+    mock_file.original_name = "test.txt"
+    mock_file.mime_type = "text/plain"
+    mock_file.storage_path = "path/to/test.txt"
+    mock_file.is_public = False
+    mock_file.description = None
+    mock_file.created_at = datetime.now()
+    mock_file.updated_at = datetime.now()
+
+    mock_result = MagicMock()
+    mock_result.all.return_value = [(mock_file, 5)]
+    mock_db.execute.return_value = mock_result
+
+    result = await file_service.list_files(tenant_id=tenant_id, user_id=1)
+
+    assert result["total_count"] == 5
+    assert len(result["data"]) == 1
+    mock_db.execute.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_list_files_filtered_empty_page_zero_offset_no_second_query(file_service, mock_db):
+    """P2: empty first page reports total 0 without a fallback COUNT."""
+    mock_result = MagicMock()
+    mock_result.all.return_value = []
+    mock_db.execute.return_value = mock_result
+
+    result = await file_service.list_files(tenant_id=uuid4(), user_id=1, offset=0)
+
+    assert result["total_count"] == 0
+    assert result["data"] == []
+    mock_db.execute.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_download_stream_performs_zero_db_fetches(file_service, mock_storage_service):
+    """P2: download() resolves row+settings once; the stream re-fetches neither."""
+    tenant_id = uuid4()
+
+    mock_file = MagicMock()
+    mock_file.id = 1
+    mock_file.tenant_id = tenant_id
+    mock_file.storage_path = "path"
+    mock_file.size_bytes = 100
+    mock_file.user_id = 1
+    mock_file.original_name = "test.txt"
+    mock_file.mime_type = "text/plain"
+    mock_file.is_public = False
+    mock_file.description = None
+    mock_file.created_at = datetime.now()
+    mock_file.updated_at = datetime.now()
+    file_service.get_file_or_raise = AsyncMock(return_value=mock_file)
+
+    mock_settings = MagicMock()
+    mock_settings.provider = "local"
+    mock_storage_service.get_settings_or_raise.return_value = mock_settings
+
+    mock_provider = MagicMock()
+
+    async def mock_download_gen(*args, **kwargs):
+        yield b"chunk1"
+
+    mock_provider.download = mock_download_gen
+    mock_storage_service.get_provider_for_settings.return_value = mock_provider
+
+    download = await file_service.download(tenant_id, 1)
+    chunks = [chunk async for chunk in download.iter_bytes()]
+
+    assert chunks == [b"chunk1"]
+    file_service.get_file_or_raise.assert_awaited_once()
+    mock_storage_service.get_settings_or_raise.assert_awaited_once()

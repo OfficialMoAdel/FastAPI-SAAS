@@ -18,11 +18,9 @@ import posixpath
 import re
 import unicodedata
 from enum import Enum
-from typing import cast
 
 from fastapi import Request, Response, status
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
@@ -107,6 +105,88 @@ COMBINED_ATTACK_RE: re.Pattern[bytes] = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# P1-7: necessary-literal prefilter for the combined regex. Each literal is a
+# *necessary* (not sufficient) condition for its group — every byte-string the
+# group can match contains the literal — so "no literal present" provably
+# implies "regex cannot match" and we can skip the ~1.1 ms finditer. Any hit
+# falls through to the unchanged full regex, so false positives only cost the
+# regex run, never a missed verdict. Literals are lowercase ASCII and content
+# is ASCII-folded via bytes.lower() (bytes IGNORECASE folds ASCII only), which
+# keeps the implication sound.
+#
+# group -> literal: sql_union->"union" | sql_or->"or" | sql_drop->"drop" |
+#   sql_delete->"delete" | sql_comment/sql_semicomment->"--" |
+#   sql_exec->"exec" | xss_script/xss_event/xss_iframe/xss_object->"<" |
+#   xss_jsuri->"javascript" | path_dotdot->"../" | path_enc->"%2e%2e%2f" |
+#   path_penc->"%2e%2e/" | cmd_inj->";"/"||"/"&&" (one separator is required) |
+#   ssrf_cloud->"169.254.169.254".
+_PREFILTER_LITERALS_BYTES: frozenset[bytes] = frozenset(
+    [
+        b"union",
+        b"or",
+        b"drop",
+        b"delete",
+        b"--",
+        b"exec",
+        b"<",
+        b"javascript",
+        b"../",
+        b"%2e%2e%2f",
+        b"%2e%2e/",
+        b";",
+        b"||",
+        b"&&",
+        b"169.254.169.254",
+    ]
+)
+
+try:
+    import ahocorasick as _ahocorasick
+except ImportError:  # pragma: no cover - precaution: stdlib fallback below
+    _ahocorasick = None  # type: ignore[assignment]
+
+
+def _build_prefilter_automaton() -> object | None:
+    """Build the Aho-Corasick automaton once, or None to use str.find fallback."""
+    if _ahocorasick is None:
+        return None
+    try:
+        automaton = _ahocorasick.Automaton()
+        # str automaton over latin-1: pure-ASCII literals make a latin-1
+        # decode of ASCII-folded bytes exactly equivalent to a bytes search.
+        for literal in _PREFILTER_LITERALS_BYTES:
+            automaton.add_word(literal.decode("latin-1"), literal)
+        automaton.make_automaton()
+        return automaton  # type: ignore[no-any-return]  # untyped C extension
+    except Exception:  # pragma: no cover - precaution: fall back, never fail boot
+        return None
+
+
+_PREFILTER_AUTOMATON: object | None = _build_prefilter_automaton()
+
+
+def _attack_prefilter_hit(content: bytes) -> bool:
+    """Return True if any necessary literal is present (regex may match).
+
+    Prefers the C automaton; falls back to a short-circuiting bytes ``in``
+    chain when pyahocorasick is unavailable or the automaton failed to build.
+    Read-only against the shared automaton, so safe from request threads and
+    the scan executor.
+    """
+    lowered = content.lower()
+    automaton = _PREFILTER_AUTOMATON
+    if automaton is not None:
+        try:
+            for _ in automaton.iter(lowered.decode("latin-1")):  # type: ignore[union-attr, attr-defined]  # untyped C extension
+                return True
+            return False
+        except Exception:  # pragma: no cover - precaution: degrade to fallback
+            pass
+    for literal in _PREFILTER_LITERALS_BYTES:
+        if literal in lowered:
+            return True
+    return False
+
 # Unicode characters commonly used to bypass regex-based detection.
 # Zero-width joiners/non-joiners, directional overrides, BOM, etc.
 _ZERO_WIDTH_RE = re.compile(
@@ -141,7 +221,21 @@ _HEADERS_TO_CHECK: tuple[str, ...] = (
 )
 
 
-class AttackDetectionMiddleware(BaseHTTPMiddleware):
+# P1-6: byte form of the scanned header set, so the native ASGI __call__
+# can filter scope["headers"] in a single pass without per-name str lookups.
+_HEADERS_TO_CHECK_BYTES: frozenset[bytes] = frozenset(h.encode("latin-1") for h in _HEADERS_TO_CHECK)
+
+
+class AttackDetectionMiddleware:
+    """Native ASGI middleware (not BaseHTTPMiddleware) to detect malicious patterns.
+
+    P1-6: converted from BaseHTTPMiddleware, which pays an anyio task-group +
+    full-body buffer/replay per POST/PUT/PATCH. The native __call__ drains the
+    body once and replays it downstream via a wrapped receive channel, so
+    streaming responses are never buffered and no task-group hop is incurred.
+    (Template: RateLimitMiddleware.__call__ — plain class with
+    ``async def __call__(self, scope, receive, send)``.)
+    """
 
     # P1: bodies larger than this are scanned in the executor (bytes).
     _BODY_OFFLOAD_THRESHOLD = 16 * 1024
@@ -161,7 +255,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
     """
 
     def __init__(self, app: ASGIApp) -> None:
-        super().__init__(app)
+        self.app = app
         self._filter_service = IPFilterService()
         self._mode = settings.attack_detection.ATTACK_DETECTION_MODE
         self._log_full_request = settings.attack_detection.ATTACK_DETECTION_LOG_FULL_REQUEST
@@ -215,49 +309,90 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
         return text.encode("utf-8", errors="replace")
 
-    async def _detect_attack_patterns(self, request: Request) -> tuple[list[dict[str, str]], Request]:
-        """Scan request for attack patterns using zero-copy bytes scanning.
+    @staticmethod
+    async def _drain_body(receive: Receive) -> tuple[bytes, Receive]:
+        """Drain the request body and return (body, replay_receive).
 
-        Checks:
-        - URL path and query parameters (encoded to bytes)
-        - Request body (scanned as raw bytes without UTF-8 decode)
-        - Headers (encoded to bytes)
+        P1-6: native ASGI has no _CachedRequest replay, so the middleware
+        drains ``receive`` itself and hands downstream a wrapped channel that
+        replays the buffered bytes once, then delegates to the underlying
+        channel so ``http.disconnect`` (and any later frames) propagate.
+        Delegation is required: swallowing disconnect breaks
+        ``StreamingResponse.listen_for_disconnect`` (hangs SSE under
+        TestClient; zombie generators on real servers).
+        """
+        chunks: list[bytes] = []
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                break  # disconnect or terminal frame: scan what we have
+            chunk = message.get("body", b"")
+            if chunk:
+                chunks.append(chunk)
+            if not message.get("more_body", False):
+                break
+        body = b"".join(chunks)
 
-        All text inputs are sanitized via NFKC normalization and zero-width
-        character stripping before regex matching to prevent bypass attacks.
+        replayed = False
 
-        Returns:
-            Tuple of (detected attacks list, request). The request object is
-            returned unchanged; the body is read via ``Request.body()`` so
-            Starlette's ``_CachedRequest`` replays it downstream (P0-1: a
-            consumed ``request.stream()`` would make downstream see ``b""``).
+        async def replay_receive() -> Message:
+            nonlocal replayed
+            if replayed:
+                return await receive()
+            replayed = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        return body, replay_receive
+
+    async def _scan_request(
+        self,
+        path: str,
+        query_string: bytes,
+        raw_headers: list[tuple[bytes, bytes]],
+        method: str,
+        receive: Receive,
+    ) -> tuple[list[dict[str, str]], Receive]:
+        """Scan path, query, headers and body for attack patterns.
+
+        P1-6 scan-trim vs the old BaseHTTP version:
+        - query_string is scanned as raw scope bytes (no str(query_params)
+          decode/re-encode round-trip; percent-encoded traversal stays intact
+          for the path_enc patterns);
+        - headers are filtered in ONE pass over scope["headers"] (already
+          lowercase bytes — no per-name dict lookup + str→bytes encode);
+        - path comes from scope["path"] (no Request.url construction).
+        Body handling (MAX_SCAN_SIZE skip, executor offload) is unchanged.
+
+        Returns (detected attacks, receive) where receive replays the body
+        for POST/PUT/PATCH and is the original channel otherwise.
         """
         detected_attacks: list[dict] = []
 
         # Encode small strings to bytes (fast) instead of decoding large body (slow)
-        path_bytes = self._sanitize_input(request.url.path.encode("utf-8", errors="replace"))
+        path_bytes = self._sanitize_input(path.encode("utf-8", errors="replace"))
         self._check_for_patterns(path_bytes, "url_path", detected_attacks)
 
-        query = str(request.query_params)
-        if query:
+        if query_string:
             self._check_for_patterns(
-                self._sanitize_input(query.encode("utf-8", errors="replace")),
+                self._sanitize_input(query_string),
                 "query_string",
                 detected_attacks,
             )
 
-        # Check security-relevant headers (expanded from original 3)
-        for header_name in _HEADERS_TO_CHECK:
-            header_value = request.headers.get(header_name, "")
-            if header_value:
+        # Check security-relevant headers in a single pass (expanded from original 3)
+        content_length: bytes | None = None
+        for header_name, header_value in raw_headers:
+            if header_name == b"content-length" and content_length is None:
+                content_length = header_value
+            if header_value and header_name in _HEADERS_TO_CHECK_BYTES:
                 self._check_for_patterns(
-                    self._sanitize_input(header_value.encode("utf-8", errors="replace")),
-                    f"header:{header_name}",
+                    self._sanitize_input(header_value),
+                    f"header:{header_name.decode('latin-1')}",
                     detected_attacks,
                 )
 
         # Check request body if it's a POST/PUT/PATCH with content
-        if request.method in ("POST", "PUT", "PATCH"):
+        if method in ("POST", "PUT", "PATCH"):
             # Removed early return for multipart/form-data to actually apply the BUG FIX.
 
             # BUG FIX: Scan all content types to prevent bypass via multipart/form-data or other types
@@ -266,29 +401,20 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
             # (phantom knob). Keep the 128KB default here; adding a real field
             # is tracked with the typed-settings sweep.
             MAX_SCAN_SIZE = 128 * 1024
-            content_length_str = request.headers.get("content-length")
-            if content_length_str:
+            if content_length:
                 try:
-                    if int(content_length_str) > MAX_SCAN_SIZE:
+                    if int(content_length) > MAX_SCAN_SIZE:
                         skip_body = True
                         logger.debug(
                             "Skipping attack scan of oversized body | content-length=%s",
-                            content_length_str,
+                            content_length.decode("latin-1", errors="replace"),
                         )
                 except ValueError:
                     pass  # Malformed Content-Length; proceed with body read
 
             if not skip_body:
                 try:
-                    # P0-1 FIX: read via Request.body(), NOT request.stream().
-                    # Starlette's BaseHTTPMiddleware wraps dispatch in a
-                    # _CachedRequest: body() caches the bytes and replays them
-                    # downstream via wrapped_receive, while a consumed stream()
-                    # makes downstream see b"" — and the rebuilt Request object
-                    # below was discarded anyway (call_next ignores its argument
-                    # and reuses the original scope + receive channel). Body size
-                    # is bounded upstream by RequestBodyLimitMiddleware.
-                    body_to_scan = await request.body()
+                    body_to_scan, receive = await self._drain_body(receive)
                     body_size = len(body_to_scan)
 
                     if body_to_scan:
@@ -333,14 +459,19 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                         }
                     )
 
-        return detected_attacks, request  # type: ignore[return-value]
+        return detected_attacks, receive
 
     def _check_for_patterns(self, content: bytes, location: str, attacks: list[dict]) -> None:
         """Check content against all attack patterns using combined bytes regex.
 
         Uses a single compiled regex with named groups instead of iterating
         over 16 individual patterns. The named group identifies the attack type.
+
+        P1-7: a necessary-literal prefilter (Aho-Corasick, str.find fallback)
+        skips the regex entirely when no group can possibly match.
         """
+        if not _attack_prefilter_hit(content):
+            return
         for match in COMBINED_ATTACK_RE.finditer(content):
             group_name = match.lastgroup
             if group_name and group_name in _GROUP_TO_ATTACK:
@@ -367,7 +498,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
     async def _handle_attack_detection(
         self,
-        request: Request,
+        path: str,
         client_ip: str,
         detected_attacks: list[dict],
     ) -> Response | None:
@@ -376,7 +507,6 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         Returns:
             Response if attack should be blocked/banned, None if request should continue
         """
-        path = request.url.path
 
         # Log the attack
         for attack in detected_attacks:
@@ -446,9 +576,13 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
         return None
 
-    async def dispatch(self, request: Request, call_next) -> Response:
-        """Process request through attack detection."""
-        path = request.url.path
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Process request through attack detection (native ASGI)."""
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path: str = scope.get("path", "")
 
         # Refresh runtime-configurable flags each request so tests and
         # dynamic settings overrides are respected without app restart.
@@ -470,33 +604,41 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
         # Skip if attack detection is disabled
         if not self._enabled:
-            response = await call_next(request)
-            return cast(Response, response)
+            await self.app(scope, receive, send)
+            return
 
         # Skip exempt paths
         if self._is_exempt_path(path):
-            response = await call_next(request)
-            return cast(Response, response)
+            await self.app(scope, receive, send)
+            return
 
-        # Skip if IP is whitelisted (set by IPFilterMiddleware)
-        is_whitelisted = getattr(request.state, "ip_whitelisted", False)
-        if is_whitelisted:
+        # Skip if IP is whitelisted (set by IPFilterMiddleware).
+        # P1-6: read from scope state directly — same dict BaseHTTP's
+        # Request.state was backed by, so cross-middleware semantics hold.
+        scope_state = scope.get("state", {})
+        if scope_state.get("ip_whitelisted", False):
             logger.debug("Attack detection skipped for whitelisted IP | path=%s", path)
-            response = await call_next(request)
-            return cast(Response, response)
+            await self.app(scope, receive, send)
+            return
 
-        client_ip = getattr(request.state, "client_ip", None) or get_client_ip(request)
+        client_ip = scope_state.get("client_ip") or get_client_ip(Request(scope))
 
-        # Detect attack patterns
-        detected_attacks, request = await self._detect_attack_patterns(request)
+        # Detect attack patterns (drains + replays body on POST/PUT/PATCH)
+        detected_attacks, receive = await self._scan_request(
+            path,
+            scope.get("query_string", b""),
+            scope.get("headers", []),
+            scope.get("method", "GET"),
+            receive,
+        )
 
         if detected_attacks:
             # Handle based on mode
-            block_response = await self._handle_attack_detection(request, client_ip, detected_attacks)
+            block_response = await self._handle_attack_detection(path, client_ip, detected_attacks)
 
             if block_response is not None:
-                return block_response
+                await block_response(scope, receive, send)
+                return
 
         # Allow request to continue
-        response = await call_next(request)
-        return cast(Response, response)
+        await self.app(scope, receive, send)

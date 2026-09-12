@@ -8,15 +8,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.middleware.tenant import _L1_TENANT_CACHE
+from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
 
 
 @pytest.fixture(autouse=True)
 def clear_l1_cache():
     """Clear L1 cache before each test."""
     _L1_TENANT_CACHE.clear()
+    _L1_TENANT_PARSED.clear()
     yield
     _L1_TENANT_CACHE.clear()
+    _L1_TENANT_PARSED.clear()
 
 
 class TestNegativeCache:

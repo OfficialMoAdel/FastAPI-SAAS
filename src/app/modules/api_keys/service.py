@@ -177,8 +177,7 @@ class APIKeyService(BaseService[APIKey]):
         dict
             Paginated list of API keys (without actual keys)
         """
-        return await self.crud.get_multi(
-            db=self.db,
+        return await self.get_page_with_total(
             user_id=user_id,
             tenant_id=tenant_id,
             offset=(page - 1) * items_per_page,

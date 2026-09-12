@@ -788,14 +788,25 @@ async def test_charge_refunded_itemized_never_writes_invoice_id(
     mock_crud_billing.exists = AsyncMock(return_value=False)
     mock_crud_billing.create = AsyncMock()
 
+    # P1-11 bulk dedup: the IN-query finds nothing recorded yet.
+    in_result = MagicMock()
+    in_result.scalars.return_value.all.return_value = []
+    tenant_db.execute = AsyncMock(return_value=in_result)
+
     event = _make_charge_refunded_event(refunds={"data": [{"id": "re_1", "amount": 200}]})
     await handle_charge_refunded(event)
 
-    mock_crud_billing.create.assert_awaited_once()
-    created = mock_crud_billing.create.call_args[1]["object"]
-    assert created.stripe_refund_id == "re_1"
-    assert created.amount_cents == -200
-    assert created.stripe_invoice_id is None
+    tenant_db.execute.assert_awaited_once()
+    tenant_db.add_all.assert_called_once()
+    (rows,) = tenant_db.add_all.call_args[0]
+    assert len(rows) == 1
+    assert rows[0].stripe_refund_id == "re_1"
+    assert rows[0].amount_cents == -200
+    assert rows[0].stripe_invoice_id is None
+    tenant_db.flush.assert_awaited_once()
+    # Bulk path never touches per-row exists/create.
+    mock_crud_billing.exists.assert_not_awaited()
+    mock_crud_billing.create.assert_not_awaited()
     tenant_db.commit.assert_awaited_once()
 
 
@@ -894,3 +905,89 @@ async def test_charge_refunded_integrity_error_skips_not_500s(
 
     tenant_db.rollback.assert_awaited_once()
     tenant_db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.job_bypass_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+@patch("src.app.modules.billing.webhook.crud_billing_records")
+async def test_charge_refunded_bulk_skips_already_recorded(
+    mock_crud_billing, mock_crud_subs, mock_bypass_ctx, mock_tenant_ctx, mock_get_gateway
+):
+    """P1-11: one IN-query replaces N exists(); only unrecorded refunds are inserted."""
+    mock_get_gateway.return_value.retrieve_invoice = AsyncMock(return_value={"subscription": "sub_123"})
+    bypass_db = AsyncMock()
+    tenant_db = AsyncMock()
+    mock_bypass_ctx.return_value = AsyncContextManagerMock(bypass_db)
+    mock_tenant_ctx.return_value = AsyncContextManagerMock(tenant_db)
+    mock_crud_subs.model = UserSubscription
+
+    bypass_result = MagicMock()
+    bypass_result.scalar_one_or_none.return_value = _make_mock_sub()
+    bypass_db.execute = AsyncMock(return_value=bypass_result)
+
+    in_result = MagicMock()
+    in_result.scalars.return_value.all.return_value = ["re_1"]
+    tenant_db.execute = AsyncMock(return_value=in_result)
+
+    mock_crud_billing.exists = AsyncMock()
+    mock_crud_billing.create = AsyncMock()
+
+    event = _make_charge_refunded_event(
+        refunds={"data": [{"id": "re_1", "amount": 200}, {"id": "re_2", "amount": 300}]}
+    )
+    await handle_charge_refunded(event)
+
+    tenant_db.execute.assert_awaited_once()
+    (rows,) = tenant_db.add_all.call_args[0]
+    assert [r.stripe_refund_id for r in rows] == ["re_2"]
+    tenant_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.modules.billing.webhook.job_tenant_context")
+@patch("src.app.modules.billing.webhook.job_bypass_context")
+@patch("src.app.modules.billing.webhook.crud_user_subscriptions")
+@patch("src.app.modules.billing.webhook.crud_billing_records")
+async def test_charge_refunded_bulk_race_falls_back_to_per_row(
+    mock_crud_billing, mock_crud_subs, mock_bypass_ctx, mock_tenant_ctx, mock_get_gateway
+):
+    """P1-11: a bulk flush that loses the redelivery race rolls back and
+    retries per-row (exists + create), skipping instead of 500ing."""
+    from sqlalchemy.exc import IntegrityError
+
+    mock_get_gateway.return_value.retrieve_invoice = AsyncMock(return_value={"subscription": "sub_123"})
+    bypass_db = AsyncMock()
+    tenant_db = AsyncMock()
+    mock_bypass_ctx.return_value = AsyncContextManagerMock(bypass_db)
+    mock_tenant_ctx.return_value = AsyncContextManagerMock(tenant_db)
+    mock_crud_subs.model = UserSubscription
+
+    bypass_result = MagicMock()
+    bypass_result.scalar_one_or_none.return_value = _make_mock_sub()
+    bypass_db.execute = AsyncMock(return_value=bypass_result)
+
+    in_result = MagicMock()
+    in_result.scalars.return_value.all.return_value = []
+    tenant_db.execute = AsyncMock(return_value=in_result)
+    tenant_db.flush = AsyncMock(
+        side_effect=IntegrityError("INSERT INTO billing_records", {}, Exception("uq_billing_records_stripe_refund"))
+    )
+
+    # Race winner's row is now visible: re_1 exists, re_2 still new.
+    mock_crud_billing.exists = AsyncMock(side_effect=[True, False])
+    mock_crud_billing.create = AsyncMock()
+
+    event = _make_charge_refunded_event(
+        refunds={"data": [{"id": "re_1", "amount": 200}, {"id": "re_2", "amount": 300}]}
+    )
+    await handle_charge_refunded(event)
+
+    assert mock_crud_billing.exists.await_count == 2
+    mock_crud_billing.create.assert_awaited_once()
+    created = mock_crud_billing.create.call_args[1]["object"]
+    assert created.stripe_refund_id == "re_2"
+    tenant_db.commit.assert_awaited_once()

@@ -93,7 +93,20 @@ class CircuitBreaker:
         return self._failure_count
 
     async def record_success(self) -> None:
-        """Record successful call, potentially closing circuit."""
+        """Record successful call, potentially closing circuit.
+
+        P0-4 fast path: a healthy CLOSED breaker with zero failures and no
+        probe in flight is a locked-body no-op (the body only clears
+        ``_probe_in_progress``, already False, then takes no branch), so
+        return before the lock/imports. Every DB op wraps
+        ``db_circuit_guard()``, making this the hottest path here.
+        """
+        if (
+            self._state is CircuitState.CLOSED
+            and self._failure_count == 0
+            and not self._probe_in_progress
+        ):
+            return
         from src.app.core.config import settings
         from src.app.core.monitoring.r1_unified_metrics import record_circuit_breaker_transition
 
@@ -112,9 +125,6 @@ class CircuitBreaker:
                         self.success_threshold,
                     )
                     # Record state transition for monitoring
-                    from src.app.core.config import settings
-                    from src.app.core.monitoring.r1_unified_metrics import record_circuit_breaker_transition
-
                     if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
                         record_circuit_breaker_transition("closed")
             elif self.state == CircuitState.CLOSED and self._failure_count:

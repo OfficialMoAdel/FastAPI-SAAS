@@ -116,7 +116,7 @@ class WebhookEndpoint(Base, UUIDMixin):
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(  # type: ignore
-        "Tenant", back_populates="webhook_endpoints", init=False, lazy="selectin"
+        "Tenant", back_populates="webhook_endpoints", init=False, lazy="noload"
     )
     deliveries: Mapped[list["WebhookDelivery"]] = relationship(
         "WebhookDelivery", back_populates="webhook_endpoint", cascade="all, delete-orphan", init=False, lazy="noload"
@@ -267,7 +267,7 @@ class WebhookDelivery(Base, UUIDMixin):
         "WebhookEndpoint", back_populates="deliveries", init=False, lazy="selectin"
     )
     tenant: Mapped["Tenant"] = relationship(  # type: ignore
-        "Tenant", back_populates="webhook_deliveries", init=False, lazy="selectin"
+        "Tenant", back_populates="webhook_deliveries", init=False, lazy="noload"
     )
 
     # Composite Indexes for Performance

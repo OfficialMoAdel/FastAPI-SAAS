@@ -148,40 +148,83 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
                 )
                 return
         else:
-            for refund in refunds:
-                refund_id = refund["id"]
-                if await _pkg.crud_billing_records.exists(
-                    db=db,
-                    stripe_refund_id=refund_id,
-                ):
-                    continue
-
-                billing_record = BillingRecordCreateInternal(
-                    tenant_id=tenant_id,
-                    user_id=user_id,
-                    user_subscription_id=subscription_id,
-                    stripe_payment_intent_id=stripe_payment_intent_id,
-                    # P0-2: see above — the succeeded/failed row owns the
-                    # invoice id; refund rows link via payment_intent +
-                    # stripe_refund_id (which has its own unique index).
-                    stripe_invoice_id=None,
-                    stripe_refund_id=refund_id,
-                    amount_cents=-refund["amount"],
-                    currency=charge["currency"],
-                    status="refunded",
-                    description=f"Refund {refund_id} processed for charge {charge['id']}",
+            # P1-11: bulk dedup — one SELECT ... WHERE stripe_refund_id IN
+            # (...) replaces N per-refund exists() round-trips, and a single
+            # add_all + flush replaces N INSERT round-trips. Set membership
+            # over the same id list in the same txn is equivalent to per-id
+            # exists(); same rows, same commit boundary.
+            refund_ids = [refund["id"] for refund in refunds]
+            existing_result = await db.execute(
+                select(BillingRecord.stripe_refund_id).where(
+                    BillingRecord.tenant_id == tenant_id,
+                    BillingRecord.stripe_refund_id.in_(refund_ids),
                 )
+            )
+            already_recorded = set(existing_result.scalars().all())
+
+            new_rows = [
+                BillingRecord(
+                    **BillingRecordCreateInternal(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        user_subscription_id=subscription_id,
+                        stripe_payment_intent_id=stripe_payment_intent_id,
+                        # P0-2: see above — the succeeded/failed row owns the
+                        # invoice id; refund rows link via payment_intent +
+                        # stripe_refund_id (which has its own unique index).
+                        stripe_invoice_id=None,
+                        stripe_refund_id=refund["id"],
+                        amount_cents=-refund["amount"],
+                        currency=charge["currency"],
+                        status="refunded",
+                        description=f"Refund {refund['id']} processed for charge {charge['id']}",
+                    ).model_dump()
+                )
+                for refund in refunds
+                if refund["id"] not in already_recorded
+            ]
+            if new_rows:
+                db.add_all(new_rows)
                 try:
-                    await _pkg.crud_billing_records.create(db=db, object=billing_record)
+                    await db.flush()
                 except IntegrityError:
                     # Concurrent redelivery inside the stripe_refund_id dedup
-                    # window already inserted this refund. Skip it.
+                    # window inserted some of these rows between our IN query
+                    # and the flush. Roll back and fall back to the per-row
+                    # exists()+create path, which skips row-by-row.
                     await db.rollback()
                     _pkg.logger.info(
-                        "Refund row already exists (race), skipping duplicate insert",
-                        val=refund_id,
+                        "Bulk refund insert raced redelivery, falling back to per-row dedup",
+                        val=charge["id"],
                     )
-                    continue
+                    for refund in refunds:
+                        refund_id = refund["id"]
+                        if await _pkg.crud_billing_records.exists(
+                            db=db,
+                            stripe_refund_id=refund_id,
+                        ):
+                            continue
+                        billing_record = BillingRecordCreateInternal(
+                            tenant_id=tenant_id,
+                            user_id=user_id,
+                            user_subscription_id=subscription_id,
+                            stripe_payment_intent_id=stripe_payment_intent_id,
+                            stripe_invoice_id=None,
+                            stripe_refund_id=refund_id,
+                            amount_cents=-refund["amount"],
+                            currency=charge["currency"],
+                            status="refunded",
+                            description=f"Refund {refund_id} processed for charge {charge['id']}",
+                        )
+                        try:
+                            await _pkg.crud_billing_records.create(db=db, object=billing_record)
+                        except IntegrityError:
+                            await db.rollback()
+                            _pkg.logger.info(
+                                "Refund row already exists (race), skipping duplicate insert",
+                                val=refund_id,
+                            )
+                            continue
 
         await db.commit()
 

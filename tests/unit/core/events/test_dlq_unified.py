@@ -46,6 +46,7 @@ class FakeRedis:
 
     def __init__(self) -> None:
         self.store: dict[str, list[str]] = {}
+        self.evalsha_calls: list[str] = []
 
     def pipeline(self, transaction: bool = True) -> FakePipe:
         return FakePipe(self)
@@ -56,6 +57,8 @@ class FakeRedis:
 
     async def lrange(self, key: str, start: int, end: int) -> list[str]:
         items = self.store.get(key, [])
+        if end < 0:  # Redis negative-end semantics (test double fidelity)
+            end = len(items) + end
         return items[start : end + 1]
 
     async def llen(self, key: str) -> int:
@@ -66,6 +69,62 @@ class FakeRedis:
         if not items:
             return None
         return items.pop()
+
+    async def lrem(self, key: str, count: int, value: str) -> int:
+        """Redis LREM semantics for count=1: remove head-most match."""
+        items = self.store.get(key, [])
+        kept: list[str] = []
+        removed = 0
+        for v in items:
+            if v == value and removed < count:
+                removed += 1
+            else:
+                kept.append(v)
+        self.store[key] = kept
+        return removed
+
+    async def evalsha(self, sha: str, numkeys: int, *keys_and_args: str) -> Any:
+        """SHA-matched emulation of the DLQ filter scripts (P2).
+
+        Mirrors the Lua semantics exactly: only raw values starting with
+        ``{`` participate, unparseable entries are skipped, non-objects are
+        skipped, a missing ``source`` field counts as ``"arq"``, pop scans
+        oldest-first (tail = oldest), clear scans head-to-tail with one
+        LREM count=1 per match.
+        """
+        from src.app.core.utils.lua_manager import get_lua_manager
+
+        manager = get_lua_manager()
+        pop_sha = manager.get_script("dlq_pop_filtered").sha1
+        clear_sha = manager.get_script("dlq_clear_filtered").sha1
+        self.evalsha_calls.append(sha)
+        if sha not in (pop_sha, clear_sha):
+            raise Exception("NOSCRIPT no matching script")
+        key = keys_and_args[0]
+        want = keys_and_args[1]
+        items = list(self.store.get(key, []))
+
+        def _matches(raw: str) -> bool:
+            if not raw or raw[0] not in "{ \t\n\r\v\f" or raw.lstrip(" \t\n\r\v\f")[:1] != "{":
+                return False
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                return False
+            return isinstance(obj, dict) and obj.get("source", "arq") == want
+
+        if sha == pop_sha:
+            for raw in reversed(items):
+                if _matches(raw):
+                    await self.lrem(key, 1, raw)
+                    return raw
+            return False
+        cleared = 0
+        for raw in items:
+            if _matches(raw):
+                await self.lrem(key, 1, raw)
+                cleared += 1
+        return cleared
 
     async def delete(self, key: str) -> int:
         return 1 if self.store.pop(key, None) is not None else 0
@@ -191,3 +250,96 @@ def test_strict_ordering_flag_declared_default_false() -> None:
     from src.app.core.config import settings
 
     assert settings.EVENT_BUS_REQUIRE_STRICT_ORDERING is False
+
+
+def _seed_dlq(fake_redis: FakeRedis, raws: list[str]) -> None:
+    """Seed ``arq:dlq`` oldest-first (LPUSH each in order: last pushed = head)."""
+    for raw in raws:
+        fake_redis.store.setdefault(EventBus.DLQ_REDIS_KEY, []).insert(0, raw)
+
+
+class TestDlqFilteredLuaPath:
+    """P2: source-filtered DLQ ops run server-side (single EVALSHA)."""
+
+    @pytest.mark.asyncio
+    async def test_pop_filtered_oldest_first_single_rtt(
+        self, bus: EventBus, fake_redis: FakeRedis
+    ) -> None:
+        a = json.dumps({"job_id": "a", "source": "arq"})
+        b = json.dumps({"job_id": "b", "source": "event_bus"})
+        c = json.dumps({"job_id": "c", "source": "arq"})
+        _seed_dlq(fake_redis, [a, b, c])  # a oldest (tail), c newest (head)
+
+        entry = await bus.retry_dlq_entry(source="arq")
+
+        assert entry is not None and entry["job_id"] == "a"
+        assert [json.loads(r)["job_id"] for r in fake_redis.store[EventBus.DLQ_REDIS_KEY]] == ["c", "b"]
+        assert len(fake_redis.evalsha_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_pop_filtered_missing_source_counts_as_arq(
+        self, bus: EventBus, fake_redis: FakeRedis
+    ) -> None:
+        naked = json.dumps({"job_id": "naked"})
+        _seed_dlq(fake_redis, [naked])
+
+        found = await bus.retry_dlq_entry(source="arq")
+        assert found is not None and found["job_id"] == "naked"
+
+        _seed_dlq(fake_redis, [naked])
+        assert await bus.retry_dlq_entry(source="event_bus") is None
+        assert len(fake_redis.store[EventBus.DLQ_REDIS_KEY]) == 1
+
+    @pytest.mark.asyncio
+    async def test_pop_filtered_skips_garbage(
+        self, bus: EventBus, fake_redis: FakeRedis
+    ) -> None:
+        good = json.dumps({"job_id": "good", "source": "arq"})
+        garbage = ["not-json", "[1, 2]", "null", "123", "  "]
+        _seed_dlq(fake_redis, [*garbage, good])
+
+        entry = await bus.retry_dlq_entry(source="arq")
+
+        assert entry is not None and entry["job_id"] == "good"
+        assert fake_redis.store[EventBus.DLQ_REDIS_KEY] == garbage[::-1]
+
+    @pytest.mark.asyncio
+    async def test_pop_filtered_no_match_returns_none(
+        self, bus: EventBus, fake_redis: FakeRedis
+    ) -> None:
+        _seed_dlq(fake_redis, [json.dumps({"job_id": "b", "source": "event_bus"})])
+
+        assert await bus.retry_dlq_entry(source="arq") is None
+        assert len(fake_redis.store[EventBus.DLQ_REDIS_KEY]) == 1
+
+    @pytest.mark.asyncio
+    async def test_clear_filtered_single_rtt(
+        self, bus: EventBus, fake_redis: FakeRedis
+    ) -> None:
+        keep = json.dumps({"job_id": "keep", "source": "event_bus"})
+        drop1 = json.dumps({"job_id": "drop1", "source": "arq"})
+        drop2 = json.dumps({"job_id": "drop2"})  # missing source counts as arq
+        _seed_dlq(fake_redis, [drop1, keep, drop2, "not-json"])
+
+        cleared = await bus.clear_dlq(source="arq")
+
+        assert cleared == 2
+        assert fake_redis.store[EventBus.DLQ_REDIS_KEY] == ["not-json", keep]
+        assert len(fake_redis.evalsha_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_script_error_falls_back_to_python_scan(
+        self, bus: EventBus, fake_redis: FakeRedis
+    ) -> None:
+        async def _boom(sha: str, numkeys: int, *args: str) -> Any:
+            raise RuntimeError("redis down-ish")
+
+        fake_redis.evalsha = _boom  # type: ignore[method-assign]
+        a = json.dumps({"job_id": "a", "source": "arq"})
+        b = json.dumps({"job_id": "b", "source": "event_bus"})
+        _seed_dlq(fake_redis, [a, b])
+
+        popped = await bus.retry_dlq_entry(source="arq")
+        assert popped is not None and popped["job_id"] == "a"
+        assert (await bus.clear_dlq(source="event_bus")) == 1
+        assert fake_redis.store[EventBus.DLQ_REDIS_KEY] == []

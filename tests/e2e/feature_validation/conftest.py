@@ -270,9 +270,10 @@ async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient, None]:
     # app under ASGITransport), so a stale slug->tenant_id mapping cannot survive
     # even when Redis was already clean.
     try:
-        from src.app.middleware.tenant import _L1_TENANT_CACHE
+        from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
 
         _L1_TENANT_CACHE.clear()
+        _L1_TENANT_PARSED.clear()
         logger.info("Cleared middleware L1 tenant cache")
     except Exception as e:
         logger.warning(f"Failed to clear L1 tenant cache: {e}")

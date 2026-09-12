@@ -98,9 +98,15 @@ class GZipFilterMiddleware:
             await self.app(scope, receive, send)
             return
 
-        headers = dict(scope.get("headers", []))
-        accept = headers.get(b"accept", b"").decode("utf-8", errors="ignore")
-        if "text/event-stream" in accept:
+        # P2 micro: single-pass last-wins scan for the accept header instead of
+        # building a full dict of all headers. Exact byte match preserves the
+        # old dict-lookup semantics (ASGI guarantees lowercase names).
+        accept = b""
+        for _k, _v in scope.get("headers", []):
+            if _k == b"accept":
+                accept = _v
+        # Decode-then-search preserves the old errors="ignore" semantics exactly.
+        if "text/event-stream" in accept.decode("utf-8", errors="ignore"):
             # Known SSE request - bypass GZip entirely (avoids gzip setup cost).
             await self.app(scope, receive, send)
             return

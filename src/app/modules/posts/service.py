@@ -111,8 +111,7 @@ class PostService(BaseService[Post]):
             "is_deleted": False,
         }
 
-        posts_data = await self.crud.get_multi(
-            db=self.db,
+        posts_data = await self.get_page_with_total(
             offset=compute_offset(page, items_per_page),
             limit=items_per_page,
             schema_to_select=PostRead,

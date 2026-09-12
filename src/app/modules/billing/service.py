@@ -96,6 +96,7 @@ from src.app.core.exceptions.http_exceptions import TenantContextError
 from src.app.core.logger import get_logger
 from src.app.core.security.encryption import CredentialEncryption
 from src.app.core.tenancy.context import get_current_tenant, require_active_tenant
+from src.app.modules._base.service import fetch_page_with_total
 from src.app.shared.exceptions import ModelNotFoundError
 
 logger = get_logger(__name__)
@@ -330,8 +331,14 @@ class ProductService:
         filters: dict[str, Any] = {}
         if is_active is not None:
             filters["is_active"] = is_active
-        return await crud_products.get_multi(
-            db=self.db, offset=offset, limit=limit, schema_to_select=ProductRead, tenant_id=tid, **filters
+        return await fetch_page_with_total(
+            crud_products,
+            self.db,
+            offset=offset,
+            limit=limit,
+            schema_to_select=ProductRead,
+            tenant_id=tid,
+            **filters,
         )
 
     async def update_product(self, product_id: int, data: ProductUpdate) -> dict[str, Any]:
@@ -472,12 +479,12 @@ class PricingService:
         from src.app.core.pagination import MAX_PER_PAGE
 
         effective_limit = min(limit or MAX_PER_PAGE, MAX_PER_PAGE)
-        return await crud_pricing.get_multi(
-            db=self.db,
+        return await fetch_page_with_total(
+            crud_pricing,
+            self.db,
             product_id=product_id,
             offset=offset,
             limit=effective_limit,
-            return_total_count=True,
             schema_to_select=PricingRead,
         )
     async def list_prices(
@@ -519,8 +526,9 @@ class PricingService:
                 join_model=Product,
                 **filters,
             )
-        return await crud_pricing.get_multi(
-            db=self.db,
+        return await fetch_page_with_total(
+            crud_pricing,
+            self.db,
             offset=offset,
             limit=limit,
             schema_to_select=PricingRead,

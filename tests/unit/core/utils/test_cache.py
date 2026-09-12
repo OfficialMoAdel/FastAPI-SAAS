@@ -620,6 +620,134 @@ async def test_cache_write_validation_failure_skips_caching(client: MagicMock) -
     client.setex.assert_not_called()
 
 
+def _make_write_pipe_client() -> tuple[AsyncMock, MagicMock]:
+    """Own pipe + client so write-path SETEX bytes are assertable."""
+    pipe = AsyncMock()
+    pipe.execute = AsyncMock(return_value=[1])
+    fake_client = MagicMock(spec=Redis)
+    fake_client.get = AsyncMock(return_value=None)
+    fake_client.ttl = AsyncMock(return_value=-1)
+    fake_client.pipeline = MagicMock(return_value=AsyncMockCM(pipe))
+    return pipe, fake_client
+
+
+async def _run_write_path(handler_result: Any, response_model: Any) -> tuple[bytes, Any]:
+    """Drive the decorator write path on a miss; return (setex_bytes, response)."""
+    from fastapi import Request
+
+    pipe, fake_client = _make_write_pipe_client()
+    request = MagicMock(spec=Request)
+    request.method = "GET"
+    request.state = MagicMock()
+    route = MagicMock()
+    route.response_model = response_model
+    request.scope = {"route": route}
+
+    @cache(key_prefix="p", resource_id_name="rid")
+    async def handler(request, rid):
+        return handler_result
+
+    with (
+        patch.object(cache_mod, "client", fake_client),
+        patch("src.app.core.utils.cache.get_current_tenant", return_value=None),
+        patch("src.app.core.utils.cache.random.random", return_value=1.0),
+    ):
+        resp = await handler(request, rid=1)
+    assert pipe.setex.call_count == 1
+    return pipe.setex.call_args[0][2], resp
+
+
+async def test_cache_write_list_single_pass_bytes() -> None:
+    """P2: memoized TypeAdapter list path must byte-match per-item validate+dump."""
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    from pydantic import ConfigDict, Field
+
+    class Item(BaseModel):
+        model_config = ConfigDict(populate_by_name=True)
+
+        id: int
+        created_at: datetime
+        uid: UUID
+        name: str = Field(alias="itemName")
+
+    rows = [
+        {
+            "id": 1,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "uid": "12345678-1234-5678-1234-567812345678",
+            "itemName": "a",
+        },
+        {
+            "id": 2,
+            "created_at": datetime(2026, 2, 1, tzinfo=UTC),
+            "uid": UUID("12345678-1234-5678-1234-567812345679"),
+            "name": "b",
+        },
+    ]
+    stored, resp = await _run_write_path(rows, Item)
+    expected = cache_mod.json_dumps([Item.model_validate(r).model_dump(mode="json", by_alias=True) for r in rows])
+    assert stored == expected
+    assert b'"itemName":"a"' in stored  # alias + JSON mode (datetime/UUID) applied
+    assert resp.body == expected  # fresh response serves the same bytes
+
+
+async def test_cache_write_single_model_single_pass_bytes() -> None:
+    """P2: single-model path must byte-match model_validate().model_dump()."""
+    from datetime import datetime
+
+    class Out(BaseModel):
+        id: int
+        created_at: datetime
+
+    row = {"id": 7, "created_at": "2026-03-01T12:00:00+00:00"}
+    stored, _ = await _run_write_path(row, Out)
+    assert stored == cache_mod.json_dumps(Out.model_validate(row).model_dump(mode="json", by_alias=True))
+
+
+async def test_cache_write_list_validation_failure_skips_caching() -> None:
+    """P2: a bad list item still fails closed (fresh served, nothing stored)."""
+    from fastapi import Request
+
+    class OutModel(BaseModel):
+        ok: bool
+
+    pipe, fake_client = _make_write_pipe_client()
+    request = MagicMock(spec=Request)
+    request.method = "GET"
+    request.state = MagicMock()
+    route = MagicMock()
+    route.response_model = OutModel
+    request.scope = {"route": route}
+
+    @cache(key_prefix="p", resource_id_name="rid")
+    async def handler(request, rid):
+        return [{"ok": True}, {"wrong_shape": 1}]
+
+    with (
+        patch.object(cache_mod, "client", fake_client),
+        patch("src.app.core.utils.cache.get_current_tenant", return_value=None),
+        patch("src.app.core.utils.cache.random.random", return_value=1.0),
+    ):
+        resp = await handler(request, rid=1)
+
+    assert b"wrong_shape" in resp.body
+    pipe.setex.assert_not_called()
+
+
+def test_write_adapter_memoized() -> None:
+    """P2: adapters are memoized per (model, shape); list/single differ."""
+    from src.app.core.utils.cache.decorator import _write_adapter
+
+    class OutModel(BaseModel):
+        ok: bool
+
+    assert _write_adapter(OutModel, is_list=True) is _write_adapter(OutModel, is_list=True)
+    assert _write_adapter(OutModel, is_list=False) is _write_adapter(OutModel, is_list=False)
+    assert _write_adapter(OutModel, is_list=True) is not _write_adapter(OutModel, is_list=False)
+
+
 async def test_cache_get_miss_and_set(client: MagicMock) -> None:
     from fastapi import Request
 
@@ -772,6 +900,24 @@ async def test_register_key_patterns_empty() -> None:
 
 async def test_register_key_patterns_ok(client: MagicMock) -> None:
     await register_key_patterns("k", ["p:*"], 100)
+
+
+async def test_pattern_index_ttl_is_double_data_ttl() -> None:
+    """P1-9: the pattern index must outlive the data key (2x TTL), so a
+    later write never finds an empty index while keys are still live."""
+    pipe = AsyncMock()
+    pipe.execute = AsyncMock(return_value=[1])
+    fake_client = MagicMock(spec=Redis)
+    fake_client.pipeline = MagicMock(return_value=AsyncMockCM(pipe))
+    with patch.object(cache_mod, "client", fake_client):
+        await register_key_patterns("k", ["p:*"], 100)
+        expire_calls = [c.args for c in pipe.expire.call_args_list]
+        assert ("idx_pattern:p:_STAR_", 200) in expire_calls
+
+        pipe.expire.reset_mock()
+        await set_cache_with_patterns("k2", {"a": 1}, ttl=60, patterns=["q:*"])
+        expire_calls = [c.args for c in pipe.expire.call_args_list]
+        assert ("idx_pattern:q:_STAR_", 120) in expire_calls
 
 
 async def test_invalidate_by_pattern_no_client() -> None:

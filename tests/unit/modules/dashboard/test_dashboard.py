@@ -426,35 +426,33 @@ class TestGetMetrics:
         end = datetime.now(UTC)
 
         with patch.object(dashboard_service, "_get_date_range", return_value=(start, end)):
-            # Use AsyncMock for the metrics methods to properly await
-            with patch.object(dashboard_service, "_get_user_metrics", new_callable=AsyncMock) as user_mock:
-                with patch.object(dashboard_service, "_get_revenue_metrics", new_callable=AsyncMock) as rev_mock:
-                    with patch.object(dashboard_service, "_get_activity_metrics", new_callable=AsyncMock) as act_mock:
-                        # Set return values for the async mocks
-                        user_mock.return_value = UserMetrics(
-                            total_users=100, new_users=10, active_users=50, deleted_users=2
-                        )
-                        rev_mock.return_value = RevenueMetrics(
-                            total_revenue=1000.0,
-                            recurring_revenue=800.0,
-                            average_revenue_per_user=10.0,
-                            total_subscriptions=50,
-                        )
-                        act_mock.return_value = ActivityMetrics(
-                            total_logins=500,
-                            api_calls=10000,
-                            webhook_deliveries=100,
-                            failed_authentications=5,
-                        )
+            # Merged path: one statement for all three groups.
+            with patch.object(dashboard_service, "_get_all_metrics", new_callable=AsyncMock) as all_mock:
+                # Set return values for the async mock
+                all_mock.return_value = (
+                    UserMetrics(total_users=100, new_users=10, active_users=50, deleted_users=2),
+                    RevenueMetrics(
+                        total_revenue=1000.0,
+                        recurring_revenue=800.0,
+                        average_revenue_per_user=10.0,
+                        total_subscriptions=50,
+                    ),
+                    ActivityMetrics(
+                        total_logins=500,
+                        api_calls=10000,
+                        webhook_deliveries=100,
+                        failed_authentications=5,
+                    ),
+                    None,
+                )
 
-                        result = await dashboard_service.get_metrics(db_mock, "tenant", TimeRange.MONTH)
+                result = await dashboard_service.get_metrics(db_mock, "tenant", TimeRange.MONTH)
 
-                        assert result.time_range == TimeRange.MONTH
-                        assert result.start_date == start
-                        assert result.end_date == end
-                        user_mock.assert_called_once()
-                        rev_mock.assert_called_once()
-                        act_mock.assert_called_once()
+                assert result.time_range == TimeRange.MONTH
+                assert result.start_date == start
+                assert result.end_date == end
+                all_mock.assert_called_once()
+                assert db_mock.execute.call_count == 0
 
     @pytest.mark.asyncio
     async def test_get_metrics_uses_default_time_range(self):
@@ -470,29 +468,28 @@ class TestGetMetrics:
         db_mock = AsyncMock()
 
         with patch.object(dashboard_service, "_get_date_range", return_value=(datetime.now(UTC), datetime.now(UTC))):
-            with patch.object(dashboard_service, "_get_user_metrics", new_callable=AsyncMock) as user_mock:
-                with patch.object(dashboard_service, "_get_revenue_metrics", new_callable=AsyncMock) as rev_mock:
-                    with patch.object(dashboard_service, "_get_activity_metrics", new_callable=AsyncMock) as act_mock:
-                        user_mock.return_value = UserMetrics(
-                            total_users=100, new_users=10, active_users=50, deleted_users=2
-                        )
-                        rev_mock.return_value = RevenueMetrics(
-                            total_revenue=1000.0,
-                            recurring_revenue=800.0,
-                            average_revenue_per_user=10.0,
-                            total_subscriptions=50,
-                        )
-                        act_mock.return_value = ActivityMetrics(
-                            total_logins=500,
-                            api_calls=10000,
-                            webhook_deliveries=100,
-                            failed_authentications=5,
-                        )
+            with patch.object(dashboard_service, "_get_all_metrics", new_callable=AsyncMock) as all_mock:
+                all_mock.return_value = (
+                    UserMetrics(total_users=100, new_users=10, active_users=50, deleted_users=2),
+                    RevenueMetrics(
+                        total_revenue=1000.0,
+                        recurring_revenue=800.0,
+                        average_revenue_per_user=10.0,
+                        total_subscriptions=50,
+                    ),
+                    ActivityMetrics(
+                        total_logins=500,
+                        api_calls=10000,
+                        webhook_deliveries=100,
+                        failed_authentications=5,
+                    ),
+                    None,
+                )
 
-                        # Call without time_range - should default to MONTH
-                        result = await dashboard_service.get_metrics(db_mock, "tenant")
+                # Call without time_range - should default to MONTH
+                result = await dashboard_service.get_metrics(db_mock, "tenant")
 
-                        assert result.time_range == TimeRange.MONTH
+                assert result.time_range == TimeRange.MONTH
 
 
 class TestDashboardMetricsResponse:
@@ -666,9 +663,11 @@ class TestP111DashboardCache:
         with (
             patch("src.app.modules.dashboard.service.cache_client", cache_mock),
             patch.object(dashboard_service, "_get_date_range", return_value=(start, end)),
-            patch.object(dashboard_service, "_get_user_metrics", return_value=users),
-            patch.object(dashboard_service, "_get_revenue_metrics", return_value=revenue),
-            patch.object(dashboard_service, "_get_activity_metrics", return_value=activity),
+            patch.object(
+                dashboard_service,
+                "_get_all_metrics",
+                return_value=(users, revenue, activity, None),
+            ),
         ):
             result = await dashboard_service.get_metrics(AsyncMock(), "tenant-1", TimeRange.MONTH)
 
@@ -706,6 +705,114 @@ class TestP111DashboardCache:
         )
         assert "webhook.%" in sql
         assert "%webhook%" not in sql
+
+
+class TestGetAllMetrics:
+    """P2: _get_all_metrics fetches all 11 aggregates in ONE statement."""
+
+    def _row(self, min_created=None):
+        row = (100, 10, 50, 2, 100000, 50, 800.0, 500, 10000, 5, 100)
+        return row + ((min_created,) if min_created is not None else ())
+
+    def _db(self, row):
+        db_mock = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.one.return_value = row
+        db_mock.execute = AsyncMock(return_value=mock_result)
+        return db_mock
+
+    @pytest.mark.asyncio
+    async def test_single_execute_eleven_column_layout(self):
+        """One execute, 11 selected columns, groups assembled at fixed offsets."""
+        from src.app.modules.dashboard.service import dashboard_service
+
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+        db_mock = self._db(self._row())
+
+        users, revenue, activity, min_created = await dashboard_service._get_all_metrics(
+            db_mock, start, end, "tenant"
+        )
+
+        db_mock.execute.assert_awaited_once()
+        stmt = db_mock.execute.call_args[0][0]
+        assert len(stmt.selected_columns) == 11
+        assert (users.total_users, users.new_users, users.active_users, users.deleted_users) == (100, 10, 50, 2)
+        assert (revenue.total_revenue, revenue.recurring_revenue, revenue.total_subscriptions) == (1000.0, 800.0, 50)
+        assert revenue.average_revenue_per_user == 20.0
+        assert (activity.total_logins, activity.api_calls) == (500, 10000)
+        assert (activity.failed_authentications, activity.webhook_deliveries) == (5, 100)
+        assert min_created is None
+
+    @pytest.mark.asyncio
+    async def test_include_min_created_appends_twelfth_column(self):
+        """include_min_created adds the min column at index 11 and returns it."""
+        from src.app.modules.dashboard.service import dashboard_service
+
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+        earliest = datetime.now(UTC) - timedelta(days=200)
+        db_mock = self._db(self._row(min_created=earliest))
+
+        users, revenue, activity, min_created = await dashboard_service._get_all_metrics(
+            db_mock, start, end, "tenant", include_min_created=True
+        )
+
+        db_mock.execute.assert_awaited_once()
+        stmt = db_mock.execute.call_args[0][0]
+        assert len(stmt.selected_columns) == 12
+        assert min_created == earliest
+        assert users.total_users == 100
+        assert activity.webhook_deliveries == 100
+
+    @pytest.mark.asyncio
+    async def test_get_metrics_month_single_execute(self):
+        """MONTH path: date range (0 RTT) + one merged statement."""
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+        db_mock = self._db(self._row())
+        cache_mock = AsyncMock()
+        cache_mock.get_json = AsyncMock(return_value=None)
+        cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
+
+        with (
+            patch("src.app.modules.dashboard.service.cache_client", cache_mock),
+            patch.object(dashboard_service, "_get_date_range", return_value=(start, end)) as date_mock,
+        ):
+            result = await dashboard_service.get_metrics(db_mock, "tenant-1", TimeRange.MONTH)
+
+        date_mock.assert_awaited_once()
+        db_mock.execute.assert_awaited_once()
+        assert result.users.total_users == 100
+        assert result.revenue.total_revenue == 1000.0
+        assert result.activity.api_calls == 10000
+        cache_mock.set_json.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_get_metrics_all_folds_min_into_start(self):
+        """ALL path: no separate min query; start_date comes from the merged row."""
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        earliest = datetime.now(UTC) - timedelta(days=200)
+        db_mock = self._db(self._row(min_created=earliest))
+        cache_mock = AsyncMock()
+        cache_mock.get_json = AsyncMock(return_value=None)
+        cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
+
+        with (
+            patch("src.app.modules.dashboard.service.cache_client", cache_mock),
+            patch.object(dashboard_service, "_get_date_range", new_callable=AsyncMock) as date_mock,
+        ):
+            result = await dashboard_service.get_metrics(db_mock, "tenant-1", TimeRange.ALL)
+
+        date_mock.assert_not_called()
+        db_mock.execute.assert_awaited_once()
+        assert result.start_date == earliest
+        assert result.users.total_users == 100
 
 
 if __name__ == "__main__":
