@@ -52,7 +52,11 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
             user_id=user_id,
             plan_id=plan_id,
         )
-        raise ValueError(f"Missing metadata: tenant_id={tenant_id}, user_id={user_id}, plan_id={plan_id}")
+        # P1 FIX (code-review): deterministic failure — Stripe retry can
+        # never succeed (metadata is immutable). Return success-with-log so
+        # dispatch acks and does not retry-storm for days. Only transient
+        # errors (subscription-not-found, Stripe transport) raise.
+        return
 
     stripe_subscription_id = session.get("subscription")
 
@@ -77,7 +81,13 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
             # Read from items.data[0] with top-level fallback for older versions.
             period_start, period_end = extract_period_timestamps(stripe_sub)
             if period_start is None or period_end is None:
-                raise ValueError(f"Missing critical timestamps in Stripe subscription {stripe_subscription_id}")
+                # P1 FIX: deterministic payload shape — retry cannot heal a
+                # version-skewed payload; ack to avoid poison retry storm.
+                _pkg.logger.error(
+                    "Missing critical timestamps in Stripe subscription — acking",
+                    stripe_subscription_id=stripe_subscription_id,
+                )
+                return
 
             current_period_start = datetime.fromtimestamp(period_start, UTC)
             current_period_end = datetime.fromtimestamp(period_end, UTC)
@@ -106,7 +116,8 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                     claimed_tenant_id=str(tenant_id),
                     plan_tenant_id=str(plan_row.get("tenant_id")) if plan_row else None,
                 )
-                raise ValueError(f"Plan {plan_id} is not available to tenant {tenant_id}")
+                # P1 FIX: forged/cross-tenant metadata never heals on retry.
+                return
             # B2-06 FIX: validate that the user belongs to this tenant before minting subscription
             from src.app.modules.users.models import User
 
@@ -123,7 +134,8 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                     claimed_tenant_id=str(tenant_id),
                     actual_user_tenant=str(user_tenant),
                 )
-                raise ValueError(f"User {user_id} does not belong to tenant {tenant_id}")
+                # P1 FIX: membership mismatch never heals on retry.
+                return
 
             # Create user subscription with tenant_id in the object
             subscription_data = UserSubscriptionCreateInternal(

@@ -41,8 +41,13 @@ class TestCodeImprovementsE2E:
         duration = time.perf_counter() - start_time
 
         if process.returncode != 0:
-            logger.error(f"Import failed: {stderr.decode()}")
-            pytest.fail(f"App import failed: {stderr.decode()}")
+            # FIX: Windows subprocess stderr can be cp1252/latin-1 (e.g.
+            # 'Ÿ' from emoji/unicode in a config error path) — strict
+            # utf-8 decode crashed before pytest.fail could report the real
+            # import error. Decode with errors=replace so the failure surfaces.
+            stderr_text = stderr.decode("utf-8", errors="replace")
+            logger.error(f"Import failed: {stderr_text}")
+            pytest.fail(f"App import failed: {stderr_text}")
 
         logger.info(f"Import validation passed in {duration:.4f}s")
         assert b"Import Successful" in stdout

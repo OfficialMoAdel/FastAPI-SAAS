@@ -311,10 +311,16 @@ class SSOService:
 
                     if user_by_email:
                         # M27: Security - prevent account takeover via IdP
+                        # P1 FIX (code-review): generic message — the detailed
+                        # "email already exists, go link it" text was an
+                        # email-existence oracle. Guidance lives behind the
+                        # authenticated connect flow + server logs.
+                        _pkg_logger = logger
+                        _pkg_logger.info(
+                            "sso_email_collision", email=user_info.email,
+                        )
                         raise ValidationError(
-                            "An account with this email already exists. "
-                            "Please log in using your existing credentials and "
-                            "link this provider in your account settings."
+                            "Unable to complete sign-in with this provider."
                         )
                     else:
                         # P1-4: S-M2 signup-gate parity with /account/register.

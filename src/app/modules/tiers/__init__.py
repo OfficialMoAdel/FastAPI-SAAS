@@ -24,7 +24,27 @@ from src.app.modules.tiers.schemas import (
     TierUpdate,
     TierUpdateInternal,
 )
-from src.app.modules.tiers.service import TierService
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy service/router access (cycle guard).
+
+    FIX (code-review): eager ``from .service import TierService`` created a
+    hard cycle — rate_limits.models → tiers.models executes this __init__ →
+    tiers.service → rate_limits.models (partially initialized) → ImportError
+    when anything imported main.py cold (subprocess/import e2e). Models and
+    schemas stay eager (they are leaves); the service (which imports
+    rate_limits) resolves lazily like the router already does.
+    """
+    if name == "TierService":
+        from src.app.modules.tiers.service import TierService
+
+        return TierService
+    if name == "get_tier_service":
+        from src.app.modules.tiers.router import get_tier_service
+
+        return get_tier_service
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "Tier",
@@ -38,12 +58,3 @@ __all__ = [
     "TierUpdateInternal",
     "get_tier_service",
 ]
-
-
-def __getattr__(name: str) -> Any:
-    """Lazily resolve the router factory to keep package import cycle-free."""
-    if name == "get_tier_service":
-        from src.app.modules.tiers import router as _router
-
-        return _router.get_tier_service
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

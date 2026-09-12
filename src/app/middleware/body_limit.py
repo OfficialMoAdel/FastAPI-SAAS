@@ -43,18 +43,20 @@ class RequestBodyLimitMiddleware:
             return await self.app(scope, receive, send)
 
         # SECURITY FIX: Prevent HTTP Request Smuggling via multiple Content-Length headers
+        # P2 FIX (code-review): reject ALL multiples — proxies/CDNs differ on
+        # first-vs-last wins, so even identical duplicates leave an
+        # interpretation gap.
         content_lengths = [value for name, value in scope.get("headers", []) if name == b"content-length"]
 
         if len(content_lengths) > 1:
-            if len(set(content_lengths)) > 1:
-                # Multiple Content-Length headers with different values - classic smuggling attempt
-                logger.warning(
-                    "multiple_conflicting_content_length_headers",
-                    path=scope.get("path", ""),
-                    client=scope.get("client", ["unknown"])[0] if scope.get("client") else "unknown",
-                )
-                await self._send_400(send, b"Bad Request - Multiple conflicting Content-Length headers")
-                return
+            logger.warning(
+                "multiple_content_length_headers",
+                path=scope.get("path", ""),
+                count=len(content_lengths),
+                client=scope.get("client", ["unknown"])[0] if scope.get("client") else "unknown",
+            )
+            await self._send_400(send, b"Bad Request - Multiple Content-Length headers")
+            return
 
         content_length = content_lengths[0] if content_lengths else b""
 
@@ -109,6 +111,16 @@ class RequestBodyLimitMiddleware:
         except BodySizeLimitExceeded:
             if not response_started:
                 await self._send_413(send)
+            else:
+                # P2 FIX (code-review): previously swallowed silently when the
+                # response had started — client hung with no error and no
+                # teardown. Log loudly; the connection closes on return.
+                logger.warning(
+                    "body_limit_exceeded_after_response_start",
+                    path=scope.get("path", ""),
+                    bytes_received=bytes_received,
+                    client=scope.get("client", ["unknown"])[0] if scope.get("client") else "unknown",
+                )
 
     async def _send_413(self, send: Send) -> None:
         await send(

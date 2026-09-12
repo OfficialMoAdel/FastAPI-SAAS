@@ -338,25 +338,33 @@ async def migrate_tenant_cache_index(tenant_id: int | str | None = None) -> dict
 
         cursor, keys = await client.scan(cursor, match=pattern, count=100)
         if keys:
-            pipe = client.pipeline(transaction=False)
-            if hasattr(pipe, "__aenter__"):
-                pipe = await pipe.__aenter__()
-            for key in keys:
-                # Extract tenant_id from key (format: tenant:123:prefix:...)
-                parts = key.split(":", 2)
-                if len(parts) >= 2:
-                    tid = parts[1]
-                    tenants_seen.add(tid)
-                    index_key = f"tenant_index:{tid}"
+            # P1 FIX (code-review): keys are bytes when decode_responses=False;
+            # str.split on bytes raises TypeError and mixed-type sadd corrupts
+            # the index. Decode first. Pipeline acquisition handles both the
+            # real client (sync factory returning an async-CM) and test
+            # doubles (AsyncMock whose call returns a coroutine).
+            import inspect
 
-                    rest = parts[2]
-                    rest_parts = rest.split(":", 1)
-                    prefix = rest_parts[0]
+            pipe_obj = client.pipeline(transaction=False)
+            if inspect.isawaitable(pipe_obj):
+                pipe_obj = await pipe_obj
+            async with pipe_obj as pipe:
+                for key in keys:
+                    key_str = key.decode("utf-8", errors="replace") if isinstance(key, bytes) else str(key)
+                    # Extract tenant_id from key (format: tenant:123:prefix:...)
+                    parts = key_str.split(":", 2)
+                    if len(parts) >= 2:
+                        tid = parts[1]
+                        tenants_seen.add(tid)
+                        index_key = f"tenant_index:{tid}"
 
-                    pipe.sadd(index_key, key)
-                    pipe.sadd(f"tenant_index:{tid}:{prefix}", key)
-                    keys_indexed += 1
-            if hasattr(pipe, "execute"):
+                        rest = parts[2]
+                        rest_parts = rest.split(":", 1)
+                        prefix = rest_parts[0]
+
+                        pipe.sadd(index_key, key_str)
+                        pipe.sadd(f"tenant_index:{tid}:{prefix}", key_str)
+                        keys_indexed += 1
                 await pipe.execute()
         if cursor == 0:
             break

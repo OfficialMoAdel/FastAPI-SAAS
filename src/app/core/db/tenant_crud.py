@@ -23,7 +23,7 @@ from typing import Any, Generic, TypeVar, cast
 from uuid import UUID
 
 from fastcrud import FastCRUD
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ColumnElement, Select
@@ -286,7 +286,7 @@ class TenantAwareCRUD(
                 if hasattr(object, "tenant_id"):
                     object.tenant_id = tenant_id
         else:
-            raise RuntimeError("Tenant-scoped create executed without an active tenant context")
+            raise TenantContextError("Tenant-scoped create executed without an active tenant context")
 
         async with db_circuit_guard():
             return await super().create(db, object, **kwargs)  # type: ignore[arg-type]
@@ -382,8 +382,11 @@ class TenantAwareCRUD(
             if tenant:  # B1: truthiness rejects NO_TENANT sentinel too
                 try:
                     object.tenant_id = tenant.id  # type: ignore[attr-defined]
-                except Exception:
-                    pass
+                except (AttributeError, ValueError, TypeError, ValidationError) as e:
+                    # P1 FIX (code-review): fail closed — never proceed with an
+                    # uncoerced payload that may still carry attacker tenant_id
+                    # in the SET clause (WHERE-scoping does not protect SET).
+                    raise TenantContextError(f"Cannot enforce tenant on update payload: {e}") from e
         kwargs = self.inject_tenant_filter(kwargs)
         async with db_circuit_guard():
             await super().update(db, object, **kwargs)

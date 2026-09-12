@@ -309,11 +309,17 @@ def test_storage_file_type_not_allowed_handler():
 
 
 def test_storage_not_configured_handler():
-    """B12: StorageNotConfiguredError must map to 400."""
+    """B12: StorageNotConfiguredError maps to 404 (missing resource).
+
+    FIX (code-review): was 400 — but GET /storage for an unconfigured
+    tenant is a missing resource (404), and the integration/e2e suite
+    asserts 404. 400 also made the regular-user 403 unreachable
+    (validation ran before authz).
+    """
     response = client.get("/test/storage-not-configured")
-    assert response.status_code == 400
+    assert response.status_code == 404
     data = response.json()
-    assert data["error"]["code"] == ErrorCode.INVALID_INPUT
+    assert data["error"]["code"] == ErrorCode.NOT_FOUND
     assert data["error"]["message"] == "Storage not configured for this tenant."
 
 
@@ -395,7 +401,7 @@ def test_exception_table_status_mapping():
         WebhookVerificationError: 400,
         WebhookNotConfiguredError: 501,
         FileEntityNotFoundError: 404,
-        StorageNotConfiguredError: 400,
+        StorageNotConfiguredError: 404,  # FIX: missing resource, not validation error
         FileTypeNotAllowedError: 400,
         QuotaExceededError: 507,
         StorageBackendError: 502,

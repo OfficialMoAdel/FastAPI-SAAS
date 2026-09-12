@@ -468,7 +468,7 @@ async def test_delete_keys_by_pattern_iteration_limit(client: MagicMock) -> None
 def test_build_cache_key_no_tenant() -> None:
     with patch("src.app.core.utils.cache.get_current_tenant", return_value=None):
         key = _build_cache_key("user", 42, {}, False)
-    assert key == "v2:user:42"  # P-M1 key version strands pre-fix entries
+    assert key == "public:v2:user:42"  # P-M1 version + P0 public: namespace (missing tenant never shares bare key)
 
 
 def test_build_cache_key_with_tenant() -> None:
@@ -486,7 +486,7 @@ def test_build_cache_key_with_tenant() -> None:
 def test_build_cache_key_user_scoped_dict() -> None:
     with patch("src.app.core.utils.cache.get_current_tenant", return_value=None):
         key = _build_cache_key("user", 42, {"current_user": {"id": 7}}, True)
-    assert key == "user:7:v2:user:42"
+    assert key == "public:user:7:v2:user:42"  # P0 public: namespace (missing tenant)
 
 
 def test_build_cache_key_user_scoped_obj() -> None:
@@ -495,7 +495,7 @@ def test_build_cache_key_user_scoped_obj() -> None:
 
     with patch("src.app.core.utils.cache.get_current_tenant", return_value=None):
         key = _build_cache_key("user", 42, {"current_user": U()}, True)
-    assert key == "user:9:v2:user:42"
+    assert key == "public:user:9:v2:user:42"  # P0 public: namespace (missing tenant)
 
 
 # ---------------------------------------------------------------------------

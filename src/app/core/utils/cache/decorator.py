@@ -211,6 +211,12 @@ def _build_cache_key(
     base_key = f"{_CACHE_KEY_VERSION}:{formatted_key_prefix}:{resource_id}"
     if user_id is not None:
         base_key = f"user:{user_id}:{base_key}"
+    if tenant_id is None:
+        # P0 FIX (code-review): missing tenant must never collapse onto a
+        # bare shared key. Public/unauthenticated entries live under an
+        # explicit `public:` namespace so they can never collide with
+        # `tenant:{id}:...` entries if a context bug drops the tenant.
+        return f"public:{base_key}"
     return _state.build_tenant_key(base_key, tenant_id)
 
 

@@ -261,7 +261,11 @@ class TestPasskeyServiceVerification:
                     registration_id="test-registration-id",
                 )
 
-            assert "challenge" in str(exc_info.value.detail).lower() or "expired" in str(exc_info.value.detail).lower()
+            # NOTE: registration flow is authenticated (not the login oracle),
+            # so its distinct challenge message is kept.
+            assert "challenge" in str(exc_info.value.detail).lower() or "expired" in str(
+                exc_info.value.detail
+            ).lower()
 
     @pytest.mark.asyncio
     async def test_verify_registration_encrypts_credential(self):
@@ -567,7 +571,7 @@ class TestPasskeyServiceAuthentication:
                             db=mock_db, redis=mock_redis, credential={"id": "x"}, challenge_id="test-challenge-id"
                         )  # noqa: E501
 
-                    assert "replay" in str(exc.value.detail).lower()
+                    assert "invalid passkey assertion" in str(exc.value.detail).lower()  # P1: oracle collapsed
 
     @pytest.mark.asyncio
     async def test_verify_authentication_invalid_challenge(self):
@@ -585,7 +589,7 @@ class TestPasskeyServiceAuthentication:
                     db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id"
                 )  # noqa: E501
 
-            assert "challenge" in str(exc.value.detail).lower()
+            assert "invalid passkey assertion" in str(exc.value.detail).lower()  # P1: oracle collapsed
 
     @pytest.mark.asyncio
     async def test_verify_authentication_credential_not_found(self):
@@ -606,7 +610,7 @@ class TestPasskeyServiceAuthentication:
                         db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id"
                     )  # noqa: E501
 
-                assert "credential not found" in str(exc.value.detail).lower()
+                assert "invalid passkey assertion" in str(exc.value.detail).lower()  # P1: oracle collapsed
 
 
 # === MERGED: Tests from tests/modules/test_passkey_service.py ===

@@ -116,6 +116,7 @@ async def check_mfa_mutate_rate_limit(
 async def setup_mfa(
     ctx: RequestContextDep,
     service: Annotated[MFAService, Depends(get_mfa_service)],
+    fastapi_request: Request,
 ) -> MFASetupResponse:
     """Generate TOTP secret for MFA setup.
 
@@ -126,6 +127,9 @@ async def setup_mfa(
     Returns:
         MFASetupResponse with secret and provisioning URI.
     """
+    # P1 FIX (code-review): setup/enable had no rate limit while verify did —
+    # the enable TOTP check was brute-forceable. Throttle both seams.
+    await check_mfa_mutate_rate_limit(fastapi_request, ctx.user_id)
     result = await service.generate_totp_secret(
         user_id=ctx.user_id,
         db=ctx.db,
@@ -138,6 +142,7 @@ async def enable_mfa(
     request: MFAEnableRequest,
     ctx: RequestContextDep,
     service: Annotated[MFAService, Depends(get_mfa_service)],
+    fastapi_request: Request,
 ) -> dict[str, Any]:
     """Enable MFA for the current user.
 
@@ -153,6 +158,7 @@ async def enable_mfa(
     Raises:
         BadRequestException: If MFA already enabled or token is invalid.
     """
+    await check_mfa_mutate_rate_limit(fastapi_request, ctx.user_id)
     return await service.enable_mfa(
         user_id=ctx.user_id,
         request=request,

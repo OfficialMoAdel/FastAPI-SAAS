@@ -145,7 +145,7 @@ class TestPasskeyAuthenticationVerification:
                     challenge_id="test-challenge-id",
                 )
 
-            assert "challenge" in str(exc_info.value.detail).lower() or "expired" in str(exc_info.value.detail).lower()
+            assert "invalid passkey assertion" in str(exc_info.value.detail).lower()  # P1: oracle collapsed to generic
 
     @pytest.mark.asyncio
     async def test_verify_authentication_finds_credential(self):
@@ -181,8 +181,7 @@ class TestPasskeyAuthenticationVerification:
                     )
 
                 assert (
-                    "credential" in str(exc_info.value.detail).lower()
-                    or "not found" in str(exc_info.value.detail).lower()
+"invalid passkey assertion" in str(exc_info.value.detail).lower()  # P1: oracle collapsed
                 )
 
     @pytest.mark.asyncio
@@ -239,8 +238,7 @@ class TestPasskeyAuthenticationVerification:
 
                     # Should reject replay attack
                     assert (
-                        "counter" in str(exc_info.value.detail).lower()
-                        or "replay" in str(exc_info.value.detail).lower()
+"invalid passkey assertion" in str(exc_info.value.detail).lower()  # P1: oracle collapsed
                     )
 
     @pytest.mark.asyncio
@@ -500,7 +498,7 @@ async def test_verify_authentication_credential_required():
             challenge_id="test-id",
         )
 
-    assert "required" in str(exc.value.detail).lower()
+    assert "invalid passkey assertion" in str(exc.value.detail).lower()  # P1: oracle collapsed
 
 
 @pytest.mark.asyncio
@@ -519,7 +517,7 @@ async def test_verify_authentication_challenge_id_required():
             challenge_id=None,
         )
 
-    assert "challenge_id" in str(exc.value.detail).lower()
+    assert "invalid passkey assertion" in str(exc.value.detail).lower()  # P1: oracle collapsed
 
 
 @pytest.mark.asyncio
@@ -543,8 +541,8 @@ async def test_verify_authentication_raw_id_required():
             challenge_id="test-id",
         )
 
-    # Either credential not found or credential id required depending on flow
-    assert "credential" in str(exc.value.detail).lower()
+    # P1: oracle collapsed — all failures share one generic message
+    assert "invalid passkey assertion" in str(exc.value.detail).lower()
 
 
 @pytest.mark.asyncio
@@ -581,7 +579,7 @@ async def test_verify_authentication_user_not_found():
                                 challenge_id="test-id",
                             )
 
-                        assert "user" in str(exc.value.detail).lower()
+                        assert "invalid passkey assertion" in str(exc.value.detail).lower()  # P1: oracle collapsed
 
 
 @pytest.mark.asyncio
@@ -648,4 +646,4 @@ async def test_verify_authentication_exception_handling():
                         challenge_id="test-id",
                     )
 
-                assert "authentication failed" in str(exc.value.detail).lower()
+                assert "invalid passkey assertion" in str(exc.value.detail).lower()  # P1: oracle collapsed

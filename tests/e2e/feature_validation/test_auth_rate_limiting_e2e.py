@@ -192,10 +192,20 @@ async def test_anonymous_vs_authenticated_limits(client: AsyncClient, authentica
     log_step("Starting anonymous vs authenticated limits E2E test")
 
     # Step 1: Make anonymous request
+    # FIX (code-review): /api/v1/health is rate-limit-EXEMPT (middleware_exempt)
+    # so its responses never carry X-RateLimit-* headers — anon_limit was
+    # always 0. Use /api/v1/tenants/slug/<tenant> style unauthenticated-read? No:
+    # simplest stable non-exempt anonymous-readable path is /api/v1/tenants
+    # (listed exempt only for TENANT middleware, NOT rate limit). Fallback:
+    # /api/v1/posts (public read in this app) — but tenants is guaranteed
+    # mounted. Use /api/v1/tenants/{slug} resolve? It 401/404s. Keep it
+    # simple: anonymous bucket applies to ANY non-exempt path; the tenants
+    # list returns 403 for anonymous but still passes THROUGH the limiter
+    # first, which is what we assert (header presence). 403 body is fine.
     log_step("Making anonymous request")
-    response = await client.get("/api/v1/health")
-    assert response.status_code == 200
-
+    response = await client.get("/api/v1/tenants")
+    # Non-exempt path: limiter ran and stamped headers regardless of the
+    # downstream 403. Assert the header, not the status.
     anon_limit = int(response.headers.get("X-RateLimit-Limit", 0))
     log_step("Anonymous rate limit", limit=anon_limit)
 

@@ -199,6 +199,10 @@ class MFAService:
                 raise ValidationError("Setup token does not belong to the current user")
         else:
             totp_secret = raw_val
+        # P1 FIX (code-review): enable seam performs the same 6-digit TOTP
+        # check as verify but had no lockout — brute-forceable over the
+        # 10-min setup-token lifetime. Enforce the service-level lockout.
+        await self._check_mfa_lockout(user_id)
         # Verify the provided TOTP token
         totp = pyotp.TOTP(totp_secret, interval=TOTP_INTERVAL, digits=TOTP_DIGITS)
         if not totp.verify(request.totp_token, valid_window=TOTP_SKEW):
@@ -321,6 +325,13 @@ class MFAService:
         request: MFAVerifyRequest,
         db: AsyncSession,
         *,
+        # P1 NOTE (code-review): cross-endpoint TOTP reuse within the ~90s
+        # validity window is a known residual risk (auth-review P1). Default
+        # stays False to preserve the established UX/tests where one code
+        # authorizes enable→backup-codes→disable in quick succession.
+        # Login (complete-login) passes prevent_replay=True. Tightening the
+        # sensitive mutations to always require a FRESH code needs a UX
+        # decision + test updates — tracked as follow-up, not forced here.
         prevent_replay: bool = False,
     ) -> dict[str, Any]:
         """Verify a TOTP token for a user.

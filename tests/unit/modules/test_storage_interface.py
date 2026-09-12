@@ -305,7 +305,12 @@ class TestS3Storage:
 
     @pytest.mark.asyncio
     async def test_s3_get_url_failure(self, mock_s3_client):
-        """Test S3 signed URL generation failure."""
+        """Test S3 signed URL generation failure.
+
+        P1 FIX (code-review): get_url now RAISES StorageBackendError (fail-
+        closed) instead of returning "" which callers treated as success.
+        """
+        from src.app.modules.storage.errors import StorageBackendError
         from src.app.modules.storage.s3_storage import S3Storage
 
         mock_s3_client.generate_presigned_url.side_effect = MockClientError(
@@ -314,9 +319,8 @@ class TestS3Storage:
 
         storage = S3Storage(s3_client=mock_s3_client, bucket="test-bucket")
 
-        url = await storage.get_url("uploads/test.txt")
-
-        assert url == ""
+        with pytest.raises(StorageBackendError):
+            await storage.get_url("uploads/test.txt")
 
 
 class TestStorageModuleExports:

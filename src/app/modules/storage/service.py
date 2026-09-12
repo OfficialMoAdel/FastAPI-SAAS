@@ -693,7 +693,12 @@ class StorageService:
         download path instead (``/api`` + ``/v1`` + files router prefix): it
         requires FILES_READ, so the URL grants nothing to unauthenticated
         holders — no indefinite-share bearer token.
+
+        P1 FIX (code-review): clamp expires_in to 60..3600 in the service
+        (not just the router edge) so in-process callers cannot mint
+        long-lived bearer URLs past the HTTP validation.
         """
+        expires_in = max(60, min(int(expires_in), 3600))
         storage_svc = getattr(self, "_storage_service", self.admin)
         file = await self.get_file_or_raise(tenant_id, file_id, user_id)
         settings = await storage_svc.get_settings_or_raise(tenant_id)

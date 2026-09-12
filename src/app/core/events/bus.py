@@ -392,8 +392,10 @@ class EventBus:
                 sync_ok = await self._publish_sync(event_name, enriched_data, handlers)
             else:
                 # Queue for async execution via ARQ
-                await self._publish_async(event_name, enriched_data, handlers, priority)
-                sync_ok = True
+                # P0 FIX (code-review): propagate the fallback result — a
+                # failed sync-fallback must NOT be marked idempotent or the
+                # same event_id republish is a "duplicate" forever.
+                sync_ok = await self._publish_async(event_name, enriched_data, handlers, priority)
 
             # H-6: mark the event processed only AFTER the handlers ran (sync
             # path) or the enqueue succeeded (async path). A crash before
@@ -503,14 +505,12 @@ class EventBus:
         data: dict[str, Any],
         handlers: list[Callable[..., Coroutine[Any, Any, None]]],
         priority: EventPriority,
-    ) -> None:
+    ) -> bool:
         """Queue handlers for async execution via ARQ.
 
-        Args:
-            event_name: Name of event
-            data: Event payload
-            handlers: List of handler functions
-            priority: Event priority for queue scheduling
+        Returns True when every handler was enqueued or sync-fallback
+        succeeded; False when a fallback also failed (caller must NOT mark
+        idempotent so a republish retries).
         """
         if not self._arq_queue:
             _pkg.logger.warning(
@@ -518,8 +518,7 @@ class EventBus:
                 event_name=event_name,
                 message="ARQ queue not set, falling back to sync execution",
             )
-            await self._publish_sync(event_name, data, handlers)
-            return
+            return await self._publish_sync(event_name, data, handlers)
 
         # P1-4: Parallel enqueue using asyncio.gather for reduced latency
         # Changes Sum(RTT) to Max(RTT) for multiple handlers
@@ -528,7 +527,7 @@ class EventBus:
         if _pkg.settings.EVENT_BUS_USE_BATCH_ENQUEUE and len(handlers) > 1:
             try:
                 await self._publish_async_batch(event_name, data, handlers, priority)
-                return
+                return True
             except Exception as e:
                 _pkg.logger.warning(
                     "Batch enqueue failed, falling back to parallel enqueue",
@@ -555,8 +554,10 @@ class EventBus:
                 # the DLQ (the old inline block only logged them — during a
                 # Redis outage, exactly when the circuit is open, log-only
                 # meant permanent silent loss).
-                await self._sync_fallback_handler(event_name, handler, data, reason="circuit open")
-                return (True, handler, None)  # Handled via fallback
+                fallback_ok = await self._sync_fallback_handler(
+                    event_name, handler, data, reason="circuit open"
+                )
+                return (fallback_ok, handler, None if fallback_ok else Exception("sync fallback failed"))
 
             try:
                 # Type assertion: we checked _arq_queue earlier
@@ -591,7 +592,15 @@ class EventBus:
                     error=str(e),
                     exc_info=True,
                 )
-                return (False, handler, e)
+                # B8: enqueue failure also routes through the shared fallback
+                # (the old code only returned the failure tuple — handler was
+                # never run, contradicting the documented B8 contract and the
+                # parallel-enqueue test). DLQ write on fallback failure happens
+                # inside _sync_fallback_handler.
+                fallback_ok = await self._sync_fallback_handler(
+                    event_name, handler, data, reason="queue failure"
+                )
+                return (fallback_ok, handler, None if fallback_ok else e)
 
         # Enqueue all handlers in parallel
         results = await asyncio.gather(
@@ -599,25 +608,32 @@ class EventBus:
             return_exceptions=True,
         )
 
-        # Handle any failures with sync fallback
+        # Handle failures. NOTE: enqueue_handler already routes circuit-open
+        # and enqueue failures through _sync_fallback_handler (B8) — including
+        # the DLQ write on fallback failure. Re-running the fallback here
+        # would DOUBLE-EXECUTE the handler (a real bug: first run's exception
+        # hit the DLQ, then the outer loop re-invoked it). So this loop only
+        # counts overall success and handles gather-level surprises.
+        overall_ok = True
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 handler = handlers[i]
-                # asyncio.gather caught an unexpected exception
+                # asyncio.gather caught an unexpected exception that escaped
+                # enqueue_handler's own guards — extremely unlikely (its body
+                # is fully guarded), but do not lose it.
                 _pkg.logger.error(
                     "Unexpected error during parallel enqueue",
                     event_name=event_name,
                     handler=handler.__name__,
                     error=str(result),
                 )
-
-                await self._sync_fallback_handler(event_name, handler, data, reason="gather queue failure")
+                await self._dlq_quietly(event_name, handler, data, error=str(result), attempt_count=0)
+                overall_ok = False
                 continue
 
-            # Unpack result tuple (narrowed to tuple by isinstance check above)
-            success, handler, error = result  # type: ignore[misc]
-            if not success and error is not None:
-                await self._sync_fallback_handler(event_name, handler, data, reason="queue failure")
+            success, _handler, _error = result  # type: ignore[misc]
+            overall_ok = overall_ok and bool(success)
+        return overall_ok
 
     async def _dlq_quietly(
         self,
@@ -659,12 +675,15 @@ class EventBus:
         handler: Callable[..., Coroutine[Any, Any, None]],
         data: dict[str, Any],
         reason: str,
-    ) -> None:
+    ) -> bool:
         """A-2: single graceful-degradation path for a handler that failed to enqueue.
 
         Runs the handler synchronously with the configured timeout; on timeout
         or error, records the failure in the dead-letter queue. Consolidates the
         two previously duplicated inline blocks in ``_publish_async``.
+
+        Returns True when the sync run succeeded, False otherwise (so the
+        caller can withhold idempotent marking and allow a retry).
         """
         try:
             await asyncio.wait_for(
@@ -676,6 +695,7 @@ class EventBus:
                 event_name=event_name,
                 handler=handler.__name__,
             )
+            return True
         except TimeoutError as e:
             _pkg.logger.error(
                 "Sync fallback timed out after " + reason,
@@ -684,6 +704,7 @@ class EventBus:
                 timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
             )
             await self._dlq_quietly(event_name, handler, data, error=str(e), attempt_count=0)
+            return False
         except Exception as handler_error:
             _pkg.logger.error(
                 "Sync fallback also failed",
@@ -692,6 +713,7 @@ class EventBus:
                 error=str(handler_error),
             )
             await self._dlq_quietly(event_name, handler, data, error=str(handler_error), attempt_count=0)
+            return False
 
     async def _publish_async_batch(
         self,
@@ -699,10 +721,11 @@ class EventBus:
         data: dict[str, Any],
         handlers: list[Callable[..., Coroutine[Any, Any, None]]],
         priority: EventPriority,
-    ) -> None:
+    ) -> bool:
         """Enqueue multiple handlers in a single Redis roundtrip using pipeline.
 
         Optimizes N roundtrips -> 1 roundtrip for multiple handlers.
+        Returns True on success (raise on failure so the caller falls back).
         """
         if not self._arq_queue:
             raise RuntimeError("ARQ queue not configured")
@@ -711,8 +734,7 @@ class EventBus:
         if not await _pkg.arq_circuit.allow_single_flight():
             _pkg.logger.warning("ARQ circuit breaker open during batch enqueue", event_name=event_name)
             # Fallback to sync execution for all handlers
-            await self._publish_sync(event_name, data, handlers, priority=priority)
-            return
+            return await self._publish_sync(event_name, data, handlers, priority=priority)
 
         from src.app.core.events.arq_adapter import enqueue_batch_jobs
 
@@ -729,6 +751,7 @@ class EventBus:
             _pkg.logger.debug(
                 "Batch event handlers queued", event_name=event_name, count=len(handlers), priority=priority
             )
+            return True
 
         except Exception as e:
             await _pkg.arq_circuit.record_failure(e)

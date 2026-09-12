@@ -313,23 +313,28 @@ class PasskeyService:
             BadRequestException: If verification fails, challenge expired, or replay attempt.
         """
         if not credential:
-            raise ValidationError("Credential is required.")
+            logger.debug("passkey verify failed: missing credential")
+            raise ValidationError("Invalid passkey assertion.")
 
         if not challenge_id:
-            raise ValidationError("challenge_id is required.")
+            logger.debug("passkey verify failed: missing challenge_id")
+            raise ValidationError("Invalid passkey assertion.")
 
         # 1. Retrieve stored challenge
         stored_challenge = await self._get_stored_auth_challenge(redis, challenge_id) if redis else None
         if not stored_challenge:
-            raise ValidationError("Authentication challenge expired or invalid.")
+            logger.debug("passkey verify failed: challenge expired/invalid")
+            raise ValidationError("Invalid passkey assertion.")
 
         # 2. Find credential in database by raw ID
         raw_id = credential.get("rawId") or credential.get("id")
         if not raw_id:
-            raise ValidationError("Credential ID is required.")
+            logger.debug("passkey verify failed: missing credential id")
+            raise ValidationError("Invalid passkey assertion.")
         db_credential = await self._find_credential_by_id(db, raw_id)
         if not db_credential:
-            raise ValidationError("Credential not found.")
+            logger.debug("passkey verify failed: credential not found")
+            raise ValidationError("Invalid passkey assertion.")
 
         # 3. Verify authentication response
         try:
@@ -342,7 +347,9 @@ class PasskeyService:
             )
         except Exception as e:
             logger.warning("Passkey authentication failed", error=e)
-            raise ValidationError("Passkey authentication failed.")
+            # P1 FIX (code-review): collapse to a generic message — distinct
+            # crypto/challenge/counter errors were an enumeration oracle.
+            raise ValidationError("Invalid passkey assertion.")
 
         # 4. Check counter for replay prevention
         new_count = verification.new_sign_count
@@ -356,14 +363,15 @@ class PasskeyService:
                 f"Possible replay attack for credential {db_credential.id}: "
                 f"stored counter={db_credential.counter}, received={new_count}"
             )
-            raise ValidationError("Counter mismatch - possible replay attack.")
+            raise ValidationError("Invalid passkey assertion.")
 
         # 5. Update counter and last_used_at
         await self._update_credential_counter(db, db_credential, new_count)
 
         user = await self._get_user_for_credential(db, db_credential)
         if not user:
-            raise ValidationError("User not found for credential.")
+            logger.debug("passkey verify failed: user not found for credential")
+            raise ValidationError("Invalid passkey assertion.")
 
         # S4 FIX: Check MFA before issuing tokens (mirrors auth login flow)
         from src.app.modules.auth.services.mfa import get_mfa_service

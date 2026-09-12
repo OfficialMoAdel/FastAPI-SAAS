@@ -275,7 +275,11 @@ class S3Storage(StorageProvider):
             expires_in: URL expiration in seconds (default: 1 hour).
 
         Returns:
-            Signed URL for temporary access, or empty string on failure.
+            Signed URL for temporary access.
+
+        Raises:
+            StorageBackendError: If presigning fails (fail-closed — never
+                emit a bogus empty URL that callers treat as success).
         """
         path = self._validate_s3_key(path)
         try:
@@ -296,9 +300,10 @@ class S3Storage(StorageProvider):
 
         except Exception as e:
             from src.app.core.logger import get_logger
+            from src.app.modules.storage.errors import StorageBackendError
 
             get_logger(__name__).error("S3 get_url failed", error=e)
-            return ""
+            raise StorageBackendError(f"Failed to generate presigned URL: {e}") from e
 
     def _get_error_code(self, exc: Exception) -> str | None:
         """Extract AWS error code from botocore ClientError or test mock errors."""

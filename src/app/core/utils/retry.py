@@ -46,6 +46,8 @@ async def with_retry(
     on_retry: Callable[[Exception, int], None] | None = None,
     retry_after_attr: str | None = None,
     max_retry_after: float = 120.0,
+    max_elapsed: float | None = None,
+    jitter: bool = True,
 ) -> T:
     """Execute function with exponential backoff retry.
 
@@ -61,6 +63,11 @@ async def with_retry(
             Honored when it is a positive number, capped at max_retry_after;
             otherwise the computed exponential delay is used.
         max_retry_after: Upper bound for a server-directed wait (seconds).
+        max_elapsed: Optional total budget across all waits (seconds).
+            Stops retrying once the budget is exhausted even if attempts
+            remain — bounds synchronized-retry storms.
+        jitter: Apply full-jitter (wait * uniform(0.5, 1.5)) so fleet
+            retries do not synchronize. P1 FIX (code-review).
 
     Returns:
         Result from fn
@@ -68,8 +75,12 @@ async def with_retry(
     Raises:
         Exception: Last exception if all attempts fail
     """
+    import random
+    import time as _time
+
     last_exception: Exception | None = None
     delay = delay_seconds
+    start = _time.monotonic()
 
     for attempt in range(1, max_attempts + 1):
         try:
@@ -102,6 +113,11 @@ async def with_retry(
                         "Honoring server-directed retry wait",
                         retry_after=wait,
                     )
+            if jitter:
+                wait = wait * random.uniform(0.5, 1.5)
+            if max_elapsed is not None and (_time.monotonic() - start + wait) > max_elapsed:
+                logger.debug("Retry budget exhausted", elapsed=_time.monotonic() - start)
+                break
 
             await asyncio.sleep(wait)
             delay *= backoff_factor

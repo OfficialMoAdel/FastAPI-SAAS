@@ -29,6 +29,16 @@ class LogSanitizer:
     Handles strings, dicts, lists, and nested structures.
     """
 
+    # P1 FIX: key-name matcher for dict-key masking (see sanitize_dict).
+    # NOTE: only keys with no safe partial form are fully redacted here.
+    # Email/phone/SSN/card values keep their shape-preserving partial masks
+    # from SENSITIVE_PATTERNS (e.g. u***@example.com), so those key names
+    # must NOT appear here or nested-dict tests regress to [REDACTED].
+    _SENSITIVE_KEY_RE: re.Pattern[str] = re.compile(
+        r"(?i)(password|passwd|pwd|secret|token|api[_-]?key|apikey|"
+        r"auth|credential|private[_-]?key)"
+    )
+
     # Pre-compiled patterns for performance
     SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         # JWT tokens
@@ -172,6 +182,20 @@ class LogSanitizer:
 
         sanitized = {}
         for key, value in data.items():
+            # P1 FIX (code-review): key-based masking — value-only patterns
+            # miss {"password": "hunter2"} since no `key=value` string exists.
+            # Dicts/lists recurse (structure + partial email masks survive).
+            # Scalars first run the value sanitizer so shaped secrets keep
+            # their specific masks ([JWT_TOKEN]); only unchanged values fall
+            # back to [REDACTED].
+            if (
+                isinstance(key, str)
+                and cls._SENSITIVE_KEY_RE.search(key)
+                and not isinstance(value, dict | list)
+            ):
+                cleaned = cls.sanitize_value(value, _depth, _max_depth)
+                sanitized[key] = cleaned if cleaned != value else "[REDACTED]"
+                continue
             sanitized[key] = cls.sanitize_value(value, _depth, _max_depth)
 
         return sanitized

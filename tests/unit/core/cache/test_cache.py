@@ -129,7 +129,7 @@ async def test_cache_decorator_uses_setex():
 
         # Verify arguments
         call_args = mock_pipeline.setex.call_args
-        assert call_args[0][0] == "v2:test:123"  # key (P-M1 versioned)
+        assert call_args[0][0] == "public:v2:test:123"  # key (P-M1 versioned + P0 public: namespace for missing tenant)
         assert call_args[0][1] == 60  # time
 
         # Value is bytes because json_dumps returns bytes by default

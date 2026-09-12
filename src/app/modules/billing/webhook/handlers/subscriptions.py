@@ -145,6 +145,7 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
     # Find subscription by stripe_subscription_id using bypass context
     tenant_id = None
     subscription_id = None
+    user_id = None
 
     async with _pkg.job_bypass_context("Webhook subscription lookup") as db:
         result = await db.execute(
@@ -163,6 +164,10 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
 
         tenant_id = db_subscription.tenant_id
         subscription_id = db_subscription.id
+        # P1 FIX (code-review): capture user_id inside the session. Reading
+        # db_subscription.user_id after the bypass context exits risks
+        # DetachedInstanceError -> 500 -> Stripe retry storm.
+        user_id = db_subscription.user_id
 
     canceled_at_ts = subscription.get("canceled_at")
     # Update subscription to canceled/expired
@@ -214,7 +219,7 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
         # M-04: Explicitly downgrade user to free tier
         from src.app.modules.users import UserService
 
-        await UserService(db).downgrade_to_free_tier(db_subscription.user_id)
+        await UserService(db).downgrade_to_free_tier(user_id)
 
         await db.commit()
 

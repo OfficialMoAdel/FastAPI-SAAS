@@ -175,6 +175,19 @@ def lifespan_factory(
 
             register_users_security_lookups()
 
+            # P1 FIX (code-review): fail fast when the JWT DIP seams are
+            # unwired instead of surfacing as mass 401s at runtime. The
+            # per-request path still fails closed; this is the loud gate.
+            try:
+                from src.app.core.security.jwt_service import ensure_jwt_lookups_registered
+
+                ensure_jwt_lookups_registered()
+            except Exception as e:  # noqa: BLE001 — startup must stay loud, not crash on log path
+                from src.app.core.logger import get_logger as _gl
+
+                _gl(__name__).error("jwt_lookups_startup_check_failed", error=str(e))
+                raise
+
             # Warm caches after DB and Redis are ready
 
             from src.app.core.cache.warmer import warm_caches

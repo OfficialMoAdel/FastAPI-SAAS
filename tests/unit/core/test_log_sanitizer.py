@@ -271,7 +271,9 @@ class TestLogSanitizer:
             result = LogSanitizer.sanitize_dict(data)
             assert "j***@example.com" in result["user"]
             assert "[JWT_TOKEN]" in result["auth"]["token"]
-            assert "sk_test_123" in result["auth"]["metadata"]["api_key"]
+            # P1 FIX (code-review): key-based masking — the old assertion
+            # ("sk_test_123" survives) encoded the leak the fix closes.
+            assert result["auth"]["metadata"]["api_key"] == "[REDACTED]"
 
         def test_list_sanitization(self) -> None:
             """Test lists are sanitized."""

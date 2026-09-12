@@ -177,7 +177,13 @@ def require_tenant_match(
             to a different tenant (or to none).
     """
     current = get_current_tenant()
-    if current is None:
+    # P1 FIX (code-review): normalize the two "no tenant" states. `None`
+    # (context never set) and NO_TENANT (falsy exempt sentinel) previously
+    # behaved differently — None skipped while NO_TENANT compared against
+    # UUID(int=0) and 404'd. Both now skip identically with a debug log so
+    # worker/system flows keep existing behavior and the seam has one rule.
+    # Callers needing fail-closed must use require_active_tenant() instead.
+    if not current:
         return
     if resource_tenant_id != current.tenant_id:
         raise ModelNotFoundError(resource, key)

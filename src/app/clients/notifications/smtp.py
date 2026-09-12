@@ -343,6 +343,28 @@ def set_email_provider(provider: EmailProvider | None) -> None:
 
 
 def reset_email_provider() -> None:
-    """Reset the active EmailProvider seam to default."""
-    global _active_email_provider
+    """Reset the EmailProvider seam to default.
+
+    P1 FIX (code-review): also drops the cached default SMTP provider (and
+    its pooled connections) so credential rotation takes effect without a
+    process restart. Previously only _active was cleared and _default lived
+    forever with stale creds/pool.
+    """
+    global _active_email_provider, _default_smtp_provider
     _active_email_provider = None
+    default = _default_smtp_provider
+    _default_smtp_provider = None
+    if default is not None:
+        try:
+            pool = getattr(default, "_pool", None)
+            if pool is not None and hasattr(pool, "close_all"):
+                import asyncio
+
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None:
+                    loop.create_task(pool.close_all())  # type: ignore[attr-defined]
+        except Exception:
+            pass

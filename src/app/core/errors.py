@@ -481,8 +481,12 @@ def build_exception_table() -> list[_HandlerSpec]:
         ),
         _HandlerSpec(
             StorageNotConfiguredError,
-            status.HTTP_400_BAD_REQUEST,
-            ErrorCode.INVALID_INPUT,
+            # FIX (code-review): 404 not 400 — GET /storage for an
+            # unconfigured tenant is a missing resource, and the storage
+            # tests/e2e contract asserts 404. 400 also made the regular-user
+            # 403 check unreachable (validation ran before authz).
+            status.HTTP_404_NOT_FOUND,
+            ErrorCode.NOT_FOUND,
             "Storage not configured for this tenant.",
             None,
             "Storage not configured",

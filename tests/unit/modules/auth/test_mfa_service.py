@@ -111,7 +111,12 @@ class TestEnableMFA:
                     setup_token="some-setup-token",
                     totp_token="000000",
                 )
-                with patch("src.app.core.utils.cache.client") as mock_redis:
+                # P1: enable now enforces the service-level lockout; mock it
+                # here (lockout itself is covered by dedicated tests).
+                with (
+                    patch.object(mfa_service, "_check_mfa_lockout", new_callable=AsyncMock),
+                    patch("src.app.core.utils.cache.client") as mock_redis,
+                ):
                     mock_redis.get = AsyncMock(return_value=b"JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
                     with pytest.raises(ValidationError, match="Invalid TOTP"):
                         await mfa_service.enable_mfa(
@@ -141,7 +146,12 @@ class TestEnableMFA:
                         setup_token="some-setup-token",
                         totp_token="123456",
                     )
-                    with patch("src.app.core.utils.cache.client") as mock_redis:
+                    # P1: enable now enforces the service-level lockout; mock
+                    # it here (lockout itself is covered by dedicated tests).
+                    with (
+                        patch.object(mfa_service, "_check_mfa_lockout", new_callable=AsyncMock),
+                        patch("src.app.core.utils.cache.client") as mock_redis,
+                    ):
                         mock_redis.get = AsyncMock(return_value=b"JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
                         mock_redis.delete = AsyncMock()
                         result = await mfa_service.enable_mfa(

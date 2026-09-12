@@ -95,7 +95,9 @@ class TestP26WithRetryHonorsServerWait:
             return "ok"
 
         with patch("src.app.core.utils.retry.asyncio.sleep", new=AsyncMock()) as mock_sleep:
-            assert await with_retry(flaky, max_attempts=2, delay_seconds=30.0, retry_after_attr="retry_after") == "ok"
+            assert await with_retry(
+                flaky, max_attempts=2, delay_seconds=30.0, retry_after_attr="retry_after", jitter=False
+            ) == "ok"
         mock_sleep.assert_awaited_once_with(0.05)
 
     @pytest.mark.asyncio
@@ -111,6 +113,7 @@ class TestP26WithRetryHonorsServerWait:
                     delay_seconds=30.0,
                     retry_after_attr="retry_after",
                     max_retry_after=120.0,
+                    jitter=False,
                 )
         mock_sleep.assert_awaited_once_with(120.0)
 
@@ -121,7 +124,9 @@ class TestP26WithRetryHonorsServerWait:
 
         with patch("src.app.core.utils.retry.asyncio.sleep", new=AsyncMock()) as mock_sleep:
             with pytest.raises(AIProviderError):
-                await with_retry(always_fail, max_attempts=2, delay_seconds=0.5, retry_after_attr="retry_after")
+                await with_retry(
+                    always_fail, max_attempts=2, delay_seconds=0.5, retry_after_attr="retry_after", jitter=False
+                )
         mock_sleep.assert_awaited_once_with(0.5)
 
 
