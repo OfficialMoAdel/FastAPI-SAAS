@@ -14,6 +14,7 @@ from src.app.modules.ai.providers import (
     AIProvider,
     AITokenUsage,
     ChatCompletionResponse,
+    ChatMessage,
     EmbeddingResponse,
     validate,
 )
@@ -92,7 +93,7 @@ class OllamaProvider(AIProvider):
 
     async def generate_text(
         self,
-        prompt: str,
+        messages: list[ChatMessage],
         model: str,
         temperature: float = 0.7,
         max_tokens: int | None = None,
@@ -102,7 +103,7 @@ class OllamaProvider(AIProvider):
         """Generate text completion using Ollama Chat API.
 
         Args:
-            prompt: The user prompt
+            messages: Full conversation as typed ChatMessage objects (P2-11)
             model: Model name (e.g., "llama2", "mistral")
             temperature: Sampling temperature (0.0-1.0)
             max_tokens: Maximum tokens to generate (num_predict in Ollama)
@@ -119,9 +120,7 @@ class OllamaProvider(AIProvider):
             "temperature": temperature,
             **kwargs,
         }
-        chat_messages = options.pop("messages", None)
-        if chat_messages is None:
-            chat_messages = [{"role": "user", "content": prompt}]
+        chat_messages = [m.model_dump() for m in messages]
         if max_tokens is not None:
             options["num_predict"] = max_tokens
 
@@ -146,7 +145,7 @@ class OllamaProvider(AIProvider):
 
     async def generate_text_stream(
         self,
-        prompt: str,
+        messages: list[ChatMessage],
         model: str,
         temperature: float = 0.7,
         max_tokens: int | None = None,
@@ -158,7 +157,7 @@ class OllamaProvider(AIProvider):
         Yields chunks of generated text as they become available.
 
         Args:
-            prompt: The user prompt
+            messages: Full conversation as typed ChatMessage objects (P2-11)
             model: Model name
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
@@ -175,9 +174,7 @@ class OllamaProvider(AIProvider):
             "temperature": temperature,
             **kwargs,
         }
-        chat_messages = options.pop("messages", None)
-        if chat_messages is None:
-            chat_messages = [{"role": "user", "content": prompt}]
+        chat_messages = [m.model_dump() for m in messages]
         if max_tokens is not None:
             options["num_predict"] = max_tokens
 

@@ -91,7 +91,7 @@ class AIProvider(ABC):
     @abstractmethod
     async def generate_text(
         self,
-        prompt: str,
+        messages: list["ChatMessage"],
         model: str,
         temperature: float = 0.7,
         max_tokens: int | None = None,
@@ -101,7 +101,9 @@ class AIProvider(ABC):
         """Generate text completion.
 
         Args:
-            prompt: The user prompt
+            messages: Full conversation as typed ChatMessage objects
+                (P2-11: ChatMessage is THE boundary param — the vestigial
+                prompt/messages-in-kwargs seam is gone)
             model: The model name to use
             temperature: Sampling temperature (0.0-2.0)
             max_tokens: Maximum tokens to generate
@@ -119,7 +121,7 @@ class AIProvider(ABC):
     @abstractmethod
     def generate_text_stream(
         self,
-        prompt: str,
+        messages: list["ChatMessage"],
         model: str,
         temperature: float = 0.7,
         max_tokens: int | None = None,
@@ -131,7 +133,7 @@ class AIProvider(ABC):
         Yields chunks of generated text as they become available.
 
         Args:
-            prompt: The user prompt
+            messages: Full conversation as typed ChatMessage objects
             model: The model name to use
             temperature: Sampling temperature (0.0-2.0)
             max_tokens: Maximum tokens to generate
@@ -298,8 +300,10 @@ class AIProvider(ABC):
         if schema:
             json_system += f"\n\nJSON Schema:\n{json.dumps(schema, indent=2)}"
 
+        # P2-11: ChatMessage is THE provider-boundary param; generate_json
+        # stays a prompt-taking convenience that wraps into a typed message.
         response = await self.generate_text(
-            prompt=prompt,
+            messages=[ChatMessage(role="user", content=prompt)],
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,

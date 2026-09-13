@@ -1,25 +1,32 @@
+import asyncio
 from collections.abc import AsyncGenerator, Callable
 from contextlib import _AsyncGeneratorContextManager, asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anyio
 import fastapi
-import redis.asyncio as redis
-from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
+from redis.exceptions import RedisError
 
 from src.app.api.deps import get_current_superuser
 from src.app.core.config import (
     EnvironmentOption,
     Settings,
+    settings,
 )
 from src.app.core.db.database import Base, get_async_engine
 from src.app.core.logger import get_logger
-from src.app.core.redis_provider import close_redis_pool, get_redis_pool
+from src.app.core.redis_provider import close_redis_pool
 from src.app.core.utils import cache, queue
+from src.app.shared.exceptions import ServiceUnavailableError
+
+if TYPE_CHECKING:
+    # K10: annotation-only use — defer the crudadmin import out of module
+    # import time. _init_admin() imports the real module at runtime.
+    from crudadmin import CRUDAdmin
 
 logger = get_logger(__name__)
 
@@ -72,23 +79,29 @@ def _resolve_create_tables_on_start(settings_obj: Settings | Any, requested: boo
 
 # -------------- cache --------------
 async def create_redis_cache_pool() -> None:
-    """Initialize Redis cache pool and client via the Redis provider."""
-    # Cache client needs string decoding; the shared pool is raw (bytes),
-    # but the client overrides decoding.
-    if cache.client is None or cache.pool is None:
-        pool = await get_redis_pool()
-        cache.pool = pool
-        cache.client = redis.Redis(connection_pool=pool, decode_responses=True)
+    """Initialize Redis cache pool and client via the Redis provider.
+
+    Thin lifespan hook (P1-#3): construction lives in the provider —
+    :func:`redis_provider.create_cache_client` is the single construction
+    seam. Retained under this name because fixtures and tests patch it here.
+    """
+    from src.app.core.redis_provider import create_cache_client
+
+    await create_cache_client()
 
 
 async def close_redis_cache_pool() -> None:
-    """Close the shared Redis cache client and clear its global slots."""
+    """Close the shared Redis cache client and clear its global slots.
+
+    Thin lifespan hook (P1-#3): teardown lives in the provider; see
+    :func:`redis_provider.shutdown`.
+    """
     import src.app.core.utils.cache as _cache
 
     if _cache.client is not None:
         # Use aclose() for proper async cleanup if available (redis-py 5.0+)
         if hasattr(_cache.client, "aclose"):
-            await _cache.client.aclose()
+            await _cache.client.aclose()  # type: ignore[attr-defined]
         else:
             await _cache.client.close()
         _cache.client = None
@@ -97,16 +110,16 @@ async def close_redis_cache_pool() -> None:
 
 # -------------- queue --------------
 async def create_redis_queue_pool() -> None:
-    """Initialize ARQ queue pool (reuses the shared connection pool)."""
-    # K1 FIX: use unified ARQ wire serializer adapter (Candidate 5)
-    from src.app.core.events.arq_adapter import get_arq_pool_kwargs
+    """Initialize ARQ queue pool (reuses the shared connection pool).
+
+    Thin lifespan hook (P1-#3): construction lives in the provider —
+    :func:`redis_provider.create_arq_pool` is the single construction seam
+    (K1: unified ARQ wire serializers via arq_adapter.get_arq_pool_kwargs).
+    """
+    from src.app.core.redis_provider import create_arq_pool
 
     if queue.pool is None:
-        pool = await get_redis_pool()
-        queue.pool = ArqRedis(
-            connection_pool=pool,
-            **get_arq_pool_kwargs(),
-        )
+        queue.pool = await create_arq_pool()
 
 
 async def close_redis_queue_pool() -> None:
@@ -347,3 +360,281 @@ def create_application(
     setup_exception_handlers(application)
 
     return application
+
+
+# -------------- application lifespan (P3-#15) --------------
+# The full startup/shutdown orchestration lives here — one home, as a
+# declarative phase list composed by ``lifespan_with_admin`` — so main.py
+# stays a thin composition root (app factory + middleware + OpenAPI).
+# Every phase keeps its historical behavior verbatim; only the address
+# changed (moved from main.py).
+
+# admin interface initialized inside lifespan to eliminate import-time side effects
+admin: "CRUDAdmin | None" = None
+
+
+async def _warm_token_blacklist_cache() -> None:
+    """Warm the token blacklist Redis cache from database on startup."""
+    # RedisError imported at module top (M-3: duplicate import removed).
+
+    # P1-4: narrow excepts to actual infra failure types so a bug in the
+    # warmer surfaces immediately. The blacklist is auth-critical, so a
+    # warmup failure in production must fail-closed (raised) rather than
+    # silently leave the app serving with a cold cache.
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from src.app.core.db.crud_token_blacklist import crud_token_blacklist
+    from src.app.core.db.database import async_session_maker
+    from src.app.core.security.token_blacklist_cache import warm_cache_from_db
+
+    try:
+        async with async_session_maker() as db:
+            # P-M9: cap the warmup set — loading every active blacklisted
+            # token made boot cost O(total sessions). Keep the N
+            # longest-lived entries (they stay in the cache longest, so the
+            # warm-up value per slot is highest); the rest fall back to the
+            # on-demand DB check on first lookup. TOKEN_BLACKLIST_WARMUP_LIMIT
+            # is env-tunable (APP_TOKEN_BLACKLIST_WARMUP_LIMIT); 0 disables
+            # warmup entirely (and skips the query). P2: the cap is pushed
+            # into the DB (ORDER BY expires_at DESC + LIMIT) so boot is
+            # O(limit) even before the first row is read.
+            limit = settings.app.TOKEN_BLACKLIST_WARMUP_LIMIT
+            if limit == 0:
+                logger.info("Token blacklist warmup disabled by TOKEN_BLACKLIST_WARMUP_LIMIT=0")
+            else:
+                tokens = await crud_token_blacklist.get_active_tokens(db, limit=limit)
+                if tokens:
+                    count = await warm_cache_from_db(tokens)
+                    logger.info("Token blacklist cache warmed", count=count)
+    except (RedisError, SQLAlchemyError, ServiceUnavailableError) as e:
+        logger.error("Failed to warm token blacklist cache", error=str(e))
+        if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
+            raise
+        logger.warning("Continuing with cold blacklist cache (non-production)")
+
+
+def _init_pool_metrics() -> None:
+    """Initialize database pool metrics collection."""
+    from src.app.core.db.database import get_async_engine
+    from src.app.core.utils.pool_metrics import setup_pool_metrics
+
+    try:
+        async_engine = get_async_engine()
+        setup_pool_metrics(async_engine)
+    except Exception as e:  # noqa: BLE001 - P1-17: observability only; metrics must not block boot
+        logger.warning("Pool metrics setup failed", error=str(e))
+
+
+def _init_event_bus_and_queue(redis_client: Any) -> None:
+    """Initialize event bus, background queue, and pre-register handlers."""
+    from src.app.core.events import event_bus
+
+    if redis_client:
+        event_bus.set_redis_client(redis_client)
+        if settings.arq.ARQ_ENABLED:
+            try:
+                from src.app.core.utils.queue import pool as arq_queue
+
+                if arq_queue:
+                    event_bus.set_arq_queue(arq_queue)
+                    logger.info("ARQ queue initialized for async event dispatch (reusing shared pool)")
+                else:
+                    logger.warning("Shared ARQ queue pool not initialized, events will run synchronously")
+            except Exception as e:  # noqa: BLE001 - P1-17: sync dispatch is the designed degraded mode
+                logger.warning("ARQ queue initialization failed, events will run synchronously", error=str(e))
+        else:
+            logger.info("ARQ background tasks are disabled, events will run synchronously")
+
+    event_bus.register_all_handlers()
+
+
+async def _init_rate_limiting_and_security(redis_client: Any) -> None:
+    """Initialize session manager, GCRA rate limiter, and Lua scripts."""
+    if not redis_client:
+        return
+
+    from src.app.core.security.session_manager import session_manager
+
+    session_manager.set_redis_client(redis_client)
+
+    from src.app.core.utils.gcra_rate_limit import init_gcra_rate_limiter
+    from src.app.core.utils.lua_manager import get_lua_manager
+
+    init_gcra_rate_limiter(redis_client)
+    logger.info("GCRA rate limiter initialized")
+    try:
+        loaded_scripts = await get_lua_manager().preload_scripts(redis_client)
+        logger.info("Lua scripts preloaded", count=len(loaded_scripts))
+    except RedisError as e:
+        logger.error("Failed to preload Lua scripts", error=str(e))
+        if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
+            raise
+
+    from src.app.core.security.auto_ban import _start_ban_l1_invalidation_listener
+    from src.app.core.security.rate_limit_cache import start_policy_invalidation_listener
+    from src.app.core.tenancy.cache import start_l1_invalidation_listener
+
+    _start_ban_l1_invalidation_listener()
+    start_policy_invalidation_listener()
+    # T9: without this listener, tenant L1 invalidation publishes into the
+    # void and other workers serve a suspended tenant as active for up to
+    # the L1 TTL (60s).
+    start_l1_invalidation_listener()
+
+
+def apply_security_runtime_config(config: dict[str, Any]) -> list[str]:
+    """Validate + inject runtime security overrides into process-global settings.
+
+    P3-#15: this is the ONE sanctioned site that mutates
+    ``settings.security`` after boot — the old inline ``setattr`` loop in
+    main.py's ``_load_security_runtime_config``. Making it an explicit,
+    named, testable function (instead of an anonymous loop inside a
+    lifespan phase) is the "explicit runtime-config injection": every key
+    is validated with ``TypeAdapter`` against the model field before it is
+    applied, unknown/invalid keys are logged and skipped, and the applied
+    key list is returned for observability.
+
+    Args:
+        config: Raw key/value overrides from the Redis runtime-config store.
+
+    Returns:
+        The keys that were successfully applied.
+    """
+    from pydantic import TypeAdapter, ValidationError
+
+    security_keys = (
+        "IP_WHITELIST_ENABLED",
+        "IP_BLACKLIST_ENABLED",
+        "IP_WHITELIST_BYPASS_RATE_LIMIT",
+        "AUTO_BAN_ENABLED",
+        "AUTO_BAN_THRESHOLD",
+        "AUTO_BAN_DURATION",
+        "AUTO_BAN_ESCALATION",
+    )
+    applied: list[str] = []
+    model_fields = type(settings.security).model_fields
+    for key in security_keys:
+        if key not in config:
+            continue
+        field = model_fields.get(key)
+        if field is None or field.annotation is None:
+            logger.error("Skipping unknown security runtime config key", key=key)
+            continue
+        raw = config[key]
+        try:
+            coerced = raw.strip() if isinstance(raw, str) else raw
+            validated = TypeAdapter(field.annotation).validate_python(coerced)
+            setattr(settings.security, key, validated)
+            applied.append(key)
+        except (ValidationError, ValueError, TypeError) as e:
+            logger.error("Skipping invalid security runtime config value", key=key, error=str(e))
+            continue
+    return applied
+
+
+async def _load_security_runtime_config() -> None:
+    """Load dynamic security configuration overrides from Redis store via table loop."""
+    from src.app.core.utils.config_store import get_runtime_config
+
+    config = await get_runtime_config()
+    if not config:
+        return
+
+    apply_security_runtime_config(config)
+    logger.info("Security runtime config loaded from Redis")
+
+
+async def _warm_startup_caches() -> None:
+    """Warm the token blacklist cache on startup.
+
+    P2-4: application caches (tenants/tiers/feature flags) are warmed
+    exactly once by the setup.py background task (cross-worker Redis
+    lock). Warming them here too doubled DB + Redis load on every boot,
+    so this lifespan phase now covers only the auth-critical blacklist.
+    """
+    logger.info("Starting application cache warming...")
+    try:
+        await asyncio.wait_for(
+            _warm_token_blacklist_cache(),
+            timeout=15.0,
+        )
+    except TimeoutError:
+        logger.warning("Cache warming exceeded 15s timeout; continuing boot with partial state")
+
+
+async def _init_admin() -> None:
+    """Initialize admin interface if enabled."""
+    global admin
+    if admin is None:
+        from src.app.admin.initialize import create_admin_interface
+
+        admin = create_admin_interface()
+    if admin:
+        try:
+            await admin.initialize()
+            logger.info("Admin interface initialized successfully")
+        except Exception as e:  # noqa: BLE001 - P1-17: admin is optional; API must boot without it
+            logger.error("Failed to initialize admin interface", error=str(e))
+
+
+async def _teardown_security_listeners() -> None:
+    """Shutdown bcrypt thread pool and cancel L1 pubsub invalidation listeners."""
+    try:
+        from src.app.core.security import _bcrypt_executor
+
+        if _bcrypt_executor is not None:
+            _bcrypt_executor.shutdown(wait=True)
+            import src.app.core.security
+
+            src.app.core.security._bcrypt_executor = None
+            logger.info("Bcrypt thread pool shutdown successfully")
+    except Exception as e:  # noqa: BLE001 - P1-17: teardown must not mask shutdown
+        logger.error("Failed to shutdown bcrypt thread pool", error=str(e))
+
+    from src.app.core.security.auto_ban import stop_ban_l1_invalidation_listener
+    from src.app.core.security.rate_limit_cache import stop_policy_invalidation_listener
+    from src.app.core.tenancy.cache import stop_l1_invalidation_listener
+
+    await stop_ban_l1_invalidation_listener()
+    await stop_l1_invalidation_listener()
+    await stop_policy_invalidation_listener()
+    try:
+        from src.app.modules.auth.http_client import close_sso_http_client
+
+        await close_sso_http_client()
+    except Exception as e:  # noqa: BLE001 - P1-17: teardown must not mask shutdown
+        logger.error("Failed to close SSO HTTP client", error=str(e))
+
+
+@asynccontextmanager
+async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Startup and shutdown orchestration composing modular phases."""
+    from src.app.core.logger import setup_logging
+
+    setup_logging()
+
+    from src.app.core.env_validator import EnvironmentValidator
+
+    if not EnvironmentValidator.validate_and_log():
+        if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
+            raise RuntimeError("Environment validation failed - refusing to start in production")
+
+    default_lifespan = lifespan_factory(settings, create_tables_on_start=settings.app.CREATE_TABLES_ON_STARTUP)
+
+    async with default_lifespan(app):
+        from src.app.core.redis_provider import get_redis
+
+        redis_client = get_redis()
+        _init_pool_metrics()
+        _init_event_bus_and_queue(redis_client)
+        await _init_rate_limiting_and_security(redis_client)
+        await _load_security_runtime_config()
+        await _warm_startup_caches()
+        await _init_admin()
+
+        yield
+
+        await _teardown_security_listeners()
+        from src.app.core.logger import shutdown_logging
+
+        shutdown_logging()

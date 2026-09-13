@@ -3,6 +3,9 @@
 One module owns connection lifecycle and hands out clients. Every consumer
 either imports :func:`get_redis` / :func:`get_arq` from here or goes through
 FastAPI DI (:mod:`src.app.core.cache.dependencies`) — never the bare globals.
+Client construction lives here too (:func:`create_cache_client` /
+:func:`create_arq_pool`) — no other module constructs ``redis.Redis(...)`` or
+``ArqRedis(...)`` directly.
 
 Compatibility contract
 ----------------------
@@ -21,7 +24,15 @@ from src.app.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-__all__ = ["get_arq", "get_redis", "get_redis_pool", "require_redis", "set_clients", "shutdown"]
+__all__ = [
+    "create_arq_pool",
+    "create_cache_client",
+    "get_arq",
+    "get_redis",
+    "get_redis_pool",
+    "set_clients",
+    "shutdown",
+]
 
 _shared_pool: ConnectionPool | None = None
 
@@ -80,6 +91,37 @@ def get_arq() -> ArqRedis | None:
     return queue.pool
 
 
+async def create_cache_client() -> Redis:
+    """Create the shared decode_responses cache client and install it.
+
+    Single construction seam for the cache client (P1-#3: the escape hatch
+    in ``core/setup.py`` moved here). Idempotent: returns the already
+    installed client when one exists.
+    """
+    import src.app.core.utils.cache as _cache
+
+    if _cache.client is not None:
+        return _cache.client
+    pool = await get_redis_pool()
+    client = Redis(connection_pool=pool, decode_responses=True)
+    await set_clients(redis_client=client, redis_pool=pool)
+    return client
+
+
+async def create_arq_pool() -> ArqRedis:
+    """Create the shared ARQ queue client on the shared pool.
+
+    Single construction seam for the queue client (K1 wire serializers via
+    :func:`get_arq_pool_kwargs`). Does NOT install into the legacy
+    ``queue.pool`` global — callers that need it installed use
+    :func:`set_clients`.
+    """
+    from src.app.core.events.arq_adapter import get_arq_pool_kwargs
+
+    pool = await get_redis_pool()
+    return ArqRedis(connection_pool=pool, **get_arq_pool_kwargs())
+
+
 async def set_clients(
     *,
     redis_client: Redis | None,
@@ -125,17 +167,3 @@ async def shutdown() -> None:
         except Exception as e:
             logger.warning("arq_pool_close_failed", error=str(e))
         queue.pool = None
-
-
-def require_redis() -> Redis:
-    """Return the shared Redis client or raise if not initialized.
-
-    For code paths where None means a configuration error rather than an
-    expected disabled state.
-    """
-    from src.app.core.exceptions.cache_exceptions import MissingClientError
-
-    client = get_redis()
-    if client is None:
-        raise MissingClientError("Redis client not initialized")
-    return client

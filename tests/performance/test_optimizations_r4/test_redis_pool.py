@@ -71,13 +71,13 @@ class TestP22RedisQueuePoolConfiguration:
         assert settings.REDIS_QUEUE_CONN_RETRIES == 5
 
     def test_create_pool_uses_explicit_settings(self) -> None:
-        """create_redis_queue_pool should reuse shared pool from redis_factory."""
-        from src.app.core.setup import create_redis_queue_pool
+        """create_redis_queue_pool should reuse shared pool from the provider."""
+        from src.app.core.redis_provider import create_arq_pool
 
-        source = inspect.getsource(create_redis_queue_pool)
+        source = inspect.getsource(create_arq_pool)
 
-        # P2-2: Verify pool reuse pattern (not creating separate pool)
-        assert "redis_factory" in source or "get_redis_pool" in source
+        # P2-2 + P1-#3: construction lives in the provider (pool reuse, not a separate pool)
+        assert "get_redis_pool" in source
         assert "ArqRedis" in source
         assert "connection_pool" in source
 
@@ -125,20 +125,20 @@ class TestP22RedisQueuePoolIsomorphism:
 
     def test_password_handling_unchanged(self) -> None:
         """Password should be handled by shared pool configuration."""
-        from src.app.core.setup import create_redis_queue_pool
+        from src.app.core.redis_provider import create_arq_pool
 
-        source = inspect.getsource(create_redis_queue_pool)
+        source = inspect.getsource(create_arq_pool)
 
-        # P2-2: Password is handled by redis_factory, not directly in this function
+        # P2-2 + P1-#3: Password is handled by the shared pool factory, not here
         # Verify the function uses the shared pool pattern
-        assert "redis_factory" in source or "get_redis_pool" in source
+        assert "get_redis_pool" in source
 
     def test_host_port_handling_unchanged(self) -> None:
         """Host and port should be handled by shared pool configuration."""
-        from src.app.core.setup import create_redis_queue_pool
+        from src.app.core.redis_provider import create_arq_pool
 
-        source = inspect.getsource(create_redis_queue_pool)
+        source = inspect.getsource(create_arq_pool)
 
-        # P2-2: Host/port are handled by redis_factory, not directly in this function
+        # P2-2 + P1-#3: Host/port are handled by the shared pool factory, not here
         # Verify the function uses the shared pool pattern
-        assert "redis_factory" in source or "get_redis_pool" in source
+        assert "get_redis_pool" in source

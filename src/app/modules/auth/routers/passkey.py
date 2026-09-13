@@ -151,6 +151,7 @@ async def login_begin(
 async def login_complete(
     request: PasskeyLoginVerifyRequest,
     response: Response,
+    fastapi_request: Request,
     db: AsyncSession = Depends(async_get_db),
     redis: Redis = Depends(async_get_redis),
 ):
@@ -164,6 +165,7 @@ async def login_complete(
         redis=redis,
         credential=request.credential,
         challenge_id=request.challenge_id,
+        request=fastapi_request,
     )
 
     # Set the refresh token as an HttpOnly, Secure cookie

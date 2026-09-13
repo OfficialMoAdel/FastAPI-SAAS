@@ -2,7 +2,7 @@
 
 import asyncio
 import hashlib
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -30,6 +30,33 @@ AUTH_CRITICAL_TEMPLATES: frozenset[str] = frozenset(
         "password_reset",
     }
 )
+
+# Job-level ARQ retry schedule for send_email_task (transmission-level
+# retries happen inside with_retry; these delays govern worker re-runs when
+# the transmission budget is exhausted). Indexed by job_try - 1, so at the
+# default ARQ_MAX_TRIES=3 only the first two entries fire (try 1 -> 10s,
+# try 2 -> 60s; try 3 is terminal). The third entry is not dead weight: it
+# is the schedule for operators who raise max tries, and keeping the tuple
+# longer than the default is what makes that a config-only change.
+EMAIL_RETRY_DELAYS: tuple[int, ...] = (10, 60, 360)
+
+# P2-7: email rate-limit policy, shared by every door into the pipeline
+# (send_email service door + handle_notification_request_event event door).
+# Previously each door hard-coded its own 100/60 and 1000/3600 literals.
+EMAIL_RATE_LIMIT_PER_MINUTE: int = 100
+EMAIL_RATE_LIMIT_MINUTE_WINDOW_SECONDS: int = 60
+EMAIL_RATE_LIMIT_PER_HOUR: int = 1000
+EMAIL_RATE_LIMIT_HOUR_WINDOW_SECONDS: int = 3600
+
+# P2-6: outbox terminal semantics for notifications. PENDING rows older
+# than NOTIFICATION_MAX_PENDING_AGE_HOURS are swept to FAILED by the
+# recover_stuck_notifications cron (bounded terminal state — mirrors the
+# webhooks recovery lifecycle without replicating its table shape).
+# NOTE: re-enqueueing on recovery is impossible today because the rendered
+# html body is not persisted on the Notification row; if recovery-retry is
+# ever needed, add a body column first.
+NOTIFICATION_MAX_PENDING_AGE_HOURS: int = 24
+NOTIFICATION_RECOVERY_BATCH_SIZE: int = 100
 
 # Initialize Jinja2 environment
 TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates" / "email"
@@ -177,17 +204,59 @@ class NotificationService:
 
         return subject, rendered_html
 
-    async def send_email(
+    async def _rate_limited(self, tenant_id: UUID | None, to_email: str) -> str | None:
+        """Check the shared email rate-limit policy (P2-7).
+
+        Both doors into the email pipeline (send_email service door and
+        handle_notification_request_event event door) call this helper so
+        the policy constants are defined once.
+
+        Args:
+            tenant_id: Tenant ID (None falls back to a global per-email key)
+            to_email: Recipient email address (used for the global key)
+
+        Returns:
+            The limit reason when rate-limited (e.g. "100 emails per minute"),
+            or None when the request is within budget.
+        """
+        # N4: probe both windows concurrently (1 Redis round instead of 2).
+        # Note: both counters increment even if the minute probe rejects —
+        # accepted trade-off, the rejected request consumes one hourly slot.
+        rate_limit_key_min = f"notif:min:{tenant_id}" if tenant_id else f"notif:min:global:{to_email}"
+        rate_limit_key_hour = f"notif:hour:{tenant_id}" if tenant_id else f"notif:hour:global:{to_email}"
+        (is_limited_min, _), (is_limited_hour, _) = await asyncio.gather(
+            rate_limiter.check_rate_limit(
+                rate_limit_key_min,
+                EMAIL_RATE_LIMIT_PER_MINUTE,
+                EMAIL_RATE_LIMIT_MINUTE_WINDOW_SECONDS,
+            ),
+            rate_limiter.check_rate_limit(
+                rate_limit_key_hour,
+                EMAIL_RATE_LIMIT_PER_HOUR,
+                EMAIL_RATE_LIMIT_HOUR_WINDOW_SECONDS,
+            ),
+        )
+        if is_limited_min:
+            logger.warning("notification_rate_limit_exceeded_min", tenant_id=str(tenant_id))
+            return f"{EMAIL_RATE_LIMIT_PER_MINUTE} emails per minute"
+        if is_limited_hour:
+            logger.warning("notification_rate_limit_exceeded_hour", tenant_id=str(tenant_id))
+            return f"{EMAIL_RATE_LIMIT_PER_HOUR} emails per hour"
+        return None
+
+    async def _create_and_enqueue(
         self,
         tenant_id: UUID | None,
         to_email: str,
         template_name: str,
         context: dict[str, Any],
         user_id: int | None = None,
-    ) -> Notification | None:
-        """Send an email notification.
+    ) -> Notification:
+        """Render, persist the PENDING outbox row, and enqueue delivery (P2-7).
 
-        This method queues the email for async delivery via ARQ.
+        Shared by every door into the email pipeline so the PENDING row,
+        enqueue contract, and FAILED-marking idioms (enqueue error /
+        pool unavailable) are defined exactly once.
 
         Args:
             tenant_id: Tenant ID
@@ -196,46 +265,10 @@ class NotificationService:
             context: Template variables
             user_id: Optional user ID
 
-        Returns
-        -------
-            Notification record, or None if skipped by user preferences
+        Returns:
+            The persisted Notification record (PENDING, or FAILED when the
+            enqueue step failed).
         """
-        # Check user preferences if user_id is provided (auth-critical bypasses quiet hours)
-        if user_id and template_name not in AUTH_CRITICAL_TEMPLATES:
-            should_send = await self.should_send_notification(user_id, template_name)
-            if not should_send:
-                logger.info(
-                    "notification_skipped_by_user_preferences",
-                    user_id=user_id,
-                    template_name=template_name,
-                )
-                # BUG FIX: Skipped notifications should NOT be stored as PENDING or FAILED.
-                # FAILED implies an error occurred; PENDING is confusing. Instead,
-                # we use a specific SKIPPED status if available, or just use FAILED but with a clear message.
-                # Since the schema might not have SKIPPED, we will not create a DB record at all
-                # for skipped notifications.
-                return None
-
-        from src.app.shared.exceptions import RateLimitExceededError
-
-        # Rate limiting check (T105)
-        # 100 emails/minute per tenant, 1000 emails/hour per tenant.
-        # N4: probe both windows concurrently (1 Redis round instead of 2).
-        # Note: both counters increment even if the minute probe rejects —
-        # accepted trade-off, the rejected request consumes one hourly slot.
-        rate_limit_key_min = f"notif:min:{tenant_id}" if tenant_id else f"notif:min:global:{to_email}"
-        rate_limit_key_hour = f"notif:hour:{tenant_id}" if tenant_id else f"notif:hour:global:{to_email}"
-        (is_limited_min, _), (is_limited_hour, _) = await asyncio.gather(
-            rate_limiter.check_rate_limit(rate_limit_key_min, 100, 60),
-            rate_limiter.check_rate_limit(rate_limit_key_hour, 1000, 3600),
-        )
-        if is_limited_min:
-            logger.warning("notification_rate_limit_exceeded_min", tenant_id=str(tenant_id))
-            raise RateLimitExceededError("Rate limit exceeded: 100 emails per minute")
-        if is_limited_hour:
-            logger.warning("notification_rate_limit_exceeded_hour", tenant_id=str(tenant_id))
-            raise RateLimitExceededError("Rate limit exceeded: 1000 emails per hour")
-
         # Render template
         subject, html_content = await self.render_template(tenant_id, template_name, context)
 
@@ -289,6 +322,65 @@ class NotificationService:
             await self.db.commit()
 
         return notification
+
+    async def send_email(
+        self,
+        tenant_id: UUID | None,
+        to_email: str,
+        template_name: str,
+        context: dict[str, Any],
+        user_id: int | None = None,
+    ) -> Notification | None:
+        """Send an email notification.
+
+        This method queues the email for async delivery via ARQ.
+
+        Rate-limit semantics follow the event door (P2-7): when limited, a
+        FAILED outbox row is written first so there is an audit trace, and
+        only then is RateLimitExceededError raised.
+
+        Args:
+            tenant_id: Tenant ID
+            to_email: Recipient email address
+            template_name: Name of the email template
+            context: Template variables
+            user_id: Optional user ID
+
+        Returns:
+        -------
+            Notification record, or None if skipped by user preferences
+        """
+        # Check user preferences if user_id is provided (auth-critical bypasses quiet hours)
+        if user_id and template_name not in AUTH_CRITICAL_TEMPLATES:
+            should_send = await self.should_send_notification(user_id, template_name)
+            if not should_send:
+                logger.info(
+                    "notification_skipped_by_user_preferences",
+                    user_id=user_id,
+                    template_name=template_name,
+                )
+                return None
+
+        limit_reason = await self._rate_limited(tenant_id, to_email)
+        if limit_reason is not None:
+            from src.app.shared.exceptions import RateLimitExceededError
+
+            # Create FAILED outbox record so there is an audit trace
+            # (same semantics as the event door).
+            notification = Notification(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                template_name=template_name,
+                to_email=to_email,
+                subject=f"Rate limited: {template_name}",
+                status=NotificationStatus.FAILED,
+            )
+            notification.error_message = f"Rate limit exceeded: {limit_reason}"
+            self.db.add(notification)
+            await self.db.commit()
+            raise RateLimitExceededError(f"Rate limit exceeded: {limit_reason}")
+
+        return await self._create_and_enqueue(tenant_id, to_email, template_name, context, user_id)
 
     async def mark_sent(self, notification_id: UUID) -> None:
         """Mark notification as sent.
@@ -578,8 +670,15 @@ async def send_email_task(
 ) -> None:
     """ARQ worker task to send emails via SMTP.
 
+    Retry semantics: transmission failures inside a single run go through
+    with_retry (3 attempts, 1s base delay). If that budget is exhausted,
+    the job re-queues itself via arq.worker.Retry following
+    EMAIL_RETRY_DELAYS, up to settings.arq.ARQ_MAX_TRIES worker-level tries.
+    The notification row stays PENDING across worker retries and is only
+    marked FAILED on the final permitted attempt.
+
     Args:
-        ctx: ARQ context
+        ctx: ARQ context (carries job_try)
         notification_id: Notification record ID
         to_email: Recipient email
         subject: Email subject
@@ -623,15 +722,42 @@ async def send_email_task(
                 logger.info("email_sent_success", notification_id=notification_id)
 
             except Exception as e:
-                logger.error(
-                    "email_send_failed",
+                # ARQ contract (see core/events/worker.py K3 precedent): a bare
+                # raise sets finish=True and DELETES the job — zero retries.
+                # Re-queueing requires arq.worker.Retry. FAILED is terminal, so
+                # it is only marked on the final permitted attempt.
+                from arq.worker import Retry
+
+                from src.app.core.config import settings
+
+                job_try: int = ctx.get("job_try", 1)
+                max_tries = settings.arq.ARQ_MAX_TRIES
+
+                if job_try >= max_tries:
+                    logger.error(
+                        "email_send_failed",
+                        notification_id=notification_id,
+                        error=str(e),
+                        job_try=job_try,
+                        max_tries=max_tries,
+                        exc_info=True,
+                    )
+                    # Terminal: mark FAILED (inside context = RLS enforced)
+                    await service.mark_failed(UUID(notification_id), str(e))
+                    raise
+
+                # Retries remain: defer to the worker with backoff. The row
+                # stays PENDING until the final attempt decides the outcome.
+                delay = EMAIL_RETRY_DELAYS[min(job_try - 1, len(EMAIL_RETRY_DELAYS) - 1)]
+                logger.warning(
+                    "email_send_retry_scheduled",
                     notification_id=notification_id,
                     error=str(e),
-                    exc_info=True,
+                    job_try=job_try,
+                    max_tries=max_tries,
+                    retry_in_seconds=delay,
                 )
-                # Mark as failed (inside context = RLS enforced)
-                await service.mark_failed(UUID(notification_id), str(e))
-                raise  # Re-raise for ARQ retry
+                raise Retry(defer=delay) from e
 
         try:
             if tenant_id:
@@ -643,98 +769,12 @@ async def send_email_task(
             raise  # Already logged inside _run_with_context
 
 
-# Event handler for notification.send events
-async def handle_notification_send_event(data: dict[str, Any]) -> None:
-    """Handle notification send events by queuing email delivery.
-
-    This handler receives events published by send_email() and other services,
-    then enqueues the actual email delivery via ARQ background worker.
-
-    Args:
-        data: Event payload with notification details:
-            - notification_id: ID of the notification record
-            - to_email: Recipient email address
-            - subject: Email subject line
-            - html_content: Rendered HTML body
-    """
-    from src.app.core.utils.queue import pool as arq_pool
-
-    notification_id = data.get("notification_id")
-    to_email = data.get("to_email")
-    subject = data.get("subject")
-    html_content = data.get("html_content")
-    tenant_id = data.get("tenant_id")
-
-    if not all([notification_id, to_email, subject, html_content]):
-        logger.warning(
-            "notification_send_event_missing_data",
-            notification_id=notification_id,
-            has_to_email=bool(to_email),
-            has_subject=bool(subject),
-            has_html_content=bool(html_content),
-        )
-        return
-
-    # Enqueue the email delivery task via ARQ
-    if arq_pool:
-        try:
-            await arq_pool.enqueue_job(
-                "send_email_task",
-                notification_id,
-                to_email,
-                subject,
-                html_content,
-                tenant_id,
-            )
-            logger.debug(
-                "email_task_enqueued",
-                notification_id=notification_id,
-            )
-        except Exception as e:
-            logger.error(
-                "failed_to_enqueue_email_task",
-                notification_id=notification_id,
-                error=str(e),
-            )
-            # BUG FIX: Mark notification as FAILED so it doesn't stay stuck in PENDING
-            await _mark_notification_failed(notification_id, tenant_id, f"Enqueue error: {e}")
-    else:
-        logger.warning(
-            "arq_queue_not_available",
-            notification_id=notification_id,
-        )
-        # BUG FIX: Mark notification as FAILED so it doesn't stay stuck in PENDING
-        await _mark_notification_failed(notification_id, tenant_id, "ARQ queue not available")
-
-async def _mark_notification_failed(notification_id: str | None, tenant_id: str | None, reason: str) -> None:
-    """Mark a notification as failed in the database."""
-    if not notification_id:
-        return
-    try:
-        from uuid import UUID
-
-        from src.app.core.db.database import local_session
-        from src.app.core.db.rls import rls_context
-
-        async with local_session() as db:
-            ctx = rls_context(db, tenant_id) if tenant_id else None
-            if ctx:
-                async with ctx:
-                    service = NotificationService(db)
-                    await service.mark_failed(UUID(notification_id), reason)
-            else:
-                service = NotificationService(db)
-                await service.mark_failed(UUID(notification_id), reason)
-    except Exception as e:
-        logger.error("failed_to_mark_notification_failed", notification_id=notification_id, error=str(e))
-
-
-
 async def handle_notification_request_event(data: dict[str, Any]) -> None:
     """Handle request to generate and send an email notification via outbox.
 
-    Eliminates redundant event hops by creating the outbox record (Notification)
-    and directly enqueuing the delivery task.
+    Thin event door (P2-7): parses the payload, opens the RLS-scoped session,
+    and delegates to the same NotificationService helpers the service door
+    uses (prefs check, shared rate-limit policy, shared create-and-enqueue).
 
     Args:
         data: Event payload with request details:
@@ -744,8 +784,6 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
             - tenant_id: Optional tenant ID
             - user_id: Optional user ID
     """
-    from src.app.core.utils.queue import pool as arq_pool
-
     to_email = data.get("to_email")
     template_name = data.get("template_name")
 
@@ -794,17 +832,12 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
                         )
                         return
 
-                # Rate limiting check (T105)
-                from src.app.shared.exceptions import RateLimitExceededError
+                # Shared rate-limit policy (P2-7): FAILED outbox row + raise,
+                # identical to the service door.
+                limit_reason = await service._rate_limited(tenant_id, to_email)
+                if limit_reason is not None:
+                    from src.app.shared.exceptions import RateLimitExceededError
 
-                rate_limit_key_min = f"notif:min:{tenant_id}" if tenant_id else f"notif:min:global:{to_email}"
-                rate_limit_key_hour = f"notif:hour:{tenant_id}" if tenant_id else f"notif:hour:global:{to_email}"
-                (is_limited_min, _), (is_limited_hour, _) = await asyncio.gather(
-                    rate_limiter.check_rate_limit(rate_limit_key_min, 100, 60),
-                    rate_limiter.check_rate_limit(rate_limit_key_hour, 1000, 3600),
-                )
-                if is_limited_min or is_limited_hour:
-                    limit_reason = "100 emails per minute" if is_limited_min else "1000 emails per hour"
                     logger.warning(
                         "notification_rate_limit_exceeded",
                         tenant_id=str(tenant_id),
@@ -823,58 +856,64 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
                     db.add(notification)
                     await db.commit()
                     raise RateLimitExceededError(f"Rate limit exceeded: {limit_reason}")
-                # Render template
-                subject, html_content = await service.render_template(tenant_id, template_name, context)
 
-                # Create outbox record (status PENDING)
-                notification = Notification(
-                    tenant_id=tenant_id,
-                    user_id=user_id,
-                    template_name=template_name,
-                    to_email=to_email,
-                    subject=subject,
-                    status=NotificationStatus.PENDING,
-                )
-                db.add(notification)
-                await db.commit()
-                await db.refresh(notification)
-
-                # Direct enqueue to ARQ worker (retiring redundant notification.send event hop)
-                if arq_pool:
-                    try:
-                        await arq_pool.enqueue_job(
-                            "send_email_task",
-                            str(notification.id),
-                            to_email,
-                            subject,
-                            html_content,
-                            str(tenant_id) if tenant_id else None,
-                        )
-                        logger.info(
-                            "email_queued",
-                            notification_id=str(notification.id),
-                            to_email=to_email,
-                            template=template_name,
-                        )
-                    except Exception as e:
-                        logger.error(
-                            "failed_to_enqueue_email_task",
-                            notification_id=str(notification.id),
-                            error=str(e),
-                        )
-                        notification.status = NotificationStatus.FAILED
-                        notification.error_message = f"Enqueue error: {e}"
-                        await db.commit()
-                else:
-                    logger.warning(
-                        "arq_queue_not_available",
-                        notification_id=str(notification.id),
-                        to_email=to_email,
-                    )
-                    notification.status = NotificationStatus.FAILED
-                    notification.error_message = "ARQ queue not available"
-                    await db.commit()
+                await service._create_and_enqueue(tenant_id, to_email, template_name, context, user_id)
 
     except Exception as e:
         logger.error("failed_to_process_notification_request", error=str(e), exc_info=True)
         raise
+
+
+async def recover_stuck_notifications(ctx: dict[str, Any]) -> int:
+    """ARQ periodic job: sweep stuck PENDING notifications to terminal FAILED (P2-6).
+
+    Outbox terminal semantics, mirroring the webhooks recovery lifecycle
+    (recover_stuck_deliveries) without replicating its table shape: a
+    PENDING row whose enqueue was lost (or whose worker retries all
+    exhausted without a final FAILED marking) must not stay PENDING
+    forever. Rows older than NOTIFICATION_MAX_PENDING_AGE_HOURS are marked
+    FAILED with a bounded terminal reason.
+
+    Re-enqueueing on recovery is deliberately NOT attempted: the rendered
+    html body is not persisted on the Notification row, so a re-enqueue
+    cannot reconstruct the original message. If recovery-retry is ever
+    needed, add a body column first.
+
+    Args:
+        ctx: ARQ worker context
+
+    Returns:
+        Number of notifications swept to FAILED.
+    """
+    recovered = 0
+    cutoff_time = datetime.now(UTC) - timedelta(hours=NOTIFICATION_MAX_PENDING_AGE_HOURS)
+
+    from src.app.core.db.database import get_db_context
+    from src.app.core.db.rls import bypass_rls
+
+    async with get_db_context() as db:
+        async with bypass_rls(db, reason="Notification recovery sweep job"):
+            stmt = (
+                select(Notification)
+                .where(
+                    Notification.status == NotificationStatus.PENDING,
+                    Notification.created_at < cutoff_time,
+                )
+                .limit(NOTIFICATION_RECOVERY_BATCH_SIZE)
+                .with_for_update(skip_locked=True)
+            )
+
+            result = await db.execute(stmt)
+            notifications = result.scalars().all()
+            for notification in notifications:
+                notification.status = NotificationStatus.FAILED
+                notification.error_message = "Recovery window exhausted"
+                recovered += 1
+
+            if recovered > 0:
+                await db.commit()
+
+    if recovered > 0:
+        logger.info("Recovered stuck notifications (swept to FAILED)", count=recovered)
+
+    return recovered

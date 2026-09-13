@@ -435,15 +435,20 @@ class ChatCompletionService:
         max_tokens: int | None,
         system_prompt: str | None,
     ) -> dict[str, Any]:
-        """Invoke chat on the AIProvider seam (single dialect)."""
-        prompt = messages[-1]["content"] if messages else ""
+        """Invoke chat on the AIProvider seam (single dialect).
+
+        P2-11: the provider boundary takes typed ChatMessage objects —
+        the vestigial prompt/messages-in-kwargs seam is gone.
+        """
+        from src.app.modules.ai.providers import ChatMessage
+
+        chat_messages = [ChatMessage(**m) for m in messages]
         res = await provider.generate_text(
-            prompt=prompt,
+            messages=chat_messages,
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
             system_prompt=system_prompt,
-            messages=messages,
         )
         return {
             "message": res.content,
@@ -455,6 +460,7 @@ class ChatCompletionService:
             "completion_tokens": res.token_usage.completion_tokens if res.token_usage else None,
             "model": res.model or model,
             "finish_reason": res.finish_reason,
+            "provider": provider.provider_name,
         }
 
     async def _invoke_chat_stream(
@@ -466,15 +472,19 @@ class ChatCompletionService:
         max_tokens: int | None,
         system_prompt: str | None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream chat from the AIProvider seam (single dialect)."""
-        prompt = messages[-1]["content"] if messages else ""
+        """Stream chat from the AIProvider seam (single dialect).
+
+        P2-11: the provider boundary takes typed ChatMessage objects.
+        """
+        from src.app.modules.ai.providers import ChatMessage
+
+        chat_messages = [ChatMessage(**m) for m in messages]
         async for chunk_str in provider.generate_text_stream(
-            prompt=prompt,
+            messages=chat_messages,
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
             system_prompt=system_prompt,
-            messages=messages,
         ):
             if chunk_str:
                 yield {"content": chunk_str, "done": False, "token_count": None}
@@ -629,11 +639,25 @@ class ChatCompletionService:
         # cannot log: stream chunks never carry token usage. isinstance gate
         # (not None-check) so mock/partial shapes never reach the logger.
         if isinstance(result.get("prompt_tokens"), int) or isinstance(result.get("completion_tokens"), int):
-            from src.app.modules.ai.token_usage import log_token_usage
+            from src.app.modules.ai.token_usage import AITokenUsageService, log_token_usage
 
             current_tenant = get_current_tenant()
+            provider_name = self.provider.provider_name
             log_token_usage(
-                provider=self.provider.provider_name,
+                provider=provider_name,
+                model=result.get("model", model),
+                prompt_tokens=result.get("prompt_tokens") or 0,
+                completion_tokens=result.get("completion_tokens") or 0,
+                user_id=user_id,
+                tenant_id=getattr(current_tenant, "id", None),
+                session_id=session_id,
+            )
+            # P2-11: attach the persistence hook to the Completion return
+            # path — save_token_usage writes the AITokenUsage analytics row
+            # wherever the token breakdown exists (swallows its own errors).
+            await AITokenUsageService.save_token_usage(
+                self.db,
+                provider=provider_name,
                 model=result.get("model", model),
                 prompt_tokens=result.get("prompt_tokens") or 0,
                 completion_tokens=result.get("completion_tokens") or 0,

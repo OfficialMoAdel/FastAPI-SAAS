@@ -180,7 +180,7 @@ async def test_redis_consolidation_single_pool():
 @pytest.mark.uses_real_redis
 @pytest.mark.asyncio
 async def test_setup_uses_shared_pool():
-    """Verify setup uses the shared pool."""
+    """Verify setup delegates to the provider, which uses the shared pool."""
     # Reset globals to bypass idempotency check
     cache_module.client = None
     cache_module.pool = None
@@ -190,25 +190,29 @@ async def test_setup_uses_shared_pool():
 
     mock_pool = MagicMock(spec=ConnectionPool)
 
-    with patch("src.app.core.setup.get_redis_pool", new_callable=AsyncMock) as mock_get_pool:
-        mock_get_pool.return_value = mock_pool
-
-        # Patch where it is used in setup.py
-        # setup.py imports: import redis.asyncio as redis
-        # So we patch 'src.app.core.setup.redis.Redis'
+    try:
+        # P1-#3: construction lives in redis_provider — patch the provider seam
         with (
-            patch("src.app.core.setup.redis.Redis") as mock_redis_cls,
-            patch("src.app.core.setup.ArqRedis") as mock_arq_cls,
+            patch("src.app.core.redis_provider.get_redis_pool", new_callable=AsyncMock) as mock_get_pool,
+            patch("src.app.core.redis_provider.Redis") as mock_redis_cls,
+            patch("src.app.core.redis_provider.ArqRedis") as mock_arq_cls,
         ):
+            mock_get_pool.return_value = mock_pool
+
             await setup.create_redis_cache_pool()
             await setup.create_redis_queue_pool()
 
-            # Verify setup uses the same pool instance
+            # Verify the provider uses the same pool instance for both clients
             mock_redis_cls.assert_called_with(connection_pool=mock_pool, decode_responses=True)
             # K1: web-side ArqRedis must carry JSON serializers matching the worker
             arq_kwargs = mock_arq_cls.call_args.kwargs
             assert arq_kwargs["connection_pool"] is mock_pool
             assert "job_serializer" in arq_kwargs and "job_deserializer" in arq_kwargs
+    finally:
+        # Restore globals so mock instances don't leak into other tests
+        cache_module.client = None
+        cache_module.pool = None
+        queue_module.pool = None
 
 
 @pytest.mark.uses_real_redis

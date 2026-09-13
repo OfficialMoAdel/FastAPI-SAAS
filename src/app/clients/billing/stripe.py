@@ -46,27 +46,37 @@ def invalidate_stripe_api_key_cache(tenant_id: Any = None) -> None:
 
 
 class PaymentGateway(Protocol):
-    """Protocol for payment gateway integrations."""
+    """Protocol for payment gateway integrations.
 
-    async def create_checkout_session(self, tenant_id: Any = None, **kwargs: Any) -> Any:
+    P2-#12: returns are the concrete Stripe SDK objects (all subclass
+    ``dict`` and ship ``py.typed``), so both ``obj["field"]`` and
+    ``obj.attr`` access typecheck at call sites. ``Any`` returns hid
+    contract drift between callers.
+    """
+
+    async def create_checkout_session(self, tenant_id: Any = None, **kwargs: Any) -> stripe.checkout.Session:
         """Create a checkout session."""
         ...
 
     async def create_portal_session(
         self, customer_id: str, return_url: str, tenant_id: Any = None, **kwargs: Any
-    ) -> Any:
+    ) -> stripe.billing_portal.Session:
         """Create a customer portal session."""
         ...
 
-    async def modify_subscription(self, subscription_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
+    async def modify_subscription(
+        self, subscription_id: str, tenant_id: Any = None, **kwargs: Any
+    ) -> stripe.Subscription:
         """Modify a subscription."""
         ...
 
-    async def retrieve_subscription(self, subscription_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
+    async def retrieve_subscription(
+        self, subscription_id: str, tenant_id: Any = None, **kwargs: Any
+    ) -> stripe.Subscription:
         """Retrieve a subscription."""
         ...
 
-    async def retrieve_invoice(self, invoice_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
+    async def retrieve_invoice(self, invoice_id: str, tenant_id: Any = None, **kwargs: Any) -> stripe.Invoice:
         """Retrieve an invoice."""
         ...
 
@@ -159,7 +169,7 @@ class StripeGateway:
             raise StripeError("Stripe API key not configured", status_code=500)
         return api_key
 
-    async def create_checkout_session(self, tenant_id: Any = None, **kwargs: Any) -> Any:
+    async def create_checkout_session(self, tenant_id: Any = None, **kwargs: Any) -> stripe.checkout.Session:
         """Create a Stripe Checkout Session.
 
         Retries transient transport failures only (connection errors, rate
@@ -189,7 +199,7 @@ class StripeGateway:
 
     async def create_portal_session(
         self, customer_id: str, return_url: str, tenant_id: Any = None, **kwargs: Any
-    ) -> Any:
+    ) -> stripe.billing_portal.Session:
         """Create a Stripe Customer Portal Session (retries transient failures only)."""
         api_key = await self._require_api_key(tenant_id, kwargs.get("api_key"))
         try:
@@ -207,7 +217,9 @@ class StripeGateway:
             logger.error("Stripe portal error", error=str(e))
             raise StripeError("Failed to initialize customer portal.", status_code=400) from e
 
-    async def modify_subscription(self, subscription_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
+    async def modify_subscription(
+        self, subscription_id: str, tenant_id: Any = None, **kwargs: Any
+    ) -> stripe.Subscription:
         """Modify a Stripe Subscription (retries transient failures only)."""
         api_key = await self._require_api_key(tenant_id, kwargs.pop("api_key", None))
         # B16: idempotency key scoped to this logical modify — with_retry's
@@ -229,7 +241,9 @@ class StripeGateway:
             logger.error("Stripe subscription modify error", error=str(e))
             raise StripeError(f"Failed to modify subscription in Stripe: {str(e)}") from e
 
-    async def retrieve_subscription(self, subscription_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
+    async def retrieve_subscription(
+        self, subscription_id: str, tenant_id: Any = None, **kwargs: Any
+    ) -> stripe.Subscription:
         """Retrieve a Stripe Subscription (retries transient failures only)."""
         api_key = await self._require_api_key(tenant_id, kwargs.pop("api_key", None))
         try:
@@ -245,7 +259,7 @@ class StripeGateway:
             logger.error("Stripe subscription retrieve error", error=str(e))
             raise StripeError(f"Failed to retrieve subscription from Stripe: {str(e)}") from e
 
-    async def retrieve_invoice(self, invoice_id: str, tenant_id: Any = None, **kwargs: Any) -> Any:
+    async def retrieve_invoice(self, invoice_id: str, tenant_id: Any = None, **kwargs: Any) -> stripe.Invoice:
         """Retrieve a Stripe Invoice (retries transient failures only)."""
         api_key = await self._require_api_key(tenant_id, kwargs.pop("api_key", None))
         try:

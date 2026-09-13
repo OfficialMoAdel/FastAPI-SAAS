@@ -70,3 +70,50 @@ class TestRateLimiter:
             is_limited = await limiter.is_rate_limited(db=MagicMock(), user_id=1, path="api", limit=10, period=60)
 
         assert is_limited is True
+
+    @pytest.mark.asyncio
+    async def test_is_rate_limited_uses_rate_policy_key_scheme(self):
+        """P1-#5: is_rate_limited derives keys via rate_policy.build_rate_limit_key.
+
+        The dep-layer path must share the middleware's key scheme — one key
+        scheme, one decision module. The engine takes (key, policy) as inputs
+        and never derives keys itself.
+        """
+        limiter = RateLimiter()
+        captured: dict = {}
+
+        async def fake_check(key: str, limit: int, period: int) -> tuple[bool, int, int]:
+            captured["key"] = key
+            captured["limit"] = limit
+            captured["period"] = period
+            return False, 1, 59
+
+        with patch.object(limiter, "check_rate_limit_algorithm", side_effect=fake_check):
+            with patch("src.app.core.tenancy.context.get_current_tenant", return_value=None):
+                await limiter.is_rate_limited(db=MagicMock(), user_id=42, path="api", limit=10, period=60)
+
+        # No tenant context: unscoped canonical key
+        assert captured["key"] == "rate_limit:user:42:api"
+
+        tenant_ctx = MagicMock()
+        tenant_ctx.tenant_id = "t1"
+        with patch.object(limiter, "check_rate_limit_algorithm", side_effect=fake_check):
+            with patch("src.app.core.tenancy.context.get_current_tenant", return_value=tenant_ctx):
+                await limiter.is_rate_limited(db=MagicMock(), user_id=42, path="api", limit=10, period=60)
+
+        # Tenant context: build_tenant_key scoping (same shape the middleware uses)
+        assert captured["key"] == "tenant:t1:rate_limit:user:42:api"
+
+    @pytest.mark.asyncio
+    async def test_is_rate_limited_respects_patched_build_rate_limit_key(self):
+        """P1-#5: the fn-scope import keeps rate_policy.build_rate_limit_key patchable."""
+        limiter = RateLimiter()
+        fake_check = AsyncMock(return_value=(False, 1, 59))
+
+        with patch("src.app.core.security.rate_policy.build_rate_limit_key", return_value="patched:key") as fake_key:
+            with patch("src.app.core.tenancy.context.get_current_tenant", return_value=None):
+                with patch.object(limiter, "check_rate_limit_algorithm", side_effect=fake_check):
+                    await limiter.is_rate_limited(db=MagicMock(), user_id=1, path="api", limit=10, period=60)
+
+        fake_key.assert_called_once()
+        assert fake_check.call_args[0][0] == "patched:key"

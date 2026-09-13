@@ -15,7 +15,7 @@ from src.app.api.deps.request_context import (
 )
 from src.app.api.deps.tenant import tenant_dependency
 from src.app.core.db.database import async_get_db
-from src.app.core.exceptions.http_exceptions import ForbiddenException
+from src.app.core.exceptions.http_exceptions import ForbiddenException, TenantContextError
 from src.app.core.tenancy.context import NO_TENANT, TenantContext
 
 
@@ -56,8 +56,9 @@ class TestRequestContext:
         assert ctx.has_tenant is False
 
     def test_require_tenant_raises_without_tenant(self) -> None:
+        # P3-#14: one no-tenant contract — TenantContextError, not ForbiddenException.
         ctx = RequestContext(user=_make_user(), tenant=NO_TENANT, db=MagicMock())
-        with pytest.raises(ForbiddenException):
+        with pytest.raises(TenantContextError):
             ctx.require_tenant()
 
     def test_owns(self) -> None:

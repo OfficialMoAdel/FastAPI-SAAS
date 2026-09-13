@@ -11,7 +11,11 @@ from enum import Enum
 from typing import Any
 
 from src.app.core.logger import get_logger
-from src.app.core.utils.circuit_breaker import CircuitBreaker, CircuitState
+from src.app.core.utils.circuit_breaker import (
+    CircuitBreaker,
+    CircuitState,
+    webhook_circuit,
+)
 
 logger = get_logger(__name__)
 
@@ -119,6 +123,19 @@ class CircuitBreakerRegistry:
         logger.info("Registered circuit breaker", name=name, type=service_type.value)
 
         return breaker
+
+    def unregister(self, name: str) -> bool:
+        """Remove a circuit breaker from the registry.
+
+        Parameters
+        ----------
+            name: Unique identifier for the circuit breaker to remove
+
+        Returns
+        -------
+            True if a breaker was removed, False if the name was not registered
+        """
+        return self._breakers.pop(name, None) is not None
 
     def create(
         self,
@@ -452,3 +469,55 @@ def auto_register(
         return breaker
 
     return decorator
+
+
+# ---------------------------------------------------------------------------
+# Scoped webhook breakers (P2-B, relocated from core/utils/circuit_breaker.py)
+#
+# Per-endpoint breakers isolate blast radius: one dead receiver must not trip
+# deliveries for every other tenant/endpoint sharing the process. Each scope
+# is registered under ``webhook:{scope}`` so the admin panel (which reads this
+# registry) reports the breakers production traffic actually rides — the
+# ADR-0001 "two registries, divergent state" failure mode.
+# ---------------------------------------------------------------------------
+
+# Bounded so a tenant/endpoint-cardinality explosion cannot grow this without
+# limit; the oldest scope is evicted past the cap.
+_WEBHOOK_BREAKER_MAX_SCOPES = 1024
+_scoped_webhook_breakers: dict[str, CircuitBreaker] = {}
+
+
+def get_webhook_breaker(scope: str | None = None) -> CircuitBreaker:
+    """Return the circuit breaker for a webhook delivery scope.
+
+    Args:
+        scope: Endpoint identifier (e.g. the endpoint id). ``None``
+            returns the legacy process-global ``webhook_circuit``.
+
+    Returns:
+        The scoped breaker, creating (and registering) it on first use.
+    """
+    if scope is None:
+        return webhook_circuit
+
+    registry = get_registry()
+    breaker = _scoped_webhook_breakers.get(scope)
+    if breaker is None:
+        if len(_scoped_webhook_breakers) >= _WEBHOOK_BREAKER_MAX_SCOPES:
+            oldest_scope = next(iter(_scoped_webhook_breakers))
+            del _scoped_webhook_breakers[oldest_scope]
+            registry.unregister(f"webhook:{oldest_scope}")
+        breaker = CircuitBreaker(
+            name=f"webhook:{scope}",
+            failure_threshold=5,
+            recovery_timeout=60.0,
+            success_threshold=2,
+        )
+        _scoped_webhook_breakers[scope] = breaker
+        registry.register(
+            f"webhook:{scope}",
+            breaker,
+            description="Per-endpoint webhook delivery breaker",
+            service_type=ServiceType.WEBHOOK,
+        )
+    return breaker

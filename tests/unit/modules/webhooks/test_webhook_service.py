@@ -332,10 +332,10 @@ class TestWebhookServiceDelivery:
         mock_circuit = MagicMock()
         type(mock_circuit).is_closed = PropertyMock(return_value=False)
         mock_circuit.recovery_timeout = 60
-        mock_circuit._last_failure_time = 0  # stale/absent timestamp -> clamped to 0s
+        mock_circuit.last_failure_time = 0  # stale/absent timestamp -> clamped to 0s
         with (
             patch(
-                "src.app.core.utils.circuit_breaker.get_webhook_breaker",
+                "src.app.core.resilience.registry.get_webhook_breaker",
                 return_value=mock_circuit,
             ),
             patch("src.app.modules.webhooks.delivery._handle_failure", new_callable=AsyncMock) as patch_handle,
@@ -424,7 +424,7 @@ class TestWebhookServiceDelivery:
                 mock_circuit.is_closed = True
                 mock_circuit.record_failure = AsyncMock()
                 with patch(
-                    "src.app.core.utils.circuit_breaker.get_webhook_breaker",
+                    "src.app.core.resilience.registry.get_webhook_breaker",
                     return_value=mock_circuit,
                 ):
                     await webhook_service.deliver_webhook(mock_webhook_delivery.id)
@@ -461,7 +461,7 @@ class TestWebhookServiceDelivery:
                 mock_circuit.is_closed = True
                 mock_circuit.record_success = AsyncMock()
                 with patch(
-                    "src.app.core.utils.circuit_breaker.get_webhook_breaker",
+                    "src.app.core.resilience.registry.get_webhook_breaker",
                     return_value=mock_circuit,
                 ):
                     result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
@@ -499,7 +499,7 @@ class TestWebhookServiceDelivery:
                 mock_circuit.is_closed = True
                 mock_circuit.record_failure = AsyncMock()
                 with patch(
-                    "src.app.core.utils.circuit_breaker.get_webhook_breaker",
+                    "src.app.core.resilience.registry.get_webhook_breaker",
                     return_value=mock_circuit,
                 ):
                     mock_webhook_delivery.attempt_count = 0
@@ -535,7 +535,7 @@ class TestWebhookServiceDelivery:
                 mock_circuit.is_closed = True
                 mock_circuit.record_failure = AsyncMock()
                 with patch(
-                    "src.app.core.utils.circuit_breaker.get_webhook_breaker",
+                    "src.app.core.resilience.registry.get_webhook_breaker",
                     return_value=mock_circuit,
                 ):
                     mock_webhook_delivery.attempt_count = 5

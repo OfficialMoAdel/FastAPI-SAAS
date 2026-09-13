@@ -22,16 +22,18 @@ class TestRedisPoolSingleton:
 
     def test_client_uses_shared_pool(self):
         """Verify client is created from the shared pool."""
-        # The pattern: Redis(connection_pool=cache.pool) ensures pool sharing
-        # Read the setup.py source file directly to verify pattern
-        from pathlib import Path
+        # P1-#3: construction lives in redis_provider.create_cache_client
+        # (the single seam); setup delegates to it. Verify the pattern there.
+        import inspect
 
-        setup_path = Path(__file__).parents[4] / "src" / "app" / "core" / "setup.py"
-        source = setup_path.read_text()
+        from src.app.core import redis_provider
+
+        source = inspect.getsource(redis_provider.create_cache_client)
 
         # Verify connection_pool pattern is used (not from_pool)
-        assert "connection_pool=cache.pool" in source or "connection_pool=" in source
-        assert "cache.pool" in source or "cache.client" in source
+        assert "connection_pool=pool" in source
+        # and that the shared pool is installed into the legacy global slots
+        assert "set_clients" in source
 
     def test_no_per_request_pool_creation(self):
         """Verify no pool is created per-request."""

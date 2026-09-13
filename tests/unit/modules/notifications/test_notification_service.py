@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from src.app.modules.notifications.models import NotificationStatus
-from src.app.modules.notifications.service import NotificationService, handle_notification_send_event, send_email_task
+from src.app.modules.notifications.service import NotificationService, send_email_task
 
 
 @pytest.fixture
@@ -160,11 +160,22 @@ async def test_send_email_rate_limit_exceeded(mock_rate_limiter, service, mock_d
 
     t_id = uuid4()
     mock_rate_limiter.check_rate_limit = AsyncMock(return_value=(True, {}))
+    mock_db.add = MagicMock()
+    mock_db.commit = AsyncMock()
 
     with pytest.raises(RateLimitExceededError) as exc_info:
         await service.send_email(t_id, "user@test.com", "welcome", {})
 
     assert exc_info.value.retry_after == 60
+
+    # P2-7: the service door now writes a FAILED audit row before raising,
+    # matching the event-door semantics.
+    mock_db.add.assert_called_once()
+    added = mock_db.add.call_args.args[0]
+    assert added.status == NotificationStatus.FAILED
+    assert added.subject == "Rate limited: welcome"
+    assert added.error_message == "Rate limit exceeded: 100 emails per minute"
+    mock_db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -320,22 +331,3 @@ async def test_send_email_task(mock_session_maker):
     finally:
         reset_email_provider()
 
-@pytest.mark.asyncio
-@patch("src.app.core.utils.queue.pool")
-async def test_handle_notification_send_event(mock_arq):
-    mock_arq.enqueue_job = AsyncMock()
-
-    # Missing data
-    await handle_notification_send_event({})
-    mock_arq.enqueue_job.assert_not_called()
-
-    # Success
-    data = {
-        "notification_id": "123",
-        "to_email": "test@test",
-        "subject": "sub",
-        "html_content": "html",
-        "tenant_id": "t1",
-    }
-    await handle_notification_send_event(data)
-    mock_arq.enqueue_job.assert_awaited_once()

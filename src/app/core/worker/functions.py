@@ -170,15 +170,12 @@ async def startup(ctx: Worker) -> None:
         )
 
     from src.app.core.config import settings
-    from src.app.core.redis_provider import get_redis_pool, set_clients
+    from src.app.core.redis_provider import create_arq_pool, create_cache_client
 
     if settings.redis_cache.REDIS_CACHE_ENABLED or settings.redis_queue.REDIS_QUEUE_ENABLED:
-        pool = await get_redis_pool()
-        # decode_responses=True matches the web-side cache client contract.
-        import redis.asyncio as aioredis
-
-        redis_client = aioredis.Redis(connection_pool=pool, decode_responses=True)
-        await set_clients(redis_client=redis_client, redis_pool=pool)
+        # P1-#3: construction lives in the provider — no raw
+        # ``redis.asyncio.Redis(...)`` here (the last escape hatch).
+        redis_client = await create_cache_client()
 
         # Event bus: handlers + Redis client (DLQ persistence) + ARQ queue so
         # NORMAL/LOW events published inside jobs are queued, not dropped.
@@ -186,14 +183,7 @@ async def startup(ctx: Worker) -> None:
 
         event_bus.set_redis_client(redis_client)
         if settings.arq.ARQ_ENABLED:
-            from arq.connections import ArqRedis
-
-            from src.app.core.events.arq_adapter import get_arq_pool_kwargs
-
-            arq_pool = ArqRedis(
-                connection_pool=pool,
-                **get_arq_pool_kwargs(),
-            )
+            arq_pool = await create_arq_pool()
             event_bus.set_arq_queue(arq_pool)
 
         event_bus.register_all_handlers()

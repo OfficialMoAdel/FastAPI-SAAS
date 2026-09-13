@@ -586,3 +586,75 @@ async def handle_audit_log_event(data: dict[str, Any]) -> None:
         except Exception as fallback_error:
             logger.critical("audit_log_event_fallback_failed", error=str(fallback_error))
 
+
+async def handle_login_issued_event(data: dict[str, Any]) -> None:
+    """Handle ``auth.login_issued`` events published at the TokenIssuer seam.
+
+    P2-#8: every login door (password, sso, passkey, magic_link, mfa) publishes
+    ``auth.login_issued`` from inside ``TokenIssuer.issue_session``; this
+    subscription writes the audit row so individual doors no longer carry the
+    success-path audit responsibility. Dashboard vocabulary is preserved:
+    SSO keeps ``auth.sso_login``, every other channel writes ``auth.login``,
+    and ``details.success`` stays ``True``.
+
+    Args:
+        data: Event payload with user_id, tenant_id, channel, username, email,
+            ip_address, user_agent and optional door-specific context (e.g.
+            SSO ``provider``).
+    """
+    channel = data.get("channel")
+    user_id = data.get("user_id")
+    if not channel or user_id is None:
+        logger.warning("login_issued_event_invalid_payload", channel=channel, has_user_id=user_id is not None)
+        return
+
+    action = "auth.sso_login" if channel == "sso" else "auth.login"
+    details: dict[str, Any] = {
+        "username": data.get("username"),
+        "email": data.get("email"),
+        "channel": channel,
+        "success": True,
+    }
+    if data.get("provider"):
+        details["provider"] = data["provider"]
+
+    try:
+        tenant_id_val = data.get("tenant_id")
+        tenant_uuid = UUID(str(tenant_id_val)) if tenant_id_val else SYSTEM_TENANT_ID
+
+        log_data = {
+            "tenant_id": str(tenant_uuid),
+            "action": action,
+            "entity_type": "user",
+            "entity_id": str(user_id),
+            "user_id": str(user_id),
+            "details": details,
+            "ip_address": data.get("ip_address"),
+            "user_agent": data.get("user_agent"),
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        await buffer_audit_log(log_data)
+    except Exception as e:
+        # Audit must never break the login flow that already succeeded.
+        logger.error("login_issued_audit_failed", error=str(e), channel=channel, exc_info=True)
+        from src.app.core.db.database import get_db_context
+
+        try:
+            async with get_db_context() as db:
+                await _direct_insert_log(
+                    {
+                        "tenant_id": str(SYSTEM_TENANT_ID),
+                        "action": action,
+                        "entity_type": "user",
+                        "entity_id": str(user_id),
+                        "user_id": str(user_id),
+                        "details": details,
+                        "ip_address": data.get("ip_address"),
+                        "user_agent": data.get("user_agent"),
+                        "created_at": datetime.now(UTC).isoformat(),
+                    },
+                    db,
+                )
+        except Exception as fallback_error:
+            logger.critical("login_issued_audit_fallback_failed", error=str(fallback_error))
+

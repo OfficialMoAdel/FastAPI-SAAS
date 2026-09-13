@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import stripe
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from src.app.modules.billing import webhook as _pkg
@@ -11,6 +10,10 @@ from src.app.modules.billing.lifecycle import is_valid_transition
 from src.app.modules.billing.schemas import (
     BillingRecordCreateInternal,
     UserSubscriptionUpdate,
+)
+from src.app.modules.billing.webhook.locks import (
+    find_subscription_by_stripe_id,
+    lock_subscription_by_id,
 )
 
 
@@ -29,28 +32,11 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
         return
 
     # Find subscription by stripe_subscription_id using bypass context
-    tenant_id = None
-    user_id = None
-    subscription_id = None
-
-    async with _pkg.job_bypass_context("Webhook subscription lookup") as db:
-        result = await db.execute(
-            select(_pkg.crud_user_subscriptions.model)
-            .where(_pkg.crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id)
-            .with_for_update()
-        )
-        db_subscription = result.scalar_one_or_none()
-
-        if not db_subscription:
-            _pkg.logger.warning(
-                f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}. "
-                f"Raising error to trigger Stripe retry."
-            )
-            raise ValueError(f"Subscription not found for {stripe_subscription_id}")
-
-        tenant_id = db_subscription.tenant_id
-        user_id = db_subscription.user_id
-        subscription_id = db_subscription.id
+    # P2-#12: the lock dance lives in webhook.locks.
+    subscription_ref = await find_subscription_by_stripe_id(stripe_subscription_id)
+    tenant_id = subscription_ref.tenant_id
+    user_id = subscription_ref.user_id
+    subscription_id = subscription_ref.subscription_id
 
     # Create billing record with tenant_id in the object
     billing_record = BillingRecordCreateInternal(
@@ -114,22 +100,12 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
                 stripe_invoice_id=invoice_id,
             )
 
-        # P1.7: A successful payment must restore a past_due subscription to
-        # active. Otherwise the user stays past_due (and locked out of paid
-        # features) despite having paid, relying solely on a separate
-        # customer.subscription.updated event that may be delayed or missed.
-        # Only flip past_due -> active; never resurrect a canceled subscription.
-        #
         # P1-6 FIX: the bypass-context read above is a stale snapshot (lock
         # released when that session exited). Re-verify and lock the row here
         # — mirroring handle_invoice_payment_failed — so a concurrently
         # canceled subscription cannot be resurrected by this update.
-        lock_result = await db.execute(
-            select(_pkg.crud_user_subscriptions.model)
-            .where(_pkg.crud_user_subscriptions.model.id == subscription_id)
-            .with_for_update()
-        )
-        db_subscription_locked = lock_result.scalar_one_or_none()
+        # P2-#12: re-lock lives in webhook.locks.
+        db_subscription_locked = await lock_subscription_by_id(db, subscription_id)
 
         if not db_subscription_locked:
             _pkg.logger.warning(
@@ -167,28 +143,11 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
         return
 
     # Find subscription by stripe_subscription_id using bypass context
-    tenant_id = None
-    user_id = None
-    subscription_id = None
-
-    async with _pkg.job_bypass_context("Webhook subscription lookup") as db:
-        result = await db.execute(
-            select(_pkg.crud_user_subscriptions.model)
-            .where(_pkg.crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id)
-            .with_for_update()
-        )
-        db_subscription = result.scalar_one_or_none()
-
-        if not db_subscription:
-            _pkg.logger.warning(
-                f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}. "
-                f"Raising error to trigger Stripe retry."
-            )
-            raise ValueError(f"Subscription not found for {stripe_subscription_id}")
-
-        tenant_id = db_subscription.tenant_id
-        user_id = db_subscription.user_id
-        subscription_id = db_subscription.id
+    # P2-#12: the lock dance lives in webhook.locks.
+    subscription_ref = await find_subscription_by_stripe_id(stripe_subscription_id)
+    tenant_id = subscription_ref.tenant_id
+    user_id = subscription_ref.user_id
+    subscription_id = subscription_ref.subscription_id
 
     # Create billing record with failed status
     billing_record = BillingRecordCreateInternal(
@@ -217,12 +176,8 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
             return
 
         # ATOMIC LOCK: Re-verify and lock record within tenant context to prevent TOCTOU
-        lock_result = await db.execute(
-            select(_pkg.crud_user_subscriptions.model)
-            .where(_pkg.crud_user_subscriptions.model.id == subscription_id)
-            .with_for_update()
-        )
-        db_subscription_locked = lock_result.scalar_one_or_none()
+        # P2-#12: re-lock lives in webhook.locks.
+        db_subscription_locked = await lock_subscription_by_id(db, subscription_id)
 
         if not db_subscription_locked:
             _pkg.logger.warning(

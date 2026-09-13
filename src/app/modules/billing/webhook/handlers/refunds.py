@@ -12,6 +12,7 @@ from src.app.modules.billing.models import BillingRecord
 from src.app.modules.billing.schemas import (
     BillingRecordCreateInternal,
 )
+from src.app.modules.billing.webhook.locks import find_subscription_by_stripe_id
 from src.app.shared.exceptions import StripeError
 
 
@@ -63,24 +64,12 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
         _pkg.logger.warning("Could not determine subscription for charge", val=charge["id"])
         return
 
-    async with _pkg.job_bypass_context("Webhook subscription lookup") as db:
-        result = await db.execute(
-            select(_pkg.crud_user_subscriptions.model)
-            .where(_pkg.crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id)
-            .with_for_update()
-        )
-        db_subscription = result.scalar_one_or_none()
-
-        if not db_subscription:
-            _pkg.logger.warning(
-                f"Could not find subscription for charge {charge['id']} "
-                f"(sub_id: {stripe_subscription_id}). Raising error to trigger Stripe retry."
-            )
-            raise ValueError(f"Subscription not found for {stripe_subscription_id}")
-
-        tenant_id = db_subscription.tenant_id
-        user_id = db_subscription.user_id
-        subscription_id = db_subscription.id
+    # P2-#12: the lock dance lives in webhook.locks (refunds has no Phase-2
+    # re-lock by design — it never mutates the subscription row).
+    subscription_ref = await find_subscription_by_stripe_id(stripe_subscription_id)
+    tenant_id = subscription_ref.tenant_id
+    user_id = subscription_ref.user_id
+    subscription_id = subscription_ref.subscription_id
 
     async with _pkg.job_tenant_context(tenant_id) as db:
         refunds = charge.get("refunds", {}).get("data", [])

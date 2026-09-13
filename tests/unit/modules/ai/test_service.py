@@ -396,9 +396,10 @@ class TestChatCompletionService:
                         call_args = mock_ollama_client.generate_text.call_args
 
                         # Check messages include history + new message
+                        # P2-11: provider boundary takes typed ChatMessage objects
                         messages = call_args.kwargs["messages"]
                         assert len(messages) == 2  # Previous + new
-                        assert messages[-1]["content"] == "Hello"
+                        assert messages[-1].content == "Hello"
 
                         # Check response
                         assert result["message"] == "Hello! How can I help you?"

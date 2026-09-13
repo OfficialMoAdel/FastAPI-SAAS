@@ -4,6 +4,17 @@ This module provides utilities to decode JWT tokens once per request and cache
 the decoded payload in request.state. This eliminates redundant JWT decoding
 in the request lifecycle (e.g., RateLimitMiddleware + auth dependency).
 
+Authority contract (P2-#9, deletion test):
+    This module is the DECODE and key-management authority:
+    ``decode_verified_token`` is the ONE decode path — every verification
+    (jwt_service.verify_token, blacklist decoding, middleware/session
+    registration) routes through it, sharing one security posture
+    (signature, expiration, audience, issuer). It owns no issuance and
+    no policy (blacklist/token-type/token-version stay in jwt_service);
+    the fold direction is jwt_service absorbing these duties without
+    touching callers. Encoding lives in jwt_service; issuance lives in
+    auth.services.tokens.TokenIssuer.issue_session.
+
 Performance Impact:
     - JWT decode: ~70μs per call
     - With caching: Only 1 decode per request instead of 2-3

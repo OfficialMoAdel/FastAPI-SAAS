@@ -324,16 +324,9 @@ class AuthService:
             subject=user["username"],
         )
 
-        # Audit log success
-        await self._publish_login_audit(
-            request,
-            username,
-            True,
-            tenant_id=user["tenant_id"],
-            user_id=user["id"],
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
+        # P2-#8: success-path login audit now lives at the TokenIssuer seam
+        # (auth.login_issued event); failure-path audits below remain here
+        # because they occur before issuance.
 
         return {
             "access_token": issued.access_token,

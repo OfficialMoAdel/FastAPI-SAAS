@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from typing import cast
 
 import stripe
-from sqlalchemy import select
 
 from src.app.modules.billing import webhook as _pkg
 from src.app.modules.billing.lifecycle import (
@@ -17,6 +16,10 @@ from src.app.modules.billing.lifecycle import (
 from src.app.modules.billing.schemas import (
     SubscriptionStatus,
     UserSubscriptionUpdate,
+)
+from src.app.modules.billing.webhook.locks import (
+    find_subscription_by_stripe_id,
+    lock_subscription_by_id,
 )
 
 
@@ -37,28 +40,12 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
     # raised TenantContextError on every event (the webhook route is
     # tenant-exempt, so no tenant context exists), meaning this handler's
     # sync never applied and Stripe retried for ~3 days.
-    tenant_id = None
-    subscription_id = None
-    user_id = None
-
-    async with _pkg.job_bypass_context("Webhook subscription lookup") as db:
-        result = await db.execute(
-            select(_pkg.crud_user_subscriptions.model)
-            .where(_pkg.crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id)
-            .with_for_update()
-        )
-        db_subscription = result.scalar_one_or_none()
-
-        if not db_subscription:
-            _pkg.logger.warning(
-                f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}. "
-                f"Raising error to trigger Stripe retry."
-            )
-            raise ValueError(f"Subscription not found for {stripe_subscription_id}")
-
-        tenant_id = db_subscription.tenant_id
-        subscription_id = db_subscription.id
-        user_id = db_subscription.user_id
+    # P2-#12: the lock dance lives in webhook.locks — the with_for_update
+    # invariant is impossible to skip.
+    subscription_ref = await find_subscription_by_stripe_id(stripe_subscription_id)
+    tenant_id = subscription_ref.tenant_id
+    subscription_id = subscription_ref.subscription_id
+    user_id = subscription_ref.user_id
 
     # Map Stripe status to our status
     new_status: SubscriptionStatus = map_stripe_status(subscription["status"])  # type: ignore
@@ -81,12 +68,8 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
 
     async with _pkg.job_tenant_context(tenant_id) as db:
         # ATOMIC LOCK: Re-verify and lock record within tenant context to prevent TOCTOU
-        lock_result = await db.execute(
-            select(_pkg.crud_user_subscriptions.model)
-            .where(_pkg.crud_user_subscriptions.model.id == subscription_id)
-            .with_for_update()
-        )
-        db_subscription_locked = lock_result.scalar_one_or_none()
+        # P2-#12: re-lock lives in webhook.locks.
+        db_subscription_locked = await lock_subscription_by_id(db, subscription_id)
 
         if not db_subscription_locked:
             _pkg.logger.warning(
@@ -142,32 +125,14 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
     stripe_subscription_id = subscription["id"]
     _pkg.logger.info("Processing subscription.deleted:", stripe_subscription_id=stripe_subscription_id)
 
-    # Find subscription by stripe_subscription_id using bypass context
-    tenant_id = None
-    subscription_id = None
-    user_id = None
-
-    async with _pkg.job_bypass_context("Webhook subscription lookup") as db:
-        result = await db.execute(
-            select(_pkg.crud_user_subscriptions.model)
-            .where(_pkg.crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id)
-            .with_for_update()
-        )
-        db_subscription = result.scalar_one_or_none()
-
-        if not db_subscription:
-            _pkg.logger.warning(
-                f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}. "
-                f"Raising error to trigger Stripe retry."
-            )
-            raise ValueError(f"Subscription not found for {stripe_subscription_id}")
-
-        tenant_id = db_subscription.tenant_id
-        subscription_id = db_subscription.id
-        # P1 FIX (code-review): capture user_id inside the session. Reading
-        # db_subscription.user_id after the bypass context exits risks
-        # DetachedInstanceError -> 500 -> Stripe retry storm.
-        user_id = db_subscription.user_id
+    # Find subscription by stripe_subscription_id using bypass context.
+    # P2-#12: the lock dance lives in webhook.locks (user_id is captured
+    # inside the bypass session there — reading it after exit risked
+    # DetachedInstanceError -> 500 -> Stripe retry storm).
+    subscription_ref = await find_subscription_by_stripe_id(stripe_subscription_id)
+    tenant_id = subscription_ref.tenant_id
+    subscription_id = subscription_ref.subscription_id
+    user_id = subscription_ref.user_id
 
     canceled_at_ts = subscription.get("canceled_at")
     # Update subscription to canceled/expired
@@ -178,12 +143,8 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
 
     async with _pkg.job_tenant_context(tenant_id) as db:
         # ATOMIC LOCK: Re-verify and lock record within tenant context to prevent TOCTOU
-        lock_result = await db.execute(
-            select(_pkg.crud_user_subscriptions.model)
-            .where(_pkg.crud_user_subscriptions.model.id == subscription_id)
-            .with_for_update()
-        )
-        db_subscription_locked = lock_result.scalar_one_or_none()
+        # P2-#12: re-lock lives in webhook.locks.
+        db_subscription_locked = await lock_subscription_by_id(db, subscription_id)
 
         if not db_subscription_locked:
             _pkg.logger.warning(

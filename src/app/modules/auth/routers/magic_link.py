@@ -91,7 +91,7 @@ async def verify_magic_link(
     from src.app.core.utils.ip_utils import get_client_ip
 
     ip_address = get_client_ip(request)
-    result = await service.verify_magic_link(token=body.token, ip_address=ip_address)
+    result = await service.verify_magic_link(token=body.token, ip_address=ip_address, request=request)
     refresh_token = getattr(result, "refresh_token", None) or (
         result.get("refresh_token") if isinstance(result, dict) else None
     )

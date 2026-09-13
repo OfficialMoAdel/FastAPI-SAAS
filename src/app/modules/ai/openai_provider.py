@@ -14,6 +14,7 @@ from src.app.modules.ai.providers import (
     AIProvider,
     AITokenUsage,
     ChatCompletionResponse,
+    ChatMessage,
     EmbeddingResponse,
     validate,
 )
@@ -85,7 +86,7 @@ class OpenAIProvider(AIProvider):
 
     async def generate_text(
         self,
-        prompt: str,
+        messages: list[ChatMessage],
         model: str,
         temperature: float = 0.7,
         max_tokens: int | None = None,
@@ -95,7 +96,7 @@ class OpenAIProvider(AIProvider):
         """Generate text completion using OpenAI Chat API.
 
         Args:
-            prompt: The user prompt
+            messages: Full conversation as typed ChatMessage objects (P2-11)
             model: Model name (e.g., "gpt-4", "gpt-3.5-turbo")
             temperature: Sampling temperature (0.0-2.0)
             max_tokens: Maximum tokens to generate
@@ -108,20 +109,13 @@ class OpenAIProvider(AIProvider):
         Raises:
             AIProviderError: If generation fails
         """
-        chat_messages = kwargs.pop("messages", None)
-        messages: list[dict[str, str]] = []
-        if chat_messages is not None:
-            messages = list(chat_messages)
-            if system_prompt and not any(m.get("role") == "system" for m in messages):
-                messages.insert(0, {"role": "system", "content": system_prompt})
-        else:
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
+        payload_messages = [m.model_dump() for m in messages]
+        if system_prompt and not any(m.get("role") == "system" for m in payload_messages):
+            payload_messages.insert(0, {"role": "system", "content": system_prompt})
 
         payload = {
             "model": model,
-            "messages": messages,
+            "messages": payload_messages,
             "temperature": temperature,
             **kwargs,
         }
@@ -138,7 +132,7 @@ class OpenAIProvider(AIProvider):
             raise self._map_error(e) from e
     async def generate_text_stream(
         self,
-        prompt: str,
+        messages: list[ChatMessage],
         model: str,
         temperature: float = 0.7,
         max_tokens: int | None = None,
@@ -150,7 +144,7 @@ class OpenAIProvider(AIProvider):
         Yields chunks of generated text as they become available.
 
         Args:
-            prompt: The user prompt
+            messages: Full conversation as typed ChatMessage objects (P2-11)
             model: Model name
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
@@ -163,20 +157,13 @@ class OpenAIProvider(AIProvider):
         Raises:
             AIProviderError: If generation fails
         """
-        chat_messages = kwargs.pop("messages", None)
-        messages: list[dict[str, str]] = []
-        if chat_messages is not None:
-            messages = list(chat_messages)
-            if system_prompt and not any(m.get("role") == "system" for m in messages):
-                messages.insert(0, {"role": "system", "content": system_prompt})
-        else:
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
+        payload_messages = [m.model_dump() for m in messages]
+        if system_prompt and not any(m.get("role") == "system" for m in payload_messages):
+            payload_messages.insert(0, {"role": "system", "content": system_prompt})
 
         payload = {
             "model": model,
-            "messages": messages,
+            "messages": payload_messages,
             "temperature": temperature,
             "stream": True,
             **kwargs,

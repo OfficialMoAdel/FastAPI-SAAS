@@ -535,9 +535,12 @@ class TestDashboardAuditVocabulary:
     """Fix #4: dashboard must query the audit action strings producers emit.
 
     Producers (verified, do not regress):
-    - src/app/modules/auth/service.py::_publish_login_audit emits
-      action="auth.login" with details={"success": bool, ...}
-    - src/app/modules/auth/services/sso.py emits action="auth.sso_login"
+    - P2-#8: auth.login_issued subscription (audit_logs.service::
+      handle_login_issued_event, published at the TokenIssuer.issue_session
+      seam) emits action="auth.login" with details={"success": true, ...}
+      for every door; SSO keeps action="auth.sso_login".
+    - src/app/modules/auth/service.py::_publish_login_audit (failure paths)
+      emits action="auth.login" with details={"success": bool, ...}
     Zero producers emit bare "login" / "login_failed" / "authentication_failed".
     """
 

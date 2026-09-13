@@ -1,4 +1,11 @@
-"""Environment variable validation with severity levels."""
+"""Environment variable validation with severity levels.
+
+P2-13: sanctioned raw-environment reader. This validator deliberately
+inspects the raw process environment (not Pydantic settings) because its
+contract is pre-Pydantic operator-input validation: insecure defaults,
+pattern checks, production guards, and provider reachability. Tests pin
+this contract via os.environ patching.
+"""
 
 import os
 import re

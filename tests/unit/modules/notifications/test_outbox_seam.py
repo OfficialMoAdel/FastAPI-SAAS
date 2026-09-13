@@ -283,6 +283,7 @@ class TestHermeticDeliveryWithInMemoryProvider:
 
             # In-memory delivery verified
             assert fake_provider.count == 1
+            assert fake_provider.last_message is not None
             assert fake_provider.last_message.to_email == "hermetic@example.com"
             assert fake_provider.last_message.subject == "Test Hermetic"
 
@@ -291,8 +292,10 @@ class TestHermeticDeliveryWithInMemoryProvider:
 
     @pytest.mark.asyncio
     @patch("src.app.core.db.database.async_session_maker")
-    async def test_send_email_task_hermetic_failure(self, mock_session_maker) -> None:
-        """send_email_task marks notification FAILED when delivery provider raises."""
+    async def test_send_email_task_hermetic_failure_retries_via_arq_retry(self, mock_session_maker) -> None:
+        """Non-final attempt re-queues via arq Retry and leaves the row PENDING."""
+        from arq.worker import Retry
+
         fake_provider = InMemoryEmailProvider()
         fake_provider.should_fail = True
         fake_provider.failure_exception = RuntimeError("SMTP connection timeout")
@@ -307,9 +310,44 @@ class TestHermeticDeliveryWithInMemoryProvider:
             mock_srv = AsyncMock()
             mock_srv_cls.return_value = mock_srv
 
+            # job_try=1 < ARQ_MAX_TRIES=3 -> worker retry, not terminal
+            with pytest.raises(Retry) as exc_info:
+                await send_email_task(
+                    ctx={"job_try": 1},
+                    notification_id=str(notif_id),
+                    to_email="fail@example.com",
+                    subject="Fail",
+                    html_content="<p>Fail</p>",
+                )
+
+            # Deferred per EMAIL_RETRY_DELAYS[0]
+            assert exc_info.value.defer_score == 10_000
+            # Not terminal yet: row must stay PENDING (no FAILED write)
+            mock_srv.mark_failed.assert_not_awaited()
+            mock_srv.mark_sent.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("src.app.core.db.database.async_session_maker")
+    async def test_send_email_task_hermetic_failure_terminal_marks_failed(self, mock_session_maker) -> None:
+        """Final permitted attempt marks the row FAILED and propagates the original error."""
+        fake_provider = InMemoryEmailProvider()
+        fake_provider.should_fail = True
+        fake_provider.failure_exception = RuntimeError("SMTP connection timeout")
+        set_email_provider(fake_provider)
+
+        mock_db = AsyncMock()
+        mock_session_maker.return_value.__aenter__.return_value = mock_db
+
+        notif_id = uuid4()
+
+        with patch("src.app.modules.notifications.service.NotificationService") as mock_srv_cls:
+            mock_srv = AsyncMock()
+            mock_srv_cls.return_value = mock_srv
+
+            # job_try=3 == ARQ_MAX_TRIES=3 -> terminal attempt
             with pytest.raises(RuntimeError, match="SMTP connection timeout"):
                 await send_email_task(
-                    ctx={},
+                    ctx={"job_try": 3},
                     notification_id=str(notif_id),
                     to_email="fail@example.com",
                     subject="Fail",

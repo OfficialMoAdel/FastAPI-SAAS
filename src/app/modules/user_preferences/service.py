@@ -20,15 +20,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules.storage.service import StorageAdminService
-from src.app.shared.exceptions import AppException, ModelNotFoundError, ValidationError
-
-StorageSettingsService = StorageAdminService
 from src.app.modules.user_preferences.crud import crud_user_preferences
 from src.app.modules.user_preferences.models import DEFAULT_PREFERENCES
 from src.app.modules.user_preferences.schemas import UserPreferencesUpdate
 from src.app.modules.users import crud_users
 from src.app.modules.users.cache import UserCacheInvalidator
 from src.app.modules.users.session_invalidation import InvalidationReason
+from src.app.shared.exceptions import AppException, ModelNotFoundError, ValidationError
 
 logger = get_logger(__name__)
 
@@ -38,8 +36,14 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 
 
-class StorageError(AppException):
-    """Raised when storage operations fail."""
+class PreferenceStorageError(AppException):
+    """Raised when profile-image storage operations fail.
+
+    Renamed from ``StorageError`` (H4/P1-#4): the old name collided with
+    ``src.app.modules.storage.errors.StorageError`` while bypassing the
+    storage module's registered tree, so raises fell through to the
+    unregistered-exception 500 catch-all instead of a translated row.
+    """
 
     def __init__(self, operation: str, detail: str):
         self.operation = operation
@@ -220,11 +224,16 @@ class PreferencesService:
         if not user:
             raise ModelNotFoundError("User", user_id)
 
-        # 4. Prepare storage — tenant-aware provider from storage settings
+        # 4. Prepare storage — tenant-aware provider from storage settings.
+        # P2-#10: provider acquisition goes through StorageAdminService, the
+        # storage module's admin facade (tenant-aware, cached, credentials
+        # decrypted there). Deliberately NOT StorageService.put(): profile
+        # images are not File entities — no quota/File-row semantics, and the
+        # stable users/{uid}/profile.{ext} path enables old-image cleanup.
         tenant_ctx = get_current_tenant()
         if tenant_ctx is None:
-            raise StorageError("upload", "Tenant context not available")
-        storage = await StorageSettingsService(db).get_provider(tenant_ctx.tenant_id)
+            raise PreferenceStorageError("upload", "Tenant context not available")
+        storage = await StorageAdminService(db).get_provider(tenant_ctx.tenant_id)
 
         filename = file.filename or "image.png"
         file_ext = filename.split(".")[-1] if "." in filename else "png"
@@ -255,7 +264,7 @@ class PreferencesService:
 
         if not result.success:
             logger.error("Failed to upload image for user :", user_id=user_id, error=result.error)
-            raise StorageError("upload", result.error or "Unknown error")
+            raise PreferenceStorageError("upload", result.error or "Unknown error")
 
         # 6. Get URL
         # For this purpose, we assume get_url gives us a usable URL.
@@ -298,11 +307,11 @@ class PreferencesService:
         # Let's assume we want to delete whatever is there.
         # But S3 delete requires key.
 
-        # Tenant-aware provider from storage settings
+        # Tenant-aware provider from the storage admin facade (P2-#10)
         tenant_ctx = get_current_tenant()
         if tenant_ctx is None:
-            raise StorageError("delete", "Tenant context not available")
-        storage = await StorageSettingsService(db).get_provider(tenant_ctx.tenant_id)
+            raise PreferenceStorageError("delete", "Tenant context not available")
+        storage = await StorageAdminService(db).get_provider(tenant_ctx.tenant_id)
         user = await crud_users.get(db=db, id=user_id)
         if not user:
             return  # Nothing to delete

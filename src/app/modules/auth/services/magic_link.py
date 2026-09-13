@@ -10,7 +10,7 @@ import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -175,6 +175,7 @@ class MagicLinkService:
         token: str,
         ip_address: str,
         response: Any = None,
+        request: Request | None = None,
     ) -> LoginTokenResponse | LoginMFAResponse:
         """Verify a magic link token and return auth tokens.
 
@@ -286,8 +287,8 @@ class MagicLinkService:
 
             return LoginMFAResponse(**mfa_response)
 
-        # Create auth tokens
-        tokens = await self._create_auth_tokens(user)
+        # Create auth tokens (request threads client IP/UA into the login audit)
+        tokens = await self._create_auth_tokens(user, request=request)
 
         logger.info(
             "Magic link verified successfully",
@@ -352,14 +353,18 @@ class MagicLinkService:
             user_id=user_id,
         )
 
-    async def _create_auth_tokens(self, user: dict) -> dict[str, Any]:
+    async def _create_auth_tokens(
+        self, user: dict, request: Request | None = None
+    ) -> dict[str, Any]:
         """Create access and refresh tokens and register the session.
 
-        Delegates to the shared TokenIssuer seam; the "Magic Link Login"
-        device label applies because this flow has no HTTP request context.
+        Delegates to the shared TokenIssuer seam ("Magic Link Login"
+        device label). The optional request supplies client IP/User-Agent
+        for the login audit row; without it those fields stay null.
 
         Args:
             user: User dict with tier eager-loaded.
+            request: Optional FastAPI request for audit attribution.
 
         Returns:
             Dict with access_token, refresh_token, token_type, expires_in.
@@ -367,6 +372,7 @@ class MagicLinkService:
         issued = await TokenIssuer.issue_session(
             user,
             channel="magic_link",
+            request=request,
         )
         return {
             "access_token": issued.access_token,

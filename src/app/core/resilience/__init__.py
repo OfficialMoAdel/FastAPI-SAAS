@@ -20,6 +20,7 @@ from src.app.core.resilience.registry import (
     create_circuit_breaker,
     get_circuit_breaker,
     get_registry,
+    get_webhook_breaker,
 )
 from src.app.core.utils.circuit_breaker import (
     CircuitBreaker,
@@ -38,6 +39,7 @@ __all__ = [
     "get_circuit_breaker",
     "create_circuit_breaker",
     "auto_register",
+    "get_webhook_breaker",
     # Circuit breaker core (re-exported for convenience)
     "CircuitBreaker",
     "CircuitBreakerOpen",

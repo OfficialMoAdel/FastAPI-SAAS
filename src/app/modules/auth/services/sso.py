@@ -5,11 +5,9 @@ from uuid import UUID
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.events import EventPriority
 from src.app.core.logger import get_logger
 from src.app.core.security.tokens import get_sso_state_manager
 from src.app.core.tenancy.context import get_current_tenant, set_current_tenant
-from src.app.modules.audit_logs import audit
 from src.app.modules.auth.crud import crud_user_sso_connections
 from src.app.modules.auth.providers.apple import AppleProvider
 from src.app.modules.auth.providers.base import BaseOAuthProvider
@@ -426,41 +424,11 @@ class SSOService:
                     "id": normalized_user.get("id"),
                     "email": normalized_user.get("email"),
                 },
+                # P2-#8: success-path SSO audit now lives at the TokenIssuer
+                # seam (auth.login_issued → auth.sso_login row); the provider
+                # label rides the payload instead of a door-local audit call.
+                audit_details={"provider": provider},
             )
-
-            # Audit log SSO login success
-            try:
-                user_id_val = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
-                tenant_id_val = (
-                    found_user_data.tenant_id
-                    if hasattr(found_user_data, "tenant_id")
-                    else found_user_data.get("tenant_id")
-                )
-                email_val = found_user_data.email if hasattr(found_user_data, "email") else found_user_data.get("email")
-                username_val = (
-                    found_user_data.username
-                    if hasattr(found_user_data, "username")
-                    else found_user_data.get("username")
-                )
-
-                await audit(
-                    action="auth.sso_login",
-                    entity_type="user",
-                    entity_id=user_id_val,
-                    tenant_id=tenant_id_val,
-                    user_id=user_id_val,
-                    details={
-                        "provider": provider,
-                        "email": email_val,
-                        "username": username_val,
-                        "success": True,
-                    },
-                    ip_address=get_client_ip(request),
-                    user_agent=request.headers.get("user-agent"),
-                    priority=EventPriority.NORMAL,
-                )
-            except Exception as e:
-                logger.error("failed_to_publish_sso_audit_log", error=str(e))
 
             return AuthTokenResponse(
                 access_token=issued.access_token,

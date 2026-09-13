@@ -1,7 +1,12 @@
 """R2-03: settings split from core/config.py — app domain."""
 
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings
+
+# P2-13: default log directory (repo-root/logs); overridable via LOG_DIR.
+_DEFAULT_LOG_DIR = Path(__file__).resolve().parents[4] / "logs"
 
 
 class AppSettings(BaseSettings):
@@ -14,6 +19,11 @@ class AppSettings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:3000"  # Frontend URL for magic links, etc.
     # Cache warming
     CACHE_WARMING_ENABLED: bool = True
+    # P2-13: logging surface (LOG_LEVEL/LOG_DIR). Operators configure logging
+    # through Pydantic; core/logger.py reads these instead of raw os.getenv.
+    # LOG_DIR defaults to the repo-root logs/ directory.
+    LOG_LEVEL: str = Field(default="INFO", description="Root log level (DEBUG/INFO/WARNING/ERROR/CRITICAL)")
+    LOG_DIR: str = Field(default=str(_DEFAULT_LOG_DIR), description="Directory for rotating file logs (LOG_DIR)")
     # P-M9: token blacklist boot-time warmup loads every active blacklisted
     # token — O(total sessions). Cap the warmup set to the most-recent N rows;
     # tokens beyond the cap fall back to the on-demand DB check on first use.

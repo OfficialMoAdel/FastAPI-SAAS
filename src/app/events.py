@@ -15,15 +15,12 @@ logger = get_logger(__name__)
 def register_application_event_handlers(bus: Any) -> None:
     """Pre-register all application module event handlers with the event bus."""
     try:
-        from src.app.modules.audit_logs.service import handle_audit_log_event
-        from src.app.modules.notifications.service import (
-            handle_notification_request_event,
-            handle_notification_send_event,
-        )
+        from src.app.modules.audit_logs.service import handle_audit_log_event, handle_login_issued_event
+        from src.app.modules.notifications.service import handle_notification_request_event
         from src.app.modules.webhooks.service import handle_webhook_trigger_event, webhook_event_adapter
 
         bus.register_handler("audit.log", handle_audit_log_event)
-        bus.register_handler("notification.send", handle_notification_send_event)
+        bus.register_handler("auth.login_issued", handle_login_issued_event)
         bus.register_handler("notification.request", handle_notification_request_event)
         bus.register_handler("webhook.trigger", handle_webhook_trigger_event)
 

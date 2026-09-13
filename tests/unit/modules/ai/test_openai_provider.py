@@ -4,7 +4,7 @@ import pytest
 from httpx import HTTPStatusError, Request, RequestError, Response
 
 from src.app.modules.ai.openai_provider import OpenAIProvider
-from src.app.modules.ai.providers import AIProviderError
+from src.app.modules.ai.providers import AIProviderError, ChatMessage
 
 
 # Helper class for mocking async iterators
@@ -145,7 +145,11 @@ async def test_generate_text_success(provider):
         },
     )
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response) as mock_post:
-        result = await provider.generate_text("Hi", "gpt-4", system_prompt="You are a bot.")
+        result = await provider.generate_text(
+            messages=[ChatMessage(role="user", content="Hi")],
+            model="gpt-4",
+            system_prompt="You are a bot.",
+        )
 
         assert result.content == "Hello!"
         assert result.model == "gpt-4"
@@ -167,7 +171,7 @@ async def test_generate_text_without_system_prompt(provider):
     )
     post_mock = AsyncMock(return_value=mock_response)
     with patch("httpx.AsyncClient.post", post_mock):
-        await provider.generate_text("Hello", "gpt-4")
+        await provider.generate_text(messages=[ChatMessage(role="user", content="Hello")], model="gpt-4")
         call_kwargs = post_mock.call_args[1]
         assert len(call_kwargs["json"]["messages"]) == 1
         assert call_kwargs["json"]["messages"][0]["role"] == "user"
@@ -183,7 +187,11 @@ async def test_generate_text_with_max_tokens(provider):
     )
     mock_post = AsyncMock(return_value=mock_response)
     with patch("httpx.AsyncClient.post", mock_post):
-        await provider.generate_text("Hi", "gpt-4", max_tokens=100)
+        await provider.generate_text(
+            messages=[ChatMessage(role="user", content="Hi")],
+            model="gpt-4",
+            max_tokens=100,
+        )
         # Verify max_tokens was included in the payload
         call_kwargs = mock_post.call_args[1]
         assert call_kwargs["json"]["max_tokens"] == 100
@@ -198,7 +206,7 @@ async def test_generate_text_http_error(provider):
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=error):
         with pytest.raises(AIProviderError) as exc_info:
-            await provider.generate_text("Hi", "gpt-4")
+            await provider.generate_text(messages=[ChatMessage(role="user", content="Hi")], model="gpt-4")
         assert "Invalid request" in str(exc_info.value)
         assert exc_info.value.error_code == "400"
 
@@ -210,7 +218,7 @@ async def test_generate_text_request_error(provider):
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=error):
         with pytest.raises(AIProviderError) as exc_info:
-            await provider.generate_text("Hi", "gpt-4")
+            await provider.generate_text(messages=[ChatMessage(role="user", content="Hi")], model="gpt-4")
         assert "Connection failed" in str(exc_info.value)
         assert exc_info.value.error_code == "request_error"
 
@@ -242,7 +250,9 @@ async def test_generate_text_stream_success(provider):
 
     with patch.object(provider, "_get_client", return_value=mock_client):
         chunks = []
-        async for chunk in provider.generate_text_stream("Hi", "gpt-4"):
+        async for chunk in provider.generate_text_stream(
+            messages=[ChatMessage(role="user", content="Hi")], model="gpt-4"
+        ):
             chunks.append(chunk)
 
         assert chunks == ["Hello", " World"]
@@ -267,7 +277,9 @@ async def test_generate_text_stream_http_error(provider):
 
     with patch.object(provider, "_get_client", return_value=mock_client):
         with pytest.raises(AIProviderError) as exc_info:
-            async for _ in provider.generate_text_stream("Hi", "gpt-4"):
+            async for _ in provider.generate_text_stream(
+            messages=[ChatMessage(role="user", content="Hi")], model="gpt-4"
+        ):
                 pass
         assert "Rate limited" in str(exc_info.value)
         assert exc_info.value.error_code == "429"
@@ -286,7 +298,9 @@ async def test_generate_text_stream_request_error(provider):
 
     with patch.object(provider, "_get_client", return_value=mock_client):
         with pytest.raises(AIProviderError) as exc_info:
-            async for _ in provider.generate_text_stream("Hi", "gpt-4"):
+            async for _ in provider.generate_text_stream(
+            messages=[ChatMessage(role="user", content="Hi")], model="gpt-4"
+        ):
                 pass
         assert "Connection timeout" in str(exc_info.value)
         assert exc_info.value.error_code == "request_error"
@@ -312,7 +326,9 @@ async def test_generate_text_stream_malformed_json(provider):
 
     with patch.object(provider, "_get_client", return_value=mock_client):
         chunks = []
-        async for chunk in provider.generate_text_stream("Hi", "gpt-4"):
+        async for chunk in provider.generate_text_stream(
+            messages=[ChatMessage(role="user", content="Hi")], model="gpt-4"
+        ):
             chunks.append(chunk)
         # Should skip malformed JSON and continue
         assert "Valid" in chunks
@@ -652,7 +668,11 @@ async def test_generate_text_with_extra_kwargs(provider):
         json={"choices": [{"message": {"content": "Test"}}]},
     )
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response):
-        await provider.generate_text("Hi", "gpt-4", frequency_penalty=0.5, top_p=0.9)
+        await provider.generate_text(
+            messages=[ChatMessage(role="user", content="Hi")],
+            model="gpt-4",
+            frequency_penalty=0.5, top_p=0.9,
+        )
         # Just verify it doesn't raise - extra params are passed to API
 
 
@@ -669,6 +689,10 @@ async def test_generate_text_stream_with_extra_kwargs(provider):
     mock_client.stream = MagicMock(return_value=mock_stream)
 
     with patch.object(provider, "_get_client", return_value=mock_client):
-        async for _ in provider.generate_text_stream("Hi", "gpt-4", temperature=0.5):
+        async for _ in provider.generate_text_stream(
+            messages=[ChatMessage(role="user", content="Hi")],
+            model="gpt-4",
+            temperature=0.5,
+        ):
             pass
         # Verify stream was called

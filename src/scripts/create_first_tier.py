@@ -1,9 +1,9 @@
 import asyncio
 import logging
-import os
 
 from sqlalchemy import select
 
+from src.app.core.config import settings
 from src.app.core.db.database import AsyncSession, local_session
 from src.app.core.logger import get_logger
 from src.app.modules.tiers.models import Tier
@@ -14,7 +14,8 @@ logger = get_logger(__name__)
 
 async def create_first_tier(session: AsyncSession) -> None:
     try:
-        tier_name = os.getenv("TIER_NAME", "free")
+        # P2-13: seed name comes from settings, not raw os.getenv.
+        tier_name = settings.billing.DEFAULT_FREE_TIER_NAME
 
         query = select(Tier).where(Tier.name == tier_name)
         result = await session.execute(query)

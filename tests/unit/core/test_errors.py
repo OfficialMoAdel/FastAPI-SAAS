@@ -12,10 +12,12 @@ from src.app.core.errors import (
 )
 from src.app.core.exceptions.cache_exceptions import CacheException
 from src.app.core.exceptions.http_exceptions import TenantContextError
+from src.app.modules.ai.providers import AIProviderError
 from src.app.modules.ai.unified_errors import SessionLimitExceededError
 from src.app.modules.auth.errors import AuthError, InvalidMagicLinkError
 from src.app.modules.billing.exceptions import (
     PaymentRequiredError,
+    SubscriptionRequiredError,
     WebhookNotConfiguredError,
     WebhookVerificationError,
 )
@@ -25,8 +27,10 @@ from src.app.modules.storage.errors import (
     InvalidCredentialsError,
     QuotaExceededError,
     StorageBackendError,
+    StorageError,
     StorageNotConfiguredError,
 )
+from src.app.modules.user_preferences.service import PreferenceStorageError
 from src.app.shared.exceptions import (
     DuplicateError,
     ForbiddenError,
@@ -407,6 +411,12 @@ def test_exception_table_status_mapping():
         StorageBackendError: 502,
         InvalidCredentialsError: 400,
         SessionLimitExceededError: 429,
+        # H4/P1-#4: rows added by the registration audit — previously these
+        # fell through to the 500 catch-all.
+        SubscriptionRequiredError: 402,
+        AIProviderError: 502,
+        PreferenceStorageError: 400,
+        StorageError: 500,
     }
     assert set(by_class) == set(expected_static) | {StripeError, AuthError}
     for exc_class, expected_status in expected_static.items():

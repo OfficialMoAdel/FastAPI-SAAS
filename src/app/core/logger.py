@@ -4,12 +4,12 @@ Provides consistent, structured JSON logging across the application.
 Supports both development (pretty-printed) and production (JSON) formats.
 """
 
+import copy
 import logging
 import os
 import queue
 import sys
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
-from pathlib import Path
 from typing import cast
 
 import structlog
@@ -19,9 +19,9 @@ from src.app.core.config import EnvironmentOption, settings
 from src.app.core.observability.log_sampling import make_sampling_processor
 from src.app.core.observability.log_sanitizer import SanitizingProcessor
 
-# Log directory setup (repo root/logs or override via LOG_DIR)
-_default_log_dir = Path(__file__).resolve().parents[3] / "logs"
-LOG_DIR = os.getenv("LOG_DIR", str(_default_log_dir))
+# Log directory comes from settings (P2-13: was raw os.getenv here).
+# AppSettings.LOG_DIR defaults to repo-root/logs and honors the LOG_DIR env var.
+LOG_DIR = settings.app.LOG_DIR
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -37,9 +37,29 @@ IS_PRODUCTION = settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION
 _log_listener: QueueListener | None = None
 
 
+class _PassThroughQueueHandler(QueueHandler):
+    """QueueHandler that preserves structlog event dicts.
+
+    CPython's QueueHandler.prepare() formats the record with the queue
+    handler's own (stdlib) formatter and writes the resulting string back
+    into record.msg — which destroys the event dict that structlog's
+    wrap_for_formatter stashed there. The listener-side ProcessorFormatter
+    then sees the structlog markers with a str msg and crashes
+    ('str' object has no attribute 'copy'). Passing records through
+    unformatted keeps the dict intact for the listener thread to format.
+    """
+
+    def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        record = copy.copy(record)
+        record.args = None
+        record.exc_info = None
+        record.stack_info = None
+        return record
+
+
 def get_log_level() -> int:
-    """Get log level from environment or default."""
-    level = os.getenv("LOG_LEVEL", "INFO").upper()
+    """Get log level from settings (LOG_LEVEL env) or default."""
+    level = settings.app.LOG_LEVEL.upper()
     return getattr(logging, level, logging.INFO)
 
 
@@ -118,7 +138,7 @@ def setup_logging() -> None:
         _log_listener.stop()
         _log_listener = None
     log_queue: queue.Queue[logging.LogRecord] = queue.Queue(-1)
-    queue_handler = QueueHandler(log_queue)
+    queue_handler = _PassThroughQueueHandler(log_queue)
     queue_handler.setLevel(log_level)
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)

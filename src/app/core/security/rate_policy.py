@@ -11,6 +11,17 @@ Centralizes:
 - Anonymous vs Authenticated identity & key generation (including email-hash fallback)
 - Blacklist / revocation downgrade
 - RateLimitVerdict with computed headers
+
+Two-verb decision contract (P1-#5):
+- check: ``build_rate_limit_key`` derives the key, ``resolve_rate_limits`` picks the
+  policy, ``evaluate_rate_policy`` runs the engine (``RateLimiter.check_rate_limit_algorithm``)
+  and returns a ``RateLimitVerdict`` (the Decision). The engine takes (key, policy)
+  as inputs — it never derives keys or resolves policy itself.
+- record: violation/ban escalation lives OUTSIDE this module in ``auto_ban``
+  (``check_and_auto_ban``), keeping the decision pure of ban state.
+
+All rate-limit consumers (middleware, deps, RateLimiter.is_rate_limited) derive
+keys through ``build_rate_limit_key`` — one key scheme, one decision module.
 """
 
 import hashlib

@@ -803,3 +803,80 @@ def test_auto_register_decorator():
 
     # Clean up
     registry._breakers.clear()
+
+
+# ============================================================================
+# Scoped Webhook Breaker Tests (P2-B, relocated from utils/circuit_breaker)
+# ============================================================================
+
+
+class TestScopedWebhookBreakers:
+    """get_webhook_breaker lives in the registry and registers each scope."""
+
+    def setup_method(self):
+        """Isolate the scoped-breaker dict and singleton registry per test."""
+        from src.app.core.resilience import registry as registry_module
+
+        registry_module._scoped_webhook_breakers.clear()
+        get_registry()._breakers.clear()
+
+    def teardown_method(self):
+        from src.app.core.resilience import registry as registry_module
+
+        registry_module._scoped_webhook_breakers.clear()
+        get_registry()._breakers.clear()
+
+    def test_none_scope_returns_legacy_global(self):
+        """scope=None keeps the legacy webhook_circuit contract."""
+        from src.app.core.resilience.registry import get_webhook_breaker
+        from src.app.core.utils.circuit_breaker import webhook_circuit
+
+        assert get_webhook_breaker(None) is webhook_circuit
+
+    def test_scope_creates_and_registers_breaker(self):
+        """A new scope creates a breaker registered under 'webhook:{scope}'."""
+        from src.app.core.resilience.registry import get_webhook_breaker
+
+        breaker = get_webhook_breaker("endpoint-1")
+
+        assert breaker.name == "webhook:endpoint-1"
+        registry = get_registry()
+        assert registry.get("webhook:endpoint-1") is breaker
+        spec = registry.get_all()["webhook:endpoint-1"]
+        assert spec.service_type == ServiceType.WEBHOOK
+
+    def test_same_scope_returns_same_instance(self):
+        """Repeated calls for a scope return the same breaker object."""
+        from src.app.core.resilience.registry import get_webhook_breaker
+
+        first = get_webhook_breaker("endpoint-1")
+        second = get_webhook_breaker("endpoint-1")
+        assert first is second
+
+    def test_scope_eviction_removes_oldest_from_registry(self):
+        """Past the cap, the oldest scope leaves both the dict and the registry."""
+        from src.app.core.resilience import registry as registry_module
+        from src.app.core.resilience.registry import get_webhook_breaker
+
+        original_cap = registry_module._WEBHOOK_BREAKER_MAX_SCOPES
+        registry_module._WEBHOOK_BREAKER_MAX_SCOPES = 2
+        try:
+            oldest = get_webhook_breaker("ep-a")
+            get_webhook_breaker("ep-b")
+            newest = get_webhook_breaker("ep-c")  # evicts ep-a
+        finally:
+            registry_module._WEBHOOK_BREAKER_MAX_SCOPES = original_cap
+
+        registry = get_registry()
+        assert registry.get("webhook:ep-a") is None
+        assert registry.get("webhook:ep-b") is not None
+        assert registry.get("webhook:ep-c") is newest
+        assert oldest is not newest
+
+    def test_unregister_removes_breaker(self):
+        """unregister() drops a name and reports whether it existed."""
+        from src.app.core.resilience.registry import get_webhook_breaker
+
+        get_webhook_breaker("endpoint-1")
+        assert get_registry().unregister("webhook:endpoint-1") is True
+        assert get_registry().unregister("webhook:endpoint-1") is False

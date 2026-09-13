@@ -179,7 +179,8 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
     # original is still in flight). A short-lived Redis lock ensures only one
     # worker performs the HTTP call; others skip and return the current state.
     from src.app.core.redis_provider import get_redis
-    from src.app.core.utils.circuit_breaker import CircuitBreakerOpen, get_webhook_breaker
+    from src.app.core.resilience.registry import get_webhook_breaker
+    from src.app.core.utils.circuit_breaker import CircuitBreakerOpen
 
     _redis = get_redis()
     _lock_key = f"webhook:deliver_lock:{delivery_id}"
@@ -222,10 +223,10 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
         import time
 
         current_time = time.time()
-        # Clamp at 0: a breaker opened without a recorded _last_failure_time
+        # Clamp at 0: a breaker opened without a recorded failure time
         # (or clock adjustments) otherwise yields a hugely negative window,
         # scheduling next_retry_at in the past.
-        recovery_time = max(0.0, breaker.recovery_timeout - (current_time - breaker._last_failure_time))
+        recovery_time = max(0.0, breaker.recovery_timeout - (current_time - breaker.last_failure_time))
         logger.warning(
             "Circuit breaker open for webhooks, skipping delivery %s | recovery_in=%.1fs",
             delivery_id,

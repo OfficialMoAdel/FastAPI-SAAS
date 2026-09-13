@@ -285,6 +285,22 @@ def _auth_code(exc: Any) -> str:
     return _status_to_error_code(exc.status_code)
 
 
+def _storage_operation_details(exc: Any) -> dict[str, Any]:
+    """Build the ``details`` payload for PreferenceStorageError."""
+    return {
+        "operation": getattr(exc, "operation", ""),
+        "reason": getattr(exc, "detail", str(exc)),
+    }
+
+
+def _ai_provider_details(exc: Any) -> dict[str, Any]:
+    """Build the ``details`` payload for AIProviderError."""
+    return {
+        "provider": getattr(exc, "provider", ""),
+        "error_code": getattr(exc, "error_code", ""),
+    }
+
+
 def _make_table_handler(spec: _HandlerSpec) -> Callable[[Request, Any], Coroutine[Any, Any, JSONResponse]]:
     """Generic handler factory: resolve one table row into a FastAPI handler."""
     async def _handler(request: Request, exc: Exception) -> JSONResponse:
@@ -319,10 +335,12 @@ def build_exception_table() -> list[_HandlerSpec]:
     Response codes/messages are identical to the pre-table handlers.
     """
     from src.app.core.exceptions.http_exceptions import TenantContextError
+    from src.app.modules.ai.providers import AIProviderError
     from src.app.modules.ai.unified_errors import SessionLimitExceededError
     from src.app.modules.auth.errors import AuthError
     from src.app.modules.billing.exceptions import (
         PaymentRequiredError,
+        SubscriptionRequiredError,
         WebhookNotConfiguredError,
         WebhookVerificationError,
     )
@@ -332,8 +350,10 @@ def build_exception_table() -> list[_HandlerSpec]:
         InvalidCredentialsError,
         QuotaExceededError,
         StorageBackendError,
+        StorageError,
         StorageNotConfiguredError,
     )
+    from src.app.modules.user_preferences.service import PreferenceStorageError
     from src.app.shared.exceptions import (
         DuplicateError,
         ForbiddenError,
@@ -452,6 +472,32 @@ def build_exception_table() -> list[_HandlerSpec]:
             False,
         ),
         _HandlerSpec(
+            # H4/P1-#4: previously unregistered — AppException with no table
+            # row and no registered ancestor, so raises became 500 catch-alls.
+            # Zero raise sites today, but register it so the audit holds.
+            SubscriptionRequiredError,
+            status.HTTP_402_PAYMENT_REQUIRED,
+            ErrorCode.PAYMENT_REQUIRED,
+            str,
+            None,
+            "Subscription required",
+            False,
+        ),
+        # Storage domain (canonical home: src.app.modules.storage.errors).
+        # H4/P1-#4: the base StorageError itself is never raised bare, but
+        # registering it keeps the audit rule total (every AppException
+        # subclass MRO-reachable) and gives any future direct raise a sane
+        # translation instead of the 500 catch-all.
+        _HandlerSpec(
+            StorageError,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            ErrorCode.INTERNAL_ERROR,
+            str,
+            None,
+            "Storage operation failed",
+            True,
+        ),
+        _HandlerSpec(
             WebhookVerificationError,
             status.HTTP_400_BAD_REQUEST,
             ErrorCode.INVALID_INPUT,
@@ -537,6 +583,31 @@ def build_exception_table() -> list[_HandlerSpec]:
             _session_limit_details,
             "Session limit exceeded",
             False,
+        ),
+        # H4/P1-#4: AIProviderError is the root of the 12-class AI error
+        # tree (unified_errors). One row covers every subclass via the
+        # Starlette MRO walk; without it they all fell to the 500 catch-all.
+        _HandlerSpec(
+            AIProviderError,
+            status.HTTP_502_BAD_GATEWAY,
+            ErrorCode.BAD_GATEWAY,
+            str,
+            _ai_provider_details,
+            "AI provider error",
+            True,
+        ),
+        # User-preferences domain (canonical home:
+        # src.app.modules.user_preferences.service).
+        # H4/P1-#4: renamed from StorageError (collision with the storage
+        # module's class) and registered — its raises were 500 catch-alls.
+        _HandlerSpec(
+            PreferenceStorageError,
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCode.INVALID_INPUT,
+            str,
+            _storage_operation_details,
+            "Profile image storage operation failed",
+            True,
         ),
     ]
     return EXCEPTION_HANDLERS

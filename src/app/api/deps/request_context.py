@@ -53,7 +53,7 @@ from src.app.api.deps.auth import AuthenticatedUser, get_current_user
 from src.app.api.deps.tenant import tenant_dependency
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import ForbiddenException
-from src.app.core.tenancy.context import NO_TENANT, TenantContext
+from src.app.core.tenancy.context import NO_TENANT, TenantContext, TenantContextError
 from src.app.core.utils.user_utils import get_user_attr
 
 
@@ -99,11 +99,16 @@ class RequestContext:
     def require_tenant(self) -> TenantContext:
         """Return the tenant context or raise if this is a tenant-less path.
 
+        P3-#14 (one no-tenant contract): raises ``TenantContextError``
+        (403 via the central table) — the same exception
+        :func:`require_active_tenant` and ``tenant_dependency`` raise —
+        so every no-tenant seam speaks one status from one class.
+
         Raises:
-            ForbiddenException: If no real tenant context is available.
+            TenantContextError: If no real tenant context is available.
         """
         if not self.has_tenant:
-            raise ForbiddenException("Tenant context is required for this operation.")
+            raise TenantContextError("Tenant context is required for this operation.")
         return self.tenant
 
     def owns(self, owner_user_id: object) -> bool:

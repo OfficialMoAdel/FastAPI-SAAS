@@ -46,7 +46,7 @@ from src.app.core.worker.functions import (
 )
 from src.app.models import *  # noqa: F401,F403 -- single model-registration point (A-M6)
 from src.app.modules.auth.tasks import send_magic_link_email_task
-from src.app.modules.notifications.service import send_email_task
+from src.app.modules.notifications.service import recover_stuck_notifications, send_email_task
 from src.app.modules.webhooks.delivery import recover_stuck_deliveries
 
 logger = get_logger(__name__)
@@ -148,6 +148,7 @@ class WorkerSettings:
             cleanup_leaked_webhook_lock,  # B8: was enqueued but never defined/registered
             cleanup_expired_tokens_task,
             recover_stuck_deliveries,
+            recover_stuck_notifications,
         ]
     )
     # NOTE: arq 0.26.x has no multi-queue support — a worker polls exactly one
@@ -178,6 +179,8 @@ class WorkerSettings:
         cron(flush_audit_logs_task, second={0, 30}, run_at_startup=True, timeout=60),
         # Recover stuck webhook deliveries every 5 minutes
         cron(recover_stuck_deliveries, minute=set(range(0, 60, 5))),
+        # Sweep stuck PENDING notifications to terminal FAILED every 5 minutes (P2-6)
+        cron(recover_stuck_notifications, minute=set(range(0, 60, 5))),
         # Cleanup expired tokens from blacklist ZSET every hour
         cron(cleanup_expired_tokens_task, minute=0, timeout=30),
     ] + _MODULE_CRONJOBS

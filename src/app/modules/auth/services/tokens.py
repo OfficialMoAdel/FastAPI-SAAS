@@ -17,10 +17,13 @@ from fastapi import Request, Response
 from redis.asyncio import Redis
 
 from src.app.core.config import settings
+from src.app.core.logger import get_logger
 from src.app.core.security import create_access_token, create_refresh_token, get_mfa_pending_token_manager
 from src.app.core.security.login_helpers import register_login_session
 from src.app.core.security.tokens import TokenGenerator
 from src.app.shared.exceptions import ServiceUnavailableError
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -127,6 +130,7 @@ class TokenIssuer:
         verify: bool = True,
         subject: str | None = None,
         extra_claims: dict[str, Any] | None = None,
+        audit_details: dict[str, Any] | None = None,
     ) -> IssuedSession:
         """Issue tokens and establish the session for an authenticated user.
 
@@ -149,6 +153,8 @@ class TokenIssuer:
                 back to ``email``.
             extra_claims: Additional JWT claims merged on top of the standard
                 shape (e.g. SSO's legacy ``id``/``email`` claims).
+            audit_details: Optional door-specific context merged into the
+                ``auth.login_issued`` audit event payload (e.g. SSO provider).
 
         Returns:
             IssuedSession with both tokens.
@@ -188,6 +194,35 @@ class TokenIssuer:
             # direct callers that do not pre-mint.)
             session_id=token_data["sid"],
         )
+
+        # P2-#8: single issuance seam publishes the login-audit event so every
+        # door (password, sso, passkey, magic_link, mfa) is audited exactly
+        # once, with the door label carried in the payload. Audit must never
+        # break issuance — publish failures are logged and swallowed.
+        try:
+            from src.app.core.events import event_bus
+
+            ip_address = None
+            user_agent = None
+            if request is not None:
+                from src.app.core.utils.ip_utils import get_client_ip
+
+                ip_address = get_client_ip(request)
+                user_agent = request.headers.get("user-agent")
+            payload: dict[str, Any] = {
+                "user_id": str(user["id"]),
+                "tenant_id": str(user.get("tenant_id")) if user.get("tenant_id") is not None else None,
+                "channel": channel,
+                "username": user.get("username"),
+                "email": user.get("email"),
+                "ip_address": ip_address,
+                "user_agent": user_agent,
+            }
+            if audit_details:
+                payload.update(audit_details)
+            await event_bus.publish("auth.login_issued", payload)
+        except Exception as audit_err:  # pragma: no cover - defensive seam
+            logger.warning("login_issued_audit_publish_failed", channel=channel, error=str(audit_err))
 
         return IssuedSession(access_token=access_token, refresh_token=refresh_token)
 

@@ -56,3 +56,8 @@ from .idempotency import (  # noqa: E402,F401
     mark_event_processed,
 )
 from .ingest import derive_and_attach_tenant, ingest_webhook  # noqa: E402,F401
+from .locks import (  # noqa: E402,F401
+    SubscriptionRef,
+    find_subscription_by_stripe_id,
+    lock_subscription_by_id,
+)

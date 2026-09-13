@@ -122,16 +122,23 @@ class RateLimiter:
         # "/" so a second pass is a proven no-op — hence no re-sanitize here.
         sanitized_path = path
 
-        # P2-7: Incorporate tenant isolation in rate limit key
+        # P1-#5: key derivation belongs to the decision layer (rate_policy),
+        # not the engine. This unifies the dep-layer keys with the middleware
+        # path (build_rate_limit_key) so every consumer shares one key scheme.
+        # Fn-scope import mirrors auto_ban and avoids the module-level cycle
+        # (rate_policy imports this module's singleton at :29); it also
+        # preserves test patchability of rate_policy.build_rate_limit_key.
+        from src.app.core.security.rate_policy import build_rate_limit_key
         from src.app.core.tenancy.context import get_current_tenant
 
         tenant = get_current_tenant()
         tenant_id = tenant.tenant_id if tenant else None
 
-        if tenant_id:
-            key = f"tenant:{tenant_id}:{user_id}:{sanitized_path}"
-        else:
-            key = f"{user_id}:{sanitized_path}"
+        key = build_rate_limit_key(
+            path=sanitized_path,
+            user_id=str(user_id),
+            tenant_id=tenant_id,
+        )
 
         is_limited, _, _ = await self.check_rate_limit_algorithm(key, limit, period)
         return is_limited

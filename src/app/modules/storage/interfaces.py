@@ -105,14 +105,29 @@ class StorageProvider(ABC):
 
     @abstractmethod
     async def get_url(self, path: str, expires_in: int = 3600) -> str:
-        """Get a signed URL for temporary access.
+        """Get a URL for the stored object.
+
+        The returned URL has three semantics depending on the backend
+        (P2-#10):
+
+        - S3 / Azure: an EXPIRING presigned / SAS bearer URL valid for
+          ``expires_in`` seconds. On failure S3 raises
+          ``StorageBackendError`` — it never returns a bogus URL.
+        - Local: a NON-expiring in-API-style path (e.g. ``/files/...``).
+          It is NOT a bearer URL — there is no static mount serving it;
+          security is enforced at the application layer.
+
+        Callers that need authenticated file access for Local objects
+        should use ``StorageService.get_presigned_url``, which maps the
+        Local backend to the authenticated in-API route
+        ``/api/v1/files/{file_id}``.
 
         Args:
             path: Path to the file.
-            expires_in: URL expiration in seconds.
+            expires_in: URL expiration in seconds (remote backends only).
 
         Returns:
-            Signed URL for temporary access.
+            Signed URL for temporary access (remote) or in-API path (Local).
         """
         pass
 

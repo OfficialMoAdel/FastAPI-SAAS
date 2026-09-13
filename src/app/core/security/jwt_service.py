@@ -1,3 +1,19 @@
+"""JWT token lifecycle service — issuance, verification policy, and revocation.
+
+Authority contract (P2-#9, deletion test):
+    This module OWNS encoding (``jwt.encode`` via ``_jwt_encode``), claim
+    shaping for issuance, and the policy layer around verification (token
+    type, blacklist, token-version). It must NOT duplicate cryptographic
+    decode: every decode routes through
+    ``jwt_utils.decode_verified_token`` (the ONE decode path), imported
+    via fn-scope seams. If ``jwt_utils`` vanished, this module could absorb
+    its duties without touching callers — that is the fold direction;
+    until then the boundary is: **encode + policy here, decode + key
+    management in ``jwt_utils``**. Issuance itself has a single door:
+    ``auth.services.tokens.TokenIssuer.issue_session`` (stable ``sid`` +
+    RESERVED_CLAIMS protection live there and must not move).
+"""
+
 from __future__ import annotations
 
 import asyncio

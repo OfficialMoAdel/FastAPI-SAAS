@@ -147,13 +147,21 @@ ignore = [
 # (tests/** above: white-box tests pin internals + mock targets by design.)
 "src/app/api/v1/__init__.py" = ["TID"]
 "src/app/modules/*/__init__.py" = ["TID"]
-"scripts/**" = ["BLE001"]
+# P2-13: env_validator.py is the sanctioned raw-environment reader (its
+# contract is pre-Pydantic validation; tests pin os.environ patching).
+# scripts/** are ops harnesses that read their own harness env directly.
+"src/app/core/env_validator.py" = ["TID251"]
+"scripts/**" = ["BLE001", "TID251"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 24
 
 # Module boundary enforcement: ban internal cross-module imports
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
+# P2-13: raw os.getenv is banned outside src/app/core/config/. The sanctioned
+# exceptions are env_validator.py (pre-Pydantic raw-env validator) and
+# scripts/** (ops harnesses); see per-file-ignores above.
+"os.getenv".msg = "Use Pydantic settings (src.app.core.config) instead of raw os.getenv"
 "src.app.modules.auth.service".msg = "Import from 'src.app.modules.auth' instead of internal files"
 "src.app.modules.auth.router".msg = "Import from 'src.app.modules.auth' instead of internal files"
 "src.app.modules.users.service".msg = "Import from 'src.app.modules.users' instead of internal files"

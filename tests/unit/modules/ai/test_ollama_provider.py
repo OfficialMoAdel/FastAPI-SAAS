@@ -4,7 +4,7 @@ import pytest
 from httpx import HTTPStatusError, Request, RequestError, Response
 
 from src.app.modules.ai.ollama_provider import OllamaProvider
-from src.app.modules.ai.providers import AIProviderError
+from src.app.modules.ai.providers import AIProviderError, ChatMessage
 
 
 # Helper class for mocking async iterators
@@ -134,7 +134,11 @@ async def test_generate_text_success(provider):
         },
     )
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response) as mock_post:
-        result = await provider.generate_text("Hi", "llama2", system_prompt="Sys")
+        result = await provider.generate_text(
+            messages=[ChatMessage(role="user", content="Hi")],
+            model="llama2",
+            system_prompt="Sys",
+        )
 
         assert result.content == "Hello Ollama!"
         assert result.model == "llama2"
@@ -159,7 +163,7 @@ async def test_generate_text_without_system_prompt(provider):
     )
     post_mock = AsyncMock(return_value=mock_response)
     with patch("httpx.AsyncClient.post", post_mock):
-        await provider.generate_text("Hello", "llama2")
+        await provider.generate_text(messages=[ChatMessage(role="user", content="Hello")], model="llama2")
         call_kwargs = post_mock.call_args[1]
         # No "system" key when system_prompt is None
         assert "system" not in call_kwargs["json"]
@@ -175,7 +179,11 @@ async def test_generate_text_with_max_tokens(provider):
     )
     post_mock = AsyncMock(return_value=mock_response)
     with patch("httpx.AsyncClient.post", post_mock):
-        await provider.generate_text("Hi", "llama2", max_tokens=100)
+        await provider.generate_text(
+            messages=[ChatMessage(role="user", content="Hi")],
+            model="llama2",
+            max_tokens=100,
+        )
         call_kwargs = post_mock.call_args[1]
         assert call_kwargs["json"]["options"]["num_predict"] == 100
 
@@ -187,7 +195,7 @@ async def test_generate_text_http_error(provider):
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=error):
         with pytest.raises(AIProviderError) as exc_info:
-            await provider.generate_text("Hi", "llama2")
+            await provider.generate_text(messages=[ChatMessage(role="user", content="Hi")], model="llama2")
         assert exc_info.value.error_code == "500"
 
 
@@ -198,7 +206,7 @@ async def test_generate_text_request_error(provider):
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=error):
         with pytest.raises(AIProviderError) as exc_info:
-            await provider.generate_text("Hi", "llama2")
+            await provider.generate_text(messages=[ChatMessage(role="user", content="Hi")], model="llama2")
         assert "Connection failed" in str(exc_info.value)
         assert exc_info.value.error_code == "request_error"
 
@@ -229,7 +237,9 @@ async def test_generate_text_stream_success(provider):
 
     with patch.object(provider, "_get_client", return_value=mock_client):
         chunks = []
-        async for chunk in provider.generate_text_stream("Hi", "llama2"):
+        async for chunk in provider.generate_text_stream(
+            messages=[ChatMessage(role="user", content="Hi")], model="llama2"
+        ):
             chunks.append(chunk)
 
         assert chunks == ["Hello", " World"]
@@ -253,7 +263,9 @@ async def test_generate_text_stream_http_error(provider):
 
     with patch.object(provider, "_get_client", return_value=mock_client):
         with pytest.raises(AIProviderError) as exc_info:
-            async for _ in provider.generate_text_stream("Hi", "llama2"):
+            async for _ in provider.generate_text_stream(
+            messages=[ChatMessage(role="user", content="Hi")], model="llama2"
+        ):
                 pass
         assert "Service unavailable" in str(exc_info.value)
         assert exc_info.value.error_code == "503"
@@ -272,7 +284,9 @@ async def test_generate_text_stream_request_error(provider):
 
     with patch.object(provider, "_get_client", return_value=mock_client):
         with pytest.raises(AIProviderError) as exc_info:
-            async for _ in provider.generate_text_stream("Hi", "llama2"):
+            async for _ in provider.generate_text_stream(
+            messages=[ChatMessage(role="user", content="Hi")], model="llama2"
+        ):
                 pass
         assert "Connection timeout" in str(exc_info.value)
         assert exc_info.value.error_code == "request_error"
@@ -298,7 +312,9 @@ async def test_generate_text_stream_malformed_json(provider):
 
     with patch.object(provider, "_get_client", return_value=mock_client):
         chunks = []
-        async for chunk in provider.generate_text_stream("Hi", "llama2"):
+        async for chunk in provider.generate_text_stream(
+            messages=[ChatMessage(role="user", content="Hi")], model="llama2"
+        ):
             chunks.append(chunk)
         # Should skip malformed JSON and continue
         assert "Valid" in chunks
@@ -325,7 +341,9 @@ async def test_generate_text_stream_empty_lines(provider):
 
     with patch.object(provider, "_get_client", return_value=mock_client):
         chunks = []
-        async for chunk in provider.generate_text_stream("Hi", "llama2"):
+        async for chunk in provider.generate_text_stream(
+            messages=[ChatMessage(role="user", content="Hi")], model="llama2"
+        ):
             chunks.append(chunk)
         # Empty lines should be skipped
         assert "Content" in chunks
@@ -615,7 +633,11 @@ async def test_generate_text_with_extra_kwargs(provider):
         json={"model": "llama2", "message": {"content": "Test"}},
     )
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response):
-        await provider.generate_text("Hi", "llama2", seed=42, top_p=0.9)
+        await provider.generate_text(
+            messages=[ChatMessage(role="user", content="Hi")],
+            model="llama2",
+            seed=42, top_p=0.9,
+        )
         # Just verify it doesn't raise - extra params are passed to API
 
 
@@ -632,6 +654,10 @@ async def test_generate_text_stream_with_extra_kwargs(provider):
     mock_client.stream = MagicMock(return_value=mock_stream)
 
     with patch.object(provider, "_get_client", return_value=mock_client):
-        async for _ in provider.generate_text_stream("Hi", "llama2", temperature=0.5):
+        async for _ in provider.generate_text_stream(
+            messages=[ChatMessage(role="user", content="Hi")],
+            model="llama2",
+            temperature=0.5,
+        ):
             pass
         # Verify stream was called
