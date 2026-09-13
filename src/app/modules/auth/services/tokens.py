@@ -170,6 +170,11 @@ class TokenIssuer:
             safe_extra = {k: v for k, v in extra_claims.items() if k not in RESERVED_CLAIMS}
             token_data.update(safe_extra)
 
+        # Mint the stable sid here so both tokens share it AND the known value
+        # threads straight into session registration with no token re-parse.
+        # (create_token_pair keeps its setdefault as a fallback for direct
+        # callers that do not pre-mint.)
+        token_data.setdefault("sid", str(uuid4()))
         access_token, refresh_token = await TokenIssuer.create_token_pair(token_data)
         await register_login_session(
             user_id=user["id"],
@@ -177,6 +182,11 @@ class TokenIssuer:
             request=request,
             verify=verify,
             device_label=_CHANNEL_DEVICE_LABELS.get(channel, f"{channel} Login"),
+            # The sid was minted above and shared by both tokens — thread it
+            # straight into session registration with no token re-parse.
+            # (create_token_pair keeps its setdefault as a fallback for
+            # direct callers that do not pre-mint.)
+            session_id=token_data["sid"],
         )
 
         return IssuedSession(access_token=access_token, refresh_token=refresh_token)

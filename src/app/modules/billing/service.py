@@ -269,10 +269,18 @@ class StripeSettingsService:
                 object=create_obj,
                 schema_to_select=StripeSettingsRead,
             )
+            # K5: new key material — drop any cached miss for this tenant.
+            from src.app.modules.billing.gateway import invalidate_stripe_api_key_cache
+
+            invalidate_stripe_api_key_cache(tid)
             return dict(create_result) if create_result else {}
         else:
             await crud_stripe_settings.update(db=self.db, object=update_data, id=stripe_settings_record["id"])
             stripe_settings_record.update(update_data)
+            # K5: key material may have rotated — drop the cached key.
+            from src.app.modules.billing.gateway import invalidate_stripe_api_key_cache
+
+            invalidate_stripe_api_key_cache(tid)
             return dict(stripe_settings_record)
 
 

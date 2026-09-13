@@ -61,6 +61,7 @@ __all__ = [
     "_L1_INVALIDATION_CHANNEL",
     "_L1_TENANT_CACHE",
     "_L1_TENANT_PARSED",
+    "_TENANT_EXEMPT_MATCHES",
     "_TENANT_LOCKS",
     "_get_tenant_lock",
     "_publish_tenant_l1_invalidation",
@@ -109,15 +110,19 @@ TENANT_EXEMPT_PREFIXES = (*TENANT_EXEMPT_PREFIXES, ADMIN_EXEMPT_PREFIX)
 
 TENANT_HEADER = "X-Tenant-ID"
 
+# R5-MICRO: precompute the (prefix, prefix + "/") match pairs once at import
+# so per-request exemption checks are a single C-speed startswith(tuple)
+# instead of a Python loop building f-strings per prefix.
+_TENANT_EXEMPT_MATCHES: tuple[str, ...] = tuple(
+    prefix if prefix == "/" else f"{prefix}/" for prefix in TENANT_EXEMPT_PREFIXES
+)
+
 
 def is_path_exempt(path: str) -> bool:
     """Check if the request path is exempt from tenant validation."""
     if _shared_is_path_exempt(path, additional=_TENANT_EXTRA_EXEMPT):
         return True
-    for prefix in TENANT_EXEMPT_PREFIXES:
-        if path == prefix or path.startswith(f"{prefix}/"):
-            return True
-    return False
+    return path in TENANT_EXEMPT_PREFIXES or path.startswith(_TENANT_EXEMPT_MATCHES)
 
 
 class TenantMiddleware(BaseHTTPMiddleware):
@@ -316,9 +321,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
                                 # B4: use the canonical TTL (300s) — a 3600s
                                 # entry could overwrite a concurrent deactivation's
                                 # re-cached is_active=False for a full hour.
-                                await redis_client.setex(
-                                    cache_key, TENANT_CACHE_TTL, json_dumps(cache_data)
-                                )
+                                await redis_client.setex(cache_key, TENANT_CACHE_TTL, json_dumps(cache_data))
                                 # Clear any stale negative cache for this slug
                                 await redis_client.delete(f"tenant:negative:{slug}")
                             else:

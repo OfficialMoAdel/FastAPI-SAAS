@@ -15,11 +15,10 @@ from src.app.core.security.rate_policy import (
 
 @pytest.mark.asyncio
 async def test_resolve_rate_limits_from_cache():
-    cached_policies = [
-        {"path": "/api/v1/posts", "limit": 120, "period": 60},
-        {"path": "/api/v1/comments", "limit": 30, "period": 60},
-    ]
-    with patch("src.app.core.security.rate_policy.get_tier_policy", new=AsyncMock(return_value=cached_policies)):
+    with patch(
+        "src.app.core.security.rate_policy.get_tier_policy_limits",
+        new=AsyncMock(return_value=(120, 60)),
+    ):
         limit, period = await resolve_rate_limits("/api/v1/posts", tier_id=1, tier_name="pro")
     assert limit == 120
     assert period == 60
@@ -60,7 +59,10 @@ async def test_resolve_rate_limits_db_fallback_no_match():
 
 @pytest.mark.asyncio
 async def test_resolve_rate_limits_settings_fallback():
-    with patch("src.app.core.security.rate_policy.get_tier_policy", new=AsyncMock(return_value=None)):
+    with patch(
+        "src.app.core.security.rate_policy.get_tier_policy_limits",
+        new=AsyncMock(return_value=(None, None)),
+    ):
         limit, period = await resolve_rate_limits("/api/v1/missing", tier_id=None, user_id=None)
     # Falls back to anonymous default
     assert limit is not None

@@ -20,6 +20,12 @@ logger = get_logger(__name__)
 # Module-level L1 cache (256 entries, 5-minute TTL)
 _tier_policy_l1: TTLCache[int, list[dict[str, Any]] | None] = TTLCache(maxsize=256, ttl=300)
 
+# R5-MICRO: compiled per-path map (path -> (limit, period)) per tier, built
+# once from the L1 policy list instead of re-scanning it linearly on every
+# request. Invalidated alongside _tier_policy_l1 so it can never outlive the
+# policy list it was compiled from.
+_tier_policy_path_map: TTLCache[int, dict[str, tuple[int | None, int | None]]] = TTLCache(maxsize=256, ttl=300)
+
 # INFO-R11 FIX: cross-worker L1 invalidation. Tier policy updates publish on
 # this channel so every process drops its in-memory entry immediately instead
 # of serving stale policies for up to 300s.
@@ -29,9 +35,11 @@ _POLICY_INVALIDATION_CHANNEL = "rate_limit_policy:invalidate"
 def _on_policy_invalidation(data: str) -> None:
     if data == "*":
         _tier_policy_l1.clear()
+        _tier_policy_path_map.clear()
     elif data and str(data).isdigit():
-        _tier_policy_l1.pop(int(data), None)
-
+        tier_id = int(data)
+        _tier_policy_l1.pop(tier_id, None)
+        _tier_policy_path_map.pop(tier_id, None)
 
 
 _policy_invalidation_channel = InvalidationChannel(
@@ -47,6 +55,7 @@ stop_policy_invalidation_listener = _policy_invalidation_channel.stop
 
 async def _publish_policy_invalidation(tier_id: int) -> None:
     await _policy_invalidation_channel.publish(str(tier_id))
+
 
 # Redis key patterns
 POLICY_KEY_PREFIX = "rate_limit:policy:tier:"
@@ -82,6 +91,34 @@ async def get_tier_policy(tier_id: int) -> list[dict[str, Any]] | None:
     except Exception as e:
         logger.warning("Failed to get tier policy from cache", error=e)
         return None
+
+
+async def get_tier_policy_limits(tier_id: int, path: str) -> tuple[int | None, int | None]:
+    """Resolve (limit, period) for one path from the tier's policy list.
+
+    R5-MICRO: builds a per-path dict on first access per tier instead of
+    linearly scanning the policy list on every request. Semantics identical
+    to the previous scan: first matching policy row wins, missing keys
+    resolve to (None, None).
+
+    Returns:
+        (limit, period) from the matching policy, or (None, None) when the
+        tier has no cached policies or no row matches the path.
+    """
+    path_map = _tier_policy_path_map.get(tier_id)
+    if path_map is None:
+        tier_policies = await get_tier_policy(tier_id)
+        if not tier_policies:
+            return None, None
+        # setdefault: first matching row wins, mirroring the previous linear
+        # scan semantics for lists with duplicate path rows.
+        path_map = {}
+        for policy in tier_policies:
+            path_key = policy.get("path")
+            if path_key is not None:
+                path_map.setdefault(str(path_key), (policy.get("limit"), policy.get("period")))
+        _tier_policy_path_map[tier_id] = path_map
+    return path_map.get(path, (None, None))
 
 
 async def warm_policy_cache(tier_policies: dict[int, list[dict[str, Any]]]) -> int:

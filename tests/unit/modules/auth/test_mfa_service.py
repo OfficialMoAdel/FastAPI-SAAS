@@ -483,7 +483,7 @@ class TestIsMFAEnabled:
         """Test that is_mfa_enabled returns True when MFA is enabled."""
         from src.app.modules.auth.crud import crud_mfa_methods
 
-        with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value={"id": "test"}):
+        with patch.object(crud_mfa_methods, "exists", new_callable=AsyncMock, return_value=True):
             result = await mfa_service.is_mfa_enabled(mock_user_id, mock_db)
 
         assert result is True
@@ -493,7 +493,7 @@ class TestIsMFAEnabled:
         """Test that is_mfa_enabled returns False when MFA is not enabled."""
         from src.app.modules.auth.crud import crud_mfa_methods
 
-        with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=None):
+        with patch.object(crud_mfa_methods, "exists", new_callable=AsyncMock, return_value=False):
             result = await mfa_service.is_mfa_enabled(mock_user_id, mock_db)
 
         assert result is False

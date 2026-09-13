@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
-from src.app.core.security.rate_limit_cache import get_tier_policy
+from src.app.core.security.rate_limit_cache import get_tier_policy_limits
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.path_utils import sanitize_path
 from src.app.core.utils.rate_limit import rate_limiter as default_rate_limiter
@@ -105,17 +105,12 @@ async def resolve_rate_limits(
     limit: int | None = None
     period: int | None = None
 
-    # 1. Tier-policy cache lookup
+    # 1. Tier-policy cache lookup (R5-MICRO: compiled per-path map instead
+    # of a linear scan over the policy list on every request)
     if tier_id is not None:
         try:
             tier_id_val = int(tier_id)
-            tier_policies = await get_tier_policy(tier_id_val)
-            if tier_policies:
-                for policy in tier_policies:
-                    if policy.get("path") == path:
-                        limit = policy.get("limit")
-                        period = policy.get("period")
-                        break
+            limit, period = await get_tier_policy_limits(tier_id_val, path)
         except (ValueError, TypeError):
             pass
 

@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+from cachetools import TTLCache
+
 from src.app.core.config import settings
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.utils import cache
@@ -24,6 +26,26 @@ async def get_redis_client() -> AsyncIterator[Any]:
         client = redis_client
         break
     yield client
+
+
+# Negative cache for the per-request IP-status hot path (mirrors the ban
+# negative cache in core/security/auto_ban.py). Only the clean outcome
+# (not blacklisted, not whitelisted) is cached: any listed IP is always
+# served fresh, so list edits take effect immediately. All four writers
+# below evict the entry, so same-process edits are instant; cross-process
+# edits converge within _IP_STATUS_NEGATIVE_TTL (accepted — same tradeoff
+# as the ban cache; IP filtering is defense-in-depth and the authoritative
+# ban check in the rate-limit path is unaffected).
+_IP_STATUS_NEGATIVE_TTL = 5
+_ip_status_negative_cache = TTLCache[str, tuple[bool, bool]](maxsize=10000, ttl=_IP_STATUS_NEGATIVE_TTL)
+
+
+def invalidate_ip_status_cache(ip_address: str | None = None) -> None:
+    """Drop one (or all) entries from the IP-status negative cache."""
+    if ip_address is None:
+        _ip_status_negative_cache.clear()
+    else:
+        _ip_status_negative_cache.pop(ip_address, None)
 
 
 class IPFilterService:
@@ -59,6 +81,7 @@ class IPFilterService:
         Returns:
             True if successful
         """
+        invalidate_ip_status_cache(ip_address)
         key = f"{self.WHITELIST_PREFIX}{ip_address}"
         data = {
             "ip_address": ip_address,
@@ -92,6 +115,7 @@ class IPFilterService:
         Returns:
             True if entry existed and was removed
         """
+        invalidate_ip_status_cache(ip_address)
         key = f"{self.WHITELIST_PREFIX}{ip_address}"
         async with get_redis_client() as client:
             if client:
@@ -117,6 +141,7 @@ class IPFilterService:
         Returns:
             True if successful
         """
+        invalidate_ip_status_cache(ip_address)
         key = f"{self.BLACKLIST_PREFIX}{ip_address}"
         data = {
             "ip_address": ip_address,
@@ -150,6 +175,7 @@ class IPFilterService:
         Returns:
             True if entry existed and was removed
         """
+        invalidate_ip_status_cache(ip_address)
         key = f"{self.BLACKLIST_PREFIX}{ip_address}"
         async with get_redis_client() as client:
             if client:
@@ -204,6 +230,10 @@ class IPFilterService:
         if not settings.security.IP_BLACKLIST_ENABLED and not settings.security.IP_WHITELIST_ENABLED:
             return False, False
 
+        cached = _ip_status_negative_cache.get(ip_address)
+        if cached is not None:
+            return cached
+
         black_key = f"{self.BLACKLIST_PREFIX}{ip_address}"
         white_key = f"{self.WHITELIST_PREFIX}{ip_address}"
 
@@ -230,6 +260,8 @@ class IPFilterService:
                         if results and idx < len(results):
                             is_whitelisted = bool(results[idx] > 0)
 
+                    if not is_blacklisted and not is_whitelisted:
+                        _ip_status_negative_cache[ip_address] = (False, False)
                     return is_blacklisted, is_whitelisted
 
         return False, False

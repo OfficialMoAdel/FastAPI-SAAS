@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.clients.billing.stripe import (
     PaymentGateway,
     StripeGateway,
+    invalidate_stripe_api_key_cache,
 )
 from src.app.clients.billing.stripe import (
     get_payment_gateway as _get_payment_gateway,
@@ -43,4 +44,5 @@ __all__ = [
     "StripeGateway",
     "get_billing_gateway",
     "get_payment_gateway",
+    "invalidate_stripe_api_key_cache",
 ]

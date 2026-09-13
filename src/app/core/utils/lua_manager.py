@@ -620,9 +620,11 @@ class LuaScriptManager:
         Returns:
             dict[str, bool]: Script name -> success status
         """
+        import asyncio
+
         results: dict[str, bool] = {}
 
-        for name, script in self._scripts.items():
+        async def _load_one(name: str, script: LuaScript) -> tuple[str, bool]:
             try:
                 # SCRIPT LOAD returns the server's SHA1 hash
                 loaded_sha = await redis.script_load(script.source)
@@ -640,12 +642,16 @@ class LuaScriptManager:
                     )
 
                 script.loaded = True
-                results[name] = True
                 logger.debug("Preloaded script ''", name=name)
+                return name, True
 
             except Exception as e:
                 logger.error("Failed to preload script '':", name=name, error=e)
-                results[name] = False
+                return name, False
+
+        # K10: concurrent SCRIPT LOAD — one startup latency, not N sequential RTTs.
+        outcomes = await asyncio.gather(*(_load_one(name, script) for name, script in self._scripts.items()))
+        results = dict(outcomes)
 
         self._preloaded = True
         loaded_count = sum(results.values())

@@ -6,7 +6,9 @@ from src.app.core.security.rate_limit_cache import (
     _POLICY_INVALIDATION_CHANNEL,
     POLICY_KEY_PREFIX,
     _tier_policy_l1,
+    _tier_policy_path_map,
     get_tier_policy,
+    get_tier_policy_limits,
     invalidate_tier_policy,
     warm_policy_cache,
 )
@@ -15,6 +17,7 @@ from src.app.core.security.rate_limit_cache import (
 @pytest.fixture(autouse=True)
 def clear_l1_cache():
     _tier_policy_l1.clear()
+    _tier_policy_path_map.clear()
 
 @pytest.fixture
 def mock_redis():
@@ -124,3 +127,54 @@ async def test_invalidate_tier_policy_exception(mock_redis) -> None:
     pipe.execute.side_effect = Exception("Redis pipeline error")
     result = await invalidate_tier_policy(1)
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_get_tier_policy_limits_compile_and_hit(mock_redis) -> None:
+    mock_redis.get.return_value = '[{"path": "/api/v1/posts", "limit": 120, "period": 60}]'
+
+    limit, period = await get_tier_policy_limits(1, "/api/v1/posts")
+    assert limit == 120
+    assert period == 60
+
+    # Second call must serve from the compiled path map (no extra Redis GET).
+    assert 1 in _tier_policy_path_map
+    calls_before = mock_redis.get.call_count
+    limit, period = await get_tier_policy_limits(1, "/api/v1/posts")
+    assert limit == 120
+    assert period == 60
+    assert mock_redis.get.call_count == calls_before
+
+
+@pytest.mark.asyncio
+async def test_get_tier_policy_limits_path_miss(mock_redis) -> None:
+    mock_redis.get.return_value = '[{"path": "/api/v1/posts", "limit": 120, "period": 60}]'
+
+    limit, period = await get_tier_policy_limits(1, "/api/v1/other")
+    assert limit is None
+    assert period is None
+
+
+@pytest.mark.asyncio
+async def test_get_tier_policy_limits_no_policies(mock_redis) -> None:
+    mock_redis.get.return_value = None
+
+    limit, period = await get_tier_policy_limits(1, "/api/v1/posts")
+    assert limit is None
+    assert period is None
+    # Falsy tier policies must not poison the map with an empty dict.
+    assert 1 not in _tier_policy_path_map
+
+
+@pytest.mark.asyncio
+async def test_policy_invalidation_clears_path_map(mock_redis) -> None:
+    mock_redis.get.return_value = '[{"path": "/api/v1/posts", "limit": 120, "period": 60}]'
+    await get_tier_policy_limits(1, "/api/v1/posts")
+    assert 1 in _tier_policy_path_map
+
+    # Simulate the pub/sub invalidation handler for a single tier.
+    from src.app.core.security.rate_limit_cache import _on_policy_invalidation
+
+    _on_policy_invalidation("1")
+    assert 1 not in _tier_policy_path_map
+    assert 1 not in _tier_policy_l1

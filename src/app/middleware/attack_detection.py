@@ -239,6 +239,11 @@ class AttackDetectionMiddleware:
 
     # P1: bodies larger than this are scanned in the executor (bytes).
     _BODY_OFFLOAD_THRESHOLD = 16 * 1024
+    # Cap on buffered body bytes held for the pattern scan. Bodies beyond
+    # this are unscannable by policy (see _scan_request) — draining stops
+    # early and the remainder streams to downstream live via delegation, so
+    # a 10MB chunked upload never sits fully buffered here.
+    _MAX_SCAN_SIZE = 128 * 1024
     """Middleware to detect and handle malicious attack patterns.
 
     Execution order (in relation to other middleware):
@@ -310,8 +315,15 @@ class AttackDetectionMiddleware:
         return text.encode("utf-8", errors="replace")
 
     @staticmethod
-    async def _drain_body(receive: Receive) -> tuple[bytes, Receive]:
-        """Drain the request body and return (body, replay_receive).
+    async def _drain_body(receive: Receive) -> tuple[bytes | None, Receive]:
+        """Drain the request body; return (body, replay_receive).
+
+        Returns ``None`` as the body when the stream already exceeds
+        ``_MAX_SCAN_SIZE`` — the caller skips the pattern scan (same verdict
+        as the oversized-body path in ``_scan_request``). In that case only
+        the prefix is buffered; ``replay_receive`` serves the buffered
+        prefix first, then delegates live to the underlying channel so the
+        remainder streams to downstream without ever being held in memory.
 
         P1-6: native ASGI has no _CachedRequest replay, so the middleware
         drains ``receive`` itself and hands downstream a wrapped channel that
@@ -322,25 +334,44 @@ class AttackDetectionMiddleware:
         TestClient; zombie generators on real servers).
         """
         chunks: list[bytes] = []
+        total = 0
+        complete = False
         while True:
             message = await receive()
             if message["type"] != "http.request":
-                break  # disconnect or terminal frame: scan what we have
+                complete = True  # disconnect or terminal frame: scan what we have
+                break
             chunk = message.get("body", b"")
             if chunk:
                 chunks.append(chunk)
+                total += len(chunk)
             if not message.get("more_body", False):
+                complete = True
                 break
-        body = b"".join(chunks)
+            if total > AttackDetectionMiddleware._MAX_SCAN_SIZE:
+                break  # oversized: prefix buffered, rest streams via delegation
+        body: bytes | None = (
+            None if (not complete and total > AttackDetectionMiddleware._MAX_SCAN_SIZE) else b"".join(chunks)
+        )
 
-        replayed = False
+        pending = list(chunks)
 
         async def replay_receive() -> Message:
-            nonlocal replayed
-            if replayed:
-                return await receive()
-            replayed = True
-            return {"type": "http.request", "body": body, "more_body": False}
+            if pending:
+                chunk = pending.pop(0)
+                return {
+                    "type": "http.request",
+                    "body": chunk,
+                    "more_body": bool(pending) or not complete,
+                }
+            if complete:
+                # Fully drained and replayed: mirror the old single-shot
+                # replay (terminal empty frame), then delegate.
+                complete_consumed = getattr(replay_receive, "_terminal_sent", False)
+                if not complete_consumed:
+                    setattr(replay_receive, "_terminal_sent", True)
+                    return {"type": "http.request", "body": b"", "more_body": False}
+            return await receive()
 
         return body, replay_receive
 
@@ -398,9 +429,9 @@ class AttackDetectionMiddleware:
             # BUG FIX: Scan all content types to prevent bypass via multipart/form-data or other types
             skip_body = False
             # NOTE: ATTACK_DETECTION_MAX_SCAN_SIZE has no Settings field
-            # (phantom knob). Keep the 128KB default here; adding a real field
-            # is tracked with the typed-settings sweep.
-            MAX_SCAN_SIZE = 128 * 1024
+            # (phantom knob). The 128KB default lives on _MAX_SCAN_SIZE;
+            # adding a real field is tracked with the typed-settings sweep.
+            MAX_SCAN_SIZE = self._MAX_SCAN_SIZE
             if content_length:
                 try:
                     if int(content_length) > MAX_SCAN_SIZE:
@@ -415,9 +446,17 @@ class AttackDetectionMiddleware:
             if not skip_body:
                 try:
                     body_to_scan, receive = await self._drain_body(receive)
-                    body_size = len(body_to_scan)
 
-                    if body_to_scan:
+                    if body_to_scan is None:
+                        # Stream already exceeded MAX_SCAN_SIZE during drain:
+                        # only the prefix was buffered, the rest is streaming
+                        # downstream live. Same skip verdict as below.
+                        logger.warning(
+                            "Skipping attack scan of oversized body | size>%d (chunked, capped drain)",
+                            MAX_SCAN_SIZE,
+                        )
+                    elif body_to_scan:
+                        body_size = len(body_to_scan)
                         # Consistent with the Content-Length pre-check above:
                         # bodies larger than MAX_SCAN_SIZE skip the pattern scan
                         # and continue. Rejecting here (413) would close no gap —

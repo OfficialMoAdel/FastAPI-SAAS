@@ -6,10 +6,11 @@ Proves byte-identical observable behavior after removing per-request work:
   last-wins semantics (matching the old dict-lookup behavior).
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.app.core.config import EnvironmentOption
 from src.app.middleware.gzip_filter import GZipFilterMiddleware
 from src.app.middleware.security_headers import _PERMISSIONS_POLICY, SecurityHeadersMiddleware
 
@@ -34,9 +35,14 @@ class TestSecurityHeadersPrebuilt:
             await send({"type": "http.response.start", "status": 200, "headers": []})
             await send({"type": "http.response.body", "body": b"ok"})
 
-        mw2 = SecurityHeadersMiddleware(app=fake_app, hsts_max_age=60)
         # Test env is LOCAL (HSTS off by default); force the emission path.
-        mw2.enable_hsts_env = True
+        # R5-MICRO: header pairs are frozen at __init__, so force the env gate
+        # BEFORE construction instead of mutating the instance afterwards.
+        with patch(
+            "src.app.middleware.security_headers.settings.env.ENVIRONMENT",
+            EnvironmentOption.STAGING,
+        ):
+            mw3 = SecurityHeadersMiddleware(app=fake_app, hsts_max_age=60)
 
         async def send(msg):
             if msg["type"] == "http.response.start":
@@ -45,7 +51,7 @@ class TestSecurityHeadersPrebuilt:
                     # case-insensitive, so normalize for assertion.
                     seen[k.decode().lower()] = v.decode()
 
-        await mw2(_http_scope([]), _null_receive, send)
+        await mw3(_http_scope([]), _null_receive, send)
         assert seen["strict-transport-security"] == "max-age=60; includeSubDomains; preload"
         assert seen["permissions-policy"] == _PERMISSIONS_POLICY
         assert seen["x-frame-options"] == "DENY"

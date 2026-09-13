@@ -249,15 +249,18 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
         async with redis_client.pipeline() as pipe:
             for tenant in tenants:
                 cache_key = f"tenant:slug:{tenant.slug}"
+                # R5-E: the orjson bytes payload field set must match the
+                # middleware L3 fill exactly (tenant.py::_fill_l3_cache). No
+                # consumer reads the extra counters/flags from this key —
+                # storage counters are authoritative in the DB and feature
+                # flags use their own cache — so carrying them only served
+                # stale snapshots.
                 cache_data = orjson.dumps(
                     {
                         "id": str(tenant.id),
                         "slug": tenant.slug,
                         "name": tenant.name,
                         "is_active": tenant.is_active,
-                        "feature_flags": tenant.feature_flags,
-                        "storage_usage_bytes": tenant.storage_usage_bytes,
-                        "file_count": tenant.file_count,
                     }
                 )
                 pipe.setex(cache_key, TENANT_CACHE_TTL, cache_data)

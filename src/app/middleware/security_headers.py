@@ -10,7 +10,6 @@ Adds standard security headers to all responses:
 - Permissions-Policy
 """
 
-from starlette.datastructures import MutableHeaders
 from structlog import get_logger
 
 from src.app.core.config import EnvironmentOption, settings
@@ -19,8 +18,7 @@ logger = get_logger(__name__)
 
 # P2 micro: static header values built once at import, not per response.
 _PERMISSIONS_POLICY = (
-    "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
-    "magnetometer=(), microphone=(), payment=(), usb=()"
+    "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
 )
 
 
@@ -76,26 +74,35 @@ class SecurityHeadersMiddleware:
         # (plain HTTP dev servers must not receive HSTS headers).
         self.enable_hsts_env = settings.env.ENVIRONMENT != EnvironmentOption.LOCAL
 
+        # R5-MICRO (plan §4): precompute all header (name, value) byte pairs
+        # once at construction. Per response we only scan existing header
+        # names (lowercased) and append the missing pairs — no per-response
+        # MutableHeaders.setdefault calls or str->bytes encoding.
+        pairs: list[tuple[bytes, bytes]] = [
+            (b"x-content-type-options", b"nosniff"),
+            (b"x-frame-options", self.frame_options.encode("ascii")),
+            (b"x-xss-protection", b"0"),
+            (b"referrer-policy", b"strict-origin-when-cross-origin"),
+            (b"permissions-policy", _PERMISSIONS_POLICY.encode("ascii")),
+        ]
+        if self.enable_csp:
+            pairs.append((b"content-security-policy", self.csp_policy.encode("ascii")))
+        if self.enable_hsts and self.enable_hsts_env:
+            pairs.append((b"strict-transport-security", self._hsts_value.encode("ascii")))
+        self._header_pairs = tuple(pairs)
+
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
-                headers = MutableHeaders(scope=message)
-
-                # XSS Prevention Headers
-                headers.setdefault("X-Content-Type-Options", "nosniff")
-                headers.setdefault("X-Frame-Options", self.frame_options)
-                headers.setdefault("X-XSS-Protection", "0")
-                headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-                headers.setdefault("Permissions-Policy", _PERMISSIONS_POLICY)
-
-                if self.enable_csp:
-                    headers.setdefault("Content-Security-Policy", self.csp_policy)
-
-                if self.enable_hsts and self.enable_hsts_env:
-                    headers.setdefault("Strict-Transport-Security", self._hsts_value)
+                # R5-MICRO: setdefault semantics without MutableHeaders —
+                # scan existing names once, append only the missing pairs.
+                existing = {name.lower() for name, _ in message["headers"]}
+                missing = [pair for pair in self._header_pairs if pair[0] not in existing]
+                if missing:
+                    message["headers"] = [*message["headers"], *missing]
 
             await send(message)
 

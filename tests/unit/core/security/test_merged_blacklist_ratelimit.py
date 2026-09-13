@@ -299,9 +299,9 @@ class TestMergedMiddlewarePath:
                 return_value=claims,
             ),
             patch(
-                "src.app.core.security.rate_policy.get_tier_policy",
+                "src.app.core.security.rate_policy.get_tier_policy_limits",
                 new_callable=AsyncMock,
-                return_value=[],
+                return_value=(None, None),
             ),
             patch(
                 "src.app.core.security.token_blacklist_cache._get_available_redis_client_for_blacklist",

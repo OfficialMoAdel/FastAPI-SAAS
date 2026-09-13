@@ -6,8 +6,9 @@ Supports both development (pretty-printed) and production (JSON) formats.
 
 import logging
 import os
+import queue
 import sys
-from logging.handlers import RotatingFileHandler
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 from typing import cast
 
@@ -28,6 +29,12 @@ LOG_FILE_PATH = os.path.join(LOG_DIR, "app.log")
 
 # Determine if we're in production
 IS_PRODUCTION = settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION
+
+
+# K1: background listener thread target — restarted if setup_logging() is
+# called again (e.g. in tests). Stopped via shutdown_logging() from the
+# lifespan teardown so buffered records flush before process exit.
+_log_listener: QueueListener | None = None
 
 
 def get_log_level() -> int:
@@ -103,16 +110,39 @@ def setup_logging() -> None:
     file_handler.setLevel(log_level)
 
     # Configure root logger
+    # K1: request threads only enqueue records; the console + rotating-file
+    # handlers run on a dedicated QueueListener thread, so disk/console I/O
+    # never blocks the event loop or request handlers.
+    global _log_listener
+    if _log_listener is not None:
+        _log_listener.stop()
+        _log_listener = None
+    log_queue: queue.Queue[logging.LogRecord] = queue.Queue(-1)
+    queue_handler = QueueHandler(log_queue)
+    queue_handler.setLevel(log_level)
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
     root_logger.handlers.clear()
-    root_logger.addHandler(console_handler)
-    root_logger.addHandler(file_handler)
+    root_logger.addHandler(queue_handler)
+    _log_listener = QueueListener(log_queue, console_handler, file_handler)
+    _log_listener.start()
 
     # Reduce noise from third-party libraries
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+def shutdown_logging() -> None:
+    """Stop the background log listener, flushing buffered records.
+
+    Called from the lifespan teardown. Safe to call when logging was never
+    set up or was already shut down.
+    """
+    global _log_listener
+    if _log_listener is not None:
+        _log_listener.stop()
+        _log_listener = None
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:

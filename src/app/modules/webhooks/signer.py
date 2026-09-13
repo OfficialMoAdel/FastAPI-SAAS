@@ -29,6 +29,18 @@ def canonical_payload_bytes(payload: dict) -> bytes:
     return json.dumps(payload, sort_keys=True).encode("utf-8")
 
 
+def sign_canonical_bytes(canonical: bytes, secret: str, timestamp: int) -> str:
+    """Return Stripe-style ``t=<ts>,v1=<hex>`` for pre-canonicalized bytes.
+
+    The signed message is ``f\"{timestamp}.\".encode() + canonical``.
+    Lets callers that already hold canonical bytes (HTTP content, rotation
+    second-signature) skip re-serializing the payload dict per signature.
+    """
+    signed = f"{timestamp}.".encode() + canonical
+    digest = hmac_sha256_hex(secret, signed)
+    return f"t={timestamp},v1={digest}"
+
+
 def sign_payload(payload: dict, secret: str, timestamp: int) -> str:
     """Return Stripe-style ``t=<ts>,v1=<hex>`` for ``payload``.
 
@@ -39,10 +51,7 @@ def sign_payload(payload: dict, secret: str, timestamp: int) -> str:
 
     The signed message is ``f\"{timestamp}.\".encode() + canonical_bytes``.
     """
-    payload_bytes = canonical_payload_bytes(payload)
-    signed = f"{timestamp}.".encode() + payload_bytes
-    digest = hmac.new(secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
-    return f"t={timestamp},v1={digest}"
+    return sign_canonical_bytes(canonical_payload_bytes(payload), secret, timestamp)
 
 
 def hmac_sha256_hex(secret: str, data: bytes) -> str:

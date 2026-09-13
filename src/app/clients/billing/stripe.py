@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 import stripe
+from cachetools import TTLCache
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
@@ -23,6 +24,25 @@ _TRANSIENT_STRIPE_ERRORS: tuple[type[Exception], ...] = (
     stripe.APIConnectionError,
     stripe.RateLimitError,
 )
+
+# K5: per-tenant resolved Stripe API key cache. get_api_key() runs one SELECT
+# + one decrypt per billing call; the key only changes via
+# StripeSettingsService.update_settings, which invalidates this cache, so a
+# short TTL is a safe second layer (not the correctness mechanism).
+_STRIPE_API_KEY_CACHE_TTL_S = 300
+_stripe_api_key_cache = TTLCache[str, str | None](maxsize=1024, ttl=_STRIPE_API_KEY_CACHE_TTL_S)
+
+
+def invalidate_stripe_api_key_cache(tenant_id: Any = None) -> None:
+    """Drop cached Stripe API key(s).
+
+    Called by StripeSettingsService.update_settings after create/update.
+    tenant_id=None clears the whole cache (paranoia path; not used today).
+    """
+    if tenant_id is None:
+        _stripe_api_key_cache.clear()
+    else:
+        _stripe_api_key_cache.pop(str(tenant_id), None)
 
 
 class PaymentGateway(Protocol):
@@ -77,11 +97,21 @@ class StripeGateway:
             return self._api_key
 
         api_key = None
+        cache_key: str | None = None
         if tenant_id is not None and self.db is not None:
             from src.app.core.security.encryption import CredentialEncryption
             from src.app.modules.billing.crud import crud_stripe_settings
 
-            record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant_id, _allow_unscoped=True)
+            cache_key = str(tenant_id)
+            cache_lookup_done = cache_key in _stripe_api_key_cache
+            record: dict[str, Any] | None = None
+            if cache_lookup_done:
+                cached = _stripe_api_key_cache[cache_key]
+                if cached:
+                    return cached
+                # Cached miss (None) — skip the SELECT, fall to global key below.
+            else:
+                record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant_id, _allow_unscoped=True)
             if record is not None and not self._record_belongs_to_tenant(record, tenant_id):
                 # P1-2: without tenant context the _allow_unscoped escape hatch
                 # returns the table's first row regardless of tenant. Never use
@@ -94,6 +124,10 @@ class StripeGateway:
                 record = None
             if record and record.get("encrypted_secret_key"):
                 api_key = CredentialEncryption().decrypt_column(record["encrypted_secret_key"])
+            if cache_key is not None and not cache_lookup_done:
+                # Cache hits AND misses (None = no tenant key). Invalidation
+                # on update_settings is the correctness mechanism; TTL is backup.
+                _stripe_api_key_cache[cache_key] = api_key
 
         if not api_key:
             secret_key_obj = settings.billing.STRIPE_SECRET_KEY

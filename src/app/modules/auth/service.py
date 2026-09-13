@@ -465,7 +465,7 @@ class AuthService:
         # absolute_exp, original iat and the stable sid. The token string has
         # already been signature-verified by verify_token() above; this decode
         # is a local operation to surface claims TokenData does not expose.
-        from src.app.core.security.jwt_utils import decode_jwt_token
+        from src.app.core.security.jwt_utils import decode_jwt_token, extract_claim_unverified, extract_jti_unverified
 
         old_refresh_payload = await decode_jwt_token(refresh_token) or {}
 
@@ -502,9 +502,12 @@ class AuthService:
             # A2/A3: rotate with carried session claims instead of minting fresh ones
             new_access_token, new_refresh_token = await TokenIssuer.rotate_token_pair(token_data, old_refresh_payload)
 
-            # Blacklist the used refresh token (Rotation) AFTER new tokens are successfully generated
-            # We don't pass the payload here so that blacklist_token decodes it fully to get the 'exp' claim
-            await blacklist_token(token=refresh_token, db=db)
+            # Blacklist the used refresh token (Rotation) AFTER new tokens are successfully generated.
+            # Thread the already-verified payload: it is a verified decode of
+            # this exact token string (verify_token() above + decode_jwt_token()
+            # below both check the signature), so blacklist_token() reads
+            # 'exp'/'jti' directly instead of performing a third verified decode.
+            await blacklist_token(token=refresh_token, db=db, payload=old_refresh_payload)
 
             # P2-1: plant a rotation marker so a replayed old token is
             # detectable as theft (refresh-reuse → family revocation).
@@ -519,8 +522,19 @@ class AuthService:
                         settings.crypt.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
                     )
                 )
-                new_payload = await decode_jwt_token(new_refresh_token) or {}
-                if redis_client and user_data.jti and new_payload.get("jti"):
+                # The new token was minted by this process (rotate_token_pair
+                # above), so its signature is valid by construction — read jti
+                # and exp with cheap unverified base64 extraction instead of
+                # another verified decode.
+                new_jti = extract_jti_unverified(new_refresh_token)
+                new_exp_raw = extract_claim_unverified(new_refresh_token, "exp")
+                new_exp = now_ts + marker_ttl
+                if new_exp_raw is not None:
+                    try:
+                        new_exp = float(new_exp_raw)
+                    except (TypeError, ValueError):
+                        pass
+                if redis_client and user_data.jti and new_jti:
                     await redis_client.setex(
                         f"refresh_rotated:{user_data.jti}",
                         marker_ttl,
@@ -528,8 +542,8 @@ class AuthService:
                             {
                                 "user_id": db_user["id"],
                                 "sid": user_data.sid,
-                                "new_jti": new_payload["jti"],
-                                "new_exp": new_payload.get("exp", now_ts + marker_ttl),
+                                "new_jti": new_jti,
+                                "new_exp": new_exp,
                             }
                         ),
                     )
@@ -563,6 +577,9 @@ class AuthService:
             request=request,
             verify=False,
             device_label=user_agent,
+            # The carried sid is already in hand (rotation preserves it) —
+            # no need to re-parse the minted access token to recover it.
+            session_id=old_refresh_payload.get("sid") or user_data.sid,
         )
 
         return {

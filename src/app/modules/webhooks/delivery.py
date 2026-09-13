@@ -40,7 +40,7 @@ from src.app.modules._base import ModelNotFoundError
 from src.app.modules.audit_logs import audit
 from src.app.modules.webhooks.http_client import get_webhook_http_client
 from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint
-from src.app.modules.webhooks.signer import canonical_payload_bytes, sign_payload
+from src.app.modules.webhooks.signer import canonical_payload_bytes, sign_canonical_bytes
 
 if TYPE_CHECKING:
     from arq.connections import ArqRedis
@@ -273,7 +273,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
         active_secret = decrypt_data(endpoint.signing_secret)
     else:
         active_secret = decrypt_data(endpoint.secret)
-    signature_header = sign_payload(delivery.payload, active_secret, send_timestamp)
+    signature_header = sign_canonical_bytes(payload_bytes, active_secret, send_timestamp)
     if (
         endpoint.old_signing_secret
         and endpoint.old_secret_expires_at
@@ -290,7 +290,9 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
                 # `t=A,v1=X,t=A,v1=Y`, which third-party Stripe-compatible
                 # verifiers reject. The in-repo verifier accepts both
                 # forms (it collects every v1= segment).
-                old_digest = sign_payload(delivery.payload, decrypt_data(endpoint.old_signing_secret), send_timestamp)
+                old_digest = sign_canonical_bytes(
+                    payload_bytes, decrypt_data(endpoint.old_signing_secret), send_timestamp
+                )
                 signature_header = f"{signature_header},v1={old_digest.split('v1=', 1)[1]}"
             except Exception as old_sig_err:
                 logger.error(

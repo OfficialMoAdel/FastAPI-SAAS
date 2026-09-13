@@ -628,8 +628,9 @@ class MFAService:
         Returns:
             True if MFA is enabled, False otherwise.
         """
-        mfa_method_dict: dict[str, Any] | None = await crud_mfa_methods.get(db=db, user_id=user_id, type="totp")
-        return mfa_method_dict is not None
+        # Existence-only check: the login hot path calls this for every user
+        # (~95% have no MFA), so avoid materializing the full method row.
+        return await crud_mfa_methods.exists(db=db, user_id=user_id, type="totp")
 
     async def get_mfa_status(
         self,

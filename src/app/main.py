@@ -7,9 +7,8 @@ load_dotenv()
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from crudadmin import CRUDAdmin
 from fastapi import FastAPI
 from fastapi.responses import ORJSONResponse
 from redis.exceptions import RedisError  # P1-4
@@ -29,6 +28,11 @@ from src.app.middleware.request_id import RequestIDMiddleware
 from src.app.middleware.security_headers import SecurityHeadersMiddleware
 from src.app.middleware.tenant import TenantMiddleware
 from src.app.shared.exceptions import ServiceUnavailableError
+
+if TYPE_CHECKING:
+    # K10: annotation-only use — defer the crudadmin import out of module
+    # import time. _init_admin() imports the real module at runtime.
+    from crudadmin import CRUDAdmin
 
 # admin interface initialized inside lifespan to eliminate import-time side effects
 admin: "CRUDAdmin | None" = None
@@ -271,6 +275,9 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         yield
 
         await _teardown_security_listeners()
+        from src.app.core.logger import shutdown_logging
+
+        shutdown_logging()
 
 
 app = create_application(

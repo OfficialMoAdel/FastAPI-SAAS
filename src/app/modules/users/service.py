@@ -209,8 +209,10 @@ class UserService:
         # OPTIMIZATION FIX: Fetch tenant once and reuse throughout method (#16)
         tenant = get_current_tenant()  # Single fetch, reused throughout
 
-        # Optimized: Check for duplicate email or username in single query
-        stmt = select(User).where(
+        # Optimized: Check for duplicate email or username in single query.
+        # id-only projection — only existence is tested, so no column data
+        # (notably hashed_password) is ever fetched or materialized.
+        stmt = select(User.id).where(
             or_(User.email == user.email, User.username == user.username), User.is_deleted.is_(False)
         )
 

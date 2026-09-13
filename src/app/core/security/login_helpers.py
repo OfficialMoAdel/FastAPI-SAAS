@@ -87,6 +87,7 @@ async def register_login_session(
     request: Request | None = None,
     verify: bool = True,
     device_label: str | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Register session in Redis with device info.
 
@@ -102,9 +103,14 @@ async def register_login_session(
         access_token: The issued access token.
         verify: If True, uses verified jwt decoding. If False, extracts unverified.
             (e.g. "Magic Link Login"). Defaults to the generic fallback.
+        session_id: Optional already-known session id (the stable ``sid``
+            claim). When provided, the token is not parsed at all — used by
+            callers that already hold the sid (rotation carry, issue_session).
     """
     try:
-        if verify:
+        if session_id is not None:
+            resolved_session_id = session_id
+        elif verify:
             # SECURITY: Validate token length and verify signature for session registration
             if not validate_jwt_length(access_token):
                 logger.warning("JWT decode blocked: token too long")
@@ -114,9 +120,9 @@ async def register_login_session(
             # A3: sessions are keyed by the stable sid claim (shared by the
             # access and refresh tokens of one login); fall back to jti for
             # tokens minted before sid existed.
-            session_id = decoded_token.get("sid") or decoded_token.get("jti", access_token[:32])
+            resolved_session_id = decoded_token.get("sid") or decoded_token.get("jti", access_token[:32])
         else:
-            session_id = extract_claim_unverified(access_token, "sid") or (
+            resolved_session_id = extract_claim_unverified(access_token, "sid") or (
                 extract_jti_unverified(access_token) or access_token[:32]
             )
 
@@ -132,7 +138,7 @@ async def register_login_session(
 
         result = await global_session_manager.register_session(
             user_id=user_id,
-            session_id=session_id,
+            session_id=resolved_session_id,
             device_info=device_info_str,
         )
         # S-4: register_session signals failure two ways — raising RedisError
