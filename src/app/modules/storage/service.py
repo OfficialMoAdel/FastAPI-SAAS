@@ -411,6 +411,13 @@ class StorageService:
         kind = filetype.guess(head)
         actual_mime = kind.mime if kind else None
 
+        # R3-1: sniff-gate covers what libmagic can see. Binary claims with
+        # no detectable signature are rejected; a known actual MIME that
+        # contradicts the claim is rejected unless the tenant allowlist
+        # permits it. Text claims (filetype returns None for prose) cannot
+        # be sniff-verified without false-positiving legitimate files, so
+        # they pass here — compensated at serve time by forced-attachment
+        # on every path (API/S3/Azure) plus nosniff on the API download.
         is_binary_claim = mime_type.startswith(("image/", "video/", "audio/", "application/pdf"))
         if is_binary_claim and not actual_mime:
             raise FileTypeNotAllowedError("Invalid file content: missing expected file signature.")

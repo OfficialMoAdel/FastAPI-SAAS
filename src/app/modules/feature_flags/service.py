@@ -318,18 +318,43 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
         return await _with_flag_lock(cache_key, _load())
 
+    async def get_flag_value(self, tenant_id: UUID, feature_name: str, default: Any = None) -> Any:
+        """Get the typed value of a feature flag for a tenant.
+
+        Unlike :meth:`is_enabled` (boolean-only), this honors ``value_type``:
+        string/number/json values from a tenant override or the legacy
+        tenant JSONB store are returned as-is. Resolution order mirrors
+        ``is_enabled``: tenant override → registry default → tenant JSONB →
+        ``default``. The registry ``default_value`` column is boolean, so
+        non-boolean defaults only exist in overrides / tenant JSONB.
+        """
+        flag = await self.get_flag_by_key_or_none(feature_name)
+        if flag is not None:
+            flag_id = int(get_user_attr(flag, "id", 0))
+            override = await self.get_override(flag_id, tenant_id)
+            if override is not None:
+                custom_value = get_user_attr(override, "custom_value")
+                if custom_value is not None:
+                    if isinstance(custom_value, dict):
+                        if "value" in custom_value:
+                            return custom_value["value"]
+                        if "enabled" in custom_value:
+                            return custom_value["enabled"]
+                    return custom_value
+            return get_user_attr(flag, "default_value", False)
+        tenant_flags = await self.get_tenant_flags(tenant_id)
+        return tenant_flags.get(feature_name, default)
+
     async def is_enabled(self, tenant_id: UUID, feature_name: str, default: bool = False) -> bool:
-        """
-        Check if a feature is enabled for a tenant.
+        """Check if a feature is enabled for a tenant.
 
-        Args:
-            tenant_id: Tenant UUID
-            feature_name: Name of the feature flag
-            default: Default value if flag is not set
-
-        Returns:
-            True if feature is enabled, False otherwise
+        Boolean-only: string/number/json flags are NOT coerced here (a
+        ``"false"`` string is not ``False``) — non-boolean flags evaluated
+        through this method read as ``False`` unless literally ``"true"``.
+        Use :meth:`get_flag_value` or :meth:`get_tenant_flags` for typed
+        values.
         """
+
         from src.app.core.utils.cache import build_tenant_key
 
         cache_key = build_tenant_key(f"feature:{feature_name}", tenant_id)

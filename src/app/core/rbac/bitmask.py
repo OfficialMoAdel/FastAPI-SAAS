@@ -181,6 +181,14 @@ class PermissionBitmask:
         Returns:
             True if all permissions are set in mask
         """
+        # R4-1: fail closed on unknown slugs. encode() skips unregistered
+        # slugs, so without this a typo'd requirement contributes 0 bits and
+        # (mask & 0) == 0 passes vacuously. An unverifiable requirement is
+        # denied, never granted. (has_any_permission needs no guard:
+        # unknown-only input yields required_mask=0 and (mask & 0) != 0 is
+        # already False.)
+        if any(slug not in _PERMISSION_BIT_MAP for slug in permission_slugs):
+            return False
         required_mask = PermissionBitmask.encode(permission_slugs)
         return (mask & required_mask) == required_mask
 

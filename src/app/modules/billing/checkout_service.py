@@ -85,6 +85,14 @@ class CheckoutService:
                 },
                 "metadata": {"tenant_id": str(tenant.id), "user_id": str(user_id), "plan_id": str(data.plan_id)},
             }
+            # R2-2: forward a caller-supplied idempotency key when present.
+            # The client mints one UUID per checkout intent for double-click /
+            # double-POST protection; omitted → gateway's per-attempt key
+            # (retry-dedupe only). Deliberately NOT derived server-side from
+            # (tenant, plan, interval): Stripe holds keys 24h, so a stable
+            # derived key would replay a possibly-expired session — see B16.
+            if data.idempotency_key:
+                session_kwargs["idempotency_key"] = data.idempotency_key
 
             if customer_id:
                 session_kwargs["customer"] = customer_id

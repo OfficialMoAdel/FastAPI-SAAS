@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import cast
 
 import stripe
 
@@ -78,19 +77,24 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
             )
             return
 
-        # S2-02 FIX: Validate lifecycle transition to prevent resurrecting canceled/expired subscriptions
-        effective_status = new_status
+        # S2-02 FIX: Validate lifecycle transition to prevent resurrecting canceled/expired subscriptions.
+        # R2-1: early-return on invalid transition (mirrors handle_subscription_deleted).
+        # The out-of-order event's period timestamps are stale too, so nothing
+        # is written — not just the status. Downgrade below keys off the
+        # event's new_status only when the transition was accepted.
         current_status = getattr(db_subscription_locked, "status", None)
-        if isinstance(current_status, str):
-            if current_status != new_status and not is_valid_transition(current_status, new_status):
-                _pkg.logger.info(
-                    "Skipping invalid subscription transition (out-of-order webhook)",
-                    stripe_subscription_id=stripe_subscription_id,
-                    current_status=current_status,
-                    target_status=str(new_status),
-                )
-                effective_status = cast(SubscriptionStatus, current_status)
-                update_data.status = effective_status
+        if (
+            isinstance(current_status, str)
+            and current_status != new_status
+            and not is_valid_transition(current_status, new_status)
+        ):
+            _pkg.logger.info(
+                "Skipping invalid subscription transition (out-of-order webhook)",
+                stripe_subscription_id=stripe_subscription_id,
+                current_status=current_status,
+                target_status=str(new_status),
+            )
+            return
 
         await _pkg.crud_user_subscriptions.update(
             db=db,
@@ -98,7 +102,9 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
             id=subscription_id,
         )
 
-        # M-04: Explicitly downgrade user to free tier if canceled/expired
+        # M-04: Explicitly downgrade user to free tier if canceled/expired.
+        # R2-1: safe to key off new_status — rejected transitions returned
+        # above, so reaching here means the transition was accepted.
         if new_status in ("canceled", "expired"):
             from src.app.modules.users import UserService
 

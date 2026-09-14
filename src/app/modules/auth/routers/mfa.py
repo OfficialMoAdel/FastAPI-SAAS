@@ -332,14 +332,20 @@ async def complete_mfa_login(
     client_ip = get_client_ip(fastapi_request)
 
     token_store = get_mfa_pending_token_manager(client)
-    # S-M3: read the token's remaining TTL BEFORE the atomic GETDEL consume —
-    # it is the clock for the IP-rotation grace window below (the common
-    # same-IP path discards it and pays no extra RTT beyond this single read).
-    remaining_ttl = await token_store.remaining_ttl(request.mfa_token)
-    token_data = await token_store.consume(request.mfa_token)
+    # R1-1: peek first, verify TOTP, consume only on success — a typo'd code
+    # must not destroy the 5-minute pending token (previously consume ran
+    # before verification, forcing a full password re-login on any mistake).
+    # Double-submit is still single-flighted: the TOTP replay marker rejects
+    # a reused code, and the consume below rejects a reused pending token.
+    token_data = await token_store.peek(request.mfa_token)
 
     if not token_data or token_data.get("scope") != "mfa_pending":
         raise UnauthorizedException("Invalid or expired MFA pending token")
+
+    # S-M3: read the token's remaining TTL while it still exists — it is the
+    # clock for the IP-rotation grace window below (the common same-IP path
+    # discards it and pays no extra RTT beyond this single read).
+    remaining_ttl = await token_store.remaining_ttl(request.mfa_token)
 
     stored_ip = token_data.get("ip_address")
     if stored_ip and stored_ip != client_ip:
@@ -383,6 +389,15 @@ async def complete_mfa_login(
 
     if not verify_result.get("valid"):
         raise UnauthorizedException("Invalid MFA code")
+
+    # R1-1: consume the pending token only after the second factor passed.
+    # A concurrent double-submit that already consumed it lands here with
+    # None → rejected, so exactly one issuance happens per pending token.
+    # (If issuance below fails after this consume, the user re-logs in —
+    # the safe direction: never two sessions from one pending token.)
+    consumed = await token_store.consume(request.mfa_token)
+    if consumed is None:
+        raise UnauthorizedException("Invalid or expired MFA pending token")
 
     # Get user info for token generation
     user_service = get_user_service(db)

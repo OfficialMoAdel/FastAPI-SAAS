@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.events import EventPriority, event_bus
@@ -120,7 +121,15 @@ class APIKeyService(BaseService[APIKey]):
             is_active=True,
         )
         self.db.add(key_record)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            # G-1: concurrent duplicate-name race — the SELECT pre-check
+            # above passed on both sides. Report the same 400 as the
+            # pre-check (not a 500, not a 409) so the contract is identical
+            # with or without the race.
+            await self.db.rollback()
+            raise BadRequestException(f"API key with name '{api_key_data.name}' already exists in this tenant")
         await self.db.refresh(key_record)
 
         # Audit log the creation

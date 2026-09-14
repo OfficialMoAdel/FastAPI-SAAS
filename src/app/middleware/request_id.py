@@ -41,7 +41,6 @@ class RequestIDMiddleware:
         request_id = request.headers.get(REQUEST_ID_HEADER)
 
         # Validate request_id to prevent log injection (M-02)
-        # Validate request_id to prevent log injection (M-02)
         if request_id and not re.match(r"^[a-zA-Z0-9\-]{1,128}$", request_id):
             request_id = None
 

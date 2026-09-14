@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from fastcrud import FastCRUD
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.tenant_crud import TenantAwareCRUD, scoped_query, tenant_scope
@@ -321,8 +321,22 @@ async def mark_magic_link_used(
     db: AsyncSession,
     magic_link: MagicLink,
 ) -> MagicLink:
-    """Mark a magic link as used."""
-    magic_link.used_at = datetime.now(UTC)
+    """Mark a magic link as used.
+
+    R1-3: conditional UPDATE — claims the row only when ``used_at IS NULL``.
+    Zero affected rows means a concurrent verify won the race, so raise
+    instead of silently double-issuing sessions.
+    """
+    from src.app.modules.auth.errors import MagicLinkAlreadyUsedError
+
+    stmt = (
+        update(MagicLink)
+        .where(MagicLink.id == magic_link.id, MagicLink.used_at.is_(None))
+        .values(used_at=datetime.now(UTC))
+    )
+    result = await db.execute(stmt)
+    if result.rowcount == 0:
+        raise MagicLinkAlreadyUsedError("Token already used")
     await db.commit()
     await db.refresh(magic_link)
     return magic_link

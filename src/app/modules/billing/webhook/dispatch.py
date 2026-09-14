@@ -45,6 +45,15 @@ async def handle_webhook_event(event: stripe.Event) -> dict[str, str]:
     event_id = event["id"]
     _pkg.logger.info("Received Stripe webhook event", event_type=event_type, event_id=event_id)
 
+    # R2-3: resolve the handler BEFORE touching Redis. Unhandled event types
+    # return here costing zero lock ops and leaving no marker — so a type we
+    # start handling later will still process its (re)deliveries instead of
+    # tripping over a durable "processed" marker written for a no-op.
+    handler_name = EVENT_HANDLERS.get(event_type)
+    if handler_name is None:
+        _pkg.logger.info("Unhandled event type:", event_type=event_type)
+        return {"status": "unhandled"}
+
     # B4: consult the DURABLE processed marker BEFORE the processing lock.
     # The Redis SET NX lock is only a 300s in-flight guard; a Stripe
     # redelivery arriving after that window must be rejected by the terminal
@@ -58,12 +67,6 @@ async def handle_webhook_event(event: stripe.Event) -> dict[str, str]:
     if not await _pkg._try_acquire_event_lock(event_id):
         _pkg.logger.info("Event already processed, skipping", event_id=event_id)
         return {"status": "already_processed"}
-
-    handler_name = EVENT_HANDLERS.get(event_type)
-    if handler_name is None:
-        _pkg.logger.info("Unhandled event type:", event_type=event_type)
-        # Lock already acquired in _try_acquire_event_lock; no extra mark needed.
-        return {"status": "unhandled"}
 
     try:
         # Handlers manage their own DB sessions and RLS context.

@@ -242,6 +242,35 @@ async def test_is_enabled_uses_tenant(mock_redis, service, mock_db):
         result = await service.is_enabled(t_id, "test_flag")
         assert result is True
 
+@pytest.mark.asyncio
+async def test_get_flag_value_returns_typed_override(service):
+    """R6-1: non-boolean override values pass through uncoerced."""
+    t_id = uuid4()
+    mock_flag = make_mock_flag(key="theme", default_value=False)
+    mock_override = make_mock_override(custom_value={"value": "dark"})
+
+    with (
+        patch.object(service, "get_flag_by_key_or_none", new_callable=AsyncMock) as mock_get_flag,
+        patch.object(service, "get_override", new_callable=AsyncMock) as mock_get_override,
+    ):
+        mock_get_flag.return_value = mock_flag
+        mock_get_override.return_value = mock_override
+        assert await service.get_flag_value(t_id, "theme") == "dark"
+
+
+@pytest.mark.asyncio
+async def test_get_flag_value_falls_back_to_tenant_jsonb(service):
+    """R6-1: unregistered flags resolve from tenant JSONB, then default."""
+    t_id = uuid4()
+    mock_tenant = make_mock_tenant(t_id, {"page_size": 50})
+    service.db.get = AsyncMock(return_value=mock_tenant)
+
+    with patch.object(service, "get_flag_by_key_or_none", new_callable=AsyncMock) as mock_get_flag:
+        mock_get_flag.return_value = None
+        with patch("src.app.modules.feature_flags.service.get_redis", return_value=None):
+            assert await service.get_flag_value(t_id, "page_size") == 50
+            assert await service.get_flag_value(t_id, "missing", default="fallback") == "fallback"
+
 
 @pytest.mark.asyncio
 @patch("src.app.modules.feature_flags.service.flag_modified")

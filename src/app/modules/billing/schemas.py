@@ -336,6 +336,13 @@ class CheckoutCreate(BaseCreate):
     billing_interval: BillingInterval
     success_url: AnyHttpUrl
     cancel_url: AnyHttpUrl
+    # R2-2: opt-in caller-supplied idempotency key for double-click /
+    # double-POST protection. The client mints one UUID per checkout intent
+    # and reuses it across retries; a fresh intent mints a fresh key, so a
+    # restarted checkout never replays an old session (Stripe holds keys
+    # 24h — see B16 in clients/billing/stripe.py). Capped at 255 chars
+    # (Stripe's limit). Omitted → per-attempt key (retry-dedupe only).
+    idempotency_key: str | None = Field(default=None, max_length=255)
 
     @model_validator(mode="after")
     def validate_urls(self) -> "CheckoutCreate":

@@ -170,8 +170,27 @@ class TokenIssuer:
             subject=resolved_subject,
             user=user,
         )
-        # Protect core JWT claims from external extra_claims overwrite (A2-02)
-        RESERVED_CLAIMS = frozenset({"sub", "tenant_id", "tier_id", "tier_name", "token_version"})
+        # Protect core JWT claims from external extra_claims overwrite (A2-02).
+        # R1-2: session/time claims included — a future caller passing sid
+        # would fork session identity; absolute_exp/iat would extend the
+        # absolute session window that rotation deliberately preserves.
+        RESERVED_CLAIMS = frozenset(
+            {
+                "sub",
+                "tenant_id",
+                "tier_id",
+                "tier_name",
+                "token_version",
+                "sid",
+                "jti",
+                "iat",
+                "absolute_exp",
+                "exp",
+                "token_type",
+                "aud",
+                "iss",
+            }
+        )
         if extra_claims:
             safe_extra = {k: v for k, v in extra_claims.items() if k not in RESERVED_CLAIMS}
             token_data.update(safe_extra)

@@ -265,8 +265,14 @@ class AuthService:
             )
             raise UnauthorizedError("User account is no longer active.")
 
-        # Clear failed attempts on success (single roundtrip)
-        await lockout.clear(redis, normalized_username)
+        # Clear failed attempts on success (single roundtrip).
+        # G-2: never let a Redis blip 500 a correctly-authenticated login —
+        # the counter clear is hygiene, not auth. Stale counters self-heal
+        # via key TTL and fail closed on the next pre-auth check.
+        try:
+            await lockout.clear(redis, normalized_username)
+        except Exception as e:
+            logger.warning("lockout_clear_failed", username=normalized_username, error=str(e))
 
         # Check if MFA is enabled for this user
         from src.app.modules.auth.services.mfa import get_mfa_service

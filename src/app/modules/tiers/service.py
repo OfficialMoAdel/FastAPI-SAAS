@@ -10,6 +10,7 @@ from typing import Any, cast
 
 from fastcrud import FastCRUD, paginated_response
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
@@ -71,9 +72,16 @@ class TierService:
             raise DuplicateError("name", tier_dict["name"])
 
         tier_internal = TierCreateInternal(**tier_dict)
-        created_tier = await crud.create(
-            db=self.db, object=tier_internal, schema_to_select=TierRead, return_as_model=True
-        )
+        try:
+            created_tier = await crud.create(
+                db=self.db, object=tier_internal, schema_to_select=TierRead, return_as_model=True
+            )
+        except IntegrityError:
+            # G-1: concurrent duplicate-name race — the exists() pre-check
+            # above passed on both sides. Same DuplicateError as the
+            # pre-check so the contract is identical with or without the race.
+            await self.db.rollback()
+            raise DuplicateError("name", tier_dict["name"])
 
         if created_tier is None:
             raise ModelNotFoundError("Tier", "new")

@@ -87,7 +87,8 @@ def _verify_canonical_bytes(
         return False
 
     # P1-4: Asymmetric freshness window. Rejects future timestamps beyond
-    # 60s clock skew allowance, and rejects past timestamps older than max_age_seconds.
+    # the 300s clock-skew allowance (future_skew_seconds default), and
+    # rejects past timestamps older than max_age_seconds.
     if not is_timestamp_fresh(ts, max_age_seconds=max_age_seconds):
         return False
 

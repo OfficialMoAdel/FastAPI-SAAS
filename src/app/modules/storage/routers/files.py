@@ -159,6 +159,10 @@ async def download_file(
         headers={
             "Content-Disposition": f"attachment; filename*=utf-8''{encoded_filename}",
             "Content-Length": str(download.file.size_bytes),
+            # R3-1: media_type echoes the stored (claimed) MIME, so forbid
+            # sniffing — attachment already blocks inline render; this
+            # closes the legacy-sniffer residual.
+            "X-Content-Type-Options": "nosniff",
         },
     )
 

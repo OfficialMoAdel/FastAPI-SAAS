@@ -14,6 +14,8 @@ import inspect
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 from src.app.core.security import jwt_service, jwt_utils
 from src.app.modules.auth.services import tokens as auth_tokens
 
@@ -72,11 +74,38 @@ class TestIssuanceSingleDoor:
     """TokenIssuer.issue_session stays the ONLY issuance door; the stable-sid
     invariant and RESERVED_CLAIMS protection must survive any fold."""
 
-    def test_issue_session_preserves_reserved_claims_protection(self) -> None:
-        """RESERVED_CLAIMS frozenset guards claim collision in issue_session —
-        the exact set is pinned here (A2-02)."""
-        src = _source_of(auth_tokens)
-        assert 'RESERVED_CLAIMS = frozenset({"sub", "tenant_id", "tier_id", "tier_name", "token_version"})' in src
+    @pytest.mark.asyncio
+    async def test_issue_session_strips_dangerous_extra_claims(self) -> None:
+        """R1-2: session/time claims in extra_claims must not reach the JWT —
+        behavioral pin (replaces the deleted source-text pin)."""
+        from unittest.mock import AsyncMock, patch
+
+        from src.app.modules.auth.services.tokens import TokenIssuer
+
+        user = {"id": 1, "username": "u", "email": "u@x.com", "tenant_id": None}
+        with (
+            patch(
+                "src.app.modules.auth.services.tokens.TokenIssuer.create_token_pair",
+                new_callable=AsyncMock,
+                return_value=("a", "r"),
+            ) as mock_pair,
+            patch(
+                "src.app.modules.auth.services.tokens.register_login_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await TokenIssuer.issue_session(
+                user,
+                channel="password",
+                subject="u",
+                extra_claims={"sid": "forged", "absolute_exp": 1.0, "iat": 1.0, "email": "kept@x.com"},
+            )
+        token_data = mock_pair.await_args.args[0]
+        assert token_data["sid"] != "forged"
+        assert token_data.get("absolute_exp") != 1.0
+        assert token_data.get("iat") != 1.0
+        assert token_data["email"] == "kept@x.com"
+
 
     def test_issue_session_preserves_stable_sid_invariant(self) -> None:
         """The sid is minted once in issue_session and threaded into session

@@ -231,48 +231,57 @@ async def benchmark_async_function(
     return result
 
 
-def run_jwt_benchmarks() -> dict[str, BenchmarkResult]:
-    """Run JWT-related benchmarks."""
-    from app.core.security.jwt import create_access_token, verify_token
+async def run_jwt_benchmarks() -> dict[str, BenchmarkResult]:
+    """Run JWT-related benchmarks against the real auth API.
+
+    G-3: previously imported a non-existent ``app.core.security.jwt``
+    module with sync call shapes — TypeError on every run. Now uses the
+    real async ``jwt_service``/``jwt_utils`` API. Verification benchmarks
+    the pure-crypto path (``decode_verified_token``): full ``verify_token``
+    needs a DB session + Redis and is not meaningful in a standalone
+    baseline script.
+    """
+    from app.core.security.jwt_service import create_access_token
+    from app.core.security.jwt_utils import decode_verified_token
 
     results = {}
 
     # JWT creation benchmark
-    def create_jwt():
-        create_access_token(
-            subject="test-user-id",
-            tenant_id="test-tenant",
-            token_type="access",
+    async def create_jwt():
+        await create_access_token(
+            {"sub": "test-user-id", "tenant_id": "test-tenant", "token_version": 0},
         )
 
-    results["jwt_token_creation"] = benchmark_function(create_jwt, "jwt_token_creation")
+    results["jwt_token_creation"] = await benchmark_async_function(create_jwt, "jwt_token_creation")
 
-    # JWT verification benchmark
-    token = create_access_token(
-        subject="test-user-id",
-        tenant_id="test-tenant",
-        token_type="access",
+    # JWT verification benchmark (signature + claims decode, no DB)
+    token = await create_access_token(
+        {"sub": "test-user-id", "tenant_id": "test-tenant", "token_version": 0},
     )
 
-    def verify_jwt():
-        verify_token(token)
+    async def verify_jwt():
+        await decode_verified_token(token)
 
-    results["jwt_token_verification"] = benchmark_function(verify_jwt, "jwt_token_verification")
+    results["jwt_token_verification"] = await benchmark_async_function(verify_jwt, "jwt_token_verification")
 
     return results
 
 
-def run_bcrypt_benchmarks() -> dict[str, BenchmarkResult]:
-    """Run bcrypt benchmarks."""
-    from app.core.security.password import hash_password, verify_password
+async def run_bcrypt_benchmarks() -> dict[str, BenchmarkResult]:
+    """Run bcrypt benchmarks against the real password API.
+
+    G-3: previously called a non-existent sync ``hash_password``; the
+    real API is async ``get_password_hash`` / ``verify_password``.
+    """
+    from app.core.security.password import get_password_hash, verify_password
 
     results = {}
 
     # Hash password (expensive operation)
-    def hash_pw():
-        hash_password("test-password-123!")
+    async def hash_pw():
+        await get_password_hash("test-password-123!")
 
-    results["bcrypt_hash"] = benchmark_function(
+    results["bcrypt_hash"] = await benchmark_async_function(
         hash_pw,
         "bcrypt_hash",
         warmup_rounds=2,
@@ -281,12 +290,12 @@ def run_bcrypt_benchmarks() -> dict[str, BenchmarkResult]:
     )
 
     # Verify password
-    hashed = hash_password("test-password-123!")
+    hashed = await get_password_hash("test-password-123!")
 
-    def verify_pw():
-        verify_password("test-password-123!", hashed)
+    async def verify_pw():
+        await verify_password("test-password-123!", hashed)
 
-    results["bcrypt_verify"] = benchmark_function(
+    results["bcrypt_verify"] = await benchmark_async_function(
         verify_pw,
         "bcrypt_verify",
         warmup_rounds=2,
@@ -372,10 +381,10 @@ async def run_cache_benchmarks() -> dict[str, BenchmarkResult]:
 async def run_all_benchmarks(report: BaselineReport) -> None:
     """Run all benchmark suites."""
     print("Running JWT benchmarks...")
-    report.benchmarks.update(run_jwt_benchmarks())
+    report.benchmarks.update(await run_jwt_benchmarks())
 
     print("Running bcrypt benchmarks (this takes ~60 seconds)...")
-    report.benchmarks.update(run_bcrypt_benchmarks())
+    report.benchmarks.update(await run_bcrypt_benchmarks())
 
     print("Running serialization benchmarks...")
     report.benchmarks.update(run_serialization_benchmarks())
