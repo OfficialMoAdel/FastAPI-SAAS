@@ -126,78 +126,62 @@ class TestRequiresPermission:
     @pytest.mark.asyncio
     async def test_superuser_bypasses_check(self):
         """Superusers should bypass all permission checks."""
+        from tests.helpers.auth import build_test_auth_context
 
         checker = requires_permission(Permission.ROLES_MANAGE)
+        ctx = build_test_auth_context(
+            {"id": 1, "is_superuser": True, "tenant_id": 1},
+            {"id": 1, "slug": "test-tenant"},
+        )
 
-        # Mock the internal dependencies
-        class DummyTenant:
-            id = 1
-
-        with (
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                return_value={"id": 1, "is_superuser": True},
-            ),
-            patch("src.app.core.tenancy.context.get_current_tenant", return_value=DummyTenant()),
-            patch("src.app.core.rbac.dependencies.get_cached_permissions_bitmask") as mock_perms,
-        ):
+        with patch("src.app.core.rbac.dependencies.get_cached_permissions_bitmask") as mock_perms:
             mock_db = AsyncMock()
 
             # Should not raise and should not check permissions
-            await checker(token="fake_token", db=mock_db)
+            await checker(request=None, db=mock_db, auth_context=ctx)
             mock_perms.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_allows_user_with_permission(self):
         """User with required permission should pass."""
+        from tests.helpers.auth import build_test_auth_context
 
         checker = requires_permission(Permission.ROLES_READ)
+        tenant_id = uuid.uuid4()
+        ctx = build_test_auth_context(
+            {"id": 1, "is_superuser": False, "tenant_id": tenant_id},
+            {"id": tenant_id, "slug": "test-tenant"},
+        )
 
-        class DummyTenant:
-            id = uuid.uuid4()
-
-        with (
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                return_value={"id": 1, "is_superuser": False},
-            ),
-            patch("src.app.core.tenancy.context.get_current_tenant") as mock_tenant,
-            patch(
-                "src.app.core.rbac.dependencies.has_permission_cached",
-                return_value=True,
-            ),
+        with patch(
+            "src.app.core.rbac.dependencies.has_permission_cached",
+            return_value=True,
         ):
-            mock_tenant.return_value = DummyTenant()
             mock_db = AsyncMock()
 
             # Should not raise
-            await checker(token="fake_token", db=mock_db)
+            await checker(request=None, db=mock_db, auth_context=ctx)
 
     @pytest.mark.asyncio
     async def test_denies_user_without_permission(self):
         """User without required permission should get 403."""
+        from tests.helpers.auth import build_test_auth_context
 
         checker = requires_permission(Permission.ROLES_MANAGE)
+        tenant_id = uuid.uuid4()
+        ctx = build_test_auth_context(
+            {"id": 1, "is_superuser": False, "tenant_id": tenant_id},
+            {"id": tenant_id, "slug": "test-tenant"},
+        )
 
-        class DummyTenant:
-            id = uuid.uuid4()
-
-        with (
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                return_value={"id": 1, "is_superuser": False},
-            ),
-            patch("src.app.core.tenancy.context.get_current_tenant") as mock_tenant,
-            patch(
-                "src.app.core.rbac.dependencies.has_permission_cached",
-                return_value=False,
-            ),
+        with patch(
+            "src.app.core.rbac.dependencies.has_permission_cached",
+            return_value=False,
         ):
-            mock_tenant.return_value = DummyTenant()
             mock_db = AsyncMock()
 
             with pytest.raises(HTTPException) as exc_info:
-                await checker(token="fake_token", db=mock_db)
+                await checker(request=None, db=mock_db, auth_context=ctx)
 
             assert exc_info.value.status_code == 403
             assert "roles:manage" in exc_info.value.detail
@@ -205,29 +189,23 @@ class TestRequiresPermission:
     @pytest.mark.asyncio
     async def test_accepts_string_permission(self):
         """Should accept string permission as well as enum."""
+        from tests.helpers.auth import build_test_auth_context
 
         checker = requires_permission("roles:read")  # Use valid permission slug
+        tenant_id = uuid.uuid4()
+        ctx = build_test_auth_context(
+            {"id": 1, "is_superuser": False, "tenant_id": tenant_id},
+            {"id": tenant_id, "slug": "test-tenant"},
+        )
 
-        class DummyTenant:
-            id = uuid.uuid4()
-
-        with (
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                return_value={"id": 1, "is_superuser": False},
-            ),
-            patch("src.app.core.tenancy.context.get_current_tenant") as mock_tenant,
-            patch(
-                "src.app.core.rbac.dependencies.has_permission_cached",
-                return_value=True,
-            ),
+        with patch(
+            "src.app.core.rbac.dependencies.has_permission_cached",
+            return_value=True,
         ):
-            mock_tenant.return_value = DummyTenant()
             mock_db = AsyncMock()
 
             # Should not raise
-            await checker(token="fake_token", db=mock_db)
-
+            await checker(request=None, db=mock_db, auth_context=ctx)
 
 class TestCacheTTL:
     """Tests for cache TTL configuration."""

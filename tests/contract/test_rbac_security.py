@@ -13,6 +13,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src.app.core.rbac.permissions import Permission
 from src.app.main import app
+from tests.helpers.auth import override_test_principal
 
 MOCK_TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
 
@@ -60,10 +61,7 @@ class TestRBACSecurityContract:
                 "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
                 new=mock_get_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                return_value=mock_user,
-            ),
+            override_test_principal(mock_user, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.get_user_permissions",
                 side_effect=mock_get_permissions,
@@ -95,10 +93,7 @@ class TestRBACSecurityContract:
                 "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
                 new=mock_get_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                return_value=mock_user,
-            ),
+            override_test_principal(mock_user, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.get_user_permissions",
                 side_effect=mock_get_permissions,
@@ -129,10 +124,7 @@ class TestRBACSecurityContract:
                 "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
                 new=mock_get_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                return_value=mock_user,
-            ),
+            override_test_principal(mock_user, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.get_user_permissions",
                 side_effect=mock_get_permissions,
@@ -163,10 +155,7 @@ class TestRBACSecurityContract:
                 "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
                 new=mock_get_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                return_value=mock_user,
-            ),
+            override_test_principal(mock_user, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.get_user_permissions",
                 side_effect=mock_get_permissions,
@@ -197,10 +186,7 @@ class TestRBACSecurityContract:
                 "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
                 new=mock_get_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                return_value=mock_user,
-            ),
+            override_test_principal(mock_user, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.get_user_permissions",
                 side_effect=mock_get_permissions,
@@ -234,10 +220,7 @@ class TestRBACSecurityContract:
                     "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
                     new=mock_get_tenant,
                 ),
-                patch(
-                    "src.app.core.rbac.dependencies._get_current_user_from_token",
-                    return_value=mock_user,
-                ),
+            override_test_principal(mock_user, mock_tenant),
                 patch(
                     "src.app.core.rbac.dependencies.has_permission_cached",
                     new=AsyncMock(return_value=True),

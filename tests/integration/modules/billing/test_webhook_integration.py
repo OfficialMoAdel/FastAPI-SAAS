@@ -122,10 +122,20 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
 
         # Setup context manager mocks to return the test session
         # (both the B6 plan-ownership bypass ctx and the tenant ctx)
+        class MockTenantCM:
+            async def __aenter__(self):
+                from src.app.core.tenancy.context import set_current_tenant
+                set_current_tenant(mock_ctx)
+                return db_session
+
+            async def __aexit__(self, *args):
+                from src.app.core.tenancy.context import clear_tenant_context
+                clear_tenant_context()
+
         mock_ctx_instance = AsyncMock()
         mock_ctx_instance.__aenter__.return_value = db_session
         mock_bypass_ctx.return_value = mock_ctx_instance
-        mock_tenant_ctx.return_value = mock_ctx_instance
+        mock_tenant_ctx.return_value = MockTenantCM()
 
         # Simulate Webhook Request
         # Note: We send dummy data because we mocked signature verification
@@ -203,11 +213,20 @@ async def test_webhook_invoice_payment_succeeded_flow(
         mock_ctx = TenantContext(tenant_id=tenant.id, tenant_slug=tenant.slug, tenant_name=tenant.name, is_active=True)
         mock_get_tenant.return_value = mock_ctx
 
-        # Both contexts use the same test session
+        class MockTenantCM:
+            async def __aenter__(self):
+                from src.app.core.tenancy.context import set_current_tenant
+                set_current_tenant(mock_ctx)
+                return db_session
+
+            async def __aexit__(self, *args):
+                from src.app.core.tenancy.context import clear_tenant_context
+                clear_tenant_context()
+
         mock_ctx_instance = AsyncMock()
         mock_ctx_instance.__aenter__.return_value = db_session
         mock_bypass_ctx.return_value = mock_ctx_instance
-        mock_tenant_ctx.return_value = mock_ctx_instance
+        mock_tenant_ctx.return_value = MockTenantCM()
 
         response = client.post("/api/v1/billing/webhook", json=event_payload, headers={"Stripe-Signature": "dummy_sig"})
 

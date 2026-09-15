@@ -30,16 +30,19 @@ from src.app.modules.tenants.models import Tenant
 @pytest.fixture(autouse=True)
 def mock_tenant_context(tenant):
     """Mock tenant context to avoid fail-closed RuntimeErrors in CRUD tests."""
-    from src.app.core.tenancy.context import TenantContext
+    from src.app.core.tenancy.context import TenantContext, clear_tenant_context, set_current_tenant
 
     mock_ctx = TenantContext(tenant_id=tenant.id, tenant_slug=tenant.slug, tenant_name=tenant.name, is_active=True)
+    set_current_tenant(mock_ctx)
     with (
         patch("src.app.core.db.tenant_crud.get_current_tenant", return_value=mock_ctx),
         patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_ctx),
+        patch("src.app.core.tenancy.query.get_current_tenant", return_value=mock_ctx),
         patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_ctx),
         patch("src.app.modules.billing.checkout_service.require_active_tenant", return_value=mock_ctx),
     ):
-        yield
+        yield mock_ctx
+    clear_tenant_context()
 
 
 # ==================== Subscription Plan CRUD ====================
@@ -255,10 +258,15 @@ async def test_stripe_settings_multi_tenancy(db_session: AsyncSession, tenant):
 
     tenant2_id = tenant2.id
 
-    from src.app.core.tenancy.context import TenantContext
+    from src.app.core.tenancy.context import TenantContext, set_current_tenant
     mock_ctx_2 = TenantContext(tenant_id=tenant2_id, tenant_slug="tenant-2", tenant_name="Tenant 2", is_active=True)
 
-    with patch("src.app.core.db.tenant_crud.get_current_tenant", return_value=mock_ctx_2):
+    set_current_tenant(mock_ctx_2)
+    with (
+        patch("src.app.core.db.tenant_crud.get_current_tenant", return_value=mock_ctx_2),
+        patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_ctx_2),
+        patch("src.app.core.tenancy.query.get_current_tenant", return_value=mock_ctx_2),
+    ):
         # Cleanup tenant 2 settings
         existing2 = await crud_stripe_settings.get(db=db_session, tenant_id=tenant2_id)
         if existing2:
@@ -271,19 +279,32 @@ async def test_stripe_settings_multi_tenancy(db_session: AsyncSession, tenant):
 
     # Verify isolation
     # Get for tenant 1 should return s1
+    mock_ctx_1 = TenantContext(tenant_id=tenant.id, tenant_slug=tenant.slug, tenant_name=tenant.name, is_active=True)
+    set_current_tenant(mock_ctx_1)
     f1 = await crud_stripe_settings.get(db=db_session, tenant_id=tenant.id)
     assert f1["id"] == s1_id
     assert f1["stripe_customer_id"] == "cus_t1"
 
     # Get for tenant 2 should return s2
-    with patch("src.app.core.db.tenant_crud.get_current_tenant", return_value=mock_ctx_2):
+    set_current_tenant(mock_ctx_2)
+    with (
+        patch("src.app.core.db.tenant_crud.get_current_tenant", return_value=mock_ctx_2),
+        patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_ctx_2),
+        patch("src.app.core.tenancy.query.get_current_tenant", return_value=mock_ctx_2),
+    ):
         f2 = await crud_stripe_settings.get(db=db_session, tenant_id=tenant2_id)
         assert f2["id"] == s2_id
         assert f2["stripe_customer_id"] == "cus_t2"
 
     # Cleanup
+    set_current_tenant(mock_ctx_1)
     await crud_stripe_settings.db_delete(db=db_session, id=s1_id)
-    with patch("src.app.core.db.tenant_crud.get_current_tenant", return_value=mock_ctx_2):
+    set_current_tenant(mock_ctx_2)
+    with (
+        patch("src.app.core.db.tenant_crud.get_current_tenant", return_value=mock_ctx_2),
+        patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_ctx_2),
+        patch("src.app.core.tenancy.query.get_current_tenant", return_value=mock_ctx_2),
+    ):
         await crud_stripe_settings.db_delete(db=db_session, id=s2_id)
 
 

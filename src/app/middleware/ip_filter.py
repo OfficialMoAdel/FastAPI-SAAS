@@ -8,10 +8,10 @@ from fastapi import Request, status
 from starlette.types import ASGIApp
 
 from src.app.core.config import settings
+from src.app.core.guard.ip_rules import IpRules
 from src.app.core.logger import get_logger
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
 from src.app.core.utils.ip_utils import get_client_ip
-from src.app.modules.security.service import IPFilterService
 
 logger = get_logger(__name__)
 
@@ -22,8 +22,7 @@ logger = get_logger(__name__)
 # hence the derived IP_FILTER_EXEMPT_PATHS base instead of COMMON alone.
 from src.app.core.middleware_exempt import IP_FILTER_EXEMPT_PATHS, is_path_exempt
 
-_IP_FILTER_EXTRA_EXEMPT: frozenset[str] = frozenset()
-EXEMPT_PATHS: frozenset[str] = IP_FILTER_EXEMPT_PATHS | _IP_FILTER_EXTRA_EXEMPT  # backward-compat re-export
+EXEMPT_PATHS: frozenset[str] = IP_FILTER_EXEMPT_PATHS  # backward-compat re-export
 
 import re
 
@@ -71,9 +70,14 @@ class IPFilterMiddleware:
        - If no: allow request
     """
 
-    def __init__(self, app: "ASGIApp") -> None:
+    def __init__(self, app: "ASGIApp", ip_rules: IpRules | None = None) -> None:
         self.app = app
-        self._filter_service = IPFilterService()
+        from src.app.core.guard.ip_rules import RedisIpRules
+
+        # `_filter_service` is the seam instance (RedisIpRules satisfies IpRules).
+        # Kept under the historical attribute name so tests patching
+        # `middleware._filter_service.check_ip_status` keep working.
+        self._filter_service: IpRules = ip_rules if ip_rules is not None else RedisIpRules()
 
     def _is_exempt_path(self, path: str) -> bool:
         """Check if path is exempt from IP filtering.
@@ -85,7 +89,7 @@ class IPFilterMiddleware:
         while /docs and /openapi.json stay IP-filtered (blacklist +
         bad-bot scanner defense).
         """
-        return is_path_exempt(path, _IP_FILTER_EXTRA_EXEMPT, base=IP_FILTER_EXEMPT_PATHS)
+        return is_path_exempt(path, base=IP_FILTER_EXEMPT_PATHS)
     async def __call__(self, scope, receive, send):
         """Process request through IP filter."""
         if scope["type"] != "http":

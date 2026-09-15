@@ -121,22 +121,12 @@ class TestCompositeAuthPrefetch:
         mock_request = MagicMock()
         mock_request.state.cached_permissions_bitmask = (user_id, str(tenant_id), mask)
 
-        mock_user = MagicMock()
-        mock_user.id = user_id
-        mock_user.tenant_id = tenant_id
-        mock_user.is_superuser = False
+        mock_user = {"id": user_id, "tenant_id": tenant_id, "is_superuser": False}
+        mock_tenant = {"id": tenant_id, "slug": "test-tenant"}
 
-        mock_tenant = MagicMock()
-        mock_tenant.id = tenant_id
+        from tests.helpers.auth import build_test_auth_context
 
-        mock_auth_context = MagicMock()
-        from src.app.api.deps import AuthContext
-
-        # Mock isinstance(auth_context, AuthContext)
-        mock_auth_context = MagicMock(spec=AuthContext)
-        mock_auth_context.user = mock_user
-        mock_auth_context.tenant = mock_tenant
-        mock_auth_context.is_dependency_override = False
+        mock_auth_context = build_test_auth_context(mock_user, mock_tenant)
 
         checker = requires_permission(Permission.USERS_READ)
         mock_db = AsyncMock()
@@ -145,7 +135,6 @@ class TestCompositeAuthPrefetch:
             # Execute dependency check
             await checker(
                 request=mock_request,
-                token="fake_token",
                 db=mock_db,
                 auth_context=mock_auth_context,
             )
@@ -236,34 +225,24 @@ class TestCompositeAuthPrefetch:
         tenant_id = uuid4()
         user_id = 42
 
-        # Create mask that only includes USERS_READ, not ROLES_MANAGE
+        from tests.helpers.auth import build_test_auth_context
+
+        mock_auth_context = build_test_auth_context(
+            {"id": user_id, "tenant_id": tenant_id, "is_superuser": False},
+            {"id": tenant_id, "slug": "test-tenant"},
+        )
+
+        # Prefetched mask includes USERS_READ only — ROLES_MANAGE denied with 0 RTTs.
         mask = PermissionBitmask.encode({Permission.USERS_READ.value})
-
-        mock_request = MagicMock()
-        mock_request.state.cached_permissions_bitmask = (user_id, str(tenant_id), mask)
-
-        mock_user = MagicMock()
-        mock_user.id = user_id
-        mock_user.tenant_id = tenant_id
-        mock_user.is_superuser = False
-
-        mock_tenant = MagicMock()
-        mock_tenant.id = tenant_id
-
-        from src.app.api.deps import AuthContext
-
-        mock_auth_context = MagicMock(spec=AuthContext)
-        mock_auth_context.user = mock_user
-        mock_auth_context.tenant = mock_tenant
-        mock_auth_context.is_dependency_override = False
 
         checker = requires_permission(Permission.ROLES_MANAGE)
         mock_db = AsyncMock()
+        mock_request = MagicMock()
+        mock_request.state.cached_permissions_bitmask = (user_id, str(tenant_id), mask)
 
         with pytest.raises(HTTPException) as exc_info:
             await checker(
                 request=mock_request,
-                token="fake_token",
                 db=mock_db,
                 auth_context=mock_auth_context,
             )

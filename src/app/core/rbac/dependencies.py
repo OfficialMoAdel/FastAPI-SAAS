@@ -13,16 +13,13 @@ Bitmask Strategy:
 
 import asyncio
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-if TYPE_CHECKING:
-    pass
 from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.logger import get_logger
@@ -40,8 +37,6 @@ PERMISSIONS_CACHE_TTL = 300
 # each firing their own; the winner alone performs the DB query + setex.
 _in_flight_bitmask: dict[str, asyncio.Task[int]] = {}
 _bitmask_lock = asyncio.Lock()
-# OAuth2 scheme - same as used in core/security/jwt_service.py
-_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login")
 
 
 async def get_user_permissions(
@@ -221,45 +216,14 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
 
     async def _check_permission(
         request: Request = None,  # type: ignore[assignment]
-        token: str = Depends(_oauth2_scheme),
         db: AsyncSession = Depends(async_get_db),
-        auth_context: Any = Depends(get_auth_context),
+        auth_context: AuthContext = Depends(get_auth_context),
     ) -> None:
-        # R1-14: positive type check replaces the fragile negative-detection
-        # block (isinstance DependsClass / hasattr "dependency" /
-        # type(...).__name__ == "Depends" string hack). A real AuthContext is
-        # used directly; anything else (None, an unresolved Depends sentinel,
-        # or a test override) falls back to manual token resolution.
-        if not isinstance(auth_context, AuthContext):
-            # Fall back to resolving the user manually using _get_current_user_from_token(token, db)
-            user_data = await _get_current_user_from_token(token, db)
-            from src.app.api.deps import AuthenticatedUser
-
-            if isinstance(user_data, dict):
-                from src.app.core.config import settings
-
-                # A-3: only inject a mocked identity in local dev. Staging and
-                # production both fall back to the "unknown" placeholder so a
-                # non-production-but-real environment never gets a spoofed
-                # identity (previously `!= "production"` let staging through).
-                is_local = settings.env.ENVIRONMENT == "local"
-                if "email" not in user_data:
-                    user_data["email"] = "mocked@example.com" if is_local else "unknown@example.com"
-                if "username" not in user_data:
-                    user_data["username"] = "mockeduser" if is_local else "unknown"
-                current_user = AuthenticatedUser(**user_data)
-            else:
-                current_user = user_data
-
-            # Retrieve tenant_context from get_current_tenant()
-            from src.app.core.tenancy.context import get_current_tenant
-
-            tenant_context = get_current_tenant()
-            is_dependency_override = True
-        else:
-            tenant_context = auth_context.tenant
-            current_user = auth_context.user
-            is_dependency_override = auth_context.is_dependency_override
+        # Single production path: tests inject a real AuthContext via
+        # dependency_overrides (tests/helpers/auth.py). No token fallback,
+        # no mock sniffing, no spoofed identities.
+        tenant_context = auth_context.tenant
+        current_user = auth_context.user
 
         if tenant_context is None and request is not None:
             tenant_id_in_path = request.path_params.get("tenant_id")
@@ -299,14 +263,11 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
 
         # Enforce tenant isolation before any permission bypass. Superusers may bypass
         # permission checks within their tenant, but they cannot act as another tenant.
-        # Test dependency overrides are excluded because they are not production auth.
+        # Applies to every principal — test-injected AuthContexts included, so HTTP
+        # tests exercise the same isolation as production.
         current_user_tenant_id = get_user_attr(current_user, "tenant_id")
 
-        if (
-            not is_dependency_override
-            and current_user_tenant_id is not None
-            and str(current_user_tenant_id) != str(tenant_id)
-        ):
+        if current_user_tenant_id is not None and str(current_user_tenant_id) != str(tenant_id):
             raise ForbiddenException("User does not belong to the current tenant.")
 
         if is_superuser:
@@ -394,37 +355,3 @@ async def invalidate_users_permissions_cache_batch(user_ids: list[int], tenant_i
             tenant_id=tenant_id,
             error=str(e),
         )
-
-
-# Private helpers
-
-
-async def _get_current_user_from_token(token: str, db: AsyncSession) -> dict[str, Any]:
-    """Validate token and return current user dict using get_auth_context."""
-    from src.app.api.deps import get_auth_context
-
-    try:
-        auth_context = await get_auth_context(request=None, db=db, token=token)  # type: ignore[arg-type]
-        return auth_context.user.model_dump()
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in _get_current_user_from_token: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-
-def _get_current_tenant_id() -> UUID:
-    """Get current tenant ID from middleware context."""
-    from src.app.core.tenancy.context import get_current_tenant
-
-    tenant_context = get_current_tenant()
-    if tenant_context is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tenant context not set. Ensure X-Tenant-ID header is provided.",
-        )
-    return tenant_context.id

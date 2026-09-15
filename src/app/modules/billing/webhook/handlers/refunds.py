@@ -143,9 +143,11 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
             # over the same id list in the same txn is equivalent to per-id
             # exists(); same rows, same commit boundary.
             refund_ids = [refund["id"] for refund in refunds]
+            from src.app.core.db.tenant_crud import tenant_scope
+
             existing_result = await db.execute(
                 select(BillingRecord.stripe_refund_id).where(
-                    BillingRecord.tenant_id == tenant_id,
+                    tenant_scope(BillingRecord, tenant_id),
                     BillingRecord.stripe_refund_id.in_(refund_ids),
                 )
             )

@@ -11,6 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.app.shared.exceptions import ModelNotFoundError
+from tests.helpers.auth import override_test_principal
 
 # Test user-agent to avoid IP filter blocking
 TEST_USER_AGENT = "TestClient/1.0"
@@ -95,11 +96,7 @@ class TestRBACRolesAccess:
                 new_callable=AsyncMock,
                 return_value=mock_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                new_callable=AsyncMock,
-                return_value=mock_superuser,
-            ),
+            override_test_principal(mock_superuser, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.has_permission_cached",
                 new_callable=AsyncMock,
@@ -136,11 +133,7 @@ class TestRBACRolesAccess:
                 new_callable=AsyncMock,
                 return_value=mock_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                new_callable=AsyncMock,
-                return_value=mock_regular_user,
-            ),
+            override_test_principal(mock_regular_user, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.get_user_permissions",
                 new_callable=AsyncMock,
@@ -181,11 +174,7 @@ class TestRBACRolesCRUD:
                 new_callable=AsyncMock,
                 return_value=mock_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                new_callable=AsyncMock,
-                return_value=mock_superuser,
-            ),
+            override_test_principal(mock_superuser, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.has_permission_cached",
                 new_callable=AsyncMock,
@@ -224,11 +213,7 @@ class TestRBACRolesCRUD:
                 new_callable=AsyncMock,
                 return_value=mock_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                new_callable=AsyncMock,
-                return_value=mock_superuser,
-            ),
+            override_test_principal(mock_superuser, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.has_permission_cached",
                 new_callable=AsyncMock,
@@ -266,11 +251,7 @@ class TestRBACRolesCRUD:
                 new_callable=AsyncMock,
                 return_value=mock_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                new_callable=AsyncMock,
-                return_value=mock_superuser,
-            ),
+            override_test_principal(mock_superuser, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.has_permission_cached",
                 new_callable=AsyncMock,
@@ -314,11 +295,7 @@ class TestRBACRolesCRUD:
                 new_callable=AsyncMock,
                 return_value=mock_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                new_callable=AsyncMock,
-                return_value=mock_superuser,
-            ),
+            override_test_principal(mock_superuser, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.has_permission_cached",
                 new_callable=AsyncMock,
@@ -356,11 +333,7 @@ class TestRBACRolesCRUD:
                 new_callable=AsyncMock,
                 return_value=mock_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                new_callable=AsyncMock,
-                return_value=mock_superuser,
-            ),
+            override_test_principal(mock_superuser, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.has_permission_cached",
                 new_callable=AsyncMock,
@@ -399,11 +372,7 @@ class TestRBACRolesValidation:
                 new_callable=AsyncMock,
                 return_value=mock_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                new_callable=AsyncMock,
-                return_value=mock_superuser,
-            ),
+            override_test_principal(mock_superuser, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.has_permission_cached",
                 new_callable=AsyncMock,

@@ -13,6 +13,8 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from tests.helpers.auth import override_test_principal
+
 # Test user-agent to avoid IP filter blocking
 TEST_USER_AGENT = "TestClient/1.0"
 
@@ -43,11 +45,7 @@ class TestRoleAssignmentEndpoints:
                 new_callable=AsyncMock,
                 return_value=mock_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                new_callable=AsyncMock,
-                return_value=mock_user,
-            ),
+            override_test_principal(mock_user, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.get_user_permissions",
                 new_callable=AsyncMock,
@@ -83,11 +81,7 @@ class TestRoleAssignmentEndpoints:
                 new_callable=AsyncMock,
                 return_value=mock_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                new_callable=AsyncMock,
-                return_value=mock_user,
-            ),
+            override_test_principal(mock_user, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.get_user_permissions",
                 new_callable=AsyncMock,
@@ -122,11 +116,7 @@ class TestRoleAssignmentEndpoints:
                 new_callable=AsyncMock,
                 return_value=mock_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
+            override_test_principal(None, mock_tenant),
         ):
             response = await client.post(
                 "/api/v1/roles/1/users/2",
@@ -147,11 +137,7 @@ class TestRoleAssignmentEndpoints:
                 new_callable=AsyncMock,
                 return_value=mock_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                new_callable=AsyncMock,
-                return_value=mock_user,
-            ),
+            override_test_principal(mock_user, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.get_user_permissions",
                 new_callable=AsyncMock,
@@ -177,11 +163,7 @@ class TestRoleAssignmentEndpoints:
                 new_callable=AsyncMock,
                 return_value=mock_tenant,
             ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                new_callable=AsyncMock,
-                return_value=mock_user,
-            ),
+            override_test_principal(mock_user, mock_tenant),
             patch(
                 "src.app.core.rbac.dependencies.get_user_permissions",
                 new_callable=AsyncMock,

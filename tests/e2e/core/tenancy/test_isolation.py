@@ -144,9 +144,11 @@ class TestTenantIsolationE2E:
         logger.info("TEST: Tenant A cannot see Tenant B data")
         logger.info("=" * 80)
 
-        # Mock authentication for both tenants
-        from src.app.api.deps import get_current_user
+        # Principal injection via the single test-only adapter (real AuthContext
+        # through the get_auth_context seam; no token-scheme overrides needed).
+        from src.app.main import app
         from tests.conftest import MockUser
+        from tests.helpers.auth import install_test_principal
 
         # List users as Tenant A
         logger.info(f"Listing users as Tenant A (slug={tenant_a.slug})")
@@ -160,16 +162,7 @@ class TestTenantIsolationE2E:
             tenant_id=tenant_a.id,
         )
 
-        async def mock_get_current_user_a():
-            return fake_user_a
-
-        from src.app.core.rbac.dependencies import _oauth2_scheme
-        from src.app.core.security import oauth2_scheme
-        from src.app.main import app
-
-        app.dependency_overrides[get_current_user] = mock_get_current_user_a
-        app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
-        app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
+        install_test_principal(app, fake_user_a, tenant_a.id)
 
         response_a = await client.get(
             "/api/v1/users",
@@ -200,10 +193,7 @@ class TestTenantIsolationE2E:
             tenant_id=tenant_b.id,
         )
 
-        async def mock_get_current_user_b():
-            return fake_user_b
-
-        app.dependency_overrides[get_current_user] = mock_get_current_user_b
+        install_test_principal(app, fake_user_b, tenant_b.id)
 
         response_b = await client.get(
             "/api/v1/users",
@@ -245,10 +235,10 @@ class TestTenantIsolationE2E:
         logger.info("TEST: CRUD operations respect tenant context")
         logger.info("=" * 80)
 
-        # Mock authentication
-        from src.app.api.deps import get_current_user
+        # Principal injection via the single test-only adapter.
         from src.app.main import app
         from tests.conftest import MockUser
+        from tests.helpers.auth import install_test_principal
 
         fake_user = MockUser(
             id=999,
@@ -259,27 +249,15 @@ class TestTenantIsolationE2E:
             tenant_id=tenant_a.id,
         )
 
-        async def mock_get_current_user():
-            return fake_user
+        install_test_principal(app, fake_user, tenant_a.id)
 
-        from src.app.core.rbac.dependencies import _oauth2_scheme
-        from src.app.core.security import oauth2_scheme
-
-        app.dependency_overrides[get_current_user] = mock_get_current_user
-        app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
-        app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
-
-        # Mock the internal function used by requires_permission
-        with (
-            patch("src.app.core.rbac.dependencies._get_current_user_from_token", return_value=vars(fake_user)),
-            patch(
-                "src.app.core.rbac.dependencies.has_permission_cached",
-                new_callable=AsyncMock,
-                return_value=True,
-            ),
+        # Superuser bypass runs production; keep the permission-cache stub.
+        with patch(
+            "src.app.core.rbac.dependencies.has_permission_cached",
+            new_callable=AsyncMock,
+            return_value=True,
         ):
             # CREATE: Create user in tenant A
-            logger.info(f"Creating user in Tenant A (slug={tenant_a.slug})")
             create_payload = {
                 "name": "CRUD Test User",
                 "username": "crudtestusernew",
@@ -369,10 +347,10 @@ class TestTenantIsolationE2E:
         logger.info("TEST: Tenant switch mid-session maintains isolation")
         logger.info("=" * 80)
 
-        # Mock authentication
-        from src.app.api.deps import get_current_user
+        # Principal injection via the single test-only adapter.
         from src.app.main import app
         from tests.conftest import MockUser
+        from tests.helpers.auth import install_test_principal
 
         # Request 1: Tenant A
         logger.info(f"Request 1: Listing users as Tenant A (slug={tenant_a.slug})")
@@ -386,14 +364,7 @@ class TestTenantIsolationE2E:
             tenant_id=tenant_a.id,
         )
 
-        async def mock_get_current_user_a():
-            return fake_user_a
-
-        app.dependency_overrides[get_current_user] = mock_get_current_user_a
-        from src.app.core.rbac.dependencies import _oauth2_scheme
-        from src.app.core.security import oauth2_scheme
-        app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
-        app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
+        install_test_principal(app, fake_user_a, tenant_a.id)
 
         response_1 = await client.get(
             "/api/v1/users",
@@ -417,16 +388,7 @@ class TestTenantIsolationE2E:
             tenant_id=tenant_b.id,
         )
 
-        async def mock_get_current_user_b():
-            return fake_user_b
-
-        from src.app.core.rbac.dependencies import _oauth2_scheme
-        from src.app.core.security import oauth2_scheme
-
-        app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
-        app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
-
-        app.dependency_overrides[get_current_user] = mock_get_current_user_b
+        install_test_principal(app, fake_user_b, tenant_b.id)
 
         response_2 = await client.get(
             "/api/v1/users",
@@ -444,7 +406,7 @@ class TestTenantIsolationE2E:
 
         # Request 3: Switch back to Tenant A
         logger.info(f"Request 3: Switching back to Tenant A (slug={tenant_a.slug})")
-        app.dependency_overrides[get_current_user] = mock_get_current_user_a
+        install_test_principal(app, fake_user_a, tenant_a.id)
 
         response_3 = await client.get(
             "/api/v1/users",
@@ -479,90 +441,97 @@ class TestTenantIsolationE2E:
         logger.info("TEST: Parallel requests with different tenants")
         logger.info("=" * 80)
 
-        # Mock authentication
-        from src.app.api.deps import get_current_user
+        # Routed principal: one override serving both tenants by X-Tenant-ID,
+        # so concurrent requests each get their matching tenant (a single
+        # global principal cannot serve two tenants at once).
+        from fastapi import Request
+
+        from src.app.api.deps import get_auth_context, get_optional_auth_context
         from src.app.main import app
         from tests.conftest import MockUser
+        from tests.helpers.auth import build_test_auth_context, clear_test_principal
 
-        results: list[dict[str, Any]] = []
+        slug_to_id = {tenant_a.slug: tenant_a.id, tenant_b.slug: tenant_b.id}
 
-        async def fetch_users(tenant_slug: str, tenant_id: int, request_num: int) -> dict[str, Any]:
-            """Fetch users for a specific tenant and log results."""
-            # Set up auth for this tenant
-            fake_user = MockUser(
-                id=request_num,
-                username=f"testuser_{request_num}",
-                email=f"test{request_num}@{tenant_slug}.com",
-                is_superuser=True,
-                is_active=True,
-                tenant_id=tenant_id,
+        async def _routed_principal(request: Request):
+            slug = request.headers.get("X-Tenant-ID", tenant_a.slug)
+            tid = slug_to_id.get(slug, tenant_a.id)
+            return build_test_auth_context(
+                MockUser(
+                    id=1,
+                    username=f"routed-{slug}",
+                    email=f"routed@{slug}.com",
+                    is_superuser=True,
+                    is_active=True,
+                    tenant_id=tid,
+                ),
+                tid,
             )
 
-            async def mock_get_current_user():
-                return fake_user
+        app.dependency_overrides[get_auth_context] = _routed_principal
+        app.dependency_overrides[get_optional_auth_context] = _routed_principal
+        try:
+            async def fetch_users(tenant_slug: str, tenant_id: int, request_num: int) -> dict[str, Any]:
+                """Fetch users for a specific tenant and log results."""
+                logger.info(f"Request {request_num}: Fetching users for tenant {tenant_slug}")
+                response = await client.get(
+                    "/api/v1/users",
+                    headers={"X-Tenant-ID": tenant_slug},
+                )
+                assert response.status_code == 200, f"Request {request_num} failed: {response.text}"
+                data = response.json()["items"]
+                result = {
+                    "request_num": request_num,
+                    "tenant_slug": tenant_slug,
+                    "tenant_id": tenant_id,
+                    "operation": "list_users",
+                    "result_count": len(data),
+                    "user_ids": [user["id"] for user in data],
+                }
+                logger.info(
+                    f"Request {request_num}: tenant_id={tenant_id}, operation=list_users, result_count={len(data)}"
+                )
+                return result
 
-            from src.app.core.rbac.dependencies import _oauth2_scheme
-            from src.app.core.security import oauth2_scheme
+            # Create 10 parallel tasks (5 for tenant A, 5 for tenant B)
+            tasks = []
+            for i in range(5):
+                tasks.append(fetch_users(tenant_a.slug, tenant_a.id, i + 1))
+            for i in range(5):
+                tasks.append(fetch_users(tenant_b.slug, tenant_b.id, i + 6))
 
-            app.dependency_overrides[get_current_user] = mock_get_current_user
-            app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
-            app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
+            # Execute all requests in parallel
+            logger.info("Executing 10 parallel requests...")
+            results = await asyncio.gather(*tasks)
 
-            logger.info(f"Request {request_num}: Fetching users for tenant {tenant_slug}")
-            response = await client.get(
-                "/api/v1/users",
-                headers={"X-Tenant-ID": tenant_slug},
-            )
-            assert response.status_code == 200, f"Request {request_num} failed: {response.text}"
-            data = response.json()["items"]
-            result = {
-                "request_num": request_num,
-                "tenant_slug": tenant_slug,
-                "tenant_id": tenant_id,
-                "operation": "list_users",
-                "result_count": len(data),
-                "user_ids": [user["id"] for user in data],
-            }
-            logger.info(f"Request {request_num}: tenant_id={tenant_id}, operation=list_users, result_count={len(data)}")
-            return result
+            # Verify results
+            tenant_a_results = [r for r in results if r["tenant_id"] == tenant_a.id]
+            tenant_b_results = [r for r in results if r["tenant_id"] == tenant_b.id]
 
-        # Create 10 parallel tasks (5 for tenant A, 5 for tenant B)
-        tasks = []
-        for i in range(5):
-            tasks.append(fetch_users(tenant_a.slug, tenant_a.id, i + 1))
-        for i in range(5):
-            tasks.append(fetch_users(tenant_b.slug, tenant_b.id, i + 6))
+            assert len(tenant_a_results) == 5, f"Expected 5 tenant A results, got {len(tenant_a_results)}"
+            assert len(tenant_b_results) == 5, f"Expected 5 tenant B results, got {len(tenant_b_results)}"
 
-        # Execute all requests in parallel
-        logger.info("Executing 10 parallel requests...")
-        results = await asyncio.gather(*tasks)
+            # Verify each tenant A request sees exactly 5 users
+            for result in tenant_a_results:
+                assert result["result_count"] == 5, (
+                    f"Tenant A request {result['request_num']} saw {result['result_count']} users"
+                )
 
-        # Verify results
-        tenant_a_results = [r for r in results if r["tenant_id"] == tenant_a.id]
-        tenant_b_results = [r for r in results if r["tenant_id"] == tenant_b.id]
+            # Verify each tenant B request sees exactly 5 users
+            for result in tenant_b_results:
+                assert result["result_count"] == 5, (
+                    f"Tenant B request {result['request_num']} saw {result['result_count']} users"
+                )
 
-        assert len(tenant_a_results) == 5, f"Expected 5 tenant A results, got {len(tenant_a_results)}"
-        assert len(tenant_b_results) == 5, f"Expected 5 tenant B results, got {len(tenant_b_results)}"
+            # Verify no overlap between tenant A and B user IDs
+            tenant_a_user_ids = set(tenant_a_results[0]["user_ids"])
+            tenant_b_user_ids = set(tenant_b_results[0]["user_ids"])
+            overlap = tenant_a_user_ids & tenant_b_user_ids
+            assert len(overlap) == 0, f"Found {len(overlap)} overlapping user IDs: {overlap}"
 
-        # Verify each tenant A request sees exactly 5 users
-        for result in tenant_a_results:
-            assert result["result_count"] == 5, (
-                f"Tenant A request {result['request_num']} saw {result['result_count']} users"
-            )
-
-        # Verify each tenant B request sees exactly 5 users
-        for result in tenant_b_results:
-            assert result["result_count"] == 5, (
-                f"Tenant B request {result['request_num']} saw {result['result_count']} users"
-            )
-
-        # Verify no overlap between tenant A and B user IDs
-        tenant_a_user_ids = set(tenant_a_results[0]["user_ids"])
-        tenant_b_user_ids = set(tenant_b_results[0]["user_ids"])
-        overlap = tenant_a_user_ids & tenant_b_user_ids
-        assert len(overlap) == 0, f"Found {len(overlap)} overlapping user IDs: {overlap}"
-
-        logger.info("✅ PASSED: 10 parallel requests maintain tenant isolation")
+            logger.info("✅ PASSED: 10 parallel requests maintain tenant isolation")
+        finally:
+            clear_test_principal(app)
 
     @pytest.mark.asyncio
     async def test_no_data_leakage_under_load(self, db_session, get_test_app):
@@ -632,97 +601,103 @@ class TestTenantIsolationE2E:
                     transport=ASGITransport(app=app),
                     base_url="http://testserver",
                 ) as client:
-                    # Mock authentication
-                    from src.app.api.deps import get_current_user
+                    # Routed principal keyed by X-Tenant-ID (same pattern as
+                    # the 10-way parallel test above).
+                    from fastapi import Request
+
+                    from src.app.api.deps import get_auth_context, get_optional_auth_context
                     from tests.conftest import MockUser
+                    from tests.helpers.auth import build_test_auth_context, clear_test_principal
 
-                    results: list[dict[str, Any]] = []
+                    slug_to_id = {t.slug: t.id for t in tenants}
 
-                    async def fetch_users_load_test(
-                        tenant_slug: str, tenant_id: int, request_num: int
-                    ) -> dict[str, Any]:
-                        """Fetch users for load testing."""
-                        # Set up auth for this tenant
-                        fake_user = MockUser(
-                            id=request_num,
-                            username=f"loadtest_{request_num}",
-                            email=f"load{request_num}@{tenant_slug}.com",
-                            is_superuser=True,
-                            is_active=True,
-                            tenant_id=tenant_id,
+                    async def _routed_load_principal(request: Request):
+                        slug = request.headers.get("X-Tenant-ID", tenants[0].slug)
+                        tid = slug_to_id.get(slug, tenants[0].id)
+                        return build_test_auth_context(
+                            MockUser(
+                                id=1,
+                                username=f"routed-{slug}",
+                                email=f"routed@{slug}.com",
+                                is_superuser=True,
+                                is_active=True,
+                                tenant_id=tid,
+                            ),
+                            tid,
                         )
 
-                        async def mock_get_current_user():
-                            return fake_user
+                    app.dependency_overrides[get_auth_context] = _routed_load_principal
+                    app.dependency_overrides[get_optional_auth_context] = _routed_load_principal
+                    try:
+                        results: list[dict[str, Any]] = []
 
-                        app.dependency_overrides[get_current_user] = mock_get_current_user
-                        from src.app.core.rbac.dependencies import _oauth2_scheme
-                        from src.app.core.security import oauth2_scheme
-
-                        app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
-                        app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
-
-                        response = await client.get(
-                            "/api/v1/users",
-                            headers={"X-Tenant-ID": tenant_slug},
-                        )
-                        assert response.status_code == 200, f"Request {request_num} failed: {response.text}"
-                        data = response.json()["items"]
-                        result = {
-                            "request_num": request_num,
-                            "tenant_slug": tenant_slug,
-                            "tenant_id": tenant_id,
-                            "operation": "list_users",
-                            "result_count": len(data),
-                        }
-                        if request_num % 10 == 0:  # Log every 10th request to reduce noise
-                            logger.info(
-                                f"Request {request_num}: tenant_id={tenant_id}, operation=list_users, result_count={len(data)}"  # noqa: E501
+                        async def fetch_users_load_test(
+                            tenant_slug: str, tenant_id: int, request_num: int
+                        ) -> dict[str, Any]:
+                            """Fetch users for load testing."""
+                            response = await client.get(
+                                "/api/v1/users",
+                                headers={"X-Tenant-ID": tenant_slug},
                             )
-                        return result
+                            assert response.status_code == 200, f"Request {request_num} failed: {response.text}"
+                            data = response.json()["items"]
+                            result = {
+                                "request_num": request_num,
+                                "tenant_slug": tenant_slug,
+                                "tenant_id": tenant_id,
+                                "operation": "list_users",
+                                "result_count": len(data),
+                            }
+                            if request_num % 10 == 0:  # Log every 10th request to reduce noise
+                                logger.info(
+                                    f"Request {request_num}: tenant_id={tenant_id}, operation=list_users, result_count={len(data)}"  # noqa: E501
+                                )
+                            return result
 
-                    # Create 100 parallel tasks (10 requests per tenant)
-                    tasks = []
-                    request_num = 1
-                    for tenant in tenants:
-                        for _ in range(10):
-                            tasks.append(fetch_users_load_test(tenant.slug, tenant.id, request_num))
-                            request_num += 1
+                        # Create 100 parallel tasks (10 requests per tenant)
+                        tasks = []
+                        request_num = 1
+                        for tenant in tenants:
+                            for _ in range(10):
+                                tasks.append(fetch_users_load_test(tenant.slug, tenant.id, request_num))
+                                request_num += 1
 
-                    # Execute all 100 requests in parallel
-                    logger.info("Executing 100 concurrent requests across 10 tenants...")
-                    results = await asyncio.gather(*tasks)
+                        # Execute all 100 requests in parallel
+                        logger.info("Executing 100 concurrent requests across 10 tenants...")
+                        results = await asyncio.gather(*tasks)
 
-                    # Verify results
-                    logger.info(f"Completed {len(results)} requests")
+                        # Verify results
+                        logger.info(f"Completed {len(results)} requests")
 
-                    # Group results by tenant
-                    results_by_tenant: dict[int, list[dict[str, Any]]] = {}
-                    for result in results:
-                        tenant_id = result["tenant_id"]
-                        if tenant_id not in results_by_tenant:
-                            results_by_tenant[tenant_id] = []
-                        results_by_tenant[tenant_id].append(result)
+                        # Group results by tenant
+                        results_by_tenant: dict[int, list[dict[str, Any]]] = {}
+                        for result in results:
+                            tenant_id = result["tenant_id"]
+                            if tenant_id not in results_by_tenant:
+                                results_by_tenant[tenant_id] = []
+                            results_by_tenant[tenant_id].append(result)
 
-                    # Verify each tenant has exactly 10 requests
-                    assert len(results_by_tenant) == 10, f"Expected 10 tenants, got {len(results_by_tenant)}"
-                    for tenant_id, tenant_results in results_by_tenant.items():
-                        assert len(tenant_results) == 10, (
-                            f"Tenant {tenant_id} has {len(tenant_results)} requests, expected 10"
-                        )
-
-                        # Verify each request for this tenant sees exactly 10 users
-                        for result in tenant_results:
-                            assert result["result_count"] == 10, (
-                                f"Tenant {tenant_id} request {result['request_num']} saw {result['result_count']} users, expected 10"  # noqa: E501
+                        # Verify each tenant has exactly 10 requests
+                        assert len(results_by_tenant) == 10, f"Expected 10 tenants, got {len(results_by_tenant)}"
+                        for tenant_id, tenant_results in results_by_tenant.items():
+                            assert len(tenant_results) == 10, (
+                                f"Tenant {tenant_id} has {len(tenant_results)} requests, expected 10"
                             )
 
-                    logger.info("✅ PASSED: 100 concurrent requests across 10 tenants - zero data leakage detected")
+                            # Verify each request for this tenant sees exactly 10 users
+                            for result in tenant_results:
+                                assert result["result_count"] == 10, (
+                                    f"Tenant {tenant_id} request {result['request_num']} saw {result['result_count']} users, expected 10"  # noqa: E501
+                                )
 
-                    # Verify connection pool is not exhausted
-                    # Note: In SQLite tests with NullPool, connections are closed immediately
-                    # In production PostgreSQL, we would check pool stats here
-                    logger.info("Connection pool check: Using NullPool in tests (connections closed immediately)")
-                    logger.info("✅ PASSED: Connection pool not exhausted")
+                        logger.info("✅ PASSED: 100 concurrent requests across 10 tenants - zero data leakage detected")
+
+                        # Verify connection pool is not exhausted
+                        # Note: In SQLite tests with NullPool, connections are closed immediately
+                        # In production PostgreSQL, we would check pool stats here
+                        logger.info("Connection pool check: Using NullPool in tests (connections closed immediately)")
+                        logger.info("✅ PASSED: Connection pool not exhausted")
+                    finally:
+                        clear_test_principal(app)
         finally:
             app.dependency_overrides.clear()

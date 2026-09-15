@@ -1,7 +1,9 @@
-"""Tenancy core module - tenant context management.
+"""Tenancy core module - tenant context management + query seam.
 
 Provides request-scoped tenant context via ContextVar for async-safe
-tenant isolation across concurrent requests.
+tenant isolation across concurrent requests, and the single tenant-filter
+criterion (:func:`tenant_scope` / :func:`scoped_query`) that every
+tenant-shaped query composes onto.
 
 Direct imports:
     from src.app.core.tenancy.context import (
@@ -10,6 +12,7 @@ Direct imports:
         clear_tenant_context,
         require_active_tenant,
     )
+    from src.app.core.tenancy.query import tenant_scope, scoped_query
 """
 
 __all__ = [
@@ -17,6 +20,8 @@ __all__ = [
     "get_current_tenant",
     "require_active_tenant",
     "set_current_tenant",
+    "scoped_query",
+    "tenant_scope",
 ]
 
 
@@ -41,4 +46,12 @@ def __getattr__(name: str) -> Any:
         from src.app.core.tenancy.context import require_active_tenant
 
         return require_active_tenant
+    if name == "scoped_query":
+        from src.app.core.tenancy.query import scoped_query
+
+        return scoped_query
+    if name == "tenant_scope":
+        from src.app.core.tenancy.query import tenant_scope
+
+        return tenant_scope
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

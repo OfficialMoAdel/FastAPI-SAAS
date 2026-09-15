@@ -78,8 +78,10 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
     async def override_get_db():
         yield db_session
 
-    # Create dict-based mock users to avoid lazy loading issues
-    # These simulate what get_current_user returns
+    # Dict principals injected via the single test-only adapter (real
+    # AuthContext through get_auth_context seam).
+    from tests.helpers.auth import clear_test_principal, install_test_principal
+
     alpha_user_dict = {
         "id": user_alpha.id,
         "username": user_alpha.username,
@@ -110,10 +112,8 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
         app.dependency_overrides[async_get_db] = override_get_db
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=headers) as ac:
-            from src.app.api.deps import get_current_user
-
-            # 1. Login as Alpha - use dict for current_user
-            app.dependency_overrides[get_current_user] = lambda: alpha_user_dict
+            # 1. Login as Alpha
+            install_test_principal(app, alpha_user_dict, tenant_alpha.id)
 
             # Request
             response = await ac.get("/api/v1/users/me", headers={"X-Tenant-ID": tenant_alpha.slug})
@@ -124,8 +124,8 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
             assert "tenant_id" not in data
             assert "is_superuser" not in data
 
-            # 2. Login as Beta - use dict for current_user
-            app.dependency_overrides[get_current_user] = lambda: beta_user_dict
+            # 2. Login as Beta
+            install_test_principal(app, beta_user_dict, tenant_beta.id)
 
             # Request
             response = await ac.get("/api/v1/users/me", headers={"X-Tenant-ID": tenant_beta.slug})
@@ -137,4 +137,4 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
             assert "is_superuser" not in data
 
             # Clean up
-            app.dependency_overrides.clear()
+            clear_test_principal(app)

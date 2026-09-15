@@ -55,7 +55,6 @@ class AuthContext(BaseModel):
     # fields as keys); tenant is the lightweight TenantContext (or None).
     token_data: TokenData | dict[str, Any] | None
     tenant: TenantContext | None
-    is_dependency_override: bool = False
 
 
 async def _create_auth_context(
@@ -63,7 +62,6 @@ async def _create_auth_context(
     token_data: Any,
     tenant: Any,
     db: AsyncSession,
-    is_dependency_override: bool = False,
 ) -> AuthContext:
     if isinstance(user, dict):
         user_obj = AuthenticatedUser(**user)
@@ -74,7 +72,6 @@ async def _create_auth_context(
         user=user_obj,
         token_data=token_data,
         tenant=tenant,
-        is_dependency_override=is_dependency_override,
     )
 
 

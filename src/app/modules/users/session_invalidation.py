@@ -117,7 +117,12 @@ async def _extract_user_records(
     is_raw_id = isinstance(first_item, int | str) and not isinstance(first_item, dict)
 
     if is_raw_id:
-        # Keep ids verbatim: no int() cast (UUID-string ids would crash)
+        # Keep ids verbatim: no int() cast (UUID-string ids would crash).
+        # tenant_id scoping stays optional-by-contract: raw-id callers are
+        # role/permission bookkeeping (RBAC service passes self.tenant_id
+        # always; see service.py assign/remove paths). tenant_scope itself
+        # owns the fail-closed rule — a None tenant_id here means "caller
+        # takes responsibility", not a bypass of the seam.
         user_ids = list(users_list)
         stmt = select(
             User.id, User.email, User.username, User.tenant_id, User.token_version
@@ -275,6 +280,10 @@ async def _fetch_fresh_token_versions(
     Best-effort: returns whatever rows are readable (empty on failure so
     test doubles without real rows do not break the seam; the cache layer
     then applies its own explicit-or-raise contract).
+
+    tenant_id scoping is optional-by-contract (same rule as
+    :func:`_extract_user_records`): RBAC bookkeeping always passes its
+    tenant; a None tenant means the caller takes responsibility.
     """
     from src.app.modules.users.models import User
 
@@ -355,6 +364,8 @@ async def invalidate_user_sessions(
             .returning(User.id, User.token_version)
         )
         if tenant_id is not None:
+            # Optional-by-contract scoping (see _fetch_fresh_token_versions):
+            # RBAC callers always pass their tenant; None = caller owns it.
             from src.app.core.db.tenant_crud import tenant_scope
 
             update_stmt = update_stmt.where(tenant_scope(User, tenant_id))

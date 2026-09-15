@@ -15,59 +15,11 @@ import pytest
 class TestMiddlewareOrder:
     """Test middleware ordering for P1-15 optimization."""
 
-    def test_middleware_stack_order_in_main(self):
-        """Verify middleware is added in correct order for pre-tenant rate limiting."""
-        import inspect
-
-        from src.app import main
-
-        source = inspect.getsource(main)
-
-        # Find the middleware registration section
-        gzip_pos = source.find("app.add_middleware(GZipFilterMiddleware")
-        security_pos = source.find("app.add_middleware(SecurityHeadersMiddleware")
-        body_limit_pos = source.find("RequestBodyLimitMiddleware, max_body_size")
-        tenant_pos = source.find("app.add_middleware(TenantMiddleware")
-        rate_limit_pos = source.find("app.add_middleware(RateLimitMiddleware")
-        request_id_pos = source.find("app.add_middleware(RequestIDMiddleware")
-
-        # All middleware should be registered
-        assert gzip_pos > 0, "GZipFilterMiddleware not found"
-        assert security_pos > 0, "SecurityHeadersMiddleware not found"
-        assert body_limit_pos > 0, "RequestBodyLimitMiddleware not found"
-        assert tenant_pos > 0, "TenantMiddleware not found"
-        assert rate_limit_pos > 0, "RateLimitMiddleware not found"
-        assert request_id_pos > 0, "RequestIDMiddleware not found"
-
-        # P1-15: RateLimit must be added AFTER Tenant (LIFO) so it runs
-        # BEFORE Tenant on the request path: Request -> RateLimit -> Tenant.
-        # A 429 then rejects before the tenant lookup (L1+L2+DB) runs. To run
-        # first, it must be added last. So RateLimit added AFTER Tenant.
-        assert rate_limit_pos > tenant_pos, (
-            "P1-15: RateLimitMiddleware must be added after TenantMiddleware "
-            "so it runs before TenantMiddleware (LIFO) and 429s skip the "
-            "tenant lookup"
-        )
-
-        # Verify logical ordering (LIFO means later additions run first on request)
-        # Execution Order: GZip -> Security -> BodyLimit -> RateLimit -> Tenant -> RequestID
-        # Addition Order: RequestID -> Tenant -> RateLimit -> Security -> BodyLimit -> GZip
-        assert request_id_pos < tenant_pos, "RequestID added before Tenant"
-        assert tenant_pos < rate_limit_pos, "Tenant added before RateLimit"
-        assert rate_limit_pos < security_pos, "RateLimit added before Security"
-        assert security_pos < body_limit_pos, "Security added before BodyLimit"
-        assert body_limit_pos < gzip_pos, "BodyLimit added before GZip"
-
-    def test_p1_15_comment_documents_ordering(self):
-        """Verify P1-15 optimization is documented in code."""
-        import inspect
-
-        from src.app import main
-
-        source = inspect.getsource(main)
-
-        # Check for documentation of the ordering decision
-        assert "P1-15" in source, "Middleware ordering should document P1-15 pre-tenant rate limiting"
+    # Middleware ordering is pinned observably by
+    # tests/unit/test_middleware_order.py::test_middleware_execution_order
+    # (asserts app.user_middleware order). The previous source-scanning
+    # variants here pinned main.py text; ordering now lives in
+    # core/guard/ordering.py (GUARD_ORDER), so text scans are obsolete.
 
 
 class TestTenantContextAvailability:

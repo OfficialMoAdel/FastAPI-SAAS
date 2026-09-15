@@ -53,8 +53,8 @@ async def contract_mock_context(get_contract_test_app):
     fake_tenant.slug = "test-tenant-contract"
     fake_tenant.is_active = True
 
-    from src.app.api.deps import get_current_user
     from src.app.core.db.database import async_get_db
+    from tests.helpers.auth import install_test_principal
 
     fake_superuser = MockUser(
         id=1,
@@ -65,11 +65,8 @@ async def contract_mock_context(get_contract_test_app):
         tenant_id=1,
     )
 
-    async def mock_get_current_user():
-        return fake_superuser
-
     app.dependency_overrides[async_get_db] = override_get_db
-    app.dependency_overrides[get_current_user] = mock_get_current_user
+    install_test_principal(app, fake_superuser, fake_tenant)
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
@@ -166,7 +163,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 async def superuser_token_headers(get_contract_test_app, contract_mock_context):
     """Headers for superuser requests."""
     app = get_contract_test_app
-    from src.app.api.deps import get_current_user
+    from tests.helpers.auth import install_test_principal
 
     fake_superuser = MockUser(
         id=1,
@@ -177,7 +174,7 @@ async def superuser_token_headers(get_contract_test_app, contract_mock_context):
         tenant_id=1,
     )
 
-    app.dependency_overrides[get_current_user] = lambda: fake_superuser
+    install_test_principal(app, fake_superuser, 1)
     return {
         "Authorization": "Bearer superuser",
         "X-Tenant-ID": "test-tenant-contract",
@@ -188,7 +185,7 @@ async def superuser_token_headers(get_contract_test_app, contract_mock_context):
 async def regular_user_token_headers(get_contract_test_app, contract_mock_context):
     """Headers for regular user requests (non-superuser)."""
     app = get_contract_test_app
-    from src.app.api.deps import get_current_user
+    from tests.helpers.auth import install_test_principal
 
     fake_regular_user = MockUser(
         id=2,
@@ -199,7 +196,7 @@ async def regular_user_token_headers(get_contract_test_app, contract_mock_contex
         tenant_id=1,
     )
 
-    app.dependency_overrides[get_current_user] = lambda: fake_regular_user
+    install_test_principal(app, fake_regular_user, 1)
     return {
         "Authorization": "Bearer regular",
         "X-Tenant-ID": "test-tenant-contract",

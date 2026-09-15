@@ -18,6 +18,8 @@ def mock_db():
 @pytest.mark.asyncio
 async def test_rbac_exempt_path_extracts_tenant_from_path_params(mock_db):
     """Test requires_permission on exempt path extracts tenant from request.path_params and succeeds."""
+    from tests.helpers.auth import build_test_auth_context
+
     tenant_id = uuid.uuid4()
     checker = requires_permission(Permission.TENANT_UPDATE)
 
@@ -34,22 +36,17 @@ async def test_rbac_exempt_path_extracts_tenant_from_path_params(mock_db):
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = mock_tenant_model
     mock_db.execute.return_value = mock_result
+    ctx = build_test_auth_context(
+        {"id": 1, "is_superuser": False, "tenant_id": tenant_id},
+        None,
+    )
 
-    with (
-        patch(
-            "src.app.core.rbac.dependencies._get_current_user_from_token",
-            return_value={"id": 1, "is_superuser": False, "tenant_id": tenant_id},
-        ),
-        patch(
-            "src.app.core.tenancy.context.get_current_tenant", return_value=None
-        ),  # Exempt path has no tenant context
-        patch(
-            "src.app.core.rbac.dependencies.has_permission_cached",
-            return_value=True,
-        ),
+    with patch(
+        "src.app.core.rbac.dependencies.has_permission_cached",
+        return_value=True,
     ):
         # Should execute successfully
-        await checker(request=request, token="fake_token", db=mock_db)
+        await checker(request=request, db=mock_db, auth_context=ctx)
 
         # Verify it queried the database using the tenant_id in path
         mock_db.execute.assert_called_once()
@@ -60,6 +57,8 @@ async def test_rbac_exempt_path_extracts_tenant_from_path_params(mock_db):
 @pytest.mark.asyncio
 async def test_rbac_exempt_path_enforces_tenant_isolation(mock_db):
     """Test requires_permission on exempt path blocks cross-tenant access."""
+    from tests.helpers.auth import build_test_auth_context
+
     tenant_a_id = uuid.uuid4()
     tenant_b_id = uuid.uuid4()
     checker = requires_permission(Permission.TENANT_UPDATE)
@@ -77,37 +76,19 @@ async def test_rbac_exempt_path_enforces_tenant_isolation(mock_db):
     mock_result.scalar_one_or_none.return_value = mock_tenant_model
     mock_db.execute.return_value = mock_result
 
-    with (
-        patch(
-            "src.app.core.rbac.dependencies._get_current_user_from_token",
-            return_value={"id": 1, "is_superuser": False, "tenant_id": tenant_a_id},  # User belongs to tenant_a
-        ),
-        patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
-        patch(
-            "src.app.core.rbac.dependencies.has_permission_cached",
-            return_value=True,
-        ),
+    # R1-14: construct the real typed AuthContext (isinstance check).
+    mock_auth_context = build_test_auth_context(
+        {"id": 1, "is_superuser": False, "tenant_id": tenant_a_id},
+        None,
+    )
+
+    # Should raise ForbiddenException due to tenant mismatch
+    with patch(
+        "src.app.core.rbac.dependencies.has_permission_cached",
+        return_value=True,
     ):
-
-        # R1-14: construct the real typed AuthContext (isinstance check).
-        from src.app.api.deps.auth import AuthContext, AuthenticatedUser
-
-        mock_auth_context = AuthContext(
-            user=AuthenticatedUser(
-                id=1,
-                email="test@example.com",
-                username="testuser",
-                is_superuser=False,
-                tenant_id=tenant_a_id,
-            ),
-            token_data=None,
-            tenant=None,
-            is_dependency_override=False,
-        )
-
-        # Should raise ForbiddenException due to tenant mismatch
         with pytest.raises(ForbiddenException) as exc_info:
-            await checker(request=request, token="fake_token", db=mock_db, auth_context=mock_auth_context)
+            await checker(request=request, db=mock_db, auth_context=mock_auth_context)
 
         assert "User does not belong to the current tenant" in str(exc_info.value.detail)
 
@@ -115,6 +96,8 @@ async def test_rbac_exempt_path_enforces_tenant_isolation(mock_db):
 @pytest.mark.asyncio
 async def test_rbac_exempt_path_uuid_string_coercion_match(mock_db):
     """Test that UUID/string tenant comparison mismatch is resolved via string conversion."""
+    from tests.helpers.auth import build_test_auth_context
+
     tenant_id_uuid = uuid.uuid4()
     tenant_id_str = str(tenant_id_uuid)
     checker = requires_permission(Permission.TENANT_UPDATE)
@@ -131,40 +114,36 @@ async def test_rbac_exempt_path_uuid_string_coercion_match(mock_db):
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = mock_tenant_model
     mock_db.execute.return_value = mock_result
+    ctx = build_test_auth_context(
+        {"id": 1, "is_superuser": False, "tenant_id": tenant_id_uuid},
+        None,
+    )
 
-    with (
-        patch(
-            "src.app.core.rbac.dependencies._get_current_user_from_token",
-            return_value={"id": 1, "is_superuser": False, "tenant_id": tenant_id_uuid},  # User has UUID object
-        ),
-        patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
-        patch(
-            "src.app.core.rbac.dependencies.has_permission_cached",
-            return_value=True,
-        ),
+    with patch(
+        "src.app.core.rbac.dependencies.has_permission_cached",
+        return_value=True,
     ):
         # Should execute successfully without ForbiddenException because string conversion matches them
-        await checker(request=request, token="fake_token", db=mock_db)
+        await checker(request=request, db=mock_db, auth_context=ctx)
 
 
 @pytest.mark.asyncio
 async def test_rbac_exempt_path_no_tenant_raises_bad_request(mock_db):
     """Test that requires_permission raises 400 Bad Request if tenant context is missing and not in path."""
+    from tests.helpers.auth import build_test_auth_context
+
     checker = requires_permission(Permission.TENANT_UPDATE)
 
     # Request has no tenant_id in path
     request = MagicMock(spec=Request)
     request.path_params = {}
+    ctx = build_test_auth_context(
+        {"id": 1, "is_superuser": False, "tenant_id": uuid.uuid4()},
+        None,
+    )
 
-    with (
-        patch(
-            "src.app.core.rbac.dependencies._get_current_user_from_token",
-            return_value={"id": 1, "is_superuser": False, "tenant_id": uuid.uuid4()},
-        ),
-        patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
-    ):
-        with pytest.raises(HTTPException) as exc_info:
-            await checker(request=request, token="fake_token", db=mock_db)
+    with pytest.raises(HTTPException) as exc_info:
+        await checker(request=request, db=mock_db, auth_context=ctx)
 
-        assert exc_info.value.status_code == 400
-        assert "Tenant context required for permission check" in str(exc_info.value.detail)
+    assert exc_info.value.status_code == 400
+    assert "Tenant context required for permission check" in str(exc_info.value.detail)

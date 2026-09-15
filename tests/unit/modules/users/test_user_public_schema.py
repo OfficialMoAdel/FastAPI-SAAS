@@ -10,10 +10,10 @@ covering both return paths of GET /users/me:
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock
 
-from src.app.api.deps import get_current_user
 from src.app.modules.users import router as users_router
 from src.app.modules.users.service import UserService
 from tests.conftest import MockUser
+from tests.helpers.auth import clear_test_principal, install_test_principal
 
 PRIVILEGED_FIELDS = {"is_superuser", "tenant_id"}
 PUBLIC_FIELDS = {"id", "username", "email", "name", "profile_image_url"}
@@ -47,17 +47,14 @@ class TestUsersMeBodyFiltering:
         mock_service = Mock(spec=UserService)
         mock_service.resolve_current_profile = AsyncMock(return_value=_full_user_dict())
 
-        # current_user WITHOUT profile fields -> handler takes the service path
-        client.app.dependency_overrides[get_current_user] = lambda: {
-            "id": 1,
-            "username": "testuser",
-        }
+        # Principal WITHOUT profile fields -> handler takes the service path
+        install_test_principal(client.app, {"id": 1, "username": "testuser"}, 1)
         client.app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         try:
             response = client.get("/api/v1/users/me", headers={"X-Tenant-ID": "1"})
         finally:
-            client.app.dependency_overrides.pop(get_current_user, None)
+            clear_test_principal(client.app)
             client.app.dependency_overrides.pop(users_router.get_user_service, None)
 
         assert response.status_code == 200, response.text
@@ -69,14 +66,17 @@ class TestUsersMeBodyFiltering:
 
     def test_fast_path_omits_privileged_fields(self, client) -> None:
         """GET /users/me R5-1 fast path: raw current_user dict is filtered by response_model."""
-        # current_user WITH profile fields -> handler returns it directly (R5-1)
-        client.app.dependency_overrides[get_current_user] = lambda: _full_user_dict()
+        # Principal WITH profile fields -> service returns it (R5-1 direct path)
+        mock_service = Mock(spec=UserService)
+        mock_service.resolve_current_profile = AsyncMock(return_value=_full_user_dict())
+        install_test_principal(client.app, _full_user_dict(), 1)
+        client.app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         try:
             response = client.get("/api/v1/users/me", headers={"X-Tenant-ID": "1"})
         finally:
-            client.app.dependency_overrides.pop(get_current_user, None)
-
+            clear_test_principal(client.app)
+            client.app.dependency_overrides.pop(users_router.get_user_service, None)
         assert response.status_code == 200, response.text
         body = response.json()
         assert PUBLIC_FIELDS.issubset(body.keys())

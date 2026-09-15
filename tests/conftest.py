@@ -226,111 +226,11 @@ def get_test_app():
     """
     from src.app.main import app
 
-    # Clear any existing dependency overrides from previous tests
+    # Clear any existing dependency overrides from previous tests.
+    # Test principal injection lives in tests/helpers/auth.py
+    # (override_test_principal / install_test_principal). Production
+    # `get_auth_context` runs unmodified so HTTP tests cross the real seam.
     app.dependency_overrides.clear()
-
-    # --- INJECT TEST-AWARE MOCKS ---
-    # This replaces the logic that was removed from src.app.api.deps.auth in production.
-    # It allows tests to patch `_get_current_user_from_token` or override `get_current_user`
-    # and bypass token validation without polluting production code with `Mock` checks.
-    from unittest.mock import Mock
-
-    from fastapi import Depends, Request
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from src.app.api.deps import (
-        get_auth_context,
-        get_current_user,
-        get_optional_auth_context,
-        get_optional_user,
-        get_user_by_api_key,
-    )
-    from src.app.api.deps.auth import _create_auth_context
-    from src.app.core.db.database import async_get_db
-    from src.app.core.security import oauth2_scheme
-
-    async def _test_aware_get_auth_context(
-        request: Request,
-        db: AsyncSession = Depends(async_get_db),
-        token: str = Depends(oauth2_scheme),
-    ):
-        from src.app.core.rbac.dependencies import _get_current_user_from_token
-        from src.app.core.tenancy.context import get_current_tenant
-
-        current_tenant = get_current_tenant()
-
-        # 1. If tests override get_current_user, respect it
-        if get_current_user in app.dependency_overrides:
-            override_func = app.dependency_overrides[get_current_user]
-            import inspect
-
-            user_obj = await override_func() if inspect.iscoroutinefunction(override_func) else override_func()
-            return await _create_auth_context(user_obj, None, current_tenant, db, is_dependency_override=True)
-
-        # 2. If tests patch _get_current_user_from_token, use it
-        if isinstance(_get_current_user_from_token, Mock) or hasattr(_get_current_user_from_token, "mock_add_spec"):
-            mocked_user = await _get_current_user_from_token(token, db)
-            from src.app.api.deps import AuthenticatedUser
-
-            if isinstance(mocked_user, dict):
-                if "email" not in mocked_user:
-                    mocked_user["email"] = "mocked@example.com"
-                if "username" not in mocked_user:
-                    mocked_user["username"] = "mockeduser"
-                user_obj = AuthenticatedUser(**mocked_user)
-            else:
-                user_obj = mocked_user
-            return await _create_auth_context(user_obj, None, current_tenant, db, is_dependency_override=True)
-
-        # 3. Otherwise call real original dependency
-        return await get_auth_context(request=request, db=db, token=token)
-
-    async def _test_aware_get_optional_auth_context(
-        request: Request,
-        db: AsyncSession = Depends(async_get_db),
-        api_key_user=Depends(get_user_by_api_key),
-    ):
-        from src.app.core.rbac.dependencies import _get_current_user_from_token
-        from src.app.core.tenancy.context import get_current_tenant
-
-        current_tenant = get_current_tenant()
-
-        # 1. If tests override get_current_user or get_optional_user, respect it
-        for dep in (get_current_user, get_optional_user):
-            if dep in app.dependency_overrides:
-                override_func = app.dependency_overrides[dep]
-                import inspect
-
-                user_obj = await override_func() if inspect.iscoroutinefunction(override_func) else override_func()
-                if user_obj is None:
-                    return None
-                return await _create_auth_context(user_obj, None, current_tenant, db, is_dependency_override=True)
-
-        # 2. If tests patch _get_current_user_from_token, use it
-        if isinstance(_get_current_user_from_token, Mock) or hasattr(_get_current_user_from_token, "mock_add_spec"):
-            auth_header = request.headers.get("Authorization") if request is not None else None
-            token_value = ""
-            if auth_header:
-                _, _, token_value = auth_header.partition(" ")
-            mocked_user = await _get_current_user_from_token(token_value, db)
-            from src.app.api.deps import AuthenticatedUser
-
-            if isinstance(mocked_user, dict):
-                if "email" not in mocked_user:
-                    mocked_user["email"] = "mocked@example.com"
-                if "username" not in mocked_user:
-                    mocked_user["username"] = "mockeduser"
-                user_obj = AuthenticatedUser(**mocked_user)
-            else:
-                user_obj = mocked_user
-            return await _create_auth_context(user_obj, None, current_tenant, db, is_dependency_override=True)
-
-        # 3. Otherwise call real original dependency
-        return await get_optional_auth_context(request=request, db=db, api_key_user=api_key_user)
-
-    app.dependency_overrides[get_auth_context] = _test_aware_get_auth_context
-    app.dependency_overrides[get_optional_auth_context] = _test_aware_get_optional_auth_context
-
     yield app
 
     # Cleanup after test
@@ -556,7 +456,6 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
     fake_tenant.is_active = True
     fake_tenant.tier_id = 1
 
-    from src.app.api.deps import get_current_user
     from src.app.core.db.database import async_get_db
 
     # Mock superuser for auth
@@ -569,18 +468,15 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
         # tenant_id defaults to DEFAULT_TENANT_ID
     )
 
-    async def mock_get_current_user():
-        return fake_superuser
-
-    # Mock for _get_current_user_from_token used by RBAC dependencies
-    async def mock_get_current_user_from_token(token: str = None, db=None):
-        return fake_superuser
-
     # Note: We use dependency_overrides for async_get_db because FastAPI
-    # needs to properly handle the async generator in dependency injection
-
-    app.dependency_overrides[get_current_user] = mock_get_current_user
+    # needs to properly handle the async generator in dependency injection.
+    # Auth flows through install_test_principal only (single seam — overrides
+    # get_auth_context/get_optional_auth_context, which get_current_user
+    # consumes; no direct get_current_user override).
     app.dependency_overrides[async_get_db] = override_get_db
+    from tests.helpers.auth import install_test_principal as _install_principal
+
+    _install_principal(app, fake_superuser, fake_tenant)
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
@@ -602,9 +498,6 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
             "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
             new_callable=AsyncMock,
             return_value=fake_tenant,
-        ),
-        patch(
-            "src.app.core.rbac.dependencies._get_current_user_from_token", side_effect=mock_get_current_user_from_token
         ),
         # Mock has_permission_cached so superuser bypass works without a real DB user
         patch(
@@ -672,7 +565,6 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
     fake_tenant.is_active = True
     fake_tenant.tier_id = 1
 
-    from src.app.api.deps import get_current_user
     from src.app.core.db.database import async_get_db
 
     # Mock superuser with dict-like access for routes using current_user["id"]
@@ -685,16 +577,10 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
         tenant_id=MockUser.DEFAULT_TENANT_ID,  # Use UUID
     )
 
-    async def mock_get_current_user():
-        return fake_superuser
-
-    async def mock_get_current_user_from_token(token: str = None, db=None):
-        return fake_superuser
-
-    # Note: We use dependency_overrides for async_get_db because FastAPI
-    # needs to properly handle the async generator in dependency injection
-    app.dependency_overrides[get_current_user] = mock_get_current_user
     app.dependency_overrides[async_get_db] = override_get_db
+    from tests.helpers.auth import install_test_principal as _install_principal_auth
+
+    _install_principal_auth(app, fake_superuser, fake_tenant)
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
@@ -716,9 +602,6 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
             "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
             new_callable=AsyncMock,
             return_value=fake_tenant,
-        ),
-        patch(
-            "src.app.core.rbac.dependencies._get_current_user_from_token", side_effect=mock_get_current_user_from_token
         ),
         # Mock has_permission_cached so superuser bypass works without a real DB user
         patch(
@@ -857,7 +740,12 @@ async def full_mock_context(get_test_app):
     """Full mock context for async integration tests.
 
     Sets up common mocks: tenant, rate limiting, cache warming, db override, auth.
+    Auth uses the single test-only principal injector (tests/helpers/auth.py):
+    a real AuthContext via dependency_overrides, so `requires_permission`
+    exercises the production path.
     """
+    from tests.helpers.auth import install_test_principal
+
     app = get_test_app
 
     fake_tenant = Mock()
@@ -866,7 +754,6 @@ async def full_mock_context(get_test_app):
     fake_tenant.is_active = True
     fake_tenant.tier_id = 1
 
-    from src.app.api.deps import get_current_user
     from src.app.core.db.database import async_get_db
 
     # Mock superuser with dict-like access for routes using current_user["id"]
@@ -879,18 +766,11 @@ async def full_mock_context(get_test_app):
         tenant_id=MockUser.DEFAULT_TENANT_ID,  # Use UUID
     )
 
-    async def mock_get_current_user():
-        return fake_superuser
-
-    # Mock for _get_current_user_from_token used by RBAC dependencies
-    async def mock_get_current_user_from_token(token: str = None, db=None):
-        return fake_superuser
-
     # Note: We use dependency_overrides for async_get_db because FastAPI
     # needs to properly handle the async generator in dependency injection
 
-    app.dependency_overrides[get_current_user] = mock_get_current_user
     app.dependency_overrides[async_get_db] = override_get_db
+    install_test_principal(app, fake_superuser, fake_tenant)
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
@@ -913,15 +793,11 @@ async def full_mock_context(get_test_app):
             new_callable=AsyncMock,
             return_value=fake_tenant,
         ),
-        patch(
-            "src.app.core.rbac.dependencies._get_current_user_from_token", side_effect=mock_get_current_user_from_token
-        ),
     ):
         yield
 
     # Explicit cleanup - critical for test isolation
     app.dependency_overrides.clear()
-
 
 @pytest.fixture
 async def unauthenticated_mock_context(get_test_app):
@@ -1012,9 +888,9 @@ async def unauthenticated_async_client(get_test_app, unauthenticated_mock_contex
 
 @pytest.fixture
 async def superuser_token_headers(get_test_app, full_mock_context):
-    """Headers for superuser requests (overrides get_current_user)."""
+    """Headers for superuser requests (principal via test injector)."""
     app = get_test_app
-    from src.app.api.deps import get_current_user
+    from tests.helpers.auth import install_test_principal
 
     # Create superuser mock using MockUser
     fake_superuser = MockUser(
@@ -1027,10 +903,8 @@ async def superuser_token_headers(get_test_app, full_mock_context):
         tier_id=1,
     )
 
-    # Mock has_permission_cached so superuser DB verification fallback succeeds.
-    # The requires_permission dependency queries User.is_superuser from the DB (id=1),
-    # but no real user exists in the test DB. Without this mock, permission checks
-    # fall through to has_permission_cached which also hits the DB → 403.
+    # Mock has_permission_cached so superuser bypass works without a real DB
+    # user row. Without this mock, permission checks hit the DB → 403.
     perm_mock = patch(
         "src.app.core.rbac.dependencies.has_permission_cached",
         new_callable=AsyncMock,
@@ -1038,8 +912,8 @@ async def superuser_token_headers(get_test_app, full_mock_context):
     )
     perm_mock.start()
 
-    # Override dependency (updates existing overrides from full_mock_context)
-    app.dependency_overrides[get_current_user] = lambda: fake_superuser
+    # Re-install principal (updates existing overrides from full_mock_context)
+    install_test_principal(app, fake_superuser, MockUser.DEFAULT_TENANT_ID)
     yield {
         "Authorization": "Bearer superuser",
         "X-Tenant-ID": "test-tenant-integration",
@@ -1051,7 +925,7 @@ async def superuser_token_headers(get_test_app, full_mock_context):
 async def regular_user_token_headers(get_test_app, full_mock_context):
     """Headers for regular user requests (non-superuser)."""
     app = get_test_app
-    from src.app.api.deps import get_current_user
+    from tests.helpers.auth import install_test_principal
 
     # Create regular user (NOT superuser)
     fake_regular_user = MockUser(
@@ -1063,8 +937,8 @@ async def regular_user_token_headers(get_test_app, full_mock_context):
         tenant_id=MockUser.DEFAULT_TENANT_ID,  # Use UUID
     )
 
-    # Override dependency to return regular user
-    app.dependency_overrides[get_current_user] = lambda: fake_regular_user
+    # Re-install principal (updates existing overrides from full_mock_context)
+    install_test_principal(app, fake_regular_user, MockUser.DEFAULT_TENANT_ID)
     return {
         "Authorization": "Bearer regular",
         "X-Tenant-ID": "test-tenant-integration",

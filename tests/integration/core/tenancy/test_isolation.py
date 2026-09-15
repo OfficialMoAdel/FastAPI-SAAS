@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from uuid6 import uuid7
 
-from src.app.api.deps import get_current_user
 from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 from src.app.main import app
 from src.app.modules.posts.models import Post
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.models import User
+from tests.helpers.auth import clear_test_principal, install_test_principal
 
 # -----------------------------------------------------------------------------
 # Fixtures
@@ -130,28 +130,36 @@ def test_tenant_isolation_list_posts(client, user_alpha: User, tenant_alpha, pos
     """
     Verify that Alice (Tenant Alpha) can ONLY see Alpha posts.
     """
-    app.dependency_overrides[get_current_user] = lambda: {
-        "id": user_alpha.id,
-        "username": user_alpha.username,
-        "email": user_alpha.email,
-        "is_superuser": False,
-        "tenant_id": user_alpha.tenant_id,
-        "tier_id": None,
-    }
+    install_test_principal(
+        app,
+        {
+            "id": user_alpha.id,
+            "username": user_alpha.username,
+            "email": user_alpha.email,
+            "is_superuser": False,
+            "tenant_id": user_alpha.tenant_id,
+            "tier_id": None,
+        },
+        tenant_alpha.id,
+    )
+    try:
+        # R1-08: posts moved under /posts/by-user/{username}
+        response = client.get(
+            f"/api/v1/posts/by-user/{user_alpha.username}", headers={"X-Tenant-ID": tenant_alpha.slug}
+        )
 
-    # R1-08: posts moved under /posts/by-user/{username}
-    response = client.get(f"/api/v1/posts/by-user/{user_alpha.username}", headers={"X-Tenant-ID": tenant_alpha.slug})
+        assert response.status_code == 200, f"Response: {response.text}"
+        data = response.json()["data"]
 
-    assert response.status_code == 200, f"Response: {response.text}"
-    data = response.json()["data"]
+        # Debug info
+        titles = [p["title"] for p in data]
+        print(f"Alice saw posts: {titles}")
 
-    # Debug info
-    titles = [p["title"] for p in data]
-    print(f"Alice saw posts: {titles}")
-
-    assert len(data) >= 1
-    assert any(p["title"] == "Alpha Secrets" for p in data)
-    assert not any(p["title"] == "Beta Trade Secrets" for p in data)
+        assert len(data) >= 1
+        assert any(p["title"] == "Alpha Secrets" for p in data)
+        assert not any(p["title"] == "Beta Trade Secrets" for p in data)
+    finally:
+        clear_test_principal(app)
 
 
 @pytest.mark.skip(reason="Test requires sync/async DB bridge - known architecture limitation")
@@ -159,26 +167,34 @@ def test_cross_tenant_access_denied(client, user_alpha: User, user_beta: User, t
     """
     Verify that Alice (Tenant Alpha) CANNOT access Bob's (Tenant Beta) posts.
     """
-    app.dependency_overrides[get_current_user] = lambda: {
-        "id": user_alpha.id,
-        "username": user_alpha.username,
-        "email": user_alpha.email,
-        "is_superuser": False,
-        "tenant_id": user_alpha.tenant_id,
-        "tier_id": None,
-    }
+    install_test_principal(
+        app,
+        {
+            "id": user_alpha.id,
+            "username": user_alpha.username,
+            "email": user_alpha.email,
+            "is_superuser": False,
+            "tenant_id": user_alpha.tenant_id,
+            "tier_id": None,
+        },
+        tenant_alpha.id,
+    )
+    try:
+        response = client.get(
+            f"/api/v1/posts/by-user/{user_beta.username}", headers={"X-Tenant-ID": tenant_alpha.slug}
+        )
 
-    response = client.get(f"/api/v1/posts/by-user/{user_beta.username}", headers={"X-Tenant-ID": tenant_alpha.slug})
+        # Expectation: 403 Forbidden or 404 Not Found
+        print(f"Cross-tenant request status: {response.status_code}")
+        print(f"Cross-tenant response: {response.text}")
 
-    # Expectation: 403 Forbidden or 404 Not Found
-    print(f"Cross-tenant request status: {response.status_code}")
-    print(f"Cross-tenant response: {response.text}")
+        assert response.status_code in [403, 404]
 
-    assert response.status_code in [403, 404]
-
-    if response.status_code == 200:
-        data = response.json().get("data", [])
-        assert len(data) == 0, "Data Leakage! Alice saw Bob's posts."
+        if response.status_code == 200:
+            data = response.json().get("data", [])
+            assert len(data) == 0, "Data Leakage! Alice saw Bob's posts."
+    finally:
+        clear_test_principal(app)
 
 
 # =============================================================================

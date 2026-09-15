@@ -11,14 +11,14 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.api.deps import get_current_user
 from src.app.main import app
 from src.app.modules.users.models import User
+from tests.helpers.auth import clear_test_principal, install_test_principal
 
 
 @pytest.fixture(autouse=True)
 def mock_current_user():
-    """Mock the current user dependency for all tests in this module."""
+    """Inject the test principal for all tests in this module."""
     mock_user = User(
         email="test@example.com",
         name="Test User",
@@ -29,9 +29,9 @@ def mock_current_user():
     )
     mock_user.id = 1
     mock_user.tenant_id = 1
-    app.dependency_overrides[get_current_user] = lambda: mock_user
+    install_test_principal(app, mock_user, 1)
     yield
-    app.dependency_overrides.pop(get_current_user, None)
+    clear_test_principal(app)
 
 
 class TestWebhookEndpointAPI:

@@ -28,12 +28,11 @@ def _User(*, is_superuser=False, user_id=1, tenant_id=TENANT_ID) -> Authenticate
     )
 
 
-def _AuthContext(user, tenant, is_dependency_override=False) -> AuthContext:
+def _AuthContext(user, tenant) -> AuthContext:
     return AuthContext(
         user=user,
         token_data=None,
         tenant=tenant,
-        is_dependency_override=is_dependency_override,
     )
 
 
@@ -68,7 +67,7 @@ async def test_superuser_bypass(tenant_ctx, mock_db):
     user = _User(is_superuser=True, tenant_id=TENANT_ID)
     ctx = _AuthContext(user, tenant_ctx)
     dep = rbac_deps.requires_permission(Permission.USERS_READ)
-    await dep(request=_make_request(), token="tok", db=mock_db, auth_context=ctx)
+    await dep(request=_make_request(), db=mock_db, auth_context=ctx)
 
 
 async def test_tenant_mismatch_forbidden(tenant_ctx, mock_db):
@@ -76,7 +75,7 @@ async def test_tenant_mismatch_forbidden(tenant_ctx, mock_db):
     ctx = _AuthContext(user, tenant_ctx)
     dep = rbac_deps.requires_permission(Permission.USERS_READ)
     with pytest.raises(Exception):
-        await dep(request=_make_request(), token="tok", db=mock_db, auth_context=ctx)
+        await dep(request=_make_request(), db=mock_db, auth_context=ctx)
 
 
 async def test_tenant_context_required(mock_db):
@@ -84,7 +83,7 @@ async def test_tenant_context_required(mock_db):
     ctx = _AuthContext(user, None)
     dep = rbac_deps.requires_permission(Permission.USERS_READ)
     with pytest.raises(Exception):
-        await dep(request=_make_request(), token="tok", db=mock_db, auth_context=ctx)
+        await dep(request=_make_request(), db=mock_db, auth_context=ctx)
 
 
 async def test_user_id_required(tenant_ctx, mock_db):
@@ -97,7 +96,7 @@ async def test_user_id_required(tenant_ctx, mock_db):
     ctx = _AuthContext(user, tenant_ctx)
     dep = rbac_deps.requires_permission(Permission.USERS_READ)
     with pytest.raises(Exception):
-        await dep(request=_make_request(), token="tok", db=mock_db, auth_context=ctx)
+        await dep(request=_make_request(), db=mock_db, auth_context=ctx)
 
 
 async def test_permission_granted_via_cache(tenant_ctx, mock_db):
@@ -106,7 +105,7 @@ async def test_permission_granted_via_cache(tenant_ctx, mock_db):
     mask = PermissionBitmask.get_bit(Permission.USERS_READ.value)
     with patch.object(rbac_deps, "get_cached_permissions_bitmask", AsyncMock(return_value=mask)):
         dep = rbac_deps.requires_permission(Permission.USERS_READ)
-        await dep(request=_make_request(), token="tok", db=mock_db, auth_context=ctx)
+        await dep(request=_make_request(), db=mock_db, auth_context=ctx)
 
 
 async def test_permission_denied_403(tenant_ctx, mock_db):
@@ -115,7 +114,7 @@ async def test_permission_denied_403(tenant_ctx, mock_db):
     with patch.object(rbac_deps, "get_cached_permissions_bitmask", AsyncMock(return_value=0)):
         dep = rbac_deps.requires_permission(Permission.USERS_READ)
         with pytest.raises(Exception):
-            await dep(request=_make_request(), token="tok", db=mock_db, auth_context=ctx)
+            await dep(request=_make_request(), db=mock_db, auth_context=ctx)
 
 
 async def test_get_user_permissions_query(mock_db):
@@ -218,20 +217,6 @@ async def test_invalidate_users_permissions_cache_batch_with_redis():
         await rbac_deps.invalidate_users_permissions_cache_batch([1, 2], TENANT_ID)
     assert pipe.delete.called
     pipe.execute.assert_awaited_once()
-
-
-async def test_get_current_user_from_token_success(mock_db):
-    auth_ctx = MagicMock()
-    auth_ctx.user.model_dump.return_value = {"id": 1, "is_superuser": False}
-    with patch("src.app.api.deps.get_auth_context", AsyncMock(return_value=auth_ctx)):
-        result = await rbac_deps._get_current_user_from_token("tok", mock_db)
-    assert result == {"id": 1, "is_superuser": False}
-
-
-async def test_get_current_user_from_token_error(mock_db):
-    with patch("src.app.api.deps.get_auth_context", AsyncMock(side_effect=ValueError("boom"))):
-        with pytest.raises(Exception):
-            await rbac_deps._get_current_user_from_token("tok", mock_db)
 
 
 def test_get_bitmask_cache_key():

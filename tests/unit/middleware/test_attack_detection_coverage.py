@@ -159,7 +159,7 @@ async def test_call_block_mode(middleware):
 
 async def test_call_ban_mode(middleware):
     fake_filter = MagicMock()
-    fake_filter.add_to_blacklist = AsyncMock()
+    fake_filter.ban_ip = AsyncMock()
     fake_attack = MagicMock(
         ATTACK_DETECTION_MODE="ban",
         ATTACK_DETECTION_ENABLED=True,
@@ -177,7 +177,7 @@ async def test_call_ban_mode(middleware):
         )
         await middleware(scope, receive, send)
     assert _status_of(sent) == 403
-    fake_filter.add_to_blacklist.assert_awaited_once()
+    fake_filter.ban_ip.assert_awaited_once()
 
 
 async def test_call_no_attack_passes_through(middleware):

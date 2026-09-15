@@ -23,11 +23,11 @@ from fastapi import Request, Response, status
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.app.core.config import settings
+from src.app.core.guard.ip_rules import IpRules
 from src.app.core.logger import get_logger
 from src.app.core.observability.log_sanitizer import LogSanitizer
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
 from src.app.core.utils.ip_utils import get_client_ip
-from src.app.modules.security.service import IPFilterService
 
 logger = get_logger(__name__)
 
@@ -45,16 +45,10 @@ class AttackType(str, Enum):
     SSRF = "ssrf"
 
 
-# P2-7: import the shared common set; the few attack-detection-specific
-# exemptions stay here. ``is_path_exempt`` is called per-request so we
-# precompute the union once.
 from src.app.core.middleware_exempt import COMMON_EXEMPT_PATHS
 from src.app.core.middleware_exempt import is_path_exempt as _shared_is_path_exempt
 
-_ATTACK_DETECTION_EXTRA_EXEMPT: frozenset[str] = frozenset()
-_ATTACK_DETECTION_EXEMPT: frozenset[str] = COMMON_EXEMPT_PATHS | _ATTACK_DETECTION_EXTRA_EXEMPT
-
-EXEMPT_PATHS: frozenset[str] = _ATTACK_DETECTION_EXEMPT  # backward-compat re-export
+EXEMPT_PATHS: frozenset[str] = COMMON_EXEMPT_PATHS  # backward-compat re-export
 
 
 # Named group → (pattern_name, AttackType) mapping for combined regex matches
@@ -259,9 +253,20 @@ class AttackDetectionMiddleware:
     Whitelist bypass: If request.state.ip_whitelisted is True, skip all detection.
     """
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, ip_rules: IpRules | None = None) -> None:
         self.app = app
-        self._filter_service = IPFilterService()
+        # IP rules injected at the seam (default: Redis-backed service).
+        # Middleware no longer reaches across into the security feature
+        # module — the rules object owns that knowledge internally.
+        from src.app.core.guard.ip_rules import RedisIpRules
+
+        # `_filter_service` is the seam instance (RedisIpRules satisfies IpRules:
+        # check_ip_status + ban_ip). Kept under the historical attribute name so
+        # tests that patch/swap it keep exercising the ban path.
+        self._filter_service: IpRules = ip_rules if ip_rules is not None else RedisIpRules()
+        # Per-request flags: initialized here so unit tests that construct the
+        # middleware directly (without running __call__) see the configured
+        # defaults; __call__ refreshes them each request for dynamic overrides.
         self._mode = settings.attack_detection.ATTACK_DETECTION_MODE
         self._log_full_request = settings.attack_detection.ATTACK_DETECTION_LOG_FULL_REQUEST
         self._enabled = settings.attack_detection.ATTACK_DETECTION_ENABLED
@@ -269,17 +274,14 @@ class AttackDetectionMiddleware:
     def _is_exempt_path(self, path: str) -> bool:
         """Check if path is exempt from attack detection.
 
-        BUG FIX: The original `startswith` check matched any path that merely
         *begins* with an exempt string (e.g. /docs-attack matched /docs, bypassing
         attack scanning). Now we require either an exact match or a true sub-path
         (path starts with exempt + "/").
         """
         normalized_path = posixpath.normpath(path)
-        # P2-7: delegate to the shared helper, which checks the common
-        # exempt set first and any per-middleware extras via the
-        # additional= kwarg. The path normalization stays here because
-        # the startwith check must run on the normalized form.
-        return _shared_is_path_exempt(normalized_path, additional=_ATTACK_DETECTION_EXTRA_EXEMPT)
+        # P2-7: delegate to the shared helper (common set is the whole
+        # contract — the old per-middleware extra frozenset was empty).
+        return _shared_is_path_exempt(normalized_path)
 
     @staticmethod
     def _sanitize_input(content: bytes) -> bytes:
@@ -592,8 +594,9 @@ class AttackDetectionMiddleware:
         if self._mode == "ban":
             from datetime import UTC, datetime, timedelta
             try:
-                # Add IP to blacklist with a 24-hour expiration to prevent permanent bans from false positives
-                await self._filter_service.add_to_blacklist(
+                # Ban via the injected IpRules seam — never touch the
+                # security feature module directly (layering).
+                await self._filter_service.ban_ip(
                     ip_address=client_ip,
                     reason=f"Auto-banned for {detected_attacks[0]['attack_type']} attack",
                     expires_at=datetime.now(UTC) + timedelta(days=1),

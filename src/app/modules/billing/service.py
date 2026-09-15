@@ -224,10 +224,10 @@ class StripeSettingsService:
         return current_tenant.id if current_tenant is not None else None
 
     def _resolve_tenant(self, entity_name: str = "Billing", entity_id: Any = None) -> Any:
-        """Resolve tenant with cross-tenant mismatch guard."""
-        from src.app.modules.billing.tenant_resolver import resolve_billing_tenant_id
+        """Resolve tenant with cross-tenant mismatch guard (via the ONE seam)."""
+        from src.app.core.tenancy.context import resolve_tenant_id
 
-        return resolve_billing_tenant_id(self.tenant_id, entity_name, entity_id, tenant_getter=get_current_tenant)
+        return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
     async def get_settings(self) -> dict[str, Any] | None:
         """Get Stripe settings for the current tenant."""
         tid = self.current_tenant_id
@@ -299,10 +299,10 @@ class ProductService:
         return current_tenant.id if current_tenant is not None else None
 
     def _resolve_tenant(self, entity_name: str = "Product", entity_id: Any = None) -> Any:
-        """Resolve tenant with cross-tenant mismatch guard."""
-        from src.app.modules.billing.tenant_resolver import resolve_billing_tenant_id
+        """Resolve tenant with cross-tenant mismatch guard (via the ONE seam)."""
+        from src.app.core.tenancy.context import resolve_tenant_id
 
-        return resolve_billing_tenant_id(self.tenant_id, entity_name, entity_id, tenant_getter=get_current_tenant)
+        return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
 
     def _require_tenant(self, entity_name: str = "Product", entity_id: Any = None) -> Any:
         tid = self.current_tenant_id
@@ -432,10 +432,10 @@ class PricingService:
         return current_tenant.id if current_tenant is not None else None
 
     def _resolve_tenant(self, entity_name: str = "Pricing", entity_id: Any = None) -> Any:
-        """Resolve tenant with cross-tenant mismatch guard."""
-        from src.app.modules.billing.tenant_resolver import resolve_billing_tenant_id
+        """Resolve tenant with cross-tenant mismatch guard (via the ONE seam)."""
+        from src.app.core.tenancy.context import resolve_tenant_id
 
-        return resolve_billing_tenant_id(self.tenant_id, entity_name, entity_id, tenant_getter=get_current_tenant)
+        return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
 
     def _require_tenant(self, entity_name: str = "Pricing", entity_id: Any = None) -> Any:
         tid = self.current_tenant_id

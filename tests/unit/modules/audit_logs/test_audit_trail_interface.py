@@ -137,7 +137,7 @@ class TestAuditTrailInterface:
             assert payload["entity_type"] == "system"
             assert payload["entity_id"] == "rls_context"
             assert payload["tenant_id"] == str(SYSTEM_TENANT_ID)
-            assert payload["details"] == {"reason": "Cron job execution"}
+            assert payload["details"] == {"reason": "Cron job execution", "_tenant_fallback": "system"}
 
     @pytest.mark.asyncio
     async def test_audit_handles_publish_failure_fail_open(self) -> None:

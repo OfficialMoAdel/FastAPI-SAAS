@@ -39,11 +39,11 @@ async def async_client():
     # Mock rate limiter
     mock_rate_check = AsyncMock(return_value=(False, 0))
 
-    # Mock IP filter service to avoid Redis dependency
-    mock_filter_service = AsyncMock()
-    mock_filter_service.is_blacklisted = AsyncMock(return_value=False)
-    mock_filter_service.is_whitelisted = AsyncMock(return_value=True)
-    mock_filter_service.check_ip_status = AsyncMock(return_value=(False, False))
+    # Mock IP rules seam (IpRules) to avoid Redis dependency.
+    # IPFilterMiddleware reads check_ip_status via this injected seam —
+    # see core/guard/ip_rules.py (R1-16 middleware collapse).
+    mock_ip_rules = AsyncMock()
+    mock_ip_rules.check_ip_status = AsyncMock(return_value=(False, False))
 
     @asynccontextmanager
     async def mock_redis_context():
@@ -52,7 +52,7 @@ async def async_client():
     with (
         patch("src.app.core.utils.rate_limit.rate_limiter.check_rate_limit", mock_rate_check),
         patch("src.app.modules.security.service.get_redis_client", mock_redis_context),
-        patch("src.app.middleware.ip_filter.IPFilterService", return_value=mock_filter_service),
+        patch("src.app.core.guard.ip_rules.RedisIpRules", return_value=mock_ip_rules),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             yield client

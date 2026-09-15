@@ -968,7 +968,8 @@ class UserService:
                 .where(User.username == username, User.is_deleted.is_(False))
             )
         # SECURITY FIX: Filter by tenant to prevent cross-tenant data exposure.
-        # Without this, a superuser could query any user across all tenants by username.
+        # The /{id}/rate-limits route is superuser-only with no RequestContext
+        # (superusers see all tenants), so the unscoped hatch stays here.
         from src.app.core.db.tenant_crud import tenant_scope
 
         tenant = get_current_tenant()

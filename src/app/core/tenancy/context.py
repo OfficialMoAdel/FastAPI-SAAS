@@ -187,3 +187,26 @@ def require_tenant_match(
         return
     if resource_tenant_id != current.tenant_id:
         raise ModelNotFoundError(resource, key)
+
+
+def resolve_tenant_id(explicit_tenant_id: Any = None, *, entity_name: str = "resource", entity_id: Any = None) -> Any:
+    """Resolve the effective tenant id — the ONE explicit-vs-context seam.
+
+    Rules (shared by every service; mirrors :func:`tenant_scope`):
+
+    - Active context always wins; a mismatching explicit value raises
+      ``ModelNotFoundError`` (enumeration-safe soft-404, never 403).
+    - No context: an explicit value may be used (worker/system paths).
+    - Neither: raises ``ModelNotFoundError`` (fail-closed).
+
+    Returns the context id when bound, else the explicit value verbatim.
+    """
+    current = get_current_tenant()
+    # P1: normalize the two "no tenant" states (None + NO_TENANT sentinel).
+    current_id = current.id if current else None
+    if current_id is not None and explicit_tenant_id is not None and str(explicit_tenant_id) != str(current_id):
+        raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+    tid = current_id if current_id is not None else explicit_tenant_id
+    if tid is None:
+        raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
+    return tid

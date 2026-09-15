@@ -1,15 +1,7 @@
 """FastAPI middleware components for request processing.
 
-Middleware order in application (Outermost to Innermost):
-1. GZipMiddleware           (compresses all responses)
-2. QueryProfilerMiddleware  (dev-mode query analysis)
-3. IPFilterMiddleware       (IP whitelist/blacklist enforcement)
-4. RequestBodyLimitMiddleware (request size limits)
-5. AttackDetectionMiddleware  (detects SQLi, XSS, path traversal)
-6. SecurityHeadersMiddleware  (CSP, HSTS, etc.)
-7. TenantMiddleware         (multi-tenant context)
-8. RateLimitMiddleware      (tier-aware rate limiting)
-9. RequestIDMiddleware      (request tracing)
+Ordering lives in ONE place: ``src/app/core/guard/ordering.py``
+(``GUARD_ORDER``). This package only re-exports the middleware classes.
 """
 
 from src.app.middleware.attack_detection import AttackDetectionMiddleware

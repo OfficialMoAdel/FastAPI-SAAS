@@ -82,9 +82,8 @@ async def test_create_auth_context_from_dict() -> None:
 
 async def test_create_auth_context_from_obj() -> None:
     user = AuthenticatedUser(id=2, email="c@d.com")
-    ctx = await _create_auth_context(user, None, None, _make_db(), is_dependency_override=True)
+    ctx = await _create_auth_context(user, None, None, _make_db())
     assert ctx.user.id == 2
-    assert ctx.is_dependency_override is True
     assert ctx.tenant is None
 
 

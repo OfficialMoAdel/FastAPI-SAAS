@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps.auth import AuthenticatedUser, get_current_user
+from src.app.api.deps.auth import AuthenticatedUser, get_auth_context, get_optional_auth_context
 from src.app.api.deps.request_context import (
     RequestContext,
     get_request_context,
@@ -89,8 +89,12 @@ class TestRequestContextDependency:
     def _build_app_client(self, user: AuthenticatedUser, tenant: TenantContext) -> TestClient:
         app = FastAPI()
 
-        async def override_user() -> AuthenticatedUser:
-            return user
+        from tests.helpers.auth import build_test_auth_context
+
+        ctx = build_test_auth_context(user, tenant)
+
+        async def override_ctx() -> object:
+            return ctx
 
         def override_tenant() -> TenantContext:
             return tenant
@@ -98,7 +102,8 @@ class TestRequestContextDependency:
         async def override_db() -> AsyncMock:
             return AsyncMock(spec=AsyncSession)
 
-        app.dependency_overrides[get_current_user] = override_user
+        app.dependency_overrides[get_auth_context] = override_ctx
+        app.dependency_overrides[get_optional_auth_context] = override_ctx
         app.dependency_overrides[tenant_dependency] = override_tenant
         app.dependency_overrides[async_get_db] = override_db
 

@@ -73,17 +73,10 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         return current_tenant.id if current_tenant is not None else None
 
     def _resolve_tenant(self, entity_name: str = "SubscriptionPlan", entity_id: Any = None) -> Any:
-        """Resolve tenant with cross-tenant mismatch guard."""
-        from src.app.core.tenancy.context import get_current_tenant as _get_ctx
+        """Resolve tenant with cross-tenant mismatch guard (via the ONE seam)."""
+        from src.app.core.tenancy.context import resolve_tenant_id
 
-        ctx = _get_ctx()
-        ctx_id = ctx.id if ctx is not None else None
-        if self.tenant_id is not None and ctx_id is not None and str(self.tenant_id) != str(ctx_id):
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        tid = self.tenant_id if self.tenant_id is not None else ctx_id
-        if tid is None:
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        return tid
+        return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
 
     def _require_tenant(self, entity_name: str = "SubscriptionPlan", entity_id: Any = None) -> Any:
         tid = self.current_tenant_id
@@ -196,17 +189,10 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         return current_tenant.id if current_tenant is not None else None
 
     def _resolve_tenant(self, entity_name: str = "UserSubscription", entity_id: Any = None) -> Any:
-        """Resolve tenant with cross-tenant mismatch guard."""
-        from src.app.core.tenancy.context import get_current_tenant as _get_ctx
+        """Resolve tenant with cross-tenant mismatch guard (via the ONE seam)."""
+        from src.app.core.tenancy.context import resolve_tenant_id
 
-        ctx = _get_ctx()
-        ctx_id = ctx.id if ctx is not None else None
-        if self.tenant_id is not None and ctx_id is not None and str(self.tenant_id) != str(ctx_id):
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        tid = self.tenant_id if self.tenant_id is not None else ctx_id
-        if tid is None:
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        return tid
+        return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
 
     def _require_tenant(self, entity_name: str = "UserSubscription", entity_id: Any = None) -> Any:
         tid = self.current_tenant_id

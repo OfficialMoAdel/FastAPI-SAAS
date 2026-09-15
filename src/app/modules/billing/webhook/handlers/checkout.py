@@ -108,7 +108,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
 
             async with _pkg.job_bypass_context("Checkout plan ownership check") as plan_db:
                 plan_row = await _plan_crud.get(plan_db, id=plan_id, _allow_unscoped=True)
-            if not plan_row or plan_row.get("tenant_id") != tenant_id:
+            if not plan_row or str(plan_row.get("tenant_id")) != str(tenant_id):
                 _pkg.logger.error(
                     "Checkout plan/tenant ownership mismatch — rejecting subscription creation",
                     session_id=session["id"],
@@ -126,7 +126,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                     select(User.tenant_id).where(User.id == user_id, User.is_deleted.is_(False))
                 )
                 user_tenant = user_res.scalar_one_or_none()
-            if user_tenant != tenant_id:
+            if str(user_tenant) != str(tenant_id):
                 _pkg.logger.error(
                     "Checkout user/tenant membership mismatch — rejecting subscription creation",
                     session_id=session["id"],

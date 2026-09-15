@@ -123,9 +123,7 @@ class StripeGateway:
             else:
                 record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant_id, _allow_unscoped=True)
             if record is not None and not self._record_belongs_to_tenant(record, tenant_id):
-                # P1-2: without tenant context the _allow_unscoped escape hatch
-                # returns the table's first row regardless of tenant. Never use
-                # another tenant's key — fail closed to the global key instead.
+                # Fail closed to the global key — never use another tenant's key.
                 logger.error(
                     "stripe_key_tenant_mismatch",
                     requested_tenant=str(tenant_id),

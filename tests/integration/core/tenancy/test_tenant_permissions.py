@@ -43,9 +43,9 @@ class TestTenantPermissions:
         self, async_client: AsyncClient, regular_user_token_headers: dict, tenant, get_test_app
     ) -> None:
         """Test that regular users CAN access their own tenant."""
-        # Update mock user to match the real tenant ID created by fixture
-        from src.app.api.deps import get_current_user
+        # Update principal to match the real tenant ID created by fixture
         from tests.conftest import MockUser
+        from tests.helpers.auth import install_test_principal
 
         fake_regular_user = MockUser(
             id=2,
@@ -57,7 +57,7 @@ class TestTenantPermissions:
         )
 
         # Access the app from the fixture to update override
-        get_test_app.dependency_overrides[get_current_user] = lambda: fake_regular_user
+        install_test_principal(get_test_app, fake_regular_user, tenant.id)
 
         # Align the middleware tenant context with the REAL fixture tenant
         # (production resolves slug→same row; the stock mock returns a
