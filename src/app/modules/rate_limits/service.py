@@ -39,7 +39,7 @@ class RateLimitService(BaseService[RateLimit]):
         db : AsyncSession
             Database session
         """
-        super().__init__(RateLimit, db)
+        super().__init__(RateLimit, db, select_schema=RateLimitRead)
         self._tiers = TierService(db)
 
     # ---------------------------------------------------------------------------
@@ -329,5 +329,3 @@ class RateLimitService(BaseService[RateLimit]):
         await self._invalidate_tier_rate_limits_cache(db_tier.id)
 
         return {"message": "Rate Limit deleted"}
-
-

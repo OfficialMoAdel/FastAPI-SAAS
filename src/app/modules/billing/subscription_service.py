@@ -62,7 +62,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
     """Service for managing subscription plans."""
 
     def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None):
-        super().__init__(SubscriptionPlan, db)
+        super().__init__(SubscriptionPlan, db, select_schema=SubscriptionPlanRead)
         self.tenant_id = tenant_id
 
     @property
@@ -185,7 +185,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
     """Service for managing user subscriptions."""
 
     def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None):
-        super().__init__(UserSubscription, db)
+        super().__init__(UserSubscription, db, select_schema=UserSubscriptionRead)
         self.tenant_id = tenant_id
 
     @property
@@ -392,7 +392,7 @@ class BillingRecordService(BaseService[BillingRecord]):
     """Service for managing billing records."""
 
     def __init__(self, db: AsyncSession):
-        super().__init__(BillingRecord, db)
+        super().__init__(BillingRecord, db, select_schema=BillingRecordRead)
 
     async def create_record(self, data: BillingRecordCreate) -> dict[str, Any]:
         """Create a billing record."""

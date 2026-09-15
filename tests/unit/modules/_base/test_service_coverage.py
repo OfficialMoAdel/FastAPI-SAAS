@@ -106,12 +106,15 @@ async def test_create() -> None:
 
 
 async def test_update() -> None:
+    """Without a select_schema, update re-reads via crud.get (the tenant
+    CRUD returns None from update, so the row payload comes from re-read)."""
     service, _ = _make_service()
     obj = create_autospec(PasskeyCredential, instance=True)
-    service.crud.update.return_value = obj
+    service.crud.get.return_value = obj
     result = await service.update(id=1, user_id=2)
     assert result is obj
     service.crud.update.assert_awaited_once()
+    service.crud.get.assert_awaited_once()
 
 
 async def test_delete() -> None:

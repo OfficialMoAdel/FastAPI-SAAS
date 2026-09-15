@@ -4,8 +4,7 @@ Tests validate P1-15 middleware reordering: RateLimitMiddleware runs
 before TenantMiddleware so a cheap 429 rejects before the tenant lookup
 (L1+L2+DB). The old P2-5 Tenant-first rationale is stale — the rate-limit
 request path resolves tenant_id from JWT claims/request.state and never
-reads the tenant ContextVar (dep-layer ``is_rate_limited`` still sees the
-context because TenantMiddleware runs before the handler regardless).
+reads the tenant ContextVar.
 """
 
 from unittest.mock import MagicMock
@@ -68,9 +67,7 @@ class TestMiddlewareOrder:
         source = inspect.getsource(main)
 
         # Check for documentation of the ordering decision
-        assert "P1-15" in source, (
-            "Middleware ordering should document P1-15 pre-tenant rate limiting"
-        )
+        assert "P1-15" in source, "Middleware ordering should document P1-15 pre-tenant rate limiting"
 
 
 class TestTenantContextAvailability:

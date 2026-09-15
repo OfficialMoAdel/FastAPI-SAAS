@@ -3,7 +3,10 @@
 Single seam answering "what is this user/tenant allowed and are they limited?"
 across:
 - RateLimitMiddleware (ASGI middleware path)
-- rate_limiter_dependency (FastAPI Depends path)
+- check_security_budget (endpoint brute-force budgets: auth/MFA/passkey/AI)
+
+No Depends-level general limiter exists — the ASGI path covers general
+limiting; endpoint budgets use the security-budget verb below.
 
 Centralizes:
 - Tier resolution (cached L1/Redis policies via get_tier_policy -> DB fallback -> settings)
@@ -20,8 +23,8 @@ Two-verb decision contract (P1-#5):
 - record: violation/ban escalation lives OUTSIDE this module in ``auto_ban``
   (``check_and_auto_ban``), keeping the decision pure of ban state.
 
-All rate-limit consumers (middleware, deps, RateLimiter.is_rate_limited) derive
-keys through ``build_rate_limit_key`` — one key scheme, one decision module.
+All rate-limit consumers (middleware, security budgets, RateLimiter.is_rate_limited)
+derive keys through ``build_rate_limit_key`` — one key scheme, one decision module.
 """
 
 import hashlib
@@ -289,9 +292,76 @@ async def evaluate_rate_policy(
     )
 
 
+async def check_security_budget(
+    budget: str,
+    identifier: str,
+    *,
+    tenant_id: Any = None,
+    limiter: Any = None,
+) -> RateLimitVerdict:
+    """Check an identity-keyed security budget (login/MFA/passkey/AI defenses).
+
+    The single seam for endpoint-level brute-force budgets, replacing the
+    per-module limiter helpers that each hand-rolled keys, hardcoded limits,
+    and called the fixed-window engine directly (bypassing the configured
+    algorithm and fail-open policy). Consumers pass an identity (client IP
+    for anonymous surfaces, user id for authenticated ones) and a budget
+    name; limit/period come from ``settings.rate_limit.SECURITY_BUDGETS``.
+
+    Keys are namespaced under the canonical ``build_rate_limit_key`` scheme
+    so every rate-limit consumer in the app shares one key format. No path
+    is involved — a budget is endpoint semantics, not path policy.
+
+    Args:
+        budget: Budget name; must exist in SECURITY_BUDGETS.
+        identifier: Identity to key on (client IP or user id).
+        tenant_id: Optional tenant scoping for authenticated budgets.
+        limiter: Optional limiter override (tests).
+
+    Returns:
+        RateLimitVerdict with is_limited and Retry-After headers.
+
+    Raises:
+        KeyError: If the budget name is not configured (fail-loud, not a
+            silent default — an unknown budget means a caller typo).
+    """
+    limit, period = settings.rate_limit.SECURITY_BUDGETS[budget]
+
+    # Budget keys get their own namespace inside the canonical scheme; a
+    # bare identifier would collide with path-shaped keys from
+    # build_rate_limit_key's "rate_limit:user:{id}:{path}" format.
+    key = build_rate_limit_key(f"budget:{budget}", user_id=identifier, tenant_id=tenant_id)
+
+    effective_limiter = limiter or default_rate_limiter
+    is_limited, remaining, retry_after = await effective_limiter.check_rate_limit_algorithm(key, limit, period)
+
+    if is_limited and retry_after == 0:
+        retry_after = period - (int(time.time()) % period)
+
+    headers = {
+        "X-RateLimit-Limit": str(limit),
+        "X-RateLimit-Remaining": str(remaining),
+        "X-RateLimit-Period": str(period),
+    }
+    if is_limited and retry_after > 0:
+        headers["Retry-After"] = str(int(retry_after))
+
+    return RateLimitVerdict(
+        is_limited=is_limited,
+        limit=limit,
+        period=period,
+        remaining=remaining,
+        retry_after=retry_after,
+        key=key,
+        headers=headers,
+        bypassed=False,
+    )
+
+
 __all__ = [
     "RateLimitVerdict",
     "build_rate_limit_key",
+    "check_security_budget",
     "evaluate_rate_policy",
     "resolve_anonymous_user_id",
     "resolve_rate_limit_identity",

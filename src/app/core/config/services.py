@@ -36,6 +36,26 @@ class DefaultRateLimitSettings(BaseSettings):
     # but defined nowhere). Declared so operators can tune the Redis TTL for
     # tier rate-limit policy cache entries.
     RATE_LIMIT_POLICY_TTL: int = Field(default=3600, ge=60, le=86400)
+    # Security budgets for sensitive endpoints, keyed by budget name.
+    # These are identity-keyed brute-force defenses (login attempts, MFA
+    # verification, passkey login, AI calls) — distinct from tier path
+    # policies above. All values moved here from module-level hardcodes so
+    # operators tune them without code changes (same pipeline as ADR-0002).
+    SECURITY_BUDGETS: dict[str, tuple[int, int]] = {
+        # auth login/register/refresh/reset per client IP (was auth/rate_limit.py 5/60)
+        "auth": (5, 60),
+        # MFA verification attempts (was mfa.py MFA_VERIFY_* 5/60)
+        "mfa_verify": (5, 60),
+        # MFA state mutations (was mfa.py MFA_MUTATE_* 5/60; separate budget
+        # so verify attempts cannot starve mutations, per P1-5)
+        "mfa_mutate": (5, 60),
+        # magic link send per email hash (was the anonymous-email path of
+        # the deleted rate_limiter_dependency: 3/min, anti-enumeration)
+        "magic_link_send": (3, 60),
+        "passkey_login": (10, 60),
+        # AI chat completions per user (was ai/rate_limiter.py 60/60)
+        "ai_chat": (60, 60),
+    }
 
 
 class CRUDAdminSettings(BaseSettings):

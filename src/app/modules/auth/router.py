@@ -40,6 +40,8 @@ from src.app.modules.auth.schemas import (
     SessionInfo,
     SessionListResponse,
 )
+from src.app.modules.auth.services.email_verification import EmailVerificationService
+from src.app.modules.auth.services.passwords import PasswordLifecycleService
 from src.app.modules.users import UserService
 from src.app.modules.users import get_user_service as _get_user_service
 from src.app.modules.users.schemas import UserCreate, UserReadPublic
@@ -51,6 +53,16 @@ logger = get_logger(__name__)
 def _get_auth_service() -> AuthService:
     """Get AuthService instance."""
     return AuthService()
+
+
+def _get_password_lifecycle_service() -> PasswordLifecycleService:
+    """Get PasswordLifecycleService instance (owns password lifecycle)."""
+    return PasswordLifecycleService()
+
+
+def _get_email_verification_service() -> EmailVerificationService:
+    """Get EmailVerificationService instance (owns email verification)."""
+    return EmailVerificationService()
 
 
 def _get_session_manager(redis: Annotated[Redis, Depends(async_get_redis)]) -> SessionManager:
@@ -89,8 +101,7 @@ async def login_for_access_token(
         ip_address=ip_address,
         user_agent=user_agent,
     )
-    if isinstance(result, dict) and result.get("refresh_token"):
-        set_refresh_cookie(response, result["refresh_token"])
+    # Cookie written by the issuance seam; nothing left to do but return.
     return result
 
 
@@ -193,10 +204,10 @@ async def change_password(
     request: Request,
     ctx: RequestContextDep,
     body: PasswordChangeRequest,
-    auth_service: Annotated[AuthService, Depends(_get_auth_service)],
+    service: Annotated[PasswordLifecycleService, Depends(_get_password_lifecycle_service)],
 ) -> PasswordChangeResponse:
     """Change current user's password."""
-    result = await auth_service.change_password(
+    result = await service.change_password(
         user_id=ctx.user_id,
         current_password=body.current_password,
         new_password=body.new_password,
@@ -209,10 +220,10 @@ async def change_password(
 async def forgot_password(
     body: PasswordResetRequest,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    auth_service: Annotated[AuthService, Depends(_get_auth_service)],
+    service: Annotated[PasswordLifecycleService, Depends(_get_password_lifecycle_service)],
 ) -> ForgotPasswordResponse:
     """Request password reset email."""
-    result = await auth_service.request_password_reset(email=body.email, db=db)
+    result = await service.request_password_reset(email=body.email, db=db)
     return ForgotPasswordResponse(**result)
 
 
@@ -220,10 +231,10 @@ async def forgot_password(
 async def reset_password(
     body: PasswordResetConfirm,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    auth_service: Annotated[AuthService, Depends(_get_auth_service)],
+    service: Annotated[PasswordLifecycleService, Depends(_get_password_lifecycle_service)],
 ) -> PasswordResetResponse:
     """Reset password using reset token."""
-    result = await auth_service.reset_password(token=body.token, new_password=body.new_password, db=db)
+    result = await service.reset_password(token=body.token, new_password=body.new_password, db=db)
     return PasswordResetResponse(**result)
 
 
@@ -233,10 +244,10 @@ async def reset_password(
 async def send_verification_email(
     body: EmailVerificationRequest,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    auth_service: Annotated[AuthService, Depends(_get_auth_service)],
+    service: Annotated[EmailVerificationService, Depends(_get_email_verification_service)],
 ) -> EmailVerificationResponse:
     """Send email verification link."""
-    result = await auth_service.send_verification_email(email=body.email, db=db)
+    result = await service.send_verification_email(email=body.email, db=db)
     return EmailVerificationResponse(**result)
 
 
@@ -244,10 +255,10 @@ async def send_verification_email(
 async def verify_email(
     body: EmailVerificationConfirm,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    auth_service: Annotated[AuthService, Depends(_get_auth_service)],
+    service: Annotated[EmailVerificationService, Depends(_get_email_verification_service)],
 ) -> EmailVerificationResponse:
     """Verify email using verification token."""
-    result = await auth_service.verify_email(token=body.token, db=db)
+    result = await service.verify_email(token=body.token, db=db)
     return EmailVerificationResponse(**result)
 
 

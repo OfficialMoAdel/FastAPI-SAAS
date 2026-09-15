@@ -526,15 +526,14 @@ class Settings(BaseSettings):
 
 ### Disabling Rate Limiting
 
-1. Remove rate limiting dependencies from endpoints:
+1. Remove the `RateLimitMiddleware` registration in `src/app/main.py`
+2. Remove `check_security_budget` calls from auth/AI routers
+3. Remove rate limiting models and schemas
+4. Update database migrations to remove rate limit tables
 
-```python
-# Remove this dependency
-dependencies=[Depends(rate_limiter_dependency)]
-```
-
-2. Remove rate limiting models and schemas
-3. Update database migrations to remove rate limit tables
+Note: `RATE_LIMIT_FAIL_OPEN` controls outage behavior (whether Redis
+downtime blocks or allows traffic) — it is not an on/off switch for rate
+limiting; see the [Rate Limiting guide](rate-limiting/).
 
 ### Disabling Authentication
 

@@ -395,30 +395,21 @@ class TestMFAEndpointRegistration:
 class TestMFAMutateRateLimiting:
     """P1-5: /disable and /backup-codes must enforce a per-user mutation budget."""
 
-    def test_mutate_limiter_uses_separate_namespace(self):
-        """Mutate budget must not share keys with the verify budget."""
+    def test_mutate_limiter_uses_separate_budget(self):
+        """Mutate budget must cross a distinct engine budget from verify."""
         import asyncio
 
         from src.app.modules.auth.routers import mfa as mfa_router
 
         seen: dict = {}
 
-        async def fake_check(request, identifier=None, key_prefix="mfa_verify", limit=5, period=60):
-            seen.update(
-                {"identifier": identifier, "key_prefix": key_prefix, "limit": limit, "period": period}
-            )
+        async def fake_check(request, identifier=None, budget="mfa_verify"):
+            seen.update({"identifier": identifier, "budget": budget})
 
         with patch.object(mfa_router, "check_mfa_rate_limit", side_effect=fake_check):
-            asyncio.get_event_loop().run_until_complete(
-                mfa_router.check_mfa_mutate_rate_limit(Mock(), 42)
-            )
+            asyncio.get_event_loop().run_until_complete(mfa_router.check_mfa_mutate_rate_limit(Mock(), 42))
 
-        assert seen == {
-            "identifier": "42",
-            "key_prefix": "mfa_mutate",
-            "limit": mfa_router.MFA_MUTATE_LIMIT,
-            "period": mfa_router.MFA_MUTATE_PERIOD,
-        }
+        assert seen == {"identifier": "42", "budget": "mfa_mutate"}
 
     def test_disable_enforces_mutate_limit(self, client_with_rate_limit):
         """Should return 429 when the mutate limiter trips on /disable."""

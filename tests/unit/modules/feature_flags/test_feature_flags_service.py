@@ -85,7 +85,7 @@ async def test_update_flag(service, mock_db):
     data = FeatureFlagUpdate(description="new desc")
     mock_flag = make_mock_flag(desc="new desc")
     with (
-        patch.object(service, "update", new_callable=AsyncMock) as mock_update,
+        patch.object(service.crud, "update", new_callable=AsyncMock) as mock_update,
         patch.object(service.crud, "get", new_callable=AsyncMock, return_value=mock_flag) as mock_get,
     ):
         result = await service.update_flag(1, data)
@@ -100,7 +100,7 @@ async def test_update_flag_not_found(service, mock_db):
     return); the 404 decision must come from the post-write re-read."""
     data = FeatureFlagUpdate(description="new desc")
     with (
-        patch.object(service, "update", new_callable=AsyncMock),
+        patch.object(service.crud, "update", new_callable=AsyncMock),
         patch.object(service.crud, "get", new_callable=AsyncMock, return_value=None),
     ):
         with pytest.raises(ModelNotFoundError):

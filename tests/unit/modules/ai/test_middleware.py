@@ -1,13 +1,38 @@
-"""Unit tests for AI rate limiting middleware dependency.
+"""Unit tests for the AI rate-limiting Depends adapter.
 
-Tests T099: Rate limiting middleware (60 req/user/min)
-Tests T100: HTTP 429 RateLimitError response
+The adapter delegates its decision to the engine's ``check_security_budget``
+("ai_chat" budget) and keeps its sanctioned HTTPException 429 shape
+(T099: 60 req/user/min default; T100: HTTP 429 with Retry-After and
+X-RateLimit headers). These tests pin that HTTP contract through the
+engine seam.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+
+from src.app.core.security.rate_policy import RateLimitVerdict
+
+
+def _verdict(is_limited=False, limit=60, period=60, remaining=59, retry_after=60, key="k"):
+    headers = {
+        "X-RateLimit-Limit": str(limit),
+        "X-RateLimit-Remaining": str(remaining),
+        "X-RateLimit-Period": str(period),
+    }
+    if is_limited and retry_after > 0:
+        headers["Retry-After"] = str(retry_after)
+    return RateLimitVerdict(
+        is_limited=is_limited,
+        limit=limit,
+        period=period,
+        remaining=remaining,
+        retry_after=retry_after,
+        key=key,
+        headers=headers,
+        bypassed=False,
+    )
 
 
 class TestRateLimitDependency:
@@ -33,11 +58,10 @@ class TestRateLimitDependency:
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
         with patch(
-            "src.app.modules.ai.middleware.check_ai_rate_limit",
+            "src.app.modules.ai.middleware.check_security_budget",
             new_callable=AsyncMock,
-        ) as mock_check:
-            mock_check.return_value = (True, 59, 60)  # is_allowed, remaining, retry_after
-
+            return_value=_verdict(remaining=59, retry_after=60),
+        ):
             result = await check_rate_limit_dependency(mock_response, mock_current_user)
 
             assert result == mock_current_user
@@ -51,31 +75,27 @@ class TestRateLimitDependency:
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
         with patch(
-            "src.app.modules.ai.middleware.check_ai_rate_limit",
+            "src.app.modules.ai.middleware.check_security_budget",
             new_callable=AsyncMock,
-        ) as mock_check:
-            mock_check.return_value = (True, 30, 45)
+            return_value=_verdict(remaining=15, retry_after=45),
+        ):
+            result = await check_rate_limit_dependency(mock_response, mock_current_user)
 
-            await check_rate_limit_dependency(mock_response, mock_current_user)
-
-            assert "X-RateLimit-Limit" in mock_response.headers
-            assert "X-RateLimit-Remaining" in mock_response.headers
-            assert "X-RateLimit-Reset" in mock_response.headers
-            assert mock_response.headers["X-RateLimit-Remaining"] == "30"
+            assert result == mock_current_user
+            assert mock_response.headers["X-RateLimit-Limit"] == "60"
+            assert mock_response.headers["X-RateLimit-Remaining"] == "15"
             assert mock_response.headers["X-RateLimit-Reset"] == "45"
 
     @pytest.mark.asyncio
     async def test_rate_limit_raises_429_when_exceeded(self, mock_response, mock_current_user):
         """Test that HTTP 429 is raised when rate limit is exceeded."""
         from src.app.modules.ai.middleware import check_rate_limit_dependency
-        from src.app.modules.ai.rate_limiter import RateLimitError
 
         with patch(
-            "src.app.modules.ai.middleware.check_ai_rate_limit",
+            "src.app.modules.ai.middleware.check_security_budget",
             new_callable=AsyncMock,
-        ) as mock_check:
-            mock_check.side_effect = RateLimitError(retry_after=30)
-
+            return_value=_verdict(is_limited=True, remaining=0, retry_after=30),
+        ):
             with pytest.raises(HTTPException) as exc_info:
                 await check_rate_limit_dependency(mock_response, mock_current_user)
 
@@ -87,32 +107,27 @@ class TestRateLimitDependency:
     async def test_rate_limit_429_includes_retry_after_header(self, mock_response, mock_current_user):
         """Test that 429 response includes Retry-After header."""
         from src.app.modules.ai.middleware import check_rate_limit_dependency
-        from src.app.modules.ai.rate_limiter import RateLimitError
 
         with patch(
-            "src.app.modules.ai.middleware.check_ai_rate_limit",
+            "src.app.modules.ai.middleware.check_security_budget",
             new_callable=AsyncMock,
-        ) as mock_check:
-            mock_check.side_effect = RateLimitError(retry_after=45)
-
+            return_value=_verdict(is_limited=True, remaining=0, retry_after=45),
+        ):
             with pytest.raises(HTTPException) as exc_info:
                 await check_rate_limit_dependency(mock_response, mock_current_user)
 
-            assert "Retry-After" in exc_info.value.headers
             assert exc_info.value.headers["Retry-After"] == "45"
 
     @pytest.mark.asyncio
     async def test_rate_limit_429_includes_rate_limit_headers(self, mock_response, mock_current_user):
         """Test that 429 response includes all rate limit headers."""
         from src.app.modules.ai.middleware import check_rate_limit_dependency
-        from src.app.modules.ai.rate_limiter import RateLimitError
 
         with patch(
-            "src.app.modules.ai.middleware.check_ai_rate_limit",
+            "src.app.modules.ai.middleware.check_security_budget",
             new_callable=AsyncMock,
-        ) as mock_check:
-            mock_check.side_effect = RateLimitError(retry_after=60)
-
+            return_value=_verdict(is_limited=True, remaining=0, retry_after=60),
+        ):
             with pytest.raises(HTTPException) as exc_info:
                 await check_rate_limit_dependency(mock_response, mock_current_user)
 
@@ -122,19 +137,18 @@ class TestRateLimitDependency:
             assert headers["X-RateLimit-Reset"] == "60"
 
     @pytest.mark.asyncio
-    async def test_rate_limit_uses_correct_user_id(self, mock_response, mock_current_user):
-        """Test that rate limit check uses the correct user ID."""
+    async def test_rate_limit_keys_on_user_id_via_engine_budget(self, mock_response, mock_current_user):
+        """The adapter keys the budget on the authenticated user's id."""
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
         with patch(
-            "src.app.modules.ai.middleware.check_ai_rate_limit",
+            "src.app.modules.ai.middleware.check_security_budget",
             new_callable=AsyncMock,
+            return_value=_verdict(),
         ) as mock_check:
-            mock_check.return_value = (True, 59, 60)
-
             await check_rate_limit_dependency(mock_response, mock_current_user)
 
-            mock_check.assert_called_once_with(mock_current_user.id)
+            mock_check.assert_called_once_with("ai_chat", "1")
 
     @pytest.mark.asyncio
     async def test_rate_limit_with_zero_remaining(self, mock_response, mock_current_user):
@@ -142,11 +156,10 @@ class TestRateLimitDependency:
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
         with patch(
-            "src.app.modules.ai.middleware.check_ai_rate_limit",
+            "src.app.modules.ai.middleware.check_security_budget",
             new_callable=AsyncMock,
-        ) as mock_check:
-            mock_check.return_value = (True, 0, 30)  # Last allowed request
-
+            return_value=_verdict(remaining=0, retry_after=30),
+        ):
             result = await check_rate_limit_dependency(mock_response, mock_current_user)
 
             assert result == mock_current_user

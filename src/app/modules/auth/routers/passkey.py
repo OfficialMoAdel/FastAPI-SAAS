@@ -8,9 +8,9 @@ from src.app.api.deps import RequestContextDep
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
+from src.app.core.security.rate_policy import check_security_budget
 from src.app.core.utils.cache import async_get_redis
 from src.app.core.utils.ip_utils import get_client_ip
-from src.app.core.utils.rate_limit import rate_limiter
 from src.app.modules.auth.schemas import (
     LoginMFAResponse,
     LoginTokenResponse,
@@ -31,26 +31,20 @@ router = APIRouter(prefix="/auth/passkey", tags=["passkey"])
 # Rate Limiting for Passkey Login (T082)
 # ============================================================================
 
-# Rate limit: 10 requests per minute per IP
-PASSKEY_LOGIN_RATE_LIMIT = 10
-PASSKEY_LOGIN_RATE_PERIOD = 60  # seconds
+# Rate limit: the passkey_login budget in settings.rate_limit.SECURITY_BUDGETS
+# (default 10/min per IP). The engine owns keys, algorithm, and fail-open policy.
 
 
 async def passkey_login_rate_limit(request: Request) -> None:
     """IP-based rate limiting for passkey login endpoints.
 
-    Limits: 10 requests per minute per IP address.
+    Budget: ``passkey_login`` in ``settings.rate_limit.SECURITY_BUDGETS``
+    (default 10 requests per minute per IP address).
     """
     client_ip = get_client_ip(request)
-    key = f"passkey:login:{client_ip}"
+    verdict = await check_security_budget("passkey_login", client_ip)
 
-    is_limited, current_count = await rate_limiter.check_rate_limit(
-        key=key,
-        limit=PASSKEY_LOGIN_RATE_LIMIT,
-        period=PASSKEY_LOGIN_RATE_PERIOD,
-    )
-
-    if is_limited:
+    if verdict.is_limited:
         raise RateLimitException("Too many login attempts. Please try again later.")
 
 
@@ -166,13 +160,12 @@ async def login_complete(
         credential=request.credential,
         challenge_id=request.challenge_id,
         request=fastapi_request,
+        response=response,
     )
 
-    # Set the refresh token as an HttpOnly, Secure cookie
-    refresh_token = result.pop("refresh_token", None)
-    if refresh_token:
-        from src.app.core.security.login_helpers import set_refresh_cookie
-        set_refresh_cookie(response, refresh_token)
+    # Cookie written by the issuance seam; pop the refresh token so the
+    # JSON body carries only the access token (M4 parity with SSO).
+    result.pop("refresh_token", None)
 
     if result.get("mfa_required"):
         return LoginMFAResponse(**result)

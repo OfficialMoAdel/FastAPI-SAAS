@@ -406,6 +406,7 @@ class TestAuthServiceEmailFlows:
     @pytest.mark.asyncio
     async def test_request_password_reset_sends_email(self, auth_service, mock_db):
         """Test that requesting password reset triggers email event."""
+        from src.app.modules.auth.services.passwords import PasswordLifecycleService
         mock_user = {
             "id": 1,
             "email": "test@example.com",
@@ -436,7 +437,7 @@ class TestAuthServiceEmailFlows:
             mock_token.id = 55
             mock_token_model.return_value = mock_token
 
-            await auth_service.request_password_reset("test@example.com", mock_db)
+            await PasswordLifecycleService().request_password_reset("test@example.com", mock_db)
 
             # Check user lookup (active-gated named-lookup seam)
             mock_user_service.get_active_user.assert_called_once_with(email="test@example.com")
@@ -457,6 +458,7 @@ class TestAuthServiceEmailFlows:
     @pytest.mark.asyncio
     async def test_send_verification_email_creates_token_and_event(self, auth_service, mock_db):
         """Test sending verification email creates token and calls notification service."""
+        from src.app.modules.auth.services.email_verification import EmailVerificationService
         mock_user = {
             "id": 1,
             "email": "test@example.com",
@@ -487,7 +489,7 @@ class TestAuthServiceEmailFlows:
             mock_db.commit = AsyncMock()
             mock_db.refresh = AsyncMock()
 
-            await auth_service.send_verification_email("test@example.com", mock_db)
+            await EmailVerificationService().send_verification_email("test@example.com", mock_db)
 
             # Check token created and stored
             mock_token_cls.assert_called()
@@ -508,6 +510,7 @@ class TestAuthServiceEmailFlows:
     @pytest.mark.asyncio
     async def test_verify_email_validates_and_updates_user(self, auth_service, mock_db):
         """Test verification logic updates user and deletes token."""
+        from src.app.modules.auth.services.email_verification import EmailVerificationService
         mock_user = {"id": 99, "is_email_verified": False, "is_active": True}
 
         with (
@@ -535,7 +538,7 @@ class TestAuthServiceEmailFlows:
             mock_db.delete = AsyncMock()
             mock_db.commit = AsyncMock()
 
-            result = await auth_service.verify_email("verify_token_123", mock_db)
+            result = await EmailVerificationService().verify_email("verify_token_123", mock_db)
 
             # Assertions
             mock_user_service.crud.get.assert_called_once()
@@ -552,6 +555,7 @@ class TestAuthServiceEmailFlows:
     @pytest.mark.asyncio
     async def test_verify_email_invalid_token_raises_error(self, auth_service, mock_db):
         """Test verify_email raises error if token is invalid or missing."""
+        from src.app.modules.auth.services.email_verification import EmailVerificationService
         from src.app.shared.exceptions import UnauthorizedError
 
         mock_result = MagicMock()
@@ -559,7 +563,7 @@ class TestAuthServiceEmailFlows:
         mock_db.execute = AsyncMock(return_value=mock_result)
 
         with pytest.raises(UnauthorizedError) as exc_info:
-            await auth_service.verify_email("invalid_token", mock_db)
+            await EmailVerificationService().verify_email("invalid_token", mock_db)
 
         assert "Invalid verification token" in str(exc_info.value.detail)
 

@@ -518,7 +518,7 @@ class TestMFALockoutFlow:
         # for the login+complete pair (MFA lockout is per-user, IP-agnostic;
         # IP binding only requires login and complete-login share an IP).
         if cache.client:
-            auth_keys = await cache.client.keys("ratelimit:auth_ip:*")
+            auth_keys = await cache.client.keys("ratelimit:*budget:auth")
             if auth_keys:
                 await cache.client.delete(*auth_keys)
         login_headers_6 = {"X-Forwarded-For": "192.168.99.50", "X-Tenant-ID": "test-tenant-e2e"}

@@ -299,6 +299,7 @@ class PasskeyService:
         credential: dict[str, Any] | None = None,
         challenge_id: str | None = None,
         request: Request | None = None,
+        response: Any = None,
     ) -> dict[str, Any]:
         """Verify WebAuthn authentication response and return JWT tokens.
 
@@ -309,7 +310,8 @@ class PasskeyService:
             challenge_id: The challenge_id returned from generate_authentication_challenge.
             request: Optional FastAPI request; supplies client IP/User-Agent
                 for the login audit row.
-
+            response: Optional FastAPI response; when given, the refresh
+                cookie is written by the issuance seam.
         Returns:
             dict: Authentication tokens (access_token, refresh_token, etc.).
 
@@ -392,7 +394,7 @@ class PasskeyService:
                 raise RuntimeError("Redis client is not initialized")
             return await TokenIssuer.issue_mfa_pending(user, redis=redis_client)
 
-        tokens = await self._generate_auth_tokens(user, request=request)
+        tokens = await self._generate_auth_tokens(user, request=request, response=response)
 
         # 7. Cleanup - Handled atomically by _get_stored_auth_challenge
 
@@ -722,18 +724,20 @@ class PasskeyService:
         return user_dict
 
     async def _generate_auth_tokens(
-        self, user: dict, request: Request | None = None
+        self, user: dict, request: Request | None = None, response: Any = None
     ) -> dict[str, Any]:
         """Generate JWT authentication tokens and register the session.
 
         Delegates to the shared TokenIssuer seam ("Passkey Login" device
         label). The optional request supplies client IP/User-Agent for the
-        login audit row; without it those fields stay null.
+        login audit row; without it those fields stay null. The refresh
+        cookie is written by the seam when response is given.
         """
         issued = await TokenIssuer.issue_session(
             user,
             channel="passkey",
             request=request,
+            response=response,
         )
         return {
             "access_token": issued.access_token,

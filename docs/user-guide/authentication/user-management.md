@@ -718,18 +718,25 @@ class UserCreate(UserBase):
 
 ### Rate Limiting
 
+Auth endpoints use the existing `check_auth_rate_limit` dependency
+(identity-keyed "auth" budget — see the [Rate Limiting guide](../rate-limiting/)):
+
 ```python
-# Protect registration endpoint
-@router.post("/user", dependencies=[Depends(rate_limiter_dependency)])
+from fastapi import Depends
+from src.app.modules.auth.rate_limit import check_auth_rate_limit
+
+# Protect registration and login endpoints
+@router.post("/user", dependencies=[Depends(check_auth_rate_limit)])
 async def write_user(user: UserCreate, db: AsyncSession):
     # Registration logic
     pass
 
-# Protect login endpoint
-@router.post("/login", dependencies=[Depends(rate_limiter_dependency)])
+@router.post("/login", dependencies=[Depends(check_auth_rate_limit)])
 async def login_for_access_token():
     # Login logic
     pass
+# General path limits come from the ASGI RateLimitMiddleware (tier-aware)
+# — no per-endpoint wiring needed for those.
 ```
 
 ### Data Sanitization

@@ -23,9 +23,7 @@ from src.app.core.security import (
 )
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.audit_logs import audit
-from src.app.modules.auth.services.email_verification import EmailVerificationService
 from src.app.modules.auth.services.lockout import LoginLockoutPolicy
-from src.app.modules.auth.services.passwords import PasswordLifecycleService
 from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.users import UserService
 from src.app.shared.exceptions import ServiceUnavailableError, UnauthorizedError
@@ -327,6 +325,7 @@ class AuthService:
             user,
             channel="password",
             request=request,
+            response=response,
             subject=user["username"],
         )
 
@@ -432,9 +431,7 @@ class AuthService:
 
         # P2-1: refresh-reuse detection — a rotated token presented again
         # means theft; revoke the whole family before any other check.
-        await self._reject_reused_refresh_token(
-            refresh_token, ip_address=ip_address, user_agent=user_agent
-        )
+        await self._reject_reused_refresh_token(refresh_token, ip_address=ip_address, user_agent=user_agent)
 
         user_data = await verify_token(refresh_token, TokenType.REFRESH, db)
         if not user_data:
@@ -475,11 +472,11 @@ class AuthService:
         if payload_tenant is not None and user_tenant is not None and str(payload_tenant) != str(user_tenant):
             raise UnauthorizedError("Invalid refresh token.")
 
-        # SECURITY FIX: Check token version to enforce password change/all-session invalidation
-        # `user_data.token_version` is pulled from the refresh token by `verify_token`
-        current_token_version = db_user.get("token_version", 0)
-        if hasattr(user_data, "token_version") and user_data.token_version != current_token_version:
-            raise UnauthorizedError("Session invalidated due to password change or security event.")
+        # token_version is enforced by verify_token() above (Redis/DB-backed
+        # comparison inside the jwt_service seam). No re-check against the
+        # DB row here — the row was fetched after verification of the same
+        # token, and any version minted after this point is enforced on the
+        # next refresh's verify_token call.
 
         # Include tier info in JWT claims for Zero-DB rate limiting
         # SECURITY FIX: Include token_version for session invalidation
@@ -676,62 +673,3 @@ class AuthService:
             logger.warning("failed_to_publish_logout_audit_log", error=str(e))
 
         return {"message": "Logged out successfully", "session_revoked": session_revoked}
-
-    # ------------------------------------------------------------------
-    # Password lifecycle — delegated to PasswordLifecycleService
-    # ------------------------------------------------------------------
-
-    async def change_password(
-        self,
-        user_id: int,
-        current_password: str,
-        new_password: str,
-        db: AsyncSession,
-    ) -> dict[str, str]:
-        """Change user password (delegates to PasswordLifecycleService)."""
-        return await PasswordLifecycleService().change_password(user_id, current_password, new_password, db)
-
-    async def _invalidate_all_user_sessions(self, user: dict[str, Any], db: AsyncSession) -> None:
-        """Increment token_version to invalidate all sessions (see PasswordLifecycleService)."""
-        await PasswordLifecycleService().invalidate_all_user_sessions(user, db)
-
-    async def _delete_user_token_cache(self, user: dict[str, Any]) -> None:
-        """Delete token_version cache keys for a user (see PasswordLifecycleService)."""
-        await PasswordLifecycleService().delete_user_token_cache(user)
-
-    async def request_password_reset(
-        self,
-        email: str,
-        db: AsyncSession,
-    ) -> dict[str, str]:
-        """Request password reset (delegates to PasswordLifecycleService)."""
-        return await PasswordLifecycleService().request_password_reset(email, db)
-
-    async def reset_password(
-        self,
-        token: str,
-        new_password: str,
-        db: AsyncSession,
-    ) -> dict[str, str]:
-        """Reset password using reset token (delegates to PasswordLifecycleService)."""
-        return await PasswordLifecycleService().reset_password(token, new_password, db)
-
-    # ------------------------------------------------------------------
-    # Email verification — delegated to EmailVerificationService
-    # ------------------------------------------------------------------
-
-    async def send_verification_email(
-        self,
-        email: str,
-        db: AsyncSession,
-    ) -> dict[str, str]:
-        """Send email verification link (delegates to EmailVerificationService)."""
-        return await EmailVerificationService().send_verification_email(email, db)
-
-    async def verify_email(
-        self,
-        token: str,
-        db: AsyncSession,
-    ) -> dict[str, str]:
-        """Verify email using verification token (delegates to EmailVerificationService)."""
-        return await EmailVerificationService().verify_email(token, db)

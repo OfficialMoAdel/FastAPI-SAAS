@@ -15,7 +15,6 @@ from src.app.api.deps.auth import (
     requires_api_key_scope,
     resolve_principal,
 )
-from src.app.api.deps.core import rate_limiter_dependency
 from src.app.api.deps.request_context import (
     RequestContext,
     RequestContextDep,
@@ -35,7 +34,6 @@ __all__ = [
     "resolve_principal",
     "get_current_superuser",
     "tenant_dependency",
-    "rate_limiter_dependency",
     "RequestContext",
     "RequestContextDep",
     "get_request_context",

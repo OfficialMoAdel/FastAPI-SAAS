@@ -19,8 +19,8 @@ from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException, UnauthorizedException
 from src.app.core.redis_provider import get_redis
 from src.app.core.security import get_mfa_pending_token_manager
+from src.app.core.security.rate_policy import check_security_budget
 from src.app.core.utils.ip_utils import get_client_ip
-from src.app.core.utils.rate_limit import rate_limiter
 from src.app.modules.auth.schemas import (
     MFABackupCodesResponse,
     MFACompleteLoginRequest,
@@ -38,34 +38,29 @@ from src.app.modules.users import get_user_service
 
 router = APIRouter(prefix="/mfa", tags=["mfa"])
 
-# MFA verify rate limiting constants
-MFA_VERIFY_LIMIT = 5  # attempts per minute
-MFA_VERIFY_PERIOD = 60  # seconds (1 minute)
-
-# P1-5: separate namespace for MFA state mutations (disable / backup-code
-# regeneration). Same 5/min budget, but a distinct key so a user burning
-# verify attempts cannot starve — or be starved by — mutation attempts.
-MFA_MUTATE_LIMIT = 5  # attempts per minute
-MFA_MUTATE_PERIOD = 60  # seconds (1 minute)
+# MFA budgets live in settings.rate_limit.SECURITY_BUDGETS (mfa_verify /
+# mfa_mutate). The engine (check_security_budget) owns keys, algorithm, and
+# fail-open policy; these aliases only document the budget names.
+MFA_VERIFY_BUDGET = "mfa_verify"
+MFA_MUTATE_BUDGET = "mfa_mutate"
 
 
 async def check_mfa_rate_limit(
     request: Request,
     identifier: str | None = None,
-    key_prefix: str = "mfa_verify",
-    limit: int = MFA_VERIFY_LIMIT,
-    period: int = MFA_VERIFY_PERIOD,
+    budget: str = MFA_VERIFY_BUDGET,
 ) -> None:
-    """Check rate limit for MFA verification attempts.
+    """Check the MFA security budget for verification/mutation attempts.
 
-    Uses Redis-based rate limiting with 5 attempts per minute.
+    Limits live in ``settings.rate_limit.SECURITY_BUDGETS`` (default 5/min
+    per budget). The engine owns keys, algorithm, and fail-open policy.
 
     Args:
         request: FastAPI request object.
         identifier: Optional identifier (user_id, IP, etc.) for rate limiting.
-        key_prefix: Rate-limit key namespace (verify vs mutate budgets).
-        limit: Max attempts per period.
-        period: Window in seconds.
+        budget: Budget name — ``mfa_verify`` or ``mfa_mutate``. P1-5 keeps
+            them as distinct budgets so a user burning verify attempts
+            cannot starve — or be starved by — mutation attempts.
 
     Raises:
         RateLimitException: If rate limit is exceeded.
@@ -74,21 +69,12 @@ async def check_mfa_rate_limit(
     if identifier is None:
         # SECURITY FIX: Use get_client_ip() consistently instead of raw XFF parsing.
         # Raw X-Forwarded-For leftmost entry is attacker-controlled.
-        client_ip = get_client_ip(request)
-        identifier = client_ip
+        identifier = get_client_ip(request)
 
-    # Build rate limit key
-    key = f"{key_prefix}:{identifier}"
+    verdict = await check_security_budget(budget, identifier)
 
-    # Check rate limit
-    is_limited, current_count = await rate_limiter.check_rate_limit(
-        key, limit=limit, period=period
-    )
-
-    if is_limited:
-        raise RateLimitException(
-            f"Too many MFA verification attempts. Please try again in {period} seconds."
-        )
+    if verdict.is_limited:
+        raise RateLimitException(f"Too many MFA verification attempts. Please try again in {verdict.period} seconds.")
 
 
 async def check_mfa_mutate_rate_limit(
@@ -106,9 +92,7 @@ async def check_mfa_mutate_rate_limit(
     await check_mfa_rate_limit(
         request,
         identifier=str(user_id),
-        key_prefix="mfa_mutate",
-        limit=MFA_MUTATE_LIMIT,
-        period=MFA_MUTATE_PERIOD,
+        budget=MFA_MUTATE_BUDGET,
     )
 
 
@@ -410,12 +394,10 @@ async def complete_mfa_login(
         user,
         channel="mfa",
         request=fastapi_request,
+        response=response,
         subject=user["username"],
         verify=False,  # MFA completion: session registered from unverified jti extraction
     )
-    from src.app.core.security.login_helpers import set_refresh_cookie
-
-    set_refresh_cookie(response, issued.refresh_token)
     return MFACompleteLoginResponse(
         access_token=issued.access_token,
         token_type="bearer",

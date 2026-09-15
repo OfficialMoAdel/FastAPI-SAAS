@@ -4,11 +4,13 @@ HTTP endpoints for magic link passwordless authentication.
 Follows the API contract defined in auth-api.yaml.
 """
 
+import hashlib
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response
 
-from src.app.api.deps import rate_limiter_dependency
+from src.app.core.exceptions.http_exceptions import RateLimitException
+from src.app.core.security.rate_policy import check_security_budget
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.auth.schemas import (
     LoginMFAResponse,
@@ -28,7 +30,6 @@ router = APIRouter(prefix="/auth/magic-link", tags=["magic-link"])
     summary="Send magic link",
     description="Request a magic link to be sent to the specified email. "
     "Returns success even if email doesn't exist to prevent enumeration.",
-    dependencies=[Depends(rate_limiter_dependency)],
     responses={
         200: {"description": "Magic link sent (or not, to prevent enumeration)"},
         422: {"description": "Invalid email format"},
@@ -46,8 +47,19 @@ async def send_magic_link(
     If the email exists, a magic link will be sent.
     The link expires after 15 minutes and can only be used once.
 
-    Rate limited to 3 requests per minute per email address.
+    Rate limited to 3 requests per minute per email address (the
+    ``magic_link_send`` budget in ``settings.rate_limit.SECURITY_BUDGETS``,
+    keyed on a hashed email — the same anti-enumeration semantics as the
+    dependency this replaces).
     """
+    # Anti-enumeration budget: keyed on the email hash, not the IP, so one
+    # sender cannot mail-bomb a victim's inbox by rotating IPs (and a
+    # shared NAT cannot lock out an office).
+    email_hash = hashlib.sha256(body.email.lower().strip().encode()).hexdigest()[:16]
+    verdict = await check_security_budget("magic_link_send", f"email:{email_hash}")
+    if verdict.is_limited:
+        raise RateLimitException(f"Too many magic link requests. Please try again in {verdict.period} seconds.")
+
     # Extract client info for audit logging
     ip_address = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "unknown")
@@ -64,7 +76,6 @@ async def send_magic_link(
     response_model=LoginTokenResponse | LoginMFAResponse,
     summary="Verify magic link",
     description="Verify a magic link token and receive authentication tokens.",
-    dependencies=[Depends(rate_limiter_dependency)],
     responses={
         200: {"description": "Token verified, auth tokens returned. If MFA is enabled, returns MFA pending token."},
         400: {"description": "Invalid or expired token"},
@@ -87,14 +98,12 @@ async def verify_magic_link(
     - 400: Token is invalid or expired
     - 410: Token was already used
     """
-    from src.app.core.security.login_helpers import set_refresh_cookie
     from src.app.core.utils.ip_utils import get_client_ip
 
     ip_address = get_client_ip(request)
-    result = await service.verify_magic_link(token=body.token, ip_address=ip_address, request=request)
-    refresh_token = getattr(result, "refresh_token", None) or (
-        result.get("refresh_token") if isinstance(result, dict) else None
+    result = await service.verify_magic_link(
+        token=body.token, ip_address=ip_address, response=response, request=request
     )
-    if refresh_token:
-        set_refresh_cookie(response, refresh_token)
+    # Cookie was written by issue_session inside the service when the
+    # response was threaded through; nothing left to do here but return.
     return result

@@ -61,15 +61,28 @@ class BaseService(Generic[T]):
         crud: An instance of FastCRUD configured for the model.
     """
 
-    def __init__(self, model: type[T], db: AsyncSession):
-        """Initialize service with model and database session.
+    def __init__(
+        self,
+        model: type[T],
+        db: AsyncSession,
+        *,
+        select_schema: Any | None = None,
+    ):
+        """Initialize service with model, database session, and response schema.
 
         Args:
             model: The SQLAlchemy model class.
             db: The async database session.
+            select_schema: Pydantic Read schema returned by ``get``/``get_multi``/
+                ``create``/``update``. When set, these methods return validated
+                model instances instead of FastCRUD's raw dicts — the
+                dict-vs-model question lives here, once, not at every caller.
+                Subclasses without a Read schema keep the legacy dict behavior
+                (returns then are ``T | dict``; narrow at the call site).
         """
         self.model = model
         self.db = db
+        self.select_schema = select_schema
         # OPT P0-2: Reuse cached FastCRUD instance (flyweight pattern)
         # SECURITY FIX: Use thread-safe cache access with lock
         self.crud = self._get_or_create_crud(model)
@@ -114,23 +127,29 @@ class BaseService(Generic[T]):
                 crud = _CRUD_CACHE.setdefault(model, FastCRUD(model))
         return crud
 
-    async def get(self, id: Any) -> T | dict[str, Any] | None:
-        """Get a single record by ID.
+    async def get(self, id: Any) -> Any | None:
+        """Get a single record by ID as the configured ``select_schema``.
 
         Args:
             id: The record ID.
 
         Returns:
-            The record if found, None otherwise. C-4: FastCRUD returns a
-            plain dict unless `schema_to_select`/`return_as_model` is passed,
-            and `TenantAwareCRUD.get` is explicitly dict-typed — so the
-            return is `T | dict | None`, not `T | None`. Consume with
-            dict-safe access (`get_user_attr`-style helpers or isinstance
-            narrowing) or pass `schema_to_select` at the call site.
+            A validated ``select_schema`` instance when the schema is
+            configured, ``None`` otherwise. Without a schema the legacy
+            FastCRUD dict is returned (``T | dict | None`` — narrow at the
+            call site).
         """
         async with self._circuit_guard():
-            result = await self.crud.get(db=self.db, id=id)
-        return cast("T | dict[str, Any] | None", result)
+            if self.select_schema is not None:
+                result = await self.crud.get(
+                    db=self.db,
+                    id=id,
+                    schema_to_select=self.select_schema,
+                    return_as_model=True,
+                )
+            else:
+                result = await self.crud.get(db=self.db, id=id)
+        return result
 
     async def get_multi(
         self,
@@ -150,10 +169,10 @@ class BaseService(Generic[T]):
             **kwargs: Additional filter parameters passed to the CRUD layer.
 
         Returns:
-            List of records for the requested page. Returns empty list if no
-            records found. FastCRUD's dict response is unwrapped automatically.
-            C-4: the eager-loads path returns real ORM models; the plain path
-            returns FastCRUD dicts. Consume dict-safely or narrow explicitly.
+            List of validated ``select_schema`` instances for the requested
+            page (empty list if none). Without a schema the eager-loads path
+            returns ORM models and the plain path returns FastCRUD dicts —
+            narrow at the call site.
         """
         # M3: guard page=0 / negative and overflow (was page=0 -> OFFSET -20)
         if page < 1:
@@ -214,15 +233,17 @@ class BaseService(Generic[T]):
                     attr = getattr(self.model, relationship)
                     query = query.options(selectinload(attr))
                 query = query.offset(offset).limit(per_page)
-                result = await self.db.execute(query)
+                query_result = await self.db.execute(query)
                 # Remove duplicate objects if they are duplicated due to joins and relationships handling
-                return list(result.scalars().unique().all())
+                return list(query_result.scalars().unique().all())
             else:
                 result = await self.crud.get_multi(
                     db=self.db,
                     offset=offset,
                     limit=per_page,
                     return_total_count=False,
+                    schema_to_select=self.select_schema,
+                    return_as_model=self.select_schema is not None,
                     **kwargs,
                 )
                 if isinstance(result, dict):
@@ -293,22 +314,29 @@ class BaseService(Generic[T]):
             return cast(list[dict[str, Any]], result.get("data", []))
         return cast(list[dict[str, Any]], result)
 
-    async def create(self, **kwargs: Any) -> T | dict[str, Any]:
+    async def create(self, **kwargs: Any) -> Any:
         """Create a new record.
 
         Args:
             **kwargs: Fields for the new record.
 
         Returns:
-            The created record. C-4: FastCRUD returns a dict unless
-            `schema_to_select`/`return_as_model` is passed — map explicitly
-            or consume dict-safely at the call site.
+            The created record as a validated ``select_schema`` instance when
+            the schema is configured (FastCRUD returns it directly — no extra
+            round-trip), otherwise the legacy dict/None.
         """
         async with self._circuit_guard():
+            if self.select_schema is not None:
+                return await self.crud.create(
+                    db=self.db,
+                    object=kwargs,
+                    schema_to_select=self.select_schema,
+                    return_as_model=True,
+                )
             result = await self.crud.create(db=self.db, object=kwargs)
-        return cast("T | dict[str, Any]", result)
+        return result
 
-    async def update(self, id: Any, **kwargs: Any) -> T | dict[str, Any] | None:
+    async def update(self, id: Any, **kwargs: Any) -> Any | None:
         """Update a record by ID.
 
         Args:
@@ -316,15 +344,18 @@ class BaseService(Generic[T]):
             **kwargs: Fields to update.
 
         Returns:
-            The updated record if found, None otherwise. C-4: FastCRUD
-            returns a dict (or None) without `schema_to_select`, and
-            `TenantAwareCRUD.update` returns None unconditionally — falsy
-            means "not found OR tenant-scoped update with no row payload",
-            so callers must re-read when they need the updated state.
+            The updated record as a validated ``select_schema`` instance when
+            the schema is configured. ``TenantAwareCRUD.update`` returns None
+            unconditionally, so the typed path re-reads via ``get`` (None
+            then means "not found"). Without a schema the legacy union
+            (``T | dict | None``) is returned.
         """
         async with self._circuit_guard():
-            result = await self.crud.update(db=self.db, object=kwargs, id=id)
-        return cast("T | dict[str, Any] | None", result)
+            await self.crud.update(db=self.db, object=kwargs, id=id)
+        if self.select_schema is not None:
+            return await self.get(id)
+        result = await self.crud.get(db=self.db, id=id)
+        return result
 
     async def delete(self, id: Any) -> None:
         """Delete a record by ID.

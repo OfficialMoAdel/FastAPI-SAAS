@@ -115,8 +115,7 @@ src/app/modules/ai/
 ├── models.py             # SQLAlchemy models
 ├── schemas.py            # Pydantic schemas
 ├── ollama_client.py      # Ollama API client
-├── middleware.py         # Rate limiting middleware
-├── rate_limiter.py       # Rate limiter implementation
+├── middleware.py         # Rate limiting Depends adapter (engine-backed)
 └── unified_errors.py     # AI-specific exceptions
 ```
 
@@ -126,7 +125,7 @@ src/app/modules/ai/
 - **Completion service**: `modules/ai/service.py::ChatCompletionService`
 - **Settings service**: `modules/ai/service.py::AISettingsService`
 - **Ollama client**: `modules/ai/ollama_client.py::OllamaClient`
-- **Rate limiter**: `modules/ai/rate_limiter.py::RateLimiter`
+- **Rate limiting**: `core/security/rate_policy.py::check_security_budget` (`ai_chat` budget) — this module's middleware.py is only the HTTP adapter
 
 ## JIT Index Hints
 

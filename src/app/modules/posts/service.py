@@ -26,7 +26,7 @@ class PostService(BaseService[Post]):
         db : AsyncSession
             Database session
         """
-        super().__init__(Post, db)
+        super().__init__(Post, db, select_schema=PostRead)
 
     async def _check_ownership(self, current_user_id: int, target_user_id: Any) -> None:
         """Check if current user owns the resource.
@@ -314,5 +314,3 @@ class PostService(BaseService[Post]):
 
         await self.crud.db_delete(db=self.db, id=post_id)
         return {"message": "Post deleted from the database"}
-
-

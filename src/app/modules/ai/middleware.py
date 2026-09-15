@@ -4,6 +4,13 @@ T099: Add rate limiting middleware (60 req/user/min)
 T100: Add HTTP 429 RateLimitError response
 
 Provides FastAPI dependencies for rate limiting AI endpoints.
+
+The engine seam: this adapter keeps its sanctioned HTTPException 429 shape
+(Retry-After / X-RateLimit headers, structured detail — no domain-table
+equivalent) but delegates the decision to the unified rate-policy engine's
+``check_security_budget``. The "ai_chat" budget (60/min per user by default)
+lives in ``settings.rate_limit.SECURITY_BUDGETS``; keys, algorithm choice
+(GCRA/fixed-window), and fail-open policy are owned by the engine.
 """
 
 from typing import Annotated
@@ -12,7 +19,9 @@ from fastapi import Depends, HTTPException, Response, status
 
 from src.app.api.deps import get_current_user
 from src.app.api.deps.auth import AuthenticatedUser
-from src.app.modules.ai.rate_limiter import RateLimitError, check_ai_rate_limit
+from src.app.core.security.rate_policy import check_security_budget
+
+AI_CHAT_BUDGET = "ai_chat"
 
 
 async def check_rate_limit_dependency(
@@ -21,7 +30,7 @@ async def check_rate_limit_dependency(
 ) -> AuthenticatedUser:
     """FastAPI dependency to check rate limit before processing request.
 
-    T099: Rate limiting middleware (60 requests/user/minute).
+    T099: Rate limiting middleware (60 requests/user/minute by default).
     T100: Returns HTTP 429 with Retry-After header when rate limited.
 
     Args:
@@ -36,17 +45,14 @@ async def check_rate_limit_dependency(
     """
     user_id = current_user.id
 
-    try:
-        is_allowed, remaining, retry_after = await check_ai_rate_limit(user_id)
+    verdict = await check_security_budget(AI_CHAT_BUDGET, str(user_id))
 
-        # Add rate limit headers to response
-        response.headers["X-RateLimit-Limit"] = "60"
-        response.headers["X-RateLimit-Remaining"] = str(remaining)
-        response.headers["X-RateLimit-Reset"] = str(retry_after)
+    # Add rate limit headers to response
+    response.headers["X-RateLimit-Limit"] = str(verdict.limit)
+    response.headers["X-RateLimit-Remaining"] = str(verdict.remaining)
+    response.headers["X-RateLimit-Reset"] = str(verdict.retry_after)
 
-        return current_user
-
-    except RateLimitError as e:
+    if verdict.is_limited:
         # T100: Return HTTP 429 with Retry-After header.
         # P1-19: sanctioned HTTPException — this is a FastAPI Depends
         # dependency (native HTTPException support), and the Retry-After /
@@ -57,16 +63,18 @@ async def check_rate_limit_dependency(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail={
                 "error": "rate_limit_exceeded",
-                "message": e.message,
-                "retry_after": e.retry_after,
+                "message": f"Rate limit exceeded. Retry after {verdict.retry_after} seconds.",
+                "retry_after": verdict.retry_after,
             },
             headers={
-                "Retry-After": str(e.retry_after),
-                "X-RateLimit-Limit": "60",
+                "Retry-After": str(verdict.retry_after),
+                "X-RateLimit-Limit": str(verdict.limit),
                 "X-RateLimit-Remaining": "0",
-                "X-RateLimit-Reset": str(e.retry_after),
+                "X-RateLimit-Reset": str(verdict.retry_after),
             },
-        ) from e
+        )
+
+    return current_user
 
 
 # Type alias for dependency injection

@@ -13,35 +13,49 @@ Rate limiting controls how many requests users can make within a specific time p
 
 ## Quick Example
 
-```python
-from fastapi import Depends
-from app.api.dependencies import rate_limiter_dependency
+General path limits are enforced by the ASGI `RateLimitMiddleware` on
+every request (tier-aware; no per-endpoint wiring needed). Endpoint-level
+brute-force budgets go through the engine's security-budget verb:
 
-@router.post("/api/v1/posts", dependencies=[Depends(rate_limiter_dependency)])
-async def create_post(post_data: PostCreate):
-    # This endpoint is automatically rate limited based on:
-    # - User's tier (basic, premium, enterprise)  
-    # - Specific limits for the /posts endpoint
-    # - Default limits for unauthenticated users
-    return await crud_posts.create(db=db, object=post_data)
+```python
+from src.app.core.security.rate_policy import check_security_budget
+
+@router.post("/send")
+async def send(body: SendRequest):
+    # "auth"-style budget keyed on an identity (IP, user id, email hash);
+    # (limit, period) come from settings.rate_limit.SECURITY_BUDGETS
+    verdict = await check_security_budget("magic_link_send", email_identity)
+    if verdict.is_limited:
+        raise RateLimitException("Too many requests. Try again later.")
 ```
 
 ## Architecture
 
-### Rate Limiting Components
+### One Engine
 
-**Rate Limiter Class**: Singleton Redis client for checking limits<br>
-**User Tiers**: Database-stored user subscription levels<br>
-**Rate Limit Rules**: Path-specific limits per tier<br>
-**Dependency Injection**: Automatic enforcement via FastAPI dependencies<br>
+All rate limiting resolves through `core/security/rate_policy.py`:
+
+- **`evaluate_rate_policy`** — request-path decisions for the ASGI
+  middleware (tier policy → key → algorithm → verdict with headers).
+- **`check_security_budget(budget, identifier)`** — identity-keyed
+  brute-force budgets for sensitive endpoints (login, MFA, passkey,
+  magic link, AI chat). One key scheme, one algorithm selector
+  (GCRA or fixed-window), one fail-open policy.
+
+Ban/blacklist escalation stays composed by the middleware via
+`core/security/auto_ban`'s merged single-RTT helpers — the decision
+engine itself stays pure of ban state.
 
 ### How It Works
 
-1. **Request Arrives**: User makes API request to protected endpoint
-2. **User Identification**: System identifies user and their tier
-3. **Limit Lookup**: Finds applicable rate limit for user tier + endpoint
-4. **Redis Check**: Increments counter in Redis sliding window
-5. **Allow/Deny**: Request proceeds or returns 429 Too Many Requests
+1. **Request Arrives**: `RateLimitMiddleware` (ASGI) applies tier policy,
+   or a router dependency applies a security budget
+2. **Limit Lookup**: tier path policy (L1 → Redis cache → DB → settings)
+   or the named budget in settings
+3. **Algorithm Check**: GCRA (default) or fixed window via one shared Redis
+   round-trip
+4. **Allow/Deny**: request proceeds or returns 429 Too Many Requests with
+   `Retry-After` / `X-RateLimit-*` headers
 
 ## User Tier System
 
@@ -94,99 +108,37 @@ class RateLimit:
 
 ## Implementation Details
 
-### Automatic Rate Limiting
+### Automatic Rate Limiting (ASGI middleware)
 
-The system automatically applies rate limiting through dependency injection:
+Every non-exempt path is rate limited by `RateLimitMiddleware` — tier-aware
+policy, ban coupling, and response headers without per-endpoint wiring.
+Exempt paths (health probes, docs, webhook receivers) live in
+`core/middleware_exempt.py`.
 
-```python
-@router.post("/protected-endpoint", dependencies=[Depends(rate_limiter_dependency)])
-async def protected_endpoint():
-    """This endpoint is automatically rate limited."""
-    pass
+Do not add a general-purpose Depends limiter — it double-limits what the
+middleware already covers (this was removed; see `api/deps/core.py` note).
+For endpoint-specific brute-force budgets, extend
+`settings.rate_limit.SECURITY_BUDGETS` and call `check_security_budget`.
 
-# The dependency:
-# 1. Identifies the user and their tier
-# 2. Looks up rate limits for this path
-# 3. Checks Redis counter
-# 4. Allows or blocks the request
-```
-#### Example Dependency Implementation
-
-To make the rate limiting dependency functional, you must implement how user tiers and paths resolve to actual rate limits.
-Below is a complete example using Redis and the database to determine per-tier and per-path restrictions.
+### Security Budgets
 
 ```python
-async def rate_limiter_dependency(
-    request: Request,
-    db: AsyncSession = Depends(async_get_db),
-    user=Depends(get_current_user_optional),
-):
-    """
-    Enforces rate limits per user tier and API path.
-
-    - Identifies user (or defaults to IP-based anonymous rate limit)
-    - Finds tier-specific limit for the request path
-    - Checks Redis counter to determine if request should be allowed
-    """
-    path = sanitize_path(request.url.path)
-    user_id = getattr(user, "id", None) or request.client.host or "anonymous"
-
-    # Determine user tier (default to "free" or anonymous)
-    if user and getattr(user, "tier_id", None):
-        tier = await crud_tiers.get(db=db, id=user.tier_id)
-    else:
-        tier = await crud_tiers.get(db=db, name="free")
-
-    if not tier:
-        raise RateLimitException("Tier configuration not found")
-
-    # Find specific rate limit rule for this path + tier
-    rate_limit_rule = await crud_rate_limits.get_by_path_and_tier(
-        db=db, path=path, tier_id=tier.id
-    )
-
-    # Use default limits if no specific rule is found
-    limit = getattr(rate_limit_rule, "limit", 100)
-    period = getattr(rate_limit_rule, "period", 3600)
-
-    # Check rate limit in Redis
-    is_limited = await rate_limiter.is_rate_limited(
-        db=db,
-        user_id=user_id,
-        path=path,
-        limit=limit,
-        period=period,
-    )
-
-    if is_limited:
-        raise RateLimitException(
-            f"Rate limit exceeded for path '{path}'. Try again later."
-        )
+# settings.rate_limit.SECURITY_BUDGETS (core/config/services.py)
+SECURITY_BUDGETS = {
+    "auth": (5, 60),            # login/register/refresh/reset per IP
+    "mfa_verify": (5, 60),     # MFA verification attempts
+    "mfa_mutate": (5, 60),     # MFA state changes (separate budget, P1-5)
+    "magic_link_send": (3, 60),# per hashed email (anti-enumeration)
+    "passkey_login": (10, 60), # passkey login per IP
+    "ai_chat": (60, 60),       # AI completions per user
+}
 ```
-
 ### Redis-Based Counting
 
-The rate limiter uses Redis for distributed, high-performance counting:
-
-```python
-# Sliding window implementation
-async def is_rate_limited(self, user_id: int, path: str, limit: int, period: int) -> bool:
-    current_timestamp = int(datetime.now(UTC).timestamp())
-    window_start = current_timestamp - (current_timestamp % period)
-    
-    # Create unique key for this user/path/window
-    key = f"ratelimit:{user_id}:{sanitized_path}:{window_start}"
-    
-    # Increment counter
-    current_count = await redis_client.incr(key)
-    
-    # Set expiration on first increment
-    if current_count == 1:
-        await redis_client.expire(key, period)
-    
-    # Check if limit exceeded
-    return current_count > limit
-```
+The engine delegates counting to `RateLimiter.check_rate_limit_algorithm`,
+which picks GCRA (default, no boundary bursts) or fixed window per
+`RATE_LIMIT_ALGORITHM`, and honors `RATE_LIMIT_FAIL_OPEN` on Redis outages.
+Callers never hand-roll keys — `build_rate_limit_key` is the one scheme.
 
 ### Path Sanitization
 
@@ -252,37 +204,35 @@ POST /api/v1/tier/free/rate_limit
 
 ## Usage Patterns
 
-### Basic Protection
+### General Protection
+
+No wiring needed — the ASGI middleware covers every non-exempt path with
+tier-aware policy. To make a path *cheaper* for a tier, add a tier path
+policy via the rate-limits API rather than endpoint dependencies.
+
+### Endpoint-Specific Budgets
 
 ```python
-# Protect all endpoints in a router
-router = APIRouter(dependencies=[Depends(rate_limiter_dependency)])
+from src.app.core.security.rate_policy import check_security_budget
 
-@router.get("/users")
-async def get_users():
-    """Rate limited based on user tier."""
-    pass
+@router.post("/login")
+async def login(body: LoginRequest):
+    # Sensitive endpoint: identity-keyed brute-force budget
+    verdict = await check_security_budget("auth", client_ip)
+    if verdict.is_limited:
+        raise RateLimitException("Too many attempts. Try again later.")
+    ...
 
-@router.post("/posts")  
-async def create_post():
-    """Rate limited based on user tier."""
-    pass
+# Adding a new budget: declare it in SECURITY_BUDGETS, then call with an
+# identity (IP, user id, email hash — whatever the abuse vector is).
 ```
 
-### Selective Protection
+### AI adapter (sanctioned HTTPException shape)
 
-```python
-# Protect only specific endpoints
-@router.get("/public-data")
-async def get_public_data():
-    """No rate limiting - public endpoint."""
-    pass
+`modules/ai/middleware.py` keeps its Depends adapter because its 429
+carries Retry-After and X-RateLimit headers with a structured detail body;
+the decision itself comes from `check_security_budget("ai_chat", user_id)`.
 
-@router.post("/premium-feature", dependencies=[Depends(rate_limiter_dependency)])
-async def premium_feature():
-    """Rate limited - premium feature."""
-    pass
-```
 
 ### Custom Error Handling
 
@@ -443,31 +393,22 @@ tiers = {
 ### Resource Protection
 
 ```python
-# Protect expensive operations
-@router.post("/ai/generate-image", dependencies=[Depends(rate_limiter_dependency)])
-async def generate_image():
-    """Expensive AI operation - heavily rate limited."""
-    pass
-
-@router.get("/data/export", dependencies=[Depends(rate_limiter_dependency)])  
-async def export_data():
-    """Database-intensive operation - rate limited."""
-    pass
+# Protect expensive operations via tier path policies (no endpoint wiring):
+# POST /api/v1/tier/free/rate_limit
+# {"name": "free_ai_limit", "path": "/api/v1/ai/generate-image",
+#  "limit": 5, "period": 86400}
+# Expensive paths get cheap per-tier budgets; the ASGI middleware enforces.
 ```
 
 ### Abuse Prevention
 
 ```python
-# Strict limits on user-generated content
-@router.post("/posts", dependencies=[Depends(rate_limiter_dependency)])
-async def create_post():
-    """Prevent spam posting."""
-    pass
+# Sensitive endpoints use identity-keyed budgets:
+from src.app.core.security.rate_policy import check_security_budget
 
-@router.post("/comments", dependencies=[Depends(rate_limiter_dependency)])
-async def create_comment():
-    """Prevent comment spam.""" 
-    pass
+verdict = await check_security_budget("auth", client_ip)          # login spam
+verdict = await check_security_budget("magic_link_send", email_hash)  # mail-bomb
+verdict = await check_security_budget("ai_chat", str(user_id))    # API cost abuse
 ```
 
 This comprehensive rate limiting system provides robust protection against API abuse while supporting flexible business models through user tiers and granular endpoint controls. 

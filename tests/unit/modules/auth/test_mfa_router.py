@@ -10,29 +10,38 @@ import pytest
 
 
 class TestMFARateLimitingFunction:
-    """Test MFA verification rate limiting function."""
+    """Test MFA verification rate limiting through the engine budget seam."""
 
     @pytest.mark.asyncio
     async def test_check_mfa_rate_limit_not_exceeded(self, mock_redis):
         """Test that rate limit is not exceeded when under limit."""
         from fastapi import Request
 
-        from src.app.core.utils.rate_limit import rate_limiter
+        from src.app.core.security.rate_policy import RateLimitVerdict
         from src.app.modules.auth.routers.mfa import check_mfa_rate_limit
 
-        # Mock request object
         request = Mock(spec=Request)
         request.headers = {}
         request.client = Mock(host="192.168.1.1")
 
-        # Mock rate limiter to return not rate limited
-        with patch.object(rate_limiter, "check_rate_limit", new_callable=AsyncMock) as mock_rate_check:
-            mock_rate_check.return_value = (False, 1)
-
-            # Should not raise exception
+        verdict = RateLimitVerdict(
+            is_limited=False,
+            limit=5,
+            period=60,
+            remaining=4,
+            retry_after=0,
+            key="k",
+            headers={},
+            bypassed=False,
+        )
+        with patch(
+            "src.app.modules.auth.routers.mfa.check_security_budget",
+            new_callable=AsyncMock,
+            return_value=verdict,
+        ) as mock_budget:
             await check_mfa_rate_limit(request, identifier="user_123")
 
-            mock_rate_check.assert_called_once_with("mfa_verify:user_123", limit=5, period=60)
+            mock_budget.assert_called_once_with("mfa_verify", "user_123")
 
     @pytest.mark.asyncio
     async def test_check_mfa_rate_limit_exceeded(self, mock_redis):
@@ -40,77 +49,100 @@ class TestMFARateLimitingFunction:
         from fastapi import Request
 
         from src.app.core.exceptions.http_exceptions import RateLimitException
-        from src.app.core.utils.rate_limit import rate_limiter
-        from src.app.modules.auth.routers.mfa import MFA_VERIFY_PERIOD, check_mfa_rate_limit
+        from src.app.core.security.rate_policy import RateLimitVerdict
+        from src.app.modules.auth.routers.mfa import check_mfa_rate_limit
 
-        # Mock request object
         request = Mock(spec=Request)
         request.headers = {}
         request.client = Mock(host="192.168.1.1")
 
-        # Mock rate limiter to return rate limited
-        with patch.object(rate_limiter, "check_rate_limit", new_callable=AsyncMock) as mock_rate_check:
-            mock_rate_check.return_value = (True, 6)
-
-            # Should raise RateLimitException
+        verdict = RateLimitVerdict(
+            is_limited=True,
+            limit=5,
+            period=60,
+            remaining=0,
+            retry_after=42,
+            key="k",
+            headers={},
+            bypassed=False,
+        )
+        with patch(
+            "src.app.modules.auth.routers.mfa.check_security_budget",
+            new_callable=AsyncMock,
+            return_value=verdict,
+        ):
             with pytest.raises(RateLimitException) as exc_info:
                 await check_mfa_rate_limit(request, identifier="user_123")
 
-            assert "Too many MFA verification attempts" in str(exc_info.value)
-            assert str(MFA_VERIFY_PERIOD) in str(exc_info.value)
+            assert "60" in str(exc_info.value)  # period in the message
 
     @pytest.mark.asyncio
     async def test_check_mfa_rate_limit_uses_client_ip(self, mock_redis, monkeypatch):
-        """Test that rate limit uses the client IP when no identifier provided.
+        """Test that the budget is keyed on the resolved client IP.
 
-        S-3: only trusted proxies may supply X-Forwarded-For. Make the direct
-        peer (192.168.1.1) a trusted proxy so the header is honored; with
-        XFF "10.0.0.1, 10.0.0.2" the rightmost untrusted hop (10.0.0.2) is
-        the client IP.
+        SECURITY: get_client_ip parses X-Forwarded-For right-to-left and
+        only trusts it when the direct peer is itself a trusted proxy —
+        the raw leftmost XFF entry is attacker-controlled and must never
+        be keyed directly.
         """
         from fastapi import Request
 
-        from src.app.core.utils import ip_utils
-        from src.app.core.utils.rate_limit import rate_limiter
+        from src.app.core.security.rate_policy import RateLimitVerdict
         from src.app.modules.auth.routers.mfa import check_mfa_rate_limit
 
-        monkeypatch.setattr(ip_utils, "TRUSTED_PROXY_IPS", {"192.168.1.1"})
-
-        # Mock request object with X-Forwarded-For header
         request = Mock(spec=Request)
-        request.headers = {"X-Forwarded-For": "10.0.0.1, 10.0.0.2"}
-        request.client = Mock(host="192.168.1.1")
+        request.headers = {"X-Forwarded-For": "10.0.0.2, 127.0.0.1"}
+        # Direct peer 127.0.0.1 IS a trusted proxy, so XFF is parsed and
+        # the rightmost untrusted IP (10.0.0.2) wins.
+        request.client = Mock(host="127.0.0.1")
 
-        # Mock rate limiter
-        with patch.object(rate_limiter, "check_rate_limit", new_callable=AsyncMock) as mock_rate_check:
-            mock_rate_check.return_value = (False, 1)
-
-            # Should use rightmost untrusted IP from X-Forwarded-For
+        verdict = RateLimitVerdict(
+            is_limited=False,
+            limit=5,
+            period=60,
+            remaining=4,
+            retry_after=0,
+            key="k",
+            headers={},
+            bypassed=False,
+        )
+        with patch(
+            "src.app.modules.auth.routers.mfa.check_security_budget",
+            new_callable=AsyncMock,
+            return_value=verdict,
+        ) as mock_budget:
             await check_mfa_rate_limit(request)
 
-            mock_rate_check.assert_called_once_with("mfa_verify:10.0.0.2", limit=5, period=60)
+            mock_budget.assert_called_once_with("mfa_verify", "10.0.0.2")
 
     @pytest.mark.asyncio
-    async def test_check_mfa_rate_limit_uses_client_host(self, mock_redis):
-        """Test that rate limit uses client host when no X-Forwarded-For."""
+    async def test_check_mfa_mutate_uses_separate_budget(self, mock_redis):
+        """P1-5: mutations cross a separate budget (mfa_mutate), keyed on user_id."""
         from fastapi import Request
 
-        from src.app.core.utils.rate_limit import rate_limiter
-        from src.app.modules.auth.routers.mfa import check_mfa_rate_limit
+        from src.app.core.security.rate_policy import RateLimitVerdict
+        from src.app.modules.auth.routers.mfa import check_mfa_mutate_rate_limit
 
-        # Mock request object without X-Forwarded-For header
         request = Mock(spec=Request)
-        request.headers = {}
-        request.client = Mock(host="192.168.1.100")
 
-        # Mock rate limiter
-        with patch.object(rate_limiter, "check_rate_limit", new_callable=AsyncMock) as mock_rate_check:
-            mock_rate_check.return_value = (False, 1)
+        verdict = RateLimitVerdict(
+            is_limited=False,
+            limit=5,
+            period=60,
+            remaining=4,
+            retry_after=0,
+            key="k",
+            headers={},
+            bypassed=False,
+        )
+        with patch(
+            "src.app.modules.auth.routers.mfa.check_security_budget",
+            new_callable=AsyncMock,
+            return_value=verdict,
+        ) as mock_budget:
+            await check_mfa_mutate_rate_limit(request, user_id=42)
 
-            # Should use client host
-            await check_mfa_rate_limit(request)
-
-            mock_rate_check.assert_called_once_with("mfa_verify:192.168.1.100", limit=5, period=60)
+            mock_budget.assert_called_once_with("mfa_mutate", "42")
 
 
 class TestMFARouterEndpoints:

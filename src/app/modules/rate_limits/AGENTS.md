@@ -37,14 +37,17 @@ MAX_REQUESTS = 1000  # Don't do this
 ### DO: Apply rate limit middleware
 
 ```python
+from src.app.core.security.rate_policy import check_security_budget
 from src.app.shared.exceptions import RateLimitExceededError
 
-# In middleware - rate limits are checked per request.
-# Raise the domain error — the central table maps it to 429.
-# (FastAPI Depends dependencies that must attach Retry-After headers
-# are the sanctioned exception: see ai/middleware.py.)
-if await rate_limiter.is_rate_limited(tenant_id, endpoint):
-    raise RateLimitExceededError("Rate limit exceeded", retry_after=60)
+# General path limits are enforced by the ASGI RateLimitMiddleware — this
+# module only manages tier path policies via the rate-limits API.
+# Endpoint brute-force budgets use the engine verb:
+verdict = await check_security_budget("auth", client_ip)
+if verdict.is_limited:
+    raise RateLimitExceededError("Rate limit exceeded", retry_after=verdict.retry_after)
+# (FastAPI Depends adapters that must attach Retry-After headers are the
+# sanctioned exception: see ai/middleware.py.)
 ```
 
 ### DO: Track rate limit headers

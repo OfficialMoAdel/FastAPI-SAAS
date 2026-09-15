@@ -328,7 +328,13 @@ async def _load_and_validate_user(
     payload_version: int,
     on_failure: _FailureMode,
 ) -> dict[str, Any]:
-    """Shared user loading: fetch by email/username, validate liveness + version."""
+    """Shared user loading: fetch by email/username, validate liveness + version.
+
+    The token_version comparison is the SOLE enforcement for the cached-
+    payload path, which skips verify_token. For the verified path it is a
+    cheap same-row re-check (harmless duplicate of verify_token's verdict).
+    The registry inversion in jwt_service is untouched (PR-12 DIP).
+    """
     user_service = UserService(db)
     if "@" in username_or_email:
         user = await user_service.get_user_auth_info(email=username_or_email)
@@ -403,6 +409,9 @@ async def _resolve_optional_bearer_flow(
 
     H-7: runs the SAME primitives as the strict path with
     on_failure="return_none"; their _OptionalAuthAbort signals degrade here.
+    Cached-payload path skips verify_token, so the version comparison here
+    IS the enforcement for that path — _load_and_validate_user keeps its
+    payload_version argument (jwt_service stays untouched per ADR-PR-12).
     """
     try:
         resolved = await _resolve_token_data(request, token, cached_payload, db, on_failure="return_none")
@@ -539,9 +548,8 @@ async def resolve_principal(
 
     if strict:
         # H-7: the strict path now consumes the SAME primitives as the
-        # optional path (on_failure="raise"). Steps 3-6 collapse into the
-        # shared implementations; the composite prefetch stays inline
-        # because it is strict-only (RBAC bitmask warm).
+        # optional path (steps 3-4 shared implementations; the composite
+        # prefetch stays inline because it is strict-only, RBAC bitmask warm).
         resolved = await _resolve_token_data(request, token, cached_payload, db, on_failure="raise")
         if resolved is None:
             raise UnauthorizedException("User not authenticated.")

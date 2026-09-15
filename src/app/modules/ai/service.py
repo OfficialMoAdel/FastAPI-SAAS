@@ -19,10 +19,13 @@ from src.app.modules.ai.crud import crud_ai_settings, crud_chat_messages, crud_c
 from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings
 from src.app.modules.ai.providers import AIProvider, AIProviderError
 from src.app.modules.ai.schemas import (
+    AISettingsRead,
     AISettingsUpdate,
     ChatCompletionRequest,
     ChatMessageCreate,
+    ChatMessageRead,
     ChatSessionCreate,
+    ChatSessionRead,
     ChatSessionUpdate,
 )
 from src.app.modules.ai.unified_errors import SessionLimitExceededError
@@ -146,7 +149,7 @@ class ChatSessionService(BaseService[AIChatSession]):
     """Service for managing AI chat sessions."""
 
     def __init__(self, db: AsyncSession):
-        super().__init__(AIChatSession, db)
+        super().__init__(AIChatSession, db, select_schema=ChatSessionRead)
 
     async def create_session(self, user_id: int, data: ChatSessionCreate) -> dict[str, Any]:
         """Create a new chat session.
@@ -231,7 +234,7 @@ class ChatMessageService(BaseService[AIChatMessage]):
     """Service for managing chat messages."""
 
     def __init__(self, db: AsyncSession):
-        super().__init__(AIChatMessage, db)
+        super().__init__(AIChatMessage, db, select_schema=ChatMessageRead)
 
     async def add_message(
         self, session_id: int, data: ChatMessageCreate, token_count: int | None = None
@@ -268,7 +271,7 @@ class AISettingsService(BaseService[AISettings]):
     """Service for managing user AI settings."""
 
     def __init__(self, db: AsyncSession):
-        super().__init__(AISettings, db)
+        super().__init__(AISettings, db, select_schema=AISettingsRead)
 
     async def get_settings(self, user_id: int) -> dict[str, Any] | None:
         """Get AI settings for a user within current tenant."""

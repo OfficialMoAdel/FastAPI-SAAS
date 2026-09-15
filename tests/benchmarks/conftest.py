@@ -9,7 +9,6 @@ import pytest
 # Performance thresholds (P95 in milliseconds)
 PERF_THRESHOLDS = {
     "auth_token_verify": 50,  # AUTH_P95: 50ms
-    "ai_rate_limit_check": 10,  # Rate limit should be very fast
     "user_fetch_with_tier": 30,  # USER_FETCH_P95: 30ms
     "token_blacklist_check": 5,  # Redis lookup should be <5ms
 }

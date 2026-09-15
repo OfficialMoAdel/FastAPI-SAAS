@@ -31,7 +31,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         db : AsyncSession
             Database session
         """
-        super().__init__({{ ModelName }}, db)
+        super().__init__({{ ModelName }}, db, select_schema={{ ModelName }}Read)
 
     async def create_{{ module_name }}(
         self,
@@ -62,6 +62,8 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         existing = await self.crud.get(
             db=self.db,
             {{ fields[0].name }}=data.{{ fields[0].name }},
+            schema_to_select={{ ModelName }}Read,
+            return_as_model=True,
         )
         if existing:
             raise DuplicateError("{{ fields[0].name }}", data.{{ fields[0].name }})
@@ -71,11 +73,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         create_data = data.model_dump()
         create_data["user_id"] = get_user_attr(current_user, "id")
 
-        result = await self.crud.create(
-            db=self.db,
-            object=create_data,
-        )
-        return {{ ModelName }}Read.model_validate(result)
+        return await self.create(**create_data)
 
     async def list_{{ module_name }}s(
         self,
@@ -96,11 +94,9 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         dict
             Paginated list
         """
-        return await self.crud.get_multi(
-            db=self.db,
-            offset=(page - 1) * items_per_page,
-            limit=items_per_page,
-            schema_to_select={{ ModelName }}Read,  # type: ignore[arg-type]
+        return await self.get_multi(
+            page=page,
+            per_page=items_per_page,
         )
 
     async def update_{{ module_name }}(
@@ -140,18 +136,13 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         if not existing:
             raise ModelNotFoundError("{{ ModelName }}", id)
 
-        existing_user_id = existing.get("user_id") if isinstance(existing, dict) else getattr(existing, "user_id", None)
+        existing_user_id = existing.user_id
         if existing_user_id != get_user_attr(current_user, "id"):
             raise ForbiddenError("You don't have permission to update this {{ module_name }}")
 
-        # Update
+        # Update (typed path re-reads and returns the Read schema)
         update_data = data.model_dump(exclude_unset=True, exclude_none=True)
-        result = await self.crud.update(
-            db=self.db,
-            id=id,
-            object=update_data,
-        )
-        return {{ ModelName }}Read.model_validate(result)
+        return await self.update(id, **update_data)
 
     async def delete_{{ module_name }}(
         self,
@@ -182,7 +173,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         if not existing:
             raise ModelNotFoundError("{{ ModelName }}", id)
 
-        existing_user_id = existing.get("user_id") if isinstance(existing, dict) else getattr(existing, "user_id", None)
+        existing_user_id = existing.user_id
         if existing_user_id != get_user_attr(current_user, "id"):
             raise ForbiddenError("You don't have permission to delete this {{ module_name }}")
 

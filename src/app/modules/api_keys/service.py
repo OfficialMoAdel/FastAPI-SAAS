@@ -48,7 +48,7 @@ class APIKeyService(BaseService[APIKey]):
         db : AsyncSession
             Database session
         """
-        super().__init__(APIKey, db)
+        super().__init__(APIKey, db, select_schema=APIKeyRead)
 
     def _generate_key(self) -> tuple[str, str, str]:
         """Generate a new API key.

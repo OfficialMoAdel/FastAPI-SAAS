@@ -88,6 +88,7 @@ class TokenIssuer:
             create_access_token(data=data_copy, expires_delta=access_token_expires),
             create_refresh_token(data=data_copy),
         )
+
     @staticmethod
     async def rotate_token_pair(
         token_data: dict[str, Any],
@@ -201,6 +202,15 @@ class TokenIssuer:
         # callers that do not pre-mint.)
         token_data.setdefault("sid", str(uuid4()))
         access_token, refresh_token = await TokenIssuer.create_token_pair(token_data)
+        # Cookie write lives here so every door gets identical semantics.
+        # Channels that must transform the response (SSO strips the refresh
+        # token from the JSON body) keep their own call — set_refresh_cookie
+        # is idempotent for the same token, so at most one extra Set-Cookie
+        # is ever emitted.
+        if response is not None:
+            from src.app.core.security.login_helpers import set_refresh_cookie
+
+            set_refresh_cookie(response, refresh_token)
         await register_login_session(
             user_id=user["id"],
             access_token=access_token,

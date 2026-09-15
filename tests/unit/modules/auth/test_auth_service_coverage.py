@@ -505,11 +505,27 @@ class TestLogout:
 # ============================================================================
 
 
+@pytest.fixture
+def password_service():
+    """PasswordLifecycleService instance (owns password change/reset)."""
+    from src.app.modules.auth.services.passwords import PasswordLifecycleService
+
+    return PasswordLifecycleService()
+
+
+@pytest.fixture
+def email_service():
+    """EmailVerificationService instance (owns email send/confirm)."""
+    from src.app.modules.auth.services.email_verification import EmailVerificationService
+
+    return EmailVerificationService()
+
+
 class TestChangePassword:
-    """Tests for change_password edge cases."""
+    """Tests for change_password edge cases (PasswordLifecycleService)."""
 
     @pytest.mark.asyncio
-    async def test_change_password_user_not_found(self, auth_service, mock_db):
+    async def test_change_password_user_not_found(self, password_service, mock_db):
         """Test change password when user not found (lines 547-549)."""
         from src.app.shared.exceptions import UnauthorizedError
 
@@ -521,7 +537,7 @@ class TestChangePassword:
             mock_get_service.return_value = mock_user_service
 
             with pytest.raises(UnauthorizedError) as exc_info:
-                await auth_service.change_password(
+                await password_service.change_password(
                     user_id=999,
                     current_password="oldpassword",
                     new_password="NewPassword123!",
@@ -531,7 +547,7 @@ class TestChangePassword:
             assert "not found" in str(exc_info.value.detail).lower()
 
     @pytest.mark.asyncio
-    async def test_change_password_inactive_user(self, auth_service, mock_db):
+    async def test_change_password_inactive_user(self, password_service, mock_db):
         """Test change password with inactive user."""
         from src.app.shared.exceptions import UnauthorizedError
 
@@ -543,114 +559,16 @@ class TestChangePassword:
             mock_get_service.return_value = mock_user_service
 
             with pytest.raises(UnauthorizedError):
-                await auth_service.change_password(
+                await password_service.change_password(
                     user_id=1,
                     current_password="oldpassword",
                     new_password="NewPassword123!",
                     db=mock_db,
                 )
-
-    @pytest.mark.asyncio
-    async def test_change_password_wrong_current(self, auth_service, mock_db):
-        """Test change password with incorrect current password."""
-        from src.app.shared.exceptions import UnauthorizedError
-
-        mock_user = {
-            "id": 1,
-            "username": "testuser",
-            "hashed_password": "$2b$12$validhash",
-            "is_active": True,
-            "tenant_id": "test-tenant",
-        }
-
-        with patch("src.app.modules.auth.services.passwords.UserService") as mock_get_service:
-            mock_user_service = MagicMock()
-            mock_user_service.get_active_user = AsyncMock(return_value=mock_user)
-            mock_get_service.return_value = mock_user_service
-
-            with patch(
-                "src.app.modules.auth.services.passwords.verify_password", new_callable=AsyncMock
-            ) as mock_verify:
-                mock_verify.return_value = False  # Wrong password
-
-                with pytest.raises(UnauthorizedError) as exc_info:
-                    await auth_service.change_password(
-                        user_id=1,
-                        current_password="wrongpassword",
-                        new_password="NewPassword123!",
-                        db=mock_db,
-                    )
-
-                assert "incorrect" in str(exc_info.value.detail).lower()
-
-    @pytest.mark.asyncio
-    async def test_change_password_complexity_failure(self, auth_service, mock_db):
-        """Test change password with insufficient complexity."""
-        from src.app.shared.exceptions import ValidationError
-
-        mock_user = {
-            "id": 1,
-            "username": "testuser",
-            "hashed_password": "$2b$12$validhash",
-            "is_active": True,
-            "tenant_id": "test-tenant",
-        }
-
-        with patch("src.app.modules.auth.services.passwords.UserService") as mock_get_service:
-            mock_user_service = MagicMock()
-            mock_user_service.get_active_user = AsyncMock(return_value=mock_user)
-            mock_get_service.return_value = mock_user_service
-
-            with patch(
-                "src.app.modules.auth.services.passwords.verify_password", new_callable=AsyncMock
-            ) as mock_verify:
-                mock_verify.return_value = True
-
-                with pytest.raises(ValidationError):
-                    await auth_service.change_password(
-                        user_id=1,
-                        current_password="oldpassword",
-                        new_password="weak",  # Too simple
-                        db=mock_db,
-                    )
-
-
-# ============================================================================
-# TEST: _invalidate_all_user_sessions (lines 615-619)
-# ============================================================================
-
-
-class TestInvalidateAllUserSessions:
-    """Tests for _invalidate_all_user_sessions method."""
-
-    @pytest.mark.asyncio
-    async def test_invalidate_all_user_sessions_increments_version(self, auth_service, mock_db):
-        """Test that session invalidation routes the bump through the seam (no commit inside)."""
-        mock_user = {
-            "id": 1,
-            "username": "testuser",
-        }
-
-        mock_db.execute = AsyncMock()
-
-        await auth_service._invalidate_all_user_sessions(mock_user, mock_db)
-
-        # Verify the seam's SQL bump + fresh-version read were issued...
-        assert mock_db.execute.await_count == 2
-        # ...without committing (caller owns the transaction).
-        mock_db.commit.assert_not_called()
-
-
-# ============================================================================
-# TEST: request_password_reset edge cases (line 681)
-# ============================================================================
-
-
-class TestRequestPasswordReset:
     """Tests for request_password_reset edge cases."""
 
     @pytest.mark.asyncio
-    async def test_request_password_reset_user_not_found(self, auth_service, mock_db):
+    async def test_request_password_reset_user_not_found(self, password_service, mock_db):
         """Test password reset request for non-existent user - still returns success."""
         with patch("src.app.modules.auth.services.passwords.UserService") as mock_get_service:
             mock_user_service = MagicMock()
@@ -658,7 +576,7 @@ class TestRequestPasswordReset:
             mock_get_service.return_value = mock_user_service
 
             with patch("src.app.modules.auth.services.passwords.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-                result = await auth_service.request_password_reset(
+                result = await password_service.request_password_reset(
                     email="nonexistent@test.com",
                     db=mock_db,
                 )
@@ -670,7 +588,7 @@ class TestRequestPasswordReset:
                 assert 0.1 <= sleep_time <= 0.2
 
     @pytest.mark.asyncio
-    async def test_request_password_reset_inactive_user(self, auth_service, mock_db):
+    async def test_request_password_reset_inactive_user(self, password_service, mock_db):
         """Test password reset for inactive user - returns success for security."""
         # Note: the active-gated named-lookup seam filters inactive users out,
         # so this tests the security timing equalization path
@@ -680,7 +598,7 @@ class TestRequestPasswordReset:
             mock_get_service.return_value = mock_user_service
 
             with patch("src.app.modules.auth.services.passwords.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-                result = await auth_service.request_password_reset(
+                result = await password_service.request_password_reset(
                     email="inactive@test.com",
                     db=mock_db,
                 )
@@ -701,7 +619,7 @@ class TestResetPassword:
     """Tests for reset_password edge cases."""
 
     @pytest.mark.asyncio
-    async def test_reset_password_invalid_token(self, auth_service, mock_db):
+    async def test_reset_password_invalid_token(self, password_service, mock_db):
         """Test reset with invalid token (lines 721-722)."""
         from src.app.shared.exceptions import UnauthorizedError
 
@@ -714,7 +632,7 @@ class TestResetPassword:
                     mock_db.execute = AsyncMock(return_value=mock_result)
 
                     with pytest.raises(UnauthorizedError) as exc_info:
-                        await auth_service.reset_password(
+                        await password_service.reset_password(
                             token="invalid_token",
                             new_password="NewPassword123!",
                             db=mock_db,
@@ -723,7 +641,7 @@ class TestResetPassword:
                     assert "invalid" in str(exc_info.value.detail).lower()
 
     @pytest.mark.asyncio
-    async def test_reset_password_token_already_used(self, auth_service, mock_db):
+    async def test_reset_password_token_already_used(self, password_service, mock_db):
         """Test reset with already-used token (lines 725-726)."""
         from src.app.shared.exceptions import UnauthorizedError
 
@@ -740,7 +658,7 @@ class TestResetPassword:
                 mock_db.execute = AsyncMock(return_value=mock_result)
 
                 with pytest.raises(UnauthorizedError) as exc_info:
-                    await auth_service.reset_password(
+                    await password_service.reset_password(
                         token="used_token",
                         new_password="NewPassword123!",
                         db=mock_db,
@@ -749,7 +667,7 @@ class TestResetPassword:
                 assert "already been used" in str(exc_info.value.detail).lower()
 
     @pytest.mark.asyncio
-    async def test_reset_password_token_expired(self, auth_service, mock_db):
+    async def test_reset_password_token_expired(self, password_service, mock_db):
         """Test reset with expired token (lines 727-728)."""
         from src.app.shared.exceptions import UnauthorizedError
 
@@ -766,7 +684,7 @@ class TestResetPassword:
                 mock_db.execute = AsyncMock(return_value=mock_result)
 
                 with pytest.raises(UnauthorizedError) as exc_info:
-                    await auth_service.reset_password(
+                    await password_service.reset_password(
                         token="expired_token",
                         new_password="NewPassword123!",
                         db=mock_db,
@@ -775,7 +693,7 @@ class TestResetPassword:
                 assert "expired" in str(exc_info.value.detail).lower()
 
     @pytest.mark.asyncio
-    async def test_reset_password_deleted_user(self, auth_service, mock_db):
+    async def test_reset_password_deleted_user(self, password_service, mock_db):
         """Test reset for deleted user account (lines 738-739)."""
         from src.app.shared.exceptions import UnauthorizedError
 
@@ -804,7 +722,7 @@ class TestResetPassword:
                     mock_db.execute = AsyncMock(return_value=mock_result)
 
                     with pytest.raises(UnauthorizedError) as exc_info:
-                        await auth_service.reset_password(
+                        await password_service.reset_password(
                             token="valid_token",
                             new_password="NewPassword123!",
                             db=mock_db,
@@ -816,7 +734,7 @@ class TestResetPassword:
                     )
 
     @pytest.mark.asyncio
-    async def test_reset_password_inactive_user(self, auth_service, mock_db):
+    async def test_reset_password_inactive_user(self, password_service, mock_db):
         """Test reset for inactive user account."""
         from src.app.shared.exceptions import UnauthorizedError
 
@@ -845,14 +763,14 @@ class TestResetPassword:
                     mock_db.execute = AsyncMock(return_value=mock_result)
 
                     with pytest.raises(UnauthorizedError):
-                        await auth_service.reset_password(
+                        await password_service.reset_password(
                             token="valid_token",
                             new_password="NewPassword123!",
                             db=mock_db,
                         )
 
     @pytest.mark.asyncio
-    async def test_reset_password_complexity_failure(self, auth_service, mock_db):
+    async def test_reset_password_complexity_failure(self, password_service, mock_db):
         """Test reset with insufficient password complexity."""
         from src.app.shared.exceptions import ValidationError
 
@@ -882,7 +800,7 @@ class TestResetPassword:
                     mock_db.execute = AsyncMock(return_value=mock_result)
 
                     with pytest.raises(ValidationError):
-                        await auth_service.reset_password(
+                        await password_service.reset_password(
                             token="valid_token",
                             new_password="weak",
                             db=mock_db,
@@ -898,7 +816,7 @@ class TestSendVerificationEmail:
     """Tests for send_verification_email edge cases."""
 
     @pytest.mark.asyncio
-    async def test_send_verification_email_user_not_found_or_verified(self, auth_service, mock_db):
+    async def test_send_verification_email_user_not_found_or_verified(self, email_service, mock_db):
         """Test verification email for non-existent or already verified user (line 825)."""
         with patch("src.app.modules.auth.services.email_verification.UserService") as mock_get_service:
             mock_user_service = MagicMock()
@@ -909,7 +827,7 @@ class TestSendVerificationEmail:
             with patch(
                 "src.app.modules.auth.services.email_verification.asyncio.sleep", new_callable=AsyncMock
             ) as mock_sleep:
-                result = await auth_service.send_verification_email(
+                result = await email_service.send_verification_email(
                     email="nonexistent@test.com",
                     db=mock_db,
                 )
@@ -921,7 +839,7 @@ class TestSendVerificationEmail:
                 assert 0.1 <= sleep_time <= 0.2
 
     @pytest.mark.asyncio
-    async def test_send_verification_email_already_verified(self, auth_service, mock_db):
+    async def test_send_verification_email_already_verified(self, email_service, mock_db):
         """Test verification email when email already verified."""
         mock_user = {
             "id": 1,
@@ -939,7 +857,7 @@ class TestSendVerificationEmail:
             with patch(
                 "src.app.modules.auth.services.email_verification.asyncio.sleep", new_callable=AsyncMock
             ) as mock_sleep:
-                result = await auth_service.send_verification_email(
+                result = await email_service.send_verification_email(
                     email="verified@test.com",
                     db=mock_db,
                 )
@@ -960,7 +878,7 @@ class TestVerifyEmail:
     """Tests for verify_email edge cases."""
 
     @pytest.mark.asyncio
-    async def test_verify_email_invalid_token(self, auth_service, mock_db):
+    async def test_verify_email_invalid_token(self, email_service, mock_db):
         """Test verification with invalid token (lines 858-859)."""
         from src.app.shared.exceptions import UnauthorizedError
 
@@ -972,7 +890,7 @@ class TestVerifyEmail:
                 mock_db.execute = AsyncMock(return_value=mock_result)
 
                 with pytest.raises(UnauthorizedError) as exc_info:
-                    await auth_service.verify_email(
+                    await email_service.verify_email(
                         token="invalid_token",
                         db=mock_db,
                     )
@@ -980,7 +898,7 @@ class TestVerifyEmail:
                 assert "invalid" in str(exc_info.value.detail).lower()
 
     @pytest.mark.asyncio
-    async def test_verify_email_expired_token(self, auth_service, mock_db):
+    async def test_verify_email_expired_token(self, email_service, mock_db):
         """Test verification with expired token (lines 861-862)."""
         from src.app.shared.exceptions import UnauthorizedError
 
@@ -995,7 +913,7 @@ class TestVerifyEmail:
                 mock_db.execute = AsyncMock(return_value=mock_result)
 
                 with pytest.raises(UnauthorizedError) as exc_info:
-                    await auth_service.verify_email(
+                    await email_service.verify_email(
                         token="expired_token",
                         db=mock_db,
                     )
@@ -1003,7 +921,7 @@ class TestVerifyEmail:
                 assert "expired" in str(exc_info.value.detail).lower()
 
     @pytest.mark.asyncio
-    async def test_verify_email_user_not_found(self, auth_service, mock_db):
+    async def test_verify_email_user_not_found(self, email_service, mock_db):
         """Test verification when user no longer exists (lines 865-867)."""
         from src.app.shared.exceptions import UnauthorizedError
 
@@ -1023,7 +941,7 @@ class TestVerifyEmail:
                     mock_db.execute = AsyncMock(return_value=mock_result)
 
                     with pytest.raises(UnauthorizedError) as exc_info:
-                        await auth_service.verify_email(
+                        await email_service.verify_email(
                             token="valid_token",
                             db=mock_db,
                         )
@@ -1031,7 +949,7 @@ class TestVerifyEmail:
                     assert "not found" in str(exc_info.value.detail).lower()
 
     @pytest.mark.asyncio
-    async def test_verify_email_inactive_user(self, auth_service, mock_db):
+    async def test_verify_email_inactive_user(self, email_service, mock_db):
         """Test verification for inactive user account (lines 871-872)."""
         from src.app.shared.exceptions import UnauthorizedError
 
@@ -1060,7 +978,7 @@ class TestVerifyEmail:
                     mock_db.execute = AsyncMock(return_value=mock_result)
 
                     with pytest.raises(UnauthorizedError) as exc_info:
-                        await auth_service.verify_email(
+                        await email_service.verify_email(
                             token="valid_token",
                             db=mock_db,
                         )

@@ -1,7 +1,6 @@
 from typing import Optional
 
 from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
 from src.app.core.utils.lua_manager import get_lua_manager
@@ -114,34 +113,6 @@ class RateLimiter:
             is_limited = not settings.rate_limit.RATE_LIMIT_FAIL_OPEN
             remaining = 0 if is_limited else limit
             return is_limited, remaining, 0
-
-    async def is_rate_limited(self, db: AsyncSession, user_id: int | str, path: str, limit: int, period: int) -> bool:
-        # P2 micro: callers pass sanitize_path() output (the single caller,
-        # api.deps.core.rate_limiter_dependency, sanitizes for the tier-policy
-        # lookup first). sanitize_path is idempotent — its output contains no
-        # "/" so a second pass is a proven no-op — hence no re-sanitize here.
-        sanitized_path = path
-
-        # P1-#5: key derivation belongs to the decision layer (rate_policy),
-        # not the engine. This unifies the dep-layer keys with the middleware
-        # path (build_rate_limit_key) so every consumer shares one key scheme.
-        # Fn-scope import mirrors auto_ban and avoids the module-level cycle
-        # (rate_policy imports this module's singleton at :29); it also
-        # preserves test patchability of rate_policy.build_rate_limit_key.
-        from src.app.core.security.rate_policy import build_rate_limit_key
-        from src.app.core.tenancy.context import get_current_tenant
-
-        tenant = get_current_tenant()
-        tenant_id = tenant.tenant_id if tenant else None
-
-        key = build_rate_limit_key(
-            path=sanitized_path,
-            user_id=str(user_id),
-            tenant_id=tenant_id,
-        )
-
-        is_limited, _, _ = await self.check_rate_limit_algorithm(key, limit, period)
-        return is_limited
 
     @classmethod
     def reset(cls) -> None:

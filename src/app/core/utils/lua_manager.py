@@ -260,19 +260,6 @@ class LuaScriptManager:
             end
             return result
         """,
-        # AI sliding-window rate limit: INCR + TTL + conditional EXPIRE
-        # (migrated from ai/rate_limiter._RATE_LIMIT_SCRIPT)
-        "ai_rate_limit_check": """
-            -- KEYS[1]: bucket key, ARGV[1]: window seconds
-            -- Returns: [count, ttl]
-            local count = redis.call('INCR', KEYS[1])
-            local ttl = redis.call('TTL', KEYS[1])
-            if ttl < 0 then
-                redis.call('EXPIRE', KEYS[1], ARGV[1])
-                ttl = tonumber(ARGV[1])
-            end
-            return {count, ttl}
-        """,
         # MFA lockout: atomic check + increment
         # (migrated from mfa/service._MFA_CHECK_LUA)
         "mfa_lockout_check": """

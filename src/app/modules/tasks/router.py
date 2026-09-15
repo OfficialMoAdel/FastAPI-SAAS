@@ -1,8 +1,8 @@
 """Task API router - HTTP handlers delegating to service layer."""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, status
 
-from src.app.api.deps import RequestContextDep, rate_limiter_dependency
+from src.app.api.deps import RequestContextDep
 from src.app.core.logger import get_logger
 from src.app.modules.tasks.schemas import Job, TaskCreate, TaskStatus
 from src.app.modules.tasks.service import task_service
@@ -17,7 +17,6 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
     "/task",
     response_model=Job,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(rate_limiter_dependency)],
 )
 async def create_task(
     body: TaskCreate,

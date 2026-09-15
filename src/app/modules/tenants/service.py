@@ -56,7 +56,7 @@ class TenantService(BaseService[Tenant]):
         db : AsyncSession
             Database session
         """
-        super().__init__(Tenant, db)
+        super().__init__(Tenant, db, select_schema=TenantResponse)
         self.crud = crud_tenants
 
     async def _cache_tenant(self, tenant: Tenant | dict[str, Any]) -> None:
@@ -540,5 +540,3 @@ class TenantService(BaseService[Tenant]):
         updated_dict = _tenant_to_dict(tenant)  # type: ignore[arg-type]
         await self._cache_tenant(updated_dict)
         return updated_dict
-
-

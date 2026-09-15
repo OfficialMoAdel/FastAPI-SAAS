@@ -288,7 +288,7 @@ class MagicLinkService:
             return LoginMFAResponse(**mfa_response)
 
         # Create auth tokens (request threads client IP/UA into the login audit)
-        tokens = await self._create_auth_tokens(user, request=request)
+        tokens = await self._create_auth_tokens(user, request=request, response=response)
 
         logger.info(
             "Magic link verified successfully",
@@ -354,10 +354,12 @@ class MagicLinkService:
         )
 
     async def _create_auth_tokens(
-        self, user: dict, request: Request | None = None
-    ) -> dict[str, Any]:
+        self,
+        user: dict,
+        request: Any = None,
+        response: Any = None,
+    ) -> dict:
         """Create access and refresh tokens and register the session.
-
         Delegates to the shared TokenIssuer seam ("Magic Link Login"
         device label). The optional request supplies client IP/User-Agent
         for the login audit row; without it those fields stay null.
@@ -373,6 +375,7 @@ class MagicLinkService:
             user,
             channel="magic_link",
             request=request,
+            response=response,
         )
         return {
             "access_token": issued.access_token,

@@ -1,164 +1,91 @@
-"""Unit tests for api/deps/core.py rate_limiter_dependency."""
+"""Tests for the rate-policy engine's security-budget verb.
 
-from unittest.mock import AsyncMock, MagicMock, patch
+These sit at the engine interface (``check_security_budget``) — the seam
+every endpoint brute-force budget crosses (auth login, MFA, passkey, magic
+link, AI chat). The historical ``api/deps/core.rate_limiter_dependency``
+tests were deleted with the dependency: its tier-resolution behaviour is
+covered by the rate_policy tests; the ASGI middleware path by
+tests/unit/middleware.
+"""
+
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import Request
 
-from src.app.api.deps import core as deps_core
-from src.app.core.exceptions.http_exceptions import RateLimitException
+from src.app.core.security.rate_policy import check_security_budget
 
 
-def _make_request(path="/api/v1/foo", method="GET", client_host="1.2.3.4", body=None):
-    request = MagicMock(spec=Request)
-    request.url.path = path
-    request.method = method
-    request.client = MagicMock()
-    request.client.host = client_host
-    request.app.state = MagicMock(spec=object)
-    request.json = AsyncMock(return_value=body or {})
-    return request
+def _make_limiter(is_limited=False, remaining=5, retry_after=0):
+    limiter = MagicMock()
+    limiter.check_rate_limit_algorithm = AsyncMock(return_value=(is_limited, remaining, retry_after))
+    return limiter
 
 
-def _fake_settings():
-    s = MagicMock()
-    s.DEFAULT_RATE_LIMIT_LIMIT = 50
-    s.DEFAULT_RATE_LIMIT_PERIOD = 30
-    s.rate_limit.DEFAULT_RATE_LIMIT_LIMIT = 50
-    s.rate_limit.DEFAULT_RATE_LIMIT_PERIOD = 30
-    return s
+async def test_budget_uses_configured_limit_and_period():
+    """The budget name resolves (limit, period) from SECURITY_BUDGETS."""
+    limiter = _make_limiter()
+
+    verdict = await check_security_budget("auth", "1.2.3.4", limiter=limiter)
+
+    assert not verdict.is_limited
+    args = limiter.check_rate_limit_algorithm.call_args.args
+    assert args[1:] == (5, 60)  # auth budget: 5 attempts / 60s
+    assert verdict.limit == 5
+    assert verdict.period == 60
+    assert verdict.headers["X-RateLimit-Limit"] == "5"
 
 
-async def test_rate_limiter_user_with_tier_and_limit():
-    """H-9: the tier path now resolves via the unified rate-policy engine
-    (L1/Redis policy cache → DB → settings) instead of a per-request DB
-    crud.get. Patch the engine seam and assert the resolved limit flows
-    through to the limiter."""
-    request = _make_request()
-    db = MagicMock()
-    user = {"id": "u1", "tier": {"id": "t1", "name": "pro"}}
-    with (
-        patch.object(deps_core, "resolve_rate_limits", new=AsyncMock(return_value=(100, 60))) as resolve,
-        patch.object(deps_core, "rate_limiter") as rl,
-    ):
-        rl.is_rate_limited = AsyncMock(return_value=False)
-        await deps_core.rate_limiter_dependency(request=request, db=db, user=user)
-    resolve.assert_awaited_once()
-    kwargs = rl.is_rate_limited.call_args.kwargs
-    assert kwargs["user_id"] == "u1"
-    assert kwargs["limit"] == 100
-    assert kwargs["period"] == 60
+async def test_budget_key_is_namespaced_per_budget_and_identity():
+    """Keys isolate budgets from each other and from path-shaped keys."""
+    limiter = _make_limiter()
+
+    await check_security_budget("mfa_verify", "42", limiter=limiter)
+    await check_security_budget("mfa_mutate", "42", limiter=limiter)
+    await check_security_budget("mfa_verify", "43", limiter=limiter)
+
+    keys = [c.args[0] for c in limiter.check_rate_limit_algorithm.call_args_list]
+    # P1-5 separation: verify and mutate budgets never share a key.
+    assert keys[0] != keys[1]
+    # Different identities never share a key.
+    assert keys[0] != keys[2]
+    assert keys[0] == "rate_limit:user:42:budget:mfa_verify"
 
 
-async def test_rate_limiter_user_with_tier_no_limit_uses_default():
-    """H-9: cache-miss + no DB row → engine falls back to settings default."""
-    request = _make_request()
-    db = MagicMock()
-    user = {"id": "u1", "tier": {"id": "t1", "name": "pro"}}
-    with (
-        patch.object(deps_core, "resolve_rate_limits", new=AsyncMock(return_value=(50, 30))),
-        patch.object(deps_core, "rate_limiter") as rl,
-    ):
-        rl.is_rate_limited = AsyncMock(return_value=False)
-        await deps_core.rate_limiter_dependency(request=request, db=db, user=user)
-    kwargs = rl.is_rate_limited.call_args.kwargs
-    assert kwargs["user_id"] == "u1"
-    assert kwargs["limit"] == 50
-    assert kwargs["period"] == 30
+async def test_budget_key_is_tenant_scoped_when_tenant_id_passed():
+    """Tenant context prefixes the canonical key — the same tenant-scoping
+    the ASGI middleware path relies on (ported from the deleted
+    is_rate_limited tenant-key coverage)."""
+    limiter = _make_limiter()
+
+    await check_security_budget("mfa_verify", "42", tenant_id="t1", limiter=limiter)
+
+    key = limiter.check_rate_limit_algorithm.call_args.args[0]
+    assert key == "tenant:t1:rate_limit:user:42:budget:mfa_verify"
 
 
-async def test_rate_limiter_user_no_tier_uses_default():
-    """H-9: no tier → engine resolves the settings default (no DB hit)."""
-    request = _make_request()
-    db = MagicMock()
-    user = {"id": "u1"}
-    with (
-        patch.object(deps_core, "resolve_rate_limits", new=AsyncMock(return_value=(50, 30))),
-        patch.object(deps_core, "rate_limiter") as rl,
-    ):
-        rl.is_rate_limited = AsyncMock(return_value=False)
-        await deps_core.rate_limiter_dependency(request=request, db=db, user=user)
-    kwargs = rl.is_rate_limited.call_args.kwargs
-    assert kwargs["user_id"] == "u1"
-    assert kwargs["limit"] == 50
-    assert kwargs["period"] == 30
+async def test_budget_limited_verdict_carries_retry_after():
+    limiter = _make_limiter(is_limited=True, remaining=0, retry_after=37)
+
+    verdict = await check_security_budget("auth", "1.2.3.4", limiter=limiter)
+
+    assert verdict.is_limited
+    assert verdict.retry_after == 37
+    assert verdict.headers["Retry-After"] == "37"
+    assert verdict.headers["X-RateLimit-Remaining"] == "0"
 
 
-async def test_rate_limiter_anonymous_with_email():
-    request = _make_request(method="POST", body={"email": "a@b.com"})
-    db = MagicMock()
-    with (
-        patch.object(deps_core, "rate_limiter") as rl,
-        patch.object(deps_core, "settings", _fake_settings()),
-    ):
-        rl.is_rate_limited = AsyncMock(return_value=False)
-        await deps_core.rate_limiter_dependency(request=request, db=db, user=None)
-    user_id = rl.is_rate_limited.call_args.kwargs["user_id"]
-    assert user_id.startswith("email:")
+async def test_budget_unknown_name_fails_loud():
+    """An unconfigured budget is a caller typo — never a silent default."""
+    with pytest.raises(KeyError):
+        await check_security_budget("nonexistent_budget", "x", limiter=_make_limiter())
 
 
-async def test_rate_limiter_anonymous_no_email_uses_host():
-    request = _make_request(method="POST", body={}, client_host="9.9.9.9")
-    db = MagicMock()
-    with (
-        patch.object(deps_core, "rate_limiter") as rl,
-        patch.object(deps_core, "settings", _fake_settings()),
-    ):
-        rl.is_rate_limited = AsyncMock(return_value=False)
-        await deps_core.rate_limiter_dependency(request=request, db=db, user=None)
-    assert rl.is_rate_limited.call_args.kwargs["user_id"] == "unknown:9.9.9.9"
+async def test_budget_uses_configured_engine_algorithm():
+    """Budgets run the shared algorithm selector (GCRA/fixed-window),
+    not a module-local fixed-window shortcut like the old per-channel limiters."""
+    limiter = _make_limiter()
 
+    await check_security_budget("ai_chat", "7", limiter=limiter)
 
-async def test_rate_limiter_anonymous_no_client_uses_unknown():
-    request = _make_request(method="GET", client_host=None)
-    request.client = None
-    db = MagicMock()
-    with (
-        patch.object(deps_core, "rate_limiter") as rl,
-        patch.object(deps_core, "settings", _fake_settings()),
-    ):
-        rl.is_rate_limited = AsyncMock(return_value=False)
-        await deps_core.rate_limiter_dependency(request=request, db=db, user=None)
-    assert rl.is_rate_limited.call_args.kwargs["user_id"] == "unknown:unknown"
-
-
-async def test_rate_limiter_json_parse_error_falls_through():
-    request = _make_request(method="POST", body={})
-    request.json = AsyncMock(side_effect=ValueError("bad json"))
-    request.client = None
-    db = MagicMock()
-    with (
-        patch.object(deps_core, "rate_limiter") as rl,
-        patch.object(deps_core, "settings", _fake_settings()),
-    ):
-        rl.is_rate_limited = AsyncMock(return_value=False)
-        await deps_core.rate_limiter_dependency(request=request, db=db, user=None)
-    assert rl.is_rate_limited.call_args.kwargs["user_id"] == "unknown:unknown"
-
-
-async def test_rate_limiter_raises_when_limited():
-    request = _make_request()
-    db = MagicMock()
-    user = {"id": "u1"}
-    with (
-        patch.object(deps_core, "rate_limiter") as rl,
-        patch.object(deps_core, "settings", _fake_settings()),
-    ):
-        rl.is_rate_limited = AsyncMock(return_value=True)
-        with pytest.raises(RateLimitException):
-            await deps_core.rate_limiter_dependency(request=request, db=db, user=user)
-
-
-async def test_rate_limiter_waits_for_initialization():
-    request = _make_request()
-    event = AsyncMock()
-    request.app.state.initialization_complete = event
-    db = MagicMock()
-    user = {"id": "u1"}
-    with (
-        patch.object(deps_core, "rate_limiter") as rl,
-        patch.object(deps_core, "settings", _fake_settings()),
-    ):
-        rl.is_rate_limited = AsyncMock(return_value=False)
-        await deps_core.rate_limiter_dependency(request=request, db=db, user=user)
-    event.wait.assert_awaited_once()
+    method = limiter.check_rate_limit_algorithm
+    assert method.await_count == 1  # single engine call, no hand-rolled scripts

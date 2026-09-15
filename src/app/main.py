@@ -49,8 +49,7 @@ app = create_application(
 #   lookup (L1+L2+DB). Safe: the middleware resolves tenant_id from JWT
 #   claims/request.state, never from the tenant ContextVar (P1-15; the old
 #   P2-5 Tenant-first rationale is stale — nothing in the rate-limit request
-#   path reads get_current_tenant; dep-layer is_rate_limited still sees the
-#   context because TenantMiddleware runs before the handler regardless).
+#   path reads get_current_tenant).
 # - Tenant: Extract tenant context for multi-tenant features
 # - SecurityHeaders: Add security headers to all responses
 # - AttackDetection: Registered before RateLimit so it runs AFTER it in LIFO —

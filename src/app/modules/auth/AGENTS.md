@@ -44,17 +44,18 @@ from src.app.modules.auth import AuthService, get_auth_service  # lazy import vi
 ```
 ❌ DON'T: Import `auth/service.py` or `auth/router.py` internals from other modules (ruff banned-api enforces this for `service`/`router`).
 
-### DO: Keep auth logic in AuthService — never in routers
+### DO: Keep auth logic in services — never in routers
 
-```python
-# service.py — constant-time authentication (timing-attack safe)
-class AuthService:
-    _DUMMY_BCRYPT_HASH = "$2b$12$..."  # noqa: S105 — verify even when user is missing
-
-    async def authenticate_user(self, username_or_email: str, password: str, db) -> dict | None:
-        ...
-```
-Routers only wire request/response: login returns `LoginTokenResponse | LoginMFAResponse` (MFA challenge possible).
+Password (login), MFA, passkey, magic-link, and SSO doors verify credentials,
+then hand off to `services/tokens.py::TokenIssuer.issue_session` — the one
+choreography for claims → token pair → refresh cookie (when a response is
+threaded through) → session registration → `auth.login_issued` audit event.
+Routers only wire request/response; `service.py::AuthService` owns login,
+refresh, and logout orchestration. Password reset/change and email
+verification belong to their subservices
+(`services/passwords.py::PasswordLifecycleService`,
+`services/email_verification.py::EmailVerificationService`) — call them
+directly; `AuthService` carries no pass-throughs.
 
 ### DO: Use the subservices for each identity mechanism
 
@@ -85,9 +86,8 @@ Logout resolves the session id from the access token (`sid` claim → `jti` fall
 - Events: emit via `core.events` (`EventPriority`) — e.g. security notifications — not direct cross-module service calls (only `users.service.UserService` is a sanctioned in-module dependency for auth-info lookup)
 
 ## Touch Points
-
-- Core service: `service.py::AuthService` (+ `get_auth_service` factory)
-- Token issuance: `services/tokens.py::TokenIssuer`; JWT machinery: `core/security/jwt_service.py`
+- Core service: `service.py::AuthService` (login, refresh, logout; + `get_auth_service` factory)
+- Session seam: `services/tokens.py::TokenIssuer.issue_session` (claims, token pair, refresh cookie, session registration, login audit); JWT machinery: `core/security/jwt_service.py`
 - Errors: `errors.py` (`AuthError`, magic-link tree)
 - OAuth providers: `providers/base.py` + google/github/microsoft/apple (use `http_client.py`)
 - Auth deps (JWT verification): `src/app/api/deps/auth.py`

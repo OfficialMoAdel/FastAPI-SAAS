@@ -22,6 +22,7 @@ from src.app.modules.feature_flags.schemas import (
     FeatureFlagCreate,
     FeatureFlagOverrideCreate,
     FeatureFlagOverrideUpdate,
+    FeatureFlagRead,
     FeatureFlagUpdate,
 )
 from src.app.modules.tenants.models import Tenant
@@ -54,7 +55,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
     """Service for managing feature flags using BaseService pattern."""
 
     def __init__(self, db: AsyncSession):
-        super().__init__(model=FeatureFlag, db=db)
+        super().__init__(model=FeatureFlag, db=db, select_schema=FeatureFlagRead)
         self.crud = crud_feature_flags
         self.override_crud = crud_feature_flag_overrides
 
@@ -148,7 +149,9 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         # old `if not flag: raise` therefore 404'd every real update.
         # Re-read the row after the write to source both the not-found
         # decision and the returned entity.
-        await self.update(flag_id, **data.model_dump(exclude_unset=True))
+        # crud.update directly: this method re-reads below for the ORM entity
+        # (its return contract), so the typed BaseService path would re-read twice.
+        await self.crud.update(db=self.db, object=data.model_dump(exclude_unset=True), id=flag_id)
         flag = await self.crud.get(db=self.db, id=flag_id)
         if flag is None:
             raise ModelNotFoundError("FeatureFlag", flag_id)
