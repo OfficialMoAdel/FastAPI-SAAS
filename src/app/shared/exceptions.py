@@ -173,6 +173,7 @@ class ServiceUnavailableError(AppException):
     def __init__(self, message: str = "Service temporarily unavailable"):
         self.message = message
         self.detail = message
+        super().__init__(self.message)
 
 
 class StripeError(AppException):

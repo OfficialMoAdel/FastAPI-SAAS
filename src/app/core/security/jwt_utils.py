@@ -140,21 +140,6 @@ def _is_symmetric_algorithm() -> bool:
     return _get_algorithm().startswith("HS")
 
 
-def _get_verification_key() -> str:
-    """Get the raw key string used for JWT signature verification.
-
-    Returns:
-        Public key PEM string for RS256, or SECRET_KEY for HS256.
-
-    Note:
-        For RS256, prefer _get_parsed_verification_key() which returns
-        a pre-parsed key object for better performance.
-    """
-    if settings.crypt.JWT_PRIVATE_KEY or settings.crypt.JWT_PUBLIC_KEY:
-        # RS256: Use public key for verification
-        return str(settings.crypt.JWT_PUBLIC_KEY or "")
-    # HS256: Use symmetric secret
-    return settings.SECRET_KEY.get_secret_value()
 
 
 @lru_cache(maxsize=1)
@@ -181,7 +166,7 @@ def _get_parsed_verification_key() -> JWTPublicKey | str:
         - Private key never cached
         - lru_cache(maxsize=1) = singleton per process
     """
-    if settings.crypt.JWT_PRIVATE_KEY or settings.crypt.JWT_PUBLIC_KEY:
+    if _get_algorithm().startswith("RS"):
         # RS256: Pre-parse public key
         key_pem = settings.crypt.JWT_PUBLIC_KEY or ""
         if key_pem:

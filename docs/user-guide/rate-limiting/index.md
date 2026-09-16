@@ -33,18 +33,15 @@ async def send(body: SendRequest):
 
 ### One Engine
 
-All rate limiting resolves through `core/security/rate_policy.py`:
-
-- **`evaluate_rate_policy`** — request-path decisions for the ASGI
-  middleware (tier policy → key → algorithm → verdict with headers).
-- **`check_security_budget(budget, identifier)`** — identity-keyed
-  brute-force budgets for sensitive endpoints (login, MFA, passkey,
-  magic link, AI chat). One key scheme, one algorithm selector
-  (GCRA or fixed-window), one fail-open policy.
-
-Ban/blacklist escalation stays composed by the middleware via
-`core/security/auto_ban`'s merged single-RTT helpers — the decision
-engine itself stays pure of ban state.
+Endpoint brute-force budgets resolve through `core/security/rate_policy.py`
+via `check_security_budget(budget, identifier)` — identity-keyed budgets for
+sensitive endpoints (login, MFA, passkey, magic link, AI chat). One key
+scheme, one algorithm selector (GCRA or fixed-window), one fail-open policy.
+(`evaluate_rate_policy` is a deprecated general-purpose evaluator with no
+production callers — tests only; it lacks the middleware's ban/blacklist
+merge.) Tier path policy for general traffic lives in the same module
+(`resolve_rate_limits` + `build_rate_limit_key`) and is composed by the ASGI
+`RateLimitMiddleware` together with the ban/blacklist merge.
 
 ### How It Works
 

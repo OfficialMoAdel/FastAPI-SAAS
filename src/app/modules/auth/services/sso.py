@@ -2,6 +2,7 @@ import uuid
 from typing import Any, cast
 from uuid import UUID
 
+import httpx
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -213,6 +214,8 @@ class SSOService:
             oauth_provider = self._get_provider_instance(provider, settings_data, redirect_uri)
             try:
                 token_response = await oauth_provider.exchange_code_for_token(code)
+            except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.RequestError):
+                raise
             except Exception as e:
                 logger.error("SSO Code Exchange Failed", error_type=type(e).__name__, provider=provider)
                 raise ValidationError("Failed to exchange code with provider")
@@ -239,6 +242,10 @@ class SSOService:
                     )
                 else:
                     user_info = await oauth_provider.get_user_info(access_token)
+            except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.RequestError):
+                raise
+            except ValidationError:
+                raise
             except Exception as e:
                 logger.error("SSO User Info Fetch Failed", error_type=type(e).__name__, provider=provider)
                 raise ValidationError("Failed to fetch user info from provider")

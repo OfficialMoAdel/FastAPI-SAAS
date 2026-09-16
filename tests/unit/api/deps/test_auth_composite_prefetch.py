@@ -4,12 +4,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 
 from src.app.core.rbac.bitmask import PermissionBitmask
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.core.security.auth_prefetch import execute_composite_auth_prefetch
+from src.app.shared.exceptions import ForbiddenError
 from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
 
@@ -239,12 +239,11 @@ class TestCompositeAuthPrefetch:
         mock_db = AsyncMock()
         mock_request = MagicMock()
         mock_request.state.cached_permissions_bitmask = (user_id, str(tenant_id), mask)
-
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(ForbiddenError) as exc_info:
             await checker(
                 request=mock_request,
                 db=mock_db,
                 auth_context=mock_auth_context,
             )
 
-        assert exc_info.value.status_code == 403
+        assert "roles:manage" in str(exc_info.value)

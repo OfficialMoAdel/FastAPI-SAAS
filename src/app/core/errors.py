@@ -704,6 +704,7 @@ def _status_to_error_code(status_code: int) -> str:
         410: ErrorCode.GONE,
         422: ErrorCode.VALIDATION_ERROR,
         429: ErrorCode.RATE_LIMITED,
+        431: ErrorCode.INVALID_INPUT,
         500: ErrorCode.INTERNAL_ERROR,
         501: ErrorCode.NOT_IMPLEMENTED,
         502: ErrorCode.BAD_GATEWAY,

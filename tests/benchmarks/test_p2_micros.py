@@ -15,6 +15,7 @@ those paths are covered by unit tests instead.
 
 import gc
 import logging
+import sys
 import time
 from datetime import datetime
 from typing import Any
@@ -77,7 +78,10 @@ class TestSanitizerBench:
         # Tripwire, not the plan's 5µs Linux number: this box measures ~7µs
         # for .lower() + ~30-literal scan + one regex search. Catches
         # regressions back toward the old 28µs alternation gate.
-        assert best_us < 15.0, f"sanitize-clean {best_us:.2f}µs regressed"
+        # Coverage tracing adds ~3-5x overhead — timing is meaningless under it,
+        # so only gate when not traced (same precedent as test_post_optimization.py).
+        if sys.gettrace() is None:
+            assert best_us < 15.0, f"sanitize-clean {best_us:.2f}µs regressed"
 
     def test_sanitize_sensitive_redacts(self) -> None:
         from src.app.core.observability.log_sanitizer import LogSanitizer
@@ -98,7 +102,8 @@ class TestPrefilterBench:
 
         assert _attack_prefilter_hit(self._CLEAN) is False
         best_us = best_of_benchmark("prefilter_clean", lambda: _attack_prefilter_hit(self._CLEAN))
-        assert best_us < 50.0, f"prefilter-clean {best_us:.2f}µs exceeds 50µs plan threshold"
+        if sys.gettrace() is None:
+            assert best_us < 50.0, f"prefilter-clean {best_us:.2f}µs exceeds 50µs plan threshold"
 
     def test_prefilter_hit(self) -> None:
         from src.app.middleware.attack_detection import _attack_prefilter_hit

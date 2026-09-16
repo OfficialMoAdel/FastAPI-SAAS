@@ -216,8 +216,13 @@ async def handle_callback(
         # Item 7: provider-transport 502 as a domain error with cookie
         # hygiene (was a sanctioned HTTPException); the table maps it.
         raise _gateway_error("Provider returned an error response.", 502)
-    finally:
-        response.delete_cookie("sso_state")
+    except httpx.RequestError:
+        # Connection-layer failures (DNS, refused, reset, pool exhaustion)
+        # are transport failures too — 502 with cookie hygiene, not the
+        # 500 catch-all. (The old finally: response.delete_cookie was a
+        # no-op: it mutated the injected Response, not the returned one;
+        # hygiene rides exc.headers / _access_only_response instead.)
+        raise _gateway_error("Provider connection failed.", 502)
 
 
 @router.post("/{provider}/callback", dependencies=[Depends(check_auth_rate_limit)])
@@ -276,8 +281,13 @@ async def handle_post_callback(
         # Item 7: provider-transport 502 as a domain error with cookie
         # hygiene (was a sanctioned HTTPException); the table maps it.
         raise _gateway_error("Provider returned an error response.", 502)
-    finally:
-        response.delete_cookie("sso_state")
+    except httpx.RequestError:
+        # Connection-layer failures (DNS, refused, reset, pool exhaustion)
+        # are transport failures too — 502 with cookie hygiene, not the
+        # 500 catch-all. (The old finally: response.delete_cookie was a
+        # no-op: it mutated the injected Response, not the returned one;
+        # hygiene rides exc.headers / _access_only_response instead.)
+        raise _gateway_error("Provider connection failed.", 502)
 
 
 @router.post("/{provider}/connect", dependencies=[Depends(check_auth_rate_limit)])

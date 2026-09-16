@@ -150,7 +150,8 @@ async def download_file(
     """Download a file via streaming response."""
     from urllib.parse import quote
 
-    download = await service.download(ctx.tenant_id, file_id, user_id=ctx.user_id)
+    owner_id = None if ctx.is_superuser else ctx.user_id
+    download = await service.download(ctx.tenant_id, file_id, user_id=owner_id)
     encoded_filename = quote(download.file.original_name)
     return StreamingResponse(
         download.iter_bytes(),
@@ -176,7 +177,8 @@ async def get_file_info(
     service: StorageService = Depends(get_storage),
 ) -> Any:
     """Get file metadata without downloading."""
-    file = await service.get_file_or_raise(ctx.tenant_id, file_id, user_id=ctx.user_id)
+    owner_id = None if ctx.is_superuser else ctx.user_id
+    file = await service.get_file_or_raise(ctx.tenant_id, file_id, user_id=owner_id)
     return FileRead.model_validate(file, from_attributes=True)
 
 @router.get(
@@ -191,7 +193,8 @@ async def get_signed_url(
     service: StorageService = Depends(get_storage),
 ) -> Any:
     """Get a signed URL for file access."""
-    url = await service.get_presigned_url(ctx.tenant_id, file_id, expires_in, user_id=ctx.user_id)
+    owner_id = None if ctx.is_superuser else ctx.user_id
+    url = await service.get_presigned_url(ctx.tenant_id, file_id, expires_in, user_id=owner_id)
     from datetime import UTC, datetime, timedelta
 
     return SignedUrlResponse(
@@ -212,7 +215,8 @@ async def update_file(
     service: StorageService = Depends(get_storage),
 ) -> Any:
     """Update file metadata."""
-    file = await service.update_file(ctx.tenant_id, file_id, data, user_id=ctx.user_id)
+    owner_id = None if ctx.is_superuser else ctx.user_id
+    file = await service.update_file(ctx.tenant_id, file_id, data, user_id=owner_id)
     return FileRead.model_validate(file, from_attributes=True)
 
 @router.delete(
@@ -227,7 +231,8 @@ async def delete_file(
     service: StorageService = Depends(get_storage),
 ) -> Response:
     """Delete a file."""
-    await service.delete_file(ctx.tenant_id, file_id, user_id=ctx.user_id)
+    owner_id = None if ctx.is_superuser else ctx.user_id
+    await service.delete_file(ctx.tenant_id, file_id, user_id=owner_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 __all__ = [
     "delete_file",

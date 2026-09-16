@@ -24,6 +24,7 @@ the asserts below are load-robust tripwires (min-of-batches), not gates.
 
 import gc
 import logging
+import sys
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -112,7 +113,8 @@ class TestIPStatusNegativeCacheBench:
             return await svc.check_ip_status("203.0.113.9")
 
         mean_us = await async_run_benchmark("ip_negative_cache_hit", hit)
-        assert mean_us < 15.0, f"ip-cache hit {mean_us:.2f}µs regressed"
+        if sys.gettrace() is None:
+            assert mean_us < 15.0, f"ip-cache hit {mean_us:.2f}µs regressed"
         redis.pipeline.assert_not_called()
         _ip_status_negative_cache.clear()
 

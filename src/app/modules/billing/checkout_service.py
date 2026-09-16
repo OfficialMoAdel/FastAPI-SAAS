@@ -43,6 +43,8 @@ class CheckoutService:
         # webhook paths). Default: fresh gateway from the current session.
         from src.app.clients.billing.stripe import get_payment_gateway
 
+        if gateway_factory is not None and gateway is not None:
+            raise ValueError("Pass either gateway or gateway_factory, not both.")
         if gateway_factory is not None:
             self._gateway_factory = gateway_factory
         elif gateway is not None:
@@ -145,7 +147,7 @@ class CheckoutService:
         except StripeError:
             raise
         except Exception as e:
-            logger.error("Stripe portal error", error=str(e))
+            logger.error("Stripe checkout error", error=str(e))
             raise StripeError(f"Failed to initialize checkout session: {str(e)}") from e
 
     async def create_portal_session(self, return_url: str) -> str:
@@ -164,7 +166,7 @@ class CheckoutService:
                 parsed_return = urlparse(return_url)
                 parsed_frontend = urlparse(frontend_url)
 
-                # Check if it matches exactly or is a subdomain of frontend_url
+                # Exact netloc match (subdomains rejected by design).
                 if parsed_return.netloc == parsed_frontend.netloc:
                     is_allowed_origin = True
 

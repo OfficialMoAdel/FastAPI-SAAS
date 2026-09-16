@@ -2,11 +2,12 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import Request
 
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
+from src.app.shared.exceptions import ValidationError
 
 
 @pytest.fixture
@@ -142,8 +143,7 @@ async def test_rbac_exempt_path_no_tenant_raises_bad_request(mock_db):
         None,
     )
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(ValidationError) as exc_info:
         await checker(request=request, db=mock_db, auth_context=ctx)
 
-    assert exc_info.value.status_code == 400
-    assert "Tenant context required for permission check" in str(exc_info.value.detail)
+    assert "Tenant context required for permission check" in str(exc_info.value)

@@ -136,7 +136,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         if not existing:
             raise ModelNotFoundError("{{ ModelName }}", id)
 
-        existing_user_id = existing.user_id
+        existing_user_id = existing.get("user_id") if isinstance(existing, dict) else getattr(existing, "user_id", None)
         if existing_user_id != get_user_attr(current_user, "id"):
             raise ForbiddenError("You don't have permission to update this {{ module_name }}")
 
@@ -173,7 +173,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         if not existing:
             raise ModelNotFoundError("{{ ModelName }}", id)
 
-        existing_user_id = existing.user_id
+        existing_user_id = existing.get("user_id") if isinstance(existing, dict) else getattr(existing, "user_id", None)
         if existing_user_id != get_user_attr(current_user, "id"):
             raise ForbiddenError("You don't have permission to delete this {{ module_name }}")
 

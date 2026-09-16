@@ -45,7 +45,10 @@ async def passkey_login_rate_limit(request: Request) -> None:
     verdict = await check_security_budget("passkey_login", client_ip)
 
     if verdict.is_limited:
-        raise RateLimitExceededError("Too many login attempts. Please try again later.")
+        raise RateLimitExceededError(
+            "Too many login attempts. Please try again later.",
+            retry_after=verdict.retry_after or verdict.period,
+        )
 
 
 # ============================================================================

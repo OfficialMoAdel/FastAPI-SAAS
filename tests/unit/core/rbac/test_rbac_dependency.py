@@ -13,7 +13,6 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 
 from src.app.core.rbac.dependencies import (
     PERMISSIONS_CACHE_TTL,
@@ -24,6 +23,7 @@ from src.app.core.rbac.dependencies import (
     requires_permission,
 )
 from src.app.core.rbac.permissions import Permission
+from src.app.shared.exceptions import ForbiddenError
 
 
 def _acm(pipe):
@@ -179,12 +179,10 @@ class TestRequiresPermission:
             return_value=False,
         ):
             mock_db = AsyncMock()
-
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(ForbiddenError) as exc_info:
                 await checker(request=None, db=mock_db, auth_context=ctx)
 
-            assert exc_info.value.status_code == 403
-            assert "roles:manage" in exc_info.value.detail
+            assert "roles:manage" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_accepts_string_permission(self):

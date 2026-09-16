@@ -16,7 +16,7 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,8 @@ from src.app.core.rbac.bitmask import PermissionBitmask
 from src.app.core.rbac.permissions import Permission as PermissionEnum
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
+from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
+from src.app.shared.exceptions import ValidationError as ValidationException
 
 logger = get_logger(__name__)
 
@@ -243,24 +245,18 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
                     tenant_context = TenantContext.from_model(tenant_model)
 
         if tenant_context is None:
-            # SECURITY FIX: Never fall back to a default tenant ID
-            # Permission checks require valid tenant context
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Tenant context required for permission check",
-            )
+            # SECURITY FIX: Never fall back to a default tenant ID.
+            # ValidationError preserves the historical 400 INVALID_INPUT
+            # (TenantContextError would map to 403 via the table).
+            raise ValidationException("Tenant context required for permission check")
         tenant_id = tenant_context.id
 
         is_superuser = get_user_attr(current_user, "is_superuser", False)
         user_id_val = get_user_attr(current_user, "id")
 
         if user_id_val is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User ID is required.",
-            )
+            raise UnauthorizedException("User ID is required.")
         user_id = int(user_id_val)
-
         # Enforce tenant isolation before any permission bypass. Superusers may bypass
         # permission checks within their tenant, but they cannot act as another tenant.
         # Applies to every principal — test-injected AuthContexts included, so HTTP
@@ -289,10 +285,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
 
         # Raise if permission denied
         if not has_perm:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission denied: {permission_slug}",
-            )
+            raise ForbiddenException(f"Permission denied: {permission_slug}")
 
     return _check_permission
 

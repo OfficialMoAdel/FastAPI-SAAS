@@ -184,8 +184,16 @@ async def resolve_rate_limits(
     return limit, period
 
 
-async def resolve_anonymous_user_id(request: Request) -> str:
-    """Resolve an anonymous user identifier using email-body hash or client IP."""
+async def resolve_anonymous_user_id(request: Request) -> str:  # noqa: C901
+    """Resolve an anonymous user identifier using email-body hash or client IP.
+
+    .. deprecated::
+        No production callers (endpoint budgets inline their own email-hash
+        identity, e.g. magic_link_send; the middleware resolves anonymous
+        identity inline from ``request.state``/JWT). Kept for tests and
+        ad-hoc tooling; do not wire new production callers here — extend
+        ``check_security_budget`` instead.
+    """
     # Check if request has an email in JSON body for per-email rate limiting
     if request.method == "POST":
         try:
@@ -224,14 +232,25 @@ def build_rate_limit_key(
     return build_tenant_key(base_key, tenant_id)
 
 
-async def evaluate_rate_policy(
+async def evaluate_rate_policy(  # noqa: C901
     request: Request,
     *,
     user: Any = None,
     db: AsyncSession | None = None,
     limiter: Any = None,
 ) -> RateLimitVerdict:
-    """Evaluate rate policy for a request and return a comprehensive verdict."""
+    """Evaluate rate policy for a request and return a comprehensive verdict.
+
+    .. deprecated::
+        No production callers: the ASGI ``RateLimitMiddleware`` resolves
+        identity/tier/key inline (via ``check_ban_blacklist_and_rate_limit``)
+        and endpoint budgets use ``check_security_budget``. This helper also
+        lacks the middleware's ban/blacklist merge, so do not wire new
+        callers here — it is pinned by
+        ``tests/unit/core/security/test_rate_policy.py`` only. Delete once
+        a second consumer need disappears (keep ``resolve_rate_limits`` /
+        ``build_rate_limit_key`` / ``check_security_budget``).
+    """
     # 1. IP Whitelist bypass
     if settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT and getattr(request.state, "ip_whitelisted", False):
         headers = {

@@ -24,8 +24,10 @@ class TestPEMKeyCaching:
 
         clear_jwt_key_cache()
 
-        # Mock RS256 settings
+        # Mock RS256 settings (ALGORITHM now keys verification, aligned with
+        # jwt_service encode and startup CryptSettings validation).
         mock_settings = MagicMock()
+        mock_settings.crypt.ALGORITHM = "RS256"
         mock_settings.crypt.JWT_PRIVATE_KEY = "dummy_private_key"
         mock_settings.crypt.JWT_PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Z3VS5JJcds3xfn/ygWyf8Adw5gKOLxMBZ
@@ -62,13 +64,13 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Z3VS5JJcds3xfn/ygWyf8Adw5gKOLxMBZ
 
         clear_jwt_key_cache()
 
-        # Mock HS256 settings (no private key)
+        # Mock HS256 settings (no keys; ALGORITHM selects the secret).
         mock_settings = MagicMock()
+        mock_settings.crypt.ALGORITHM = "HS256"
         mock_settings.crypt.JWT_PRIVATE_KEY = None
         mock_settings.crypt.JWT_PUBLIC_KEY = None
         mock_settings.SECRET_KEY = MagicMock()
         mock_settings.SECRET_KEY.get_secret_value.return_value = "my_secret_key"
-
         with patch("src.app.core.security.jwt_utils.settings", mock_settings):
             # Clear cache after patching
             clear_jwt_key_cache()
@@ -93,6 +95,7 @@ class TestCacheClearUtility:
 
         # Mock settings
         mock_settings = MagicMock()
+        mock_settings.crypt.ALGORITHM = "HS256"
         mock_settings.crypt.JWT_PRIVATE_KEY = None
         mock_settings.crypt.JWT_PUBLIC_KEY = None
         mock_settings.SECRET_KEY = MagicMock()
@@ -156,9 +159,9 @@ class TestEmptyKeyHandling:
         )
 
         mock_settings = MagicMock()
+        mock_settings.crypt.ALGORITHM = "RS256"
         mock_settings.crypt.JWT_PRIVATE_KEY = "some_private_key"
         mock_settings.crypt.JWT_PUBLIC_KEY = ""  # Empty
-        mock_settings.SECRET_KEY = MagicMock()
         with patch("src.app.core.security.jwt_utils.settings", mock_settings):
             clear_jwt_key_cache()
             key = _get_parsed_verification_key()
@@ -174,9 +177,9 @@ class TestEmptyKeyHandling:
         )
 
         mock_settings = MagicMock()
+        mock_settings.crypt.ALGORITHM = "RS256"
         mock_settings.crypt.JWT_PRIVATE_KEY = "some_private_key"
         mock_settings.crypt.JWT_PUBLIC_KEY = None  # None
-        mock_settings.SECRET_KEY = MagicMock()
         with patch("src.app.core.security.jwt_utils.settings", mock_settings):
             clear_jwt_key_cache()
             key = _get_parsed_verification_key()
