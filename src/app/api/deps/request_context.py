@@ -61,6 +61,34 @@ from src.app.core.utils.user_utils import get_user_attr
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 
 
+def owns_resource(actor_user_id: object, owner_user_id: object) -> bool:
+    """Whether ``actor_user_id`` owns a resource belonging to ``owner_user_id``.
+
+    Item 8: the pure ownership predicate behind :meth:`RequestContext.owns`.
+    String comparison so int/str id mismatches across ORM/dict rows can
+    never bypass the check.
+    """
+    return str(owner_user_id) == str(actor_user_id)
+
+
+def require_resource_ownership(
+    owner_user_id: object,
+    actor_user_id: object,
+    is_superuser: bool = False,
+) -> None:
+    """Raise unless ``actor_user_id`` owns the resource.
+
+    Item 8: the ONE ownership seam for services and routers. Superusers
+    bypass; everyone else must own the resource. Raises the shared domain
+    ``ForbiddenError`` (the central table maps it to 403).
+
+    Raises:
+        ForbiddenError: If the resource belongs to another user.
+    """
+    if not is_superuser and not owns_resource(actor_user_id, owner_user_id):
+        raise ForbiddenException("You do not have permission to access this resource.")
+
+
 @dataclass(frozen=True, slots=True)
 class RequestContext:
     """The current request's authenticated principal within its tenant.
@@ -117,19 +145,19 @@ class RequestContext:
 
     def owns(self, owner_user_id: object) -> bool:
         """Whether the principal owns a resource belonging to ``owner_user_id``."""
-        return str(owner_user_id) == str(self.user_id)
+        return owns_resource(self.user_id, owner_user_id)
 
     def require_ownership(self, owner_user_id: object) -> None:
         """Raise unless the principal owns the resource.
 
-        Centralizes the ownership-check bug class that was previously
-        duplicated once per module service.
+        Thin wrapper over :func:`require_resource_ownership` for the
+        request layer; services call the pure function directly so they
+        stay ``RequestContext``-free.
 
         Raises:
             ForbiddenException: If the resource belongs to another user.
         """
-        if not self.is_superuser and not self.owns(owner_user_id):
-            raise ForbiddenException("You do not have permission to access this resource.")
+        require_resource_ownership(owner_user_id, self.user_id, self.is_superuser)
 
 
 async def get_request_context(
@@ -153,4 +181,6 @@ __all__ = [
     "RequestContext",
     "RequestContextDep",
     "get_request_context",
+    "owns_resource",
+    "require_resource_ownership",
 ]

@@ -281,23 +281,28 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         result = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
         return dict(result) if result else {}
 
-    async def cancel_subscription_for_user(self, subscription_id: int, user_id: int) -> dict[str, Any]:
+    async def cancel_subscription_for_user(
+        self, subscription_id: int, user_id: int, *, is_superuser: bool = False
+    ) -> dict[str, Any]:
         """Cancel a subscription at period end, enforcing user ownership.
 
         Ownership/tenant-isolation check lives here (not in the router) so
-        every caller gets it by construction.
+        every caller gets it by construction. Item 8: enforced via the ONE
+        ownership seam (:func:`require_resource_ownership`).
 
         Raises:
-            ForbiddenError: If the subscription is not owned by the user
-                (Q-M1: was ForbiddenException; core/errors.py owns the HTTP
-                mapping centrally).
+            ForbiddenError: If the subscription is not owned by the user.
         """
+        from src.app.api.deps.request_context import require_resource_ownership
+
         subscription = await self.get_subscription(subscription_id)
         sub_user_id = (
             subscription.get("user_id") if isinstance(subscription, dict) else getattr(subscription, "user_id", None)
         )
-        if sub_user_id != user_id:
-            raise ForbiddenError("Not authorized to cancel this subscription")
+        try:
+            require_resource_ownership(sub_user_id, user_id, is_superuser)
+        except ForbiddenError:
+            raise ForbiddenError("Not authorized to cancel this subscription") from None
         return await self.cancel_subscription(subscription_id, user_id=user_id)
 
     async def cancel_subscription(self, subscription_id: int, user_id: int | None = None) -> dict[str, Any]:
@@ -405,21 +410,26 @@ class BillingRecordService(BaseService[BillingRecord]):
 
         return cast(dict[str, Any], record)
 
-    async def get_record_for_user(self, record_id: int, user_id: int) -> dict[str, Any]:
+    async def get_record_for_user(
+        self, record_id: int, user_id: int, *, is_superuser: bool = False
+    ) -> dict[str, Any]:
         """Get a billing record, enforcing user ownership.
 
         Ownership check lives here (not in the router) so every caller gets
-        it by construction.
+        it by construction. Item 8: enforced via the ONE ownership seam
+        (:func:`require_resource_ownership`).
 
         Raises:
-            ForbiddenError: If the record is not owned by the user
-                (Q-M1: was ForbiddenException; core/errors.py owns the HTTP
-                mapping centrally).
+            ForbiddenError: If the record is not owned by the user.
         """
+        from src.app.api.deps.request_context import require_resource_ownership
+
         record = await self.get_record(record_id)
         record_user_id = record.get("user_id") if isinstance(record, dict) else getattr(record, "user_id", None)
-        if record_user_id != user_id:
-            raise ForbiddenError("Not authorized to view this record")
+        try:
+            require_resource_ownership(record_user_id, user_id, is_superuser)
+        except ForbiddenError:
+            raise ForbiddenError("Not authorized to view this record") from None
         return cast(dict[str, Any], record)
 
     async def get_user_records(

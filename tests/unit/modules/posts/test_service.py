@@ -248,6 +248,27 @@ class TestPostServiceUpdate:
             mock_crud.update.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_post_allowed_for_superuser(self, mock_db, mock_superuser, mock_post, post_update):
+        """Item 8: superusers bypass ownership (the drift fix — posts had no exemption)."""
+        from src.app.modules.posts.service import PostService
+
+        service = PostService(mock_db)
+        updated_post = {**mock_post, "title": "Admin edit"}
+
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
+            mock_crud.get.return_value = mock_post
+            mock_crud.update.return_value = updated_post
+
+            result = await service.update_post(
+                post_id=1,
+                values=post_update,
+                current_user=mock_superuser,
+            )
+
+            assert result["message"] == "Post updated"
+            mock_crud.update.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_update_post_forbidden_for_other_user(self, mock_db, mock_user, mock_post, post_update):
         """Test that updating another user's post raises the domain ForbiddenError (Q-M1)."""
         from src.app.modules.posts.service import PostService
@@ -306,6 +327,25 @@ class TestPostServiceDelete:
 
             assert result["message"] == "Post deleted from the database"
             mock_crud.db_delete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_post_allowed_for_superuser(self, mock_db, mock_superuser, mock_post):
+        """Item 8: superusers bypass ownership on delete too."""
+        from src.app.modules.posts.service import PostService
+
+        service = PostService(mock_db)
+
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
+            mock_crud.get.return_value = mock_post
+            mock_crud.delete.return_value = None
+
+            result = await service.delete_post(
+                post_id=1,
+                current_user=mock_superuser,
+            )
+
+            assert result["message"] == "Post deleted"
+            mock_crud.delete.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_delete_post_forbidden_for_other_user(self, mock_db, mock_user, mock_post):

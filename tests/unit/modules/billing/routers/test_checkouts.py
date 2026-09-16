@@ -118,3 +118,16 @@ async def test_cancel_subscription_unauthorized():
     ):
         with pytest.raises(ForbiddenError, match="Not authorized to cancel this subscription"):
             await cancel_current_subscription(current_user=current_user, db=MagicMock(), subscription_id=None)
+
+
+async def test_cancel_subscription_for_user_superuser_bypass():
+    """Item 8: superusers bypass the ownership seam (default is deny)."""
+    from src.app.modules.billing.subscription_service import UserSubscriptionService
+
+    service = UserSubscriptionService(AsyncMock())
+    service.get_subscription = AsyncMock(return_value={"id": 9, "user_id": 2, "tenant_id": 3})
+    service.cancel_subscription = AsyncMock(return_value={"id": 9, "status": "cancelled"})
+
+    result = await service.cancel_subscription_for_user(9, user_id=1, is_superuser=True)
+    assert result["status"] == "cancelled"
+    service.cancel_subscription.assert_awaited_once()

@@ -345,57 +345,46 @@ class TestAPIKeyRotation:
 
     @pytest.mark.asyncio
     async def test_rotate_key_wrong_user(self, api_key_service: APIKeyService, mock_db_session: AsyncMock) -> None:
-        """Test that rotation fails if user doesn't own the key."""
-        mock_key = MagicMock(spec=APIKey)
-        mock_key.id = 1
-        mock_key.user_id = 2  # Different user
-        mock_key.tenant_id = 1
-        mock_key.is_active = True
+        """Test that rotation fails if user doesn't own the key.
 
+        Item 8: the scoped lookup (tenant + user filter) finds no row, so
+        cross-user keys are indistinguishable from missing (404, no
+        existence oracle) — the dead explicit ownership check is gone.
+        """
         with patch.object(api_key_service.crud, "get") as mock_get:
             mock_result = MagicMock()
 
-            mock_result.scalar_one_or_none.return_value = mock_key
+            mock_result.scalar_one_or_none.return_value = None
 
             api_key_service.db.execute = AsyncMock(return_value=mock_result)
 
-            mock_get.return_value = mock_key
+            mock_get.return_value = None
 
-            with pytest.raises(ForbiddenException) as exc_info:
+            with pytest.raises(ModelNotFoundError):
                 await api_key_service.rotate_api_key(
                     key_id=1,
                     user_id=1,  # Requesting user
                     tenant_id=1,
                 )
 
-            assert "don't have permission" in str(exc_info.value).lower()
-
     @pytest.mark.asyncio
     async def test_rotate_key_wrong_tenant(self, api_key_service: APIKeyService, mock_db_session: AsyncMock) -> None:
-        """Test that rotation fails if tenant doesn't match."""
-        mock_key = MagicMock(spec=APIKey)
-        mock_key.id = 1
-        mock_key.user_id = 1
-        mock_key.tenant_id = 2  # Different tenant
-        mock_key.is_active = True
-
+        """Test that rotation fails if tenant doesn't match (404, no oracle)."""
         with patch.object(api_key_service.crud, "get") as mock_get:
             mock_result = MagicMock()
 
-            mock_result.scalar_one_or_none.return_value = mock_key
+            mock_result.scalar_one_or_none.return_value = None
 
             api_key_service.db.execute = AsyncMock(return_value=mock_result)
 
-            mock_get.return_value = mock_key
+            mock_get.return_value = None
 
-            with pytest.raises(ForbiddenException) as exc_info:
+            with pytest.raises(ModelNotFoundError):
                 await api_key_service.rotate_api_key(
                     key_id=1,
                     user_id=1,
                     tenant_id=1,  # Requesting tenant
                 )
-
-            assert "don't have permission" in str(exc_info.value).lower()
 
     @pytest.mark.asyncio
     async def test_rotate_revoked_key_fails(self, api_key_service: APIKeyService, mock_db_session: AsyncMock) -> None:

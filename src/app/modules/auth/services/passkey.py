@@ -243,6 +243,9 @@ class PasskeyService:
                 raise ModelNotFoundError("PasskeyCredential", credential_id, message="Passkey credential not found.")
 
         cred = await crud_passkey_credentials.get_credential(db=db, id=credential_id)
+        # Item 8: deliberately NOT the ownership seam — a wrong-user
+        # credential id stays a soft-404 (ModelNotFoundError), never 403, so
+        # credential existence is not enumerable across users.
         if not cred or cred.user_id != user_id:
             raise ModelNotFoundError("PasskeyCredential", credential_id, message="Passkey credential not found.")
 

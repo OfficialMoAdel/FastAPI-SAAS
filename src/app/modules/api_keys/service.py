@@ -517,8 +517,10 @@ class APIKeyService(BaseService[APIKey]):
         if old_key is None:
             raise ModelNotFoundError("APIKey", key_id)
 
-        if old_key.tenant_id != tenant_id or old_key.user_id != user_id:
-            raise ForbiddenError("You don't have permission to rotate this key")
+        # Item 8: the scoped lookup above (tenant + user filter) already
+        # 404s cross-tenant/cross-user keys — the old explicit ownership
+        # check was unreachable dead code (K-R1-01 oracle removal made it
+        # so). Ownership of the found row holds by construction.
         if not old_key.is_active:
             raise ForbiddenError("Cannot rotate a revoked key")
 

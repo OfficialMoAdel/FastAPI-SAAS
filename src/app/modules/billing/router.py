@@ -294,7 +294,9 @@ async def cancel_subscription(
 ) -> Any:
     """Cancel a subscription at period end (ownership enforced in service)."""
     service = get_user_subscription_service(ctx.db)
-    return await service.cancel_subscription_for_user(subscription_id, user_id=ctx.user_id)
+    return await service.cancel_subscription_for_user(
+        subscription_id, user_id=ctx.user_id, is_superuser=ctx.is_superuser
+    )
 
 
 # =============================================================================
@@ -358,4 +360,4 @@ async def get_billing_record(
 ) -> Any:
     """Get a billing record by ID (ownership enforced in service)."""
     service = get_billing_record_service(ctx.db)
-    return await service.get_record_for_user(record_id, user_id=ctx.user_id)
+    return await service.get_record_for_user(record_id, user_id=ctx.user_id, is_superuser=ctx.is_superuser)

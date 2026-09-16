@@ -49,11 +49,14 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
             from src.app.clients.billing.stripe import get_payment_gateway
 
             # P1-9: route through the PaymentGateway seam (B15 pattern from
-            # handlers/checkout.py) — per-tenant key resolution plus
-            # with_retry on transient Stripe failures. The tenant is still
-            # unknown here (this lookup is what discovers it), so no
-            # tenant_id is passed and the gateway falls back to the platform
-            # key — the same key the raw call below used, minus the bypass.
+            # handlers/checkout.py) — with_retry on transient Stripe
+            # failures. The tenant is still unknown here (this lookup is
+            # what discovers it), so no tenant_id is passed and the gateway
+            # falls back to the platform key. Item 10: deliberately NOT via
+            # CheckoutService.resolve_api_key — that seam adds a key-resolve
+            # round-trip the gateway already performs internally in
+            # retrieve_invoice, and this tenant-less read needs exactly the
+            # platform fallback, nothing more.
             invoice = await get_payment_gateway().retrieve_invoice(stripe_invoice_id)
             stripe_subscription_id = invoice.get("subscription")
         except StripeError as e:

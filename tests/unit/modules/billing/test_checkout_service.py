@@ -162,6 +162,71 @@ async def test_create_session_has_tenant_metadata(db_session, tenant):
 
 
 @pytest.mark.asyncio
+async def test_resolve_api_key_prefers_tenant_key(db_session, tenant):
+    """Item 10: seam resolves the tenant's own key when configured."""
+    from src.app.clients.billing.stripe import StripeGateway
+
+    service = CheckoutService(db_session)
+    with patch.object(
+        StripeGateway, "get_api_key", new=AsyncMock(return_value="sk_tenant_123")
+    ) as mock_key:
+        key = await service.resolve_api_key(tenant.id)
+    assert key == "sk_tenant_123"
+    mock_key.assert_awaited_once_with(tenant.id)
+
+
+@pytest.mark.asyncio
+async def test_injected_gateway_double_replaces_stripe(db_session, tenant):
+    """Item 10: injected gateway double — no Stripe, no key resolve."""
+    mock_gateway = MagicMock()
+    mock_gateway.get_api_key = AsyncMock(return_value="sk_test_123")
+    mock_gateway.create_checkout_session = AsyncMock(
+        return_value=MagicMock(url="https://double/...", id="cs_double", expires_at=1234567890)
+    )
+    service = CheckoutService(db_session, gateway=mock_gateway)
+    with (
+        patch("src.app.modules.billing.checkout_service.require_active_tenant", return_value=tenant),
+        patch(
+            "src.app.modules.billing.service.StripeSettingsService.get_settings",
+            return_value={"stripe_customer_id": "cus_123"},
+        ),
+        patch(
+            "src.app.modules.billing.subscription_service.SubscriptionPlanService.get_plan",
+            return_value={"stripe_price_id_monthly": "price_123"},
+        ),
+    ):
+        from src.app.core.config import settings as app_settings
+
+        frontend = app_settings.FRONTEND_URL.rstrip("/") if app_settings.FRONTEND_URL else "https://example.com"
+        data = CheckoutCreate(
+            plan_id=1, billing_interval="monthly", success_url=f"{frontend}/s", cancel_url=f"{frontend}/c"
+        )
+        result = await service.create_session(user_id=1, user_email="t@e.com", data=data)
+    assert result.session_id == "cs_double"
+    mock_gateway.create_checkout_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gateway_factory_builds_fresh_per_call(db_session, tenant):
+    """Item 10: factory (not a held instance) builds the gateway at call time."""
+    builds: list = []
+    from src.app.clients.billing.stripe import StripeGateway
+
+    def factory(**kw):
+        gw = StripeGateway(db=db_session)
+        builds.append(gw)
+        return gw
+
+    service = CheckoutService(db_session, gateway_factory=factory)
+    with patch.object(
+        StripeGateway, "get_api_key", new=AsyncMock(return_value="sk_test_123")
+    ):
+        await service.resolve_api_key(tenant.id)
+        await service.resolve_api_key(tenant.id)
+    assert len(builds) == 2
+
+
+@pytest.mark.asyncio
 async def test_create_session_commits_before_stripe_call(db_session, tenant):
     """P1-14: pooled DB connection must be released before Stripe network I/O."""
     events: list[str] = []

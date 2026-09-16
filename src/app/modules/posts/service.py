@@ -6,6 +6,7 @@ from fastcrud import compute_offset, paginated_response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.api.deps.request_context import require_resource_ownership
 from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.pagination import build_keyset_response, paginate_keyset
 from src.app.core.utils.user_utils import get_user_attr
@@ -28,20 +29,28 @@ class PostService(BaseService[Post]):
         """
         super().__init__(Post, db, select_schema=PostRead)
 
-    async def _check_ownership(self, current_user_id: int, target_user_id: Any) -> None:
+    async def _check_ownership(
+        self,
+        current_user_id: int,
+        target_user_id: Any,
+        *,
+        is_superuser: bool = False,
+    ) -> None:
         """Check if current user owns the resource.
 
-        ``target_user_id`` comes from ORM/dict rows (Any-typed); coerce to
-        int so a string/int mismatch can never bypass ownership.
+        Item 8: delegates to the ONE ownership seam
+        (:func:`require_resource_ownership`) — superusers bypass. Keeps the
+        int-coercion guard so a string/int mismatch across ORM/dict rows can
+        never bypass ownership (uncoercible targets fail closed).
         """
         try:
             target = int(target_user_id)
         except (TypeError, ValueError):
-            # Q-M1: raise the shared domain exception, never an HTTP-shaped
-            # one — core/errors.py owns the HTTP mapping centrally.
             raise ForbiddenError("You do not have permission to modify this post.") from None
-        if current_user_id != target:
-            raise ForbiddenError("You do not have permission to modify this post.")
+        try:
+            require_resource_ownership(target, current_user_id, is_superuser)
+        except ForbiddenError:
+            raise ForbiddenError("You do not have permission to modify this post.") from None
 
     async def create_post(
         self,
@@ -238,7 +247,11 @@ class PostService(BaseService[Post]):
         created_by_user_id = (
             db_post.get("created_by_user_id") if isinstance(db_post, dict) else db_post.created_by_user_id
         )
-        await self._check_ownership(get_user_attr(current_user, "id"), created_by_user_id)
+        await self._check_ownership(
+            get_user_attr(current_user, "id"),
+            created_by_user_id,
+            is_superuser=bool(get_user_attr(current_user, "is_superuser")),
+        )
 
         await self.crud.update(db=self.db, object=values, id=post_id)
         return {"message": "Post updated"}
@@ -278,7 +291,11 @@ class PostService(BaseService[Post]):
         created_by_user_id = (
             db_post.get("created_by_user_id") if isinstance(db_post, dict) else db_post.created_by_user_id
         )
-        await self._check_ownership(get_user_attr(current_user, "id"), created_by_user_id)
+        await self._check_ownership(
+            get_user_attr(current_user, "id"),
+            created_by_user_id,
+            is_superuser=bool(get_user_attr(current_user, "is_superuser")),
+        )
 
         await self.crud.delete(db=self.db, id=post_id)
         return {"message": "Post deleted"}

@@ -80,6 +80,18 @@ class TestRequestContext:
         ctx = RequestContext(user=_make_user(id=7, is_superuser=True), tenant=_make_tenant(), db=MagicMock())
         ctx.require_ownership(999)  # no exception
 
+    def test_pure_helpers_match_ctx_methods(self) -> None:
+        """Item 8: owns_resource/require_resource_ownership are the ctx methods' source."""
+        from src.app.api.deps.request_context import owns_resource, require_resource_ownership
+
+        assert owns_resource(7, 7) is True
+        assert owns_resource(7, 8) is False
+        assert owns_resource(7, "7") is True  # int/str mismatch never bypasses
+        require_resource_ownership(7, 7)
+        require_resource_ownership(999, 7, is_superuser=True)
+        with pytest.raises(ForbiddenException):
+            require_resource_ownership(8, 7)
+
     def test_frozen(self) -> None:
         ctx = RequestContext(user=_make_user(), tenant=_make_tenant(), db=MagicMock())
         with pytest.raises(Exception):  # noqa: B017 - FrozenInstanceError

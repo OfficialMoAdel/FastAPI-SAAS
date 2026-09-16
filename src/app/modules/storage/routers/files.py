@@ -101,11 +101,10 @@ async def list_files(
 ) -> Any:
     """List files for the current tenant."""
     effective_user_id = user_id
+    if user_id is not None:
+        # Item 8: ownership via the ONE seam (superuser bypass lives there).
+        ctx.require_ownership(user_id)
     if not ctx.is_superuser:
-        if user_id is not None and user_id != ctx.user_id:
-            from src.app.shared.exceptions import ForbiddenError
-
-            raise ForbiddenError("Cannot list files of another user")
         effective_user_id = ctx.user_id if user_id is None else user_id
 
     offset = (page - 1) * per_page

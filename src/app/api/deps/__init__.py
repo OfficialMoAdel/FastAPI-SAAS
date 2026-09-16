@@ -18,6 +18,8 @@ from src.app.api.deps.request_context import (
     RequestContext,
     RequestContextDep,
     get_request_context,
+    owns_resource,
+    require_resource_ownership,
 )
 from src.app.api.deps.tenant import tenant_dependency
 
@@ -35,4 +37,6 @@ __all__ = [
     "RequestContext",
     "RequestContextDep",
     "get_request_context",
+    "owns_resource",
+    "require_resource_ownership",
 ]
