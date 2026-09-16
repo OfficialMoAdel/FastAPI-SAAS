@@ -5,12 +5,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.app.core.config.environment import EnvironmentOption
-from src.app.core.exceptions.http_exceptions import TenantContextError
 from src.app.core.utils.ip_utils import is_trusted_proxy
 from src.app.middleware.tenant import is_path_exempt
 from src.app.modules._base.service import BaseService
 from src.app.modules.users.models import User
 from src.app.modules.webhooks.signer import verify_signature
+from src.app.shared.exceptions import TenantContextError
 
 
 class TestP0CriticalRegressions:

@@ -77,6 +77,23 @@ class ErrorCode:
     STORAGE_BACKEND_ERROR = "STORAGE_BACKEND_ERROR"
 
 
+def middleware_error_response(
+    code: str,
+    message: str,
+    status_code: int = 400,
+    *,
+    headers: Mapping[str, str] | None = None,
+) -> JSONResponse:
+    """Build an envelope response for native ASGI middleware (item 7).
+
+    Middleware runs before routing, so it cannot raise domain exceptions
+    into the table — but it must not hand-roll envelopes either. This is
+    the ONE failure interface middleware calls: same shape as
+    :func:`create_error_response`, minus request-id (unavailable pre-route).
+    """
+    return create_error_response(code=code, message=message, status_code=status_code, headers=headers)
+
+
 def create_error_response(
     code: str,
     message: str,
@@ -313,6 +330,13 @@ def _make_table_handler(spec: _HandlerSpec) -> Callable[[Request, Any], Coroutin
         resolved_message = message_spec(exc) if callable(message_spec) else message_spec
         resolved_details = spec.details(exc) if spec.details is not None else None
         resolved_headers = spec.headers(exc) if spec.headers is not None else None
+        # Item 7: transport headers ride the exception (e.g. SSO Set-Cookie
+        # hygiene) so routers stop converting domain errors to HTTPException.
+        exc_headers = getattr(exc, "headers", None)
+        if exc_headers:
+            merged = dict(resolved_headers) if resolved_headers else {}
+            merged.update(exc_headers)
+            resolved_headers = merged
         log = logger.error if spec.log_error else logger.warning
         log(spec.log_message, error=str(exc), request_id=request_id, path=request.url.path)
         return create_error_response(
@@ -334,7 +358,6 @@ def build_exception_table() -> list[_HandlerSpec]:
     cycle — core must never import feature modules at module scope.
     Response codes/messages are identical to the pre-table handlers.
     """
-    from src.app.core.exceptions.http_exceptions import TenantContextError
     from src.app.modules.ai.providers import AIProviderError
     from src.app.modules.ai.unified_errors import SessionLimitExceededError
     from src.app.modules.auth.errors import AuthError
@@ -361,6 +384,7 @@ def build_exception_table() -> list[_HandlerSpec]:
         RateLimitExceededError,
         ServiceUnavailableError,
         StripeError,
+        TenantContextError,
         UnauthorizedError,
     )
     from src.app.shared.exceptions import (
@@ -667,7 +691,8 @@ def _status_to_error_code(status_code: int) -> str:
     handler mislabeled itself SERVICE_UNAVAILABLE); 502 maps to the generic
     BAD_GATEWAY (previously every 502 was mislabeled STORAGE_BACKEND_ERROR,
     which describes exactly one storage handler, not arbitrary gateway
-    failures).
+    failures). Item 7: 504 (SSO provider timeout via the table) maps to
+    SERVICE_UNAVAILABLE.
     """
     mapping = {
         400: ErrorCode.INVALID_INPUT,
@@ -683,6 +708,7 @@ def _status_to_error_code(status_code: int) -> str:
         501: ErrorCode.NOT_IMPLEMENTED,
         502: ErrorCode.BAD_GATEWAY,
         503: ErrorCode.SERVICE_UNAVAILABLE,
+        504: ErrorCode.SERVICE_UNAVAILABLE,
         507: ErrorCode.STORAGE_QUOTA_EXCEEDED,
     }
     return mapping.get(status_code, ErrorCode.INTERNAL_ERROR)

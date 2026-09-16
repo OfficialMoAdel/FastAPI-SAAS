@@ -9,7 +9,6 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response
 
-from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.security.rate_policy import check_security_budget
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.auth.schemas import (
@@ -20,6 +19,7 @@ from src.app.modules.auth.schemas import (
     MagicLinkVerifyRequest,
 )
 from src.app.modules.auth.services.magic_link import MagicLinkService, get_magic_link_service
+from src.app.shared.exceptions import RateLimitExceededError
 
 router = APIRouter(prefix="/auth/magic-link", tags=["magic-link"])
 
@@ -58,7 +58,10 @@ async def send_magic_link(
     email_hash = hashlib.sha256(body.email.lower().strip().encode()).hexdigest()[:16]
     verdict = await check_security_budget("magic_link_send", f"email:{email_hash}")
     if verdict.is_limited:
-        raise RateLimitException(f"Too many magic link requests. Please try again in {verdict.period} seconds.")
+        raise RateLimitExceededError(
+            f"Too many magic link requests. Please try again in {verdict.period} seconds.",
+            retry_after=verdict.retry_after or verdict.period,
+        )
 
     # Extract client info for audit logging
     ip_address = get_client_ip(request)

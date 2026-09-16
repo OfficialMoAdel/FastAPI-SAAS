@@ -21,7 +21,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.app.core.config import settings
-from src.app.core.errors import ErrorCode, create_error_response
+from src.app.core.errors import ErrorCode, middleware_error_response
 from src.app.core.logger import get_logger
 from src.app.core.middleware_exempt import is_path_exempt
 from src.app.core.security.auto_ban import (
@@ -80,7 +80,7 @@ async def _reject_banned_ip(
         retry_after = int(ban_info.expires_at - time.time()) + 1
         if retry_after > 0:
             headers["Retry-After"] = str(retry_after)
-    response = create_error_response(
+    response = middleware_error_response(
         code=ErrorCode.FORBIDDEN,
         message="Forbidden: IP address banned due to abuse",
         status_code=status.HTTP_403_FORBIDDEN,
@@ -350,7 +350,7 @@ class RateLimitMiddleware:
                     except Exception:
                         pass
 
-                    response = create_error_response(
+                    response = middleware_error_response(
                         code=ErrorCode.FORBIDDEN,
                         message=f"Forbidden: IP banned after {violation_count} rate limit violations",
                         status_code=status.HTTP_403_FORBIDDEN,
@@ -359,7 +359,7 @@ class RateLimitMiddleware:
                     await response(scope, receive, send)
                     return
 
-            response = create_error_response(
+            response = middleware_error_response(
                 code=ErrorCode.RATE_LIMITED,
                 message="Rate limit exceeded",
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

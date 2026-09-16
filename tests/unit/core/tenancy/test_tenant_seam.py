@@ -17,7 +17,6 @@ import pytest
 from sqlalchemy import select
 
 from src.app.core.db.tenant_crud import TenantAwareCRUD, scoped_query, tenant_scope
-from src.app.core.exceptions.http_exceptions import TenantContextError
 from src.app.core.tenancy.context import (
     NO_TENANT,
     TenantContext,
@@ -27,6 +26,7 @@ from src.app.core.tenancy.context import (
     set_current_tenant,
 )
 from src.app.modules.users.models import User
+from src.app.shared.exceptions import TenantContextError
 
 
 def _ctx(is_active: bool = True) -> TenantContext:

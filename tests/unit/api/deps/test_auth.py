@@ -28,12 +28,12 @@ from src.app.api.deps.auth import (
     get_optional_auth_context,
     get_optional_user,
     get_user_by_api_key,
-    requires_api_key_scope,
     resolve_principal,
 )
-from src.app.core.exceptions.http_exceptions import ForbiddenException, UnauthorizedException
 from src.app.core.schemas import TokenData
 from src.app.core.tenancy.context import TenantContext
+from src.app.shared.exceptions import ForbiddenError as ForbiddenException
+from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
 
 def _make_request(headers: dict[str, str] | None = None, state: Any = None) -> MagicMock:
@@ -866,42 +866,6 @@ async def test_get_optional_user_rebuild() -> None:
         result = await get_optional_user(request, _make_db())
     assert result is not None
     assert result.id == 5
-
-
-# ---------------------------------------------------------------------------
-# requires_api_key_scope
-# ---------------------------------------------------------------------------
-
-
-async def test_requires_api_key_scope_no_user() -> None:
-    dep = requires_api_key_scope("read")
-    with pytest.raises(UnauthorizedException):
-        await dep(None)
-
-
-async def test_requires_api_key_scope_missing_scope() -> None:
-    dep = requires_api_key_scope("admin")
-    user = AuthenticatedUser(id=1, email="a@b.com")
-    object.__setattr__(user, "api_key_id", "k1")
-    object.__setattr__(user, "api_key_scopes", ["read"])
-    with pytest.raises(ForbiddenException):
-        await dep(user)
-
-
-async def test_requires_api_key_scope_ok() -> None:
-    dep = requires_api_key_scope("read")
-    user = AuthenticatedUser(id=1, email="a@b.com")
-    object.__setattr__(user, "api_key_id", "k1")
-    object.__setattr__(user, "api_key_scopes", ["read", "write"])
-    result = await dep(user)
-    assert result.id == 1
-
-
-async def test_requires_api_key_scope_no_key() -> None:
-    dep = requires_api_key_scope("read")
-    user = AuthenticatedUser.model_construct(id=1, email="a@b.com")
-    result = await dep(user)
-    assert result.id == 1
 
 
 # ---------------------------------------------------------------------------

@@ -21,11 +21,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.tenant_crud import tenant_scope
-from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.logger import get_logger
 from src.app.core.rbac.bitmask import PermissionBitmask
 from src.app.core.rbac.permissions import Permission as PermissionEnum
 from src.app.core.utils.user_utils import get_user_attr
+from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 
 logger = get_logger(__name__)
 

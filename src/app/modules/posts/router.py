@@ -8,12 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.core.db.database import async_get_db
-from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.schemas import MessageResponse
 from src.app.core.utils.cache import cache
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.posts import PostService
 from src.app.modules.posts.schemas import PostCreate, PostRead, PostUpdate
+from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 
 # R1-08: posts previously mounted a top-level path param (/{username}/posts)
 # directly under /v1, the only router to do so. That made {username} match any

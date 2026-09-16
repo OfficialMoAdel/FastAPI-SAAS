@@ -11,13 +11,13 @@ from uuid import UUID
 import pytest
 
 from src.app.api.deps.tenant import tenant_dependency
-from src.app.core.exceptions.http_exceptions import TenantContextError
 from src.app.core.tenancy.context import (
     NO_TENANT,
     TenantContext,
     clear_tenant_context,
     set_current_tenant,
 )
+from src.app.shared.exceptions import TenantContextError
 
 
 def _active_ctx() -> TenantContext:

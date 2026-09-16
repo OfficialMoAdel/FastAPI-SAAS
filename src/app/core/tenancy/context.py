@@ -17,8 +17,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from src.app.core.exceptions.http_exceptions import TenantContextError  # noqa: F401  # H3: re-exported canonical class
-from src.app.shared.exceptions import ModelNotFoundError
+from src.app.shared.exceptions import (  # noqa: F401 — canonical home; re-exported for legacy importers
+    ModelNotFoundError,
+    TenantContextError,
+)
 
 if TYPE_CHECKING:
     from src.app.modules.tenants.models import Tenant

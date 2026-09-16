@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
-from src.app.core.schemas import MessageResponse
 from src.app.modules._base.service import BaseService
 from src.app.modules.rate_limits.models import RateLimit
 from src.app.modules.rate_limits.schemas import (
@@ -16,7 +15,7 @@ from src.app.modules.rate_limits.schemas import (
     RateLimitRead,
     RateLimitUpdate,
 )
-from src.app.modules.tiers.schemas import TierCreate, TierRead, TierUpdate
+from src.app.modules.tiers.schemas import TierRead
 from src.app.modules.tiers.service import TierService
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
@@ -26,9 +25,8 @@ logger = get_logger(__name__)
 class RateLimitService(BaseService[RateLimit]):
     """Service class for rate limits.
 
-    P1-18: tier operations moved to their canonical home
-    (``tiers.service.TierService``); this service composes it and keeps
-    thin deprecated shims so existing call sites keep working.
+    P1-18: tier operations live in their canonical home
+    (``tiers.service.TierService``), composed here as ``self._tiers``.
     """
 
     def __init__(self, db: AsyncSession):
@@ -43,45 +41,16 @@ class RateLimitService(BaseService[RateLimit]):
         self._tiers = TierService(db)
 
     # ---------------------------------------------------------------------------
-    # Tier Operations (canonical: tiers.service.TierService — deprecated shims)
-    # ---------------------------------------------------------------------------
-
-    async def create_tier(self, tier: TierCreate) -> TierRead:
-        """Create a new tier (deprecated shim — canonical: TierService.create_tier)."""
-        return await self._tiers.create_tier(tier)
-
-    async def get_tiers(self, page: int = 1, items_per_page: int = 10) -> dict[str, Any]:
-        """Get paginated list of tiers (deprecated shim — canonical: TierService.get_tiers)."""
-        return await self._tiers.get_tiers(page, items_per_page)
-
-    async def get_tier_by_id(self, tier_id: int) -> TierRead:
-        """Get a tier by ID (deprecated shim — canonical: TierService.get_tier_by_id)."""
-        return await self._tiers.get_tier_by_id(tier_id)
-
-    async def get_tier(self, name: str) -> TierRead:
-        """Get a tier by name (deprecated shim — canonical: TierService.get_tier)."""
-        return await self._tiers.get_tier(name)
-
-    async def update_tier(self, name: str, values: TierUpdate) -> MessageResponse:
-        """Update a tier (deprecated shim — canonical: TierService.update_tier)."""
-        return await self._tiers.update_tier(name, values)
-
-    async def delete_tier(self, name: str) -> MessageResponse:
-        """Delete a tier (deprecated shim — canonical: TierService.delete_tier)."""
-        return await self._tiers.delete_tier(name)
-
-    # ---------------------------------------------------------------------------
     # Rate Limit Operations
     # ---------------------------------------------------------------------------
 
     async def _get_tier_or_404(self, tier_name: str) -> TierRead:
         """Resolve a tier by name, raising ModelNotFoundError when absent.
 
-        P1-18: routes through the ``get_tier`` shim (canonical
-        implementation: TierService) so the tier-resolution seam stays
-        patchable at this class — the documented test seam.
+        Canonical implementation lives in the composed TierService; the
+        seam stays patchable at ``self._tiers.get_tier``.
         """
-        return await self.get_tier(tier_name)
+        return await self._tiers.get_tier(tier_name)
 
     async def _invalidate_tier_rate_limits_cache(self, tier_id: int) -> None:
         """Invalidate rate limits cache for a tier (B10: retrying, never bare).

@@ -177,7 +177,7 @@ class MFAService:
             Dict with backup codes and status.
 
         Raises:
-            BadRequestException: If token is invalid or MFA already enabled.
+            ValidationError: If token is invalid or MFA already enabled.
         """
         # Check if MFA is already enabled
         existing = await crud_mfa_methods.get(db=db, user_id=user_id, type="totp")
@@ -267,7 +267,7 @@ class MFAService:
         and if not, increments the attempt counter.
 
         Raises:
-            UnauthorizedException: If user is locked out.
+            UnauthorizedError: If user is locked out.
         """
         client = get_redis()
         if client is None:
@@ -345,7 +345,7 @@ class MFAService:
             Dict with verification status.
 
         Raises:
-            UnauthorizedException: If token is invalid or MFA not enabled.
+            UnauthorizedError: If token is invalid or MFA not enabled.
         """
         # Get user's MFA method (FastCRUD returns dict)
         mfa_method_dict: dict[str, Any] | None = await crud_mfa_methods.get(db=db, user_id=user_id, type="totp")
@@ -568,8 +568,8 @@ class MFAService:
             Dict with success message.
 
         Raises:
-            BadRequestException: If MFA is not enabled.
-            UnauthorizedException: If verification fails.
+            ValidationError: If MFA is not enabled.
+            UnauthorizedError: If verification fails.
         """
         from src.app.core.security import verify_password
         from src.app.modules.users import UserService
@@ -690,8 +690,8 @@ class MFAService:
             Dict with new backup codes.
 
         Raises:
-            BadRequestException: If MFA is not enabled.
-            UnauthorizedException: If verification fails.
+            ValidationError: If MFA is not enabled.
+            UnauthorizedError: If verification fails.
         """
         from src.app.core.security import verify_password
         from src.app.modules.users import UserService

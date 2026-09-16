@@ -125,7 +125,7 @@ class TestGoogleSSOE2EFlow:
 
     def test_google_oauth_invalid_code(self, client, mock_user, auth_headers):
         """Test that invalid authorization codes are rejected."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.shared.exceptions import ValidationError as BadRequestException
 
         mock_service = _create_mock_sso_service(process_callback=BadRequestException("Invalid authorization code"))
 

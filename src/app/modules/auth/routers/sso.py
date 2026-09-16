@@ -4,7 +4,7 @@ from typing import Annotated, Any
 
 import httpx
 import orjson
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Form, Query, Request, Response
 from fastapi.responses import ORJSONResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,20 +13,13 @@ from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_loads
 from src.app.modules.auth.crud import crud_user_sso_connections
+from src.app.modules.auth.errors import SSOGatewayError
 from src.app.modules.auth.rate_limit import check_auth_rate_limit
 from src.app.modules.auth.schemas import AuthTokenResponse, SSOProvider, SSOProviderRead, SSOProvidersResponse
 from src.app.modules.auth.services.sso import SSOService, get_sso_service
+from src.app.shared.exceptions import AppException as _DomainAppException
 from src.app.shared.exceptions import (
     DuplicateError as _DomainDuplicateError,
-)
-from src.app.shared.exceptions import (
-    ForbiddenError as _DomainForbiddenError,
-)
-from src.app.shared.exceptions import (
-    ModelNotFoundError as _DomainNotFoundError,
-)
-from src.app.shared.exceptions import (
-    UnauthorizedError as _DomainUnauthorizedError,
 )
 from src.app.shared.exceptions import (
     ValidationError as _DomainValidationError,
@@ -34,35 +27,23 @@ from src.app.shared.exceptions import (
 
 router = APIRouter(prefix="/account/sso", tags=["sso"])
 
-_DOMAIN_STATUS_CODES = {
-    _DomainValidationError: status.HTTP_400_BAD_REQUEST,
-    _DomainUnauthorizedError: status.HTTP_401_UNAUTHORIZED,
-    _DomainNotFoundError: status.HTTP_404_NOT_FOUND,
-    # P1-4: closed-registration gate rejection mirrors /account/register (403).
-    _DomainForbiddenError: status.HTTP_403_FORBIDDEN,
-}
+def _with_cleared_cookie(exc: _DomainAppException) -> _DomainAppException:
+    """Attach ``sso_state``-clearing cookie hygiene to a domain error.
 
-
-def _domain_error_with_cleared_cookie(exc: Exception) -> HTTPException:
-    """Convert a domain failure to HTTP while clearing the sso_state cookie.
-
-    The SSO service raises _base domain errors (not HTTPException), so the
-    `except HTTPException` cookie hygiene never fires for them. Status codes
-    mirror the central handlers in core/errors.py; note the error `code`
-    field follows the generic HTTP mapping (e.g. INVALID_INPUT) rather than
-    the domain-specific code the central handler would emit.
+    Item 7: the central table merges ``exc.headers`` into the envelope
+    response, so routers raise domain errors (with transport headers) and
+    never convert to HTTPException. Status/code mapping stays in
+    core/errors.py.
     """
-    for cls, code in _DOMAIN_STATUS_CODES.items():
-        if isinstance(exc, cls):
-            http_status = code
-            break
-    else:
-        http_status = status.HTTP_400_BAD_REQUEST
-    return HTTPException(
-        status_code=http_status,
-        detail=str(exc),
-        headers={"Set-Cookie": _get_clear_cookie_str()},
-    )
+    exc.headers = {"Set-Cookie": _get_clear_cookie_str()}
+    return exc
+
+
+def _gateway_error(detail: str, status_code: int) -> SSOGatewayError:
+    """Build a provider-transport domain error with cookie hygiene."""
+    exc = SSOGatewayError(detail=detail, status_code=status_code)
+    exc.headers = {"Set-Cookie": _get_clear_cookie_str()}
+    return exc
 
 
 def _get_state_cookie_kwargs(provider: str | None = None) -> dict:
@@ -213,7 +194,7 @@ async def handle_callback(
 
     cookie_state = request.cookies.get("sso_state")
     if not cookie_state or not hmac.compare_digest(state or "", cookie_state or ""):
-        raise _domain_error_with_cleared_cookie(
+        raise _with_cleared_cookie(
             _DomainValidationError("State mismatch or missing session cookie (Login CSRF detection)")
         )
     try:
@@ -225,31 +206,16 @@ async def handle_callback(
             db=db,
         )
         return _access_only_response(tokens)  # M4
-    except HTTPException as e:
-        headers: dict[str, str] = dict(e.headers or {})
-        headers["Set-Cookie"] = _get_clear_cookie_str()
-        e.headers = headers
-        raise e
-    except (_DomainValidationError, _DomainUnauthorizedError, _DomainNotFoundError, _DomainForbiddenError) as e:
-        raise _domain_error_with_cleared_cookie(e)
+    except _DomainAppException as e:
+        raise _with_cleared_cookie(e)
     except httpx.TimeoutException:
-        headers = {"Set-Cookie": _get_clear_cookie_str()}
-        # P1-19: sanctioned HTTPException — provider-transport 504 with a
-        # Set-Cookie header has no domain-table equivalent.
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="Provider timeout.",
-            headers=headers,
-        )
+        # Item 7: provider-transport 504 as a domain error with cookie
+        # hygiene (was a sanctioned HTTPException); the table maps it.
+        raise _gateway_error("Provider timeout.", 504)
     except httpx.HTTPStatusError:
-        headers = {"Set-Cookie": _get_clear_cookie_str()}
-        # P1-19: sanctioned HTTPException — provider-transport 502 with a
-        # Set-Cookie header has no domain-table equivalent.
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Provider returned an error response.",
-            headers=headers,
-        )
+        # Item 7: provider-transport 502 as a domain error with cookie
+        # hygiene (was a sanctioned HTTPException); the table maps it.
+        raise _gateway_error("Provider returned an error response.", 502)
     finally:
         response.delete_cookie("sso_state")
 
@@ -278,7 +244,7 @@ async def handle_post_callback(
 
     cookie_state = request.cookies.get("sso_state")
     if not cookie_state or not hmac.compare_digest(state or "", cookie_state or ""):
-        raise _domain_error_with_cleared_cookie(
+        raise _with_cleared_cookie(
             _DomainValidationError("State mismatch or missing session cookie (Login CSRF detection)")
         )
 
@@ -300,29 +266,16 @@ async def handle_post_callback(
             user_data=user_data,
         )
         return _access_only_response(tokens)  # M4
-    except HTTPException as e:
-        headers: dict[str, str] = dict(e.headers or {})
-        headers["Set-Cookie"] = _get_clear_cookie_str()
-        e.headers = headers
-        raise e
-    except (_DomainValidationError, _DomainUnauthorizedError, _DomainNotFoundError, _DomainForbiddenError) as e:
-        raise _domain_error_with_cleared_cookie(e)
+    except _DomainAppException as e:
+        raise _with_cleared_cookie(e)
     except httpx.TimeoutException:
-        # P1-19: sanctioned HTTPException — provider-transport 504 with a
-        # Set-Cookie header has no domain-table equivalent.
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="Provider timeout.",
-            headers={"Set-Cookie": _get_clear_cookie_str()},
-        )
+        # Item 7: provider-transport 504 as a domain error with cookie
+        # hygiene (was a sanctioned HTTPException); the table maps it.
+        raise _gateway_error("Provider timeout.", 504)
     except httpx.HTTPStatusError:
-        # P1-19: sanctioned HTTPException — provider-transport 502 with a
-        # Set-Cookie header has no domain-table equivalent.
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Provider returned an error response.",
-            headers={"Set-Cookie": _get_clear_cookie_str()},
-        )
+        # Item 7: provider-transport 502 as a domain error with cookie
+        # hygiene (was a sanctioned HTTPException); the table maps it.
+        raise _gateway_error("Provider returned an error response.", 502)
     finally:
         response.delete_cookie("sso_state")
 

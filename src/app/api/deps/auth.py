@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
-from src.app.core.exceptions.http_exceptions import ForbiddenException, UnauthorizedException
 from src.app.core.logger import get_logger
 from src.app.core.schemas import TokenData
 from src.app.core.security import TokenType, api_key_scheme, oauth2_scheme, verify_token
@@ -14,6 +13,8 @@ from src.app.core.security.jwt_utils import get_cached_jwt_payload
 from src.app.core.tenancy.context import TenantContext, get_current_tenant
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.users import UserService
+from src.app.shared.exceptions import ForbiddenError as ForbiddenException
+from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
 logger = get_logger(__name__)
 
@@ -108,82 +109,6 @@ def _enforce_token_length(token: str) -> None:
         from fastapi import HTTPException
 
         raise HTTPException(status_code=431, detail="Request header field too large")
-
-
-async def _resolve_cached_token_data(
-    request: Request,
-    cached_payload: dict[str, Any] | None,
-) -> tuple[Any, str, int, str | None, int | None, str | None] | None:
-    """Return (token_data, username_or_email, payload_version, jti, jwt_exp, session_id) from cache, or None."""
-    if not cached_payload:
-        return None
-    # A1: request.state.is_token_blacklisted is tri-state (True/False/None).
-    # Only a DEFINITE True/False from the middleware's Redis probe
-    # short-circuits; None (Redis down) or an absent attribute runs the
-    # DB fallback so revoked tokens are still caught during outages.
-    cached_blacklist = getattr(request.state, "is_token_blacklisted", None) if request is not None else None
-    if cached_blacklist is True:
-        raise UnauthorizedException("Token has been revoked.")
-
-    token_type = cached_payload.get("token_type")
-    if token_type != TokenType.ACCESS:
-        raise UnauthorizedException("User not authenticated.")
-
-    username_or_email = cached_payload.get("sub")
-    if not username_or_email:
-        raise UnauthorizedException("User not authenticated.")
-
-    session_id = cached_payload.get("sid") or cached_payload.get("jti")
-    return (
-        cached_payload,
-        username_or_email,
-        cached_payload.get("token_version", 0),
-        cached_payload.get("jti"),
-        cached_payload.get("exp"),
-        session_id,
-    )
-
-
-async def _resolve_verified_token_data(
-    token: str,
-    db: AsyncSession,
-) -> tuple[Any, str, int, str | None, int | None, str | None] | None:
-    """Return (token_data, username_or_email, payload_version, jti, jwt_exp, session_id) via verify_token, or None."""
-    token_data = await verify_token(token, TokenType.ACCESS, db)
-    if token_data is None:
-        return None
-    session_id = getattr(token_data, "sid", None) or getattr(token_data, "jti", None)
-    return (
-        token_data,
-        token_data.username_or_email,
-        getattr(token_data, "token_version", 0) or 0,
-        getattr(token_data, "jti", None),
-        getattr(token_data, "exp", None),
-        session_id,
-    )
-
-
-async def _load_user_for_token(
-    db: AsyncSession,
-    username_or_email: str,
-    payload_version: int,
-) -> dict[str, Any]:
-    """Fetch user by email/username and validate token_version + liveness."""
-    user_service = UserService(db)
-    if "@" in username_or_email:
-        user = await user_service.get_user_auth_info(email=username_or_email)
-    else:
-        user = await user_service.get_user_auth_info(username=username_or_email)
-
-    if not user:
-        raise UnauthorizedException("User not authenticated.")
-    if not user.get("is_active", False):
-        raise UnauthorizedException("User account is no longer active.")
-    if user.get("is_deleted", False):
-        raise UnauthorizedException("User account has been deleted.")
-    if payload_version != user.get("token_version", 0):
-        raise UnauthorizedException("Session expired. Please log in again.")
-    return user
 
 
 async def _enforce_token_not_revoked(
@@ -427,9 +352,8 @@ async def _resolve_optional_bearer_flow(
         return None
 
 
-# P1-1: API-key scope vocabulary, enforced at the resolve-principal seam.
-# Keys used to authenticate with the full user surface (requires_api_key_scope
-# had zero production call sites). Coarse scopes "read"/"write" cover HTTP
+# P1-1: API-key scope vocabulary, enforced at the resolve-principal seam
+# (enforce_api_key_scope below). Coarse scopes "read"/"write" cover HTTP
 # verbs ("write" implies "read" for safe methods); "admin" is a wildcard;
 # resource-qualified "read:<resource>"/"write:<resource>" narrow to one
 # top-level resource (first path segment after an optional vN prefix).
@@ -715,26 +639,6 @@ async def get_optional_user(
     if auth_context:
         return auth_context.user
     return None
-
-
-def requires_api_key_scope(required_scope: str) -> Any:
-    """Dependency to check if the current API key has the required scope."""
-
-    async def dependency(
-        current_user: Annotated[AuthenticatedUser | None, Depends(get_optional_user)],
-    ) -> AuthenticatedUser:
-        if current_user is None:
-            raise UnauthorizedException("Not authenticated")
-
-        key_id = get_user_attr(current_user, "api_key_id")
-        scopes = get_user_attr(current_user, "api_key_scopes", [])
-
-        if key_id and required_scope not in scopes:
-            raise ForbiddenException(f"API key missing required scope: {required_scope}")
-
-        return current_user
-
-    return dependency
 
 
 async def get_current_superuser(

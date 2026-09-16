@@ -29,7 +29,6 @@ from src.app.shared.exceptions import AppException
 _EXCEPTION_MODULES = [
     "src.app.shared.exceptions",
     "src.app.core.exceptions.cache_exceptions",
-    "src.app.core.exceptions.http_exceptions",
     "src.app.modules.ai.providers",
     "src.app.modules.ai.unified_errors",
     "src.app.modules.auth.errors",

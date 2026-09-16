@@ -121,7 +121,7 @@ async def test_handle_webhook_event_checkout_completed():
             "src.app.modules.billing.webhook.crud_user_subscriptions.exists", new_callable=AsyncMock, return_value=False
         ) as mock_exists,
         patch(
-            "src.app.modules.billing.gateway.StripeGateway.retrieve_subscription",
+            "src.app.clients.billing.stripe.StripeGateway.retrieve_subscription",
             new_callable=AsyncMock,
             return_value=mock_stripe_sub,
         ),
@@ -433,7 +433,7 @@ async def test_handle_webhook_event_charge_refunded():
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
         patch("src.app.modules.billing.webhook.crud_billing_records.exists", new_callable=AsyncMock) as mock_exists,
         patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create,
-            patch("src.app.modules.billing.gateway.get_payment_gateway") as mock_gateway_factory,
+            patch("src.app.clients.billing.stripe.get_payment_gateway") as mock_gateway_factory,
             patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock, return_value=None),
     ):
         mock_exists.return_value = False

@@ -5,19 +5,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.app.core.schemas import MessageResponse
 from src.app.modules.rate_limits.models import RateLimit
 from src.app.modules.rate_limits.router import get_rate_limit_service
-from src.app.modules.rate_limits.schemas import (
-    RateLimitCreate,
-    TierCreate,
-    TierUpdate,
-)
+from src.app.modules.rate_limits.schemas import RateLimitCreate
 from src.app.modules.rate_limits.service import RateLimitService
 from src.app.modules.tiers.models import Tier
 from src.app.modules.tiers.schemas import TierRead
 from src.app.modules.tiers.service import TierService
-from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 
 def _tier(tier_id: int, name: str) -> TierRead:
@@ -35,79 +29,6 @@ def rate_limit_service(mock_db):
     return RateLimitService(mock_db)
 
 
-class TestRateLimitServiceTierDelegation:
-    """Tier operations on RateLimitService are deprecated shims delegating to the composed TierService."""
-
-    @pytest.mark.asyncio
-    async def test_create_tier_delegates(self, rate_limit_service, mock_db):
-        tier_in = TierCreate(name="starter")
-        created = _tier(10, "starter")
-        with patch.object(rate_limit_service._tiers, "create_tier", new_callable=AsyncMock) as mock_create:
-            mock_create.return_value = created
-
-            result = await rate_limit_service.create_tier(tier_in)
-
-            assert result == created
-            mock_create.assert_awaited_once_with(tier_in)
-
-    @pytest.mark.asyncio
-    async def test_get_tier_by_id_delegates(self, rate_limit_service, mock_db):
-        tier = _tier(1, "free")
-        with patch.object(rate_limit_service._tiers, "get_tier_by_id", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = tier
-
-            result = await rate_limit_service.get_tier_by_id(1)
-            assert result == tier
-            mock_get.assert_awaited_once_with(1)
-
-    @pytest.mark.asyncio
-    async def test_get_tier_by_id_not_found(self, rate_limit_service, mock_db):
-        with patch.object(rate_limit_service._tiers, "get_tier_by_id", new_callable=AsyncMock) as mock_get:
-            mock_get.side_effect = ModelNotFoundError("Tier", 999)
-
-            with pytest.raises(ModelNotFoundError):
-                await rate_limit_service.get_tier_by_id(999)
-
-    @pytest.mark.asyncio
-    async def test_get_tier_by_name_delegates(self, rate_limit_service, mock_db):
-        tier = _tier(2, "enterprise")
-        with patch.object(rate_limit_service._tiers, "get_tier", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = tier
-
-            result = await rate_limit_service.get_tier("enterprise")
-            assert result == tier
-            mock_get.assert_awaited_once_with("enterprise")
-
-    @pytest.mark.asyncio
-    async def test_update_tier_delegates(self, rate_limit_service, mock_db):
-        with patch.object(rate_limit_service._tiers, "update_tier", new_callable=AsyncMock) as mock_update:
-            mock_update.return_value = MessageResponse(message="Tier updated")
-
-            result = await rate_limit_service.update_tier("pro", TierUpdate())
-            assert result == MessageResponse(message="Tier updated")
-            mock_update.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_update_tier_rejects_rename(self, rate_limit_service, mock_db):
-        """Rename rejection lives in the canonical TierService (asserted in tiers/test_service indirectly)."""
-        with patch.object(rate_limit_service._tiers, "update_tier", new_callable=AsyncMock) as mock_update:
-            mock_update.side_effect = DuplicateError("name", "renaming tier 'pro' is not supported")
-
-            with pytest.raises(DuplicateError, match="renaming tier"):
-                await rate_limit_service.update_tier("pro", TierUpdate(name="super-pro"))
-
-    @pytest.mark.asyncio
-    async def test_delete_tier_delegates(self, rate_limit_service, mock_db):
-        """Deleting a tier in use raises the domain DuplicateError from the canonical service."""
-        with patch.object(rate_limit_service._tiers, "delete_tier", new_callable=AsyncMock) as mock_delete:
-            mock_delete.side_effect = DuplicateError("tier_in_use", "'busy_tier' (3 user(s), 0 rate limit(s))")
-
-            with pytest.raises(DuplicateError):
-                await rate_limit_service.delete_tier("busy_tier")
-
-            mock_delete.assert_awaited_once_with("busy_tier")
-
-
 class TestRateLimitDirectTierResolution:
     """Tests verifying RateLimitService uses internal tier methods without cross-module lookups."""
 
@@ -117,7 +38,7 @@ class TestRateLimitDirectTierResolution:
         rl_create = RateLimitCreate(path="/api/v1/data", limit=100, period=60)
 
         with (
-            patch.object(rate_limit_service, "get_tier", new_callable=AsyncMock) as mock_get_tier,
+            patch.object(rate_limit_service._tiers, "get_tier", new_callable=AsyncMock) as mock_get_tier,
             patch.object(rate_limit_service, "crud") as mock_rl_crud,
             patch.object(rate_limit_service, "_invalidate_tier_rate_limits_cache", new_callable=AsyncMock),
         ):

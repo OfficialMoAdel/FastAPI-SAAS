@@ -134,9 +134,9 @@ class IPFilterMiddleware:
                         client_ip=client_ip,
                         user_agent=user_agent,
                     )
-                    from src.app.core.errors import ErrorCode, create_error_response
+                    from src.app.core.errors import ErrorCode, middleware_error_response
 
-                    response = create_error_response(
+                    response = middleware_error_response(
                         code=ErrorCode.FORBIDDEN,
                         message="Forbidden - Bad bot detected",
                         status_code=status.HTTP_403_FORBIDDEN,
@@ -157,9 +157,9 @@ class IPFilterMiddleware:
                 log_security_event(event)
 
                 logger.warning("IP blocked - blacklisted for", client_ip=client_ip, path=path)
-                from src.app.core.errors import ErrorCode, create_error_response
+                from src.app.core.errors import ErrorCode, middleware_error_response
 
-                response = create_error_response(
+                response = middleware_error_response(
                     code=ErrorCode.FORBIDDEN,
                     message="Forbidden - IP is blacklisted",
                     status_code=status.HTTP_403_FORBIDDEN,

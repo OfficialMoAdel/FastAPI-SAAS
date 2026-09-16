@@ -144,7 +144,7 @@ async def test_get_storage_settings_requires_tenant():
     ctx = RequestContext(user=MagicMock(id=1), tenant=NO_TENANT, db=MagicMock())
     service = _make_service()
     # P3-#14: one no-tenant contract — TenantContextError (still 403).
-    from src.app.core.exceptions.http_exceptions import TenantContextError
+    from src.app.shared.exceptions import TenantContextError
 
     with pytest.raises(TenantContextError):
         await ss_router.get_storage_settings(ctx=ctx, service=service)

@@ -52,9 +52,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.deps.auth import AuthenticatedUser, get_current_user
 from src.app.api.deps.tenant import tenant_dependency
 from src.app.core.db.database import async_get_db
-from src.app.core.exceptions.http_exceptions import ForbiddenException
-from src.app.core.tenancy.context import NO_TENANT, TenantContext, TenantContextError
+from src.app.core.tenancy.context import (  # noqa: F401 — re-exported canonical domain error
+    NO_TENANT,
+    TenantContext,
+    TenantContextError,
+)
 from src.app.core.utils.user_utils import get_user_attr
+from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 
 
 @dataclass(frozen=True, slots=True)

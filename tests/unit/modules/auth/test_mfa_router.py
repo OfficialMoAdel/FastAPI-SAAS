@@ -48,9 +48,9 @@ class TestMFARateLimitingFunction:
         """Test that rate limit exception is raised when over limit."""
         from fastapi import Request
 
-        from src.app.core.exceptions.http_exceptions import RateLimitException
         from src.app.core.security.rate_policy import RateLimitVerdict
         from src.app.modules.auth.routers.mfa import check_mfa_rate_limit
+        from src.app.shared.exceptions import RateLimitExceededError as RateLimitException
 
         request = Mock(spec=Request)
         request.headers = {}

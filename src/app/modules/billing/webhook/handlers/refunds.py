@@ -46,7 +46,7 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
     stripe_subscription_id = None
     if stripe_invoice_id:
         try:
-            from src.app.modules.billing.gateway import get_payment_gateway
+            from src.app.clients.billing.stripe import get_payment_gateway
 
             # P1-9: route through the PaymentGateway seam (B15 pattern from
             # handlers/checkout.py) — per-tenant key resolution plus

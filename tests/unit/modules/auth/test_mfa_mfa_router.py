@@ -11,7 +11,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from src.app.core.exceptions.http_exceptions import RateLimitException
+from src.app.shared.exceptions import RateLimitExceededError as RateLimitException
 
 
 @pytest.fixture
@@ -86,7 +86,7 @@ class TestMFARateLimiting:
             new_callable=AsyncMock,
             side_effect=mock_check_mfa_rate_limit,
         ):
-            from src.app.core.exceptions.http_exceptions import UnauthorizedException
+            from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
             with patch(
                 "src.app.modules.auth.services.mfa.MFAService.verify_totp_token",
@@ -135,7 +135,7 @@ class TestMFARateLimiting:
             new_callable=AsyncMock,
             side_effect=mock_check_mfa_rate_limit,
         ):
-            from src.app.core.exceptions.http_exceptions import UnauthorizedException
+            from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
             with patch(
                 "src.app.modules.auth.services.mfa.MFAService.verify_totp_token",

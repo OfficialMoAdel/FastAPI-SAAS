@@ -9,7 +9,6 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.exceptions.http_exceptions import TenantContextError
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_current_tenant, require_active_tenant
 from src.app.modules._base.service import BaseService, fetch_page_with_total
@@ -338,7 +337,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
                 if isinstance(subscription, dict)
                 else getattr(subscription, "tenant_id", None)
             )
-            from src.app.modules.billing.gateway import get_payment_gateway
+            from src.app.clients.billing.stripe import get_payment_gateway
 
             gateway = get_payment_gateway(self.db)
             try:
@@ -427,9 +426,9 @@ class BillingRecordService(BaseService[BillingRecord]):
         self, user_id: int, page: int = 1, limit: int = 20, status: str | None = None
     ) -> dict[str, Any]:
         """Get paginated billing records for a user."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise TenantContextError("Tenant context required")
+        # Item 7: fail-closed via the tenancy seam (missing/inactive context
+        # raises TenantContextError) instead of an ad-hoc None check.
+        tenant = require_active_tenant()
         offset = (page - 1) * limit
         filters: dict[str, Any] = {"user_id": user_id, "tenant_id": tenant.id}
 

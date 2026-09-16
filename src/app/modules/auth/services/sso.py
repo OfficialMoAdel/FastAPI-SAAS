@@ -25,6 +25,7 @@ from src.app.modules.tenants.models import Tenant
 from src.app.modules.users import UserService
 from src.app.modules.users.schemas import UserCreate
 from src.app.shared.exceptions import (
+    DuplicateError,
     ForbiddenError,
     ModelNotFoundError,
     UnauthorizedError,
@@ -461,8 +462,6 @@ class SSOService:
         import secrets
         import string
 
-        from src.app.core.exceptions.http_exceptions import DuplicateValueException
-
         base_username = user_info.email.split("@")[0]
         # Ensure username is lowercase and alphanumeric
         clean_base = "".join(c for c in base_username if c.isalnum()).lower()
@@ -503,7 +502,7 @@ class SSOService:
                 )
 
                 return result
-            except DuplicateValueException as e:
+            except DuplicateError as e:
                 # If email duplicate, it should have been caught earlier or it's a real collision
                 if "email" in str(e).lower():
                     raise
@@ -553,8 +552,8 @@ class SSOService:
             tenant_id: Optional tenant ID for multi-tenant context
 
         Raises:
-            BadRequestException: If this is the user's only authentication method
-            NotFoundException: If no connection exists
+            ValidationError: If this is the user's only authentication method
+            ModelNotFoundError: If no connection exists
         """
         # Check if connection exists
         connection = await crud_user_sso_connections.get_by_criteria(

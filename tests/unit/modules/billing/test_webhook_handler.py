@@ -120,7 +120,7 @@ class AsyncContextManagerMock:
 @patch("src.app.modules.billing.webhook.job_tenant_context")
 @patch("src.app.modules.billing.webhook.crud_user_subscriptions")
 @patch(
-    "src.app.modules.billing.gateway.StripeGateway.retrieve_subscription",
+    "src.app.clients.billing.stripe.StripeGateway.retrieve_subscription",
     new_callable=AsyncMock,
 )
 async def test_handle_checkout_session_completed(
@@ -621,7 +621,7 @@ async def test_invoice_payment_succeeded_promotes_failed_to_succeeded(
 @patch("src.app.modules.billing.webhook.job_tenant_context")
 @patch("src.app.modules.billing.webhook.crud_user_subscriptions")
 @patch(
-    "src.app.modules.billing.gateway.StripeGateway.retrieve_subscription",
+    "src.app.clients.billing.stripe.StripeGateway.retrieve_subscription",
     new_callable=AsyncMock,
 )
 async def test_checkout_session_completed_maps_stripe_status(
@@ -720,7 +720,7 @@ def _make_charge_refunded_event(**overrides) -> dict:
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.clients.billing.stripe.get_payment_gateway")
 @patch("src.app.modules.billing.webhook.job_tenant_context")
 @patch("src.app.modules.billing.webhook.job_bypass_context")
 @patch("src.app.modules.billing.webhook.crud_user_subscriptions")
@@ -764,7 +764,7 @@ async def test_charge_refunded_delta_never_writes_invoice_id(
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.clients.billing.stripe.get_payment_gateway")
 @patch("src.app.modules.billing.webhook.job_tenant_context")
 @patch("src.app.modules.billing.webhook.job_bypass_context")
 @patch("src.app.modules.billing.webhook.crud_user_subscriptions")
@@ -811,7 +811,7 @@ async def test_charge_refunded_itemized_never_writes_invoice_id(
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.clients.billing.stripe.get_payment_gateway")
 @patch("src.app.modules.billing.webhook.job_tenant_context")
 @patch("src.app.modules.billing.webhook.job_bypass_context")
 @patch("src.app.modules.billing.webhook.crud_user_subscriptions")
@@ -848,7 +848,7 @@ async def test_charge_refunded_uses_gateway_seam_not_raw_sdk(
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.clients.billing.stripe.get_payment_gateway")
 @patch("src.app.modules.billing.webhook.job_tenant_context")
 @patch("src.app.modules.billing.webhook.job_bypass_context")
 @patch("src.app.modules.billing.webhook.crud_user_subscriptions")
@@ -869,7 +869,7 @@ async def test_charge_refunded_gateway_failure_still_raises_for_retry(
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.clients.billing.stripe.get_payment_gateway")
 @patch("src.app.modules.billing.webhook.job_tenant_context")
 @patch("src.app.modules.billing.webhook.job_bypass_context")
 @patch("src.app.modules.billing.webhook.crud_user_subscriptions")
@@ -908,7 +908,7 @@ async def test_charge_refunded_integrity_error_skips_not_500s(
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.clients.billing.stripe.get_payment_gateway")
 @patch("src.app.modules.billing.webhook.job_tenant_context")
 @patch("src.app.modules.billing.webhook.job_bypass_context")
 @patch("src.app.modules.billing.webhook.crud_user_subscriptions")
@@ -947,7 +947,7 @@ async def test_charge_refunded_bulk_skips_already_recorded(
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.clients.billing.stripe.get_payment_gateway")
 @patch("src.app.modules.billing.webhook.job_tenant_context")
 @patch("src.app.modules.billing.webhook.job_bypass_context")
 @patch("src.app.modules.billing.webhook.crud_user_subscriptions")

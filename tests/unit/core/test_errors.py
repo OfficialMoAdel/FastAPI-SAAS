@@ -11,10 +11,9 @@ from src.app.core.errors import (
     setup_exception_handlers,
 )
 from src.app.core.exceptions.cache_exceptions import CacheException
-from src.app.core.exceptions.http_exceptions import TenantContextError
 from src.app.modules.ai.providers import AIProviderError
 from src.app.modules.ai.unified_errors import SessionLimitExceededError
-from src.app.modules.auth.errors import AuthError, InvalidMagicLinkError
+from src.app.modules.auth.errors import AuthError, InvalidMagicLinkError, SSOGatewayError
 from src.app.modules.billing.exceptions import (
     PaymentRequiredError,
     SubscriptionRequiredError,
@@ -38,6 +37,7 @@ from src.app.shared.exceptions import (
     RateLimitExceededError,
     ServiceUnavailableError,
     StripeError,
+    TenantContextError,
     UnauthorizedError,
     ValidationError,
 )
@@ -138,6 +138,24 @@ async def route_webhook_not_configured():
 @app.get("/test/cache-error")
 async def route_cache_error():
     raise CacheException("redis down")
+
+
+@app.get("/test/sso-gateway-timeout")
+async def route_sso_gateway_timeout():
+    # Item 7: provider-transport failures ride the table with cookie hygiene.
+    exc = SSOGatewayError(detail="Provider timeout.", status_code=504)
+    exc.headers = {"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; SameSite=Lax'}
+    raise exc
+
+
+@app.get("/test/sso-gateway-bad-gateway")
+async def route_sso_gateway_bad_gateway():
+    raise SSOGatewayError(detail="Provider returned an error response.", status_code=502)
+
+
+@app.get("/test/rate-limit-custom-retry")
+async def route_rate_limit_custom_retry():
+    raise RateLimitExceededError("Slow down", retry_after=17)
 
 @app.get("/test/generic")
 async def route_generic():
@@ -378,6 +396,31 @@ def test_webhook_not_configured_handler():
     assert response.status_code == 501
     data = response.json()
     assert data["error"]["code"] == ErrorCode.NOT_IMPLEMENTED
+
+
+def test_sso_gateway_timeout_handler_preserves_cookie_hygiene():
+    """Item 7: SSO 504 via the table carries the Set-Cookie hygiene header."""
+    response = client.get("/test/sso-gateway-timeout")
+    assert response.status_code == 504
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.SERVICE_UNAVAILABLE
+    assert data["error"]["message"] == "Provider timeout."
+    assert response.headers["set-cookie"].startswith("sso_state=")
+
+
+def test_sso_gateway_bad_gateway_handler():
+    """Item 7: SSO 502 via the table maps to BAD_GATEWAY."""
+    response = client.get("/test/sso-gateway-bad-gateway")
+    assert response.status_code == 502
+    data = response.json()
+    assert data["error"]["code"] == ErrorCode.BAD_GATEWAY
+
+
+def test_rate_limit_custom_retry_after_header():
+    """Item 7: per-instance retry_after flows through the table headers hook."""
+    response = client.get("/test/rate-limit-custom-retry")
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "17"
 
 
 def test_cache_exception_handler():

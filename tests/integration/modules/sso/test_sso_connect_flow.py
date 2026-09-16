@@ -153,7 +153,7 @@ class TestSSODisconnectFlowIntegration:
 
     def test_disconnect_fails_for_last_auth_method(self, client: TestClient):
         """Verify disconnect fails when it's user's only auth method."""
-        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.shared.exceptions import ValidationError as BadRequestException
 
         mock_service = _create_mock_sso_service(
             disconnect_provider=BadRequestException("Cannot disconnect: this is your only authentication method.")
@@ -182,7 +182,7 @@ class TestSSODisconnectFlowIntegration:
 
     def test_disconnect_not_found_provider(self, client: TestClient):
         """Verify disconnect returns 404 for non-connected provider."""
-        from src.app.core.exceptions.http_exceptions import NotFoundException
+        from src.app.shared.exceptions import ModelNotFoundError as NotFoundException
 
         mock_service = _create_mock_sso_service(
             disconnect_provider=NotFoundException("No github connection found for this account")

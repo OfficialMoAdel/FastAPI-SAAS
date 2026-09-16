@@ -14,9 +14,11 @@ from tests.conftest import MockUser
 def app():
     """Create a FastAPI app instance with the account router."""
     # Lazy import to avoid circular import at collection time
+    from src.app.core.errors import setup_exception_handlers
     from src.app.modules.auth.router import router as account_router
 
     app = FastAPI()
+    setup_exception_handlers(app)
     app.include_router(account_router, prefix="/api/v1")
     return app
 

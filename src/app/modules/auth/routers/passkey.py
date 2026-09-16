@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep
 from src.app.core.db.database import async_get_db
-from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
 from src.app.core.security.rate_policy import check_security_budget
 from src.app.core.utils.cache import async_get_redis
@@ -23,6 +22,7 @@ from src.app.modules.auth.schemas import (
     PasskeyRegistrationVerifyRequest,
 )
 from src.app.modules.auth.services.passkey import passkey_service
+from src.app.shared.exceptions import RateLimitExceededError
 
 router = APIRouter(prefix="/auth/passkey", tags=["passkey"])
 
@@ -45,7 +45,7 @@ async def passkey_login_rate_limit(request: Request) -> None:
     verdict = await check_security_budget("passkey_login", client_ip)
 
     if verdict.is_limited:
-        raise RateLimitException("Too many login attempts. Please try again later.")
+        raise RateLimitExceededError("Too many login attempts. Please try again later.")
 
 
 # ============================================================================

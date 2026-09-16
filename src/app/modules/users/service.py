@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from src.app.core.events import EventPriority, event_bus
-from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.logger import get_logger
 from src.app.core.security import blacklist_token, get_password_hash
 from src.app.core.tenancy.context import get_current_tenant, require_tenant_match
@@ -25,7 +24,7 @@ from src.app.modules.users.crud import CRUDUser, crud_users
 from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
 from src.app.modules.users.session_invalidation import InvalidationReason, should_bump_token_version
-from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
+from src.app.shared.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 
 if TYPE_CHECKING:
     from src.app.api.deps.auth import AuthenticatedUser
@@ -589,7 +588,7 @@ class UserService:
         ------
         ModelNotFoundError
             If user not found
-        ForbiddenException
+        ForbiddenError
             If current user doesn't own this account
         DuplicateError
             If new email/username already taken
@@ -607,10 +606,8 @@ class UserService:
 
         # Ownership check (superusers bypass)
         if db_username != get_user_attr(current_user, "username") and not get_user_attr(current_user, "is_superuser"):
-            raise ForbiddenException("You do not have permission to modify this user's email.")
+            raise ForbiddenError("You do not have permission to modify this user's email.")
         # Check for duplicate email if changing (exclude soft-deleted users)
-        # R2-02: track the invalidation reason; the bump decision is derived
-        # from the SessionInvalidator policy, not a bare bool.
         reason = InvalidationReason.PROFILE_EDIT
         if values.email is not None and values.email != db_email:
             reason = InvalidationReason.CREDENTIAL_CHANGE
@@ -675,7 +672,7 @@ class UserService:
         ------
         ModelNotFoundError
             If user not found
-        ForbiddenException
+        ForbiddenError
             If current user doesn't own this account
         """
         db_user = await self._get_active_user(username)
@@ -688,7 +685,7 @@ class UserService:
         require_tenant_match(get_user_attr(db_user, "tenant_id"), resource="User", key=username)
 
         if username != get_user_attr(current_user, "username") and not get_user_attr(current_user, "is_superuser"):
-            raise ForbiddenException("You do not have permission to delete this user.")
+            raise ForbiddenError("You do not have permission to delete this user.")
 
         # BUG FIX: Previously used two separate auto-committing calls:
         #   1. crud.update(token_version + 1)  <- auto-commit
@@ -827,10 +824,10 @@ class UserService:
 
         db_username = get_user_attr(db_user, "username")
 
-        # Validate tier exists via rate limits module
-        rate_limit_svc = TierService(self.db)
+        # Validate tier exists via the canonical TierService
+        tier_svc = TierService(self.db)
         try:
-            await rate_limit_svc.get_tier_by_id(values.tier_id)
+            await tier_svc.get_tier_by_id(values.tier_id)
         except ModelNotFoundError:
             raise ModelNotFoundError("Tier", values.tier_id)
 
@@ -904,9 +901,9 @@ class UserService:
         """
         from src.app.core.config import settings
 
-        rate_limit_svc = TierService(self.db)
+        tier_svc = TierService(self.db)
         try:
-            free_tier = await rate_limit_svc.get_tier(settings.billing.DEFAULT_FREE_TIER_NAME)
+            free_tier = await tier_svc.get_tier(settings.billing.DEFAULT_FREE_TIER_NAME)
         except ModelNotFoundError:
             logger.warning("Free tier not configured; skipping downgrade", user_id=user_id)
             return None

@@ -10,7 +10,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.events import EventPriority, event_bus
-from src.app.core.exceptions.http_exceptions import BadRequestException, ForbiddenException
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 
@@ -21,7 +20,7 @@ from src.app.modules._base.service import BaseService
 from src.app.modules.api_keys.models import APIKey
 from src.app.modules.api_keys.schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
 from src.app.modules.audit_logs import audit
-from src.app.shared.exceptions import ModelNotFoundError
+from src.app.shared.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 
 MAX_GRACE_PERIOD_DAYS: int = 90
 __all__ = ["APIKeyService", "MAX_GRACE_PERIOD_DAYS"]
@@ -98,7 +97,7 @@ class APIKeyService(BaseService[APIKey]):
         stmt = select(APIKey).where(tenant_scope(APIKey, tenant_id), APIKey.name == api_key_data.name)
         existing_result = await self.db.execute(stmt)
         if existing_result.scalar_one_or_none():
-            raise BadRequestException(f"API key with name '{api_key_data.name}' already exists in this tenant")
+            raise DuplicateError("name", api_key_data.name)
 
         # Generate the key
         full_key, prefix, hashed_key = self._generate_key()
@@ -125,11 +124,11 @@ class APIKeyService(BaseService[APIKey]):
             await self.db.commit()
         except IntegrityError:
             # G-1: concurrent duplicate-name race — the SELECT pre-check
-            # above passed on both sides. Report the same 400 as the
-            # pre-check (not a 500, not a 409) so the contract is identical
+            # above passed on both sides. Same domain duplicate as the
+            # pre-check (409 via the table) so the contract is identical
             # with or without the race.
             await self.db.rollback()
-            raise BadRequestException(f"API key with name '{api_key_data.name}' already exists in this tenant")
+            raise DuplicateError("name", api_key_data.name) from None
         await self.db.refresh(key_record)
 
         # Audit log the creation
@@ -220,7 +219,7 @@ class APIKeyService(BaseService[APIKey]):
         ------
         ModelNotFoundError
             If key not found
-        ForbiddenException
+        ForbiddenError
             If user doesn't own the key
         """
         from sqlalchemy import select
@@ -498,7 +497,7 @@ class APIKeyService(BaseService[APIKey]):
         ------
         ModelNotFoundError
             If key not found
-        ForbiddenException
+        ForbiddenError
             If user doesn't own the key
         """
         from datetime import timedelta
@@ -519,9 +518,9 @@ class APIKeyService(BaseService[APIKey]):
             raise ModelNotFoundError("APIKey", key_id)
 
         if old_key.tenant_id != tenant_id or old_key.user_id != user_id:
-            raise ForbiddenException("You don't have permission to rotate this key")
+            raise ForbiddenError("You don't have permission to rotate this key")
         if not old_key.is_active:
-            raise ForbiddenException("Cannot rotate a revoked key")
+            raise ForbiddenError("Cannot rotate a revoked key")
 
         api_key = old_key
         api_key_name = api_key.name

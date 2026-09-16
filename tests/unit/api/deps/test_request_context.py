@@ -15,8 +15,9 @@ from src.app.api.deps.request_context import (
 )
 from src.app.api.deps.tenant import tenant_dependency
 from src.app.core.db.database import async_get_db
-from src.app.core.exceptions.http_exceptions import ForbiddenException, TenantContextError
 from src.app.core.tenancy.context import NO_TENANT, TenantContext
+from src.app.shared.exceptions import ForbiddenError as ForbiddenException
+from src.app.shared.exceptions import TenantContextError
 
 
 def _make_user(**overrides: Any) -> AuthenticatedUser:
@@ -120,8 +121,11 @@ class TestRequestContextDependency:
         assert resp.json() == {"user_id": 5, "tenant_slug": "acme"}
 
     def test_auth_failure_propagates(self) -> None:
-        # No overrides for auth -> oauth2 scheme fails -> 401 from scheme.
+        # No overrides for auth -> oauth2 scheme fails -> 401 via the table.
+        from src.app.core.errors import setup_exception_handlers
+
         app = FastAPI()
+        setup_exception_handlers(app)
 
         @app.get("/probe")
         async def probe(ctx: RequestContext = Depends(get_request_context)) -> dict[str, Any]:  # pragma: no cover

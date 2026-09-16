@@ -224,9 +224,11 @@ async def test_user_subscription_service_operations(mock_crud, mock_get_tenant, 
 
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.subscription_service.crud_billing_records")
-async def test_billing_record_service_operations(mock_crud, mock_get_tenant, mock_db, mock_tenant):
+async def test_billing_record_service_operations(mock_crud, mock_get_ctx, mock_get_tenant, mock_db, mock_tenant):
     mock_get_tenant.return_value = mock_tenant
+    mock_get_ctx.return_value = mock_tenant
     mock_crud.create = AsyncMock(return_value={"id": 1, "amount_cents": 1000})
     mock_crud.get = AsyncMock(return_value={"id": 1, "amount_cents": 1000, "tenant_id": mock_tenant.id})
     mock_crud.get_multi = AsyncMock(return_value={"data": [{"id": 1}], "total_count": 1})
@@ -250,7 +252,7 @@ async def test_billing_record_service_operations(mock_crud, mock_get_tenant, moc
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.checkout_service.require_active_tenant")
 @patch("src.app.modules.billing.service.StripeSettingsService.get_settings", new_callable=AsyncMock)
-@patch("src.app.modules.billing.gateway.get_payment_gateway")
+@patch("src.app.clients.billing.stripe.get_payment_gateway")
 async def test_checkout_service_create_portal_session(
     mock_gateway_fn, mock_get_settings, mock_get_tenant, mock_db, mock_tenant
 ):

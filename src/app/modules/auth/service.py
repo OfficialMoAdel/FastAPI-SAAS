@@ -226,7 +226,7 @@ class AuthService:
 
         Raises
         ------
-        UnauthorizedException
+        UnauthorizedError
             If credentials are invalid or account is locked
         """
         if db is None:
@@ -620,7 +620,7 @@ class AuthService:
 
         Raises
         ------
-        UnauthorizedException
+        UnauthorizedError
             If neither access nor refresh token is provided, or a token is invalid
         """
         if db is None:

@@ -25,9 +25,11 @@ from fastcrud import FastCRUD
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.exceptions.http_exceptions import TenantContextError  # noqa: F401 — re-exported; runtime raises
 from src.app.core.resilience.db_circuit_breaker import db_circuit_guard
-from src.app.core.tenancy.context import get_current_tenant
+from src.app.core.tenancy.context import (
+    TenantContextError,  # noqa: F401 — re-exported; runtime raises
+    get_current_tenant,
+)
 from src.app.core.tenancy.query import (
     _resolve_tenant_id_from_context,
     scoped_query,  # noqa: F401 — re-exported; modules import from this path

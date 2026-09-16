@@ -6,11 +6,11 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from src.app.core.exceptions.http_exceptions import UnauthorizedException
 from src.app.core.rbac.bitmask import PermissionBitmask
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.core.security.auth_prefetch import execute_composite_auth_prefetch
+from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
 
 class TestCompositeAuthPrefetch:

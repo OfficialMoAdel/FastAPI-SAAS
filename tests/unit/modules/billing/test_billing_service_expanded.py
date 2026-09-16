@@ -108,7 +108,7 @@ async def test_pricing_service_create(mock_crud_products, mock_crud_pricing, moc
 
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.checkout_service.require_active_tenant")
-@patch("src.app.modules.billing.gateway.StripeGateway.get_api_key", new_callable=AsyncMock)
+@patch("src.app.clients.billing.stripe.StripeGateway.get_api_key", new_callable=AsyncMock)
 @patch("src.app.modules.billing.service.StripeSettingsService.get_settings")
 @patch("src.app.modules.billing.subscription_service.SubscriptionPlanService.get_plan")
 @patch("src.app.modules.billing.service.settings")

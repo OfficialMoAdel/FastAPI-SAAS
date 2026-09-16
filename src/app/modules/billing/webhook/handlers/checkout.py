@@ -63,7 +63,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
     # Retrieve subscription details from Stripe via the PaymentGateway seam
     if stripe_subscription_id:
         try:
-            from src.app.modules.billing.gateway import get_payment_gateway
+            from src.app.clients.billing.stripe import get_payment_gateway
 
             # B15: resolve the tenant's own Stripe key when one is configured
             # (per-tenant Stripe accounts). The gateway falls back to the

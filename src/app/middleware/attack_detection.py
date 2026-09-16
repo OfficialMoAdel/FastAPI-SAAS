@@ -582,9 +582,9 @@ class AttackDetectionMiddleware:
 
         # Mode: block - return 400 Bad Request
         if self._mode == "block":
-            from src.app.core.errors import ErrorCode, create_error_response
+            from src.app.core.errors import ErrorCode, middleware_error_response
 
-            return create_error_response(
+            return middleware_error_response(
                 code=ErrorCode.VALIDATION_ERROR,
                 message="Bad Request - Attack pattern detected",
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -608,9 +608,9 @@ class AttackDetectionMiddleware:
                 logger.error("Failed to add IP to blacklist during ban: %s", str(e))
                 # Fall back to block behavior but still return 403
 
-            from src.app.core.errors import ErrorCode, create_error_response
+            from src.app.core.errors import ErrorCode, middleware_error_response
 
-            return create_error_response(
+            return middleware_error_response(
                 code=ErrorCode.FORBIDDEN,
                 message="Forbidden - Attack detected and IP banned",
                 status_code=status.HTTP_403_FORBIDDEN,

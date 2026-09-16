@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.deps import RequestContextDep
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
-from src.app.core.exceptions.http_exceptions import RateLimitException, UnauthorizedException
 from src.app.core.redis_provider import get_redis
 from src.app.core.security import get_mfa_pending_token_manager
 from src.app.core.security.rate_policy import check_security_budget
@@ -35,6 +34,10 @@ from src.app.modules.auth.schemas import (
 from src.app.modules.auth.services.mfa import MFAService, get_mfa_service
 from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.users import get_user_service
+from src.app.shared.exceptions import (  # noqa: F401 — re-exported for test patch targets
+    RateLimitExceededError,
+    UnauthorizedError,
+)
 
 router = APIRouter(prefix="/mfa", tags=["mfa"])
 
@@ -63,7 +66,7 @@ async def check_mfa_rate_limit(
             cannot starve — or be starved by — mutation attempts.
 
     Raises:
-        RateLimitException: If rate limit is exceeded.
+        RateLimitExceededError: If rate limit is exceeded.
     """
     # Use provided identifier or fall back to client IP
     if identifier is None:
@@ -74,7 +77,10 @@ async def check_mfa_rate_limit(
     verdict = await check_security_budget(budget, identifier)
 
     if verdict.is_limited:
-        raise RateLimitException(f"Too many MFA verification attempts. Please try again in {verdict.period} seconds.")
+        raise RateLimitExceededError(
+            f"Too many MFA verification attempts. Please try again in {verdict.period} seconds.",
+            retry_after=verdict.retry_after or verdict.period,
+        )
 
 
 async def check_mfa_mutate_rate_limit(
@@ -140,7 +146,7 @@ async def enable_mfa(
         Dict with status and backup codes.
 
     Raises:
-        BadRequestException: If MFA already enabled or token is invalid.
+        ValidationError: If MFA already enabled or token is invalid.
     """
     await check_mfa_mutate_rate_limit(fastapi_request, ctx.user_id)
     return await service.enable_mfa(
@@ -169,8 +175,8 @@ async def verify_mfa(
         MFAVerifyResponse with verification status.
 
     Raises:
-        RateLimitException: If too many verification attempts.
-        UnauthorizedException: If token is invalid or MFA not enabled.
+        RateLimitExceededError: If too many verification attempts.
+        UnauthorizedError: If token is invalid or MFA not enabled.
     """
     # Check rate limit
     await check_mfa_rate_limit(fastapi_request, identifier=str(ctx.user_id))
@@ -202,9 +208,8 @@ async def disable_mfa(
         Dict with success message.
 
     Raises:
-        RateLimitException: If too many mutation attempts.
-        BadRequestException: If MFA not enabled.
-        UnauthorizedException: If verification fails.
+        RateLimitExceededError: If too many mutation attempts.
+        UnauthorizedError: If verification fails.
     """
     # P1-5: cap password/second-factor guessing behind an authenticated session.
     await check_mfa_mutate_rate_limit(fastapi_request, ctx.user_id)
@@ -259,9 +264,8 @@ async def regenerate_backup_codes(
         MFABackupCodesResponse with new backup codes.
 
     Raises:
-        RateLimitException: If too many mutation attempts.
-        BadRequestException: If MFA not enabled.
-        UnauthorizedException: If verification fails.
+        RateLimitExceededError: If too many mutation attempts.
+        UnauthorizedError: If verification fails.
     """
     # P1-5: cap password/second-factor guessing behind an authenticated session.
     await check_mfa_mutate_rate_limit(fastapi_request, ctx.user_id)
@@ -299,8 +303,8 @@ async def complete_mfa_login(
         MFACompleteLoginResponse with access token and user info.
 
     Raises:
-        RateLimitException: If too many verification attempts.
-        UnauthorizedException: If MFA pending token or code is invalid.
+        RateLimitExceededError: If too many verification attempts.
+        UnauthorizedError: If MFA pending token or code is invalid.
     """
     # Check rate limit (use MFA pending token as identifier)
     await check_mfa_rate_limit(fastapi_request, identifier=request.mfa_token)
@@ -309,7 +313,7 @@ async def complete_mfa_login(
     # Use the live seam (refreshed by tests per-loop)
     client = get_redis()
     if not client:
-        raise UnauthorizedException("Authentication service unavailable")
+        raise UnauthorizedError("Authentication service unavailable")
 
     from src.app.core.utils.ip_utils import get_client_ip
 
@@ -324,7 +328,7 @@ async def complete_mfa_login(
     token_data = await token_store.peek(request.mfa_token)
 
     if not token_data or token_data.get("scope") != "mfa_pending":
-        raise UnauthorizedException("Invalid or expired MFA pending token")
+        raise UnauthorizedError("Invalid or expired MFA pending token")
 
     # S-M3: read the token's remaining TTL while it still exists — it is the
     # clock for the IP-rotation grace window below (the common same-IP path
@@ -349,7 +353,7 @@ async def complete_mfa_login(
             token_age = settings.auth.MFA_PENDING_EXPIRY_SECONDS - remaining_ttl
             within_grace = grace > 0 and 0 <= token_age <= grace
             if not within_grace:
-                raise UnauthorizedException(
+                raise UnauthorizedError(
                     "MFA verification rejected: IP address changed since login. Please try again."
                 )
 
@@ -357,7 +361,7 @@ async def complete_mfa_login(
     username = token_data.get("username")
 
     if not user_id or not username:
-        raise UnauthorizedException("Invalid MFA pending token")
+        raise UnauthorizedError("Invalid MFA pending token")
 
     # Verify MFA code
     verify_request = MFAVerifyRequest(
@@ -372,7 +376,7 @@ async def complete_mfa_login(
     )
 
     if not verify_result.get("valid"):
-        raise UnauthorizedException("Invalid MFA code")
+        raise UnauthorizedError("Invalid MFA code")
 
     # R1-1: consume the pending token only after the second factor passed.
     # A concurrent double-submit that already consumed it lands here with
@@ -381,14 +385,14 @@ async def complete_mfa_login(
     # the safe direction: never two sessions from one pending token.)
     consumed = await token_store.consume(request.mfa_token)
     if consumed is None:
-        raise UnauthorizedException("Invalid or expired MFA pending token")
+        raise UnauthorizedError("Invalid or expired MFA pending token")
 
     # Get user info for token generation
     user_service = get_user_service(db)
     user = await user_service.get_user_auth_info(username=username)
 
     if not user or user.get("is_deleted") or not user.get("is_active", False):
-        raise UnauthorizedException("User account is no longer active")
+        raise UnauthorizedError("User account is no longer active")
 
     issued = await TokenIssuer.issue_session(
         user,

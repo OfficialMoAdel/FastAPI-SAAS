@@ -9,21 +9,15 @@ from fastcrud.exceptions.http_exceptions import (
     UnprocessableEntityException,
 )
 
+from src.app.shared.exceptions import TenantContextError as _SharedTenantContextError
 
-class TenantContextError(CustomException):
-    """Raised when a tenant-scoped query is attempted without active tenant context."""
+TenantContextError = _SharedTenantContextError
 
-    def __init__(
-        self,
-        detail: str = "Tenant context required for tenant-scoped operation",
-        status_code: int = 403,
-    ) -> None:
-        # H3: unified class — mirror the legacy _base/ForbiddenError attribute
-        # surface (.message/.reason) so core/errors.py's handler keeps working.
-        self.message = detail
-        self.reason = "tenant_context_error"
-        super().__init__(detail=detail, status_code=status_code)
-
+# Item 7: TenantContextError moved to src.app.shared.exceptions (domain tree).
+# This module-level alias preserves ``from ...http_exceptions import
+# TenantContextError`` for auth deps/RBAC/CRUD importers (single-tree alias,
+# not a second tree — isinstance checks and the error table resolve the
+# shared class). Prefer importing from ``src.app.shared.exceptions``.
 
 __all__ = [
     "CustomException",

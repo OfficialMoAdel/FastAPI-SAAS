@@ -11,6 +11,7 @@ from src.app.core.utils import cache as cache_module
 from src.app.modules.rate_limits.schemas import RateLimitCreate, RateLimitUpdate
 from src.app.modules.rate_limits.service import RateLimitService
 from src.app.modules.tiers.schemas import TierRead
+from src.app.modules.tiers.service import TierService
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 
@@ -19,15 +20,11 @@ def _make_service() -> tuple[RateLimitService, AsyncMock]:
     return RateLimitService(db), db
 
 
-def _patch_tier():
-    """Patch the tier resolution seam (Q-M6: single implementation — get_tier).
-
-    The old helper patched the module-level TierService alias, which the
-    inherited `_get_tier_or_404` constructed; composition removed that
-    branch, so the seam is now the get_tier method itself.
-    """
+def _patch_tier(service: RateLimitService | None = None):
+    """Patch the tier resolution seam (canonical: ``self._tiers.get_tier``)."""
+    target = service._tiers if service is not None else TierService
     return patch.object(
-        RateLimitService,
+        target,
         "get_tier",
         AsyncMock(
             return_value=TierRead(id=5, name="free", created_at=datetime(2025, 1, 1, tzinfo=UTC))
@@ -74,7 +71,7 @@ async def test_create_rate_limit_success() -> None:
     crud.create.return_value = {"id": 1, "name": "free:/a:10:minute"}
     data = RateLimitCreate(path="/a", limit=10, period=60)
     with (
-        _patch_tier(),
+        _patch_tier(service),
         _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
@@ -89,7 +86,7 @@ async def test_create_rate_limit_duplicate_name() -> None:
     crud.exists.return_value = True
     data = RateLimitCreate(path="/a", limit=10, period=60)
     with (
-        _patch_tier(),
+        _patch_tier(service),
         _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
@@ -103,7 +100,7 @@ async def test_create_rate_limit_duplicate_path() -> None:
     crud.exists.side_effect = [False, True]
     data = RateLimitCreate(path="/a", limit=10, period=60)
     with (
-        _patch_tier(),
+        _patch_tier(service),
         _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
@@ -118,7 +115,7 @@ async def test_create_rate_limit_none_returned_raises() -> None:
     crud.create.return_value = None
     data = RateLimitCreate(path="/a", limit=10, period=60)
     with (
-        _patch_tier(),
+        _patch_tier(service),
         _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
@@ -130,7 +127,7 @@ async def test_get_rate_limits_paginated() -> None:
     service, db = _make_service()
     page = {"data": [], "total_count": 0}
     with (
-        _patch_tier(),
+        _patch_tier(service),
         _patch_crud(service, AsyncMock()),
         patch.object(RateLimitService, "get_page_with_total", AsyncMock(return_value=page)),
     ):
@@ -143,7 +140,7 @@ async def test_get_rate_limit_found() -> None:
     crud = AsyncMock()
     crud.get.return_value = {"id": 3, "name": "r"}
     with (
-        _patch_tier(),
+        _patch_tier(service),
         _patch_crud(service, crud),
     ):
         out = await service.get_rate_limit("free", 3)
@@ -155,7 +152,7 @@ async def test_get_rate_limit_not_found() -> None:
     crud = AsyncMock()
     crud.get.return_value = None
     with (
-        _patch_tier(),
+        _patch_tier(service),
         _patch_crud(service, crud),
     ):
         with pytest.raises(ModelNotFoundError):
@@ -169,7 +166,7 @@ async def test_update_rate_limit_success() -> None:
     crud.exists.return_value = False
     values = RateLimitUpdate(name="newname")
     with (
-        _patch_tier(),
+        _patch_tier(service),
         _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
@@ -185,7 +182,7 @@ async def test_update_rate_limit_duplicate_name() -> None:
     crud.exists.return_value = True
     values = RateLimitUpdate(name="taken")
     with (
-        _patch_tier(),
+        _patch_tier(service),
         _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
@@ -199,7 +196,7 @@ async def test_update_rate_limit_not_found() -> None:
     crud.get.return_value = None
     values = RateLimitUpdate(name="x")
     with (
-        _patch_tier(),
+        _patch_tier(service),
         _patch_crud(service, crud),
     ):
         with pytest.raises(ModelNotFoundError):
@@ -211,7 +208,7 @@ async def test_delete_rate_limit_success() -> None:
     crud = AsyncMock()
     crud.get.return_value = {"id": 3, "name": "r"}
     with (
-        _patch_tier(),
+        _patch_tier(service),
         _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
@@ -225,7 +222,7 @@ async def test_delete_rate_limit_not_found() -> None:
     crud = AsyncMock()
     crud.get.return_value = None
     with (
-        _patch_tier(),
+        _patch_tier(service),
         _patch_crud(service, crud),
     ):
         with pytest.raises(ModelNotFoundError):

@@ -17,8 +17,7 @@ from uuid import UUID
 from sqlalchemy import select, true
 from sqlalchemy.sql import ColumnElement, Select
 
-from src.app.core.exceptions.http_exceptions import TenantContextError
-from src.app.core.tenancy.context import get_current_tenant
+from src.app.core.tenancy.context import TenantContextError, get_current_tenant
 
 
 def _resolve_tenant_id_from_context() -> UUID | None:

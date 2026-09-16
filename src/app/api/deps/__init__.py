@@ -12,7 +12,6 @@ from src.app.api.deps.auth import (
     get_optional_auth_context,
     get_optional_user,
     get_user_by_api_key,
-    requires_api_key_scope,
     resolve_principal,
 )
 from src.app.api.deps.request_context import (
@@ -30,7 +29,6 @@ __all__ = [
     "get_user_by_api_key",
     "get_optional_auth_context",
     "get_optional_user",
-    "requires_api_key_scope",
     "resolve_principal",
     "get_current_superuser",
     "tenant_dependency",

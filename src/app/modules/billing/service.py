@@ -92,10 +92,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.app.core.config import settings
-from src.app.core.exceptions.http_exceptions import TenantContextError
 from src.app.core.logger import get_logger
 from src.app.core.security.encryption import CredentialEncryption
-from src.app.core.tenancy.context import get_current_tenant, require_active_tenant
+from src.app.core.tenancy.context import (  # noqa: F401 — get_current_tenant re-exported for test patch targets
+    get_current_tenant,
+    require_active_tenant,
+)
 from src.app.modules._base.service import fetch_page_with_total
 from src.app.shared.exceptions import ModelNotFoundError
 
@@ -233,9 +235,12 @@ class StripeSettingsService:
         tid = self.current_tenant_id
         if tid is None:
             return None
+        # Item 7: inactive tenants fail closed via the tenancy seam
+        # (TenantContextError) instead of an ad-hoc check beside the seam.
+        # Tenant-less worker/system paths keep the legacy None passthrough.
         current_tenant = get_current_tenant()
         if current_tenant is not None and not current_tenant.is_active:
-            raise TenantContextError("Tenant is not active")
+            require_active_tenant()
         result = await crud_stripe_settings.get(db=self.db, tenant_id=tid)
         return dict(result) if result else None
 
@@ -270,7 +275,7 @@ class StripeSettingsService:
                 schema_to_select=StripeSettingsRead,
             )
             # K5: new key material — drop any cached miss for this tenant.
-            from src.app.modules.billing.gateway import invalidate_stripe_api_key_cache
+            from src.app.clients.billing.stripe import invalidate_stripe_api_key_cache
 
             invalidate_stripe_api_key_cache(tid)
             return dict(create_result) if create_result else {}
@@ -278,7 +283,7 @@ class StripeSettingsService:
             await crud_stripe_settings.update(db=self.db, object=update_data, id=stripe_settings_record["id"])
             stripe_settings_record.update(update_data)
             # K5: key material may have rotated — drop the cached key.
-            from src.app.modules.billing.gateway import invalidate_stripe_api_key_cache
+            from src.app.clients.billing.stripe import invalidate_stripe_api_key_cache
 
             invalidate_stripe_api_key_cache(tid)
             return dict(stripe_settings_record)

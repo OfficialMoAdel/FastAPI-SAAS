@@ -15,11 +15,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import sqlalchemy.event
 
-from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.modules.users.schemas import UserCreate, UserTierUpdate, UserUpdate
 from src.app.modules.users.service import UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
+from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 
 
 @pytest.fixture(autouse=True)

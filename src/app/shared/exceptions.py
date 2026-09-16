@@ -23,6 +23,9 @@ class AppException(Exception):
     def __init__(self, message: str = "An application error occurred"):
         self.message = message
         self.detail = message
+        # Item 7: optional transport headers (e.g. SSO ``Set-Cookie`` hygiene).
+        # The central table merges these into the envelope response.
+        self.headers: dict[str, str] | None = None
         super().__init__(self.message)
 
 
@@ -118,6 +121,31 @@ class UnauthorizedError(AppException):
         super().__init__(self.message)
 
 
+class TenantContextError(AppException):
+    """Raised when a tenant-scoped operation lacks an active tenant context.
+
+    Canonical home (item 7): previously lived in
+    ``core/exceptions/http_exceptions.py`` as an HTTP-shaped
+    ``CustomException`` subclass. Services must raise this domain error;
+    the central ``EXCEPTION_HANDLERS`` table maps it to 403.
+
+    Attributes:
+        message: Human-readable error message.
+        reason: Machine-readable reason code.
+        detail: Backward-compatibility attribute mirroring message.
+    """
+
+    def __init__(
+        self,
+        message: str = "Tenant context required for tenant-scoped operation",
+        reason: str = "tenant_context_error",
+    ):
+        self.message = message
+        self.reason = reason
+        self.detail = message
+        super().__init__(self.message)
+
+
 class RateLimitExceededError(AppException):
     """Raised when a rate limit is exceeded.
 
@@ -178,6 +206,7 @@ __all__ = [
     "RateLimitExceededError",
     "ServiceUnavailableError",
     "StripeError",
+    "TenantContextError",
     "UnauthorizedError",
     "ValidationError",
 ]

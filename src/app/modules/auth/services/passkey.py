@@ -92,7 +92,7 @@ class PasskeyService:
             tuple: (WebAuthn registration options, registration_id)
 
         Raises:
-            BadRequestException: If user has reached passkey limit.
+            ValidationError: If user has reached passkey limit.
         """
         import uuid
 
@@ -156,7 +156,7 @@ class PasskeyService:
             dict: Created credential information.
 
         Raises:
-            BadRequestException: If verification fails or challenge expired.
+            ValidationError: If verification fails or challenge expired.
         """
         user_id = get_user_attr(user, "id")
 
@@ -316,7 +316,7 @@ class PasskeyService:
             dict: Authentication tokens (access_token, refresh_token, etc.).
 
         Raises:
-            BadRequestException: If verification fails, challenge expired, or replay attempt.
+            ValidationError: If verification fails, challenge expired, or replay attempt.
         """
         if not credential:
             logger.debug("passkey verify failed: missing credential")

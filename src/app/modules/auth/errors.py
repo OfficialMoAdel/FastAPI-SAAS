@@ -17,7 +17,18 @@ class AuthError(AppException):
         self.message = detail
         self.status_code = status_code
         super().__init__(self.detail)
+class SSOGatewayError(AuthError):
+    """SSO provider-transport failure (item 7: replaces raw HTTPException).
 
+    Carries ``headers`` (``Set-Cookie`` clearing ``sso_state``) the same way
+    the old sanctioned HTTPException did — the central table merges
+    ``exc.headers`` into the envelope response. Status mirrors the old
+    behavior: 504 for provider timeouts, 502 for provider error responses.
+    """
+
+    def __init__(self, detail: str = "SSO provider error", status_code: int = 502) -> None:
+        super().__init__(detail=detail, status_code=status_code)
+        self.headers: dict[str, str] | None = None
 
 class MagicLinkError(AuthError):
     """Base exception for magic link operations."""
@@ -60,4 +71,5 @@ __all__ = [
     "MagicLinkAlreadyUsedError",
     "MagicLinkRateLimitError",
     "MagicLinkUserInactiveError",
+    "SSOGatewayError",
 ]

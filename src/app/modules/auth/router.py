@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep
 from src.app.core.db.database import async_get_db
-from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.logger import get_logger
 from src.app.core.security import oauth2_scheme
 from src.app.core.security.login_helpers import (
@@ -45,7 +44,7 @@ from src.app.modules.auth.services.passwords import PasswordLifecycleService
 from src.app.modules.users import UserService
 from src.app.modules.users import get_user_service as _get_user_service
 from src.app.modules.users.schemas import UserCreate, UserReadPublic
-from src.app.shared.exceptions import UnauthorizedError
+from src.app.shared.exceptions import ForbiddenError, UnauthorizedError
 
 logger = get_logger(__name__)
 
@@ -135,8 +134,8 @@ async def register(
             path="/account/register",
             tenant_id=str(tenant.id) if tenant is not None else None,
         )
-        raise ForbiddenException(
-            detail="Registration is closed for this tenant. Ask an administrator to create your account."
+        raise ForbiddenError(
+            "Registration is closed for this tenant. Ask an administrator to create your account."
         )
 
     return await user_service.create(user, email_verifier=make_email_verifier(db))

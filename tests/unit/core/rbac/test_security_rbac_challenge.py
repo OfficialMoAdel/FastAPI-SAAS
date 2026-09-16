@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException, Request
 
-from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
+from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 
 
 @pytest.fixture

@@ -34,7 +34,7 @@ class CheckoutService:
         plan_service: Any = None,
     ):
         self.db = db
-        from src.app.modules.billing.gateway import get_payment_gateway
+        from src.app.clients.billing.stripe import get_payment_gateway
 
         self.gateway = gateway or get_payment_gateway(self.db)
         self.settings_service = settings_service or StripeSettingsService(self.db)
@@ -149,7 +149,7 @@ class CheckoutService:
                     )
                 return_url = f"{frontend_url}{return_url}"
 
-        from src.app.modules.billing.gateway import get_payment_gateway
+        from src.app.clients.billing.stripe import get_payment_gateway
 
         gateway = get_payment_gateway(self.db)
         api_key = await gateway.get_api_key(tenant.id)

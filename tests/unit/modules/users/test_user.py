@@ -4,15 +4,14 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from src.app.core.exceptions.http_exceptions import (
-    DuplicateValueException,
-    ForbiddenException,
-    NotFoundException,
-)
 from src.app.main import app
 from src.app.modules.users import router as users_router
 from src.app.modules.users.service import UserService
-from src.app.shared.exceptions import ModelNotFoundError
+from src.app.shared.exceptions import (
+    DuplicateError,
+    ForbiddenError,
+    ModelNotFoundError,
+)
 
 # Test tenant header for middleware
 TEST_TENANT_HEADER = {"X-Tenant-ID": "1"}
@@ -69,26 +68,26 @@ class TestWriteUser:
 
     def test_create_user_duplicate_email(self, client, auth_headers, sample_user_data, mock_user_service_override):
         """Test user creation with duplicate email."""
-        mock_service = _create_mock_user_service(create=DuplicateValueException("Email is already registered"))
+        mock_service = _create_mock_user_service(create=DuplicateError("email", "Email is already registered"))
         app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         headers = {**auth_headers, **TEST_TENANT_HEADER}
         response = client.post("/api/v1/users", json=sample_user_data, headers=headers)
 
-        # DuplicateValueException from fastcrud returns 422
-        assert response.status_code == 422
+        # DuplicateError maps to 409 via the central table
+        assert response.status_code == 409
         assert "already registered" in response.json()["detail"].lower()
 
     def test_create_user_duplicate_username(self, client, auth_headers, sample_user_data, mock_user_service_override):
         """Test user creation with duplicate username."""
-        mock_service = _create_mock_user_service(create=DuplicateValueException("Username not available"))
+        mock_service = _create_mock_user_service(create=DuplicateError("username", "Username not available"))
         app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         headers = {**auth_headers, **TEST_TENANT_HEADER}
         response = client.post("/api/v1/users", json=sample_user_data, headers=headers)
 
-        # DuplicateValueException from fastcrud returns 422
-        assert response.status_code == 422
+        # DuplicateError maps to 409 via the central table
+        assert response.status_code == 409
         assert "username" in response.json()["detail"].lower()
 
 
@@ -153,7 +152,7 @@ class TestPatchUser:
 
     def test_patch_user_forbidden(self, client, auth_headers, mock_user_service_override):
         """Test user update by non-owner/non-superuser."""
-        mock_service = _create_mock_user_service(update=ForbiddenException("You can only update your own account"))
+        mock_service = _create_mock_user_service(update=ForbiddenError("You can only update your own account"))
         app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         response = client.patch(
@@ -179,7 +178,7 @@ class TestEraseUser:
 
     def test_erase_user_not_found(self, client, auth_headers, mock_user_service_override):
         """Test deleting non-existent user."""
-        mock_service = _create_mock_user_service(delete=NotFoundException("User not found"))
+        mock_service = _create_mock_user_service(delete=ModelNotFoundError("User", "nonexistent_user"))
         app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         response = client.delete("/api/v1/users/nonexistent_user", headers=auth_headers)
@@ -188,7 +187,7 @@ class TestEraseUser:
 
     def test_erase_user_forbidden(self, client, auth_headers, mock_user_service_override):
         """Test user deletion by non-owner."""
-        mock_service = _create_mock_user_service(delete=ForbiddenException("You can only delete your own account"))
+        mock_service = _create_mock_user_service(delete=ForbiddenError("You can only delete your own account"))
         app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
 
         response = client.delete("/api/v1/users/other_user", headers=auth_headers)

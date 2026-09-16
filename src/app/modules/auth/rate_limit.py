@@ -8,9 +8,9 @@ module only supplies the identity (client IP) and the budget name.
 
 from fastapi import Request
 
-from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.security.rate_policy import check_security_budget
 from src.app.core.utils.ip_utils import get_client_ip
+from src.app.shared.exceptions import RateLimitExceededError
 
 
 async def check_auth_rate_limit(request: Request) -> None:
@@ -23,4 +23,7 @@ async def check_auth_rate_limit(request: Request) -> None:
     verdict = await check_security_budget("auth", client_ip)
 
     if verdict.is_limited:
-        raise RateLimitException(f"Too many authentication attempts. Please try again in {verdict.period} seconds.")
+        raise RateLimitExceededError(
+            f"Too many authentication attempts. Please try again in {verdict.period} seconds.",
+            retry_after=verdict.retry_after or verdict.period,
+        )

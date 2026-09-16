@@ -886,10 +886,10 @@ class TestGetUserWithTierEagerRequireActive:
     @pytest.mark.asyncio
     async def test_fail_closed_without_tenant(self):
         """No context + no explicit tenant must fail closed (usernames are per-tenant)."""
-        from src.app.core.exceptions.http_exceptions import TenantContextError
         from src.app.core.tenancy.context import clear_tenant_context
         from src.app.modules.users.crud import CRUDUser
         from src.app.modules.users.models import User
+        from src.app.shared.exceptions import TenantContextError
 
         crud = CRUDUser(User)
         mock_db = self._mock_db_with_user()
