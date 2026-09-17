@@ -9,6 +9,7 @@ for import compatibility.
 """
 
 from datetime import UTC, datetime
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, String
@@ -21,6 +22,20 @@ if TYPE_CHECKING:
     # from this module). String reference + TYPE_CHECKING satisfies mypy
     # and SQLAlchemy's lazy mapper resolution.
     from src.app.modules.rate_limits.models import RateLimit
+
+
+class TierName(str, Enum):
+    """Canonical tier identifiers (A5 entitlement seam).
+
+    Values match the ``TIER_RATE_LIMITS`` settings keys; ``FREE`` mirrors
+    ``settings.billing.DEFAULT_FREE_TIER_NAME``. ``str`` mixin so members
+    compare/serialize as their plain names.
+    """
+
+    FREE = "free"
+    BASIC = "basic"
+    PRO = "pro"
+    ENTERPRISE = "enterprise"
 
 
 class Tier(Base):

@@ -783,16 +783,20 @@ class ChatCompletionService:
 
                 async def _save_response(resp_content: str, resp_tokens: int | None, tenant_ctx: Any) -> None:
                     import asyncio
+                    from contextlib import nullcontext
+
+                    from src.app.core.tenancy.lifecycle import bound_tenant
 
                     max_retries = 3
                     for attempt in range(max_retries):
                         try:
-                            if tenant_ctx:
-                                from src.app.core.tenancy.context import set_current_tenant
-
-                                set_current_tenant(tenant_ctx)
-                            # P2-6: shared single-write helper (same as complete()).
-                            await self._persist_assistant_message(session_id, resp_content, resp_tokens)
+                            # A6: re-bind the stream-time context for the retry
+                            # span (the lifecycle seam owns set/clear); a None
+                            # context keeps the task-inherited one via nullcontext.
+                            scope = bound_tenant(tenant_ctx) if tenant_ctx else nullcontext()
+                            with scope:
+                                # P2-6: shared single-write helper (same as complete()).
+                                await self._persist_assistant_message(session_id, resp_content, resp_tokens)
                             break
                         except Exception as e:
                             if attempt < max_retries - 1:

@@ -49,15 +49,15 @@ from uuid import UUID
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps.auth import AuthenticatedUser, get_current_user
+from src.app.api.deps.auth import get_current_user
 from src.app.api.deps.tenant import tenant_dependency
 from src.app.core.db.database import async_get_db
+from src.app.core.principal import AuthenticatedUser
 from src.app.core.tenancy.context import (  # noqa: F401 — re-exported canonical domain error
     NO_TENANT,
     TenantContext,
     TenantContextError,
 )
-from src.app.core.utils.user_utils import get_user_attr
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 
 
@@ -108,7 +108,7 @@ class RequestContext:
     @property
     def user_id(self) -> int:
         """The authenticated user's integer id."""
-        return int(get_user_attr(self.user, "id"))  # type: ignore[arg-type]
+        return self.user.id
 
     @property
     def tenant_id(self) -> UUID:
@@ -121,7 +121,7 @@ class RequestContext:
     @property
     def is_superuser(self) -> bool:
         """Whether the principal bypasses normal tenant scoping."""
-        return bool(get_user_attr(self.user, "is_superuser"))
+        return self.user.is_superuser
 
     @property
     def has_tenant(self) -> bool:

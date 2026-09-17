@@ -11,7 +11,6 @@ from src.app.core.db.database import async_get_db
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.core.tenancy.context import require_tenant_match
-from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.tenants import TenantService
 from src.app.modules.tenants.schemas import TenantCreate, TenantList, TenantResponse, TenantUpdate
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
@@ -89,7 +88,7 @@ async def get_tenant(
 
     Requires authentication. Returns 404 if not found.
     """
-    user_tenant_id = get_user_attr(ctx.user, "tenant_id")
+    user_tenant_id = ctx.user.tenant_id
     if not ctx.is_superuser:
         # P1 FIX (code-review): enumeration-safe soft-404 via the canonical
         # seam instead of ad-hoc 403 (403 vs 404 leaked tenant existence).
@@ -116,7 +115,7 @@ async def update_tenant(
     Requires TENANT_UPDATE permission. Returns 404 if not found.
     Can update name and is_active status.
     """
-    user_tenant_id = get_user_attr(ctx.user, "tenant_id")
+    user_tenant_id = ctx.user.tenant_id
     if not ctx.is_superuser:
         # P1 FIX (code-review): same soft-404-first ordering as get_tenant.
         require_tenant_match(tenant_id, resource="Tenant", key=tenant_id)

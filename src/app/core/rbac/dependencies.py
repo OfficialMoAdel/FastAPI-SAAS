@@ -24,7 +24,6 @@ from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.logger import get_logger
 from src.app.core.rbac.bitmask import PermissionBitmask
 from src.app.core.rbac.permissions import Permission as PermissionEnum
-from src.app.core.utils.user_utils import get_user_attr
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 from src.app.shared.exceptions import ValidationError as ValidationException
@@ -251,8 +250,8 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
             raise ValidationException("Tenant context required for permission check")
         tenant_id = tenant_context.id
 
-        is_superuser = get_user_attr(current_user, "is_superuser", False)
-        user_id_val = get_user_attr(current_user, "id")
+        is_superuser = current_user.is_superuser
+        user_id_val = current_user.id
 
         if user_id_val is None:
             raise UnauthorizedException("User ID is required.")
@@ -261,7 +260,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
         # permission checks within their tenant, but they cannot act as another tenant.
         # Applies to every principal — test-injected AuthContexts included, so HTTP
         # tests exercise the same isolation as production.
-        current_user_tenant_id = get_user_attr(current_user, "tenant_id")
+        current_user_tenant_id = current_user.tenant_id
 
         if current_user_tenant_id is not None and str(current_user_tenant_id) != str(tenant_id):
             raise ForbiddenException("User does not belong to the current tenant.")

@@ -13,8 +13,8 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.cache.client import cache_client
 from src.app.core.logger import get_logger
-from src.app.core.redis_provider import get_redis
 from src.app.core.schemas import MessageResponse
 from src.app.modules.rate_limits.models import RateLimit
 from src.app.modules.tiers.models import Tier
@@ -206,13 +206,13 @@ class TierService:
         (e.g. a lowered limit stays generous for up to 1h). Mirror the tenants
         Q-M8 posture instead: retry once, then error-log with identifiers so
         the stale-policy window is visible to operators.
+
+        The delete goes through the CacheClient seam (None-safe: noop when
+        Redis is down, so no client guard is needed here).
         """
-        redis_client = get_redis()
-        if not redis_client:
-            return
         for attempt in (1, 2):
             try:
-                await redis_client.delete(*keys)
+                await cache_client.delete(*keys)
                 return
             except Exception as e:
                 if attempt == 1:

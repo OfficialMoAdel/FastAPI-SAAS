@@ -15,6 +15,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.app.modules._base import BaseList, BaseRead, BaseUpdate
+from src.app.modules.tiers.entitlement import DEFAULT_ENTITLEMENT as _DEFAULT_QUOTA
 
 # ============================================================================
 # Storage Settings Schemas
@@ -73,9 +74,9 @@ class StorageSettingsBase(BaseModel):
         default=["image/jpeg", "image/png", "image/gif", "application/pdf"],
         description="List of allowed MIME types",
     )
-    max_file_count: Annotated[int, Field(ge=1, le=1_000_000)] = 10000
+    max_file_count: Annotated[int, Field(ge=1, le=1_000_000)] = _DEFAULT_QUOTA.storage_file_count
     storage_quota_bytes: Annotated[int, Field(ge=1024, le=10_000_000_000_000)] = (
-        10 * 1024 * 1024 * 1024  # 10GB
+        _DEFAULT_QUOTA.storage_quota_bytes  # 10GB
     )
 
 

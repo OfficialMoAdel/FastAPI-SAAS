@@ -37,10 +37,16 @@ class TestSetexUsage:
 
 
     def test_tenant_cache_uses_setex(self):
-        """Verify tenant middleware uses SETEX."""
+        """Verify tenant resolution caching uses SETEX.
+
+        A2: the L1/L2/DB read-through (including the L2 SETEX fills) lives
+        in the canonical resolver (``src.app.core.tenancy.resolver``); the
+        middleware is a thin adapter, so the invariant is asserted on the
+        seam that owns the cache writes.
+        """
         from pathlib import Path
 
-        tenant_path = Path(__file__).parents[4] / "src" / "app" / "middleware" / "tenant.py"
+        tenant_path = Path(__file__).parents[4] / "src" / "app" / "core" / "tenancy" / "resolver.py"
         source = tenant_path.read_text()
 
         # Tenant caching should use setex

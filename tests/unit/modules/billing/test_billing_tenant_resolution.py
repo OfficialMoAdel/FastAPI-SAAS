@@ -83,15 +83,75 @@ async def test_services_raise_when_tenant_missing():
     sub_svc = SubscriptionPlanService(mock_db, tenant_id=None)
     user_sub_svc = UserSubscriptionService(mock_db, tenant_id=None)
 
-    # All services raise ModelNotFoundError when tenant is missing
-    with pytest.raises(ModelNotFoundError):
-        product_svc._require_tenant("Product", 1)
+    # A1: every service resolves through the ONE seam, so a missing scope
+    # fails closed with the same error regardless of service.
+    for service, entity in (
+        (product_svc, "Product"),
+        (pricing_svc, "Pricing"),
+        (sub_svc, "SubscriptionPlan"),
+        (user_sub_svc, "UserSubscription"),
+    ):
+        assert service.current_tenant_id is None
+        with pytest.raises(ModelNotFoundError):
+            service._resolve_tenant(entity, 1)
 
-    with pytest.raises(ModelNotFoundError):
-        pricing_svc._require_tenant("Pricing", 1)
 
-    with pytest.raises(ModelNotFoundError):
-        sub_svc._require_tenant("SubscriptionPlan", 1)
+@pytest.mark.asyncio
+async def test_current_tenant_id_is_a_view_over_the_seam():
+    """A1: the property delegates to the seam instead of re-deriving precedence."""
+    from src.app.core.tenancy.context import (
+        TenantContext,
+        clear_tenant_context,
+        set_current_tenant,
+    )
 
-    with pytest.raises(ModelNotFoundError):
-        user_sub_svc._require_tenant("UserSubscription", 1)
+    mock_db = AsyncMock()
+    tid = uuid4()
+    explicit_only = (
+        ProductService(mock_db, tenant_id=tid),
+        PricingService(mock_db, tenant_id=tid),
+        SubscriptionPlanService(mock_db, tenant_id=tid),
+        UserSubscriptionService(mock_db, tenant_id=tid),
+        StripeSettingsService(mock_db, tenant_id=tid),
+    )
+
+    clear_tenant_context()
+    for service in explicit_only:
+        assert service.current_tenant_id == tid
+
+    # Tenant-less path with no construction value: None, not a raise.
+    assert ProductService(mock_db).current_tenant_id is None
+
+    set_current_tenant(
+        TenantContext(tenant_id=tid, tenant_slug="acme", tenant_name="Acme", is_active=True)
+    )
+    try:
+        for service in explicit_only:
+            assert service.current_tenant_id == tid
+
+        # A construction value outside the bound context is the scope
+        # mismatch the seam soft-404s — the view must not silently shadow it.
+        with pytest.raises(ModelNotFoundError):
+            ProductService(mock_db, tenant_id=uuid4()).current_tenant_id
+    finally:
+        clear_tenant_context()
+
+
+@pytest.mark.asyncio
+async def test_resolve_tenant_rejects_cross_tenant_explicit():
+    """A1: resolution rejects a constructor value outside the active context."""
+    from src.app.core.tenancy.context import (
+        TenantContext,
+        clear_tenant_context,
+        set_current_tenant,
+    )
+
+    set_current_tenant(
+        TenantContext(tenant_id=uuid4(), tenant_slug="acme", tenant_name="Acme", is_active=True)
+    )
+    try:
+        mock_db = AsyncMock()
+        with pytest.raises(ModelNotFoundError):
+            ProductService(mock_db, tenant_id=uuid4())._resolve_tenant("Product", 1)
+    finally:
+        clear_tenant_context()

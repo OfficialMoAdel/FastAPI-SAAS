@@ -43,8 +43,8 @@ async def test_is_feature_enabled_cache_miss(mock_redis):
     result = await utils.is_feature_enabled(db, tenant_id, "test_flag")
 
     assert result is True
-    # Verify cache set
-    mock_redis.setex.assert_called_with(f"tenant:{tenant_id}:feature:test_flag", 300, "true")
+    # Verify cache set (CacheClient seam: set with ex TTL, not setex)
+    mock_redis.set.assert_called_with(f"tenant:{tenant_id}:feature:test_flag", "true", ex=300)
 
 
 @pytest.mark.asyncio

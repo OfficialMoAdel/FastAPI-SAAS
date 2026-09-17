@@ -38,7 +38,7 @@ def mock_tenant_context(tenant):
         patch("src.app.core.db.tenant_crud.get_current_tenant", return_value=mock_ctx),
         patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_ctx),
         patch("src.app.core.tenancy.query.get_current_tenant", return_value=mock_ctx),
-        patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_ctx),
+        patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_ctx),
         patch("src.app.modules.billing.checkout_service.require_active_tenant", return_value=mock_ctx),
     ):
         yield mock_ctx
@@ -346,7 +346,7 @@ async def test_get_plans_sorted(db_session, tenant):
 
     with (
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=tenant),
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=tenant),
         ):
         await service.create_plan(plan1_in)
         await service.create_plan(plan2_in)
@@ -378,7 +378,7 @@ async def test_create_update_delete_plan(db_session, tenant):
 
     with (
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=tenant),
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=tenant),
         ):
         plan = await service.create_plan(plan_in)
         # FastCRUD v0.20.0 returns dict when schema_to_select is provided

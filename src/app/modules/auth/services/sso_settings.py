@@ -3,8 +3,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.cache.client import cache_client
 from src.app.core.logger import get_logger
-from src.app.core.redis_provider import get_redis
 
 logger = get_logger(__name__)
 
@@ -91,17 +91,12 @@ class SSOSettingsService:
         TTL, keeping the cache warm and bounded after invalidations.
         """
         cache_key = f"sso_settings:{provider}"
-        redis_client = get_redis()
-        if redis_client is not None:
-            try:
-                cached = await redis_client.get(cache_key)
-                if cached is not None:
-                    from src.app.core.json_utils import json_loads
-
-                    data = json_loads(cached)
-                    return SSOSettingsRead.model_validate(data)
-            except Exception as e:
-                logger.warning("SSO settings cache read failed, falling back to DB", provider=provider, error=str(e))
+        try:
+            cached = await cache_client.get_json(cache_key)
+            if cached is not None:
+                return SSOSettingsRead.model_validate(cached)
+        except Exception as e:
+            logger.warning("SSO settings cache read failed, falling back to DB", provider=provider, error=str(e))
 
         settings = await crud_sso_settings.get(db=db, provider=provider)
         if not settings:
@@ -110,34 +105,29 @@ class SSOSettingsService:
         result = SSOSettingsRead.model_validate(settings)
 
         # Write-through so subsequent reads hit the cache (same shape/TTL as warmer).
-        if redis_client is not None:
-            try:
-                from src.app.core.json_utils import json_dumps
-
-                await redis_client.setex(
-                    cache_key,
-                    _SSO_SETTINGS_CACHE_TTL,
-                    json_dumps(
-                        {
-                            "id": str(settings.id) if hasattr(settings, "id") else settings["id"],
-                            "provider": (settings.provider if hasattr(settings, "provider") else settings["provider"]),
-                            "is_enabled": bool(
-                                settings.is_enabled if hasattr(settings, "is_enabled") else settings["is_enabled"]
-                            ),
-                            "additional_config": (
-                                (
-                                    settings.additional_config
-                                    if hasattr(settings, "additional_config")
-                                    else settings.get("additional_config")
-                                )
-                                or {}
-                            ),
-                        },
-                        as_str=True,
+        # The adapter is None-safe (noop when Redis is down).
+        try:
+            await cache_client.set_json(
+                cache_key,
+                {
+                    "id": str(settings.id) if hasattr(settings, "id") else settings["id"],
+                    "provider": (settings.provider if hasattr(settings, "provider") else settings["provider"]),
+                    "is_enabled": bool(
+                        settings.is_enabled if hasattr(settings, "is_enabled") else settings["is_enabled"]
                     ),
-                )
-            except Exception as e:
-                logger.warning("SSO settings cache write-through failed", provider=provider, error=str(e))
+                    "additional_config": (
+                        (
+                            settings.additional_config
+                            if hasattr(settings, "additional_config")
+                            else settings.get("additional_config")
+                        )
+                        or {}
+                    ),
+                },
+                ttl=_SSO_SETTINGS_CACHE_TTL,
+            )
+        except Exception as e:
+            logger.warning("SSO settings cache write-through failed", provider=provider, error=str(e))
 
         return result
 
@@ -263,12 +253,10 @@ class SSOSettingsService:
     @staticmethod
     async def _invalidate_provider_cache(provider: str) -> None:
         """Delete the Redis cache entry for a single SSO provider."""
-        redis_client = get_redis()
-        if redis_client is not None:
-            try:
-                await redis_client.delete(f"sso_settings:{provider}")
-            except Exception as e:
-                logger.warning("Failed to invalidate SSO settings cache", provider=provider, error=str(e))
+        try:
+            await cache_client.delete(f"sso_settings:{provider}")
+        except Exception as e:
+            logger.warning("Failed to invalidate SSO settings cache", provider=provider, error=str(e))
 
 
 # Legacy singleton for backward compatibility - will be removed

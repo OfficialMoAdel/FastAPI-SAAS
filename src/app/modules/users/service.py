@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
@@ -13,6 +13,7 @@ from sqlalchemy.orm import joinedload
 
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.logger import get_logger
+from src.app.core.principal import AuthenticatedUser
 from src.app.core.security import blacklist_token, get_password_hash
 from src.app.core.tenancy.context import get_current_tenant, require_tenant_match
 from src.app.core.utils.user_utils import get_user_attr
@@ -25,9 +26,6 @@ from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
 from src.app.modules.users.session_invalidation import InvalidationReason, should_bump_token_version
 from src.app.shared.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
-
-if TYPE_CHECKING:
-    from src.app.api.deps.auth import AuthenticatedUser
 
 logger = get_logger(__name__)
 
@@ -566,7 +564,7 @@ class UserService:
         self,
         username: str,
         values: UserUpdate,
-        current_user: dict[str, Any] | AuthenticatedUser,
+        current_user: AuthenticatedUser,
     ) -> dict[str, str]:
         """Update a user with ownership validation.
 
@@ -576,7 +574,7 @@ class UserService:
             Username of user to update
         values : UserUpdate
             Update values
-        current_user : dict[str, Any]
+        current_user : AuthenticatedUser
             Currently authenticated user
 
         Returns
@@ -605,7 +603,7 @@ class UserService:
         require_tenant_match(get_user_attr(db_user, "tenant_id"), resource="User", key=username)
 
         # Ownership check (superusers bypass)
-        if db_username != get_user_attr(current_user, "username") and not get_user_attr(current_user, "is_superuser"):
+        if db_username != current_user.username and not current_user.is_superuser:
             raise ForbiddenError("You do not have permission to modify this user's email.")
         # Check for duplicate email if changing (exclude soft-deleted users)
         reason = InvalidationReason.PROFILE_EDIT
@@ -649,7 +647,7 @@ class UserService:
     async def delete(
         self,
         username: str,
-        current_user: dict[str, Any] | AuthenticatedUser,
+        current_user: AuthenticatedUser,
         token: str,
     ) -> dict[str, str]:
         """Soft delete a user with ownership validation.
@@ -658,7 +656,7 @@ class UserService:
         ----------
         username : str
             Username of user to delete
-        current_user : dict[str, Any]
+        current_user : AuthenticatedUser
             Currently authenticated user
         token : str
             Access token to blacklist
@@ -684,7 +682,7 @@ class UserService:
         # this check a superuser from Tenant A could delete Tenant B's user.
         require_tenant_match(get_user_attr(db_user, "tenant_id"), resource="User", key=username)
 
-        if username != get_user_attr(current_user, "username") and not get_user_attr(current_user, "is_superuser"):
+        if username != current_user.username and not current_user.is_superuser:
             raise ForbiddenError("You do not have permission to delete this user.")
 
         # BUG FIX: Previously used two separate auto-committing calls:
@@ -728,10 +726,10 @@ class UserService:
                 entity_type="user",
                 entity_id=user_id_val,
                 tenant_id=user_tenant_id,
-                user_id=get_user_attr(current_user, "id"),
+                user_id=current_user.id,
                 details={
                     "username": username,
-                    "deleted_by": get_user_attr(current_user, "username"),
+                    "deleted_by": current_user.username,
                 },
                 priority=EventPriority.NORMAL,
             )

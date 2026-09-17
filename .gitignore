@@ -211,3 +211,5 @@ src/.env.local
 .codegraph
 codegraph.json
 docs/adr/*
+# Local architecture review reports (working notes, not versioned)
+architecture-review-*.html

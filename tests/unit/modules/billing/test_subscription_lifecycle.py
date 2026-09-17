@@ -53,8 +53,8 @@ class TestSubscriptionLifecycleStates:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
@@ -82,8 +82,8 @@ class TestSubscriptionLifecycleStates:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
@@ -117,8 +117,8 @@ class TestSubscriptionStateTransitions:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",

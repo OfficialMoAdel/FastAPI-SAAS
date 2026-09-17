@@ -173,11 +173,11 @@ class SSOService:
 
         # Preserve any tenant context already set by upstream middleware (e.g. an
         # authenticated user in connect_mode). We only override it below if the SSO
-        # state carries an explicit tenant_id, and we must restore the prior value
-        # afterwards so we don't discard the caller's context.
-        prior_tenant_ctx = get_current_tenant()
+        # state carries an explicit tenant_id; the lifecycle seam restores the
+        # prior value afterwards so we don't discard the caller's context.
+        from src.app.core.tenancy.lifecycle import preserved_tenant
 
-        try:
+        with preserved_tenant():
             redirect_uri = state_data["redirect_uri"]
 
             extra_data = state_data.get("extra_data") or {}
@@ -444,11 +444,6 @@ class SSOService:
                 expires_in=issued.expires_in,
                 token_type="bearer",
             )
-        finally:
-            # Restore the tenant context that existed before this call (which may
-            # have been set by upstream auth middleware), rather than unconditionally
-            # clearing it and discarding the caller's context.
-            set_current_tenant(prior_tenant_ctx)
 
     async def _link_account(self, db: AsyncSession, user_id: int, provider: str, user_info: Any) -> None:
         """Create UserSSOConnection."""

@@ -10,7 +10,6 @@ from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.core.db.database import async_get_db
 from src.app.core.schemas import MessageResponse
 from src.app.core.utils.cache import cache
-from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.posts import PostService
 from src.app.modules.posts.schemas import PostCreate, PostRead, PostUpdate
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
@@ -25,7 +24,7 @@ router = APIRouter(prefix="/posts", tags=["posts"])
 
 def _require_post_owner(username: str, ctx: RequestContextDep) -> None:
     """Enforce that the authenticated user matches the path's username."""
-    if get_user_attr(ctx.user, "username") != username:
+    if ctx.user.username != username:
         raise ForbiddenException()
 
 
@@ -69,7 +68,7 @@ async def read_posts(
 ) -> Any:
     """Get paginated list of posts for a user."""
     _require_post_owner(username, ctx)
-    return await service.get_posts(get_user_attr(ctx.user, "id"), page, per_page)
+    return await service.get_posts(ctx.user.id, page, per_page)
 
 
 @router.get("/by-user/{username}/{id}", response_model=PostRead)
@@ -83,7 +82,7 @@ async def read_post(
 ) -> dict[str, Any]:
     """Get a single post by ID."""
     _require_post_owner(username, ctx)
-    return await service.get_post(id, get_user_attr(ctx.user, "id"))
+    return await service.get_post(id, ctx.user.id)
 
 
 @router.patch("/by-user/{username}/{id}", response_model=MessageResponse)

@@ -72,16 +72,19 @@ WEBHOOK_RETRY_DELAYS: list[int] = list(
 # ---------------------------------------------------------------------------
 
 
-async def _release_delivery_lock(redis_client: Any, lock_key: str, lock_held: bool, delivery_id: UUID) -> None:
+async def _release_delivery_lock(lock_key: str, lock_held: bool, delivery_id: UUID) -> None:
     """Release the webhook delivery lock, logging failures (R1-17).
 
     A failed delete is not swallowed silently: the lock carries a 60s TTL, so
     the worst case is a delayed redelivery, but operators should see the error.
+    Goes through the CacheClient seam (None-safe: noop when Redis is down).
     """
-    if not (lock_held and redis_client is not None):
+    if not lock_held:
         return
     try:
-        await redis_client.delete(lock_key)
+        from src.app.core.cache.client import cache_client
+
+        await cache_client.delete(lock_key)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "webhook_delivery_lock_release_failed",
@@ -178,16 +181,15 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
     # same delivery_id is enqueued twice (e.g. a retry scheduled while the
     # original is still in flight). A short-lived Redis lock ensures only one
     # worker performs the HTTP call; others skip and return the current state.
-    from src.app.core.redis_provider import get_redis
+    # The claim goes through the CacheClient seam (None-safe: when Redis is
+    # down the claim reports not-held and delivery proceeds unserialized).
+    from src.app.core.cache.client import cache_client
     from src.app.core.resilience.registry import get_webhook_breaker
     from src.app.core.utils.circuit_breaker import CircuitBreakerOpen
 
-    _redis = get_redis()
     _lock_key = f"webhook:deliver_lock:{delivery_id}"
-    _lock_held = False
-    if _redis is not None:
-        _lock_held = bool(await _redis.set(_lock_key, "1", nx=True, ex=60))
-        if not _lock_held:
+    _lock_held = await cache_client.set_nx(_lock_key, "1", ttl=60)
+    if cache_client.client is not None and not _lock_held:
             logger.info("Webhook delivery already in progress, skipping", delivery_id=delivery_id)
             existing = await db.get(WebhookDelivery, delivery_id)
             if not existing:
@@ -207,7 +209,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
     result = await db.execute(stmt)
     delivery = result.unique().scalar_one_or_none()
     if not delivery:
-        await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
+        await _release_delivery_lock(_lock_key, _lock_held, delivery_id)
         raise ModelNotFoundError("WebhookDelivery", delivery_id)
 
     # Access pre-resolved or eagerly loaded endpoint
@@ -245,7 +247,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
             _spawn_enqueue(delivery_id, recovery_delay, delivery.tenant_id)
         except RuntimeError:
             logger.warning("webhook_circuit_skip_reenqueue_failed", delivery_id=str(delivery_id))
-        await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
+        await _release_delivery_lock(_lock_key, _lock_held, delivery_id)
         return delivery
 
     # W1+W2+S-4 FIX: serialize and sign AT SEND TIME, per attempt.
@@ -340,7 +342,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
         delivery.status = WebhookDeliveryStatus.FAILED
         delivery.response_body = f"SSRF protection: {e}"
         await db.commit()
-        await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
+        await _release_delivery_lock(_lock_key, _lock_held, delivery_id)
         return delivery
 
     # Extract data needed for HTTP call before releasing DB connection
@@ -422,7 +424,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
         await _handle_failure(db, delivery)
 
     await db.commit()
-    await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
+    await _release_delivery_lock(_lock_key, _lock_held, delivery_id)
     return delivery
 
 

@@ -20,6 +20,7 @@ from src.app.core.redis_provider import get_redis
 from src.app.core.utils.rate_limit import rate_limiter
 from src.app.core.utils.retry import with_retry
 from src.app.modules.notifications.models import EmailTemplateOverride, Notification, NotificationStatus
+from src.app.modules.tiers.entitlement import DEFAULT_ENTITLEMENT as _DEFAULT_QUOTA
 
 logger = get_logger(__name__)
 
@@ -43,10 +44,12 @@ EMAIL_RETRY_DELAYS: tuple[int, ...] = (10, 60, 360)
 # P2-7: email rate-limit policy, shared by every door into the pipeline
 # (send_email service door + handle_notification_request_event event door).
 # Previously each door hard-coded its own 100/60 and 1000/3600 literals.
-EMAIL_RATE_LIMIT_PER_MINUTE: int = 100
-EMAIL_RATE_LIMIT_MINUTE_WINDOW_SECONDS: int = 60
-EMAIL_RATE_LIMIT_PER_HOUR: int = 1000
-EMAIL_RATE_LIMIT_HOUR_WINDOW_SECONDS: int = 3600
+# A5: values owned by the tier entitlement seam (uniform across tiers
+# today — identical effective behavior); names kept for compatibility.
+EMAIL_RATE_LIMIT_PER_MINUTE: int = _DEFAULT_QUOTA.emails_per_minute
+EMAIL_RATE_LIMIT_MINUTE_WINDOW_SECONDS: int = _DEFAULT_QUOTA.email_minute_window_seconds
+EMAIL_RATE_LIMIT_PER_HOUR: int = _DEFAULT_QUOTA.emails_per_hour
+EMAIL_RATE_LIMIT_HOUR_WINDOW_SECONDS: int = _DEFAULT_QUOTA.email_hour_window_seconds
 
 # P2-6: outbox terminal semantics for notifications. PENDING rows older
 # than NOTIFICATION_MAX_PENDING_AGE_HOURS are swept to FAILED by the

@@ -33,35 +33,24 @@ async def process_event_handler(
     ):
         # SECURITY FIX: Restore tenant context from event metadata
         # This ensures RLS-protected operations in background tasks work correctly.
+        # Packing/parsing both live behind the tenancy lifecycle seam, so the
+        # wire format cannot drift from what the event bus publishes.
+        from src.app.core.tenancy.lifecycle import TenantWireError, bind_tenant, tenant_from_wire
+
         meta = data.get("_event_meta", {})
-        tenant_info = meta.get("tenant")
-        if tenant_info:
-            try:
-                from uuid import UUID
-
-                from src.app.core.tenancy.context import TenantContext, set_current_tenant
-
-                if not all(tenant_info.get(k) is not None for k in ("id", "slug", "name", "is_active")):
-                    raise KeyError(f"Missing or null required keys in tenant_info: {tenant_info}")
-
-                tenant_context = TenantContext(
-                    tenant_id=UUID(tenant_info["id"]),
-                    tenant_slug=tenant_info["slug"],
-                    tenant_name=tenant_info["name"],
-                    is_active=tenant_info["is_active"],
-                )
-                set_current_tenant(tenant_context)
-                _pkg.logger.debug("Tenant context restored for background task", tenant_id=tenant_info["id"])
-            except Exception as e:
-                _pkg.logger.error("Failed to restore tenant context in worker - moving to DLQ", error=str(e))
-                await _pkg.event_bus.add_to_dlq(
-                    event_name=event_name,
-                    handler_name=f"{handler_module}.{handler_name}",
-                    data=data,
-                    error=f"Malformed tenant context: {e}",
-                    attempt_count=job_try,
-                )
-                return
+        try:
+            bind_tenant(tenant_from_wire(meta.get("tenant")))
+        except TenantWireError as e:
+            _pkg.logger.error("Failed to restore tenant context in worker - moving to DLQ", error=str(e))
+            await _pkg.event_bus.add_to_dlq(
+                event_name=event_name,
+                handler_name=f"{handler_module}.{handler_name}",
+                data=data,
+                error=f"Malformed tenant context: {e}",
+                attempt_count=job_try,
+            )
+            return
+        _pkg.logger.debug("Tenant context restored for background task")
 
         try:
             # Dynamically import and execute handler
@@ -151,7 +140,7 @@ async def process_event_handler(
             raise Retry(defer=delays[min(job_try - 1, len(delays) - 1)]) from e
         finally:
             # SECURITY FIX: Always clear context to prevent leakage between jobs in the same worker
-            from src.app.core.tenancy.context import clear_tenant_context
+            from src.app.core.tenancy.lifecycle import unbind_tenant
 
-            clear_tenant_context()
+            unbind_tenant()
             _pkg.logger.debug("Tenant context cleared after background task")

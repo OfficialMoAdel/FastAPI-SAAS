@@ -187,4 +187,4 @@ async def test_validate_api_key_cache_miss_then_cache() -> None:
     ):
         result = await service.validate_api_key("rawkey")
     assert result is not None
-    fake_redis.setex.assert_awaited_once()
+    fake_redis.set.assert_awaited_once()  # CacheClient seam: set with ex TTL

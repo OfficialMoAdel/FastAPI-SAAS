@@ -26,6 +26,12 @@ class InMemoryCacheAdapter:
     async def set(self, key: str, value: str, ttl: int | None = None) -> None:
         self._store[key] = value  # ttl ignored — fake has no expiry
 
+    async def set_nx(self, key: str, value: str, ttl: int) -> bool:
+        if key in self._store:
+            return False
+        self._store[key] = value
+        return True
+
     async def delete(self, *keys: str) -> int:
         removed = sum(1 for k in keys if k in self._store)
         for k in keys:
@@ -77,6 +83,12 @@ class TestContractBothAdapters:
         assert tid in fake_adapter.tenant_key("user:1", tid)
         assert fake_adapter.tenant_key("user:1") == "user:1"
 
+    @pytest.mark.asyncio
+    async def test_set_nx_claims_once(self, fake_adapter):
+        assert await fake_adapter.set_nx("lock", "1", ttl=60) is True
+        assert await fake_adapter.set_nx("lock", "1", ttl=60) is False
+        assert await fake_adapter.get("lock") == "1"
+
 
 class TestRedisAdapterDelegation:
     """RedisCacheAdapter must delegate to the shared client at call time."""
@@ -121,12 +133,24 @@ class TestRedisAdapterDelegation:
         await cache_client.set("k", "v")  # must not raise
         assert await cache_client.delete("k") == 0
         assert await cache_client.exists("k") is False
+        assert await cache_client.set_nx("k", "v", ttl=60) is False
 
     def test_singleton_exists(self):
         assert isinstance(cache_client, RedisCacheAdapter)
 
     def test_client_property_delegates(self, _redis_mock):
         assert cache_client.client is _redis_mock
+
+    @pytest.mark.asyncio
+    async def test_set_nx_delegates_with_nx_ex(self, _redis_mock):
+        _redis_mock.set = AsyncMock(return_value=True)
+        assert await cache_client.set_nx("lock", "1", ttl=60) is True
+        _redis_mock.set.assert_awaited_once_with("lock", "1", ex=60, nx=True)
+
+    @pytest.mark.asyncio
+    async def test_set_nx_contention_returns_false(self, _redis_mock):
+        _redis_mock.set = AsyncMock(return_value=None)
+        assert await cache_client.set_nx("lock", "1", ttl=60) is False
 
     @pytest.mark.asyncio
     async def test_get_json_and_set_json(self, _redis_mock):

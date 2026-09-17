@@ -15,7 +15,7 @@ from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.utils import cache as redis_cache
 from src.app.modules.audit_logs.models import AuditLog
 from src.app.modules.audit_logs.schemas import AuditLogEventData
-from src.app.modules.audit_logs.trail import SYSTEM_TENANT_ID
+from src.app.modules.audit_logs.trail import system_tenant_id
 
 if TYPE_CHECKING:
     pass
@@ -337,15 +337,15 @@ async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None =
         log_data: Log data
         db: Optional DB session. If None, creates a new one.
     """
-    tenant_id_val = SYSTEM_TENANT_ID
+    tenant_id_val = system_tenant_id(reason="audit.missing_tenant_id")
     if log_data.get("tenant_id"):
         try:
             tenant_id_val = UUID(str(log_data["tenant_id"]))
         except (ValueError, TypeError):
             # P2-2: garbage tenant IDs fall back to SYSTEM (audit must never
-            # crash the request), but log loudly so misconfig surfaces.
-            logger.warning("audit_tenant_id_unparseable", raw_tenant_id=str(log_data["tenant_id"])[:64])
-            tenant_id_val = SYSTEM_TENANT_ID
+            # crash the request); the constructor logs loudly so misconfig
+            # surfaces.
+            tenant_id_val = system_tenant_id(reason="audit.unparseable_tenant_id")
 
     user_id_val = None
     if log_data.get("user_id"):
@@ -433,12 +433,12 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     for raw_data in logs_data:
         try:
             data = orjson.loads(raw_data)
-            tenant_id_val = SYSTEM_TENANT_ID
+            tenant_id_val = system_tenant_id(reason="audit.flush_missing_tenant_id")
             if data.get("tenant_id"):
                 try:
                     tenant_id_val = UUID(str(data["tenant_id"]))
                 except (ValueError, TypeError):
-                    tenant_id_val = SYSTEM_TENANT_ID
+                    tenant_id_val = system_tenant_id(reason="audit.unparseable_tenant_id")
 
             user_id_val = None
             if data.get("user_id"):
@@ -552,9 +552,13 @@ async def handle_audit_log_event(data: dict[str, Any]) -> None:
         logger.warning("audit_log_schema_validation_failed", error=str(parse_err), raw_data=str(data)[:200])
         tenant_val = data.get("tenant_id")
         try:
-            tenant_uuid = str(UUID(str(tenant_val))) if tenant_val and str(tenant_val) != "0" else str(SYSTEM_TENANT_ID)
+            tenant_uuid = (
+                str(UUID(str(tenant_val)))
+                if tenant_val and str(tenant_val) != "0"
+                else str(system_tenant_id(reason="audit.event_missing_tenant_id"))
+            )
         except (ValueError, TypeError):
-            tenant_uuid = str(SYSTEM_TENANT_ID)
+            tenant_uuid = str(system_tenant_id(reason="audit.unparseable_tenant_id"))
 
         entity_type = data.get("entity_type") or data.get("resource_type")
         entity_id_val = data.get("entity_id") if data.get("entity_id") is not None else data.get("resource_id")
@@ -620,7 +624,11 @@ async def handle_login_issued_event(data: dict[str, Any]) -> None:
 
     try:
         tenant_id_val = data.get("tenant_id")
-        tenant_uuid = UUID(str(tenant_id_val)) if tenant_id_val else SYSTEM_TENANT_ID
+        tenant_uuid = (
+            UUID(str(tenant_id_val))
+            if tenant_id_val
+            else system_tenant_id(reason="audit.login_issued_missing_tenant_id")
+        )
 
         log_data = {
             "tenant_id": str(tenant_uuid),
@@ -643,7 +651,7 @@ async def handle_login_issued_event(data: dict[str, Any]) -> None:
             async with get_db_context() as db:
                 await _direct_insert_log(
                     {
-                        "tenant_id": str(SYSTEM_TENANT_ID),
+                        "tenant_id": str(system_tenant_id(reason="audit.login_issued_fallback")),
                         "action": action,
                         "entity_type": "user",
                         "entity_id": str(user_id),

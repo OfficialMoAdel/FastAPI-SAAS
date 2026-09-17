@@ -9,7 +9,7 @@ This module provides:
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import insert, or_, select
@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
+from src.app.core.principal import AuthenticatedUser
 from src.app.core.security.encryption import decrypt_data, encrypt_data
 from src.app.modules._base import ModelNotFoundError
 from src.app.modules.webhooks import delivery as delivery_module
@@ -59,9 +60,6 @@ __all__ = [
     "handle_webhook_trigger_event",
     "webhook_event_adapter",
 ]
-
-if TYPE_CHECKING:
-    from src.app.api.deps.auth import AuthenticatedUser
 
 logger = get_logger(__name__)
 
@@ -492,7 +490,7 @@ class WebhookService:
         logger.info("Triggered webhook delivery for endpoint", delivery_id=delivery.id, endpoint_id=endpoint.id)
         return delivery
 
-    async def check_test_rate_limit(self, tenant_id: UUID, current_user: "dict[str, Any] | AuthenticatedUser") -> None:
+    async def check_test_rate_limit(self, tenant_id: UUID, current_user: AuthenticatedUser) -> None:
         """Enforce the per-tier rate limit for endpoint test calls.
 
         Q-M1: raises the domain RateLimitExceededError (moved out of the
@@ -506,26 +504,18 @@ class WebhookService:
         """
         from src.app.core.utils.path_utils import sanitize_path
         from src.app.core.utils.rate_limit import rate_limiter
-        from src.app.core.utils.user_utils import get_user_attr
-        from src.app.modules.rate_limits.models import RateLimit
+        from src.app.modules.tiers.entitlement import resolve_path_limit
         from src.app.shared.exceptions import RateLimitExceededError
 
-        tier = get_user_attr(current_user, "tier")
-        tier_id = get_user_attr(current_user, "tier_id")
+        tier = current_user.tier
+        tier_id = current_user.tier_id
         if tier_id is None and isinstance(tier, dict):
             tier_id = tier.get("id")
 
         rate_limit_path = sanitize_path("/api/v1/webhooks/{endpoint_id}/test")
-        stmt = select(RateLimit).where(
-            RateLimit.tier_id == tier_id,
-            RateLimit.path == rate_limit_path,
-        )
-        rate_limit_result = await self.db.execute(stmt)
-        rate_limit_config = rate_limit_result.scalar_one_or_none()
-
-        # Fallback to defaults if tenant hasn't configured a specific limit
-        limit = rate_limit_config.limit if rate_limit_config else 10
-        period = rate_limit_config.period if rate_limit_config else 60
+        # A5: tier-indexed lookup + entitlement default live behind the one
+        # entitlement seam (same row query and 10/60 fallback as before).
+        limit, period = await resolve_path_limit(self.db, tier_id, rate_limit_path)
 
         is_limited, _ = await rate_limiter.check_rate_limit(f"webhook:test:{tenant_id}", limit, period)
         if is_limited:

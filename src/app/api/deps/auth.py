@@ -1,52 +1,21 @@
 from typing import Annotated, Any, Literal, NoReturn
-from uuid import UUID
 
 from fastapi import Depends, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
+from src.app.core.principal import AuthenticatedUser  # noqa: F401 — canonical home; re-exported for legacy importers
 from src.app.core.schemas import TokenData
 from src.app.core.security import TokenType, api_key_scheme, oauth2_scheme, verify_token
 from src.app.core.security.jwt_utils import get_cached_jwt_payload
 from src.app.core.tenancy.context import TenantContext, get_current_tenant
-from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.users import UserService
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
 logger = get_logger(__name__)
-
-
-class AuthenticatedUser(BaseModel):
-    """Strict typed user model for request dependencies.
-
-    Provides IDE autocomplete while maintaining backward compatibility
-    with dict-based access via __getitem__.
-    """
-
-    model_config = ConfigDict(extra="ignore", arbitrary_types_allowed=True, from_attributes=True)
-
-    id: int
-    uuid: UUID | str | None = None
-    email: str
-    username: str | None = None
-    is_superuser: bool = False
-    is_active: bool = True
-    is_deleted: bool = False
-    tier_id: int | None = None
-    tenant_id: UUID | str | int | None = None
-    profile_image_url: str | None = None
-    token_version: int = 0
-    tier: dict[str, Any] | None = None
-    api_key_id: str | int | None = None
-    api_key_scopes: list[str] | None = None
-
-    # Q-M2: dict-compat shim (__getitem__/get/keys/__contains__/__len__)
-    # deleted. All call sites use attribute access (or get_user_attr for
-    # dict|model unions). Do NOT re-add subscript access — it hid type
-    # errors on the hottest auth path.
 
 
 class AuthContext(BaseModel):
@@ -400,7 +369,7 @@ def enforce_api_key_scope(user: AuthenticatedUser, request: Request | None) -> N
     Raises ForbiddenException when the key's scopes do not cover the
     request. JWT principals never reach here (separate seam branch).
     """
-    scopes = get_user_attr(user, "api_key_scopes", None)
+    scopes = user.api_key_scopes
     method = getattr(request, "method", None)
     url = getattr(request, "url", None)
     path = getattr(url, "path", None)
@@ -644,9 +613,9 @@ async def get_optional_user(
 async def get_current_superuser(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> AuthenticatedUser:
-    if not get_user_attr(current_user, "is_active", False):
+    if not current_user.is_active:
         raise ForbiddenException("User account is no longer active.")
-    if not get_user_attr(current_user, "is_superuser", False):
+    if not current_user.is_superuser:
         raise ForbiddenException("You do not have enough privileges.")
 
     return current_user

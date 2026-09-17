@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import sqlalchemy.event
 
+from src.app.core.principal import AuthenticatedUser
 from src.app.modules.users.schemas import UserCreate, UserTierUpdate, UserUpdate
 from src.app.modules.users.service import UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
@@ -378,7 +379,7 @@ class TestUserServiceUpdate:
         other_user.username = "otheruser"
         other_user.email = "other@example.com"
 
-        current_user = {"username": "testuser", "is_superuser": False}
+        current_user = AuthenticatedUser(id=1, username="testuser", email="test@example.com", is_superuser=False)
 
         with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = other_user
@@ -451,7 +452,7 @@ class TestUserServiceDelete:
         other_user.username = "otheruser"
         other_user.email = "other@example.com"
 
-        current_user = {"username": "testuser", "is_superuser": False}
+        current_user = AuthenticatedUser(id=1, username="testuser", email="test@example.com", is_superuser=False)
         token = "test_token"
 
         with (

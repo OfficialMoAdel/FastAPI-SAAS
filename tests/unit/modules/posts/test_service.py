@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.app.core.principal import AuthenticatedUser
 from src.app.modules.posts.schemas import PostCreate, PostUpdate
 from tests.conftest import MockUser
 
@@ -25,27 +26,27 @@ def mock_db():
 
 
 @pytest.fixture
-def mock_user():
+def mock_user() -> AuthenticatedUser:
     """Sample user data."""
-    return {
-        "id": 1,
-        "username": "testuser",
-        "email": "test@example.com",
-        "is_superuser": False,
-        "tenant_id": MockUser.DEFAULT_TENANT_ID,  # Use UUID
-    }
+    return AuthenticatedUser(
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        is_superuser=False,
+        tenant_id=MockUser.DEFAULT_TENANT_ID,  # Use UUID
+    )
 
 
 @pytest.fixture
-def mock_superuser():
+def mock_superuser() -> AuthenticatedUser:
     """Sample superuser data."""
-    return {
-        "id": 2,
-        "username": "admin",
-        "email": "admin@example.com",
-        "is_superuser": True,
-        "tenant_id": MockUser.DEFAULT_TENANT_ID,  # Use UUID
-    }
+    return AuthenticatedUser(
+        id=2,
+        username="admin",
+        email="admin@example.com",
+        is_superuser=True,
+        tenant_id=MockUser.DEFAULT_TENANT_ID,  # Use UUID
+    )
 
 
 @pytest.fixture
@@ -116,7 +117,7 @@ class TestPostServiceGet:
 
             result = await service.get_post(
                 post_id=1,
-                user_id=mock_user["id"],
+                user_id=mock_user.id,
             )
 
             assert result["id"] == 1
@@ -134,7 +135,7 @@ class TestPostServiceGet:
             mock_crud.get.return_value = None
 
             with pytest.raises(ModelNotFoundError):
-                await service.get_post(post_id=999, user_id=mock_user["id"])
+                await service.get_post(post_id=999, user_id=mock_user.id)
 
     @pytest.mark.asyncio
     async def test_get_posts_paginated(self, mock_db, mock_user, mock_post):
@@ -150,7 +151,7 @@ class TestPostServiceGet:
         ):
 
             result = await service.get_posts(
-                user_id=mock_user["id"],
+                user_id=mock_user.id,
                 page=1,
                 items_per_page=10,
             )
@@ -173,7 +174,7 @@ class TestPostServiceGet:
             patch("src.app.modules.posts.service.tenant_scope", return_value=True),
             patch("src.app.modules.posts.service.select"),
         ):
-            result = await service.get_posts_keyset(user_id=mock_user["id"], limit=10)
+            result = await service.get_posts_keyset(user_id=mock_user.id, limit=10)
 
         assert result["items"] == rows
         # short page => end of listing
@@ -199,7 +200,7 @@ class TestPostServiceGet:
             patch("src.app.modules.posts.service.tenant_scope", return_value=True),
             patch("src.app.modules.posts.service.select"),
         ):
-            result = await service.get_posts_keyset(user_id=mock_user["id"], limit=10)
+            result = await service.get_posts_keyset(user_id=mock_user.id, limit=10)
 
         assert result["has_next"] is True
         created_at, row_id = decode_keyset_cursor(result["next_cursor"])
@@ -218,7 +219,7 @@ class TestPostServiceGet:
             patch("src.app.modules.posts.service.select"),
         ):
             with pytest.raises(ValueError):
-                await service.get_posts_keyset(user_id=mock_user["id"], cursor="!!!bad!!!")
+                await service.get_posts_keyset(user_id=mock_user.id, cursor="!!!bad!!!")
 
         mock_db.execute.assert_not_called()
 
@@ -275,7 +276,7 @@ class TestPostServiceUpdate:
         from src.app.shared.exceptions import ForbiddenError
 
         service = PostService(mock_db)
-        other_user = {**mock_user, "id": 999, "username": "otheruser"}
+        other_user = mock_user.model_copy(update={"id": 999, "username": "otheruser"})
 
         with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
@@ -354,7 +355,7 @@ class TestPostServiceDelete:
         from src.app.shared.exceptions import ForbiddenError
 
         service = PostService(mock_db)
-        other_user = {**mock_user, "id": 999, "username": "otheruser"}
+        other_user = mock_user.model_copy(update={"id": 999, "username": "otheruser"})
 
         with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post

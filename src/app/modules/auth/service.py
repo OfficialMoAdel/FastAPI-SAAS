@@ -354,17 +354,14 @@ class AuthService:
         session, blacklist the replacement token, audit, and reject with the
         same message as an invalid token (no oracle).
         """
-        from src.app.core.redis_provider import get_redis
+        from src.app.core.cache.client import cache_client
         from src.app.core.security.jwt_utils import extract_jti_unverified
 
-        redis_client = get_redis()
-        if redis_client is None:
-            return  # fail-closed downstream: verify/blacklist require Redis
         old_jti = extract_jti_unverified(refresh_token)
         if not old_jti:
             return  # unverifiable here; verify_token below rejects it
         try:
-            raw = await redis_client.get(f"refresh_rotated:{old_jti}")
+            raw = await cache_client.get(f"refresh_rotated:{old_jti}")
         except Exception as e:
             logger.debug("refresh reuse-marker lookup failed", error=str(e))
             return
@@ -484,14 +481,12 @@ class AuthService:
         token_data = TokenIssuer.build_token_data(subject=user_data.username_or_email, user=db_user or {})
 
         # Create new tokens FIRST to ensure atomicity. If this fails, the user is not left locked out.
-        from src.app.core.redis_provider import get_redis
-
-        redis_client = get_redis()
+        from src.app.core.cache.client import cache_client
 
         lock_key = None
-        if redis_client and user_data.jti:
+        if cache_client.client is not None and user_data.jti:
             lock_key = f"refresh_lock:{user_data.jti}"
-            lock_acquired = await redis_client.set(lock_key, "1", nx=True, ex=30)
+            lock_acquired = await cache_client.set_nx(lock_key, "1", ttl=30)
             if not lock_acquired:
                 raise UnauthorizedError("Token refresh already in progress.")
         try:
@@ -530,10 +525,9 @@ class AuthService:
                         new_exp = float(new_exp_raw)
                     except (TypeError, ValueError):
                         pass
-                if redis_client and user_data.jti and new_jti:
-                    await redis_client.setex(
+                if cache_client.client is not None and user_data.jti and new_jti:
+                    await cache_client.set(
                         f"refresh_rotated:{user_data.jti}",
-                        marker_ttl,
                         json.dumps(
                             {
                                 "user_id": db_user["id"],
@@ -542,13 +536,14 @@ class AuthService:
                                 "new_exp": new_exp,
                             }
                         ),
+                        ttl=marker_ttl,
                     )
             except Exception as e:
                 logger.debug("failed to plant refresh rotation marker", error=str(e))
         finally:
-            if redis_client and lock_key:
+            if lock_key:
                 try:
-                    await redis_client.delete(lock_key)
+                    await cache_client.delete(lock_key)
                 except Exception as e:
                     # Bounded by ex=30, but log for incident diagnosis
                     logger.debug("Failed to delete refresh lock key", lock_key=lock_key, error=str(e))

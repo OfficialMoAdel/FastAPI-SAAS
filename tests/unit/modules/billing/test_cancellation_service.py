@@ -61,8 +61,8 @@ class TestCancellationService:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
@@ -119,8 +119,8 @@ class TestCancellationService:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
@@ -161,8 +161,8 @@ class TestCancellationService:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
@@ -203,8 +203,8 @@ class TestCancellationWithStripe:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
@@ -252,8 +252,8 @@ class TestCancellationAccessControl:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
@@ -298,8 +298,8 @@ class TestSubscriptionStatusAfterCancellation:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
@@ -335,8 +335,8 @@ class TestSubscriptionStatusAfterCancellation:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",

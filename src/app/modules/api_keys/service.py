@@ -14,8 +14,8 @@ from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 
 logger = get_logger(__name__)
+from src.app.core.cache.client import cache_client
 from src.app.core.db.tenant_crud import tenant_scope
-from src.app.core.redis_provider import get_redis
 from src.app.modules._base.service import BaseService
 from src.app.modules.api_keys.models import APIKey
 from src.app.modules.api_keys.schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
@@ -244,11 +244,11 @@ class APIKeyService(BaseService[APIKey]):
         api_key_prefix = key.key_prefix
         api_key_is_active = key.is_active
 
-        # Invalidate cache before revoking (using hashed_key from DB record)
-        redis_client = get_redis()
-        if redis_client is not None and api_key_hashed:
+        # Invalidate cache before revoking (using hashed_key from DB record).
+        # The adapter is None-safe: noop when Redis is down.
+        if api_key_hashed:
             cache_key = self._get_cache_key(api_key_hashed)
-            await redis_client.delete(cache_key)
+            await cache_client.delete(cache_key)
 
         await self.crud.update(
             db=self.db,
@@ -291,13 +291,12 @@ class APIKeyService(BaseService[APIKey]):
         suspended/deleted, and None when no cache entry exists (or probing
         fails) so the caller falls back to the authoritative DB check.
         """
-        redis_client = get_redis()
-        if redis_client is None or not tenant_id:
+        if not tenant_id:
             return None
         try:
             from src.app.core.tenancy.cache import get_tenant_cache_key
 
-            raw = await redis_client.get(get_tenant_cache_key(tenant_id))
+            raw = await cache_client.get(get_tenant_cache_key(tenant_id))
             if raw is None:
                 return None
             data = json_loads(raw)
@@ -329,61 +328,58 @@ class APIKeyService(BaseService[APIKey]):
         """
         hashed = self._hash_key(api_key)
         cache_key = self._get_cache_key(hashed)
-        redis_client = get_redis()
 
-        # Check cache first (O(1) lookup)
-        if redis_client is not None:
-            cached = await redis_client.get(cache_key)
-            if cached is not None:
-                result = json_loads(cached)
-                # Check expiration on cached data
-                if result.get("expires_at"):
-                    expires_at = datetime.fromisoformat(result["expires_at"])
-                    if expires_at < datetime.now(UTC):
-                        # Expired - delete from cache and return None
-                        await redis_client.delete(cache_key)
-                        return None
-                # BUG FIX: Also check valid_from. Without this, a rotated key that was
-                # cached before its valid_from time could be used prematurely (up to 5 min).
-                if result.get("valid_from"):
-                    valid_from = datetime.fromisoformat(result["valid_from"])
-                    if valid_from > datetime.now(UTC):
-                        return None
-                # T8 FIX: cached key entries previously outlived tenant/key
-                # suspension because nothing evicted them. Probe the shared L2
-                # tenant cache: False => suspended (reject); missing => the
-                # tenant entry was invalidated, so distrust the key cache and
-                # take the authoritative DB path below.
-                tenant_state = await self._get_cached_tenant_active(result["tenant_id"])
-                if tenant_state is False:
+        # Check cache first (O(1) lookup; adapter is None-safe)
+        cached = await cache_client.get(cache_key)
+        if cached is not None:
+            result = json_loads(cached)
+            # Check expiration on cached data
+            if result.get("expires_at"):
+                expires_at = datetime.fromisoformat(result["expires_at"])
+                if expires_at < datetime.now(UTC):
+                    # Expired - delete from cache and return None
+                    await cache_client.delete(cache_key)
                     return None
-                if tenant_state is None:
-                    pass  # fall through to DB validation
-                else:
-                    return {
-                        "user_id": result["user_id"],
-                        "tenant_id": result["tenant_id"],
-                        "scopes": result["scopes"],
-                        "key_id": result["key_id"],
-                    }
+            # BUG FIX: Also check valid_from. Without this, a rotated key that was
+            # cached before its valid_from time could be used prematurely (up to 5 min).
+            if result.get("valid_from"):
+                valid_from = datetime.fromisoformat(result["valid_from"])
+                if valid_from > datetime.now(UTC):
+                    return None
+            # T8 FIX: cached key entries previously outlived tenant/key
+            # suspension because nothing evicted them. Probe the shared L2
+            # tenant cache: False => suspended (reject); missing => the
+            # tenant entry was invalidated, so distrust the key cache and
+            # take the authoritative DB path below.
+            tenant_state = await self._get_cached_tenant_active(result["tenant_id"])
+            if tenant_state is False:
+                return None
+            if tenant_state is None:
+                pass  # fall through to DB validation
+            else:
+                return {
+                    "user_id": result["user_id"],
+                    "tenant_id": result["tenant_id"],
+                    "scopes": result["scopes"],
+                    "key_id": result["key_id"],
+                }
 
         # Cache miss - query database
         result = await self._validate_from_db(hashed)
         if result is None:
             return None
 
-        # Cache the result
-        if redis_client is not None:
-            cache_data = {
-                "user_id": result["user_id"],
-                "tenant_id": result["tenant_id"],
-                "scopes": result["scopes"],
-                "key_id": result["key_id"],
-                "expires_at": result["expires_at"].isoformat() if result["expires_at"] else None,
-                # BUG FIX: Cache valid_from so it can be enforced on cache hits too.
-                "valid_from": result["valid_from"].isoformat() if result.get("valid_from") else None,
-            }
-            await redis_client.setex(cache_key, API_KEY_CACHE_TTL, json_dumps(cache_data))
+        # Cache the result (adapter noops when Redis is down)
+        cache_data = {
+            "user_id": result["user_id"],
+            "tenant_id": result["tenant_id"],
+            "scopes": result["scopes"],
+            "key_id": result["key_id"],
+            "expires_at": result["expires_at"].isoformat() if result["expires_at"] else None,
+            # BUG FIX: Cache valid_from so it can be enforced on cache hits too.
+            "valid_from": result["valid_from"].isoformat() if result.get("valid_from") else None,
+        }
+        await cache_client.set(cache_key, json_dumps(cache_data, as_str=True), ttl=API_KEY_CACHE_TTL)
 
         return {
             "user_id": result["user_id"],
@@ -575,9 +571,8 @@ class APIKeyService(BaseService[APIKey]):
         await self.db.refresh(new_key_record)
 
         old_key_hashed = api_key.hashed_key
-        redis_client = get_redis()
-        if redis_client is not None and old_key_hashed:
-            await redis_client.delete(self._get_cache_key(old_key_hashed))
+        if old_key_hashed:
+            await cache_client.delete(self._get_cache_key(old_key_hashed))
 
         # Audit log the rotation
         await audit(

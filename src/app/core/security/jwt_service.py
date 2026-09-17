@@ -282,7 +282,7 @@ async def _check_db_fallback(jti: str | None, token: str) -> bool | None:
         return None
 
 
-async def _load_token_version(cache_key: str, username_or_email: str, redis_client: Any) -> int | None:
+async def _load_token_version(cache_key: str, username_or_email: str) -> int | None:
     """P6: one DB lookup for the user's token_version; backfills Redis (nx).
 
     Returns the stored token_version, or None when the user does not exist.
@@ -306,11 +306,12 @@ async def _load_token_version(cache_key: str, username_or_email: str, redis_clie
     version = await _token_version_lookup(username_or_email)
     if version is None:
         return None
-    if redis_client and version is not None:
-        try:
-            await redis_client.set(cache_key, str(version), ex=300, nx=True)
-        except Exception as e:
-            _jwt_logger.warning("token_version_cache_write_error", error=str(e), user=username_or_email)
+    try:
+        from src.app.core.cache.client import cache_client
+
+        await cache_client.set_nx(cache_key, str(version), ttl=300)
+    except Exception as e:
+        _jwt_logger.warning("token_version_cache_write_error", error=str(e), user=username_or_email)
     return version
 
 
@@ -370,22 +371,18 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     token_version: int | None = payload.get("token_version")
     if token_version is not None:
         tenant_id = payload.get("tenant_id")
+        from src.app.core.cache.client import cache_client
         from src.app.core.utils.cache import build_tenant_key
 
         cache_key = build_tenant_key(f"user:{username_or_email}:token_version", tenant_id)
 
-        from src.app.core.redis_provider import get_redis
-
-        redis_client = get_redis()
-
         cached_version = None
-        if redis_client:
-            try:
-                cached_value = await redis_client.get(cache_key)
-                if cached_value is not None:
-                    cached_version = int(cached_value)
-            except Exception as e:
-                _jwt_logger.warning("token_version_cache_read_error", error=str(e), user=username_or_email)
+        try:
+            cached_value = await cache_client.get(cache_key)
+            if cached_value is not None:
+                cached_version = int(cached_value)
+        except Exception as e:
+            _jwt_logger.warning("token_version_cache_read_error", error=str(e), user=username_or_email)
 
         if cached_version is not None:
             if cached_version != token_version:
@@ -396,7 +393,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
             async with _token_version_lock:
                 task = _in_flight_token_version.get(cache_key)
                 if task is None:
-                    task = asyncio.create_task(_load_token_version(cache_key, username_or_email, redis_client))
+                    task = asyncio.create_task(_load_token_version(cache_key, username_or_email))
                     _in_flight_token_version[cache_key] = task
             try:
                 db_version = await task

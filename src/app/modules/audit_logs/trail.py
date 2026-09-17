@@ -20,22 +20,37 @@ logger = get_logger(__name__)
 SYSTEM_TENANT_ID = UUID(int=0)
 
 
+def system_tenant_id(*, reason: str) -> UUID:
+    """Name the tenant-less fallback at the call site.
+
+    Tenant-less system events (RLS bypass, worker bootstrap) attribute to the
+    ``SYSTEM_TENANT_ID`` sentinel (``UUID(int=0)``), but LOUDLY: every call
+    logs, so silent cross-tenant attribution can never hide. Callers with a
+    real tenant must pass it explicitly or run under an active tenant
+    context — the sentinel is never a quiet default.
+
+    Args:
+        reason: Short stable label for the fallback site (e.g.
+            ``"audit.resolve_tenant"`` or ``"audit.unparseable_tenant_id"``).
+
+    Returns:
+        The ``SYSTEM_TENANT_ID`` sentinel.
+    """
+    logger.warning("audit_tenant_fallback_to_system", action=reason)
+    return SYSTEM_TENANT_ID
+
+
 def _resolve_tenant_id(tenant_id: UUID | None = None) -> UUID:
     """Resolve tenant ID from explicit argument or context.
 
     P2-C: UUID is the sole tenant type — no str/int coercion.
 
-    Tenant-less system events (RLS bypass, worker bootstrap) still resolve
-    to the ``SYSTEM_TENANT_ID`` sentinel (``UUID(int=0)``), but LOUDLY: the
-    fallback logs every time so silent cross-tenant attribution can never
-    hide. Callers with a real tenant must pass it explicitly or run under
-    an active tenant context — the sentinel is never a quiet default.
-
     Args:
         tenant_id: Optional explicit tenant UUID (or None)
 
     Returns:
-        Explicit UUID, context tenant UUID, or SYSTEM_TENANT_ID (logged).
+        Explicit UUID, context tenant UUID, or SYSTEM_TENANT_ID (logged via
+        :func:`system_tenant_id`).
     """
     if tenant_id is not None:
         return tenant_id
@@ -44,8 +59,7 @@ def _resolve_tenant_id(tenant_id: UUID | None = None) -> UUID:
     if ctx_tenant and ctx_tenant.tenant_id:
         return ctx_tenant.tenant_id
 
-    logger.warning("audit_tenant_fallback_to_system", action="audit.resolve_tenant")
-    return SYSTEM_TENANT_ID
+    return system_tenant_id(reason="audit.resolve_tenant")
 
 
 def _coerce_user_id(user_id: Any) -> str | None:
@@ -138,4 +152,5 @@ async def audit(
 __all__ = [
     "SYSTEM_TENANT_ID",
     "audit",
+    "system_tenant_id",
 ]

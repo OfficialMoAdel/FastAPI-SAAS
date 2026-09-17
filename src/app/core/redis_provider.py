@@ -1,11 +1,22 @@
 """Single Redis/ARQ access seam.
 
-One module owns connection lifecycle and hands out clients. Every consumer
-either imports :func:`get_redis` / :func:`get_arq` from here or goes through
-FastAPI DI (:mod:`src.app.core.cache.dependencies`) — never the bare globals.
-Client construction lives here too (:func:`create_cache_client` /
+One module owns connection lifecycle and hands out clients. Client
+construction lives here too (:func:`create_cache_client` /
 :func:`create_arq_pool`) — no other module constructs ``redis.Redis(...)`` or
 ``ArqRedis(...)`` directly.
+
+Consumer direction (A3):
+
+- Module-level caching (get/set/delete/exists, JSON values, tenant-scoped
+  keys, atomic claims) goes through the CacheClient interface
+  (:mod:`src.app.core.cache.client` :: ``cache_client``) — never
+  :func:`get_redis` directly. The adapter resolves the same shared client
+  at call time, so the None-guards and key-building live behind its seam.
+- :func:`get_redis` remains for infrastructure primitives the narrow
+  interface does not cover (pipelines, pub/sub, Lua scripts, hashes,
+  streams, distributed locks, FastAPI DI in
+  :mod:`src.app.core.cache.dependencies`) and as the patch point the test
+  suite mocks. New module-caching code must not import it.
 
 Compatibility contract
 ----------------------
@@ -13,7 +24,8 @@ The legacy module globals ``src.app.core.utils.cache.client/pool`` and
 ``src.app.core.utils.queue.pool`` remain the live state: the provider writes
 them on startup/shutdown, and reads them at call time so ``mock.patch`` of
 those names in the ~46 test files keeps working unchanged. New code should
-not read the globals directly — call the functions here.
+not read the globals directly — modules use ``cache_client``; infra calls
+the functions here.
 """
 from typing import cast
 
@@ -70,6 +82,12 @@ async def close_redis_pool() -> None:
 
 def get_redis() -> Redis | None:
     """Return the shared decode_responses Redis client, or None before startup.
+
+    Legacy entry point for module caching — new module-caching code must use
+    the CacheClient interface (``src.app.core.cache.client.cache_client``)
+    instead. Retained for infrastructure primitives (pipelines, pub/sub, Lua,
+    hashes, streams, locks), the FastAPI DI seam, and the test suite, which
+    mocks the underlying global.
 
     Reads through the owning module's namespace at call time so runtime
     reassignment (startup, shutdown, test fixtures that patch

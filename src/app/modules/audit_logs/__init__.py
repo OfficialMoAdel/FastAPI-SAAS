@@ -8,7 +8,7 @@ from src.app.modules.audit_logs.schemas import (
     AuditLogResponse,
 )
 from src.app.modules.audit_logs.service import AuditLogService
-from src.app.modules.audit_logs.trail import SYSTEM_TENANT_ID, audit
+from src.app.modules.audit_logs.trail import SYSTEM_TENANT_ID, audit, system_tenant_id
 
 __all__ = [
     "AuditLog",
@@ -19,4 +19,5 @@ __all__ = [
     "AuditLogService",
     "SYSTEM_TENANT_ID",
     "audit",
+    "system_tenant_id",
 ]

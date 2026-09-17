@@ -60,7 +60,7 @@ def mock_db():
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_stripe_settings")
 async def test_stripe_settings_service_update(mock_crud, mock_get_tenancy, mock_get_svc, mock_db, mock_tenant):
@@ -88,7 +88,7 @@ async def test_stripe_settings_service_update(mock_crud, mock_get_tenancy, mock_
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.subscription_service.crud_subscription_plans")
 async def test_subscription_plan_service_get_and_list(mock_crud, mock_get_tenant, mock_db, mock_tenant):
     mock_get_tenant.return_value = mock_tenant
@@ -107,7 +107,7 @@ async def test_subscription_plan_service_get_and_list(mock_crud, mock_get_tenant
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.subscription_service.crud_subscription_plans")
 async def test_subscription_plan_service_delete(mock_crud, mock_get_tenant, mock_db, mock_tenant):
     mock_get_tenant.return_value = mock_tenant
@@ -124,8 +124,8 @@ async def test_subscription_plan_service_delete(mock_crud, mock_get_tenant, mock
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.service.get_current_tenant")
-@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_products")
 async def test_product_service_operations(mock_crud, mock_get_tenant_sub, mock_get_tenant_svc, mock_db, mock_tenant):
     mock_get_tenant_sub.return_value = mock_tenant
@@ -155,7 +155,7 @@ async def test_product_service_operations(mock_crud, mock_get_tenant_sub, mock_g
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_products")
 @patch("src.app.modules.billing.service.crud_pricing")
 async def test_pricing_service_operations(mock_crud, mock_products, mock_get_tenant, mock_db, mock_tenant):
@@ -180,7 +180,7 @@ async def test_pricing_service_operations(mock_crud, mock_products, mock_get_ten
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.subscription_service.crud_user_subscriptions")
 async def test_user_subscription_service_operations(mock_crud, mock_get_tenant, mock_db, mock_tenant):
     mock_get_tenant.return_value = mock_tenant
@@ -223,7 +223,7 @@ async def test_user_subscription_service_operations(mock_crud, mock_get_tenant, 
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.subscription_service.crud_billing_records")
 async def test_billing_record_service_operations(mock_crud, mock_get_ctx, mock_get_tenant, mock_db, mock_tenant):

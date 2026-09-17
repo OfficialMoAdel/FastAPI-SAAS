@@ -83,7 +83,7 @@ class TestP2MediumPriorityRegressions:
         mock_tenant = MagicMock(id=1)
 
         with (
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.crud_products.get", new_callable=AsyncMock) as mock_prod_get,
             patch("src.app.modules.billing.service.fetch_page_with_total", new_callable=AsyncMock) as mock_fetch,
         ):

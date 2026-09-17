@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import Response
 
+from src.app.core.principal import AuthenticatedUser
 from src.app.modules.posts import router as posts_router
 
 
@@ -27,13 +28,13 @@ def _make_service():
 
 
 def _make_user(username="alice", user_id=1):
-    return {"username": username, "id": user_id}
+    return AuthenticatedUser(id=user_id, username=username, email=f"{username}@example.com")
 
 
 def _make_ctx(username="alice", user_id=1):
     from unittest.mock import MagicMock
 
-    user = {"username": username, "id": user_id}
+    user = _make_user(username, user_id)
     ctx = MagicMock()
     ctx.user = user
     ctx.user_id = user_id

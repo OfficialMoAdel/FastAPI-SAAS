@@ -126,7 +126,9 @@ async def test_delete_tier_success():
     db.execute = AsyncMock(return_value=MagicMock(scalar_one=MagicMock(return_value=0)))
     with (
         patch.object(service, "tier_crud") as crud,
-        patch("src.app.modules.tiers.service.get_redis", return_value=None),
+        # A3: invalidation goes through the CacheClient seam, which reads
+        # the shared client — simulate Redis down at the global.
+        patch("src.app.core.utils.cache.client", None),
     ):
         crud.get = AsyncMock(return_value=_tier_read(1, "pro"))
         crud.delete = AsyncMock()

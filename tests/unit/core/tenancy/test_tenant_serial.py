@@ -46,10 +46,16 @@ class TestTenantSerialization:
         assert isinstance(bytes_result, bytes)
 
     def test_tenant_middleware_uses_bytes(self) -> None:
-        """Verify tenant middleware uses bytes (no as_str=True)."""
+        """Verify tenant resolution caching uses bytes (no as_str=True).
+
+        A2: the L1/L2/DB read-through lives in the canonical resolver
+        (``src.app.core.tenancy.resolver``); the middleware is a thin
+        adapter, so the bytes invariant is asserted on the seam that owns
+        serialization.
+        """
         import inspect
 
-        from src.app.middleware import tenant
+        from src.app.core.tenancy import resolver as tenant
 
         source = inspect.getsource(tenant)
 

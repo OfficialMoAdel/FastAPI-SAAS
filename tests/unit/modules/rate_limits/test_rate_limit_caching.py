@@ -99,10 +99,11 @@ async def test_invalidate_cache_on_create(service):
     tier_name = "Free"
     tier_data = _tier_data()
 
-    # Mock Redis in the tiers.service namespace (P1-18: invalidation
-    # lives in the canonical TierService).
+    # Mock Redis at the shared-client global (A3: invalidation lives in
+    # the canonical TierService and goes through the CacheClient seam,
+    # which reads this global at call time).
     mock_redis = AsyncMock()
-    with patch("src.app.modules.tiers.service.get_redis", return_value=mock_redis):
+    with patch("src.app.core.utils.cache.client", mock_redis):
 
         # Mock internal methods
         service._get_tier_or_404 = AsyncMock(return_value=tier_data)
@@ -127,10 +128,11 @@ async def test_invalidate_cache_on_update(service):
     tier_name = "Free"
     tier_data = _tier_data()
 
-    # Mock Redis in the tiers.service namespace (P1-18: invalidation
-    # lives in the canonical TierService).
+    # Mock Redis at the shared-client global (A3: invalidation lives in
+    # the canonical TierService and goes through the CacheClient seam,
+    # which reads this global at call time).
     mock_redis = AsyncMock()
-    with patch("src.app.modules.tiers.service.get_redis", return_value=mock_redis):
+    with patch("src.app.core.utils.cache.client", mock_redis):
 
         # Mock internal methods
         service._get_tier_or_404 = AsyncMock(return_value=tier_data)
@@ -155,10 +157,11 @@ async def test_invalidate_cache_on_delete(service):
     tier_name = "Free"
     tier_data = _tier_data()
 
-    # Mock Redis in the tiers.service namespace (P1-18: invalidation
-    # lives in the canonical TierService).
+    # Mock Redis at the shared-client global (A3: invalidation lives in
+    # the canonical TierService and goes through the CacheClient seam,
+    # which reads this global at call time).
     mock_redis = AsyncMock()
-    with patch("src.app.modules.tiers.service.get_redis", return_value=mock_redis):
+    with patch("src.app.core.utils.cache.client", mock_redis):
 
         # Mock internal methods
         service._get_tier_or_404 = AsyncMock(return_value=tier_data)

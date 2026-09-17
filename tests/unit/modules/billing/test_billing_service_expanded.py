@@ -32,11 +32,10 @@ def mock_tenant():
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.service.get_current_tenant")
-@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_stripe_settings")
-async def test_stripe_settings_service_get(mock_crud, mock_get_tenant, mock_db, mock_tenant):
-    mock_get_tenant.return_value = mock_tenant
+async def test_stripe_settings_service_get(mock_crud, mock_ctx_tenant, mock_db, mock_tenant):
+    mock_ctx_tenant.return_value = mock_tenant
     mock_crud.get = AsyncMock(return_value={"id": 1, "stripe_customer_id": "cus_123"})
 
     service = StripeSettingsService(mock_db)
@@ -47,7 +46,7 @@ async def test_stripe_settings_service_get(mock_crud, mock_get_tenant, mock_db, 
 
 @pytest.mark.asyncio
 @patch("src.app.core.tenancy.context.get_current_tenant")
-@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.subscription_service.crud_subscription_plans")
 async def test_subscription_plan_service_create(
     mock_crud, mock_get_tenant_sub, mock_get_tenant_common, mock_db, mock_tenant
@@ -71,8 +70,8 @@ async def test_subscription_plan_service_create(
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.service.get_current_tenant")
-@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_products")
 async def test_product_service_create(
@@ -91,7 +90,7 @@ async def test_product_service_create(
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_pricing")
 @patch("src.app.modules.billing.service.crud_products")
 async def test_pricing_service_create(mock_crud_products, mock_crud_pricing, mock_get_tenant, mock_db, mock_tenant):

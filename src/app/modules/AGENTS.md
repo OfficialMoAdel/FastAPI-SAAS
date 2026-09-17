@@ -109,25 +109,29 @@ from src.app.modules.users import UserService
 ```
 
 ### Redis Acquisition (the ONE seam)
-✅ DO: Acquire the Redis client through the provider or DI — never globals or direct construction
+✅ DO: Use the CacheClient interface for module caching — never `get_redis`, globals, or direct construction
 ```python
-# In a service (call-time; observes test patches of utils.cache.client):
-from src.app.core.redis_provider import get_redis
-redis_client = get_redis()
-
-# In a router (FastAPI dependency):
-from src.app.core.utils.cache import async_get_redis
-redis: Annotated[Redis, Depends(async_get_redis)]
-
-# Cache-key semantics only (no client needed):
+# In a service (None-safe, observes test patches of utils.cache.client):
 from src.app.core.cache.client import cache_client
 await cache_client.set(cache_client.tenant_key("feature:flag", tenant_id), "on", ttl=30)
+value = await cache_client.get_json(cache_key)
+await cache_client.delete(key)
+
+# Atomic claims (locks, idempotency markers) — ttl is required:
+acquired = await cache_client.set_nx(lock_key, "1", ttl=60)
+
+# In a router (FastAPI dependency, raw client):
+from src.app.core.utils.cache import async_get_redis
+redis: Annotated[Redis, Depends(async_get_redis)]
 ```
 
-❌ DON'T: `from redis.asyncio import Redis` to *construct* a client, or read
-`utils.cache.client` directly (two modules were migrated off this; the
-provider is the single owner of the Redis lifecycle, incl. the pool).
-Importing the `Redis` *type* for annotations is fine.
+❌ DON'T: `from redis.asyncio import Redis` to *construct* a client, read
+`utils.cache.client` directly, or import `get_redis` for plain module
+caching (migrated to `cache_client`; the provider remains the single owner
+of the Redis lifecycle, incl. the pool). `get_redis` stays only for
+infrastructure primitives the narrow interface doesn't cover (pipelines,
+pub/sub, Lua, hashes, streams) plus the test suite. Importing the `Redis`
+*type* for annotations is fine.
 
 ### CRUD Pattern
 ✅ DO: Use FastCRUD with minimal wrapper (handled by `BaseService`)

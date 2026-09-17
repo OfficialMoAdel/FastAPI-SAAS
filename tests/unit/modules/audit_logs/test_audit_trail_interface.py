@@ -45,6 +45,16 @@ class TestAuditTrailInterface:
         set_current_tenant(None)
         assert _resolve_tenant_id(None) == SYSTEM_TENANT_ID
 
+    def test_system_tenant_id_constructor_logs_reason(self) -> None:
+        """A1: the SYSTEM fallback is a named, logged constructor (not a twin)."""
+        from src.app.modules.audit_logs.trail import system_tenant_id
+
+        with patch("src.app.modules.audit_logs.trail.logger") as mock_logger:
+            assert system_tenant_id(reason="audit.test_reason") == SYSTEM_TENANT_ID
+            mock_logger.warning.assert_called_once_with(
+                "audit_tenant_fallback_to_system", action="audit.test_reason"
+            )
+
     def test_coerce_user_id(self) -> None:
         """Verify user_id coercion for int, str, dict, and objects."""
         assert _coerce_user_id(None) is None

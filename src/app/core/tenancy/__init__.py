@@ -16,12 +16,28 @@ Direct imports:
 """
 
 __all__ = [
+    "TENANT_WIRE_KEYS",
+    "TenantWireError",
+    "bind_tenant",
+    "bound_tenant",
     "clear_tenant_context",
+    "fabricate_job_tenant",
     "get_current_tenant",
+    "is_valid_slug",
+    "negative_cache_key",
+    "normalize_slug",
+    "preserved_tenant",
     "require_active_tenant",
+    "resolve_tenant_by_slug",
     "set_current_tenant",
     "scoped_query",
+    "slug_cache_key",
+    "tenant_cache_data_from_model",
+    "tenant_context_from_cache_data",
+    "tenant_from_wire",
     "tenant_scope",
+    "tenant_to_wire",
+    "unbind_tenant",
 ]
 
 
@@ -54,4 +70,30 @@ def __getattr__(name: str) -> Any:
         from src.app.core.tenancy.query import tenant_scope
 
         return tenant_scope
+    if name in {
+        "is_valid_slug",
+        "negative_cache_key",
+        "normalize_slug",
+        "resolve_tenant_by_slug",
+        "slug_cache_key",
+        "tenant_cache_data_from_model",
+        "tenant_context_from_cache_data",
+    }:
+        from src.app.core.tenancy import resolver as _resolver
+
+        return getattr(_resolver, name)
+    if name in {
+        "TENANT_WIRE_KEYS",
+        "TenantWireError",
+        "bind_tenant",
+        "bound_tenant",
+        "fabricate_job_tenant",
+        "preserved_tenant",
+        "tenant_from_wire",
+        "tenant_to_wire",
+        "unbind_tenant",
+    }:
+        from src.app.core.tenancy import lifecycle as _lifecycle
+
+        return getattr(_lifecycle, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

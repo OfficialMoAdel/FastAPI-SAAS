@@ -91,7 +91,7 @@ class TestProductService:
 
         with (
             patch(
-                "src.app.modules.billing.service.get_current_tenant",
+                "src.app.core.tenancy.context.get_current_tenant",
                 return_value=mock_tenant,
             ),
             patch(
@@ -128,8 +128,8 @@ class TestProductService:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_products.get",
@@ -177,7 +177,7 @@ class TestProductService:
 
         with (
             patch(
-                "src.app.modules.billing.service.get_current_tenant",
+                "src.app.core.tenancy.context.get_current_tenant",
                 return_value=mock_tenant,
             ),
             patch(
@@ -221,8 +221,8 @@ class TestProductService:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_products.get",
@@ -263,8 +263,8 @@ class TestProductService:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_products.get",
@@ -313,8 +313,8 @@ class TestProductPricingService:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_products.get",
@@ -412,8 +412,8 @@ class TestProductPricingService:
         mock_db_session.execute = AsyncMock(return_value=mock_result)
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
         ):
             from src.app.modules.billing.service import ProductService
@@ -444,7 +444,7 @@ class TestProductServiceValidation:
 
         with (
             patch(
-                "src.app.modules.billing.service.get_current_tenant",
+                "src.app.core.tenancy.context.get_current_tenant",
                 return_value=mock_tenant,
             ),
             patch(
@@ -479,7 +479,7 @@ class TestProductServiceValidation:
 
         with (
             patch(
-                "src.app.modules.billing.service.get_current_tenant",
+                "src.app.core.tenancy.context.get_current_tenant",
                 return_value=mock_tenant,
             ),
             patch(

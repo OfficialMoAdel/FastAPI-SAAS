@@ -44,7 +44,7 @@ async def test_is_feature_enabled_cache_hit_str():
 async def test_is_feature_enabled_cache_miss_db_default():
     redis = MagicMock()
     redis.get = AsyncMock(return_value=None)
-    redis.setex = AsyncMock()
+    redis.set = AsyncMock()
 
     db = MagicMock()
     db.get = AsyncMock(return_value=None)
@@ -52,13 +52,13 @@ async def test_is_feature_enabled_cache_miss_db_default():
     with patch("src.app.core.utils.cache.client", redis):
         result = await ff_utils.is_feature_enabled(db=db, tenant_id="t1", feature_name="beta", default=True)
         assert result is True
-        redis.setex.assert_awaited_once()
+        redis.set.assert_awaited_once()
 
 
 async def test_is_feature_enabled_cache_miss_db_flags():
     redis = MagicMock()
     redis.get = AsyncMock(return_value=None)
-    redis.setex = AsyncMock()
+    redis.set = AsyncMock()
 
     tenant = _make_tenant({"beta": False, "gamma": True})
     db = MagicMock()
@@ -82,7 +82,7 @@ async def test_is_feature_enabled_no_redis():
 async def test_is_feature_enabled_cache_get_exception():
     redis = MagicMock()
     redis.get = AsyncMock(side_effect=RuntimeError("down"))
-    redis.setex = AsyncMock()
+    redis.set = AsyncMock()
 
     tenant = _make_tenant({"beta": True})
     db = MagicMock()
@@ -104,7 +104,7 @@ async def test_get_feature_flags_cache_hit():
 async def test_get_feature_flags_cache_exception_falls_to_db():
     redis = MagicMock()
     redis.get = AsyncMock(side_effect=RuntimeError("down"))
-    redis.setex = AsyncMock()
+    redis.set = AsyncMock()
 
     tenant = _make_tenant({"a": 1})
     db = MagicMock()
@@ -203,7 +203,7 @@ async def test_bulk_update_feature_flags_not_found():
 async def test_is_feature_enabled_cache_setex_exception():
     redis = MagicMock()
     redis.get = AsyncMock(return_value=None)
-    redis.setex = AsyncMock(side_effect=RuntimeError("down"))
+    redis.set = AsyncMock(side_effect=RuntimeError("down"))
 
     tenant = _make_tenant({"beta": True})
     db = MagicMock()
@@ -216,7 +216,7 @@ async def test_is_feature_enabled_cache_setex_exception():
 async def test_get_feature_flags_cache_setex_exception():
     redis = MagicMock()
     redis.get = AsyncMock(return_value=None)
-    redis.setex = AsyncMock(side_effect=RuntimeError("down"))
+    redis.set = AsyncMock(side_effect=RuntimeError("down"))
 
     tenant = _make_tenant({"a": 1})
     db = MagicMock()

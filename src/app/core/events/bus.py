@@ -354,17 +354,13 @@ class EventBus:
 
             # SECURITY FIX: Capture tenant context if available to propagate to background tasks
             # This is critical for RLS-enabled database operations in worker processes.
+            # A6: packing lives behind the tenancy lifecycle seam — the worker
+            # parses with the same key set, so the format cannot drift.
             from src.app.core.tenancy.context import get_current_tenant
+            from src.app.core.tenancy.lifecycle import tenant_to_wire
 
             tenant = get_current_tenant()
-            tenant_info = None
-            if tenant:
-                tenant_info = {
-                    "id": str(tenant.id),
-                    "slug": tenant.slug,
-                    "name": tenant.name,
-                    "is_active": tenant.is_active,
-                }
+            tenant_info = tenant_to_wire(tenant)
 
             # Inject sequence and tenant into event data for consumers
             enriched_data = {

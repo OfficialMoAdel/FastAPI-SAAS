@@ -97,6 +97,7 @@ from src.app.core.security.encryption import CredentialEncryption
 from src.app.core.tenancy.context import (  # noqa: F401 — get_current_tenant re-exported for test patch targets
     get_current_tenant,
     require_active_tenant,
+    resolve_tenant_id,
 )
 from src.app.modules._base.service import fetch_page_with_total
 from src.app.shared.exceptions import ModelNotFoundError
@@ -220,27 +221,41 @@ class StripeSettingsService:
 
     @property
     def current_tenant_id(self) -> Any:
-        if self.tenant_id is not None:
-            return self.tenant_id
-        current_tenant = get_current_tenant()
-        return current_tenant.id if current_tenant is not None else None
+        """Effective tenant id — read-only view over the ONE seam.
+
+        Returns the context tenant when bound, else the construction value,
+        else ``None`` (``fail_closed=False``). Callers that must not proceed
+        without a tenant use :meth:`_resolve_tenant` instead.
+        """
+        return resolve_tenant_id(
+            self.tenant_id,
+            entity_name="Tenant",
+            entity_id="current",
+            fail_closed=False,
+        )
 
     def _resolve_tenant(self, entity_name: str = "Billing", entity_id: Any = None) -> Any:
         """Resolve tenant with cross-tenant mismatch guard (via the ONE seam)."""
-        from src.app.core.tenancy.context import resolve_tenant_id
-
         return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
+
     async def get_settings(self) -> dict[str, Any] | None:
-        """Get Stripe settings for the current tenant."""
-        tid = self.current_tenant_id
-        if tid is None:
-            return None
-        # Item 7: inactive tenants fail closed via the tenancy seam
-        # (TenantContextError) instead of an ad-hoc check beside the seam.
-        # Tenant-less worker/system paths keep the legacy None passthrough.
+        """Get Stripe settings for the current tenant.
+
+        Inactive contexts fail closed (:func:`require_active_tenant`); a
+        tenant-less worker/system path resolves to ``None`` (no settings row)
+        instead of raising.
+        """
         current_tenant = get_current_tenant()
         if current_tenant is not None and not current_tenant.is_active:
             require_active_tenant()
+        tid = resolve_tenant_id(
+            self.tenant_id,
+            entity_name="StripeSettings",
+            entity_id="settings",
+            fail_closed=False,
+        )
+        if tid is None:
+            return None
         result = await crud_stripe_settings.get(db=self.db, tenant_id=tid)
         return dict(result) if result else None
 
@@ -298,22 +313,21 @@ class ProductService:
 
     @property
     def current_tenant_id(self) -> Any:
-        if self.tenant_id is not None:
-            return self.tenant_id
-        current_tenant = get_current_tenant()
-        return current_tenant.id if current_tenant is not None else None
+        """Effective tenant id (context wins; explicit construction value otherwise).
+
+        Read-only compatibility view over the ONE seam — see
+        :class:`StripeSettingsService`.
+        """
+        return resolve_tenant_id(
+            self.tenant_id,
+            entity_name="Tenant",
+            entity_id="current",
+            fail_closed=False,
+        )
 
     def _resolve_tenant(self, entity_name: str = "Product", entity_id: Any = None) -> Any:
-        """Resolve tenant with cross-tenant mismatch guard (via the ONE seam)."""
-        from src.app.core.tenancy.context import resolve_tenant_id
-
+        """Resolve tenant via the ONE seam (context wins; mismatch soft-404s)."""
         return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
-
-    def _require_tenant(self, entity_name: str = "Product", entity_id: Any = None) -> Any:
-        tid = self.current_tenant_id
-        if tid is None:
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        return tid
 
     async def create_product(self, data: ProductCreate) -> dict[str, Any]:
         """Create a new product."""
@@ -329,7 +343,7 @@ class ProductService:
 
     async def get_product(self, product_id: int) -> dict[str, Any]:
         """Get a product by ID."""
-        tid = self._require_tenant("Product", product_id)
+        tid = self._resolve_tenant("Product", product_id)
 
         product = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         if product is None:
@@ -339,7 +353,7 @@ class ProductService:
 
     async def get_products(self, page: int = 1, limit: int = 20, is_active: bool | None = None) -> dict[str, Any]:
         """Get paginated products (tenant-scoped)."""
-        tid = self._require_tenant("Product", "list")
+        tid = self._resolve_tenant("Product", "list")
         offset = (page - 1) * limit
         filters: dict[str, Any] = {}
         if is_active is not None:
@@ -356,7 +370,7 @@ class ProductService:
 
     async def update_product(self, product_id: int, data: ProductUpdate) -> dict[str, Any]:
         """Update a product."""
-        tid = self._require_tenant("Product", product_id)
+        tid = self._resolve_tenant("Product", product_id)
 
         product = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         if product is None:
@@ -370,7 +384,7 @@ class ProductService:
 
     async def deactivate_product(self, product_id: int) -> dict[str, Any]:
         """Deactivate a product."""
-        tid = self._require_tenant("Product", product_id)
+        tid = self._resolve_tenant("Product", product_id)
 
         product = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         if product is None:
@@ -386,7 +400,7 @@ class ProductService:
         Uses selectinload to fetch product and pricing in a single query,
         avoiding N+1 query issues.
         """
-        tid = self._require_tenant("Product", product_id)
+        tid = self._resolve_tenant("Product", product_id)
 
         from src.app.core.db.tenant_crud import tenant_scope
 
@@ -409,7 +423,7 @@ class ProductService:
         data: PricingCreate,
     ) -> dict[str, Any]:
         """Add a pricing tier to a product."""
-        tid = self._require_tenant("Product", product_id)
+        tid = self._resolve_tenant("Product", product_id)
 
         product = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         if product is None:
@@ -431,26 +445,25 @@ class PricingService:
 
     @property
     def current_tenant_id(self) -> Any:
-        if self.tenant_id is not None:
-            return self.tenant_id
-        current_tenant = get_current_tenant()
-        return current_tenant.id if current_tenant is not None else None
+        """Effective tenant id (context wins; explicit construction value otherwise).
+
+        Read-only compatibility view over the ONE seam — see
+        :class:`StripeSettingsService`.
+        """
+        return resolve_tenant_id(
+            self.tenant_id,
+            entity_name="Tenant",
+            entity_id="current",
+            fail_closed=False,
+        )
 
     def _resolve_tenant(self, entity_name: str = "Pricing", entity_id: Any = None) -> Any:
-        """Resolve tenant with cross-tenant mismatch guard (via the ONE seam)."""
-        from src.app.core.tenancy.context import resolve_tenant_id
-
+        """Resolve tenant via the ONE seam (context wins; mismatch soft-404s)."""
         return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
-
-    def _require_tenant(self, entity_name: str = "Pricing", entity_id: Any = None) -> Any:
-        tid = self.current_tenant_id
-        if tid is None:
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        return tid
 
     async def create_pricing(self, product_id: int, data: PricingCreate) -> dict[str, Any]:
         """Create a pricing tier for a product."""
-        tid = self._require_tenant("Product", product_id)
+        tid = self._resolve_tenant("Product", product_id)
 
         product = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         if product is None:
@@ -463,14 +476,13 @@ class PricingService:
         )
 
     async def get_pricing(self, pricing_id: int) -> dict[str, Any]:
-        """Get a pricing tier by ID."""
         pricing = await crud_pricing.get(db=self.db, id=pricing_id)
         if pricing is None:
             raise ModelNotFoundError("Pricing", pricing_id)
 
         # SECURITY FIX: Verify pricing's parent product belongs to current tenant.
         if pricing is not None:
-            tid = self._require_tenant("Pricing", pricing_id)
+            tid = self._resolve_tenant("Pricing", pricing_id)
             # FastCRUD might return dict or object
             prod_id = pricing.get("product_id") if isinstance(pricing, dict) else pricing.product_id
             product = await crud_products.get(db=self.db, id=prod_id, tenant_id=tid)
@@ -485,7 +497,7 @@ class PricingService:
         limit: int | None = None,
     ) -> dict[str, Any]:
         """Get all pricing tiers for a product (tenant-scoped via parent product)."""
-        tid = self._require_tenant("Product", product_id)
+        tid = self._resolve_tenant("Product", product_id)
         product = await crud_products.get(db=self.db, id=product_id, tenant_id=tid)
         if product is None:
             raise ModelNotFoundError("Product", product_id)
@@ -509,7 +521,7 @@ class PricingService:
         tenant_id: int | str | None = None,  # deprecated: ignored - tenant taken from context
     ) -> dict[str, Any]:
         """List prices with optional filtering (tenant-scoped)."""
-        tid = self._require_tenant("Pricing", "list")
+        tid = self._resolve_tenant("Pricing", "list")
         if tenant_id is not None and str(tenant_id) != str(tid):
             from src.app.core.logger import get_logger as _get_logger
             _get_logger(__name__).warning("tenant_id_override_blocked_in_list_prices", requested=str(tenant_id), context=str(tid))  # noqa: E501
@@ -557,7 +569,7 @@ class PricingService:
         if pricing is None:
             raise ModelNotFoundError("Pricing", pricing_id)
 
-        tid = self._require_tenant("Pricing", pricing_id)
+        tid = self._resolve_tenant("Pricing", pricing_id)
         product = await crud_products.get(db=self.db, id=pricing.product_id, tenant_id=tid)
         if product is None:
             raise ModelNotFoundError("Pricing", pricing_id)

@@ -79,8 +79,8 @@ class TestBillingHistoryService:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
@@ -106,8 +106,8 @@ class TestBillingHistoryService:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
@@ -129,8 +129,8 @@ class TestBillingHistoryService:
         mock_empty = {"data": [], "total_count": 0}
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
@@ -163,8 +163,8 @@ class TestBillingHistoryService:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
@@ -196,8 +196,8 @@ class TestBillingHistoryService:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get",
@@ -240,8 +240,8 @@ class TestBillingHistoryService:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
@@ -271,8 +271,8 @@ class TestBillingRecordStatusFiltering:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
@@ -295,8 +295,8 @@ class TestBillingRecordStatusFiltering:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
@@ -319,8 +319,8 @@ class TestBillingRecordStatusFiltering:
         }
 
         with (
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",

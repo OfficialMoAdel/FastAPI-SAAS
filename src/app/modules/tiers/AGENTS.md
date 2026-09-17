@@ -22,13 +22,18 @@ uv run python -c "from src.app.modules.tiers.service import TierService; print('
 ### DO: Use tier for resource limits
 
 ```python
-from src.app.modules.tiers.service import TierService
+from src.app.modules.tiers import TierService, resolve_entitlement
 
-# Tiers are accessed through the service (BaseService flyweight CRUD),
+# Tiers are accessed through the service (hand-rolled FastCRUD, not the
+# BaseService flyweight — TierService composes its own crud handles),
 # not a module-global crud instance (crud.py was removed in the C4 refactor).
 tier_svc = TierService(db)
 tier = await tier_svc.get_tier(tier_name)
-max_users = tier.max_users
+
+# Non-HTTP limits (webhook test calls, email quotas, storage defaults)
+# resolve through the entitlement seam — never hard-code them per caller.
+entitlement = resolve_entitlement(tier.name)
+max_files = entitlement.storage_file_count
 ```
 
 ### DON'T: hardcode tier-specific logic
@@ -65,9 +70,10 @@ TIER_HIERARCHY = {
 ## Module Structure
 ```
 src/app/modules/tiers/
-├── __init__.py           # Re-exports Tier, TierService, schemas
+├── __init__.py           # Re-exports Tier, TierName, TierService, schemas, entitlement seam
 ├── router.py             # /tiers endpoints (served by TierService)
 ├── service.py            # TierService (canonical tier business logic)
+├── entitlement.py        # Tier entitlement seam (TierName, Entitlement, resolve_* )
 ├── models.py             # Canonical Tier model (rate_limits re-exports)
 └── schemas.py            # Canonical Tier schemas (rate_limits re-exports)
 ```

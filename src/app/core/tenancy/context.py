@@ -191,7 +191,13 @@ def require_tenant_match(
         raise ModelNotFoundError(resource, key)
 
 
-def resolve_tenant_id(explicit_tenant_id: Any = None, *, entity_name: str = "resource", entity_id: Any = None) -> Any:
+def resolve_tenant_id(
+    explicit_tenant_id: Any = None,
+    *,
+    entity_name: str = "resource",
+    entity_id: Any = None,
+    fail_closed: bool = True,
+) -> Any:
     """Resolve the effective tenant id — the ONE explicit-vs-context seam.
 
     Rules (shared by every service; mirrors :func:`tenant_scope`):
@@ -199,9 +205,23 @@ def resolve_tenant_id(explicit_tenant_id: Any = None, *, entity_name: str = "res
     - Active context always wins; a mismatching explicit value raises
       ``ModelNotFoundError`` (enumeration-safe soft-404, never 403).
     - No context: an explicit value may be used (worker/system paths).
-    - Neither: raises ``ModelNotFoundError`` (fail-closed).
+    - Neither: raises ``ModelNotFoundError`` when ``fail_closed`` (default),
+      or returns ``None`` when the caller is a read-only resolution view that
+      tolerates an absent scope (service construction values, list filters).
 
-    Returns the context id when bound, else the explicit value verbatim.
+    ``fail_closed=False`` only relaxes the *absent scope* case; a mismatch
+    between the context and an explicit value still raises, because that is
+    an inconsistent scope rather than a missing one.
+
+    Args:
+        explicit_tenant_id: Caller-owned tenant id (service construction value).
+        entity_name: Model/entity name for the soft-404 payload.
+        entity_id: Lookup key for the soft-404 payload.
+        fail_closed: Raise on absent scope instead of returning ``None``.
+
+    Returns:
+        The context id when bound, else the explicit value verbatim; ``None``
+        only when ``fail_closed`` is False and no scope exists.
     """
     current = get_current_tenant()
     # P1: normalize the two "no tenant" states (None + NO_TENANT sentinel).
@@ -209,6 +229,6 @@ def resolve_tenant_id(explicit_tenant_id: Any = None, *, entity_name: str = "res
     if current_id is not None and explicit_tenant_id is not None and str(explicit_tenant_id) != str(current_id):
         raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
     tid = current_id if current_id is not None else explicit_tenant_id
-    if tid is None:
+    if tid is None and fail_closed:
         raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
     return tid

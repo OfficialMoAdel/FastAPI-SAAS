@@ -35,10 +35,10 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from src.app.api.deps.auth import AuthenticatedUser
 from src.app.core.config import EnvironmentOption, settings
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
+from src.app.core.principal import AuthenticatedUser
 from src.app.core.utils.lua_manager import get_lua_manager
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.auth.crud import crud_passkey_credentials

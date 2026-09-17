@@ -1,12 +1,11 @@
-"""CacheClient — the declared seam for cache operations (candidate 2).
+"""CacheClient — the interface for module-level cache operations (A3).
 
-Every module that today acquires a Redis client four different ways
-(``redis_provider.get_redis``, the legacy ``utils.cache.client`` global,
-direct ``redis.asyncio`` imports, or the FastAPI ``async_get_redis``
-dependency) can instead depend on this small interface. The Redis adapter
-wraps the SAME shared client the provider hands out — it observes test
-patches of ``utils.cache.client`` exactly like ``get_redis()`` does, so
-the ~46 test files that mock the global keep working unchanged.
+Every module that needs plain caching (get/set/delete/exists, JSON
+values, tenant-scoped keys, atomic claims) depends on this interface
+instead of acquiring a raw Redis client. The Redis adapter wraps the SAME
+shared client the provider hands out — it observes test patches of
+``utils.cache.client`` exactly like ``get_redis()`` does, so existing
+tests that mock the global keep working unchanged.
 
 The interface is deliberately narrow: get/set/delete/invalidate semantics
 plus ``tenant_key()`` (the tenant-scoped key builder from ``utils.cache``).
@@ -35,6 +34,17 @@ class CacheClient(Protocol):
 
     async def set(self, key: str, value: str, ttl: int | None = None) -> None:
         """Set ``key`` to ``value`` with an optional TTL in seconds."""
+        ...  # pragma: no cover - Protocol
+
+    async def set_nx(self, key: str, value: str, ttl: int) -> bool:
+        """Atomically set ``key`` only if absent; return True if acquired.
+
+        The claim primitive for distributed locks and idempotency markers.
+        ``ttl`` is required (no persistent locks — a crashed holder must
+        never block claimants forever). Returns False when the client is
+        unavailable, so callers needing a down-Redis fallback must check
+        availability via the ``client`` property first.
+        """
         ...  # pragma: no cover - Protocol
 
     async def delete(self, *keys: str) -> int:
@@ -95,6 +105,15 @@ class RedisCacheAdapter:
         # a missing ttl must never create a non-expiring key (unbounded
         # growth). There is no persistent-key path on this adapter.
         await client.set(key, value, ex=ttl if ttl is not None else _DEFAULT_TTL)
+
+    async def set_nx(self, key: str, value: str, ttl: int) -> bool:
+        from src.app.core.redis_provider import get_redis
+
+        client = get_redis()
+        if client is None:
+            return False
+        result = await client.set(key, value, ex=ttl, nx=True)
+        return bool(result)
 
     async def delete(self, *keys: str) -> int:
         from src.app.core.redis_provider import get_redis

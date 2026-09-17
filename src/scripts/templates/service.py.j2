@@ -4,7 +4,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.utils.user_utils import get_user_attr
+from src.app.core.principal import AuthenticatedUser
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.{{ module_name }}.crud import crud_{{ module_name }}
@@ -36,7 +36,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
     async def create_{{ module_name }}(
         self,
         data: {{ ModelName }}Create,
-        current_user: Any,
+        current_user: AuthenticatedUser,
     ) -> {{ ModelName }}Read:
         """Create a new {{ module_name }}.
 
@@ -44,7 +44,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         ----------
         data : {{ ModelName }}Create
             Creation data
-        current_user : Any
+        current_user : AuthenticatedUser
             Currently authenticated user (already validated by auth)
 
         Returns
@@ -71,7 +71,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
 
         # Create object (tenant_id injected from context by the CRUD seam)
         create_data = data.model_dump()
-        create_data["user_id"] = get_user_attr(current_user, "id")
+        create_data["user_id"] = current_user.id
 
         return await self.create(**create_data)
 
@@ -103,7 +103,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         self,
         id: int,
         data: {{ ModelName }}Update,
-        current_user: Any,
+        current_user: AuthenticatedUser,
     ) -> {{ ModelName }}Read:
         """Update a {{ module_name }}.
 
@@ -113,7 +113,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
             {{ ModelName }} ID
         data : {{ ModelName }}Update
             Update data
-        current_user : Any
+        current_user : AuthenticatedUser
             Currently authenticated user
 
         Returns
@@ -137,7 +137,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
             raise ModelNotFoundError("{{ ModelName }}", id)
 
         existing_user_id = existing.get("user_id") if isinstance(existing, dict) else getattr(existing, "user_id", None)
-        if existing_user_id != get_user_attr(current_user, "id"):
+        if existing_user_id != current_user.id:
             raise ForbiddenError("You don't have permission to update this {{ module_name }}")
 
         # Update (typed path re-reads and returns the Read schema)
@@ -147,7 +147,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
     async def delete_{{ module_name }}(
         self,
         id: int,
-        current_user: Any,
+        current_user: AuthenticatedUser,
     ) -> None:
         """Delete a {{ module_name }}.
 
@@ -155,7 +155,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         ----------
         id : int
             {{ ModelName }} ID
-        current_user : Any
+        current_user : AuthenticatedUser
             Currently authenticated user
 
         Raises
@@ -174,7 +174,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
             raise ModelNotFoundError("{{ ModelName }}", id)
 
         existing_user_id = existing.get("user_id") if isinstance(existing, dict) else getattr(existing, "user_id", None)
-        if existing_user_id != get_user_attr(current_user, "id"):
+        if existing_user_id != current_user.id:
             raise ForbiddenError("You don't have permission to delete this {{ module_name }}")
 
         await self.crud.delete(db=self.db, id=id)

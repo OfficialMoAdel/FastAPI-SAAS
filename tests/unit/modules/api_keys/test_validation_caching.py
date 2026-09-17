@@ -93,18 +93,18 @@ class TestAPIKeyValidationCaching:
             patch.object(api_key_service, "crud") as mock_crud,
         ):
             mock_redis.get = AsyncMock(return_value=None)  # Cache miss
-            mock_redis.setex = AsyncMock()
+            mock_redis.set = AsyncMock()
             mock_crud.update = AsyncMock()
 
             result = await api_key_service.validate_api_key("test_api_key_12345")
 
             assert result is not None
             assert result["user_id"] == 1
-            # Verify cache was set
-            mock_redis.setex.assert_called_once()
+            # Verify cache was set (CacheClient seam: set with ex TTL)
+            mock_redis.set.assert_called_once()
             # Verify cache TTL is 300 seconds
-            call_args = mock_redis.setex.call_args
-            assert call_args[0][1] == 300  # TTL
+            call_args = mock_redis.set.call_args
+            assert call_args[1]["ex"] == 300  # TTL
 
     @pytest.mark.asyncio
     async def test_expired_key_in_cache_is_deleted(self, api_key_service: Any) -> None:

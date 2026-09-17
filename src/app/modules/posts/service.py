@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.deps.request_context import require_resource_ownership
 from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.pagination import build_keyset_response, paginate_keyset
-from src.app.core.utils.user_utils import get_user_attr
+from src.app.core.principal import AuthenticatedUser
 from src.app.modules._base.service import BaseService
 from src.app.modules.posts.models import Post
 from src.app.modules.posts.schemas import PostCreate, PostCreateInternal, PostRead, PostUpdate
@@ -55,7 +55,7 @@ class PostService(BaseService[Post]):
     async def create_post(
         self,
         post: PostCreate,
-        current_user: Any,
+        current_user: AuthenticatedUser,
     ) -> dict[str, Any]:
         """Create a new post.
 
@@ -65,7 +65,7 @@ class PostService(BaseService[Post]):
         ----------
         post : PostCreate
             Post creation data
-        current_user : dict[str, Any]
+        current_user : AuthenticatedUser
             Currently authenticated user (already validated by auth)
 
         Returns
@@ -79,7 +79,7 @@ class PostService(BaseService[Post]):
             If post creation fails
         """
         post_dict = post.model_dump()
-        post_dict["created_by_user_id"] = get_user_attr(current_user, "id")
+        post_dict["created_by_user_id"] = current_user.id
 
         post_internal = PostCreateInternal(**post_dict)
         created_post = cast(
@@ -213,7 +213,7 @@ class PostService(BaseService[Post]):
         self,
         post_id: int,
         values: PostUpdate,
-        current_user: Any,
+        current_user: AuthenticatedUser,
     ) -> dict[str, str]:
         """Update a post with ownership validation.
 
@@ -223,7 +223,7 @@ class PostService(BaseService[Post]):
             Post ID
         values : PostUpdate
             Update values
-        current_user : dict[str, Any]
+        current_user : AuthenticatedUser
             Currently authenticated user
 
         Returns
@@ -248,9 +248,9 @@ class PostService(BaseService[Post]):
             db_post.get("created_by_user_id") if isinstance(db_post, dict) else db_post.created_by_user_id
         )
         await self._check_ownership(
-            get_user_attr(current_user, "id"),
+            current_user.id,
             created_by_user_id,
-            is_superuser=bool(get_user_attr(current_user, "is_superuser")),
+            is_superuser=current_user.is_superuser,
         )
 
         await self.crud.update(db=self.db, object=values, id=post_id)
@@ -259,7 +259,7 @@ class PostService(BaseService[Post]):
     async def delete_post(
         self,
         post_id: int,
-        current_user: Any,
+        current_user: AuthenticatedUser,
     ) -> dict[str, str]:
         """Soft delete a post with ownership validation.
 
@@ -267,7 +267,7 @@ class PostService(BaseService[Post]):
         ----------
         post_id : int
             Post ID
-        current_user : dict[str, Any]
+        current_user : AuthenticatedUser
             Currently authenticated user
 
         Returns
@@ -292,9 +292,9 @@ class PostService(BaseService[Post]):
             db_post.get("created_by_user_id") if isinstance(db_post, dict) else db_post.created_by_user_id
         )
         await self._check_ownership(
-            get_user_attr(current_user, "id"),
+            current_user.id,
             created_by_user_id,
-            is_superuser=bool(get_user_attr(current_user, "is_superuser")),
+            is_superuser=current_user.is_superuser,
         )
 
         await self.crud.delete(db=self.db, id=post_id)

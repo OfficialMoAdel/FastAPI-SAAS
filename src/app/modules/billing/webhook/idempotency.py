@@ -9,7 +9,7 @@ Fail-closed: if both fail, the event is rejected so Stripe retries later
 rather than risking duplicate side effects.
 """
 
-from src.app.core.redis_provider import get_redis
+from src.app.core.cache.client import cache_client
 from src.app.modules.billing import webhook as _pkg
 from src.app.shared.exceptions import ServiceUnavailableError
 
@@ -21,16 +21,14 @@ async def _is_event_processed(event_id: str) -> bool:
     the 300s processing window are rejected by evidence that the event was
     fully handled — not just by a short-lived in-flight lock.
     """
-    redis_client = get_redis()
-    if redis_client:
-        try:
-            value = await redis_client.get(f"{_pkg._WEBHOOK_EVENT_KEY_PREFIX}{event_id}")
-            if value == "processed":
-                return True
-        except Exception as e:
-            _pkg.logger.warning(
-                "Processed-marker Redis check failed, falling back to DB", event_id=event_id, error=str(e)
-            )
+    try:
+        value = await cache_client.get(f"{_pkg._WEBHOOK_EVENT_KEY_PREFIX}{event_id}")
+        if value == "processed":
+            return True
+    except Exception as e:
+        _pkg.logger.warning(
+            "Processed-marker Redis check failed, falling back to DB", event_id=event_id, error=str(e)
+        )
 
     # Redis down / marker missing: consult the durable WebhookEvent row.
     from sqlalchemy import select
@@ -61,8 +59,7 @@ async def _try_acquire_event_lock(event_id: str) -> bool:
     Returns:
         True if lock acquired (event NOT previously processed), False if already processed
     """
-    redis_client = get_redis()
-    if redis_client is None:
+    if cache_client.client is None:
         # Redis not available — fall back to DB idempotency check
         return await _pkg._db_idempotency_check(event_id)
 
@@ -73,8 +70,8 @@ async def _try_acquire_event_lock(event_id: str) -> bool:
         # "processed" marker: no durable marker is written on success (handlers
         # are expected to be internally idempotent), so a crash mid-handling or
         # a late Stripe redelivery outside the TTL window simply reprocesses.
-        result = await redis_client.set(key, "processing", nx=True, ex=_pkg._WEBHOOK_PROCESSING_TTL_SECONDS)
-        return result is not None  # True = lock acquired, False = already processed
+        acquired = await cache_client.set_nx(key, "processing", ttl=_pkg._WEBHOOK_PROCESSING_TTL_SECONDS)
+        return acquired  # True = lock acquired, False = already processed
     except Exception as e:
         _pkg.logger.error(
             "Failed to acquire webhook event lock, falling back to DB check",
@@ -144,17 +141,15 @@ async def mark_event_processed(event_id: str) -> None:
     happened, so rejecting the delivery would only cause pointless Stripe
     retries; handlers are internally idempotent as a last resort.
     """
-    redis_client = get_redis()
-    if redis_client:
-        try:
-            seven_days = 7 * 24 * 3600
-            await redis_client.set(
-                f"{_pkg._WEBHOOK_EVENT_KEY_PREFIX}{event_id}",
-                "processed",
-                ex=seven_days,
-            )
-        except Exception as e:
-            _pkg.logger.error("Failed to write terminal webhook idempotency marker", event_id=event_id, error=str(e))
+    try:
+        seven_days = 7 * 24 * 3600
+        await cache_client.set(
+            f"{_pkg._WEBHOOK_EVENT_KEY_PREFIX}{event_id}",
+            "processed",
+            ttl=seven_days,
+        )
+    except Exception as e:
+        _pkg.logger.error("Failed to write terminal webhook idempotency marker", event_id=event_id, error=str(e))
 
     from sqlalchemy.exc import IntegrityError
 
@@ -177,10 +172,9 @@ async def _release_webhook_event_lock(event_id: str) -> None:
     # CRITICAL FIX: We MUST delete the Redis lock we just acquired, otherwise
     # Stripe's retries will be false-positively rejected as "already_processed" for 7 days!
     lock_released = False
-    redis_client = get_redis()
-    if redis_client:
+    if cache_client.client is not None:
         try:
-            await redis_client.delete(f"{_pkg._WEBHOOK_EVENT_KEY_PREFIX}{event_id}")
+            await cache_client.delete(f"{_pkg._WEBHOOK_EVENT_KEY_PREFIX}{event_id}")
             lock_released = True
         except Exception as redis_e:
             _pkg.logger.error("Failed to release webhook event lock:", redis_e=redis_e)

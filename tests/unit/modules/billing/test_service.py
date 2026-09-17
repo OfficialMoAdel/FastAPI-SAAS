@@ -46,7 +46,7 @@ class TestStripeSettingsService:
         """Test that get_settings returns None when no tenant context."""
         from src.app.modules.billing.service import StripeSettingsService
 
-        with patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=None):
+        with patch("src.app.core.tenancy.context.get_current_tenant", return_value=None):
             service = StripeSettingsService(mock_db)
             result = await service.get_settings()
             assert result is None
@@ -65,9 +65,9 @@ class TestStripeSettingsService:
         }
 
         with (
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant_context),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
         ):
             with patch("src.app.modules.billing.service.crud_stripe_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=expected_settings)
@@ -85,9 +85,9 @@ class TestStripeSettingsService:
         from src.app.modules.billing.service import StripeSettingsService
 
         with (
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant_context),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
         ):
             with patch("src.app.modules.billing.service.crud_stripe_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=None)
@@ -110,9 +110,9 @@ class TestStripeSettingsService:
 
         tenant_id = mock_tenant_context.id
         with (
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant_context),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
         ):
             with patch("src.app.modules.billing.service.crud_stripe_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=None)
@@ -150,9 +150,9 @@ class TestSubscriptionPlanService:
 
         tenant_id = mock_tenant_context.id
         with (
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant_context),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
         ):
             with patch("src.app.modules.billing.subscription_service.crud_subscription_plans") as mock_crud:
@@ -203,9 +203,9 @@ class TestSubscriptionPlanService:
         from src.app.modules.billing.subscription_service import SubscriptionPlanService
 
         with (
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant_context),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
-        patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
+        patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
             patch("src.app.modules.billing.subscription_service.crud_subscription_plans") as mock_crud,
         ):
             mock_crud.get = AsyncMock(return_value={"id": 1, "name": "Pro", "tenant_id": mock_tenant_context.id})
@@ -242,9 +242,9 @@ class TestProductService:
 
         tenant_id = mock_tenant_context.id
         with (
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant_context),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
         ):
             with patch("src.app.modules.billing.service.crud_products") as mock_crud:
                 mock_crud.create = AsyncMock(return_value={"id": 1, "tenant_id": tenant_id, "name": "Widget"})
@@ -292,9 +292,9 @@ class TestUserSubscriptionService:
         from src.app.modules.billing.subscription_service import UserSubscriptionService
 
         with (
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant_context),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
-        patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
+        patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
             patch("src.app.modules.billing.subscription_service.crud_user_subscriptions") as mock_crud,
         ):
             mock_crud.get = AsyncMock(
@@ -346,9 +346,9 @@ class TestBillingRecordService:
 
         tenant_id = mock_tenant_context.id
         with (
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant_context),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
         ):
             with patch("src.app.modules.billing.subscription_service.crud_billing_records") as mock_crud:
                 mock_crud.create = AsyncMock(return_value={"id": 1, "tenant_id": tenant_id})
@@ -370,9 +370,9 @@ class TestBillingRecordService:
         from src.app.modules.billing.subscription_service import BillingRecordService
 
         with (
-            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant_context),
             patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
-            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant_context),
         ):
             with patch("src.app.modules.billing.subscription_service.crud_billing_records") as mock_crud:
                 mock_crud.get_multi = AsyncMock(return_value={"data": [], "total_count": 0})

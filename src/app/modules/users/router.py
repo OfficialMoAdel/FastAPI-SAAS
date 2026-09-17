@@ -200,10 +200,8 @@ async def read_user_tier(
     """
     # SECURITY: IDOR via the single ownership seam — the path may carry an
     # int id or a username; check both against the principal.
-    from src.app.core.utils.user_utils import get_user_attr
-
     principal_id = str(ctx.user_id)
-    principal_username = str(get_user_attr(ctx.user, "username"))
+    principal_username = str(ctx.user.username)
     if str(user_id) != principal_id and str(user_id) != principal_username:
         ctx.require_ownership(user_id)
 

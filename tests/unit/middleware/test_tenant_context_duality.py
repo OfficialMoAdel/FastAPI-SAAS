@@ -115,7 +115,9 @@ async def test_get_tenant_by_slug_audit_failure_falls_back():
     with (
         patch("src.app.middleware.tenant.local_session") as mock_local_session,
         patch("src.app.middleware.tenant.get_redis", return_value=None),
-        patch("src.app.middleware.tenant.logger") as mock_logger,
+        # A2: the L1/L2/DB read-through (incl. the Q-M9 fallback log) lives
+        # in the canonical resolver; the middleware only forwards to it.
+        patch("src.app.core.tenancy.resolver.logger") as mock_logger,
     ):
         mock_local_session.return_value.__aenter__.return_value = mock_session
         result = await middleware._get_tenant_by_slug("delta")

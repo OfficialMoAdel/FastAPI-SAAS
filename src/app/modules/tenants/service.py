@@ -7,10 +7,11 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.cache.client import cache_client
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
-from src.app.core.redis_provider import get_redis
 from src.app.core.tenancy.cache import TENANT_CACHE_TTL, get_tenant_cache_key
+from src.app.core.tenancy.resolver import negative_cache_key, slug_cache_key
 from src.app.core.utils.cache_guard import cache_guard
 from src.app.modules._base.service import BaseService
 from src.app.modules.tenants.crud import crud_tenants
@@ -41,8 +42,13 @@ def _tenant_to_dict(tenant: Tenant) -> dict[str, Any]:
 
 
 def _get_slug_cache_key(slug: str) -> str:
-    """Generate Redis cache key for tenant slug lookup."""
-    return f"tenant:slug:{slug.lower().strip()}"
+    """Generate Redis cache key for tenant slug lookup.
+
+    Thin wrapper over the canonical resolver seam
+    (:func:`src.app.core.tenancy.resolver.slug_cache_key`) kept for
+    backward compatibility with existing importers.
+    """
+    return slug_cache_key(slug)
 
 
 class TenantService(BaseService[Tenant]):
@@ -66,11 +72,10 @@ class TenantService(BaseService[Tenant]):
         via ``_tenant_to_dict``) or an already-serialized dict (FastCRUD
         ``schema_to_select`` path). Replaces the near-duplicate
         ``_cache_tenant_dict``.
-        """
-        redis_client = get_redis()
-        if not redis_client:
-            return
 
+        Writes go through the CacheClient seam (None-safe: noop when Redis
+        is down).
+        """
         tenant_data = _tenant_to_dict(tenant) if isinstance(tenant, Tenant) else tenant
         if not tenant_data:
             return
@@ -82,11 +87,11 @@ class TenantService(BaseService[Tenant]):
         with cache_guard("tenant_write", tenant_id=str(tenant_id)):
             payload = json_dumps(tenant_data, as_str=True)
             cache_key = get_tenant_cache_key(tenant_id)
-            await redis_client.set(cache_key, payload, ex=TENANT_CACHE_TTL)
+            await cache_client.set(cache_key, payload, ttl=TENANT_CACHE_TTL)
 
             slug = tenant_data.get("slug")
             if slug:
-                await redis_client.set(_get_slug_cache_key(slug), payload, ex=TENANT_CACHE_TTL)
+                await cache_client.set(_get_slug_cache_key(slug), payload, ttl=TENANT_CACHE_TTL)
 
     async def _invalidate_tenant_cache(self, tenant_id: UUID, slug: str | None = None) -> None:
         """Invalidate tenant cache in Redis and every worker's L1 cache.
@@ -102,17 +107,20 @@ class TenantService(BaseService[Tenant]):
         / error (exhausted retries) and retried exactly once before giving
         up, leaving a poison-key marker so a later reader/ops sweep can
         detect the tenant whose cache could not be invalidated.
+
+        Deletes go through the CacheClient seam; when Redis is down the
+        adapter reports no client and invalidation is skipped (the TTL
+        bounds the stale window, as before).
         """
-        redis_client = get_redis()
-        if not redis_client:
+        if cache_client.client is None:
             return
 
         poison_key = f"tenant:invalidation_failed:{tenant_id}"
         for attempt in (1, 2):
             try:
-                await redis_client.delete(get_tenant_cache_key(tenant_id))
+                await cache_client.delete(get_tenant_cache_key(tenant_id))
                 if slug:
-                    await redis_client.delete(_get_slug_cache_key(slug))
+                    await cache_client.delete(_get_slug_cache_key(slug))
                 break
             except Exception as e:
                 if attempt == 1:
@@ -134,7 +142,7 @@ class TenantService(BaseService[Tenant]):
                         error=str(e),
                     )
                     try:
-                        await redis_client.set(poison_key, slug or "", ex=TENANT_CACHE_TTL)
+                        await cache_client.set(poison_key, slug or "", ttl=TENANT_CACHE_TTL)
                     except Exception:
                         pass  # Redis itself is down; the error log above is the record.
 
@@ -156,12 +164,8 @@ class TenantService(BaseService[Tenant]):
 
     async def _get_cached_tenant(self, tenant_id: UUID) -> dict[str, Any] | None:
         """Get tenant from cache if available."""
-        redis_client = get_redis()
-        if not redis_client:
-            return None
-
         with cache_guard("tenant_get", tenant_id=str(tenant_id)):
-            cached = await redis_client.get(get_tenant_cache_key(tenant_id))
+            cached = await cache_client.get(get_tenant_cache_key(tenant_id))
             if cached:
                 result: dict[str, Any] = json_loads(cached)
                 return result
@@ -169,13 +173,9 @@ class TenantService(BaseService[Tenant]):
 
     async def _get_cached_tenant_by_slug(self, slug: str) -> dict[str, Any] | None:
         """Get tenant by slug from cache if available."""
-        redis_client = get_redis()
-        if not redis_client:
-            return None
-
         with cache_guard("tenant_get_by_slug", slug=slug):
             slug_key = _get_slug_cache_key(slug)
-            cached = await redis_client.get(slug_key)
+            cached = await cache_client.get(slug_key)
 
             if cached:
                 try:
@@ -186,7 +186,7 @@ class TenantService(BaseService[Tenant]):
                     pass
 
                 # Fallback for old cache entries (UUID string)
-                cached_full = await redis_client.get(get_tenant_cache_key(str(cached)))
+                cached_full = await cache_client.get(get_tenant_cache_key(str(cached)))
                 if cached_full:
                     result_fallback: dict[str, Any] = json_loads(cached_full)
                     return result_fallback
@@ -242,9 +242,9 @@ class TenantService(BaseService[Tenant]):
             await self._cache_tenant(created_tenant)
 
         # Invalidate the negative cache so newly created tenants aren't hidden
-        redis_client = get_redis()
-        if redis_client and tenant.slug:
-            await redis_client.delete(f"tenant:negative:{tenant.slug}")
+        # (adapter is None-safe: noop when Redis is down).
+        if tenant.slug:
+            await cache_client.delete(negative_cache_key(tenant.slug))
 
         # B7: also clear the in-process L1 negative entries (any worker,
         # including this one, may have cached "slug not found" while probing

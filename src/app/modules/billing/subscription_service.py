@@ -10,7 +10,10 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
-from src.app.core.tenancy.context import get_current_tenant, require_active_tenant
+from src.app.core.tenancy.context import (
+    require_active_tenant,
+    resolve_tenant_id,
+)
 from src.app.modules._base.service import BaseService, fetch_page_with_total
 from src.app.modules.billing.crud import (
     crud_billing_records,
@@ -66,22 +69,22 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
     @property
     def current_tenant_id(self) -> Any:
-        if self.tenant_id is not None:
-            return self.tenant_id
-        current_tenant = get_current_tenant()
-        return current_tenant.id if current_tenant is not None else None
+        """Effective tenant id — read-only view over the ONE seam.
+
+        Returns the context tenant when bound, else the construction value,
+        else ``None`` (``fail_closed=False``). Callers that must not proceed
+        without a tenant use :meth:`_resolve_tenant` instead.
+        """
+        return resolve_tenant_id(
+            self.tenant_id,
+            entity_name="Tenant",
+            entity_id="current",
+            fail_closed=False,
+        )
 
     def _resolve_tenant(self, entity_name: str = "SubscriptionPlan", entity_id: Any = None) -> Any:
-        """Resolve tenant with cross-tenant mismatch guard (via the ONE seam)."""
-        from src.app.core.tenancy.context import resolve_tenant_id
-
+        """Resolve tenant via the ONE seam (context wins; mismatch soft-404s)."""
         return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
-
-    def _require_tenant(self, entity_name: str = "SubscriptionPlan", entity_id: Any = None) -> Any:
-        tid = self.current_tenant_id
-        if tid is None:
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        return tid
 
     async def create_plan(self, data: SubscriptionPlanCreate) -> dict[str, Any]:
         """Create a new subscription plan."""
@@ -102,7 +105,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
     async def get_plan(self, plan_id: int) -> dict[str, Any]:
         """Get a subscription plan by ID."""
-        tid = self._require_tenant("SubscriptionPlan", plan_id)
+        tid = self._resolve_tenant("SubscriptionPlan", plan_id)
 
         plan = await crud_subscription_plans.get(db=self.db, id=plan_id, tenant_id=tid)
         if plan is None:
@@ -160,7 +163,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
     async def delete_plan(self, plan_id: int) -> dict[str, str]:
         """Soft delete a subscription plan."""
-        tid = self._require_tenant("SubscriptionPlan", plan_id)
+        tid = self._resolve_tenant("SubscriptionPlan", plan_id)
 
         plan = await crud_subscription_plans.get(db=self.db, id=plan_id, tenant_id=tid)
         if plan is None:
@@ -182,26 +185,25 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
     @property
     def current_tenant_id(self) -> Any:
-        if self.tenant_id is not None:
-            return self.tenant_id
-        current_tenant = get_current_tenant()
-        return current_tenant.id if current_tenant is not None else None
+        """Effective tenant id (context wins; explicit construction value otherwise).
+
+        Read-only compatibility view over the ONE seam — see
+        :class:`SubscriptionPlanService`.
+        """
+        return resolve_tenant_id(
+            self.tenant_id,
+            entity_name="Tenant",
+            entity_id="current",
+            fail_closed=False,
+        )
 
     def _resolve_tenant(self, entity_name: str = "UserSubscription", entity_id: Any = None) -> Any:
-        """Resolve tenant with cross-tenant mismatch guard (via the ONE seam)."""
-        from src.app.core.tenancy.context import resolve_tenant_id
-
+        """Resolve tenant via the ONE seam (context wins; mismatch soft-404s)."""
         return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
-
-    def _require_tenant(self, entity_name: str = "UserSubscription", entity_id: Any = None) -> Any:
-        tid = self.current_tenant_id
-        if tid is None:
-            raise ModelNotFoundError(entity_name, entity_id if entity_id is not None else "tenant")
-        return tid
 
     async def create_subscription(self, user_id: int, data: UserSubscriptionCreate) -> dict[str, Any]:
         """Create a user subscription."""
-        tid = self._require_tenant("Tenant", "current")
+        tid = self._resolve_tenant("Tenant", "current")
 
         logger.info("Creating subscription for user in tenant", user_id=user_id, id=tid)
         sub_data = data.model_dump()
@@ -221,7 +223,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
     async def get_subscription(self, subscription_id: int) -> dict[str, Any]:
         """Get a subscription by ID."""
-        tid = self._require_tenant("UserSubscription", subscription_id)
+        tid = self._resolve_tenant("UserSubscription", subscription_id)
 
         subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tid)
         if subscription is None:
@@ -235,11 +237,16 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
         When page/limit are omitted the full list is returned (legacy
         behavior for internal callers); pass both for a single page.
+
+        Tenant scoping mirrors :meth:`_resolve_tenant` (the ONE seam): a
+        tenant-less worker/system path keeps the legacy unfiltered list.
         """
         filters: dict[str, Any] = {"user_id": user_id}
-        tid = self.current_tenant_id
-        if tid is not None:
-            filters["tenant_id"] = tid
+        # Context wins over the construction value (same rule as the
+        # property); neither present keeps the legacy unfiltered list.
+        effective_tenant = self.current_tenant_id
+        if effective_tenant is not None:
+            filters["tenant_id"] = effective_tenant
         paging: dict[str, Any] = {}
         if page is not None and limit is not None:
             paging["offset"] = (page - 1) * limit
@@ -259,7 +266,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         self, subscription_id: int, data: UserSubscriptionUpdate, user_id: int | None = None
     ) -> dict[str, Any]:
         """Update a subscription."""
-        tid = self._require_tenant("UserSubscription", subscription_id)
+        tid = self._resolve_tenant("UserSubscription", subscription_id)
 
         subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tid)
         if subscription is None:
@@ -308,7 +315,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
     async def cancel_subscription(self, subscription_id: int, user_id: int | None = None) -> dict[str, Any]:
         """Cancel a subscription at period end."""
         logger.info("Cancelling subscription", subscription_id=subscription_id)
-        tid = self._require_tenant("UserSubscription", subscription_id)
+        tid = self._resolve_tenant("UserSubscription", subscription_id)
         subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tid)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
@@ -386,12 +393,10 @@ class BillingRecordService(BaseService[BillingRecord]):
 
     async def create_record(self, data: BillingRecordCreate) -> dict[str, Any]:
         """Create a billing record."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Tenant", "current")
+        tid = resolve_tenant_id(None, entity_name="Tenant", entity_id="current")
 
         record_data = data.model_dump()
-        record_data["tenant_id"] = tenant.id
+        record_data["tenant_id"] = tid
         create_obj = BillingRecordCreateInternal(**record_data)
         return cast(
             dict[str, Any],
@@ -400,11 +405,9 @@ class BillingRecordService(BaseService[BillingRecord]):
 
     async def get_record(self, record_id: int) -> dict[str, Any]:
         """Get a billing record by ID."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("BillingRecord", record_id)
+        tid = resolve_tenant_id(None, entity_name="BillingRecord", entity_id=record_id)
 
-        record = await crud_billing_records.get(db=self.db, id=record_id, tenant_id=tenant.id)
+        record = await crud_billing_records.get(db=self.db, id=record_id, tenant_id=tid)
         if record is None:
             raise ModelNotFoundError("BillingRecord", record_id)
 

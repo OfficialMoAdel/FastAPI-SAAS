@@ -41,31 +41,19 @@ async def job_tenant_context(
                 await service.deliver_webhook(delivery_id)
     """
     from src.app.core.db.rls import rls_context
-    from src.app.core.tenancy.context import TenantContext, get_current_tenant, set_current_tenant
+    from src.app.core.tenancy.lifecycle import bind_tenant, fabricate_job_tenant, preserved_tenant
 
-    # Save previous context
-    prev_tenant = get_current_tenant()
+    # A6: save/set/restore and the minimal-context fabrication live behind
+    # the tenancy lifecycle seam — this adapter only owns the DB session.
+    with preserved_tenant():
+        bind_tenant(fabricate_job_tenant(tenant_id))
 
-    # Create a minimal context and set it
-    import uuid
-    from uuid import UUID
-
-    parsed_id = tenant_id if isinstance(tenant_id, UUID) else uuid.UUID(str(tenant_id))
-    job_tenant = TenantContext(
-        tenant_id=parsed_id, tenant_slug="job_context", tenant_name="Job Context", is_active=True
-    )
-    set_current_tenant(job_tenant)
-
-    try:
         async with local_session() as session:
             # Use rls_context so tenant variables survive transactions and commits.
             user_id_str = str(user_id) if user_id else None
             async with rls_context(session, str(tenant_id), user_id_str):
                 logger.debug("Job RLS context set via rls_context | tenant_id=%s, user_id=%s", tenant_id, user_id_str)
                 yield session
-    finally:
-        # Restore previous context
-        set_current_tenant(prev_tenant)
 
 
 @asynccontextmanager
