@@ -432,6 +432,84 @@ class TestExemptPathBehavior:
             call_next.assert_called_once_with(mock_request)
 
     @pytest.mark.asyncio
+    async def test_exempt_path_does_not_mark_whitelisted(self, middleware, mock_request, mock_response):
+        """P2: a health probe is not a trust signal — the exempt early return
+        must leave ip_whitelisted False instead of leaking a True into
+        request.state."""
+        mock_request.url.path = "/health/live"
+        mock_resp = mock_response
+
+        with patch_setting("IP_WHITELIST_ENABLED", True, "BAD_BOT_FILTER_ENABLED", True):
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
+
+            assert response.status_code == 200
+            assert mock_request.state.ip_whitelisted is False
+
+    @pytest.mark.asyncio
+    async def test_exempt_path_response_carries_request_id(self, middleware, mock_request):
+        """P2: ip_filter runs outside RequestIDMiddleware — even exempt-path
+        pass-throughs must echo X-Request-ID (incoming ID propagated)."""
+        sent: list[dict] = []
+
+        async def collect(message: dict) -> None:
+            sent.append(message)
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        middleware.app = app
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/health/live",
+            "headers": [(b"x-request-id", b"trace-ipf-1")],
+            "state": {},
+            "client": ("192.168.1.100", 1234),
+        }
+        await middleware(scope, AsyncMock(), collect)
+
+        start_headers = sent[0]["headers"]
+        assert (b"x-request-id", b"trace-ipf-1") in start_headers
+
+    @pytest.mark.asyncio
+    async def test_blacklist_reject_carries_request_id(self, middleware, mock_request):
+        """P2: 403 short-circuits (outermost guard) must not lack X-Request-ID;
+        a fresh UUID is minted when the client sends none."""
+        sent: list[dict] = []
+
+        async def collect(message: dict) -> None:
+            sent.append(message)
+
+        mock_request.url.path = "/metrics"
+        mock_request.client.host = "10.0.0.1"
+
+        class DownstreamNever:
+            def __call__(self, scope, receive, send):  # pragma: no cover - must not run
+                raise AssertionError("downstream must not be reached on blacklist reject")
+
+        middleware.app = DownstreamNever()
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/metrics",
+            "headers": [],
+            "state": {},
+            "client": ("10.0.0.1", 1234),
+        }
+        with (
+            patch.object(middleware._filter_service, "check_ip_status", return_value=(True, False)),
+            patch_setting("IP_BLACKLIST_ENABLED", True, "BAD_BOT_FILTER_ENABLED", True),
+        ):
+            await middleware(scope, AsyncMock(), collect)
+
+        start = sent[0]
+        assert start["status"] == 403
+        request_id_headers = [(k, v) for k, v in start["headers"] if k == b"x-request-id"]
+        assert len(request_id_headers) == 1
+        assert request_id_headers[0][1]  # minted UUID, non-empty
+
+    @pytest.mark.asyncio
     async def test_exempt_path_with_blacklisted_ip(self, middleware, mock_request, mock_response):
         """Test that exempt (health) paths allow blacklisted IPs.
 

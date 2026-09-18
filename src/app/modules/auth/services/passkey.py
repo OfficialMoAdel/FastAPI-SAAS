@@ -39,6 +39,7 @@ from src.app.core.config import EnvironmentOption, settings
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.principal import AuthenticatedUser
+from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.lua_manager import get_lua_manager
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.auth.crud import crud_passkey_credentials
@@ -386,16 +387,13 @@ class PasskeyService:
         from src.app.modules.auth.services.mfa import get_mfa_service
 
         mfa_service = get_mfa_service()
-        mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], db)
-
-        if mfa_enabled:
-            from src.app.core.redis_provider import get_redis
-
-            redis_client = redis if redis is not None else get_redis()
-
-            if redis_client is None:
-                raise RuntimeError("Redis client is not initialized")
-            return await TokenIssuer.issue_mfa_pending(user, redis=redis_client)
+        # P1: bind the MFA pending token to the client IP like the
+        # password/SSO/magic-link doors so IP-grace enforcement applies.
+        mfa_response = await mfa_service.challenge_if_required(
+            user, db, redis=redis, ip_address=get_client_ip(request) if request is not None else None
+        )
+        if mfa_response is not None:
+            return mfa_response.model_dump()
 
         tokens = await self._generate_auth_tokens(user, request=request, response=response)
 

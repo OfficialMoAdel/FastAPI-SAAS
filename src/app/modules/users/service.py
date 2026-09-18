@@ -18,7 +18,7 @@ from src.app.core.security import blacklist_token, get_password_hash
 from src.app.core.tenancy.context import get_current_tenant, require_tenant_match
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules._base.service import fetch_page_with_total
-from src.app.modules.audit_logs import audit
+from src.app.modules.audit_logs import AuditGuarantee, audit
 from src.app.modules.tiers.models import Tier
 from src.app.modules.tiers.service import TierService
 from src.app.modules.users.crud import CRUDUser, crud_users
@@ -720,21 +720,15 @@ class UserService:
         )
 
         # SECURITY FIX: Add audit log for user deletion (Issue 15)
-        try:
-            await audit(
-                action="user.deleted",
-                entity_type="user",
-                entity_id=user_id_val,
-                tenant_id=user_tenant_id,
-                user_id=current_user.id,
-                details={
-                    "username": username,
-                    "deleted_by": current_user.username,
-                },
-                priority=EventPriority.NORMAL,
-            )
-        except Exception as e:
-            logger.warning("failed_to_publish_user_deletion_audit_log", error=str(e))
+        await audit(
+            action="user.deleted",
+            entity_type="user",
+            entity_id=user_id_val,
+            tenant_id=user_tenant_id,
+            user_id=current_user.id,
+            details={"username": username, "deleted_by": current_user.username},
+            guarantee=AuditGuarantee.BEST_EFFORT,
+        )
 
         return {"message": "User deleted successfully"}
 

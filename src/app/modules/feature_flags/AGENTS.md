@@ -8,7 +8,7 @@ Feature flag management system for controlled feature rollout per tenant. Uses P
 
 ```bash
 # Test feature flags module
-uv run pytest tests/test_feature_flags.py -v
+uv run pytest tests/unit/modules/feature_flags/ -v
 
 # Type check module
 uv run mypy src/app/modules/feature_flags/
@@ -22,14 +22,34 @@ uv run ruff check src/app/modules/feature_flags/
 ### Module Structure
 ```
 src/app/modules/feature_flags/
-├── __init__.py           # Exports: is_feature_enabled, get_feature_flags, update_feature_flag
+├── __init__.py           # Exports: FeatureFlagService, get_feature_flag_service, models, schemas, CRUD
 ├── router.py             # FastAPI routes
-├── service.py            # FeatureFlagsService business logic
+├── service.py            # FeatureFlagService business logic (the single flag API)
 ├── schemas.py            # Pydantic schemas
 ├── models.py             # SQLAlchemy models (FeatureFlag, FeatureFlagOverride)
 ├── crud.py               # FastCRUD operations
-└── utils.py              # Convenience functions
+└── utils.py              # get_feature_flags() thin tenant-JSONB read only
 ```
+
+B7: the legacy JSONB shims (`is_feature_enabled` / `update_feature_flag` /
+`bulk_update_feature_flags`) were REMOVED. `FeatureFlagService` is the
+single flag module; `utils.py` retains only the `get_feature_flags`
+tenant-JSONB read (with cache).
+
+### B7 Precedence Contract (highest wins)
+
+Flag resolution order — implemented in `service.py::is_enabled` and
+`get_flag_value`:
+
+1. **Tenant override** — `FeatureFlagOverride.custom_value` (per-tenant row)
+2. **Registry default** — `FeatureFlag.default_value` (global flag row)
+3. **Legacy tenant JSONB** — `Tenant.feature_flags` dict
+4. **Caller default** — the `default=` argument
+
+`is_enabled()` is boolean-only (no coercion of string/number flags — use
+`get_flag_value()` or `get_tenant_flags()` for typed values). Result state
+is cached per tenant+flag in Redis; mutations go through
+`_invalidate_cache`.
 
 ### Feature Flag Storage
 ✅ DO: Store flags as JSONB on tenant model for performance
@@ -39,87 +59,51 @@ feature_flags: dict[str, Any] = Column(JSONB, nullable=True, default=dict)
 ```
 
 ### Check if Feature is Enabled
-✅ DO: Use async utility function for feature checks
+✅ DO: Use FeatureFlagService for feature checks
 ```python
-# src/app/modules/feature_flags/utils.py (lines 1-30)
-async def is_feature_enabled(db: AsyncSession, tenant_id: str, flag_name: str) -> bool:
-    """Check if a feature flag is enabled for a tenant."""
-    tenant = await db.get(Tenant, tenant_id)
-    if not tenant or not tenant.feature_flags:
-        return False
-    return tenant.feature_flags.get(flag_name, False)
+from src.app.modules.feature_flags import FeatureFlagService
+
+service = FeatureFlagService(db)
+enabled = await service.is_enabled(tenant_id, "advanced_reporting")
+# Typed value (string/number/json flags):
+value = await service.get_flag_value(tenant_id, "limits", default=None)
 ```
 
-❌ DON'T: Query FeatureFlag model directly for tenant-level checks - use tenant.feature_flags JSONB
+❌ DON'T: Query FeatureFlag/Tenant models directly for tenant-level checks —
+route through the service so the B7 precedence and cache invalidation apply.
 
 ### Get All Feature Flags
-✅ DO: Return entire feature_flags JSONB object
+✅ DO: Read the merged per-tenant flag map via the service
 ```python
-# src/app/modules/feature_flags/router.py (lines 26-40)
+# src/app/modules/feature_flags/router.py (list endpoint)
 @router.get("", response_model=FeatureFlagsResponse)
-async def list_feature_flags(
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
-) -> FeatureFlagsResponse:
-    tenant_id = current_tenant.id if hasattr(current_tenant, "id") else current_tenant
-    flags = await get_feature_flags(db, tenant_id)
+async def list_feature_flags(ctx: RequestContextDep) -> FeatureFlagsResponse:
+    flags = await ctx.service.get_tenant_flags(ctx.tenant_id)
     return FeatureFlagsResponse(flags=flags)
 ```
 
-### Update Feature Flag
-✅ DO: Update tenant.feature_flags JSONB and commit
+### Update / Delete / Bulk-Update Flags
+✅ DO: Mutate through the service (cache invalidation included)
 ```python
-# src/app/modules/feature_flags/router.py (lines 65-106)
-@router.patch("/{flag_name}", response_model=FeatureFlagCheckResponse)
-async def update_feature_flag(
-    flag_name: str,
-    request: FeatureFlagUpdateRequest,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
-) -> FeatureFlagCheckResponse:
-    tenant_id = current_tenant.id if hasattr(current_tenant, "id") else current_tenant
-    query = select(Tenant).where(Tenant.id == tenant_id)
-    result = await db.execute(query)
-    tenant = result.scalar_one()
-
-    if tenant.feature_flags is None:
-        tenant.feature_flags = {}
-
-    flags = dict(tenant.feature_flags)
-    flags[flag_name] = request.value
-    tenant.feature_flags = flags
-
-    await db.commit()
-    await db.refresh(tenant)
-
-    return FeatureFlagCheckResponse(flag_name=flag_name, enabled=request.value)
+await service.update_tenant_flag(tenant_id, flag_name, value)
+await service.delete_tenant_flag(tenant_id, flag_name)
+await service.bulk_update_tenant_flags(tenant_id, {"dark_mode": True, "theme": "dark"})
 ```
 
 ### User-Level Overrides
-✅ DO: Use FeatureFlagOverride model for per-user flag values
+✅ DO: Use FeatureFlagOverride rows for per-tenant custom values
 ```python
-# src/app/modules/feature_flags/service.py (lines 47-78)
-async def is_feature_enabled(
-    self, db: AsyncSession, flag_name: str, user_id: Optional[int], tenant_id: int
-) -> bool:
-    flag = await self.get_flag(db, flag_name, tenant_id)
-    if not flag:
-        return False
-    if not flag.is_enabled:
-        return False
-    if not user_id:
-        return True
-    user_override = await self.get_override(db, flag_name, user_id, tenant_id)
-    if user_override:
-        return user_override.is_enabled
-    return True
+override = await service.get_override(flag_id, tenant_id)
+await service.create_override(FeatureFlagOverrideCreate(...))
 ```
+Overrides resolve at precedence tier 1 (see B7 above); `custom_value` may be
+a plain value or `{"value": ...}` / `{"enabled": ...}`.
 
 ## Touch Points / Key Files
 
-### Core Functions
-- Utils: `src/app/modules/feature_flags/utils.py` - `is_feature_enabled()`, `get_feature_flags()`, `update_feature_flag()`
-- Service: `src/app/modules/feature_flags/service.py` - `FeatureFlagsService` class
+### Core Service
+- Service: `src/app/modules/feature_flags/service.py` - `FeatureFlagService` (single flag API: is_enabled, get_flag_value, get_tenant_flags, update/delete/bulk_update_tenant_flag(s), overrides, warm_feature_flags)
+- Utils: `src/app/modules/feature_flags/utils.py` - `get_feature_flags()` thin tenant-JSONB read only (legacy shims removed)
 
 ### Router
 - Router: `src/app/modules/feature_flags/router.py` - API endpoints at `/api/v1/feature-flags`
@@ -137,13 +121,13 @@ async def is_feature_enabled(
 
 ```bash
 # Find feature flag checks
-rg -n "is_feature_enabled" src/app/
+rg -n "is_enabled|get_flag_value" src/app/modules/feature_flags/
 
 # Find feature flag routes
 rg -n "feature-flags" src/app/modules/feature_flags/
 
 # Find feature flag updates
-rg -n "update_feature_flag|bulk_update" src/app/modules/feature_flags/
+rg -n "update_tenant_flag|bulk_update_tenant_flags" src/app/modules/feature_flags/
 
 # Find flag usage in code
 rg -n "feature_flags\." src/app/modules/
@@ -158,24 +142,21 @@ rg -n "class.*FeatureFlag.*Schema" src/app/modules/feature_flags/
 ✅ DO: Flags can be any JSON-serializable type (bool, str, int, list, dict)
 ```python
 # Boolean flag
-await update_feature_flag(db, tenant_id, "dark_mode", True)
+await service.update_tenant_flag(tenant_id, "dark_mode", True)
 
 # String flag
-await update_feature_flag(db, tenant_id, "theme", "premium")
+await service.update_tenant_flag(tenant_id, "theme", "premium")
 
 # Object flag
-await update_feature_flag(db, tenant_id, "limits", {"max_users": 100})
+await service.update_tenant_flag(tenant_id, "limits", {"max_users": 100})
 ```
 
 ### Missing Flags
 ✅ DO: Return `False` or `None` for non-existent flags
 ```python
-# In router - the service raises a domain error; the central
+# The service raises a domain error; the central
 # EXCEPTION_HANDLERS table maps it to 404 for DELETE on non-existent flag
 from src.app.shared.exceptions import ModelNotFoundError
-
-if tenant.feature_flags is None or flag_name not in tenant.feature_flags:
-    raise ModelNotFoundError("FeatureFlag", flag_name)
 ```
 
 ### Admin Protection
@@ -187,8 +168,8 @@ if tenant.feature_flags is None or flag_name not in tenant.feature_flags:
 ```
 
 ### Performance
-✅ DO: Cache frequently checked flags in Redis
-❌ DON'T: Query database on every `is_feature_enabled()` call in hot paths
+✅ DO: Cache frequently checked flags in Redis (is_enabled/get_tenant_flags already do)
+❌ DON'T: Query database on every `is_enabled()` call in hot paths
 
 ## Pre-PR Checks
 

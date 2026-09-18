@@ -10,8 +10,10 @@ from starlette.types import ASGIApp
 from src.app.core.config import settings
 from src.app.core.guard.ip_rules import IpRules
 from src.app.core.logger import get_logger
+from src.app.core.middleware_state import set_client_ip, set_whitelisted
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
 from src.app.core.utils.ip_utils import get_client_ip
+from src.app.middleware.request_id import request_id_from_scope, wrap_send_with_request_id
 
 logger = get_logger(__name__)
 
@@ -96,6 +98,12 @@ class IPFilterMiddleware:
             return await self.app(scope, receive, send)
 
         request = Request(scope, receive, send)
+        # P2: this middleware runs OUTSIDE RequestIDMiddleware (which is
+        # innermost), so its 403 short-circuits would otherwise lack
+        # X-Request-ID. Echo the same generate-or-propagate ID on every
+        # response here; setdefault keeps the inner middleware's header
+        # authoritative on pass-through responses.
+        send = wrap_send_with_request_id(send, request_id_from_scope(scope))
         path = request.url.path
 
         # Skip exempt paths
@@ -103,13 +111,17 @@ class IPFilterMiddleware:
             # R7 FIX: downstream middleware expects these state attributes on
             # every request; the bare early-return previously set neither,
             # causing fallback warnings and repeated client-IP parsing.
-            request.state.client_ip = get_client_ip(request)
-            request.state.ip_whitelisted = True
+            set_client_ip(request.state, get_client_ip(request))
+            # P2: exempt paths (health probes) are NOT trust signals — do not
+            # mark them whitelisted. Consumers (admission, attack detection)
+            # only read this flag on non-exempt paths, but a True here would
+            # leak a bogus trust signal into request.state.
+            set_whitelisted(request.state, False)
             return await self.app(scope, receive, send)
 
         client_ip = get_client_ip(request)
         # P3 FIX: Store computed IP for downstream middleware reuse
-        request.state.client_ip = client_ip
+        set_client_ip(request.state, client_ip)
 
         # BAD BOT FILTERING: Check User-Agent for known malicious scanners
         if settings.security.BAD_BOT_FILTER_ENABLED:
@@ -177,11 +189,11 @@ class IPFilterMiddleware:
                 log_security_event(event)
 
                 # Mark request as whitelisted for other middleware (e.g., rate limiting)
-                request.state.ip_whitelisted = True
+                set_whitelisted(request.state, True)
 
                 logger.debug("IP allowed via whitelist for", client_ip=client_ip, path=path)
                 return await self.app(scope, receive, send)
 
         # IP is allowed through
-        request.state.ip_whitelisted = False
+        set_whitelisted(request.state, False)
         return await self.app(scope, receive, send)

@@ -199,27 +199,28 @@ class TestHandleLoginIssuedEvent:
         await handle_login_issued_event({})
 
     @pytest.mark.asyncio
-    async def test_buffer_failure_falls_back_to_direct_insert(self):
+    async def test_writer_failure_is_best_effort_without_second_fallback(self) -> None:
         from src.app.modules.audit_logs.service import handle_login_issued_event
 
-        with patch(
-            "src.app.modules.audit_logs.service.buffer_audit_log",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("redis down"),
-        ):
-            with patch(
+        with (
+            patch(
+                "src.app.modules.audit_logs.service.buffer_audit_log",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("writer failed"),
+            ) as writer,
+            patch(
                 "src.app.modules.audit_logs.service._direct_insert_log", new_callable=AsyncMock
-            ) as mock_insert:
-                with patch("src.app.core.db.database.get_db_context") as ctx:
-                    ctx.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
-                    ctx.return_value.__aexit__ = AsyncMock(return_value=False)
-                    await handle_login_issued_event(
-                        {"user_id": "42", "channel": "mfa", "username": "alice"}
-                    )
+            ) as mock_insert,
+            patch("src.app.core.config.settings.auth.AUDIT_LOG_FAILURE_MODE", "fail_closed"),
+        ):
+            await handle_login_issued_event(
+                {"user_id": "42", "channel": "mfa", "username": "alice"}
+            )
 
-        mock_insert.assert_awaited_once()
-        log_data = mock_insert.call_args[0][0]
-        assert log_data["action"] == "auth.login"
+        writer.assert_awaited_once()
+        mock_insert.assert_not_awaited()
+        assert writer.await_args is not None
+        assert writer.await_args.args[0]["action"] == "auth.login"
 
 
 class TestDoorRequestForwarding:

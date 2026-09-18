@@ -25,6 +25,7 @@ from src.app.modules.feature_flags.schemas import (
     FeatureFlagRead,
     FeatureFlagUpdate,
 )
+from src.app.modules.feature_flags.utils import parse_flag_bool
 from src.app.modules.tenants.models import Tenant
 
 logger = get_logger(__name__)
@@ -351,6 +352,11 @@ class FeatureFlagService(BaseService[FeatureFlag]):
     async def is_enabled(self, tenant_id: UUID, feature_name: str, default: bool = False) -> bool:
         """Check if a feature is enabled for a tenant.
 
+        B7 precedence contract (highest wins): tenant override
+        (FeatureFlagOverride.custom_value) → registry default
+        (FeatureFlag.default_value) → legacy tenant JSONB
+        (Tenant.feature_flags) → ``default``.
+
         Boolean-only: string/number/json flags are NOT coerced here (a
         ``"false"`` string is not ``False``) — non-boolean flags evaluated
         through this method read as ``False`` unless literally ``"true"``.
@@ -370,8 +376,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
                 if cached_value is not None:
                     # BUG FIX: .decode() crashes when Redis has decode_responses=True
                     # (value is already a str). Use a safe conversion for both cases.
-                    val_str: str = (cached_value.decode() if isinstance(cached_value, bytes) else cached_value).lower()
-                    return val_str == "true"
+                    return parse_flag_bool(cached_value)
             except Exception as e:
                 # Q-M3: cache read failure serves DB-default flags while degraded.
                 logger.warning("Feature flag tenant cache get failed", cache_key=cache_key, error=str(e))
@@ -383,8 +388,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
                 try:
                     cached_value = await redis_client.get(cache_key)
                     if cached_value is not None:
-                        val_str = (cached_value.decode() if isinstance(cached_value, bytes) else cached_value).lower()
-                        return val_str == "true"
+                        return parse_flag_bool(cached_value)
                 except Exception as e:
                     # Q-M3: cache read failure serves DB-default flags while degraded.
                     logger.warning("Feature flag enabled-state cache get failed", cache_key=cache_key, error=str(e))
@@ -395,7 +399,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             flag = await self.get_flag_by_key_or_none(feature_name)
             if flag:
                 flag_id = int(get_user_attr(flag, "id", 0))
-                flag_default = bool(get_user_attr(flag, "default_value", False))
+                flag_default = parse_flag_bool(get_user_attr(flag, "default_value", False))
 
                 override = await self.get_override(flag_id, tenant_id)
 
@@ -404,13 +408,13 @@ class FeatureFlagService(BaseService[FeatureFlag]):
                     if custom_value is not None:
                         if isinstance(custom_value, dict):
                             if "value" in custom_value:
-                                enabled = bool(custom_value["value"])
+                                enabled = parse_flag_bool(custom_value["value"])
                             elif "enabled" in custom_value:
-                                enabled = bool(custom_value["enabled"])
+                                enabled = parse_flag_bool(custom_value["enabled"])
                             else:
-                                enabled = bool(custom_value)
+                                enabled = parse_flag_bool(custom_value)
                         else:
-                            enabled = bool(custom_value)
+                            enabled = parse_flag_bool(custom_value)
                     else:
                         enabled = flag_default
                 else:
@@ -418,7 +422,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             else:
                 tenant = await self.db.get(Tenant, tenant_id)
                 if tenant and tenant.feature_flags:
-                    enabled = bool(tenant.feature_flags.get(feature_name, default))
+                    enabled = parse_flag_bool(tenant.feature_flags.get(feature_name, default))
 
             if redis_client:
                 try:

@@ -1,6 +1,9 @@
 """Audit logging service for tracking system actions."""
 
-from datetime import UTC, datetime
+import csv
+import io
+from collections.abc import AsyncGenerator
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import UUID
 
@@ -12,10 +15,12 @@ from structlog import get_logger
 
 from src.app.core.db.database import get_db_context
 from src.app.core.db.tenant_crud import tenant_scope
+from src.app.core.json_utils import json_dumps
 from src.app.core.utils import cache as redis_cache
 from src.app.modules.audit_logs.models import AuditLog
-from src.app.modules.audit_logs.schemas import AuditLogEventData
-from src.app.modules.audit_logs.trail import system_tenant_id
+from src.app.modules.audit_logs.schemas import AuditExportCriteria
+from src.app.modules.audit_logs.trail import AuditGuarantee, audit, system_tenant_id
+from src.app.shared.exceptions import ValidationError
 
 if TYPE_CHECKING:
     pass
@@ -23,6 +28,32 @@ if TYPE_CHECKING:
 
 # A13: export ceiling lives with the service that enforces it (was in router).
 EXPORT_MAX_RECORDS = 100_000
+_EXPORT_COLUMNS = (
+    "id", "action", "user_id", "entity_type", "entity_id", "details", "ip_address", "user_agent", "created_at",
+)
+
+
+def _export_record(log: AuditLog) -> dict[str, Any]:
+    return {
+        "id": str(log.id),
+        "action": log.action,
+        "user_id": str(log.user_id) if log.user_id is not None else None,
+        "entity_type": log.entity_type,
+        "entity_id": str(log.entity_id) if log.entity_id else None,
+        "details": log.details,
+        "ip_address": log.ip_address,
+        "user_agent": log.user_agent,
+        "created_at": log.created_at.isoformat() if log.created_at else None,
+    }
+
+
+def _csv_cell(value: str | None) -> str:
+    if not value:
+        return ""
+    # Inspect significant text without removing whitespace from the exported cell.
+    trigger = value.lstrip()[:1]
+    unsafe = value[0] in ("\t", "\r") or trigger in ("=", "+", "-", "@", "|", "%")
+    return f"'{value}" if unsafe else value
 
 
 class _AuditFilter(NamedTuple):
@@ -36,11 +67,11 @@ class _AuditFilter(NamedTuple):
 def _compose_filters(stmt, tenant_id, f: _AuditFilter):
     """A13: single source of truth for audit-log list/export filters."""
     stmt = stmt.where(tenant_scope(AuditLog, tenant_id))
-    if f.action:
+    if f.action is not None:
         stmt = stmt.where(AuditLog.action == f.action)
-    if f.user_id:
+    if f.user_id is not None:
         stmt = stmt.where(AuditLog.user_id == f.user_id)
-    if f.entity_type:
+    if f.entity_type is not None:
         stmt = stmt.where(AuditLog.entity_type == f.entity_type)
     if f.start_date:
         stmt = stmt.where(AuditLog.created_at >= f.start_date)
@@ -53,6 +84,7 @@ logger = get_logger(__name__)
 
 # Audit log batching configuration
 AUDIT_LOG_BUFFER_KEY = "audit_log_buffer"
+AUDIT_LOG_DEAD_LETTER_KEY = "audit_log_dead_letter"
 AUDIT_LOG_BATCH_SIZE = 100
 AUDIT_LOG_MAX_FLUSH_PER_RUN = 1000
 # P2: bound the Redis buffer so a stalled flusher cannot grow it unbounded.
@@ -94,13 +126,128 @@ class AuditLogService:
         count: int = result.scalar_one()
         return int(count)
 
-    def export_stmt(self, tenant_id, f: _AuditFilter):
-        """P2-2: export SELECT statement; keeps query assembly in the service layer.
+    async def stream_export(self, criteria: AuditExportCriteria, actor: int) -> AsyncGenerator[bytes, None]:
+        """Validate and record an export before returning its lazy byte stream.
 
-        The router orders/executes the returned statement but never composes
-        filter criteria itself.
+        The caller must keep the session open while consuming the stream and
+        close the generator if consumption stops early. The export event records
+        an accepted request, not successful download completion.
+
+        The tenant is resolved ONCE here (request context wins; a mismatching
+        criteria.tenant_id raises) and that single value scopes the count, the
+        export audit event, and the streamed rows — never three independent
+        resolutions. ``record_count`` is the preflight count, not a snapshot
+        guarantee: concurrent writes can change the streamed rows.
+
+        Rows that fail mid-stream serialization yield a format-appropriate
+        ``_export_error`` sentinel row before the original error propagates, so
+        a truncated export is always self-describing and never a silent
+        success. Exports are best-effort snapshots, not transactional dumps.
+
+        P2: a long export pins one DB connection/cursor for the whole download;
+        run exports with a statement timeout and avoid concurrent exports per
+        worker. The yield_per=1000 server-side cursor is intentional — it keeps
+        memory bounded while preserving a consistent read.
         """
-        return _compose_filters(select(AuditLog), tenant_id, f)
+        from src.app.core.tenancy.context import get_current_tenant
+
+        # P1: single effective tenant — tenant_scope() lets an active context
+        # silently win over an explicit argument, so resolve explicitly and
+        # fail loudly on mismatch instead of scoping count/event/stream apart.
+        effective_tenant = criteria.tenant_id
+        ctx_tenant = get_current_tenant()
+        ctx_id = ctx_tenant.tenant_id if ctx_tenant and ctx_tenant.tenant_id else None
+        if ctx_id is not None:
+            if ctx_id != criteria.tenant_id:
+                raise ValidationError(
+                    f"Export tenant mismatch: criteria {criteria.tenant_id} != context {ctx_id}",
+                )
+            effective_tenant = ctx_id
+        filters = _AuditFilter(
+            action=criteria.action,
+            user_id=criteria.user_id,
+            entity_type=criteria.entity_type,
+            start_date=criteria.start_date,
+            end_date=criteria.end_date,
+        )
+        count = await self.export_count(effective_tenant, filters)
+        if count > EXPORT_MAX_RECORDS:
+            raise ValidationError(
+                f"Export exceeds maximum of {EXPORT_MAX_RECORDS} records. "
+                f"Found {count} records. Use date filtering to reduce the export size.",
+            )
+
+        export_log = await self.create_log(
+            tenant_id=effective_tenant,
+            user_id=actor,
+            action="audit_logs.export",
+            entity_type="audit_log",
+            entity_id=None,
+            details={"format": criteria.format, "record_count": count},
+        )
+        stmt = (
+            _compose_filters(select(AuditLog), effective_tenant, filters)
+            .where(AuditLog.id != export_log.id)
+            .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+            .limit(EXPORT_MAX_RECORDS)
+            .execution_options(yield_per=1000)
+        )
+        export_format = criteria.format
+
+        async def generate() -> AsyncGenerator[bytes, None]:
+            result = await self.db.stream(stmt)
+            try:
+                output = io.StringIO()
+                writer = csv.writer(output)
+                if export_format == "csv":
+                    writer.writerow(_EXPORT_COLUMNS)
+                    yield output.getvalue().encode("utf-8")
+                    output.seek(0)
+                    output.truncate(0)
+                elif export_format == "json":
+                    yield b"[\n"
+                first = True
+                async for log in result.scalars():
+                    try:
+                        record = _export_record(log)
+                        if export_format == "csv":
+                            record["details"] = json_dumps(log.details, as_str=True) if log.details else ""
+                            writer.writerow([_csv_cell(record[column]) for column in _EXPORT_COLUMNS])
+                            yield output.getvalue().encode("utf-8")
+                            output.seek(0)
+                            output.truncate(0)
+                        elif export_format == "jsonl":
+                            yield json_dumps(record) + b"\n"
+                        else:
+                            yield (b"" if first else b",\n") + json_dumps(record)
+                    except Exception as exc:
+                        # P2: a mid-stream serialization failure must never read
+                        # as a clean export — emit a sentinel row describing the
+                        # skipped record, then propagate so the truncation is
+                        # loud (the finally below still closes the cursor).
+                        logger.warning(
+                            "audit_export_row_failed",
+                            error_type=type(exc).__name__,
+                            log_action=getattr(log, "action", None),
+                        )
+                        marker = {"_export_error": True}
+                        if export_format == "csv":
+                            output.seek(0)
+                            output.truncate(0)
+                            writer.writerow(["", "_export_error", "", "", "", '{"_export_error":true}', "", "", ""])
+                            yield output.getvalue().encode("utf-8")
+                        elif export_format == "jsonl":
+                            yield json_dumps(marker) + b"\n"
+                        else:
+                            yield (b"" if first else b",\n") + json_dumps(marker)
+                        raise
+                    first = False
+                if export_format == "json":
+                    yield b"\n]"
+            finally:
+                await result.close()
+
+        return generate()
 
     async def create_log(
         self,
@@ -188,13 +335,13 @@ class AuditLogService:
         # AuditLogRead does not project nested user fields; avoid unnecessary LEFT OUTER JOIN
         query = select(AuditLog).where(tenant_scope(AuditLog, tenant_id))
 
-        if user_id:
+        if user_id is not None:
             query = query.where(AuditLog.user_id == user_id)
-        if action:
+        if action is not None:
             query = query.where(AuditLog.action == action)
-        if entity_type:
+        if entity_type is not None:
             query = query.where(AuditLog.entity_type == entity_type)
-        if entity_id:
+        if entity_id is not None:
             query = query.where(AuditLog.entity_id == entity_id)
         if start_date:
             query = query.where(AuditLog.created_at >= start_date)
@@ -230,13 +377,13 @@ class AuditLogService:
         total_col = func.count().over().label("total")
         query = select(AuditLog, total_col).where(tenant_scope(AuditLog, tenant_id))
 
-        if user_id:
+        if user_id is not None:
             query = query.where(AuditLog.user_id == user_id)
-        if action:
+        if action is not None:
             query = query.where(AuditLog.action == action)
-        if entity_type:
+        if entity_type is not None:
             query = query.where(AuditLog.entity_type == entity_type)
-        if entity_id:
+        if entity_id is not None:
             query = query.where(AuditLog.entity_id == entity_id)
         if start_date:
             query = query.where(AuditLog.created_at >= start_date)
@@ -258,13 +405,13 @@ class AuditLogService:
         # unavailable. Fall back to a cheap COUNT so pagination metadata stays
         # truthful (total must reflect the filtered set even when the page is empty).
         count_query = select(func.count()).select_from(AuditLog).where(tenant_scope(AuditLog, tenant_id))
-        if user_id:
+        if user_id is not None:
             count_query = count_query.where(AuditLog.user_id == user_id)
-        if action:
+        if action is not None:
             count_query = count_query.where(AuditLog.action == action)
-        if entity_type:
+        if entity_type is not None:
             count_query = count_query.where(AuditLog.entity_type == entity_type)
-        if entity_id:
+        if entity_id is not None:
             count_query = count_query.where(AuditLog.entity_id == entity_id)
         if start_date:
             count_query = count_query.where(AuditLog.created_at >= start_date)
@@ -301,95 +448,53 @@ class AuditLogService:
             )
 
 
-async def buffer_audit_log(log_data: dict[str, Any], db: AsyncSession | None = None) -> None:
-    """Buffer an audit log entry for async batch insert.
+async def buffer_audit_log(log_data: dict[str, Any]) -> None:
+    """Await buffer acceptance, falling back once to an independent DB commit.
 
-    Uses Redis LPUSH for O(1) buffering instead of immediate DB write.
-    Falls back to direct insert if Redis is unavailable.
-
-    Args:
-        log_data: Audit log data to buffer
-        db: Optional DB session for fallback direct insert
+    Only canonical, validated audit payloads should reach this writer. Neither
+    this function nor its fallback uses or commits a caller's business session.
     """
     client = redis_cache.client
     if client is None:
         logger.warning("audit_log_redis_unavailable", action="direct_insert")
-        await _direct_insert_log(log_data, db)
+        await _direct_insert_log(log_data)
         return
 
     try:
-        # BUG FIX: Push new items to the right side (tail) of the buffer list.
-        # This converts the batch processor's execution behavior to strict FIFO, securely
-        # preventing older events from starving endlessly natively under LPUSH + LTRIM bounds.
-        # P2: bound the buffer in the same RTT (ltrim keeps newest MAXLEN at the tail).
         pipe = client.pipeline()
         pipe.rpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))
         pipe.ltrim(AUDIT_LOG_BUFFER_KEY, -AUDIT_LOG_BUFFER_MAXLEN, -1)
         await pipe.execute()  # type: ignore[misc]
-    except RedisError as e:
-        logger.warning("audit_log_buffer_failed", error=str(e), action="fallback_direct")
-        await _direct_insert_log(log_data, db)
+    except RedisError as exc:
+        logger.warning("audit_log_buffer_failed", error_type=type(exc).__name__, action="fallback_direct")
+        await _direct_insert_log(log_data)
 
-async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None = None) -> None:
-    """Fallback: directly insert audit log when Redis unavailable.
 
-    Args:
-        log_data: Log data
-        db: Optional DB session. If None, creates a new one.
-    """
-    tenant_id_val = system_tenant_id(reason="audit.missing_tenant_id")
-    if log_data.get("tenant_id"):
+async def _direct_insert_log(log_data: dict[str, Any]) -> None:
+    """Commit a validated audit payload in an owned session; propagate failures."""
+    from src.app.core.db.database import local_session
+
+    # Use the session context directly: get_db_context logs exception tracebacks
+    # that can include SQL parameters. Audit failures are logged safely at audit().
+    async with local_session() as db:
         try:
-            tenant_id_val = UUID(str(log_data["tenant_id"]))
+            user_id = int(log_data["user_id"]) if log_data["user_id"] is not None else None
         except (ValueError, TypeError):
-            # P2-2: garbage tenant IDs fall back to SYSTEM (audit must never
-            # crash the request); the constructor logs loudly so misconfig
-            # surfaces.
-            tenant_id_val = system_tenant_id(reason="audit.unparseable_tenant_id")
+            user_id = None
+        log_entry = AuditLog(
+            tenant_id=UUID(log_data["tenant_id"]),
+            user_id=user_id,
+            action=log_data["action"],
+            entity_type=log_data["entity_type"],
+            entity_id=log_data["entity_id"],
+            details=log_data["details"],
+            ip_address=log_data["ip_address"],
+            user_agent=log_data["user_agent"],
+        )
+        log_entry.created_at = datetime.fromisoformat(log_data["created_at"])
+        db.add(log_entry)
+        await db.commit()
 
-    user_id_val = None
-    if log_data.get("user_id"):
-        try:
-            user_id_val = int(log_data["user_id"])
-        except (ValueError, TypeError):
-            user_id_val = None
-
-    if db:
-        # Use provided session
-        try:
-            service = AuditLogService(db)
-            await service.create_log(
-                tenant_id=tenant_id_val,
-                action=log_data["action"],
-                entity_type=log_data.get("entity_type"),
-                entity_id=str(log_data["entity_id"]) if log_data.get("entity_id") is not None else None,
-                user_id=user_id_val,
-                details=log_data.get("details", {}),
-                ip_address=log_data.get("ip_address"),
-                user_agent=log_data.get("user_agent"),
-            )
-        except Exception as e:
-            logger.error("audit_log_direct_insert_failed", error=str(e))
-        return
-
-    # Fallback to creating new session
-    from src.app.core.db.database import get_db_context
-
-    async with get_db_context() as db:
-        try:
-            service = AuditLogService(db)
-            await service.create_log(
-                tenant_id=tenant_id_val,
-                action=log_data["action"],
-                entity_type=log_data.get("entity_type"),
-                entity_id=str(log_data["entity_id"]) if log_data.get("entity_id") is not None else None,
-                user_id=user_id_val,
-                details=log_data.get("details", {}),
-                ip_address=log_data.get("ip_address"),
-                user_agent=log_data.get("user_agent"),
-            )
-        except Exception as e:
-            logger.error("audit_log_direct_insert_failed", error=str(e))
 
 async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: AsyncSession | None = None) -> int:
     """Flush buffered audit logs to database in batch.
@@ -415,6 +520,8 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
 
     # Determine how many logs to retrieve (min of batch size and max flush limit)
     flush_limit = min(AUDIT_LOG_BATCH_SIZE, max_flush_per_run)
+    if flush_limit <= 0:
+        return 0
 
     # Atomically read and trim the bounded buffer window in a single pipeline.
     async with client.pipeline() as pipe:
@@ -428,20 +535,23 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     if not isinstance(logs_data, list):
         logs_data = [logs_data]
 
-    # Parse and create log entries
+    # Keep raw payloads until they are inserted or accepted by quarantine.
     log_dicts = []
+    valid_payloads = []
+    rejected_payloads = []
     for raw_data in logs_data:
         try:
             data = orjson.loads(raw_data)
-            tenant_id_val = system_tenant_id(reason="audit.flush_missing_tenant_id")
-            if data.get("tenant_id"):
-                try:
-                    tenant_id_val = UUID(str(data["tenant_id"]))
-                except (ValueError, TypeError):
-                    tenant_id_val = system_tenant_id(reason="audit.unparseable_tenant_id")
+            if not isinstance(data, dict):
+                raise ValueError("Audit payload must be an object")
+            tenant_id_val = (
+                UUID(str(data["tenant_id"]))
+                if data.get("tenant_id") is not None
+                else system_tenant_id(reason="audit.flush_missing_tenant_id")
+            )
 
             user_id_val = None
-            if data.get("user_id"):
+            if data.get("user_id") is not None:
                 try:
                     user_id_val = int(data["user_id"])
                 except (ValueError, TypeError):
@@ -460,8 +570,19 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
             if data.get("created_at"):
                 log_dict["created_at"] = datetime.fromisoformat(data["created_at"])
             log_dicts.append(log_dict)
-        except Exception as e:
-            logger.error("audit_log_parse_failed", error=str(e), raw_data=raw_data[:100])
+            valid_payloads.append(raw_data)
+        except (ValueError, TypeError, KeyError) as exc:
+            rejected_payloads.append(raw_data)
+            logger.error("audit_log_parse_failed", error_type=type(exc).__name__)
+
+    if rejected_payloads:
+        try:
+            await client.rpush(AUDIT_LOG_DEAD_LETTER_KEY, *rejected_payloads)  # type: ignore[misc]
+        except RedisError:
+            # Quarantine did not accept the records: restore the entire window.
+            await client.lpush(AUDIT_LOG_BUFFER_KEY, *reversed(logs_data))  # type: ignore[misc]
+            raise
+        logger.error("audit_logs_quarantined", count=len(rejected_payloads), key=AUDIT_LOG_DEAD_LETTER_KEY)
 
     if not log_dicts:
         return 0
@@ -494,18 +615,19 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
         # Re-push failed entries back to Redis to prevent data loss
         try:
             async with client.pipeline() as repush_pipe:
-                for entry_data in logs_data:
-                    repush_pipe.rpush(AUDIT_LOG_BUFFER_KEY, entry_data)
+                # LPUSH reverses arguments; reverse the batch to restore FIFO.
+                # Never trim here: every entry has already been accepted.
+                repush_pipe.lpush(AUDIT_LOG_BUFFER_KEY, *reversed(valid_payloads))
                 await repush_pipe.execute()
             logger.warning(
                 "audit_logs_repushed_after_failure",
-                count=len(logs_data),
+                count=len(valid_payloads),
             )
         except Exception as repush_err:
             logger.critical(
                 "audit_log_repush_failed_data_loss",
                 error=str(repush_err),
-                lost_count=len(logs_data),
+                lost_count=len(valid_payloads),
             )
         return 0
 
@@ -527,92 +649,33 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
 
 # Event handler for audit logs
 async def handle_audit_log_event(data: dict[str, Any]) -> None:
-    """Handle audit log events from the event bus.
+    """Adapt legacy bus payloads through canonical validation and delivery.
 
-    Buffers logs in Redis for batch insert instead of immediate DB write.
-    This reduces DB IOPS by ~99% at scale (1000 events = 10 batches vs 1000 writes).
-
-    Args:
-        data: Event payload containing audit log details
+    The adapter is best-effort; bus publication itself is not a REQUIRED audit.
     """
-    try:
-        validated = AuditLogEventData.model_validate(data)
-        log_data = {
-            "tenant_id": str(validated.tenant_id),
-            "action": validated.action,
-            "entity_type": validated.entity_type,
-            "entity_id": validated.entity_id,
-            "user_id": validated.user_id,
-            "details": validated.details,
-            "ip_address": validated.ip_address,
-            "user_agent": validated.user_agent,
-            "created_at": datetime.now(UTC).isoformat(),
-        }
-    except Exception as parse_err:
-        logger.warning("audit_log_schema_validation_failed", error=str(parse_err), raw_data=str(data)[:200])
-        tenant_val = data.get("tenant_id")
-        try:
-            tenant_uuid = (
-                str(UUID(str(tenant_val)))
-                if tenant_val and str(tenant_val) != "0"
-                else str(system_tenant_id(reason="audit.event_missing_tenant_id"))
-            )
-        except (ValueError, TypeError):
-            tenant_uuid = str(system_tenant_id(reason="audit.unparseable_tenant_id"))
-
-        entity_type = data.get("entity_type") or data.get("resource_type")
-        entity_id_val = data.get("entity_id") if data.get("entity_id") is not None else data.get("resource_id")
-
-        log_data = {
-            "tenant_id": tenant_uuid,
-            "action": data.get("action", "unknown"),
-            "entity_type": entity_type,
-            "entity_id": str(entity_id_val) if entity_id_val is not None else None,
-            "user_id": str(data["user_id"]) if data.get("user_id") is not None else None,
-            "details": data.get("details", {}),
-            "ip_address": data.get("ip_address"),
-            "user_agent": data.get("user_agent"),
-            "created_at": datetime.now(UTC).isoformat(),
-        }
-
-    try:
-        await buffer_audit_log(log_data)
-    except Exception as e:
-        # Broad exception handling is appropriate here to prevent
-        # audit logging failures from crashing the main application flow
-        logger.error("audit_log_event_failed", error=str(e), exc_info=True)
-        # Fallback inline mechanism to ensure log survives Redis failures
-        from src.app.core.db.database import get_db_context
-
-        try:
-            async with get_db_context() as db:
-                await _direct_insert_log(log_data, db)
-        except Exception as fallback_error:
-            logger.critical("audit_log_event_fallback_failed", error=str(fallback_error))
+    await audit(
+        action=data.get("action") or "unknown",
+        tenant_id=data.get("tenant_id"),
+        user_id=data.get("user_id"),
+        entity_type=data.get("entity_type"),
+        entity_id=data.get("entity_id"),
+        resource_type=data.get("resource_type"),
+        resource_id=data.get("resource_id"),
+        details=data.get("details"),
+        ip_address=data.get("ip_address"),
+        user_agent=data.get("user_agent"),
+        guarantee=AuditGuarantee.BEST_EFFORT,
+    )
 
 
 async def handle_login_issued_event(data: dict[str, Any]) -> None:
-    """Handle ``auth.login_issued`` events published at the TokenIssuer seam.
-
-    P2-#8: every login door (password, sso, passkey, magic_link, mfa) publishes
-    ``auth.login_issued`` from inside ``TokenIssuer.issue_session``; this
-    subscription writes the audit row so individual doors no longer carry the
-    success-path audit responsibility. Dashboard vocabulary is preserved:
-    SSO keeps ``auth.sso_login``, every other channel writes ``auth.login``,
-    and ``details.success`` stays ``True``.
-
-    Args:
-        data: Event payload with user_id, tenant_id, channel, username, email,
-            ip_address, user_agent and optional door-specific context (e.g.
-            SSO ``provider``).
-    """
+    """Adapt successful login facts without changing their tenant attribution."""
     channel = data.get("channel")
     user_id = data.get("user_id")
     if not channel or user_id is None:
-        logger.warning("login_issued_event_invalid_payload", channel=channel, has_user_id=user_id is not None)
+        logger.warning("login_issued_event_invalid_payload", has_channel=bool(channel), has_user_id=user_id is not None)
         return
 
-    action = "auth.sso_login" if channel == "sso" else "auth.login"
     details: dict[str, Any] = {
         "username": data.get("username"),
         "email": data.get("email"),
@@ -622,47 +685,14 @@ async def handle_login_issued_event(data: dict[str, Any]) -> None:
     if data.get("provider"):
         details["provider"] = data["provider"]
 
-    try:
-        tenant_id_val = data.get("tenant_id")
-        tenant_uuid = (
-            UUID(str(tenant_id_val))
-            if tenant_id_val
-            else system_tenant_id(reason="audit.login_issued_missing_tenant_id")
-        )
-
-        log_data = {
-            "tenant_id": str(tenant_uuid),
-            "action": action,
-            "entity_type": "user",
-            "entity_id": str(user_id),
-            "user_id": str(user_id),
-            "details": details,
-            "ip_address": data.get("ip_address"),
-            "user_agent": data.get("user_agent"),
-            "created_at": datetime.now(UTC).isoformat(),
-        }
-        await buffer_audit_log(log_data)
-    except Exception as e:
-        # Audit must never break the login flow that already succeeded.
-        logger.error("login_issued_audit_failed", error=str(e), channel=channel, exc_info=True)
-        from src.app.core.db.database import get_db_context
-
-        try:
-            async with get_db_context() as db:
-                await _direct_insert_log(
-                    {
-                        "tenant_id": str(system_tenant_id(reason="audit.login_issued_fallback")),
-                        "action": action,
-                        "entity_type": "user",
-                        "entity_id": str(user_id),
-                        "user_id": str(user_id),
-                        "details": details,
-                        "ip_address": data.get("ip_address"),
-                        "user_agent": data.get("user_agent"),
-                        "created_at": datetime.now(UTC).isoformat(),
-                    },
-                    db,
-                )
-        except Exception as fallback_error:
-            logger.critical("login_issued_audit_fallback_failed", error=str(fallback_error))
-
+    await audit(
+        action="auth.sso_login" if channel == "sso" else "auth.login",
+        tenant_id=data.get("tenant_id"),
+        user_id=user_id,
+        entity_type="user",
+        entity_id=user_id,
+        details=details,
+        ip_address=data.get("ip_address"),
+        user_agent=data.get("user_agent"),
+        guarantee=AuditGuarantee.BEST_EFFORT,
+    )

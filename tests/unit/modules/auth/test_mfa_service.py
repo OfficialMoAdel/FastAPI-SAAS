@@ -171,6 +171,49 @@ class TestVerifyTotpToken:
     """Test TOTP token verification."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["fresh", "reused", "missing", "error"])
+    async def test_replay_marker_is_required(self, mfa_service, mock_db, mode: str) -> None:
+        import pyotp
+
+        from src.app.modules.auth.schemas import MFAVerifyRequest
+        from src.app.modules.auth.services import mfa
+        from src.app.shared.exceptions import ServiceUnavailableError, ValidationError
+
+        secret = pyotp.random_base32()
+        code = pyotp.TOTP(secret).now()
+        redis = AsyncMock()
+        redis.set.return_value = mode == "fresh"
+        if mode == "error":
+            redis.set.side_effect = ConnectionError("Redis unavailable")
+        with (
+            patch.object(mfa.crud_mfa_methods, "get", return_value={"id": "method", "secret": "encrypted"}),
+            patch.object(mfa_service, "_decrypt_secret", return_value=secret),
+            patch.object(mfa_service, "_check_mfa_lockout", new_callable=AsyncMock),
+            patch.object(mfa_service, "_reset_mfa_lockout", new_callable=AsyncMock),
+            patch.object(mfa, "get_redis", return_value=None) as acquire,
+            patch("src.app.modules.users.crud.crud_users.get_user_with_tier_eager", return_value=None),
+            patch.object(mfa, "audit", new_callable=AsyncMock),
+        ):
+            kwargs = {"redis_client": redis} if mode != "missing" else {}
+            if mode == "fresh":
+                result = await mfa_service.verify_totp_token(
+                    12345, MFAVerifyRequest(totp_token=code), mock_db, prevent_replay=True, **kwargs
+                )
+                assert result["valid"] is True
+            else:
+                error = {"reused": ValidationError, "missing": ServiceUnavailableError, "error": ConnectionError}[mode]
+                with pytest.raises(error):
+                    await mfa_service.verify_totp_token(
+                        12345, MFAVerifyRequest(totp_token=code), mock_db, prevent_replay=True, **kwargs
+                    )
+                mock_db.commit.assert_not_awaited()
+            if mode != "missing":
+                acquire.assert_not_called()
+                redis.set.assert_awaited_once_with(
+                    f"mfa_used:12345:{code}", "1", nx=True, ex=mfa.TOTP_REPLAY_MARKER_TTL
+                )
+
+    @pytest.mark.asyncio
     async def test_verify_totp_token_not_enabled_raises_error(self, mfa_service, mock_db, mock_user_id):
         """Test verifying TOTP when MFA not enabled raises error."""
         from src.app.modules.auth.crud import crud_mfa_methods

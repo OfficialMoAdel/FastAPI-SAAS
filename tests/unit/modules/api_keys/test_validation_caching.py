@@ -188,11 +188,13 @@ class TestAPIKeyRevocationCacheInvalidation:
         with (
             patch("src.app.core.utils.cache.client") as mock_redis,
             patch.object(api_key_service, "crud") as mock_crud,
+            patch("src.app.modules.api_keys.service.audit", new_callable=AsyncMock) as mock_audit,
         ):
             mock_crud.update = AsyncMock()
             mock_redis.delete = AsyncMock()
 
             await api_key_service.revoke_api_key(key_id=42, user_id=1, tenant_id=1)
+            mock_audit.assert_awaited_once()
 
             # Verify cache was invalidated
             mock_redis.delete.assert_called_once()
@@ -218,10 +220,12 @@ class TestAPIKeyRevocationCacheInvalidation:
         with (
             patch("src.app.core.utils.cache.client", None),
             patch.object(api_key_service, "crud") as mock_crud,
+            patch("src.app.modules.api_keys.service.audit", new_callable=AsyncMock) as mock_audit,
         ):
             mock_crud.update = AsyncMock()
 
             result = await api_key_service.revoke_api_key(key_id=42, user_id=1, tenant_id=1)
+            mock_audit.assert_awaited_once()
 
             assert result["message"] == "API key revoked successfully"
             mock_crud.update.assert_called_once()

@@ -57,6 +57,26 @@ verification belong to their subservices
 `services/email_verification.py::EmailVerificationService`) — call them
 directly; `AuthService` carries no pass-throughs.
 
+### DO: Route MFA challenges and completion through `MFAService`
+
+- **Challenge** (`challenge_if_required`): all four login doors (password,
+  magic link, passkey, SSO) call this single method instead of hand-rolling
+  `is_mfa_enabled` + `TokenIssuer.issue_mfa_pending`. It returns a typed
+  `LoginMFAResponse` when MFA is enabled, `None` otherwise.
+- **Completion** (`complete_login`): the entire
+  `POST /auth/mfa/complete-login` workflow — `mfa_verify` security budget →
+  Redis availability → pending-token peek/scope → remaining TTL / IP grace →
+  factor verify (`prevent_replay=True`) → consume → account lookup — lives in
+  `services/mfa.py::MFAService.complete_login`, which returns `IssuedSession`
+  from `TokenIssuer`. `routers/mfa.py::complete_mfa_login` is a thin mapping
+  to `MFACompleteLoginResponse` (access token only; refresh stays in the
+  cookie set by `TokenIssuer`).
+- Per-endpoint rate-limit tests patch
+  `services.mfa.check_security_budget` (not the router's
+  `check_mfa_rate_limit`, which still guards the other MFA endpoints); the
+  orchestration contract lives in
+  `tests/unit/modules/auth/test_mfa_login_completion.py`.
+
 ### DO: Use the subservices for each identity mechanism
 
 - `services/tokens.py::TokenIssuer` — token issuance/refresh
@@ -83,6 +103,11 @@ Logout resolves the session id from the access token (`sid` claim → `jti` fall
 - Rate limiting: `rate_limit.py::check_auth_rate_limit` dependency on auth endpoints
 - Lockout: `LoginLockoutPolicy` (ban-before-refresh semantics enforced)
 - Client IP: always via `core.utils.ip_utils.get_client_ip` (proxy-aware)
+- Request state: read guard-set values (`client_ip`, `ip_whitelisted`,
+  `request_id`, `is_token_blacklisted`) via the `core.middleware_state` helpers
+  (`get_client_ip_state`, `is_whitelisted`, `get_request_id`,
+  `get_token_blacklisted`) — never direct `request.state.*` / `getattr` reads;
+  wire names on `request.state` stay unchanged
 - Events: emit via `core.events` (`EventPriority`) — e.g. security notifications — not direct cross-module service calls (only `users.service.UserService` is a sanctioned in-module dependency for auth-info lookup)
 
 ## Touch Points

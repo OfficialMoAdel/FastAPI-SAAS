@@ -4,13 +4,14 @@ This module is the single, canonical interface for publishing audit events acros
 It replaces raw, hand-built event_bus.publish("audit.log", {...}) payloads.
 """
 
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
 from structlog import get_logger
 
 from src.app.core.config import settings
-from src.app.core.events import EventPriority, event_bus
 from src.app.core.observability.log_sanitizer import LogSanitizer
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules.audit_logs.schemas import AuditLogEventData
@@ -18,6 +19,13 @@ from src.app.modules.audit_logs.schemas import AuditLogEventData
 logger = get_logger(__name__)
 
 SYSTEM_TENANT_ID = UUID(int=0)
+
+
+class AuditGuarantee(StrEnum):
+    """Delivery policy for the awaited audit writer, not a durability guarantee."""
+
+    BEST_EFFORT = "best_effort"
+    REQUIRED = "required"
 
 
 def system_tenant_id(*, reason: str) -> UUID:
@@ -92,12 +100,24 @@ async def audit(
     details: dict[str, Any] | None = None,
     ip_address: str | None = None,
     user_agent: str | None = None,
-    priority: EventPriority = EventPriority.NORMAL,
     *,
+    guarantee: AuditGuarantee | None = None,
     resource_type: str | None = None,
     resource_id: Any = None,
+    use_tenant_context: bool = True,
 ) -> None:
-    """Publish a typed, sanitized audit log event.
+    """Validate, sanitize, stamp, and deliver an audit event.
+
+    REQUIRED awaits Redis buffer acceptance or an independent DB fallback commit;
+    it does not promise crash-proof persistence or atomicity with business writes.
+    There is no shutdown flush: entries still sitting in the Redis buffer when the
+    process exits are delivered only by a later worker run. Paths that must persist
+    an entry (compliance-critical writes) should call
+    ``AuditLogService.create_log`` directly instead of relying on the buffer.
+    BEST_EFFORT uses the same writer but logs delivery failures without raising.
+    Validation errors and cancellation propagate under either policy. If omitted,
+    guarantee follows settings.auth.AUDIT_LOG_FAILURE_MODE (unknown values fail
+    closed to REQUIRED with a warning, never silently downgrade to BEST_EFFORT).
 
     Args:
         action: Dot-delimited action name (e.g. 'auth.login', 'user.created', 'system.rls_bypass')
@@ -108,13 +128,25 @@ async def audit(
         details: Additional context metadata dictionary (automatically sanitized for sensitive data)
         ip_address: Client IP address
         user_agent: Client User-Agent string
-        priority: Event publishing priority (default EventPriority.NORMAL)
+        guarantee: Named delivery policy; None uses the configured failure mode.
         resource_type: Alias for entity_type for backward compatibility
         resource_id: Alias for entity_id for backward compatibility
+        use_tenant_context: When False, a missing tenant_id falls back to the
+            system sentinel WITHOUT consulting ambient tenant context. Auth-door
+            (login/SSO) events must pass False so a stale request context can
+            never misattribute them; the fallback reason is preserved in the
+            details ``_tenant_fallback`` stamp.
     """
     resolved_entity_type = entity_type or resource_type
     resolved_entity_id = _coerce_entity_id(entity_id if entity_id is not None else resource_id)
-    resolved_tenant_id = _resolve_tenant_id(tenant_id)
+    if tenant_id is not None:
+        resolved_tenant_id = tenant_id
+    elif use_tenant_context:
+        resolved_tenant_id = _resolve_tenant_id(None)
+    else:
+        # P2: auth-door attribution is authoritative-or-system — ambient
+        # context must never leak into login/SSO rows.
+        resolved_tenant_id = system_tenant_id(reason="audit.auth_door_missing_tenant")
     if resolved_tenant_id == SYSTEM_TENANT_ID and tenant_id is None:
         # Sentinel attribution: enrich details so the row is greppable and
         # the fallback reason survives downstream (buffer → flush → insert).
@@ -136,21 +168,35 @@ async def audit(
     )
 
     payload = event_data.model_dump(mode="json")
+    payload["created_at"] = datetime.now(UTC).isoformat()
+    if guarantee is None:
+        # P3: unknown modes fail closed — an unrecognized value must never
+        # silently downgrade to BEST_EFFORT (fail open).
+        mode = settings.auth.AUDIT_LOG_FAILURE_MODE
+        if mode == "fail_closed":
+            guarantee = AuditGuarantee.REQUIRED
+        elif mode == "fail_open":
+            guarantee = AuditGuarantee.BEST_EFFORT
+        else:
+            logger.warning("audit_unknown_failure_mode", mode=mode)
+            guarantee = AuditGuarantee.REQUIRED
+    guarantee = AuditGuarantee(guarantee)
+
+    from src.app.modules.audit_logs.service import buffer_audit_log
 
     try:
-        await event_bus.publish(
-            "audit.log",
-            payload,
-            priority=priority,
+        await buffer_audit_log(payload)
+    except Exception as exc:
+        # Never log payloads, exception messages, or tracebacks containing inputs.
+        logger.warning(
+            "audit_delivery_failed", action=action, guarantee=guarantee.value, error_type=type(exc).__name__
         )
-    except Exception as e:
-        logger.warning("audit_publish_failed", action=action, error=str(e))
-        fail_mode = getattr(getattr(settings, "auth", None), "AUDIT_LOG_FAILURE_MODE", "fail_closed")
-        if fail_mode == "fail_closed":
+        if guarantee == AuditGuarantee.REQUIRED:
             raise
 
 __all__ = [
     "SYSTEM_TENANT_ID",
+    "AuditGuarantee",
     "audit",
     "system_tenant_id",
 ]

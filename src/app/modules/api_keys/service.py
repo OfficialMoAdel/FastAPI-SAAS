@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.events import EventPriority, event_bus
+from src.app.core.events import event_bus
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 
@@ -591,7 +591,6 @@ class APIKeyService(BaseService[APIKey]):
                 "grace_period_days": grace_period_days,
                 "old_key_expires_at": grace_expires_at.isoformat(),
             },
-            priority=EventPriority.NORMAL,
         )
 
         logger.info(

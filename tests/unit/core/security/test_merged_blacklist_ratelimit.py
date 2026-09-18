@@ -95,6 +95,31 @@ class TestMergedBlacklistRateLimit:
         assert rl == (False, 99, 0)
 
     @pytest.mark.asyncio
+    async def test_blacklisted_premium_resolves_anonymous_limit_not_premium(self):
+        """P1: the anonymous (downgrade) candidate must resolve with
+        tier_id=None — a revoked premium token must not keep premium
+        per-path policy via the numeric tier cache."""
+        mock_exec = AsyncMock(return_value=[1, 1, 99, 0, 0, "", 0])
+        ctx = _patch_common(mock_lua_execute=mock_exec)
+        resolve_mock = ctx["patches"][1].start()
+        for p in ctx["patches"][2:]:
+            p.start()
+        try:
+            verdict, limit, period, key, ban_info, rl = await check_ban_blacklist_and_rate_limit(
+                **_base_kwargs()
+            )
+        finally:
+            for p in ctx["patches"]:
+                p.stop()
+
+        assert verdict is True
+        calls = resolve_mock.await_args_list
+        # First call: authed candidate keeps the caller's tier_id.
+        assert calls[0].kwargs["tier_id"] == 7
+        # Second call: anonymous candidate clears the whole tier identity.
+        assert calls[1].kwargs["tier_id"] is None
+
+    @pytest.mark.asyncio
     async def test_banned_ip_returns_ban_info(self):
         mock_exec = AsyncMock(return_value=[0, 0, 0, 5000, 1, "spam", 300])
         ctx = _patch_common(mock_lua_execute=mock_exec)
@@ -291,11 +316,11 @@ class TestMergedMiddlewarePath:
         orig = auto_ban_mod.check_ban_blacklist_and_rate_limit
         with (
             patch(
-                "src.app.middleware.rate_limit.settings.security.AUTO_BAN_ENABLED",
+                "src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED",
                 True,
             ),
             patch(
-                "src.app.middleware.rate_limit.get_cached_jwt_payload",
+                "src.app.core.security.request_admission.get_cached_jwt_payload",
                 return_value=claims,
             ),
             patch(
@@ -308,11 +333,11 @@ class TestMergedMiddlewarePath:
                 return_value=(fake, False),
             ),
             patch(
-                "src.app.middleware.rate_limit.check_ban_blacklist_and_rate_limit",
+                "src.app.core.security.request_admission.check_ban_blacklist_and_rate_limit",
                 wraps=orig,
             ) as mock_merged,
             patch(
-                "src.app.middleware.rate_limit.check_ban_and_rate_limit",
+                "src.app.core.security.request_admission.check_ban_and_rate_limit",
                 side_effect=AssertionError("legacy path must not run for authed requests"),
             ),
         ):

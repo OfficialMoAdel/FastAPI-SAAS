@@ -14,10 +14,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep
-from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
-from src.app.core.redis_provider import get_redis
-from src.app.core.security import get_mfa_pending_token_manager
 from src.app.core.security.rate_policy import check_security_budget
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.auth.schemas import (
@@ -32,8 +29,6 @@ from src.app.modules.auth.schemas import (
     MFAVerifyResponse,
 )
 from src.app.modules.auth.services.mfa import MFAService, get_mfa_service
-from src.app.modules.auth.services.tokens import TokenIssuer
-from src.app.modules.users import get_user_service
 from src.app.shared.exceptions import (  # noqa: F401 — re-exported for test patch targets
     RateLimitExceededError,
     UnauthorizedError,
@@ -306,102 +301,7 @@ async def complete_mfa_login(
         RateLimitExceededError: If too many verification attempts.
         UnauthorizedError: If MFA pending token or code is invalid.
     """
-    # Check rate limit (use MFA pending token as identifier)
-    await check_mfa_rate_limit(fastapi_request, identifier=request.mfa_token)
-
-    # Validate MFA pending token
-    # Use the live seam (refreshed by tests per-loop)
-    client = get_redis()
-    if not client:
-        raise UnauthorizedError("Authentication service unavailable")
-
-    from src.app.core.utils.ip_utils import get_client_ip
-
-    client_ip = get_client_ip(fastapi_request)
-
-    token_store = get_mfa_pending_token_manager(client)
-    # R1-1: peek first, verify TOTP, consume only on success — a typo'd code
-    # must not destroy the 5-minute pending token (previously consume ran
-    # before verification, forcing a full password re-login on any mistake).
-    # Double-submit is still single-flighted: the TOTP replay marker rejects
-    # a reused code, and the consume below rejects a reused pending token.
-    token_data = await token_store.peek(request.mfa_token)
-
-    if not token_data or token_data.get("scope") != "mfa_pending":
-        raise UnauthorizedError("Invalid or expired MFA pending token")
-
-    # S-M3: read the token's remaining TTL while it still exists — it is the
-    # clock for the IP-rotation grace window below (the common same-IP path
-    # discards it and pays no extra RTT beyond this single read).
-    remaining_ttl = await token_store.remaining_ttl(request.mfa_token)
-
-    stored_ip = token_data.get("ip_address")
-    if stored_ip and stored_ip != client_ip:
-        from src.app.core.logger import get_logger
-
-        logger = get_logger(__name__)
-        logger.warning("MFA IP mismatch", stored_ip=stored_ip, client_ip=client_ip, user_id=token_data.get("user_id"))
-        # SECURITY FIX (M-1) + S-M3: reject IP mismatch so a stolen 5-minute
-        # MFA pending token cannot be completed from another machine. Escape
-        # hatch for networks that legitimately rotate the client IP mid-login
-        # (mobile carriers): the token was minted at login, so a fresh token
-        # seen from a new IP is a plausible mid-login rotation — accept while
-        # the token is younger than MFA_IP_BINDING_GRACE_SECONDS. A
-        # near-expiry token from a new IP is not plausible and is rejected.
-        if settings.auth.MFA_ENFORCE_IP_BINDING:
-            grace = settings.auth.MFA_IP_BINDING_GRACE_SECONDS
-            token_age = settings.auth.MFA_PENDING_EXPIRY_SECONDS - remaining_ttl
-            within_grace = grace > 0 and 0 <= token_age <= grace
-            if not within_grace:
-                raise UnauthorizedError(
-                    "MFA verification rejected: IP address changed since login. Please try again."
-                )
-
-    user_id = token_data.get("user_id")
-    username = token_data.get("username")
-
-    if not user_id or not username:
-        raise UnauthorizedError("Invalid MFA pending token")
-
-    # Verify MFA code
-    verify_request = MFAVerifyRequest(
-        totp_token=request.totp_token,
-        backup_code=request.backup_code,
-    )
-    verify_result = await service.verify_totp_token(
-        user_id=user_id,
-        request=verify_request,
-        db=db,
-        prevent_replay=True,
-    )
-
-    if not verify_result.get("valid"):
-        raise UnauthorizedError("Invalid MFA code")
-
-    # R1-1: consume the pending token only after the second factor passed.
-    # A concurrent double-submit that already consumed it lands here with
-    # None → rejected, so exactly one issuance happens per pending token.
-    # (If issuance below fails after this consume, the user re-logs in —
-    # the safe direction: never two sessions from one pending token.)
-    consumed = await token_store.consume(request.mfa_token)
-    if consumed is None:
-        raise UnauthorizedError("Invalid or expired MFA pending token")
-
-    # Get user info for token generation
-    user_service = get_user_service(db)
-    user = await user_service.get_user_auth_info(username=username)
-
-    if not user or user.get("is_deleted") or not user.get("is_active", False):
-        raise UnauthorizedError("User account is no longer active")
-
-    issued = await TokenIssuer.issue_session(
-        user,
-        channel="mfa",
-        request=fastapi_request,
-        response=response,
-        subject=user["username"],
-        verify=False,  # MFA completion: session registered from unverified jti extraction
-    )
+    issued = await service.complete_login(request, db, fastapi_request=fastapi_request, response=response)
     return MFACompleteLoginResponse(
         access_token=issued.access_token,
         token_type="bearer",

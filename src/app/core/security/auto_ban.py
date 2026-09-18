@@ -365,7 +365,9 @@ async def check_ban_blacklist_and_rate_limit(
 
     Semantics are identical to running the two helpers separately:
     a ``is not False`` verdict downgrades to the anonymous candidate
-    (``tier_id`` still applies — only ``user_id``/``tier_name`` clear),
+    (the whole tier identity clears — ``user_id``/``tier_name`` AND
+    ``tier_id`` — so a revoked premium token cannot keep premium
+    per-path policy via the numeric tier cache),
     ``limit <= 0`` blocks without consuming budget, and the ban
     negative-cache is written (not read) on a clean verdict.
 
@@ -405,7 +407,9 @@ async def check_ban_blacklist_and_rate_limit(
         # fail-open/fail-closed policy on the anonymous candidate.
         verdict: bool | None = True if fail_closed else None
         anon_key = build_rate_limit_key(path, user_id=None, tenant_id=tenant_id, anonymous_ip=anonymous_ip)
-        sel_limit, sel_period = await resolve_rate_limits(path, tier_id=tier_id_raw, tier_name=None, user_id=None)
+        # P1: a downgraded identity must resolve the anonymous DEFAULT, not
+        # premium per-path policy via the numeric tier cache.
+        sel_limit, sel_period = await resolve_rate_limits(path, tier_id=None, tier_name=None, user_id=None)
         if settings.rate_limit.RATE_LIMIT_FAIL_OPEN:
             from src.app.core.monitoring.r1_unified_metrics import record_fail_open
 
@@ -419,11 +423,14 @@ async def check_ban_blacklist_and_rate_limit(
         return verdict, sel_limit, sel_period, anon_key, BanInfo(is_banned=False), (True, sel_limit, 0)
 
     # Resolve BOTH candidates up front (L1/settings-backed, no extra RTT).
+    # The anonymous candidate clears the WHOLE tier identity (tier_id
+    # included) — a blacklisted token must not keep premium per-path policy
+    # through the numeric tier cache.
     authed_limit, authed_period = await resolve_rate_limits(
         path, tier_id=tier_id_raw, tier_name=tier_name, user_id=user_id
     )
     authed_key = build_rate_limit_key(path, user_id=user_id, tenant_id=tenant_id, anonymous_ip=None)
-    anon_limit, anon_period = await resolve_rate_limits(path, tier_id=tier_id_raw, tier_name=None, user_id=None)
+    anon_limit, anon_period = await resolve_rate_limits(path, tier_id=None, tier_name=None, user_id=None)
     anon_key = build_rate_limit_key(path, user_id=None, tenant_id=tenant_id, anonymous_ip=anonymous_ip)
 
     def _selected(v: bool | None) -> tuple[str, int, int]:

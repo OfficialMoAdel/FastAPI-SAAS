@@ -1,0 +1,305 @@
+import time
+from dataclasses import dataclass, replace
+from typing import Any, Literal, NamedTuple, Protocol
+from urllib.parse import urlparse
+
+from fastapi import Request
+
+from src.app.core.config import settings
+from src.app.core.logger import get_logger
+from src.app.core.middleware_exempt import is_path_exempt
+from src.app.core.middleware_state import (
+    get_client_ip_state,
+    is_whitelisted,
+    set_token_blacklisted,
+)
+from src.app.core.security.auto_ban import (
+    BanInfo,
+    check_and_auto_ban,
+    check_ban_and_rate_limit,
+    check_ban_blacklist_and_rate_limit,
+    get_ban_info,
+)
+from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
+from src.app.core.security.rate_policy import RateLimitVerdict, build_rate_limit_key, resolve_rate_limits
+from src.app.core.utils.ip_utils import get_client_ip
+from src.app.core.utils.path_utils import sanitize_path
+from src.app.core.utils.rate_limit import rate_limiter
+
+logger = get_logger("src.app.middleware.rate_limit")
+
+# P1: exempt paths that still cross the ban boundary. Webhook receivers skip
+# rate limiting (third-party retries must never 429) but a banned IP stays
+# banned. Every other exempt path (health probes, docs) is fully unchecked.
+_BAN_CHECKED_EXEMPT_PREFIXES: tuple[str, ...] = (
+    "/api/v1/billing/webhook",
+    "/api/v1/webhooks/stripe",
+)
+
+
+@dataclass(frozen=True)
+class AdmissionOutcome:
+    action: Literal["passthrough", "reject_banned", "admit", "limited", "reject_auto_ban"]
+    client_ip: str
+    verdict: RateLimitVerdict | None = None
+    ban_info: BanInfo | None = None
+    violation_count: int = 0
+
+
+class RequestAdmission(Protocol):
+    async def evaluate(self, request: Request) -> AdmissionOutcome: ...
+
+
+class _RateLimitContext(NamedTuple):
+    user_id: Any
+    tier_name: Any
+    tenant_id: Any
+    tier_id_raw: Any
+    token: str | None
+    jti: str | None
+    path: str
+
+
+class RequestAdmissionService:
+    async def evaluate(self, request: Request) -> AdmissionOutcome:
+        client_ip = get_client_ip_state(request.state) or get_client_ip(request)
+        norm_path = urlparse(str(request.url)).path.rstrip("/").lower() or "/"
+        if request.method == "OPTIONS":
+            return await self._passthrough_unless_banned(client_ip)
+        if is_path_exempt(norm_path):
+            if norm_path in _BAN_CHECKED_EXEMPT_PREFIXES or norm_path.startswith(
+                tuple(f"{prefix}/" for prefix in _BAN_CHECKED_EXEMPT_PREFIXES)
+            ):
+                return await self._passthrough_unless_banned(client_ip)
+            return AdmissionOutcome("passthrough", client_ip)
+        if norm_path in ("/api/v1/auth/refresh", "/api/v1/account/refresh"):
+            return await self._passthrough_unless_banned(client_ip)
+
+        if settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT:
+            if hasattr(request.state, "ip_whitelisted"):
+                is_white = is_whitelisted(request.state)
+            else:
+                logger.warning(
+                    "RateLimitMiddleware: ip_whitelisted attribute not set. "
+                    "Ensure IPFilterMiddleware is enabled and ordered before RateLimitMiddleware."
+                )
+                is_white = False
+            if is_white:
+                # P1: whitelist bypasses the *counter*, never the ban. A
+                # banned IP stays rejected even when whitelisted.
+                if settings.security.AUTO_BAN_ENABLED:
+                    ban_info = await get_ban_info(client_ip)
+                    if ban_info.is_banned:
+                        return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
+                return AdmissionOutcome(
+                    "admit",
+                    client_ip,
+                    RateLimitVerdict(
+                        is_limited=False,
+                        limit=999999,
+                        period=60,
+                        remaining=999999,
+                        retry_after=0,
+                        key="whitelisted",
+                        headers={
+                            "X-RateLimit-Limit": "999999",
+                            "X-RateLimit-Remaining": "999999",
+                            "X-RateLimit-Period": "60",
+                            "X-RateLimit-Whitelisted": "true",
+                        },
+                        bypassed=True,
+                    ),
+                )
+
+        ctx = await self._get_rate_limit_config(request)
+        if settings.security.AUTO_BAN_ENABLED and ctx.user_id and ctx.token:
+            (
+                is_blacklisted,
+                limit,
+                period,
+                key,
+                ban_info,
+                (is_limited, remaining, retry_after),
+            ) = await check_ban_blacklist_and_rate_limit(
+                client_ip=client_ip,
+                token=ctx.token,
+                jti=ctx.jti,
+                user_id=ctx.user_id,
+                tier_name=ctx.tier_name,
+                tenant_id=ctx.tenant_id,
+                tier_id_raw=ctx.tier_id_raw,
+                anonymous_ip=client_ip,
+                path=ctx.path,
+            )
+            set_token_blacklisted(request.state, is_blacklisted)
+            if is_blacklisted is not False:
+                logger.info(
+                    "Blacklisted/unknown token detected in rate limiter | user_id=%s | treating as anonymous",
+                    ctx.user_id,
+                )
+                if ctx.tier_id_raw is not None:
+                    # P1: a downgraded identity must not keep premium tier
+                    # policy. The merged helper now resolves the anonymous
+                    # candidate with tier_id=None itself; this re-check is a
+                    # belt-and-braces guard for any residual mismatch (and
+                    # covers callers that pre-date the helper fix).
+                    anon_limit, anon_period = await resolve_rate_limits(
+                        ctx.path, tier_id=None, tier_name=None, user_id=None
+                    )
+                    if (anon_limit, anon_period) != (limit, period):
+                        logger.warning(
+                            "Downgraded token kept tier policy; re-checking anonymous budget"
+                            " | user_id=%s | tier_id=%s | path=%s",
+                            ctx.user_id,
+                            ctx.tier_id_raw,
+                            ctx.path,
+                        )
+                        key = build_rate_limit_key(
+                            ctx.path,
+                            user_id=None,
+                            tenant_id=ctx.tenant_id,
+                            anonymous_ip=client_ip,
+                        )
+                        is_limited, remaining, retry_after = (
+                            await rate_limiter.check_rate_limit_algorithm(key, anon_limit, anon_period)
+                        )
+                        limit, period = anon_limit, anon_period
+            if ban_info.is_banned:
+                return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
+        else:
+            limit, period, key = await self._resolve_legacy_config(request, ctx)
+            if settings.security.AUTO_BAN_ENABLED:
+                ban_info, (is_limited, remaining, retry_after) = await check_ban_and_rate_limit(
+                    client_ip, key, limit, period
+                )
+                if ban_info.is_banned:
+                    return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
+            else:
+                is_limited, remaining, retry_after = await rate_limiter.check_rate_limit_algorithm(key, limit, period)
+
+        headers = {
+            "X-RateLimit-Limit": str(limit),
+            "X-RateLimit-Remaining": str(remaining),
+            "X-RateLimit-Period": str(period),
+        }
+        if is_limited:
+            if retry_after == 0:
+                retry_after = period - (int(time.time()) % period)
+            if retry_after > 0:
+                headers["Retry-After"] = str(int(retry_after))
+            logger.warning("Rate limit exceeded | key=%s | limit=%s | period=%s", key, limit, period)
+
+        verdict = RateLimitVerdict(
+            is_limited=is_limited,
+            limit=limit,
+            period=period,
+            remaining=remaining,
+            retry_after=retry_after,
+            key=key,
+            headers=headers,
+        )
+        if is_limited:
+            return await self._handle_violation(client_ip, verdict)
+        return AdmissionOutcome("admit", client_ip, verdict)
+
+    async def _passthrough_unless_banned(self, client_ip: str) -> AdmissionOutcome:
+        if settings.security.AUTO_BAN_ENABLED:
+            ban_info = await get_ban_info(client_ip)
+            if ban_info.is_banned:
+                return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
+        return AdmissionOutcome("passthrough", client_ip)
+
+    async def _handle_violation(self, client_ip: str, verdict: RateLimitVerdict) -> AdmissionOutcome:
+        if settings.security.AUTO_BAN_ENABLED and client_ip:
+            try:
+                was_banned, violation_count = await check_and_auto_ban(client_ip)
+            except Exception as auto_ban_err:
+                logger.warning(
+                    "Auto-ban check failed, skipping | ip=%s | error=%s",
+                    client_ip,
+                    auto_ban_err,
+                )
+                was_banned, violation_count = False, 0
+            if was_banned:
+                logger.warning(
+                    "Auto-ban triggered | ip=%s | violations=%d | threshold=%d",
+                    client_ip,
+                    violation_count,
+                    settings.security.AUTO_BAN_THRESHOLD,
+                )
+                # P3: RateLimitVerdict is frozen — build the final headers
+                # dict up front instead of mutating the shared mapping.
+                ban_headers = {
+                    **verdict.headers,
+                    "X-Banned": "true",
+                    "X-Ban-Reason": f"Auto-ban after {violation_count} violations",
+                }
+                try:
+                    fresh_ban_info = await get_ban_info(client_ip)
+                    if fresh_ban_info.expires_at:
+                        ban_retry_after = int(fresh_ban_info.expires_at - time.time()) + 1
+                        if ban_retry_after > 0:
+                            ban_headers["Retry-After"] = str(ban_retry_after)
+                except Exception:
+                    pass
+                verdict = replace(verdict, headers=ban_headers)
+                return AdmissionOutcome("reject_auto_ban", client_ip, verdict, violation_count=violation_count)
+        return AdmissionOutcome("limited", client_ip, verdict)
+
+    async def _get_rate_limit_config(self, request: Request) -> _RateLimitContext:
+        user_id = getattr(request.state, "user_id", None)
+        tier_name = getattr(request.state, "tier_name", None)
+        tenant_id = getattr(request.state, "tenant_id", None)
+        tier_id_raw = getattr(request.state, "tier_id", None)
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header[7:] if auth_header.lower().startswith("bearer ") else None
+        cached_payload = get_cached_jwt_payload(request)
+        if cached_payload is None and token:
+            cached_payload = await extract_jwt_claims_to_state(request)
+        if not user_id:
+            if cached_payload:
+                user_id = cached_payload.get("sub")
+                tier_name = cached_payload.get("tier_name")
+        if tenant_id is None and cached_payload:
+            tenant_id = cached_payload.get("tenant_id")
+        if tier_id_raw is None and cached_payload:
+            tier_id_raw = cached_payload.get("tier_id")
+        jti = cached_payload.get("jti") if cached_payload else None
+        # P1: the exempt checks in evaluate() match on the lowercased path —
+        # the bucket key must use the same normalization or /API/V1/X and
+        # /api/v1/x mint separate buckets (and dodge tier-policy matching).
+        path = sanitize_path(request.url.path.lower())
+        return _RateLimitContext(user_id, tier_name, tenant_id, tier_id_raw, token, jti, path)
+
+    async def _resolve_legacy_config(self, request: Request, ctx: _RateLimitContext) -> tuple[int, int, str]:
+        user_id = ctx.user_id
+        tier_name = ctx.tier_name
+        tier_id = ctx.tier_id_raw
+        if user_id and ctx.token:
+            from src.app.core.security.token_blacklist_cache import is_token_blacklisted
+
+            is_blacklisted = await is_token_blacklisted(ctx.token, jti=ctx.jti)
+            set_token_blacklisted(request.state, is_blacklisted)
+            if is_blacklisted is not False:
+                logger.info(
+                    "Blacklisted/unknown token detected in rate limiter | user_id=%s | treating as anonymous",
+                    user_id,
+                )
+                # P1: downgrade clears the whole tier identity so resolution
+                # falls to the anonymous default — keeping tier_id would let
+                # a revoked premium token keep premium per-path policy.
+                user_id = None
+                tier_name = None
+                tier_id = None
+        limit, period = await resolve_rate_limits(
+            ctx.path, tier_id=tier_id, tier_name=tier_name, user_id=user_id
+        )
+        raw_ip = get_client_ip_state(request.state) if not user_id else None
+        if not isinstance(raw_ip, str) or not raw_ip or raw_ip == "unknown":
+            raw_ip = get_client_ip(request) if not user_id else None
+        # P2: collapse missing/unparseable client IPs to None so they share
+        # one explicit "unknown" bucket instead of colliding with (or
+        # fragmenting around) a literal IP-looking string.
+        anonymous_ip = raw_ip if isinstance(raw_ip, str) and raw_ip and raw_ip != "unknown" else None
+        key = build_rate_limit_key(ctx.path, user_id=user_id, tenant_id=ctx.tenant_id, anonymous_ip=anonymous_ip)
+        return limit, period, key

@@ -15,6 +15,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.app.modules.auth.services.mfa import MFAService
+
 
 class TestPasskeyAuthenticationChallengeGeneration:
     """Tests for authentication challenge generation (login initiation)."""
@@ -146,6 +148,25 @@ class TestPasskeyAuthenticationVerification:
                 )
 
             assert "invalid passkey assertion" in str(exc_info.value.detail).lower()  # P1: oracle collapsed to generic
+
+    @pytest.mark.asyncio
+    async def test_missing_redis_rejects_before_mfa_or_issuance(self) -> None:
+        from src.app.modules.auth.services.passkey import PasskeyService
+        from src.app.shared.exceptions import ValidationError
+
+        service = PasskeyService()
+        with (
+            patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as challenge,
+            patch.object(MFAService, "challenge_if_required", new_callable=AsyncMock) as mfa,
+            patch.object(service, "_generate_auth_tokens", new_callable=AsyncMock) as issue,
+        ):
+            with pytest.raises(ValidationError, match="Invalid passkey assertion"):
+                await service.verify_authentication(
+                    db=AsyncMock(), redis=None, credential={"id": "credential"}, challenge_id="challenge"
+                )
+            challenge.assert_not_awaited()
+            mfa.assert_not_awaited()
+            issue.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_verify_authentication_finds_credential(self):
@@ -290,6 +311,7 @@ class TestPasskeyAuthenticationVerification:
 
                                 with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):
                                     with patch("src.app.modules.auth.services.mfa.get_mfa_service") as mock_mfa:
+                                        mock_mfa.return_value = MFAService()
                                         mock_mfa.return_value.is_mfa_enabled = AsyncMock(return_value=False)
                                         await service.verify_authentication(
                                         db=mock_db,
@@ -356,6 +378,7 @@ class TestPasskeyAuthenticationVerification:
 
                                 with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):
                                     with patch("src.app.modules.auth.services.mfa.get_mfa_service") as mock_mfa:
+                                        mock_mfa.return_value = MFAService()
                                         mock_mfa.return_value.is_mfa_enabled = AsyncMock(return_value=False)
                                         result = await service.verify_authentication(
                                         db=mock_db,
@@ -422,6 +445,7 @@ class TestPasskeyAuthenticationVerification:
 
                                 with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):
                                     with patch("src.app.modules.auth.services.mfa.get_mfa_service") as mock_mfa:
+                                        mock_mfa.return_value = MFAService()
                                         mock_mfa.return_value.is_mfa_enabled = AsyncMock(return_value=False)
                                         await service.verify_authentication(
                                         db=mock_db,

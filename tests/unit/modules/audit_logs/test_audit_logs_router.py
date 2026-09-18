@@ -158,14 +158,17 @@ async def test_get_export_count(mock_service_cls, mock_ctx):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [ValidationError("Export exceeds maximum"), RuntimeError("audit write failed")],
+)
+@patch("src.app.modules.audit_logs.router.StreamingResponse")
 @patch("src.app.modules.audit_logs.router.AuditLogService")
-async def test_export_audit_logs_too_many(mock_service_cls, mock_ctx):
-    mock_service = MagicMock()
-    # EXPORT_MAX_RECORDS is 100_000, return more to trigger error
-    mock_service.export_count = AsyncMock(return_value=150000)
-    mock_service_cls.return_value = mock_service
+async def test_export_errors_propagate_before_response(mock_service_cls, response_cls, mock_ctx, error) -> None:
+    mock_service = mock_service_cls.return_value
+    mock_service.stream_export = AsyncMock(side_effect=error)
 
-    with pytest.raises(ValidationError, match="Export exceeds maximum"):
+    with pytest.raises(type(error)) as caught:
         await export_audit_logs(
             ctx=mock_ctx,
             format="csv",
@@ -176,136 +179,57 @@ async def test_export_audit_logs_too_many(mock_service_cls, mock_ctx):
             end_date=None,
         )
 
-
-@pytest.mark.asyncio
-@patch("src.app.modules.audit_logs.router.AuditLogService")
-async def test_export_audit_logs_csv(mock_service_cls, mock_ctx):
-    mock_service = MagicMock()
-    mock_service.create_log = AsyncMock()
-    mock_service_cls.return_value = mock_service
-
-    # A13: count comes from service.export_count, not raw db.execute
-    mock_service.export_count = AsyncMock(return_value=2)
-
-    # Mock stream
-    mock_log = MagicMock()
-    mock_log.id = uuid4()
-    mock_log.tenant_id = mock_ctx.tenant_id
-    mock_log.user_id = 1
-    mock_log.action = "test.action"
-    mock_log.entity_type = "test"
-    mock_log.entity_id = "123"
-    mock_log.details = {"key": "value"}
-    mock_log.ip_address = "127.0.0.1"
-    mock_log.user_agent = "agent"
-    mock_log.created_at = datetime.now(UTC)
-
-    async def async_gen():
-        yield mock_log
-
-    mock_stream_result = MagicMock()
-    mock_stream_result.scalars.return_value = async_gen()
-    mock_ctx.db.stream = AsyncMock(return_value=mock_stream_result)
-
-    result = await export_audit_logs(
-        ctx=mock_ctx,
-        format="csv",
-        action="test.action",
-        user_id=1,
-        entity_type="test",
-        start_date=datetime.now(UTC),
-        end_date=datetime.now(UTC),
-    )
-
-    assert result.media_type == "text/csv"
-
-    # To test streaming response content
-    body = b""
-    async for chunk in result.body_iterator:
-        if isinstance(chunk, str):
-            body += chunk.encode("utf-8")
-        else:
-            body += chunk
-
-    content = body.decode("utf-8")
-    assert "test.action" in content
+    assert caught.value is error
+    mock_service.stream_export.assert_awaited_once()
+    response_cls.assert_not_called()
+    mock_ctx.db.execute.assert_not_awaited()
+    mock_ctx.db.stream.assert_not_awaited()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("export_format", "content_type", "payload"),
+    [
+        ("csv", "text/csv; charset=utf-8", [b"action\r\n", b"test.action\r\n"]),
+        ("json", "application/json", [b"[", b'{"action":"test.action"}', b"]"]),
+        ("jsonl", "application/x-ndjson", [b'{"action":"test.action"}\n', b"{}\n"]),
+    ],
+)
+@pytest.mark.parametrize("filtered", [False, True])
 @patch("src.app.modules.audit_logs.router.AuditLogService")
-async def test_export_audit_logs_json(mock_service_cls, mock_ctx):
-    mock_service = MagicMock()
-    mock_service.create_log = AsyncMock()
-    mock_service_cls.return_value = mock_service
+async def test_export_delegates_criteria_and_streams_unchanged(
+    mock_service_cls, mock_ctx, export_format, content_type, payload, filtered
+) -> None:
+    from src.app.modules.audit_logs.schemas import AuditExportCriteria
 
-    mock_service.export_count = AsyncMock(return_value=1)
+    async def chunks():
+        for chunk in payload:
+            yield chunk
 
-    mock_log = MagicMock()
-    mock_log.id = uuid4()
-    mock_log.action = "test.action"
-    mock_log.created_at = datetime.now(UTC)
-    mock_log.user_id = None
-    mock_log.entity_type = None
-    mock_log.entity_id = None
-    mock_log.details = None
-    mock_log.ip_address = None
-    mock_log.user_agent = None
+    stream = chunks()
+    mock_service = mock_service_cls.return_value
+    mock_service.stream_export = AsyncMock(return_value=stream)
+    filters = {
+        "action": "test.action" if filtered else None,
+        "user_id": 42 if filtered else None,
+        "entity_type": "test" if filtered else None,
+        "start_date": datetime(2026, 1, 1, tzinfo=UTC) if filtered else None,
+        "end_date": datetime(2026, 2, 1, tzinfo=UTC) if filtered else None,
+    }
 
-    async def async_gen():
-        yield mock_log
+    result = await export_audit_logs(ctx=mock_ctx, format=export_format, **filters)
 
-    mock_stream_result = MagicMock()
-    mock_stream_result.scalars.return_value = async_gen()
-    mock_ctx.db.stream = AsyncMock(return_value=mock_stream_result)
-
-    result = await export_audit_logs(
-        ctx=mock_ctx,
-        format="json",
-        action=None,
-        user_id=None,
-        entity_type=None,
-        start_date=None,
-        end_date=None,
+    mock_service_cls.assert_called_once_with(mock_ctx.db)
+    mock_service.stream_export.assert_awaited_once_with(
+        AuditExportCriteria(tenant_id=mock_ctx.tenant_id, format=export_format, **filters),
+        actor=mock_ctx.user_id,
     )
-
-    assert result.media_type == "application/json"
-
-
-@pytest.mark.asyncio
-@patch("src.app.modules.audit_logs.router.AuditLogService")
-async def test_export_audit_logs_jsonl(mock_service_cls, mock_ctx):
-    mock_service = MagicMock()
-    mock_service.create_log = AsyncMock()
-    mock_service_cls.return_value = mock_service
-
-    mock_service.export_count = AsyncMock(return_value=1)
-
-    mock_log = MagicMock()
-    mock_log.id = uuid4()
-    mock_log.action = "test.action"
-    mock_log.created_at = datetime.now(UTC)
-    mock_log.user_id = None
-    mock_log.entity_type = None
-    mock_log.entity_id = None
-    mock_log.details = None
-    mock_log.ip_address = None
-    mock_log.user_agent = None
-
-    async def async_gen():
-        yield mock_log
-
-    mock_stream_result = MagicMock()
-    mock_stream_result.scalars.return_value = async_gen()
-    mock_ctx.db.stream = AsyncMock(return_value=mock_stream_result)
-
-    result = await export_audit_logs(
-        ctx=mock_ctx,
-        format="jsonl",
-        action=None,
-        user_id=None,
-        entity_type=None,
-        start_date=None,
-        end_date=None,
-    )
-
-    assert result.media_type == "application/x-ndjson"
+    assert result.status_code == 200
+    assert result.headers["content-type"] == content_type
+    assert result.headers["content-disposition"] == f"attachment; filename=audit_logs.{export_format}"
+    assert result.body_iterator is stream
+    assert [chunk async for chunk in result.body_iterator] == payload
+    mock_service.export_count.assert_not_called()
+    mock_service.create_log.assert_not_called()
+    mock_ctx.db.execute.assert_not_awaited()
+    mock_ctx.db.stream.assert_not_awaited()

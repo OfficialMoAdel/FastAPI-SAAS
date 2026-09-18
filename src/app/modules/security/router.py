@@ -24,7 +24,6 @@ from structlog import get_logger
 from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.api.deps.auth import AuthenticatedUser
 from src.app.core.config import settings
-from src.app.core.events import EventPriority
 from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
 from src.app.core.security.auto_ban import (
     ban_ip,
@@ -32,7 +31,7 @@ from src.app.core.security.auto_ban import (
     get_violation_stats,
     unban_ip,
 )
-from src.app.modules.audit_logs import audit
+from src.app.modules.audit_logs import AuditGuarantee, audit
 from src.app.modules.auth.schemas import (
     PasskeyCredentialList,
     PasskeyDeleteResponse,
@@ -353,18 +352,15 @@ async def update_ip_filter_config(
     await update_runtime_config(updates)
 
     # P2-1: security-config mutations are audited (superuser actor).
-    try:
-        await audit(
-            action="security.ip_filter_config_updated",
-            entity_type="security_config",
-            entity_id="ip_filter",
-            tenant_id=None,
-            user_id=current_user.id,
-            details={"updates": updates},
-            priority=EventPriority.NORMAL,
-        )
-    except Exception as e:
-        logger.error("failed to audit ip filter config update", error=str(e))
+    await audit(
+        action="security.ip_filter_config_updated",
+        entity_type="security_config",
+        entity_id="ip_filter",
+        tenant_id=None,
+        user_id=current_user.id,
+        details={"updates": updates},
+        guarantee=AuditGuarantee.BEST_EFFORT,
+    )
 
     return IPFilterConfig(
         whitelist_enabled=settings.security.IP_WHITELIST_ENABLED,
@@ -443,18 +439,15 @@ async def update_auto_ban_config(
     await update_runtime_config(updates)
 
     # P2-1: security-config mutations are audited (superuser actor).
-    try:
-        await audit(
-            action="security.auto_ban_config_updated",
-            entity_type="security_config",
-            entity_id="auto_ban",
-            tenant_id=None,
-            user_id=current_user.id,
-            details={"updates": updates},
-            priority=EventPriority.NORMAL,
-        )
-    except Exception as e:
-        logger.error("failed to audit auto-ban config update", error=str(e))
+    await audit(
+        action="security.auto_ban_config_updated",
+        entity_type="security_config",
+        entity_id="auto_ban",
+        tenant_id=None,
+        user_id=current_user.id,
+        details={"updates": updates},
+        guarantee=AuditGuarantee.BEST_EFFORT,
+    )
 
     return AutoBanConfig(
         enabled=settings.security.AUTO_BAN_ENABLED,

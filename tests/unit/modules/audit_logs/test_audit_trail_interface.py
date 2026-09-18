@@ -1,15 +1,23 @@
 """Unit tests for the deep audit-trail interface (trail.py, schemas, and event handlers)."""
 
+import asyncio
+from contextlib import nullcontext
+from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
 
-from src.app.core.events import EventPriority
 from src.app.core.tenancy.context import TenantContext, set_current_tenant
 from src.app.modules.audit_logs.schemas import AuditLogEventData
 from src.app.modules.audit_logs.service import handle_audit_log_event
-from src.app.modules.audit_logs.trail import SYSTEM_TENANT_ID, _coerce_user_id, _resolve_tenant_id, audit
+from src.app.modules.audit_logs.trail import (
+    SYSTEM_TENANT_ID,
+    AuditGuarantee,
+    _coerce_user_id,
+    _resolve_tenant_id,
+    audit,
+)
 
 
 class TestAuditTrailInterface:
@@ -75,15 +83,15 @@ class TestAuditTrailInterface:
             AuditLogEventData(
                 action="test.action",
                 entity_type="user",
-                entity_id=1,
+                entity_id="1",
                 tenant_id="not-a-valid-uuid",
             )
 
     @pytest.mark.asyncio
-    async def test_audit_publishes_valid_event(self) -> None:
-        """Verify audit() publishes validated payload to event_bus."""
+    async def test_audit_delivers_valid_payload(self) -> None:
+        """Verify audit() validates, stamps, and delivers payload to the writer."""
         tenant_uuid = UUID("33333333-3333-3333-3333-333333333333")
-        with patch("src.app.modules.audit_logs.trail.event_bus.publish", new_callable=AsyncMock) as mock_pub:
+        with patch("src.app.modules.audit_logs.service.buffer_audit_log", new_callable=AsyncMock) as mock_buffer:
             await audit(
                 action="user.login",
                 entity_type="user",
@@ -93,25 +101,24 @@ class TestAuditTrailInterface:
                 details={"username": "testuser", "ip": "1.2.3.4"},
                 ip_address="1.2.3.4",
                 user_agent="Mozilla/5.0",
-                priority=EventPriority.CRITICAL,
             )
 
-            mock_pub.assert_called_once()
-            args, kwargs = mock_pub.call_args
-            assert args[0] == "audit.log"
-            payload = args[1]
+            mock_buffer.assert_called_once()
+            payload = mock_buffer.call_args[0][0]
             assert payload["action"] == "user.login"
             assert payload["entity_type"] == "user"
-            assert kwargs.get("priority") == EventPriority.CRITICAL
+            assert payload["entity_id"] == "123"
+            assert payload["tenant_id"] == str(tenant_uuid)
             assert payload["user_id"] == "123"
             assert payload["details"] == {"username": "testuser", "ip": "1.2.3.4"}
             assert payload["ip_address"] == "1.2.3.4"
             assert payload["user_agent"] == "Mozilla/5.0"
+            assert "created_at" in payload
 
     @pytest.mark.asyncio
     async def test_audit_redacts_sensitive_details(self) -> None:
         """Verify audit() automatically sanitizes sensitive fields in details."""
-        with patch("src.app.modules.audit_logs.trail.event_bus.publish", new_callable=AsyncMock) as mock_pub:
+        with patch("src.app.modules.audit_logs.service.buffer_audit_log", new_callable=AsyncMock) as mock_buffer:
             await audit(
                 action="auth.password_changed",
                 entity_type="user",
@@ -123,17 +130,18 @@ class TestAuditTrailInterface:
                 },
             )
 
-            mock_pub.assert_called_once()
-            payload = mock_pub.call_args[0][1]
+            mock_buffer.assert_called_once()
+            payload = mock_buffer.call_args[0][0]
             details = payload["details"]
             assert details["safe_field"] == "public_data"
             # Sensitive tokens/passwords must be sanitized
             assert "MySecretPassword123!" not in details["password_entry"]
             assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.xyz" not in details["bearer_token"]
+
     @pytest.mark.asyncio
     async def test_audit_alias_normalization(self) -> None:
         """Verify audit() normalizes resource_type/resource_id aliases."""
-        with patch("src.app.modules.audit_logs.trail.event_bus.publish", new_callable=AsyncMock) as mock_pub:
+        with patch("src.app.modules.audit_logs.service.buffer_audit_log", new_callable=AsyncMock) as mock_buffer:
             await audit(
                 action="system.rls_bypass",
                 resource_type="system",
@@ -141,8 +149,8 @@ class TestAuditTrailInterface:
                 details={"reason": "Cron job execution"},
             )
 
-            mock_pub.assert_called_once()
-            payload = mock_pub.call_args[0][1]
+            mock_buffer.assert_called_once()
+            payload = mock_buffer.call_args[0][0]
             assert payload["action"] == "system.rls_bypass"
             assert payload["entity_type"] == "system"
             assert payload["entity_id"] == "rls_context"
@@ -150,32 +158,96 @@ class TestAuditTrailInterface:
             assert payload["details"] == {"reason": "Cron job execution", "_tenant_fallback": "system"}
 
     @pytest.mark.asyncio
-    async def test_audit_handles_publish_failure_fail_open(self) -> None:
-        """Verify audit() catches event_bus errors when AUDIT_LOG_FAILURE_MODE='fail_open'."""
+    async def test_audit_delivery_failure_best_effort_swallows(self) -> None:
+        """Verify audit() logs and swallows writer errors when the mode maps to BEST_EFFORT."""
         with (
-            patch("src.app.modules.audit_logs.trail.event_bus.publish", new_callable=AsyncMock) as mock_pub,
+            patch("src.app.modules.audit_logs.service.buffer_audit_log", new_callable=AsyncMock) as mock_buffer,
             patch("src.app.core.config.settings.auth.AUDIT_LOG_FAILURE_MODE", "fail_open"),
         ):
-            mock_pub.side_effect = RuntimeError("Event bus unreachable")
-            # Should not raise exception in fail_open mode
+            mock_buffer.side_effect = RuntimeError("Redis unreachable")
+            # Should not raise in best-effort mode
             await audit(
                 action="test.action",
                 details={"key": "val"},
             )
 
     @pytest.mark.asyncio
-    async def test_audit_handles_publish_failure_fail_closed(self) -> None:
-        """Verify audit() re-raises event_bus errors when AUDIT_LOG_FAILURE_MODE='fail_closed'."""
+    async def test_audit_delivery_failure_required_re_raises(self) -> None:
+        """Verify audit() re-raises writer errors when the mode maps to REQUIRED."""
         with (
-            patch("src.app.modules.audit_logs.trail.event_bus.publish", new_callable=AsyncMock) as mock_pub,
+            patch("src.app.modules.audit_logs.service.buffer_audit_log", new_callable=AsyncMock) as mock_buffer,
             patch("src.app.core.config.settings.auth.AUDIT_LOG_FAILURE_MODE", "fail_closed"),
         ):
-            mock_pub.side_effect = RuntimeError("Event bus unreachable")
-            with pytest.raises(RuntimeError, match="Event bus unreachable"):
+            mock_buffer.side_effect = RuntimeError("Redis unreachable")
+            with pytest.raises(RuntimeError, match="Redis unreachable"):
                 await audit(
                     action="test.action",
                     details={"key": "val"},
                 )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("guarantee", "configured_mode"),
+        [
+            (AuditGuarantee.BEST_EFFORT, "fail_closed"),
+            (AuditGuarantee.REQUIRED, "fail_open"),
+        ],
+    )
+    async def test_audit_explicit_guarantee_overrides_config(
+        self, guarantee: AuditGuarantee, configured_mode: str
+    ) -> None:
+        error = RuntimeError("private writer payload")
+        tenant_id = UUID("33333333-3333-3333-3333-333333333333")
+        with (
+            patch(
+                "src.app.modules.audit_logs.service.buffer_audit_log",
+                new_callable=AsyncMock,
+                side_effect=error,
+            ) as writer,
+            patch("src.app.core.config.settings.auth.AUDIT_LOG_FAILURE_MODE", configured_mode),
+            patch("src.app.modules.audit_logs.trail.logger") as logger,
+        ):
+            expectation = pytest.raises(RuntimeError) if guarantee == AuditGuarantee.REQUIRED else nullcontext()
+            with expectation as exc_info:
+                await audit(action="test.action", tenant_id=tenant_id, guarantee=guarantee)
+
+            if guarantee == AuditGuarantee.REQUIRED:
+                assert exc_info is not None
+                assert exc_info.value is error
+            writer.assert_awaited_once()
+            logger.warning.assert_called_once_with(
+                "audit_delivery_failed", action="test.action", guarantee=guarantee.value, error_type="RuntimeError"
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("guarantee", list(AuditGuarantee))
+    async def test_audit_awaits_writer_and_propagates_cancellation(self, guarantee: AuditGuarantee) -> None:
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocked_writer(payload: dict[str, Any]) -> None:
+            entered.set()
+            await release.wait()
+
+        with (
+            patch("src.app.modules.audit_logs.service.buffer_audit_log", side_effect=blocked_writer) as writer,
+            patch("src.app.modules.audit_logs.trail.logger") as logger,
+        ):
+            task = asyncio.create_task(
+                audit(action="test.action", tenant_id=UUID(int=1), guarantee=guarantee)
+            )
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=1)
+                assert not task.done()
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                writer.assert_awaited_once()
+                logger.warning.assert_not_called()
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
 
 
 class TestAuditLogEventDataSchema:
@@ -273,4 +345,4 @@ class TestHandleAuditLogEvent:
             assert buffered["entity_type"] == "system"
             assert buffered["entity_id"] == "rls_context"
             assert buffered["tenant_id"] == str(SYSTEM_TENANT_ID)
-            assert buffered["details"] == {"reason": "Background migration"}
+            assert buffered["details"] == {"reason": "Background migration", "_tenant_fallback": "system"}

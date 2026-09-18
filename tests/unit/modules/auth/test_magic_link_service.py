@@ -292,6 +292,44 @@ class TestMagicLinkService:
         with pytest.raises(Exception):
             await service.verify_magic_link(token=token, ip_address="127.0.0.1")
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bound_id", ["not-an-id", {}, []])
+    async def test_malformed_bound_id_is_invalid_link(self, fake_redis, mock_db, bound_id: object) -> None:
+        from src.app.modules.auth.errors import InvalidMagicLinkError
+        from src.app.modules.auth.services.magic_link import MagicLinkService
+
+        service = MagicLinkService(db=mock_db, redis=fake_redis)
+        manager = AsyncMock()
+        manager.consume.return_value = {"email": "test@example.com", "extra_data": {"user_id": bound_id}}
+        with (
+            patch.object(service, "_get_magic_link_manager", return_value=manager),
+            patch("src.app.modules.auth.crud.get_magic_link_by_token", return_value=None),
+            patch("src.app.modules.auth.services.magic_link.crud_users.get_user_with_tier_eager") as lookup,
+            patch.object(service, "_create_auth_tokens") as issue,
+        ):
+            with pytest.raises(InvalidMagicLinkError, match="Invalid token data"):
+                await service.verify_magic_link("a" * 43, "192.0.2.1")
+        lookup.assert_not_awaited()
+        issue.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_consume_loser_cannot_issue(self, fake_redis, mock_db) -> None:
+        from src.app.modules.auth.errors import MagicLinkAlreadyUsedError
+        from src.app.modules.auth.services.magic_link import MagicLinkService
+
+        service = MagicLinkService(db=mock_db, redis=fake_redis)
+        manager = AsyncMock()
+        manager.peek.return_value = {"email": "test@example.com"}
+        manager.consume.return_value = None
+        with (
+            patch.object(service, "_get_magic_link_manager", return_value=manager),
+            patch("src.app.modules.auth.crud.get_magic_link_by_token", return_value=None),
+            patch.object(service, "_create_auth_tokens") as issue,
+        ):
+            with pytest.raises(MagicLinkAlreadyUsedError):
+                await service.verify_magic_link("a" * 43, "192.0.2.1")
+        issue.assert_not_awaited()
+
 
 class TestMagicLinkTokenExpiry:
     """Test token expiration behavior."""

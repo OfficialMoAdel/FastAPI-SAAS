@@ -46,6 +46,11 @@ class DefaultRateLimitSettings(BaseSettings):
         "auth": (5, 60),
         # MFA verification attempts (was mfa.py MFA_VERIFY_* 5/60)
         "mfa_verify": (5, 60),
+        # Per-account MFA backstop (keyed user:{id} across rotating pending
+        # tokens). Deliberately 3x the 5-attempt mfa_attempts lockout so the
+        # designed per-user lockout (401 "MFA locked") stays the first
+        # observable control; this budget only caps distributed spraying.
+        "mfa_verify_global": (15, 60),
         # MFA state mutations (was mfa.py MFA_MUTATE_* 5/60; separate budget
         # so verify attempts cannot starve mutations, per P1-5)
         "mfa_mutate": (5, 60),

@@ -11,7 +11,13 @@ from fastapi import Request
 
 from src.app.core.config import settings
 
-# Parse trusted proxy networks once at module load
+# Parse trusted proxy networks once at module load.
+# NOTE (restart requirement): these are snapshots of settings at import time,
+# not live reads. Changing TRUSTED_PROXY_IPS / TRUSTED_PROXY_NETWORKS at
+# runtime (or via a settings reload) has NO effect until the process restarts.
+# A reload-aware accessor was deliberately not added: the hot path relies on
+# the module-level snapshot + lru_cache, and live re-reads would silently
+# widen the spoofing surface mid-process.
 TRUSTED_PROXY_IPS: set[str] = set(settings.security.TRUSTED_PROXY_IPS or [])
 try:
     TRUSTED_PROXY_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = tuple(
@@ -115,9 +121,25 @@ def get_client_ip(request: Request) -> str:
             if ips:
                 return ips[0]
 
-        # Fallback to X-Real-IP if configured by edge proxies (e.g. NGINX)
+        # Fallback to X-Real-IP ONLY when the direct peer is a trusted proxy
+        # AND the value parses as a real IP literal. X-Real-IP is a single
+        # header any client can send — it is trustworthy only if the edge
+        # proxy is configured to OVERWRITE it (never append/forward). If your
+        # edge forwards client-supplied X-Real-IP, spoofed values reach this
+        # fallback whenever the peer is trusted, so harden the edge and treat
+        # this as defense-in-depth, not identity. Unparseable values (lists,
+        # garbage, "unknown") are stripped and ignored.
         real_ip = request.headers.get("X-Real-IP")
         if real_ip:
-            return real_ip.strip()
+            candidate = real_ip.strip().split(",")[0].strip()
+            try:
+                ipaddress.ip_address(candidate)
+            except ValueError:
+                pass
+            else:
+                if candidate and not is_trusted_proxy(candidate):
+                    return candidate
+                # A trusted-proxy-valued X-Real-IP carries no client identity;
+                # fall through to the peer address instead of echoing it.
 
     return client_ip

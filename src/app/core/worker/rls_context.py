@@ -16,9 +16,6 @@ from src.app.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Keep a strong reference to background tasks to prevent garbage collection mid-execution
-_background_tasks = set()
-
 
 @asynccontextmanager
 async def job_tenant_context(
@@ -56,11 +53,53 @@ async def job_tenant_context(
                 yield session
 
 
+def _validate_bypass_reason(reason: str) -> str:
+    """Validate the RLS-bypass reason before any bypass is granted.
+
+    Runs BEFORE entering ``bypass_rls`` so a validation failure can never
+    fire mid-context (bypass granted but audit record lost).
+    """
+    if not reason or not reason.strip():
+        raise ValueError("Reason is required for RLS bypass (audit trail)")
+    return reason
+
+
+async def _record_bypass_audit(reason: str) -> None:
+    """Record-then-proceed: attempt the bypass audit without gating the job.
+
+    The audit trail must never block system jobs on audit infra, and a lost
+    trail must never be silent: any failure (delivery or validation — the
+    BEST_EFFORT policy only swallows delivery) is caught here and surfaced
+    as the loud ``audit_bypass_unaudited`` error event (alert on it, count
+    it) instead of propagating.
+    """
+    from src.app.modules.audit_logs import AuditGuarantee, audit
+
+    try:
+        await audit(
+            action="system.rls_bypass",
+            entity_type="system",
+            entity_id="rls_context",
+            details={"reason": reason},
+            guarantee=AuditGuarantee.BEST_EFFORT,
+        )
+    except Exception as exc:  # noqa: BLE001 — intentional: jobs never block on audit
+        logger.error(
+            "audit_bypass_unaudited",
+            reason=reason,
+            error_type=type(exc).__name__,
+        )
+
+
 @asynccontextmanager
 async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
     """Bypass RLS for system jobs with audit logging.
 
     CRITICAL: All RLS bypasses are logged for security audit.
+
+    Record-then-proceed: the ``system.rls_bypass`` record is attempted BEFORE
+    the bypass is granted, and the grant is unconditional — a failed record
+    surfaces via the ``audit_bypass_unaudited`` error event, never via raise.
 
     Args:
         reason: Required reason for bypassing RLS (for audit trail)
@@ -73,10 +112,13 @@ async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
             async with job_bypass_context("Flushing audit logs") as db:
                 await flush_audit_log_buffer(db)
     """
-    if not reason:
-        raise ValueError("Reason is required for RLS bypass (audit trail)")
+    _validate_bypass_reason(reason)
 
     from src.app.core.db.rls import bypass_rls
+
+    # Record-then-proceed: the bypass grant below is unconditional. A failed
+    # audit record surfaces via ``audit_bypass_unaudited``, never via raise.
+    await _record_bypass_audit(reason)
 
     async with local_session() as session:
         # Use bypass_rls so the bypass flag survives transactions and commits.
@@ -85,24 +127,6 @@ async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
                 "Job RLS bypass enabled via bypass_rls | reason=%s | security_event=rls_bypass",
                 reason,
             )
-
-            # SECURITY: App-level audit logging for job RLS bypass
-            # We publish a system-level audit event to ensure a durable trail
-            # Use a background task to avoid blocking the current transaction
-            import asyncio
-
-            from src.app.modules.audit_logs.trail import audit
-            task = asyncio.create_task(
-                audit(
-                    action="system.rls_bypass",
-                    entity_type="system",
-                    entity_id="rls_context",
-                    details={"reason": reason},
-                )
-            )
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
-
             yield session
 
 

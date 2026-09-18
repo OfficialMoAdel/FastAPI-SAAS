@@ -1,31 +1,4 @@
-"""Unified Rate-Policy Engine (Architecture Candidate 10).
-
-Single seam answering "what is this user/tenant allowed and are they limited?"
-across:
-- RateLimitMiddleware (ASGI middleware path)
-- check_security_budget (endpoint brute-force budgets: auth/MFA/passkey/AI)
-
-No Depends-level general limiter exists — the ASGI path covers general
-limiting; endpoint budgets use the security-budget verb below.
-
-Centralizes:
-- Tier resolution (cached L1/Redis policies via get_tier_policy -> DB fallback -> settings)
-- Path sanitization
-- Anonymous vs Authenticated identity & key generation (including email-hash fallback)
-- Blacklist / revocation downgrade
-- RateLimitVerdict with computed headers
-
-Two-verb decision contract (P1-#5):
-- check: ``build_rate_limit_key`` derives the key, ``resolve_rate_limits`` picks the
-  policy, ``evaluate_rate_policy`` runs the engine (``RateLimiter.check_rate_limit_algorithm``)
-  and returns a ``RateLimitVerdict`` (the Decision). The engine takes (key, policy)
-  as inputs — it never derives keys or resolves policy itself.
-- record: violation/ban escalation lives OUTSIDE this module in ``auto_ban``
-  (``check_and_auto_ban``), keeping the decision pure of ban state.
-
-All rate-limit consumers (middleware, security budgets, RateLimiter.is_rate_limited)
-derive keys through ``build_rate_limit_key`` — one key scheme, one decision module.
-"""
+"""Shared rate-limit verdicts, key construction, tier policies, and endpoint budgets."""
 
 import hashlib
 import time
@@ -37,11 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
+from src.app.core.middleware_state import get_client_ip_state
 from src.app.core.security.rate_limit_cache import get_tier_policy_limits
 from src.app.core.utils.ip_utils import get_client_ip
-from src.app.core.utils.path_utils import sanitize_path
 from src.app.core.utils.rate_limit import rate_limiter as default_rate_limiter
-from src.app.core.utils.user_utils import get_user_attr
 
 logger = get_logger(__name__)
 
@@ -58,47 +30,6 @@ class RateLimitVerdict:
     key: str
     headers: dict[str, str]
     bypassed: bool = False
-
-
-async def resolve_rate_limit_identity(
-    request: Request,
-    user: Any = None,
-) -> tuple[str | None, int | str | None, str | None, Any]:
-    """Extract (user_id, tier_id, tier_name, tenant_id) from request or user.
-
-    Handles token blacklist downgrade to anonymous.
-    """
-    user_id: str | None = None
-    tier_id: int | str | None = None
-    tier_name: str | None = None
-    tenant_id: Any = None
-
-    if user is not None:
-        raw_uid = get_user_attr(user, "id")
-        user_id = str(raw_uid) if raw_uid is not None else None
-        tier = get_user_attr(user, "tier")
-        if tier:
-            tier_id = tier["id"] if isinstance(tier, dict) else getattr(tier, "id", None)
-            tier_name = tier["name"] if isinstance(tier, dict) else getattr(tier, "name", None)
-    else:
-        # Check cached JWT payload from request
-        from src.app.core.security.jwt_utils import get_cached_jwt_payload
-
-        cached_payload = get_cached_jwt_payload(request)
-        if cached_payload:
-            user_id = cached_payload.get("sub")
-            tier_name = cached_payload.get("tier_name")
-            tier_id = cached_payload.get("tier_id")
-            tenant_id = cached_payload.get("tenant_id")
-
-    # Blacklist check: if token is blacklisted, downgrade to anonymous
-    is_blacklisted = getattr(request.state, "is_token_blacklisted", None) if request is not None else None
-    if is_blacklisted is True:
-        user_id = None
-        tier_name = None
-        tier_id = None
-
-    return user_id, tier_id, tier_name, tenant_id
 
 
 async def resolve_rate_limits(
@@ -207,7 +138,7 @@ async def resolve_anonymous_user_id(request: Request) -> str:  # noqa: C901
 
     client_ip: str | None = None
     if request is not None:
-        raw_ip = getattr(request.state, "client_ip", None)
+        raw_ip = get_client_ip_state(request.state)
         if isinstance(raw_ip, str) and raw_ip:
             client_ip = raw_ip
         else:
@@ -223,92 +154,20 @@ def build_rate_limit_key(
 ) -> str:
     """Build canonical rate limit key."""
     if not user_id:
-        ip_str = anonymous_ip or "unknown"
+        # P2: a missing IP and the literal "unknown" sentinel share one
+        # explicit bucket (never a per-request fragment, never colliding
+        # with a real IP — "unknown" is not a valid IP literal).
+        # NOTE: tenant scoping for anonymous keys was deliberately NOT added:
+        # the pinned key contract (exact-match assertions in
+        # test_merged_blacklist_ratelimit.py) and existing Redis buckets use
+        # the unprefixed form; scoping needs a coordinated key migration.
+        ip_str = anonymous_ip if anonymous_ip and anonymous_ip != "unknown" else "unknown"
         return f"rate_limit:anonymous:ip:{ip_str}:{path}"
 
     from src.app.core.utils.cache import build_tenant_key
 
     base_key = f"rate_limit:user:{user_id}:{path}"
     return build_tenant_key(base_key, tenant_id)
-
-
-async def evaluate_rate_policy(  # noqa: C901
-    request: Request,
-    *,
-    user: Any = None,
-    db: AsyncSession | None = None,
-    limiter: Any = None,
-) -> RateLimitVerdict:
-    """Evaluate rate policy for a request and return a comprehensive verdict.
-
-    .. deprecated::
-        No production callers: the ASGI ``RateLimitMiddleware`` resolves
-        identity/tier/key inline (via ``check_ban_blacklist_and_rate_limit``)
-        and endpoint budgets use ``check_security_budget``. This helper also
-        lacks the middleware's ban/blacklist merge, so do not wire new
-        callers here — it is pinned by
-        ``tests/unit/core/security/test_rate_policy.py`` only. Delete once
-        a second consumer need disappears (keep ``resolve_rate_limits`` /
-        ``build_rate_limit_key`` / ``check_security_budget``).
-    """
-    # 1. IP Whitelist bypass
-    if settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT and getattr(request.state, "ip_whitelisted", False):
-        headers = {
-            "X-RateLimit-Limit": "999999",
-            "X-RateLimit-Remaining": "999999",
-            "X-RateLimit-Whitelisted": "true",
-        }
-        return RateLimitVerdict(
-            is_limited=False,
-            limit=999999,
-            period=60,
-            remaining=999999,
-            retry_after=0,
-            key="whitelisted",
-            headers=headers,
-            bypassed=True,
-        )
-
-    # 2. Path normalization
-    path = sanitize_path(request.url.path)
-
-    # 3. Identity extraction
-    user_id, tier_id, tier_name, tenant_id = await resolve_rate_limit_identity(request, user)
-
-    # 4. Limit resolution
-    limit, period = await resolve_rate_limits(path, tier_id=tier_id, tier_name=tier_name, user_id=user_id, db=db)
-
-    raw_ip = getattr(request.state, "client_ip", None) if request is not None else None
-    anonymous_ip = (
-        raw_ip if isinstance(raw_ip, str) and raw_ip else (get_client_ip(request) if request is not None else "unknown")
-    )
-    key = build_rate_limit_key(path, user_id=user_id, tenant_id=tenant_id, anonymous_ip=anonymous_ip)
-
-    # 6. Check algorithm
-    effective_limiter = limiter or default_rate_limiter
-    is_limited, remaining, retry_after = await effective_limiter.check_rate_limit_algorithm(key, limit, period)
-
-    if is_limited and retry_after == 0:
-        retry_after = period - (int(time.time()) % period)
-
-    headers = {
-        "X-RateLimit-Limit": str(limit),
-        "X-RateLimit-Remaining": str(remaining),
-        "X-RateLimit-Period": str(period),
-    }
-    if is_limited and retry_after > 0:
-        headers["Retry-After"] = str(int(retry_after))
-
-    return RateLimitVerdict(
-        is_limited=is_limited,
-        limit=limit,
-        period=period,
-        remaining=remaining,
-        retry_after=retry_after,
-        key=key,
-        headers=headers,
-        bypassed=False,
-    )
 
 
 async def check_security_budget(
@@ -381,8 +240,6 @@ __all__ = [
     "RateLimitVerdict",
     "build_rate_limit_key",
     "check_security_budget",
-    "evaluate_rate_policy",
     "resolve_anonymous_user_id",
-    "resolve_rate_limit_identity",
     "resolve_rate_limits",
 ]

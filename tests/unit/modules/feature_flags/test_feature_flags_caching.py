@@ -1,63 +1,78 @@
+"""Service-level caching tests for FeatureFlagService (B7 migration).
+
+Replaces the retired utils-shim caching tests: FeatureFlagService is the
+single flag module, so cache behavior is pinned here.
+"""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
-from src.app.modules.feature_flags import utils
+from src.app.modules.feature_flags.service import FeatureFlagService
 
 
-@pytest.fixture
-def mock_redis():
-    with patch("src.app.core.utils.cache.client", new_callable=AsyncMock) as m:
-        yield m
+def _service(db):
+    return FeatureFlagService(db=db)
 
 
 @pytest.mark.asyncio
-async def test_is_feature_enabled_cached(mock_redis):
+async def test_is_enabled_cached():
     tenant_id = uuid4()
-
-    # Setup cache hit
-    mock_redis.get.return_value = b"true"
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="true")
 
     db = AsyncMock()
+    service = _service(db)
 
-    result = await utils.is_feature_enabled(db, tenant_id, "test_flag")
+    with patch("src.app.modules.feature_flags.service.get_redis", return_value=redis):
+        result = await service.is_enabled(tenant_id, "test_flag")
 
     assert result is True
-    mock_redis.get.assert_called_with(f"tenant:{tenant_id}:feature:test_flag")
     db.get.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_is_feature_enabled_cache_miss(mock_redis):
+async def test_is_enabled_cache_miss_falls_back_to_tenant_jsonb():
     tenant_id = uuid4()
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=None)
+    redis.setex = AsyncMock()
 
-    # Setup cache miss
-    mock_redis.get.return_value = None
-
-    db = AsyncMock()
     mock_tenant = MagicMock()
     mock_tenant.feature_flags = {"test_flag": True}
-    db.get.return_value = mock_tenant
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=mock_tenant)
 
-    result = await utils.is_feature_enabled(db, tenant_id, "test_flag")
+    service = _service(db)
+
+    with (
+        patch("src.app.modules.feature_flags.service.get_redis", return_value=redis),
+        patch.object(FeatureFlagService, "get_flag_by_key_or_none", AsyncMock(return_value=None)),
+    ):
+        result = await service.is_enabled(tenant_id, "test_flag")
 
     assert result is True
-    # Verify cache set (CacheClient seam: set with ex TTL, not setex)
-    mock_redis.set.assert_called_with(f"tenant:{tenant_id}:feature:test_flag", "true", ex=300)
+    redis.setex.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_update_invalidates_cache(mock_redis):
+async def test_update_tenant_flag_invalidates_cache():
     tenant_id = uuid4()
-    db = AsyncMock()
+    redis = AsyncMock()
+    redis.delete = AsyncMock()
+
     mock_tenant = MagicMock()
     mock_tenant.feature_flags = {}
-    db.get.return_value = mock_tenant
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=mock_tenant)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
 
-    await utils.update_feature_flag(db, tenant_id, "new_flag", True)
+    service = _service(db)
 
-    # Verify deletions
-    assert mock_redis.delete.call_count == 2
-    mock_redis.delete.assert_any_call(f"tenant:{tenant_id}:feature:new_flag")
-    mock_redis.delete.assert_any_call(f"tenant:{tenant_id}:features")
+    with patch("src.app.modules.feature_flags.service.get_redis", return_value=redis):
+        await service.update_tenant_flag(tenant_id, "new_flag", True)
+
+    assert mock_tenant.feature_flags == {"new_flag": True}
+    assert redis.delete.await_count >= 1

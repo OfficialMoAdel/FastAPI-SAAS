@@ -16,22 +16,34 @@ import pyotp
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from fastapi import Request, Response
+from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.core.config import settings
-from src.app.core.events import EventPriority
 from src.app.core.redis_provider import get_redis
-from src.app.modules.audit_logs import audit
+from src.app.core.security import get_mfa_pending_token_manager
+from src.app.core.security.rate_policy import check_security_budget
+from src.app.core.utils.ip_utils import get_client_ip
+from src.app.modules.audit_logs import AuditGuarantee, audit
 from src.app.modules.auth.crud import crud_mfa_methods
 from src.app.modules.auth.models import MFAMethod
 from src.app.modules.auth.schemas import (
+    LoginMFAResponse,
+    MFACompleteLoginRequest,
     MFAEnableRequest,
     MFAVerifyRequest,
 )
-from src.app.shared.exceptions import ServiceUnavailableError, UnauthorizedError, ValidationError
+from src.app.modules.auth.services.tokens import IssuedSession, TokenIssuer
+from src.app.shared.exceptions import (
+    RateLimitExceededError,
+    ServiceUnavailableError,
+    UnauthorizedError,
+    ValidationError,
+)
 
 logger = get_logger(__name__)
 
@@ -89,6 +101,132 @@ def _totp_qr_data_uri(provisioning_uri: str) -> str:
 class MFAService:
     """Service for multi-factor authentication operations."""
 
+    async def challenge_if_required(
+        self,
+        user: dict[str, Any],
+        db: AsyncSession,
+        *,
+        redis: Redis | None,
+        ip_address: str | None = None,
+    ) -> LoginMFAResponse | None:
+        if not await self.is_mfa_enabled(user["id"], db):
+            return None
+        challenge = await TokenIssuer.issue_mfa_pending(user, redis=redis, ip_address=ip_address)
+        return LoginMFAResponse(**challenge)
+
+    async def complete_login(
+        self,
+        request: MFACompleteLoginRequest,
+        db: AsyncSession,
+        *,
+        fastapi_request: Request,
+        response: Response,
+    ) -> IssuedSession:
+        verdict = await check_security_budget("mfa_verify", request.mfa_token)
+        if verdict.is_limited:
+            raise RateLimitExceededError(
+                f"Too many MFA verification attempts. Please try again in {verdict.period} seconds.",
+                retry_after=verdict.retry_after or verdict.period,
+            )
+
+        client = get_redis()
+        if not client:
+            raise UnauthorizedError("Authentication service unavailable")
+        client_ip = get_client_ip(fastapi_request)
+        token_store = get_mfa_pending_token_manager(client)
+        token_data = await token_store.peek(request.mfa_token)
+        if not token_data or token_data.get("scope") != "mfa_pending":
+            raise UnauthorizedError("Invalid or expired MFA pending token")
+
+        remaining_ttl = await token_store.remaining_ttl(request.mfa_token)
+        # P3: Redis TTL reports -2 (key missing) / -1 (no expiry). Both mean
+        # the pending token has no trustworthy age — fail closed before any
+        # IP/TOTP work instead of deriving a bogus token_age below.
+        if remaining_ttl < 0:
+            raise UnauthorizedError("Invalid or expired MFA pending token")
+        stored_ip = token_data.get("ip_address")
+        if stored_ip and stored_ip != client_ip:
+            logger.warning(
+                "MFA IP mismatch", stored_ip=stored_ip, client_ip=client_ip, user_id=token_data.get("user_id")
+            )
+            if settings.auth.MFA_ENFORCE_IP_BINDING:
+                grace = settings.auth.MFA_IP_BINDING_GRACE_SECONDS
+                token_age = settings.auth.MFA_PENDING_EXPIRY_SECONDS - remaining_ttl
+                within_grace = grace > 0 and 0 <= token_age <= grace
+                if not within_grace:
+                    raise UnauthorizedError(
+                        "MFA verification rejected: IP address changed since login. Please try again."
+                    )
+
+        user_id = token_data.get("user_id")
+        username = token_data.get("username")
+        if not user_id or not username:
+            raise UnauthorizedError("Invalid MFA pending token")
+
+        # P1: the per-token mfa_verify budget above is keyed on the random
+        # pending token, so it never accumulates across fresh challenges.
+        # Charge a second leg keyed on the stable identity (user_id from the
+        # peek, IP fallback) so brute force across challenges still trips.
+        # The global leg (mfa_verify_global, 15/min) sits ABOVE the 5-attempt
+        # mfa_attempts lockout on purpose: the durable per-user lockout (401
+        # "MFA locked") stays the first observable control, and this budget
+        # only backstops distributed spraying above the lockout threshold.
+        global_budget = (
+            "mfa_verify_global"
+            if "mfa_verify_global" in settings.rate_limit.SECURITY_BUDGETS
+            else "mfa_verify"
+        )
+        global_identifier = f"user:{user_id}" if user_id else f"ip:{client_ip}"
+        global_verdict = await check_security_budget(global_budget, global_identifier)
+        if global_verdict.is_limited:
+            raise RateLimitExceededError(
+                f"Too many MFA verification attempts. Please try again in {global_verdict.period} seconds.",
+                retry_after=global_verdict.retry_after or global_verdict.period,
+            )
+
+        verify_result = await self.verify_totp_token(
+            user_id=user_id,
+            request=MFAVerifyRequest(totp_token=request.totp_token, backup_code=request.backup_code),
+            db=db,
+            prevent_replay=True,
+            redis_client=client,
+        )
+        if not verify_result.get("valid"):
+            raise UnauthorizedError("Invalid MFA code")
+
+        consumed = await token_store.consume(request.mfa_token)
+        if consumed is None:
+            raise UnauthorizedError("Invalid or expired MFA pending token")
+
+        # P1: authoritative lookup by the immutable user_id stored at
+        # challenge time — never by the mutable username, which can be
+        # changed/renamed between challenge and completion. The stored
+        # username is then asserted to match as a tamper check.
+        from src.app.modules.users.crud import crud_users
+
+        user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
+        if not user or user.get("is_deleted") or not user.get("is_active", False):
+            raise UnauthorizedError("User account is no longer active")
+        if str(user.get("username") or "") != str(username):
+            logger.warning("mfa_pending_username_mismatch", user_id=user_id)
+            raise UnauthorizedError("Invalid MFA pending token")
+
+        # verify=False: skips re-parsing/re-verifying the just-minted access
+        # token inside register_login_session (TokenIssuer already threads the
+        # pre-minted sid straight into session registration, so no token parse
+        # happens either way). Safe here because the token was minted seconds
+        # ago by this issuance and the user row above was freshly loaded with
+        # its current token_version. Prefer verify=True if issuance ever stops
+        # threading a known sid or the token crosses a trust boundary.
+        return await TokenIssuer.issue_session(
+            user,
+            channel="mfa",
+            request=fastapi_request,
+            response=response,
+            subject=user["username"],
+            verify=False,
+        )
+
     async def generate_totp_secret(self, user_id: int, db: AsyncSession) -> dict[str, str]:
         """Generate a new TOTP secret for user setup.
 
@@ -119,6 +257,9 @@ class MFAService:
 
             user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
             tenant_id = user.get("tenant_id") if user else None
+        except Exception as exc:
+            logger.warning("mfa_audit_attribution_lookup_failed", error_type=type(exc).__name__)
+        else:
             await audit(
                 action=MFA_ACTION_SETUP,
                 entity_type="mfa",
@@ -126,17 +267,7 @@ class MFAService:
                 tenant_id=tenant_id,
                 user_id=user_id,
                 details={"method": "totp", "status": "initiated"},
-                priority=EventPriority.NORMAL,
-            )
-        except Exception as e:
-            # Q-M3: audit gaps for MFA setup are security-relevant (the
-            # security trail loses the "who initiated MFA" event) — warn
-            # with identifiers instead of hiding at debug.
-            logger.warning(
-                "mfa_setup_audit_log_failed",
-                user_id=user_id,
-                action=MFA_ACTION_SETUP,
-                error=str(e),
+                guarantee=AuditGuarantee.BEST_EFFORT,
             )
         # Store secret temporarily in redis (Expires in 10 minutes)
         setup_token = str(uuid.uuid4())
@@ -243,6 +374,9 @@ class MFAService:
 
             user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
             tenant_id = user.get("tenant_id") if user else None
+        except Exception as exc:
+            logger.warning("mfa_audit_attribution_lookup_failed", error_type=type(exc).__name__)
+        else:
             await audit(
                 action=MFA_ACTION_ENABLE,
                 entity_type="mfa",
@@ -250,10 +384,8 @@ class MFAService:
                 tenant_id=tenant_id,
                 user_id=user_id,
                 details={"method": "totp", "backup_codes_count": len(backup_codes)},
-                priority=EventPriority.CRITICAL,
+                guarantee=AuditGuarantee.BEST_EFFORT,
             )
-        except Exception as e:
-            logger.debug("Audit logging failed (non-critical): %s", e)
         return {
             "message": "MFA enabled successfully",
             "backup_codes": backup_codes,
@@ -333,6 +465,7 @@ class MFAService:
         # sensitive mutations to always require a FRESH code needs a UX
         # decision + test updates — tracked as follow-up, not forced here.
         prevent_replay: bool = False,
+        redis_client: Redis | None = None,
     ) -> dict[str, Any]:
         """Verify a TOTP token for a user.
 
@@ -373,13 +506,14 @@ class MFAService:
             if totp.verify(request.totp_token, valid_window=TOTP_SKEW):
                 # Single-use replay protection for login authentication (A2-04)
                 if prevent_replay:
-                    client = get_redis()
-                    if client is not None:
-                        used_key = f"mfa_used:{user_id}:{request.totp_token}"
-                        # P1-6: marker TTL covers the code's full validity window.
-                        is_fresh = await client.set(used_key, "1", nx=True, ex=TOTP_REPLAY_MARKER_TTL)
-                        if not is_fresh:
-                            raise ValidationError("TOTP token has already been used. Please wait for a new code.")
+                    client = redis_client if redis_client is not None else get_redis()
+                    if client is None:
+                        raise ServiceUnavailableError("MFA replay protection is currently unavailable.")
+                    used_key = f"mfa_used:{user_id}:{request.totp_token}"
+                    # P1-6: marker TTL covers the code's full validity window.
+                    is_fresh = await client.set(used_key, "1", nx=True, ex=TOTP_REPLAY_MARKER_TTL)
+                    if not is_fresh:
+                        raise ValidationError("TOTP token has already been used. Please wait for a new code.")
 
                 # Update last_used_at - fetch model instance
                 mfa_method = await db.get(MFAMethod, mfa_method_dict["id"])
@@ -397,6 +531,9 @@ class MFAService:
 
                     user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
                     tenant_id = user.get("tenant_id") if user else None
+                except Exception as exc:
+                    logger.warning("mfa_audit_attribution_lookup_failed", error_type=type(exc).__name__)
+                else:
                     await audit(
                         action=MFA_ACTION_VERIFY_SUCCESS,
                         entity_type="mfa",
@@ -404,10 +541,8 @@ class MFAService:
                         tenant_id=tenant_id,
                         user_id=user_id,
                         details={"method": "totp"},
-                        priority=EventPriority.NORMAL,
+                        guarantee=AuditGuarantee.BEST_EFFORT,
                     )
-                except Exception as e:
-                    logger.debug("Audit logging failed (non-critical): %s", e)
                 return {
                     "valid": True,
                     "message": "Verification successful",
@@ -420,6 +555,9 @@ class MFAService:
 
             user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
             tenant_id = user.get("tenant_id") if user else None
+        except Exception as exc:
+            logger.warning("mfa_audit_attribution_lookup_failed", error_type=type(exc).__name__)
+        else:
             await audit(
                 action=MFA_ACTION_VERIFY_FAILED,
                 entity_type="mfa",
@@ -427,10 +565,8 @@ class MFAService:
                 tenant_id=tenant_id,
                 user_id=user_id,
                 details={"method": "totp" if request.totp_token else "backup_code"},
-                priority=EventPriority.NORMAL,
+                guarantee=AuditGuarantee.BEST_EFFORT,
             )
-        except Exception as e:
-            logger.debug("Audit logging failed (non-critical): %s", e)
         raise UnauthorizedError("Invalid MFA token")
 
     async def _verify_backup_code(
@@ -528,6 +664,9 @@ class MFAService:
 
                 user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
                 tenant_id = user.get("tenant_id") if user else None
+            except Exception as exc:
+                logger.warning("mfa_audit_attribution_lookup_failed", error_type=type(exc).__name__)
+            else:
                 await audit(
                     action=MFA_ACTION_BACKUP_CODE_USED,
                     entity_type="mfa",
@@ -535,10 +674,8 @@ class MFAService:
                     tenant_id=tenant_id,
                     user_id=user_id,
                     details={"backup_codes_remaining": remaining},
-                    priority=EventPriority.CRITICAL,
+                    guarantee=AuditGuarantee.BEST_EFFORT,
                 )
-            except Exception as e:
-                logger.debug("Audit logging failed (non-critical): %s", e)
 
             return {
                 "valid": True,
@@ -602,19 +739,16 @@ class MFAService:
         logger.info("mfa_disabled", user_id=user_id)
 
         # Audit log: MFA disabled
-        try:
-            tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
-            await audit(
-                action=MFA_ACTION_DISABLE,
-                entity_type="mfa",
-                entity_id=mfa_method_dict["id"],
-                tenant_id=tenant_id,
-                user_id=user_id,
-                details={"method": "totp"},
-                priority=EventPriority.CRITICAL,
-            )
-        except Exception as e:
-            logger.debug("Audit logging failed (non-critical): %s", e)
+        tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+        await audit(
+            action=MFA_ACTION_DISABLE,
+            entity_type="mfa",
+            entity_id=mfa_method_dict["id"],
+            tenant_id=tenant_id,
+            user_id=user_id,
+            details={"method": "totp"},
+            guarantee=AuditGuarantee.BEST_EFFORT,
+        )
 
         return {"message": "MFA disabled successfully"}
 
@@ -733,19 +867,16 @@ class MFAService:
         logger.info("mfa_backup_codes_regenerated", user_id=user_id)
 
         # Audit log: Backup codes regenerated
-        try:
-            tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
-            await audit(
-                action=MFA_ACTION_BACKUP_CODES_REGENERATED,
-                entity_type="mfa",
-                entity_id=mfa_method_dict["id"],
-                tenant_id=tenant_id,
-                user_id=user_id,
-                details={"backup_codes_count": len(backup_codes)},
-                priority=EventPriority.NORMAL,
-            )
-        except Exception as e:
-            logger.debug("Audit logging failed (non-critical): %s", e)
+        tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+        await audit(
+            action=MFA_ACTION_BACKUP_CODES_REGENERATED,
+            entity_type="mfa",
+            entity_id=mfa_method_dict["id"],
+            tenant_id=tenant_id,
+            user_id=user_id,
+            details={"backup_codes_count": len(backup_codes)},
+            guarantee=AuditGuarantee.BEST_EFFORT,
+        )
 
         return {
             "message": "New backup codes generated",

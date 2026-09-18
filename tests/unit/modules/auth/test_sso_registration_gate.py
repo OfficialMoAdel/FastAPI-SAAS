@@ -13,6 +13,7 @@ import pytest
 from fastapi import Request
 
 from src.app.modules.auth.schemas import SSOProvider
+from src.app.modules.auth.services.mfa import MFAService
 from src.app.modules.auth.services.sso import SSOService
 from src.app.shared.exceptions import ForbiddenError
 
@@ -40,7 +41,7 @@ def mock_request():
 @pytest.fixture(autouse=True)
 def mock_mfa_service_dependency():
     with patch("src.app.modules.auth.services.mfa.get_mfa_service") as mock_get_mfa:
-        mock_mfa = AsyncMock()
+        mock_mfa = MFAService()
         mock_mfa.is_mfa_enabled = AsyncMock(return_value=False)
         mock_get_mfa.return_value = mock_mfa
         yield mock_get_mfa

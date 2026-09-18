@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.core.config import settings
-from src.app.core.events import EventPriority
 from src.app.core.security import (
     TokenType,
     blacklist_token,
@@ -22,7 +21,7 @@ from src.app.core.security import (
     verify_token,
 )
 from src.app.core.utils.ip_utils import get_client_ip
-from src.app.modules.audit_logs import audit
+from src.app.modules.audit_logs import AuditGuarantee, audit
 from src.app.modules.auth.services.lockout import LoginLockoutPolicy
 from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.users import UserService
@@ -170,25 +169,14 @@ class AuthService:
                 entity_id=user_id,
                 tenant_id=tenant_id,
                 user_id=user_id,
-                details={
-                    "username": username,
-                    "success": success,
-                    "reason": reason,
-                },
+                details={"username": username, "success": success, "reason": reason},
                 ip_address=resolved_ip,
                 user_agent=resolved_ua,
-                priority=EventPriority.NORMAL,
             )
-        except Exception as e:
-            logger.error("failed_to_publish_audit_log", error=str(e))
-            # SECURITY FIX: Make audit log failure mode configurable
-            # fail_open: Log error but allow operation (default, availability focused)
-            # fail_closed: Raise exception and block operation (security focused, compliance)
-            # Note: fail_closed requires ServiceUnavailableException to be defined
-            if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "fail_open") == "fail_closed":
-                from src.app.shared.exceptions import ServiceUnavailableError
-
-                raise ServiceUnavailableError("Service temporarily unavailable") from e
+        except Exception as exc:
+            # audit owns REQUIRED/BEST_EFFORT; propagated failures must retain
+            # the login endpoint's service-unavailable contract.
+            raise ServiceUnavailableError("Authentication audit service unavailable") from exc
 
     async def login(
         self,
@@ -276,12 +264,11 @@ class AuthService:
         from src.app.modules.auth.services.mfa import get_mfa_service
 
         mfa_service = get_mfa_service()
-        mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], db)
+        mfa_response = await mfa_service.challenge_if_required(
+            user, db, redis=redis, ip_address=ip_address or (get_client_ip(request) if request else None)
+        )
 
-        if mfa_enabled:
-            client_ip = ip_address or (get_client_ip(request) if request else None)
-
-            mfa_response = await TokenIssuer.issue_mfa_pending(user, redis=redis, ip_address=client_ip)
+        if mfa_response is not None:
 
             # Return partial authentication response
             await self._publish_login_audit(
@@ -294,7 +281,7 @@ class AuthService:
                 user_agent=user_agent,
             )
 
-            return mfa_response
+            return mfa_response.model_dump()
 
         return await self._generate_auth_tokens(
             user, response, request, username, ip_address=ip_address, user_agent=user_agent
@@ -390,20 +377,17 @@ class AuthService:
             await add_token_to_blacklist(f"jti:{new_jti}", dt.fromtimestamp(new_exp, tz=UTC))
         except Exception as e:
             logger.warning("refresh-reuse family revocation best-effort failed", error=str(e))
-        try:
-            await audit(
-                action="auth.refresh_token_reuse_detected",
-                entity_type="session",
-                entity_id=str(session_id),
-                tenant_id=None,
-                user_id=user_id,
-                details={"rotated_jti": old_jti, "revoked_jti": new_jti},
-                ip_address=ip_address,
-                user_agent=user_agent,
-                priority=EventPriority.CRITICAL,
-            )
-        except Exception as e:
-            logger.error("failed to audit refresh token reuse", error=str(e))
+        await audit(
+            action="auth.refresh_token_reuse_detected",
+            entity_type="session",
+            entity_id=str(session_id),
+            tenant_id=None,
+            user_id=user_id,
+            details={"rotated_jti": old_jti, "revoked_jti": new_jti},
+            ip_address=ip_address,
+            user_agent=user_agent,
+            guarantee=AuditGuarantee.BEST_EFFORT,
+        )
         raise UnauthorizedError("Invalid refresh token.")
 
     async def refresh_access_token(
@@ -644,27 +628,19 @@ class AuthService:
         db_user, session_revoked = await self._revoke_session(access_token, user_data, db)
 
         # Audit log logout — reuse db_user from session invalidation (saves 1 DB query)
-        try:
-            username = user_data.username_or_email if user_data else "unknown"
-            user_id_val = db_user["id"] if db_user else None
-            tenant_id_val = db_user.get("tenant_id") if db_user else None
-
-            await audit(
-                action="auth.logout",
-                entity_type="user",
-                entity_id=user_id_val,
-                tenant_id=tenant_id_val,
-                user_id=user_id_val,
-                details={
-                    "username": username,
-                    "success": True,
-                    "session_revoked": session_revoked,
-                },
-                ip_address=ip_address or (get_client_ip(request) if request else None),
-                user_agent=user_agent or (request.headers.get("user-agent") if hasattr(request, "headers") else None),
-                priority=EventPriority.NORMAL,
-            )
-        except Exception as e:
-            logger.warning("failed_to_publish_logout_audit_log", error=str(e))
+        username = user_data.username_or_email if user_data else "unknown"
+        user_id_val = db_user["id"] if db_user else None
+        tenant_id_val = db_user.get("tenant_id") if db_user else None
+        await audit(
+            action="auth.logout",
+            entity_type="user",
+            entity_id=user_id_val,
+            tenant_id=tenant_id_val,
+            user_id=user_id_val,
+            details={"username": username, "success": True, "session_revoked": session_revoked},
+            ip_address=ip_address or (get_client_ip(request) if request else None),
+            user_agent=user_agent or (request.headers.get("user-agent") if hasattr(request, "headers") else None),
+            guarantee=AuditGuarantee.BEST_EFFORT,
+        )
 
         return {"message": "Logged out successfully", "session_revoked": session_revoked}

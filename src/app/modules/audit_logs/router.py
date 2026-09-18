@@ -2,27 +2,24 @@ from typing import Any
 
 """Audit Logs API Router."""
 
-import csv
-import io
-from collections.abc import AsyncGenerator
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from src.app.api.deps import RequestContextDep
-from src.app.core.json_utils import json_dumps
 from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
 from src.app.core.rbac import Permission, requires_permission
-from src.app.modules.audit_logs.models import AuditLog
 from src.app.modules.audit_logs.schemas import (
+    AuditExportCriteria,
     AuditLogList,
     AuditLogResponse,
     ExportCountResponse,
 )
 from src.app.modules.audit_logs.service import EXPORT_MAX_RECORDS, AuditLogService, _AuditFilter
-from src.app.shared.exceptions import ModelNotFoundError, ValidationError
+from src.app.shared.exceptions import ModelNotFoundError
 
 router = APIRouter(prefix="/audit-logs", tags=["audit-logs"])
 
@@ -142,166 +139,30 @@ async def get_export_count(
 )
 async def export_audit_logs(
     ctx: RequestContextDep,
-    format: str = Query("csv", pattern="^(csv|json|jsonl)$", description="Export format"),
+    format: Literal["csv", "json", "jsonl"] = Query("csv", description="Export format"),
     action: str | None = Query(None, description="Filter by action"),
     user_id: int | None = Query(None, description="Filter by user ID"),
     entity_type: str | None = Query(None, description="Filter by entity type"),
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
-) -> Any:
-    """
-    Export audit logs as CSV, JSON, or JSONL.
-
-    Maximum 100,000 records per export. Use date filtering for larger datasets.
-    Requires AUDIT_LOGS_DOWNLOAD permission.
-    """
-    db = ctx.db
-    tenant_id = ctx.tenant_id
-    user_id = ctx.user_id
-
-    # A13: filter composition + counting moved to service layer
-    service = AuditLogService(db)
-    f = _AuditFilter(action=action, user_id=user_id, entity_type=entity_type, start_date=start_date, end_date=end_date)
-
-    stmt = service.export_stmt(tenant_id, f)
-    count = await service.export_count(tenant_id, f)
-
-    if count > EXPORT_MAX_RECORDS:
-        raise ValidationError(
-            f"Export exceeds maximum of {EXPORT_MAX_RECORDS} records. "
-            f"Found {count} records. Use date filtering to reduce the export size.",
-        )
-
-    # Order by created_at for consistent export
-    stmt = stmt.order_by(AuditLog.created_at.asc())
-
-    # Log the export event
-    audit_service = AuditLogService(db)
-    await audit_service.create_log(
-        tenant_id=tenant_id,
+) -> StreamingResponse:
+    """Export up to 100,000 tenant audit logs; requires AUDIT_LOGS_DOWNLOAD."""
+    criteria = AuditExportCriteria(
+        tenant_id=ctx.tenant_id,
+        format=format,
+        action=action,
         user_id=user_id,
-        action="audit_logs.export",
-        entity_type="audit_log",
-        entity_id=None,
-        details={"format": format, "record_count": count},
+        entity_type=entity_type,
+        start_date=start_date,
+        end_date=end_date,
     )
-
-    def _sanitize_csv_cell(value: str | None) -> str:
-        """Prevent CSV formula injection by prefixing dangerous characters."""
-        if not value:
-            return ""
-        if value[0] in ("=", "+", "-", "@", "\t", "\r"):
-            return f"'{value}"
-        return value
-
-    async def generate_csv() -> AsyncGenerator[str, None]:
-        """Generate CSV content."""
-        output = io.StringIO()
-        writer = csv.writer(output)
-
-        # Header
-        writer.writerow(
-            [
-                "id",
-                "action",
-                "user_id",
-                "entity_type",
-                "entity_id",
-                "details",
-                "ip_address",
-                "user_agent",
-                "created_at",
-            ]
-        )
-        yield output.getvalue()
-        output.seek(0)
-        output.truncate(0)
-
-        # Stream rows
-        stream_result = await db.stream(stmt)
-        async for log in stream_result.scalars():
-            writer.writerow(
-                [
-                    str(log.id),
-                    _sanitize_csv_cell(log.action),
-                    str(log.user_id) if log.user_id else "",
-                    _sanitize_csv_cell(log.entity_type or ""),
-                    str(log.entity_id) if log.entity_id else "",
-                    json_dumps(log.details, as_str=True) if log.details else "",
-                    _sanitize_csv_cell(log.ip_address or ""),
-                    _sanitize_csv_cell(log.user_agent or ""),
-                    log.created_at.isoformat() if log.created_at else "",
-                ]
-            )
-            yield output.getvalue()
-            output.seek(0)
-            output.truncate(0)
-
-    async def generate_jsonl() -> AsyncGenerator[str, None]:
-        """Generate JSONL content (one JSON object per line)."""
-        stream_result = await db.stream(stmt)
-        async for log in stream_result.scalars():
-            line = json_dumps(
-                {
-                    "id": str(log.id),
-                    "action": log.action,
-                    "user_id": str(log.user_id) if log.user_id else None,
-                    "entity_type": log.entity_type,
-                    "entity_id": str(log.entity_id) if log.entity_id else None,
-                    "details": log.details,
-                    "ip_address": log.ip_address,
-                    "user_agent": log.user_agent,
-                    "created_at": log.created_at.isoformat() if log.created_at else None,
-                },
-                as_str=True,
-            )
-            yield str(line) + "\n"
-
-    async def generate_json() -> AsyncGenerator[str, None]:
-        """Generate JSON array content."""
-        yield "[\n"
-        first = True
-        stream_result = await db.stream(stmt)
-        async for log in stream_result.scalars():
-            if not first:
-                yield ",\n"
-            first = False
-            line = json_dumps(
-                {
-                    "id": str(log.id),
-                    "action": log.action,
-                    "user_id": str(log.user_id) if log.user_id else None,
-                    "entity_type": log.entity_type,
-                    "entity_id": str(log.entity_id) if log.entity_id else None,
-                    "details": log.details,
-                    "ip_address": log.ip_address,
-                    "user_agent": log.user_agent,
-                    "created_at": log.created_at.isoformat() if log.created_at else None,
-                },
-                as_str=True,
-            )
-            yield str(line)
-        yield "\n]"
-
-    # Generate response based on format
-    if format == "csv":
-        return StreamingResponse(
-            generate_csv(),
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=audit_logs.csv"},
-        )
-    elif format == "jsonl":
-        return StreamingResponse(
-            generate_jsonl(),
-            media_type="application/x-ndjson",
-            headers={"Content-Disposition": "attachment; filename=audit_logs.jsonl"},
-        )
-    else:  # json
-        return StreamingResponse(
-            generate_json(),
-            media_type="application/json",
-            headers={"Content-Disposition": "attachment; filename=audit_logs.json"},
-        )
+    chunks = await AuditLogService(ctx.db).stream_export(criteria, actor=ctx.user_id)
+    media_types = {"csv": "text/csv", "json": "application/json", "jsonl": "application/x-ndjson"}
+    return StreamingResponse(
+        chunks,
+        media_type=media_types[format],
+        headers={"Content-Disposition": f"attachment; filename=audit_logs.{format}"},
+    )
 
 
 @router.get(

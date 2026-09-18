@@ -22,10 +22,10 @@ uv run ruff check src/app/modules/audit_logs/
 ### Module Structure
 ```
 src/app/modules/audit_logs/
-├── __init__.py           # Module exports (exports audit, SYSTEM_TENANT_ID, AuditLogService)
+├── __init__.py           # Module exports (exports audit, AuditGuarantee, SYSTEM_TENANT_ID, AuditLogService)
 ├── trail.py              # Canonical typed audit() interface with auto-tenant & sanitizer
 ├── router.py             # FastAPI routes for log queries
-├── service.py            # AuditLogService for querying and buffering
+├── service.py            # AuditLogService for querying + the single delivery writer (buffer_audit_log)
 ├── models.py             # AuditLog model (immutable)
 ├── schemas.py            # Pydantic schemas (AuditLogEventData, etc.)
 └── AGENTS.md             # This file
@@ -54,36 +54,8 @@ class AuditLog(Base):
 ```
 
 ### Create Audit Log Entry
-✅ DO: Use AuditLogService for creating logs
-```python
-# src/app/modules/audit_logs/service.py (lines 31-65)
-async def create_log(
-    self,
-    tenant_id: int,
-    action: str,
-    entity_type: Optional[str] = None,
-    entity_id: Optional[UUID] = None,
-    user_id: Optional[int] = None,
-    details: Optional[dict[str, Any]] = None,
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None,
-) -> AuditLog:
-    """Create an audit log entry."""
-    log_entry = AuditLog(
-        tenant_id=tenant_id,
-        user_id=user_id,
-        action=action,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        details=details or {},
-        ip_address=ip_address,
-        user_agent=user_agent,
-    )
-    self.db.add(log_entry)
-    await self.db.commit()
-    await self.db.refresh(log_entry)
-    return log_entry
-```
+
+Use `await audit(...)` from the module facade for feature audit events. It owns validation, attribution, sanitization, and delivery policy; see Delivery Policy below. `AuditLogService.create_log()` remains a low-level direct-write API used internally by exports.
 
 ### Log Query with Filters
 ✅ DO: Support filtering by action, user, entity, date range
@@ -119,59 +91,33 @@ async def list_audit_logs(
     # ... pagination and execution
 ```
 
-### Async Event-Based Logging
-✅ DO: Use event bus for non-blocking audit logging
-```python
-# src/app/modules/audit_logs/service.py (lines 10-17)
-from src.app.core.events import EventPriority, event_bus
+### Stream audit exports
 
-class AuditLogService:
-    async def log_async(
-        self,
-        tenant_id: int,
-        action: str,
-        **kwargs,
-    ) -> None:
-        """Log audit entry asynchronously via event bus."""
-        await event_bus.publish(
-            "audit.created",
-            {
-                "tenant_id": tenant_id,
-                "action": action,
-                **kwargs,
-            },
-            priority=EventPriority.HIGH,
-        )
+Use `await AuditLogService(db).stream_export(criteria, actor=user_id)` to obtain an async byte generator. Build `AuditExportCriteria` with the authorized tenant ID and optional action, user, entity type, and inclusive date filters. `criteria.user_id` selects records; `actor` identifies the requester in the export audit event. Callers must authorize access before invoking the service.
+
+The service owns counting, the 100,000-record limit, SQL ordering, cursor lifetime, projection, CSV/JSON/JSONL encoding, and export auditing. It rejects oversized exports before returning the generator, orders rows by `created_at` then `id`, and streams in batches of 1,000 with a SQL limit. CSV cells retain spreadsheet-formula escaping. The router only adapts request criteria and returns `StreamingResponse` with the existing content type and filename.
+
+The `audit_logs.export` event records an accepted request, not a completed download. Its `record_count` is the preflight count, not a snapshot guarantee: concurrent writes can change the streamed rows. The current export excludes its own event; prior export events remain eligible.
+
+Keep the supplied database session open until consumption finishes. If a non-HTTP consumer stops early, close the generator with `aclose()` or `contextlib.aclosing`. The generator closes its result cursor in `finally`; stream failures propagate rather than returning a successful empty export.
+
+Verify with:
+
+```bash
+uv run pytest tests/unit/modules/audit_logs/ tests/integration/modules/audit_logs/ tests/contract/test_audit_isolation.py
 ```
 
-### Decorator for Automatic Logging
-✅ DO: Use decorator for automatic action logging
-```python
-# src/app/modules/audit_logs/service.py (lines 100-120)
-def audit_action(action: str, entity_type: Optional[str] = None):
-    """Decorator to automatically log function calls."""
-    def decorator(func: Callable):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            result = await func(*args, **kwargs)
-            # Extract tenant/user from context and log
-            tenant_id = get_current_tenant_id()
-            await audit_service.log_async(
-                tenant_id=tenant_id,
-                action=action,
-                entity_type=entity_type,
-                details={"args": str(args), "kwargs": str(kwargs)},
-            )
-            return result
-        return wrapper
-    return decorator
-```
+Unit tests cover format compatibility, filters, limits, actor attribution, and cleanup. SQLite-backed tests cover query behavior; PostgreSQL cursor/RLS behavior and a full 100,000-row download require separate environment-backed verification.
+
+### Async Audit Delivery
+
+The canonical `audit()` call awaits buffer acceptance or its database fallback. It does not publish to the event bus. Legacy event handlers adapt old publishers through the same seam using best-effort delivery.
 
 ## Touch Points / Key Files
 
 ### Service Layer
-- Service: `src/app/modules/audit_logs/service.py` - `AuditLogService`
-- Decorator: `src/app/modules/audit_logs/service.py` - `audit_action()` decorator
+- Service: `src/app/modules/audit_logs/service.py` - `AuditLogService` and delivery writer
+- Seam: `src/app/modules/audit_logs/trail.py` - `audit()` and `AuditGuarantee`
 
 ### Models
 - AuditLog: `src/app/modules/audit_logs/models.py` - Immutable audit log model
@@ -253,6 +199,60 @@ details = {
     "request_id": request.state.request_id,
 }
 ```
+
+## Delivery Policy (AuditGuarantee)
+
+Route feature audit writes through `await audit()` — it validates, sanitizes,
+stamps `created_at`, and delivers through one writer:
+
+```python
+from src.app.modules.audit_logs import AuditGuarantee, audit
+
+await audit(
+    action="user.created",
+    entity_type="user",
+    entity_id=user.id,
+    details={"username": user.username},
+    guarantee=AuditGuarantee.REQUIRED,
+)
+```
+
+Delivery pipeline (single persistence path, B4):
+1. `trail.audit()` — tenant resolution (explicit → context → logged `SYSTEM_TENANT_ID`
+   sentinel with `_tenant_fallback: system` stamp), `LogSanitizer` sanitization,
+   `AuditLogEventData` validation, `created_at` stamping.
+2. `service.buffer_audit_log(payload)` — the ONE writer: Redis RPUSH+LTRIM
+   (`audit_log_buffer`, newest MAXLEN=10000 kept) → on Redis failure, ONE fallback
+   `_direct_insert_log(payload)` with its own `local_session()` that commits and
+   PROPAGATES failures. Neither touches a caller's business session.
+
+Guarantees (`src/app/modules/audit_logs/trail.py`):
+- `AuditGuarantee.REQUIRED` — writer errors propagate to the caller (buffer
+  acceptance or independent DB fallback commit; NOT crash-proof or transactional
+  with business writes).
+- `AuditGuarantee.BEST_EFFORT` — writer errors are logged (`audit_delivery_failed`,
+  error type only) and swallowed; cancellation still propagates.
+- `guarantee=None` (default) — maps from `settings.auth.AUDIT_LOG_FAILURE_MODE`
+  directly: `fail_closed` → REQUIRED, `fail_open` → BEST_EFFORT.
+
+**REQUIRED ≠ durable.** `REQUIRED` means the writer's buffer acceptance (or its
+independent fallback commit) succeeded — not crash-proof persistence, and not
+atomicity with the caller's business writes. Design callers so a lost trail is
+a loud, countable event, never a silent gap: worker RLS bypass uses
+record-then-proceed (`core/worker/rls_context.py`) and emits the error-level
+`audit_bypass_unaudited` event (alert on it, count it) when the
+`system.rls_bypass` record cannot be written. Never gate a job on audit infra;
+never swallow a missing trail without that metric.
+
+Callers provide business facts only — no per-caller try/except, no fire-and-forget
+task machinery, no `priority=` parameter. The fire-and-forget event bus is OFF the
+canonical path; the legacy handlers `handle_audit_log_event` ("audit.log") and
+`handle_login_issued_event` ("auth.login_issued") remain as thin adapters calling
+`audit(..., guarantee=BEST_EFFORT)` so older publishers keep working.
+
+❌ DON'T: Publish raw `event_bus.publish("audit.log", {...})` dicts, call
+`buffer_audit_log`/`_direct_insert_log` directly from feature code, or wrap `audit()`
+in caller-side swallow/re-raise logic — the failure policy lives once, at the seam.
 
 ## Pre-PR Checks
 

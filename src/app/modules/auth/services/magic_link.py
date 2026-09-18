@@ -247,7 +247,11 @@ class MagicLinkService:
         extra_data = consumed_data.get("extra_data") or {}
         bound_user_id = extra_data.get("user_id")
         if bound_user_id is not None:
-            user = await crud_users.get_user_with_tier_eager(db=self.db, id=int(bound_user_id))
+            try:
+                user_id = int(bound_user_id)
+            except (TypeError, ValueError) as exc:
+                raise InvalidMagicLinkError("Invalid token data") from exc
+            user = await crud_users.get_user_with_tier_eager(db=self.db, id=user_id)
             if user is None:
                 raise InvalidMagicLinkError("User not found")
             # Tenant isolation: get_user_with_tier_eager already filters by the
@@ -272,10 +276,11 @@ class MagicLinkService:
         from src.app.modules.auth.services.mfa import MFAService
 
         mfa_service = MFAService()
-        mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], self.db)
+        mfa_response = await mfa_service.challenge_if_required(
+            user, self.db, redis=self.redis, ip_address=ip_address
+        )
 
-        if mfa_enabled:
-            mfa_response = await TokenIssuer.issue_mfa_pending(user, redis=self.redis, ip_address=ip_address)
+        if mfa_response is not None:
 
             logger.info(
                 "Magic link verified, MFA required",
@@ -285,7 +290,7 @@ class MagicLinkService:
                 },
             )
 
-            return LoginMFAResponse(**mfa_response)
+            return mfa_response
 
         # Create auth tokens (request threads client IP/UA into the login audit)
         tokens = await self._create_auth_tokens(user, request=request, response=response)

@@ -141,15 +141,26 @@ Feature Flags allow you to toggle features on or off for specific tenants withou
 
 ### Backend Usage
 
-Check if a feature is enabled for a tenant:
+`FeatureFlagService` is the single flag API (the legacy `is_feature_enabled` /
+`update_feature_flag` JSONB shims were removed):
 
 ```python
-from src.app.modules.feature_flags.utils import is_feature_enabled
+from src.app.modules.feature_flags import FeatureFlagService
 
-if await is_feature_enabled(db, tenant_id, "advanced_reporting"):
+service = FeatureFlagService(db)
+
+if await service.is_enabled(tenant_id, "advanced_reporting"):
     # Execute feature-specific logic
     pass
+
+# Typed (string/number/json) values:
+value = await service.get_flag_value(tenant_id, "limits", default=None)
 ```
+
+Resolution precedence (highest wins): tenant override (`FeatureFlagOverride`)
+→ registry default (`FeatureFlag.default_value`) → legacy tenant JSONB
+(`Tenant.feature_flags`) → the `default` argument. `is_enabled` is
+boolean-only; use `get_flag_value` for typed flags.
 
 ### Frontend Integration
 
@@ -170,4 +181,8 @@ if (flags.dark_mode) {
 
 ### Managing Flags
 
-Flags are stored as JSONB in the `Tenant` record. Admins can update flags globally or per-tenant using the `/api/v1/feature-flags` endpoints.
+Flags are stored as JSONB in the `Tenant` record (the lowest precedence tier).
+Admins update tenant flags via the `/api/v1/feature-flags` endpoints, which
+delegate to `FeatureFlagService.update_tenant_flag` /
+`bulk_update_tenant_flags` / `delete_tenant_flag` (per-tenant overrides live
+in `FeatureFlagOverride` rows; global registry defaults in `FeatureFlag`).

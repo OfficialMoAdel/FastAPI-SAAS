@@ -17,6 +17,8 @@ from uuid import UUID
 import pytest
 from webauthn.helpers.structs import PublicKeyCredentialDescriptor, PublicKeyCredentialType
 
+from src.app.modules.auth.services.mfa import MFAService
+
 
 class TestPasskeyServiceExists:
     """Verify PasskeyService module structure."""
@@ -533,6 +535,7 @@ class TestPasskeyServiceAuthentication:
 
                                 with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):
                                     with patch("src.app.modules.auth.services.mfa.get_mfa_service") as mock_mfa:
+                                        mock_mfa.return_value = MFAService()
                                         mock_mfa.return_value.is_mfa_enabled = AsyncMock(return_value=False)
                                         result = await service.verify_authentication(
                                             db=mock_db,

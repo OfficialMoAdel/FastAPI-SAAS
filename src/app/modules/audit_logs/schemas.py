@@ -1,7 +1,7 @@
 """Pydantic schemas for audit logging."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -70,6 +70,23 @@ class ExportCountResponse(BaseModel):
     count: int = Field(..., description="Number of records matching the filter criteria")
     max_export_limit: int = Field(..., description="Maximum records allowed per export")
     can_export: bool = Field(..., description="Whether the count is within export limit")
+
+
+class AuditExportCriteria(BaseModel):
+    tenant_id: UUID
+    format: Literal["csv", "json", "jsonl"] = "csv"
+    action: str | None = None
+    user_id: int | None = None
+    entity_type: str | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "AuditExportCriteria":
+        """Reject inverted ranges (P3: start > end surfaces as 422)."""
+        if self.start_date is not None and self.end_date is not None and self.start_date > self.end_date:
+            raise ValueError("start_date must be earlier than or equal to end_date")
+        return self
 
 
 class AuditLogFilter(BaseModel):

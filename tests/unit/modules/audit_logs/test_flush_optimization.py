@@ -144,6 +144,8 @@ class TestFlushAuditLogBuffer:
         """Test flush handles JSON parse errors gracefully."""
         mock_redis_cache = MagicMock()
         mock_redis_cache.client = MagicMock()
+        mock_redis_cache.client.rpush = AsyncMock()
+        mock_redis_cache.client.lpush = AsyncMock()
 
         mock_pipe = MagicMock()
         _acm(mock_pipe)

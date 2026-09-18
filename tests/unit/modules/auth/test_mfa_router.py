@@ -148,6 +148,44 @@ class TestMFARateLimitingFunction:
 class TestMFARouterEndpoints:
     """Test MFA router endpoint registration and basic functionality."""
 
+    def test_complete_login_maps_issued_session_via_dependency_override(self) -> None:
+        from fastapi import FastAPI, Request, Response
+        from fastapi.testclient import TestClient
+
+        from src.app.core.db.database import async_get_db
+        from src.app.modules.auth.routers.mfa import router
+        from src.app.modules.auth.schemas import MFACompleteLoginRequest
+        from src.app.modules.auth.services.mfa import MFAService, get_mfa_service
+        from src.app.modules.auth.services.tokens import IssuedSession
+
+        app = FastAPI()
+        app.include_router(router)
+        db = Mock()
+        service = Mock(spec=MFAService)
+
+        async def complete(request, passed_db, *, fastapi_request, response):
+            assert isinstance(request, MFACompleteLoginRequest)
+            assert request.mfa_token == "a" * 32
+            assert request.totp_token == "123456"
+            assert passed_db is db
+            assert isinstance(fastapi_request, Request)
+            assert isinstance(response, Response)
+            response.set_cookie("completion-test", "set-by-service", httponly=True)
+            return IssuedSession(access_token="issued-access", refresh_token="private-refresh")
+
+        service.complete_login = AsyncMock(side_effect=complete)
+        app.dependency_overrides[async_get_db] = lambda: db
+        app.dependency_overrides[get_mfa_service] = lambda: service
+        with TestClient(app) as client:
+            response = client.post("/mfa/complete-login", json={"mfa_token": "a" * 32, "totp_token": "123456"})
+        assert response.status_code == 200
+        assert response.json() == {
+            "access_token": "issued-access", "token_type": "bearer", "message": "Login successful",
+        }
+        assert response.cookies["completion-test"] == "set-by-service"
+        assert "private-refresh" not in response.text
+        service.complete_login.assert_awaited_once()
+
     def test_mfa_router_registered(self, client):
         """MFA router should be registered in OpenAPI spec."""
         response = client.get("/openapi.json")

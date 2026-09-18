@@ -7,26 +7,236 @@ Consolidates tests from:
 - tests/unit/core/security/test_token_blacklist_fix.py
 """
 
+import asyncio
+import json
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
+from starlette.types import Receive, Scope, Send
 
 from src.app.core.db.crud_token_blacklist import crud_token_blacklist
 from src.app.core.db.database import Base
 from src.app.core.schemas import TokenBlacklistCreate
 from src.app.core.security.auto_ban import BanInfo
+from src.app.core.security.rate_policy import RateLimitVerdict
+from src.app.core.security.request_admission import AdmissionOutcome
 from src.app.core.utils.rate_limit import reset_rate_limiter
 from src.app.middleware.rate_limit import RateLimitMiddleware
+from src.app.shared.exceptions import ServiceUnavailableError
 
 # =============================================================================
 # Unit Tests: Rate Limit Middleware
 # =============================================================================
+
+
+@pytest.mark.parametrize("is_limited", [False, True])
+def test_injected_admission_verdict(is_limited: bool) -> None:
+    """The ASGI adapter consumes injected verdicts without limiter resets."""
+    headers = {"X-RateLimit-Limit": "7", "X-RateLimit-Remaining": "0", "Retry-After": "12"}
+    verdict = RateLimitVerdict(
+        is_limited=is_limited,
+        limit=7,
+        period=60,
+        remaining=0,
+        retry_after=12,
+        key="injected",
+        headers=headers,
+    )
+    evaluated_paths: list[str] = []
+    handled_paths: list[str] = []
+
+    class FakeAdmission:
+        async def evaluate(self, request: Request) -> AdmissionOutcome:
+            evaluated_paths.append(request.url.path)
+            return AdmissionOutcome("limited" if is_limited else "admit", "127.0.0.1", verdict)
+
+    app = FastAPI()
+    app.add_middleware(RateLimitMiddleware, admission=FakeAdmission())
+
+    @app.get("/")
+    async def home() -> dict[str, str]:
+        handled_paths.append("/")
+        return {"message": "ok"}
+
+    with TestClient(app) as test_client:
+        response = test_client.get("/")
+
+    assert evaluated_paths == ["/"]
+    assert handled_paths == ([] if is_limited else ["/"])
+    assert response.status_code == (429 if is_limited else 200)
+    for name, value in headers.items():
+        assert response.headers[name] == value
+    if is_limited:
+        assert response.json()["error"]["code"] == "RATE_LIMITED"
+    else:
+        assert response.json() == {"message": "ok"}
+
+
+@pytest.fixture
+def admission_scope() -> Scope:
+    return {"type": "http", "method": "GET", "path": "/", "headers": [], "client": ("127.0.0.1", 1234)}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_open", [False, True])
+@pytest.mark.parametrize(
+    ("failure", "expected_status", "expected_code"),
+    [
+        (ServiceUnavailableError("private backend detail"), 503, "SERVICE_UNAVAILABLE"),
+        (RuntimeError("private implementation detail"), 500, "INTERNAL_ERROR"),
+    ],
+)
+async def test_admission_failure_is_not_quota_or_permission(
+    admission_scope: Scope, fail_open: bool, failure: Exception, expected_status: int, expected_code: str
+) -> None:
+    admission = MagicMock(evaluate=AsyncMock(side_effect=failure))
+    downstream, receive, send = AsyncMock(), AsyncMock(), AsyncMock()
+    with patch("src.app.core.security.request_admission.settings.rate_limit.RATE_LIMIT_FAIL_OPEN", fail_open):
+        await RateLimitMiddleware(downstream, admission)(admission_scope, receive, send)
+
+    admission.evaluate.assert_awaited_once()
+    downstream.assert_not_awaited()
+    start, body = [call.args[0] for call in send.await_args_list]
+    assert start["status"] == expected_status
+    assert json.loads(body["body"])["error"]["code"] == expected_code
+    assert b"private" not in body["body"]
+    assert not any(name.startswith(b"x-ratelimit") or name == b"retry-after" for name, _ in start["headers"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_open", [False, True])
+@pytest.mark.parametrize("action", ["admit", "limited", "reject_auto_ban", "reject_banned"])
+async def test_missing_admission_data_is_internal_error(
+    admission_scope: Scope, fail_open: bool, action: Literal["admit", "limited", "reject_auto_ban", "reject_banned"]
+) -> None:
+    outcome = AdmissionOutcome(action, "127.0.0.1")
+    admission = MagicMock(evaluate=AsyncMock(return_value=outcome))
+    downstream, receive, send = AsyncMock(), AsyncMock(), AsyncMock()
+    with patch("src.app.core.security.request_admission.settings.rate_limit.RATE_LIMIT_FAIL_OPEN", fail_open):
+        await RateLimitMiddleware(downstream, admission)(admission_scope, receive, send)
+
+    downstream.assert_not_awaited()
+    start, body = [call.args[0] for call in send.await_args_list]
+    assert start["status"] == 500
+    assert json.loads(body["body"])["error"]["code"] == "INTERNAL_ERROR"
+    assert not any(name.startswith(b"x-ban") or name.startswith(b"x-ratelimit") or name == b"retry-after"
+                   for name, _ in start["headers"])
+
+
+@pytest.mark.asyncio
+async def test_admission_cancellation_propagates(admission_scope: Scope) -> None:
+    admission = MagicMock(evaluate=AsyncMock(side_effect=asyncio.CancelledError()))
+    downstream, receive, send = AsyncMock(), AsyncMock(), AsyncMock()
+    with pytest.raises(asyncio.CancelledError):
+        await RateLimitMiddleware(downstream, admission)(admission_scope, receive, send)
+    downstream.assert_not_awaited()
+    send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["passthrough", "admit"])
+@pytest.mark.parametrize("started", [False, True])
+@pytest.mark.parametrize(
+    "failure", [RuntimeError("downstream failed"), ServiceUnavailableError(), asyncio.CancelledError()]
+)
+async def test_downstream_failure_propagates_once(
+    admission_scope: Scope, action: Literal["passthrough", "admit"], started: bool, failure: BaseException
+) -> None:
+    verdict = RateLimitVerdict(False, 7, 60, 6, 0, "test", {"X-RateLimit-Limit": "7"})
+    admission = MagicMock(evaluate=AsyncMock(return_value=AdmissionOutcome(action, "127.0.0.1", verdict)))
+    receive, send = AsyncMock(), AsyncMock()
+
+    async def downstream_call(scope: Scope, receive: Receive, send: Send) -> None:
+        if started:
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+        raise failure
+
+    downstream = AsyncMock(side_effect=downstream_call)
+    with pytest.raises(type(failure)) as caught:
+        await RateLimitMiddleware(downstream, admission)(admission_scope, receive, send)
+    assert caught.value is failure
+    downstream.assert_awaited_once()
+    admission.evaluate.assert_awaited_once()
+    assert send.await_count == int(started)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_open", [False, True])
+async def test_existing_no_redis_policy_is_preserved(admission_scope: Scope, fail_open: bool) -> None:
+    """Legacy helpers encode outages as verdicts; the adapter cannot reclassify them."""
+    downstream, receive, send = AsyncMock(), AsyncMock(), AsyncMock()
+    with (
+        patch("src.app.core.security.request_admission.settings.rate_limit.RATE_LIMIT_FAIL_OPEN", fail_open),
+        patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True),
+        patch("src.app.core.security.auto_ban.get_redis", return_value=None),
+        patch("src.app.core.security.request_admission.resolve_rate_limits", AsyncMock(return_value=(10, 60))),
+        patch("src.app.core.security.request_admission.check_and_auto_ban", AsyncMock(return_value=(False, 0))),
+    ):
+        await RateLimitMiddleware(downstream)(admission_scope, receive, send)
+    assert downstream.await_count == int(fail_open)
+    if not fail_open:
+        assert send.await_args_list[0].args[0]["status"] == 429
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_open", [False, True])
+@pytest.mark.parametrize("auto_ban", [False, True])
+async def test_valid_ban_outcomes_remain_forbidden(admission_scope: Scope, fail_open: bool, auto_ban: bool) -> None:
+    headers = {"X-Banned": "true", "Retry-After": "30"}
+    verdict = RateLimitVerdict(True, 7, 60, 0, 30, "test", headers)
+    outcome = (
+        AdmissionOutcome("reject_auto_ban", "127.0.0.1", verdict, violation_count=5)
+        if auto_ban else AdmissionOutcome("reject_banned", "127.0.0.1", ban_info=BanInfo(True, reason="test ban"))
+    )
+    admission = MagicMock(evaluate=AsyncMock(return_value=outcome))
+    downstream, receive, send = AsyncMock(), AsyncMock(), AsyncMock()
+    with patch("src.app.core.security.request_admission.settings.rate_limit.RATE_LIMIT_FAIL_OPEN", fail_open):
+        await RateLimitMiddleware(downstream, admission)(admission_scope, receive, send)
+    downstream.assert_not_awaited()
+    start, body = [call.args[0] for call in send.await_args_list]
+    assert start["status"] == 403
+    assert (b"x-banned", b"true") in start["headers"]
+    assert json.loads(body["body"])["error"]["code"] == "FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_rejects_echo_incoming_request_id(admission_scope: Scope) -> None:
+    """P2: the middleware sits outside RequestIDMiddleware, so its 429
+    short-circuit must echo the SAME generate-or-propagate X-Request-ID
+    the inner middleware would have stamped."""
+    admission_scope["headers"] = [(b"x-request-id", b"trace-rl-42")]
+    verdict = RateLimitVerdict(True, 7, 60, 0, 30, "test", {"Retry-After": "30"})
+    outcome = AdmissionOutcome("limited", "127.0.0.1", verdict)
+    admission = MagicMock(evaluate=AsyncMock(return_value=outcome))
+    downstream, receive, send = AsyncMock(), AsyncMock(), AsyncMock()
+    await RateLimitMiddleware(downstream, admission)(admission_scope, receive, send)
+    downstream.assert_not_awaited()
+    start, _ = [call.args[0] for call in send.await_args_list]
+    assert start["status"] == 429
+    assert (b"x-request-id", b"trace-rl-42") in start["headers"]
+
+
+@pytest.mark.asyncio
+async def test_rejects_mint_request_id_when_absent(admission_scope: Scope) -> None:
+    """P2: a 403 reject without an incoming X-Request-ID mints one (never
+    an absent header)."""
+    outcome = AdmissionOutcome("reject_banned", "127.0.0.1", ban_info=BanInfo(True, reason="test ban"))
+    admission = MagicMock(evaluate=AsyncMock(return_value=outcome))
+    downstream, receive, send = AsyncMock(), AsyncMock(), AsyncMock()
+    await RateLimitMiddleware(downstream, admission)(admission_scope, receive, send)
+    downstream.assert_not_awaited()
+    start, _ = [call.args[0] for call in send.await_args_list]
+    assert start["status"] == 403
+    request_id_headers = [(k, v) for k, v in start["headers"] if k == b"x-request-id"]
+    assert len(request_id_headers) == 1
+    assert request_id_headers[0][1]
 
 
 @pytest.fixture
@@ -52,8 +262,8 @@ def client():
     # Cleanup after test
     reset_rate_limiter()
 
-@patch("src.app.middleware.rate_limit.rate_limiter")
-@patch("src.app.middleware.rate_limit.check_ban_and_rate_limit")
+@patch("src.app.core.security.request_admission.rate_limiter")
+@patch("src.app.core.security.request_admission.check_ban_and_rate_limit")
 def test_rate_limit_headers_allowed(mock_combined, mock_limiter, client):
     """Test that rate limit headers are set correctly when request is allowed.
 
@@ -70,8 +280,8 @@ def test_rate_limit_headers_allowed(mock_combined, mock_limiter, client):
     assert response.headers["X-RateLimit-Remaining"] == "5"
 
 
-@patch("src.app.middleware.rate_limit.rate_limiter")
-@patch("src.app.middleware.rate_limit.check_ban_and_rate_limit")
+@patch("src.app.core.security.request_admission.rate_limiter")
+@patch("src.app.core.security.request_admission.check_ban_and_rate_limit")
 def test_rate_limit_headers_exceeded(mock_combined, mock_limiter, client):
     """Test that rate limit headers are set correctly when limit is exceeded.
 
@@ -89,8 +299,8 @@ def test_rate_limit_headers_exceeded(mock_combined, mock_limiter, client):
     assert response.headers["X-RateLimit-Remaining"] == "0"
 
 
-@patch("src.app.middleware.rate_limit.settings.security.AUTO_BAN_ENABLED", True)
-@patch("src.app.middleware.rate_limit.get_ban_info", new_callable=AsyncMock)
+@patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True)
+@patch("src.app.core.security.request_admission.get_ban_info", new_callable=AsyncMock)
 def test_banned_ip_blocked_on_refresh_path(mock_ban_info, client):
     """B3 regression: the refresh-path rate-limit skip must not bypass the
     ban boundary. A banned IP hitting /api/v1/auth/refresh gets 403, not a
@@ -106,8 +316,8 @@ def test_banned_ip_blocked_on_refresh_path(mock_ban_info, client):
     mock_ban_info.assert_awaited_once()
 
 
-@patch("src.app.middleware.rate_limit.settings.security.AUTO_BAN_ENABLED", True)
-@patch("src.app.middleware.rate_limit.get_ban_info", new_callable=AsyncMock)
+@patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True)
+@patch("src.app.core.security.request_admission.get_ban_info", new_callable=AsyncMock)
 def test_unbanned_ip_skips_rate_limit_on_refresh_path(mock_ban_info, client):
     """B3 companion: a clean IP still gets the zero-Redis-ops refresh skip
     (the endpoint's own dependency-level rate limit governs it)."""
@@ -126,10 +336,10 @@ def test_unbanned_ip_skips_rate_limit_on_refresh_path(mock_ban_info, client):
 # =============================================================================
 
 
-@patch("src.app.middleware.rate_limit.settings.security.AUTO_BAN_ENABLED", True)
-@patch("src.app.middleware.rate_limit.get_ban_info", new_callable=AsyncMock)
-@patch("src.app.middleware.rate_limit.rate_limiter")
-@patch("src.app.middleware.rate_limit.check_ban_and_rate_limit")
+@patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True)
+@patch("src.app.core.security.request_admission.get_ban_info", new_callable=AsyncMock)
+@patch("src.app.core.security.request_admission.rate_limiter")
+@patch("src.app.core.security.request_admission.check_ban_and_rate_limit")
 def test_options_skips_rate_limit(mock_combined, mock_limiter, mock_ban_info, client):
     """P1-3: CORS preflight must not burn rate-limit budget. Even with the
     combined seam armed to 429, OPTIONS passes through with zero Redis RTT."""
@@ -146,8 +356,8 @@ def test_options_skips_rate_limit(mock_combined, mock_limiter, mock_ban_info, cl
     mock_ban_info.assert_awaited_once()
 
 
-@patch("src.app.middleware.rate_limit.settings.security.AUTO_BAN_ENABLED", True)
-@patch("src.app.middleware.rate_limit.get_ban_info", new_callable=AsyncMock)
+@patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True)
+@patch("src.app.core.security.request_admission.get_ban_info", new_callable=AsyncMock)
 def test_options_banned_ip_blocked(mock_ban_info, client):
     """P1-3/B3: the OPTIONS skip preserves the ban boundary — a banned IP's
     preflight gets 403, not a pass-through."""
@@ -162,9 +372,9 @@ def test_options_banned_ip_blocked(mock_ban_info, client):
     mock_ban_info.assert_awaited_once()
 
 
-@patch("src.app.middleware.rate_limit.get_ban_info", new_callable=AsyncMock)
-@patch("src.app.middleware.rate_limit.rate_limiter")
-@patch("src.app.middleware.rate_limit.check_ban_and_rate_limit")
+@patch("src.app.core.security.request_admission.get_ban_info", new_callable=AsyncMock)
+@patch("src.app.core.security.request_admission.rate_limiter")
+@patch("src.app.core.security.request_admission.check_ban_and_rate_limit")
 def test_health_path_skips_rate_limit(mock_combined, mock_limiter, mock_ban_info, client):
     """P1-3: orchestrator probes (/health) bypass rate limiting entirely —
     full passthrough, not even the cheap ban lookup. The bare test app has
@@ -178,9 +388,9 @@ def test_health_path_skips_rate_limit(mock_combined, mock_limiter, mock_ban_info
     mock_ban_info.assert_not_awaited()
 
 
-@patch("src.app.middleware.rate_limit.get_ban_info", new_callable=AsyncMock)
-@patch("src.app.middleware.rate_limit.rate_limiter")
-@patch("src.app.middleware.rate_limit.check_ban_and_rate_limit")
+@patch("src.app.core.security.request_admission.get_ban_info", new_callable=AsyncMock)
+@patch("src.app.core.security.request_admission.rate_limiter")
+@patch("src.app.core.security.request_admission.check_ban_and_rate_limit")
 def test_exempt_subpath_skips_rate_limit(mock_combined, mock_limiter, mock_ban_info, client):
     """P1-3: exempt sub-paths (/api/v1/health/live) inherit the skip via the
     shared is_path_exempt prefix rule."""

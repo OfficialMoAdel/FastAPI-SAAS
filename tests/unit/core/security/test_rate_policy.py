@@ -5,12 +5,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import Request
 
+from src.app.core.security.auto_ban import BanInfo
 from src.app.core.security.rate_policy import (
     RateLimitVerdict,
     build_rate_limit_key,
-    evaluate_rate_policy,
     resolve_rate_limits,
 )
+from src.app.core.security.request_admission import RequestAdmissionService
 
 
 @pytest.mark.asyncio
@@ -80,15 +81,17 @@ def test_build_rate_limit_key():
 
 
 @pytest.mark.asyncio
-async def test_evaluate_rate_policy_whitelisted():
-    request = MagicMock(spec=Request)
-    request.state = MagicMock()
+async def test_request_admission_whitelisted():
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/api/v1/items", "headers": [], "client": ("1.2.3.4", 1234)}
+    )
     request.state.ip_whitelisted = True
 
-    with patch("src.app.core.security.rate_policy.settings") as mock_settings:
-        mock_settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT = True
-        verdict = await evaluate_rate_policy(request)
+    with patch("src.app.core.security.request_admission.settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT", True):
+        outcome = await RequestAdmissionService().evaluate(request)
 
+    assert outcome.action == "admit"
+    verdict = outcome.verdict
     assert isinstance(verdict, RateLimitVerdict)
     assert verdict.is_limited is False
     assert verdict.bypassed is True
@@ -96,15 +99,66 @@ async def test_evaluate_rate_policy_whitelisted():
 
 
 @pytest.mark.asyncio
-async def test_evaluate_rate_policy_enforcement():
-    request = MagicMock(spec=Request)
-    request.url.path = "/api/v1/items"
-    request.state = MagicMock(spec=[])
+async def test_request_admission_whitelisted_banned_rejects():
+    """P1: the whitelist branch bypasses the *counter*, never the ban — a
+    whitelisted-but-banned IP must get reject_banned, not a synthetic admit."""
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/api/v1/items", "headers": [], "client": ("1.2.3.4", 1234)}
+    )
+    request.state.ip_whitelisted = True
 
-    mock_limiter = MagicMock()
-    mock_limiter.check_rate_limit_algorithm = AsyncMock(return_value=(False, 45, 0))
+    with (
+        patch("src.app.core.security.request_admission.settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT", True),
+        patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True),
+        patch(
+            "src.app.core.security.request_admission.get_ban_info",
+            new=AsyncMock(return_value=BanInfo(is_banned=True, reason="auto-ban")),
+        ),
+    ):
+        outcome = await RequestAdmissionService().evaluate(request)
 
-    verdict = await evaluate_rate_policy(request, limiter=mock_limiter)
+    assert outcome.action == "reject_banned"
+    assert outcome.ban_info is not None
+    assert outcome.ban_info.is_banned is True
+    assert outcome.verdict is None
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_bucket_key_is_case_insensitive():
+    """P1: exempt decisions match on the lowercased path, so the bucket key
+    must too — /API/V1/X and /api/v1/x share ONE bucket (no budget doubling)."""
+    from src.app.core.utils.path_utils import sanitize_path
+
+    service = RequestAdmissionService()
+    upper = Request(
+        {"type": "http", "method": "GET", "path": "/API/V1/USERS", "headers": [], "client": ("1.2.3.4", 1234)}
+    )
+    lower = Request(
+        {"type": "http", "method": "GET", "path": "/api/v1/users", "headers": [], "client": ("1.2.3.4", 1234)}
+    )
+
+    ctx_upper = await service._get_rate_limit_config(upper)
+    ctx_lower = await service._get_rate_limit_config(lower)
+
+    assert ctx_upper.path == ctx_lower.path
+    assert ctx_upper.path == sanitize_path("/api/v1/users")
+
+
+@pytest.mark.asyncio
+async def test_request_admission_enforcement():
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/api/v1/items", "headers": [], "client": ("1.2.3.4", 1234)}
+    )
+    request.state.ip_whitelisted = False
+    with (
+        patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", False),
+        patch("src.app.core.security.request_admission.rate_limiter") as mock_limiter,
+    ):
+        mock_limiter.check_rate_limit_algorithm = AsyncMock(return_value=(False, 45, 0))
+        outcome = await RequestAdmissionService().evaluate(request)
+    assert outcome.action == "admit"
+    verdict = outcome.verdict
+    assert isinstance(verdict, RateLimitVerdict)
     assert verdict.is_limited is False
     assert verdict.remaining == 45
     assert "X-RateLimit-Limit" in verdict.headers

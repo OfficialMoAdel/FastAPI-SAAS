@@ -10,6 +10,7 @@ Tests cover:
 """
 
 import json
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ import pytest
 from jwt.exceptions import PyJWTError as JWTError
 
 from src.app.modules.auth.service import AuthService
+from src.app.modules.auth.services.mfa import MFAService
 from src.app.modules.users.session_invalidation import InvalidationReason
 
 
@@ -81,6 +83,11 @@ def mock_tenant():
 
 class TestAuthServiceLockout:
     """Tests for account lockout (brute force protection)."""
+
+    @pytest.fixture(autouse=True)
+    def mock_audit_writer(self) -> Iterator[AsyncMock]:
+        with patch("src.app.modules.audit_logs.service.buffer_audit_log", new_callable=AsyncMock) as writer:
+            yield writer
 
     @pytest.mark.asyncio
     async def test_account_locked_after_5_failed_attempts(
@@ -157,7 +164,7 @@ class TestAuthServiceLockout:
         # Lua script returns 3 (not locked)
         mock_redis.eval = AsyncMock(return_value=3)
 
-        mock_mfa_service = MagicMock()
+        mock_mfa_service = MFAService()
         mock_mfa_service.is_mfa_enabled = AsyncMock(return_value=False)
 
         with (

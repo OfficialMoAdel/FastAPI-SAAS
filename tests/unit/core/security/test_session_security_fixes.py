@@ -352,12 +352,12 @@ class TestTriStateBlacklist:
 
     @pytest.mark.asyncio
     async def test_rate_limit_middleware_stores_tri_state_none(self):
-        """Middleware persists None (not False) when the probe returns None."""
+        """Admission persists None (not False) when the probe returns None."""
         from unittest.mock import patch as _patch
 
-        from src.app.middleware.rate_limit import RateLimitMiddleware
+        from src.app.core.security.request_admission import RequestAdmissionService
 
-        mw = RateLimitMiddleware(app=MagicMock())
+        admission = RequestAdmissionService()
         request = MagicMock()
         request.headers = {"Authorization": "Bearer sometoken"}
         request.state = MagicMock(spec=["is_token_blacklisted"])
@@ -365,11 +365,11 @@ class TestTriStateBlacklist:
 
         with (
             _patch(
-                "src.app.middleware.rate_limit.extract_jwt_claims_to_state",
+                "src.app.core.security.request_admission.extract_jwt_claims_to_state",
                 new_callable=AsyncMock,
                 return_value={"sub": "42", "tier_name": "premium", "jti": "j9"},
             ),
-            _patch("src.app.middleware.rate_limit.get_cached_jwt_payload", return_value=None),
+            _patch("src.app.core.security.request_admission.get_cached_jwt_payload", return_value=None),
             _patch(
                 "src.app.core.security.token_blacklist_cache.is_token_blacklisted",
                 new_callable=AsyncMock,
@@ -377,8 +377,8 @@ class TestTriStateBlacklist:
             ),
             _patch("src.app.core.security.rate_limit_cache.get_tier_policy", new_callable=AsyncMock, return_value=[]),
         ):
-            ctx = await mw._get_rate_limit_config(request)
-            await mw._resolve_legacy_config(request, ctx)
+            ctx = await admission._get_rate_limit_config(request)
+            await admission._resolve_legacy_config(request, ctx)
 
         assert request.state.is_token_blacklisted is None
 

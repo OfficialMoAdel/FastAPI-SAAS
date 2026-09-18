@@ -482,7 +482,7 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.cache.warmer.warm_caches", new_callable=AsyncMock),
         # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
-        patch("src.app.middleware.rate_limit.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
+        patch("src.app.core.security.request_admission.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
@@ -586,7 +586,7 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.cache.warmer.warm_caches", new_callable=AsyncMock),
         # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
-        patch("src.app.middleware.rate_limit.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
+        patch("src.app.core.security.request_admission.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
@@ -776,7 +776,7 @@ async def full_mock_context(get_test_app):
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.cache.warmer.warm_caches", new_callable=AsyncMock),
         # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
-        patch("src.app.middleware.rate_limit.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
+        patch("src.app.core.security.request_admission.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
@@ -821,7 +821,7 @@ async def unauthenticated_mock_context(get_test_app):
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.cache.warmer.warm_caches", new_callable=AsyncMock),
         # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
-        patch("src.app.middleware.rate_limit.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
+        patch("src.app.core.security.request_admission.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,

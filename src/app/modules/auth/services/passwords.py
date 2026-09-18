@@ -14,10 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.core.config import settings
-from src.app.core.events import EventPriority
 from src.app.core.security import get_password_hash, verify_password
 from src.app.core.security.tokens import hash_token
-from src.app.modules.audit_logs import audit
+from src.app.modules.audit_logs import AuditGuarantee, audit
 from src.app.modules.auth.models import PasswordResetToken, generate_reset_token
 from src.app.modules.users import UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
@@ -79,18 +78,15 @@ class PasswordLifecycleService:
 
         await self.delete_user_token_cache(user)
         # SECURITY FIX: Add audit log for password change (H-13)
-        try:
-            await audit(
-                action="auth.password_changed",
-                entity_type="user",
-                entity_id=user_id,
-                tenant_id=user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None),
-                user_id=user_id,
-                details={"message": "User password was changed"},
-                priority=EventPriority.NORMAL,
-            )
-        except Exception as e:
-            logger.error("failed_to_publish_password_change_audit_log", error=str(e))
+        await audit(
+            action="auth.password_changed",
+            entity_type="user",
+            entity_id=user_id,
+            tenant_id=user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None),
+            user_id=user_id,
+            details={"message": "User password was changed"},
+            guarantee=AuditGuarantee.BEST_EFFORT,
+        )
 
         return {"message": "Password changed successfully. All other sessions have been logged out."}
 

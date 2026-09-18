@@ -405,22 +405,13 @@ class SSOService:
             from src.app.modules.auth.services.mfa import get_mfa_service
 
             mfa_service = get_mfa_service()
-            mfa_enabled = await mfa_service.is_mfa_enabled(normalized_user["id"], db)
+            from src.app.core.utils.ip_utils import get_client_ip
 
-            if mfa_enabled:
-                from src.app.core.redis_provider import get_redis
-                from src.app.core.utils.ip_utils import get_client_ip
-
-                mfa_redis_client = get_redis()
-
-                if not mfa_redis_client:
-                    raise ValidationError("Authentication service unavailable")
-
-                return await TokenIssuer.issue_mfa_pending(
-                    normalized_user,
-                    redis=mfa_redis_client,
-                    ip_address=get_client_ip(request),
-                )
+            mfa_response = await mfa_service.challenge_if_required(
+                normalized_user, db, redis=redis_client, ip_address=get_client_ip(request)
+            )
+            if mfa_response is not None:
+                return mfa_response.model_dump()
 
             # Legacy SSO tokens carried extra id/email claims; kept via
             # extra_claims so existing consumers of those tokens are unaffected.

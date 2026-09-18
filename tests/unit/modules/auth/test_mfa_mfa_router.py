@@ -173,15 +173,15 @@ class TestMFARateLimiting:
 
     def test_complete_login_endpoint_rate_limits_after_5_attempts(self, client_with_rate_limit):
         """Should rate limit after 5 failed complete login attempts."""
+        from types import SimpleNamespace
+
         attempt_count = 0
 
-        async def mock_check_mfa_rate_limit(request, identifier=None):
-            """Mock MFA rate limiter that tracks attempts."""
+        async def mock_check_security_budget(budget, identifier):
             nonlocal attempt_count
             attempt_count += 1
-
-            if attempt_count > 5:
-                raise RateLimitException("Too many MFA verification attempts. Please try again in 60 seconds.")
+            assert (budget, identifier) == ("mfa_verify", "a" * 32)
+            return SimpleNamespace(is_limited=attempt_count > 5, period=60, retry_after=23)
 
         headers = {"X-Tenant-ID": "test-tenant"}
 
@@ -189,15 +189,11 @@ class TestMFARateLimiting:
         valid_mfa_token = "a" * 32  # 32 char token
 
         with patch(
-            "src.app.modules.auth.routers.mfa.check_mfa_rate_limit",
+            "src.app.modules.auth.services.mfa.check_security_budget",
             new_callable=AsyncMock,
-            side_effect=mock_check_mfa_rate_limit,
-        ):
-            with patch(
-                "src.app.core.security.pending_token_store.PendingTokenStore.consume",
-                new_callable=AsyncMock,
-                return_value=None,
-            ):
+            side_effect=mock_check_security_budget,
+        ) as budget:
+            with patch("src.app.modules.auth.services.mfa.get_redis", return_value=None) as redis:
                 # Make 5 failed attempts with invalid MFA pending token
                 for i in range(5):
                     response = client_with_rate_limit.post(
@@ -223,6 +219,8 @@ class TestMFARateLimiting:
                 )
                 assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
                 assert "Too many MFA verification attempts" in response.json()["detail"]
+                assert budget.await_count == 6
+                assert redis.call_count == 5  # The sixth attempt is rejected before Redis.
 
     def test_rate_limit_uses_user_id_as_identifier(self, client_with_rate_limit):
         """Rate limiting should be per-user, not per-request."""
@@ -261,42 +259,25 @@ class TestMFARateLimiting:
                 assert captured_identifiers[0] == "1"  # user_id from mock
 
     def test_rate_limit_uses_token_as_identifier(self, client_with_rate_limit):
-        """Rate limiting should use mfa_token as identifier for complete-login."""
-        captured_identifiers = []
+        """Completion charges the service verification budget to the pending token."""
+        from types import SimpleNamespace
 
-        async def mock_check_mfa_rate_limit(request, identifier=None):
-            """Mock that captures the rate limit identifier."""
-            captured_identifiers.append(identifier)
-
-        headers = {"X-Tenant-ID": "test-tenant"}
-
-        # mfa_token must be 32-64 characters per schema validation
-        valid_mfa_token = "test_pending_token_12345678_abcd"  # 32+ char token
-
-        with patch(
-            "src.app.modules.auth.routers.mfa.check_mfa_rate_limit",
-            new_callable=AsyncMock,
-            side_effect=mock_check_mfa_rate_limit,
-        ):
-            with patch(
-                "src.app.core.security.pending_token_store.PendingTokenStore.consume",
+        token = "a" * 32
+        with (
+            patch(
+                "src.app.modules.auth.services.mfa.check_security_budget",
                 new_callable=AsyncMock,
-                return_value=None,
-            ):
-                # For complete-login endpoint, uses mfa_token as identifier
-                client_with_rate_limit.post(
-                    "/api/v1/mfa/complete-login",
-                    json={
-                        "mfa_token": valid_mfa_token,
-                        "totp_token": "123456",
-                        "backup_code": None,
-                    },
-                    headers=headers,
-                )
-
-                # Identifier should be the mfa_token
-                assert len(captured_identifiers) == 1
-                assert captured_identifiers[0] == valid_mfa_token
+                return_value=SimpleNamespace(is_limited=False),
+            ) as budget,
+            patch("src.app.modules.auth.services.mfa.get_redis", return_value=None),
+        ):
+            response = client_with_rate_limit.post(
+                "/api/v1/mfa/complete-login",
+                json={"mfa_token": token, "totp_token": "123456"},
+                headers={"X-Tenant-ID": "test-tenant"},
+            )
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        budget.assert_awaited_once_with("mfa_verify", token)
 
 
 class TestMFAEndpointAuthentication:

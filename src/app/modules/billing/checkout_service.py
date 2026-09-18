@@ -77,10 +77,6 @@ class CheckoutService:
         tenant = require_active_tenant()
         gateway = self._gateway()
 
-        api_key = await gateway.get_api_key(tenant.id)
-        if not api_key:
-            raise StripeError("Stripe API key not configured", status_code=500)
-
         # Get settings to find Customer ID
         stripe_settings = await self.settings_service.get_settings()
 
@@ -105,8 +101,9 @@ class CheckoutService:
 
         try:
             # Create Stripe Session - build kwargs conditionally to satisfy type checker
+            # B5: tenant-bound adapter owns credentials — the gateway resolves
+            # the api_key from tenant_id internally via _require_api_key.
             session_kwargs: dict[str, Any] = {
-                "api_key": api_key,
                 "payment_method_types": ["card"],
                 "line_items": [{"price": price_id, "quantity": 1}],
                 "mode": "subscription",
@@ -183,10 +180,8 @@ class CheckoutService:
                 return_url = f"{frontend_url}{return_url}"
 
         gateway = self._gateway()
-        api_key = await gateway.get_api_key(tenant.id)
-        if not api_key:
-            raise StripeError("Stripe API key not configured", status_code=500)
-
+        # B5: tenant-bound adapter owns credentials — resolved inside the
+        # gateway from tenant.id; callers never handle api_key directly.
         # Get Customer ID
         settings_service = StripeSettingsService(self.db)
         stripe_settings = await settings_service.get_settings()
@@ -202,7 +197,7 @@ class CheckoutService:
 
         try:
             session = await gateway.create_portal_session(
-                customer_id=customer_id, return_url=return_url, tenant_id=tenant.id, api_key=api_key
+                customer_id=customer_id, return_url=return_url, tenant_id=tenant.id
             )
             return str(session.url)
         except StripeError:

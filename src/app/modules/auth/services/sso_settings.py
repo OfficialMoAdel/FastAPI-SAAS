@@ -15,7 +15,7 @@ from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 _SSO_SETTINGS_CACHE_TTL = 300
 from src.app.core.security.encryption import get_encryption
 from src.app.core.tenancy.context import get_current_tenant  # Needed to get default tenant_id if not passed
-from src.app.modules.audit_logs.trail import audit
+from src.app.modules.audit_logs import audit
 from src.app.modules.auth.crud import crud_sso_settings
 from src.app.modules.auth.models import SSOSettings
 from src.app.modules.auth.schemas import (

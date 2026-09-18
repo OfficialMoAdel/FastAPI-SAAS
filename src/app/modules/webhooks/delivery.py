@@ -32,12 +32,11 @@ from sqlalchemy.orm import selectinload
 from src.app.core.config import settings
 from src.app.core.db.database import get_db_context
 from src.app.core.db.rls import bypass_rls
-from src.app.core.events import EventPriority
 from src.app.core.logger import get_logger
 from src.app.core.security.encryption import decrypt_data
 from src.app.core.security.url_validator import SSRFProtectionError, validate_webhook_url
 from src.app.modules._base import ModelNotFoundError
-from src.app.modules.audit_logs import audit
+from src.app.modules.audit_logs import AuditGuarantee, audit
 from src.app.modules.webhooks.http_client import get_webhook_http_client
 from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint
 from src.app.modules.webhooks.signer import canonical_payload_bytes, sign_canonical_bytes
@@ -336,7 +335,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
             entity_id=delivery_id,
             tenant_id=endpoint.tenant_id,
             details={"endpoint_url": endpoint.url, "error": str(e)},
-            priority=EventPriority.NORMAL,
+            guarantee=AuditGuarantee.BEST_EFFORT,
         )
 
         delivery.status = WebhookDeliveryStatus.FAILED

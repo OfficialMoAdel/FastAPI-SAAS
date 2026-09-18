@@ -22,7 +22,8 @@ src/app/core/security/
 ├── login_helpers.py           # refresh-cookie helpers (set/get/clear, cookie names)
 ├── pending_token_store.py     # PendingTokenStore (MFA/SSO/magic-link pending tokens)
 ├── auto_ban.py                # IP auto-ban: violations, ban/unban, L1 invalidation
-├── rate_policy.py             # resolve_rate_limits, evaluate_rate_policy, check_security_budget, rate keys
+├── rate_policy.py             # resolve_rate_limits, check_security_budget, rate keys, RateLimitVerdict
+├── request_admission.py       # RequestAdmissionService: full admission decision (skips, identity, ban, limits)
 ├── rate_limit_cache.py        # tier rate-policy cache warm/invalidate
 ├── encryption.py              # CredentialEncryption (Fernet/MultiFernet key rotation)
 ├── url_validator.py           # SSRF protection for webhook URLs
@@ -84,6 +85,10 @@ response.set_cookie(key="refresh_token", value=..., httponly=True, secure=True, 
 - **Password hashing**: `password.py::get_password_hash` / `verify_password` (also `needs_rehash`)
 - **Token issue/verify**: `jwt_service.py::create_access_token`, `verify_token`
 - **Revocation**: `jwt_service.py::is_token_blacklisted` + `token_blacklist_cache.py`
+- **Admission**: `request_admission.py::RequestAdmissionService` (skips → identity → ban → limits)
+- **Request-state seam**: `src/app/core/middleware_state.py` (`get_client_ip_state`,
+  `is_whitelisted`, `get_request_id`, `get_token_blacklisted`) — admission and
+  rate-policy read guard-set state through it; never `getattr(request.state, ...)` directly
 - **SSO/magic-link pending state**: `tokens.py::get_sso_state_manager`, `get_magic_link_manager`
 - **FastAPI auth deps**: `src/app/api/deps/auth.py` (consumes this package)
 - **Token blacklist DB side**: `src/app/core/db/crud_token_blacklist.py`
@@ -112,6 +117,10 @@ rg -n "log_security_event|SecurityEventType" src/app/
 - **Token-version bump** (password change / global logout) invalidates all issued tokens — don't bypass
 - **Cache warmup**: blacklist cache is warmed at startup (`main.py::_warm_token_blacklist_cache`), capped by `settings.app.TOKEN_BLACKLIST_WARMUP_LIMIT` (0 disables); warmup failure is fail-closed in production
 - **SSRF**: all outbound webhook URLs pass `url_validator.validate_webhook_url`
+- **Whitelist ≠ trust**: a whitelisted IP skips the blacklist and (when
+  `IP_WHITELIST_BYPASS_RATE_LIMIT`) rate limiting, but is still authenticated
+  and authorized like any other caller. Whitelist membership is an admission
+  signal, not an identity — never gate privileged actions on it.
 
 ## Pre-PR Checks
 

@@ -17,6 +17,7 @@ from jwt import ExpiredSignatureError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.modules.auth.service import AuthService
+from src.app.modules.auth.services.mfa import MFAService
 
 # ============================================================================
 # FIXTURES
@@ -128,30 +129,39 @@ class TestPublishLoginAudit:
     """Tests for _publish_login_audit error handling."""
 
     @pytest.mark.asyncio
-    async def test_publish_audit_event_bus_failure(self, auth_service, mock_request):
-        """Test audit log failure when event_bus.publish fails (lines 140-149)."""
-        with patch("src.app.modules.auth.service.audit", side_effect=Exception("Redis connection failed")):
-            with patch("src.app.core.tenancy.context.get_current_tenant", return_value=None):
-                with patch("src.app.modules.auth.service.settings") as mock_settings:
-                    # Test fail_open mode (default)
-                    mock_settings.auth.AUDIT_LOG_FAILURE_MODE = "fail_open"
-                    # Should not raise, just log
-                    await auth_service._publish_login_audit(mock_request, "testuser", False, reason="test")
+    async def test_publish_audit_writer_failure_fail_open(self, auth_service, mock_request):
+        with (
+            patch(
+                "src.app.modules.audit_logs.service.buffer_audit_log",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("Redis connection failed"),
+            ) as writer,
+            patch("src.app.core.config.settings.auth.AUDIT_LOG_FAILURE_MODE", "fail_open"),
+        ):
+            await auth_service._publish_login_audit(mock_request, "testuser", False, reason="test")
+
+        writer.assert_awaited_once()
+        assert writer.await_args is not None
+        assert writer.await_args.args[0]["action"] == "auth.login"
 
     @pytest.mark.asyncio
     async def test_publish_audit_fail_closed_mode(self, auth_service, mock_request):
-        """Test AUDIT_LOG_FAILURE_MODE='fail_closed' raises 503."""
-        from src.app.shared.exceptions import ServiceUnavailableError
+        error = RuntimeError("Connection failed")
+        with (
+            patch(
+                "src.app.modules.audit_logs.service.buffer_audit_log",
+                new_callable=AsyncMock,
+                side_effect=error,
+            ) as writer,
+            patch("src.app.core.config.settings.auth.AUDIT_LOG_FAILURE_MODE", "fail_closed"),
+        ):
+            from src.app.shared.exceptions import ServiceUnavailableError
 
-        with patch("src.app.modules.auth.service.audit", side_effect=Exception("Connection failed")):
-            with patch("src.app.core.tenancy.context.get_current_tenant", return_value=None):
-                with patch("src.app.modules.auth.service.settings") as mock_settings:
-                    mock_settings.auth.AUDIT_LOG_FAILURE_MODE = "fail_closed"
+            with pytest.raises(ServiceUnavailableError) as exc_info:
+                await auth_service._publish_login_audit(mock_request, "testuser", False, reason="test")
 
-                    with pytest.raises(ServiceUnavailableError) as exc_info:
-                        await auth_service._publish_login_audit(mock_request, "testuser", False, reason="test")
-
-                    assert "Service temporarily unavailable" in str(exc_info.value)
+        assert exc_info.value.__cause__ is error
+        writer.assert_awaited_once()
 
 
 # ============================================================================
@@ -177,7 +187,7 @@ class TestLogin:
                 mock_auth.return_value = None  # Invalid credentials - tests the coercion path
 
                 with patch.object(auth_service, "_publish_login_audit", new_callable=AsyncMock):
-                    mock_mfa_svc = MagicMock()
+                    mock_mfa_svc = MFAService()
                     mock_mfa_svc.is_mfa_enabled = AsyncMock(return_value=False)
                     with patch("src.app.modules.auth.services.mfa.get_mfa_service", return_value=mock_mfa_svc):
                         # Should handle the bytes coercion and proceed
@@ -208,7 +218,7 @@ class TestLogin:
             mock_auth.return_value = mock_user
 
             with patch.object(auth_service, "_publish_login_audit", new_callable=AsyncMock):
-                mock_mfa_svc = MagicMock()
+                mock_mfa_svc = MFAService()
                 mock_mfa_svc.is_mfa_enabled = AsyncMock(return_value=False)
                 with patch("src.app.modules.auth.services.mfa.get_mfa_service", return_value=mock_mfa_svc):
                     with pytest.raises(Exception) as exc_info:
@@ -240,7 +250,7 @@ class TestLogin:
             mock_auth.return_value = mock_user
 
             with patch.object(auth_service, "_publish_login_audit", new_callable=AsyncMock):
-                mock_mfa_instance = MagicMock()
+                mock_mfa_instance = MFAService()
                 mock_mfa_instance.is_mfa_enabled = AsyncMock(return_value=True)
                 with patch("src.app.modules.auth.services.mfa.get_mfa_service", return_value=mock_mfa_instance):
                     with patch(
@@ -486,7 +496,7 @@ class TestLogout:
                     AuthService, "_revoke_session", new_callable=AsyncMock, return_value=({"id": 1}, True)
                 ):
                     with patch(
-                        "src.app.modules.audit_logs.trail.event_bus.publish", side_effect=Exception("Audit failed")
+                        "src.app.modules.audit_logs.service.buffer_audit_log", side_effect=RuntimeError("Audit failed")
                     ):
                         # Should not raise even if audit fails
                         result = await auth_service.logout(
