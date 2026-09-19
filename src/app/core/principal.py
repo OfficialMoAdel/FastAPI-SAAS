@@ -21,6 +21,7 @@ Layers
   longer the principal accessor.
 """
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -40,6 +41,20 @@ class AuthenticatedUser(BaseModel):
     uuid: UUID | str | None = None
     email: str
     username: str | None = None
+    # F1 profile-projection fields: the bearer-auth construction path
+    # (api.deps.auth._create_auth_context) builds the principal from the
+    # ``get_user_auth_info`` payload, which already carries every
+    # ``UserRead`` input for the SAME row the profile cache would
+    # re-serve. Carrying them here lets ``resolve_current_profile``
+    # serialize the principal directly on ``GET /users/me`` (the 80%
+    # hot path) instead of paying an extra Redis GET — or a DB SELECT on
+    # cache miss — per request. All fields are optional so principal
+    # constructions that genuinely lack them (tests, partial payloads)
+    # keep working and fall back to the profile-cache load path.
+    name: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    is_email_verified: bool = False
     is_superuser: bool = False
     is_active: bool = True
     is_deleted: bool = False
