@@ -86,6 +86,11 @@ class CheckoutService:
 
         # Get Plan
         plan = await self.plan_service.get_plan(data.plan_id)
+        # B18: a plan retired by DELETE /billing/plans/{id} only flips
+        # is_active to False; the row and its price ids stay. Reject it here
+        # so a deactivated plan cannot be subscribed to at its retired price.
+        if not plan.get("is_active"):
+            raise ValidationError(f"Plan {data.plan_id} is not available for checkout")
         # Get Price ID based on interval
         price_id = (
             plan["stripe_price_id_monthly"] if data.billing_interval == "monthly" else plan["stripe_price_id_yearly"]

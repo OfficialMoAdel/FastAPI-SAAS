@@ -51,7 +51,12 @@ def test_registry_health_summary_overhead(benchmark, populated_registry):
 
 
 def test_db_circuit_overhead_closed_sync(benchmark):
-    """Sync wrapper to benchmark db_circuit_guard overhead (closed circuit)."""
+    """Sync wrapper to benchmark db_circuit_guard overhead (closed circuit).
+
+    NOTE: wraps every round in asyncio.run(), so the mean includes event-loop
+    creation (~ms on Windows) — compare with the _persistent_loop variant
+    below via extra_info before "optimizing" the guard.
+    """
     # Setup
     cb = CircuitBreaker(name="db_bench", failure_threshold=5, recovery_timeout=30)
 
@@ -67,7 +72,39 @@ def test_db_circuit_overhead_closed_sync(benchmark):
 
     try:
         benchmark(_run)
+        benchmark.extra_info["loop_mode"] = "asyncio_run_per_round"
+        benchmark.extra_info["measures"] = "guard_plus_loop_creation"
     finally:
+        db_circuit_breaker.db_circuit = original_cb
+
+
+def test_db_circuit_overhead_closed_persistent_loop(benchmark):
+    """Persistent-loop variant: removes loop-creation cost from the measurement.
+
+    Same closed-circuit guard as _sync above but on one reused loop, so the
+    number isolates guard + per-round loop scheduling instead of loop
+    creation. Compare the two via extra_info.
+    """
+    cb = CircuitBreaker(name="db_bench_persistent", failure_threshold=5, recovery_timeout=30)
+
+    original_cb = db_circuit_breaker.db_circuit
+    db_circuit_breaker.db_circuit = cb
+
+    loop = asyncio.new_event_loop()
+
+    async def _work():
+        async with db_circuit_breaker.db_circuit_guard():
+            pass
+
+    def _run():
+        loop.run_until_complete(_work())
+
+    try:
+        benchmark(_run)
+        benchmark.extra_info["loop_mode"] = "persistent"
+        benchmark.extra_info["measures"] = "guard_only"
+    finally:
+        loop.close()
         db_circuit_breaker.db_circuit = original_cb
 
 

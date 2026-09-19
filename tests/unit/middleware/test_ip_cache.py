@@ -23,8 +23,10 @@ def clear_cache(monkeypatch):
     """Opt tests into RFC1918 trust and clear the LRU cache per test."""
     monkeypatch.setattr(ip_utils, "TRUSTED_PROXY_NETWORKS", RFC1918)
     ip_utils._is_ip_in_trusted_networks.cache_clear()
+    ip_utils._is_trusted_proxy_cached.cache_clear()
     yield
     ip_utils._is_ip_in_trusted_networks.cache_clear()
+    ip_utils._is_trusted_proxy_cached.cache_clear()
 
 
 class TestIsIpInTrustedNetworks:
@@ -80,6 +82,7 @@ class TestIsIpInTrustedNetworks:
         """Cache should track hits and misses correctly."""
         # Clear and verify empty
         _is_ip_in_trusted_networks.cache_clear()
+        ip_utils._is_trusted_proxy_cached.cache_clear()
         info = _is_ip_in_trusted_networks.cache_info()
         assert info.hits == 0
         assert info.misses == 0

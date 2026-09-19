@@ -304,6 +304,7 @@ class TestCheckoutSessionLive:
             mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_settings.return_value = {"stripe_customer_id": None}
             mock_plan.return_value = {
+                "is_active": True,
                 "stripe_price_id_monthly": test_price_id,
                 "stripe_price_id_yearly": test_price_id,
             }

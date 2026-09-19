@@ -5,6 +5,7 @@ from pydantic import SecretStr
 
 from src.app.modules.billing.checkout_service import CheckoutService
 from src.app.modules.billing.service import CheckoutCreate
+from src.app.shared.exceptions import ValidationError
 from tests.conftest import patch_setting
 
 
@@ -25,7 +26,7 @@ async def test_create_session_success(db_session, tenant):
             ),
             patch(
                 "src.app.modules.billing.subscription_service.SubscriptionPlanService.get_plan",
-                return_value={"stripe_price_id_monthly": "price_123"},
+                return_value={"is_active": True, "stripe_price_id_monthly": "price_123"},
             ),
             patch("stripe.checkout.Session.create", return_value=mock_stripe_session) as mock_stripe_create,
             patch("stripe.Account.retrieve", return_value=MagicMock()),
@@ -65,7 +66,7 @@ async def test_create_session_no_api_key(db_session, tenant):
             patch("src.app.modules.billing.checkout_service.require_active_tenant", return_value=tenant),
             patch(
                 "src.app.modules.billing.subscription_service.SubscriptionPlanService.get_plan",
-                return_value={"stripe_price_id_monthly": "price_123"},
+                return_value={"is_active": True, "stripe_price_id_monthly": "price_123"},
             ),
         ):
             from src.app.core.config import settings as app_settings
@@ -123,7 +124,7 @@ async def test_create_session_has_tenant_metadata(db_session, tenant):
             ),
             patch(
                 "src.app.modules.billing.subscription_service.SubscriptionPlanService.get_plan",
-                return_value={"stripe_price_id_monthly": "price_123"},
+                return_value={"is_active": True, "stripe_price_id_monthly": "price_123"},
             ),
             patch("stripe.checkout.Session.create", return_value=mock_stripe_session) as mock_stripe_create,
             patch("stripe.Account.retrieve", return_value=MagicMock()),
@@ -192,7 +193,7 @@ async def test_injected_gateway_double_replaces_stripe(db_session, tenant):
         ),
         patch(
             "src.app.modules.billing.subscription_service.SubscriptionPlanService.get_plan",
-            return_value={"stripe_price_id_monthly": "price_123"},
+            return_value={"is_active": True, "stripe_price_id_monthly": "price_123"},
         ),
     ):
         from src.app.core.config import settings as app_settings
@@ -250,7 +251,7 @@ async def test_create_session_commits_before_stripe_call(db_session, tenant):
             ),
             patch(
                 "src.app.modules.billing.subscription_service.SubscriptionPlanService.get_plan",
-                return_value={"stripe_price_id_monthly": "price_123"},
+                return_value={"is_active": True, "stripe_price_id_monthly": "price_123"},
             ),
             patch.object(db_session, "commit", new=AsyncMock(side_effect=commit_spy)),
             patch("stripe.checkout.Session.create", side_effect=stripe_spy),
@@ -298,3 +299,44 @@ async def test_create_portal_session_commits_before_stripe_call(db_session, tena
 
     assert url == "https://billing.stripe.com/..."
     assert events == ["db.commit", "stripe.portal.create"]
+
+
+@pytest.mark.asyncio
+async def test_create_session_rejects_deactivated_plan(db_session, tenant):
+    """A plan retired via DELETE /billing/plans/{id} (is_active=False) must not be purchasable.
+
+    Regression test for billing.checkout.deactivated_plan_accepted: get_plan is
+    tenant-scoped only and create_session resolved the price without checking
+    is_active, so a deactivated plan still reached Stripe at its retired price.
+    """
+    with patch_setting("STRIPE_SECRET_KEY", SecretStr("sk_test_123")):
+        service = CheckoutService(db_session)
+
+        with (
+            patch("src.app.modules.billing.checkout_service.require_active_tenant", return_value=tenant),
+            patch(
+                "src.app.modules.billing.service.StripeSettingsService.get_settings",
+                return_value={"stripe_customer_id": "cus_123"},
+            ),
+            patch(
+                "src.app.modules.billing.subscription_service.SubscriptionPlanService.get_plan",
+                return_value={"is_active": False, "stripe_price_id_monthly": "price_old_m"},
+            ),
+            patch("stripe.checkout.Session.create") as mock_stripe_create,
+        ):
+            from src.app.core.config import settings as app_settings
+
+            frontend = app_settings.FRONTEND_URL.rstrip("/") if app_settings.FRONTEND_URL else "https://example.com"
+            data = CheckoutCreate(
+                plan_id=42,
+                billing_interval="monthly",
+                success_url=f"{frontend}/success",
+                cancel_url=f"{frontend}/cancel",
+            )
+
+            with pytest.raises(ValidationError) as exc_info:
+                await service.create_session(user_id=1, user_email="test@example.com", data=data)
+
+            assert "not available for checkout" in str(exc_info.value)
+            # The retired price must never reach the provider.
+            mock_stripe_create.assert_not_called()

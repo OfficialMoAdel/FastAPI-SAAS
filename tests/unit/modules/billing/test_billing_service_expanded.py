@@ -137,6 +137,7 @@ async def test_checkout_service_create_session(
 
     # Needs a real API key to bypass Stripe API validation internally perhaps? No, to_thread is mocked.
     mock_get_plan.return_value = {
+        "is_active": True,
         "stripe_price_id_monthly": "price_monthly",
         "stripe_price_id_yearly": "price_yearly",
     }

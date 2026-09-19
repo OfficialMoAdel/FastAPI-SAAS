@@ -58,6 +58,30 @@ def _is_ip_in_trusted_networks(ip_str: str) -> bool:
         return False
 
 
+@lru_cache(maxsize=2048)
+def _is_trusted_proxy_cached(ip_str: str) -> bool:
+    """Static half of is_trusted_proxy (cached).
+
+    R1-OPT: hoists the ipaddress parse + set/loopback checks out of the
+    per-request path. Pure function of import-time snapshots
+    (TRUSTED_PROXY_IPS / TRUSTED_PROXY_NETWORKS are restart-only) — the
+    live-settings "testclient" branch stays OUTSIDE in is_trusted_proxy.
+    Test fixtures that monkeypatch TRUSTED_PROXY_* must clear this cache
+    alongside _is_ip_in_trusted_networks.
+    """
+    if ip_str in TRUSTED_PROXY_IPS:
+        return True
+
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        if ip.is_loopback:
+            return True
+    except ValueError:
+        return False
+
+    return _is_ip_in_trusted_networks(ip_str)
+
+
 def is_trusted_proxy(ip_str: str) -> bool:
     """Check if an IP is a trusted proxy (full check including loopback and exact IPs).
 
@@ -80,17 +104,7 @@ def is_trusted_proxy(ip_str: str) -> bool:
 
         return bool(settings.env.ENVIRONMENT != EnvironmentOption.PRODUCTION)
 
-    if ip_str in TRUSTED_PROXY_IPS:
-        return True
-
-    try:
-        ip = ipaddress.ip_address(ip_str)
-        if ip.is_loopback:
-            return True
-    except ValueError:
-        return False
-
-    return _is_ip_in_trusted_networks(ip_str)
+    return _is_trusted_proxy_cached(ip_str)
 
 
 def get_client_ip(request: Request) -> str:

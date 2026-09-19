@@ -481,6 +481,14 @@ async def _init_rate_limiting_and_security(redis_client: Any) -> None:
     # void and other workers serve a suspended tenant as active for up to
     # the L1 TTL (60s).
     start_l1_invalidation_listener()
+    # R1-OPT: auth-info (8s) + bitmask (30s) L1s need the same cross-worker
+    # fan-out, else a role revoke / deactivation stays visible to other
+    # workers until TTL expiry.
+    from src.app.core.rbac.dependencies import start_bitmask_l1_invalidation_listener
+    from src.app.modules.users.cache import start_auth_info_l1_invalidation_listener
+
+    start_auth_info_l1_invalidation_listener()
+    start_bitmask_l1_invalidation_listener()
 
 
 def apply_security_runtime_config(config: dict[str, Any]) -> list[str]:
@@ -599,6 +607,11 @@ async def _teardown_security_listeners() -> None:
     await stop_ban_l1_invalidation_listener()
     await stop_l1_invalidation_listener()
     await stop_policy_invalidation_listener()
+    from src.app.core.rbac.dependencies import stop_bitmask_l1_invalidation_listener
+    from src.app.modules.users.cache import stop_auth_info_l1_invalidation_listener
+
+    await stop_auth_info_l1_invalidation_listener()
+    await stop_bitmask_l1_invalidation_listener()
     try:
         from src.app.modules.auth.http_client import close_sso_http_client
 

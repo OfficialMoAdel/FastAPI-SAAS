@@ -43,7 +43,7 @@ async def call_middleware(middleware, mock_request, mock_response=None):
         "method": "GET",
         "path": mock_request.url.path,
         "headers": [(k.encode(), v.encode()) for k, v in mock_request.headers.items()],
-        "state": {}
+        "state": {},
     }
     if getattr(mock_request.client, "host", None):
         scope["client"] = (mock_request.client.host, 1234)
@@ -51,6 +51,7 @@ async def call_middleware(middleware, mock_request, mock_response=None):
         scope["client"] = None
 
     app_called = False
+
     async def mock_app(scope, receive, send):
         nonlocal app_called
         app_called = True
@@ -61,6 +62,7 @@ async def call_middleware(middleware, mock_request, mock_response=None):
     middleware.app = mock_app
 
     sent_messages = []
+
     async def mock_send(message):
         sent_messages.append(message)
 
@@ -106,8 +108,10 @@ def _opt_into_rfc1918_trust(monkeypatch):
         tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")),
     )
     _ip_utils._is_ip_in_trusted_networks.cache_clear()
+    _ip_utils._is_trusted_proxy_cached.cache_clear()
     yield
     _ip_utils._is_ip_in_trusted_networks.cache_clear()
+    _ip_utils._is_trusted_proxy_cached.cache_clear()
 
 
 class TestIPExtraction:

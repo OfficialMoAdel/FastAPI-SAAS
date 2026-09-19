@@ -799,6 +799,7 @@ async def full_mock_context(get_test_app):
     # Explicit cleanup - critical for test isolation
     app.dependency_overrides.clear()
 
+
 @pytest.fixture
 async def unauthenticated_mock_context(get_test_app):
     """Mock context WITHOUT authentication for testing auth-required endpoints.
@@ -1620,7 +1621,7 @@ def mock_redis(request):
 
     from src.app.core.security.session_manager import session_manager
     from src.app.core.security.token_blacklist_cache import _token_cache_key
-    from src.app.core.utils.ip_utils import _is_ip_in_trusted_networks
+    from src.app.core.utils.ip_utils import _is_ip_in_trusted_networks, _is_trusted_proxy_cached
 
     # Clear L1 caches before test to ensure isolation
     from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
@@ -1629,11 +1630,23 @@ def mock_redis(request):
     _L1_TENANT_CACHE.clear()
     _L1_TENANT_PARSED.clear()
     _L1_RBAC_CACHE.clear()
+    try:
+        from src.app.core.rbac.dependencies import _bitmask_l1
+
+        _bitmask_l1.clear()
+    except Exception:
+        pass
+    try:
+        from src.app.modules.users.cache import _auth_info_l1
+
+        _auth_info_l1.clear()
+    except Exception:
+        pass
     _token_cache_key.cache_clear()
     _is_ip_in_trusted_networks.cache_clear()
+    _is_trusted_proxy_cached.cache_clear()
 
     with (
-        patch("src.app.core.setup.create_redis_cache_pool", new=AsyncMock()),
         # Single seam: every Redis consumer reads cache.client at call time via
         # redis_provider.get_redis(), so this one patch covers all of them.
         patch("src.app.core.utils.cache.client", new=fake_redis),
@@ -1652,13 +1665,25 @@ def mock_redis(request):
         session_manager.set_redis_client(fake_redis)
         yield fake_redis
         session_manager.set_redis_client(None)
-
         # Clear L1 caches after test for cleanup
         _L1_TENANT_CACHE.clear()
         _L1_TENANT_PARSED.clear()
         _L1_RBAC_CACHE.clear()
+        try:
+            from src.app.core.rbac.dependencies import _bitmask_l1
+
+            _bitmask_l1.clear()
+        except Exception:
+            pass
+        try:
+            from src.app.modules.users.cache import _auth_info_l1
+
+            _auth_info_l1.clear()
+        except Exception:
+            pass
         _token_cache_key.cache_clear()
         _is_ip_in_trusted_networks.cache_clear()
+        _is_trusted_proxy_cached.cache_clear()
 
 
 @pytest_asyncio.fixture(autouse=True)

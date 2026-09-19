@@ -27,8 +27,12 @@ from src.app.core.utils.ip_utils import (
 def clear_cache():
     """Clear the LRU cache before each test."""
     _is_ip_in_trusted_networks.cache_clear()
+    from src.app.core.utils import ip_utils as _ip_utils
+
+    _ip_utils._is_trusted_proxy_cached.cache_clear()
     yield
     _is_ip_in_trusted_networks.cache_clear()
+    _ip_utils._is_trusted_proxy_cached.cache_clear()
 
 
 @pytest.fixture
@@ -109,6 +113,9 @@ class TestP03IPLRUCache:
         """Cache should track hits and misses correctly."""
         # Clear and verify empty
         _is_ip_in_trusted_networks.cache_clear()
+        from src.app.core.utils import ip_utils as _ip_utils
+
+        _ip_utils._is_trusted_proxy_cached.cache_clear()
         info = _is_ip_in_trusted_networks.cache_info()
         assert info.hits == 0
         assert info.misses == 0

@@ -14,6 +14,7 @@ Usage:
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from dataclasses import dataclass
 from typing import Any
 
@@ -84,27 +85,35 @@ class R1UnifiedMetrics:
             "r1_session_active_count": 0,
         }
 
-        # Histogram data (sum, count, buckets)
+        # Histogram data (sum, count, buckets). F2: each histogram also
+        # carries its precomputed ascending ``boundaries`` tuple so
+        # observe_histogram matches the cumulative prefix with one
+        # O(log B) bisect instead of an O(B log B) sort per observation.
+        _latency_boundaries = tuple(sorted(HistogramBuckets().boundaries))
         self._histograms: dict[str, dict[str, Any]] = {
             "r1_session_eviction_roundtrips": {
                 "sum": 0.0,
                 "count": 0,
                 "buckets": {1: 0, 2: 0, 3: 0, 5: 0, 10: 0},
+                "boundaries": (1, 2, 3, 5, 10),
             },
             "r1_xfetch_latency_seconds": {
                 "sum": 0.0,
                 "count": 0,
                 "buckets": dict.fromkeys(HistogramBuckets().boundaries, 0),
+                "boundaries": _latency_boundaries,
             },
             "r1_rbac_query_latency_seconds": {
                 "sum": 0.0,
                 "count": 0,
                 "buckets": dict.fromkeys(HistogramBuckets().boundaries, 0),
+                "boundaries": _latency_boundaries,
             },
             "r1_passkey_query_latency_seconds": {
                 "sum": 0.0,
                 "count": 0,
                 "buckets": dict.fromkeys(HistogramBuckets().boundaries, 0),
+                "boundaries": _latency_boundaries,
             },
         }
 
@@ -134,19 +143,43 @@ class R1UnifiedMetrics:
 
     # Histogram operations
     def observe_histogram(self, name: str, value: float) -> None:
-        """Record an observation in a histogram."""
-        if name not in self._histograms:
+        """Record an observation in a histogram.
+
+        Buckets are cumulative (Prometheus ``le`` semantics): an
+        observation increments every boundary ``>= value``. F2: the
+        ascending boundary tuple is precomputed at registration, so the
+        matching suffix size is one bisect (O(log B)) plus O(k)
+        increments instead of re-sorting the keys on every call.
+
+        Behavior is byte-identical to the previous sort-per-observation
+        implementation across the full float domain — pinned by the
+        differential test in
+        ``tests/unit/core/test_r1_metrics_histogram_isomorphism.py``:
+        - ``bisect_left`` counts boundaries strictly below ``value``, so
+          ``len - bisect_left`` is exactly the legacy
+          ``value <= boundary`` match count: values at or below the
+          smallest boundary (zero, negatives) fire ALL buckets; values
+          at a boundary fire it inclusively; +inf fires none.
+        - NaN satisfies no ``value <= boundary`` comparison → no bucket
+          fires (bisect on NaN is undefined, hence the explicit guard).
+        """
+        hist = self._histograms.get(name)
+        if hist is None:
             logger.warning("Unknown histogram: %s", name)
             return
 
-        hist = self._histograms[name]
+        boundaries: tuple[float, ...] = hist["boundaries"]
+        if value != value:  # NaN — no bucket fires
+            match_count = 0
+        else:
+            # count of boundaries >= value (legacy: value <= boundary)
+            match_count = len(boundaries) - bisect_left(boundaries, value)
+
         hist["sum"] += value
         hist["count"] += 1
-
-        # Update buckets
-        for boundary in sorted(hist["buckets"].keys()):
-            if value <= boundary:
-                hist["buckets"][boundary] += 1
+        buckets = hist["buckets"]
+        for boundary in boundaries[len(boundaries) - match_count :]:
+            buckets[boundary] += 1
 
     def get_histogram(self, name: str) -> dict[str, Any]:
         """Get histogram data."""

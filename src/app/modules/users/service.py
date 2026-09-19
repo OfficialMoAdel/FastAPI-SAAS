@@ -507,7 +507,11 @@ class UserService:
         else:
             user_id = getattr(current_user, "id", None)
             username = getattr(current_user, "username", None)
-            if hasattr(current_user, "name") and hasattr(current_user, "profile_image_url"):
+            # Optional profile fields are None on partial principals (tests,
+            # minimal payloads). Treat only populated fields as "carried".
+            has_name = getattr(current_user, "name", None) is not None
+            has_avatar = getattr(current_user, "profile_image_url", None) is not None
+            if has_name and has_avatar:
                 # Attribute-bearing principal (ORM entity, API-key payload):
                 # serialize to a real dict so downstream `.get()` access is safe.
                 try:

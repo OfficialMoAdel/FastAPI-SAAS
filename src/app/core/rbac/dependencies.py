@@ -16,10 +16,12 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
+from cachetools import TTLCache
 from fastapi import Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.cache.invalidation_channel import InvalidationChannel
 from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.logger import get_logger
 from src.app.core.rbac.bitmask import PermissionBitmask
@@ -32,12 +34,51 @@ logger = get_logger(__name__)
 
 # Cache TTL for user permissions (5 minutes)
 PERMISSIONS_CACHE_TTL = 300
-
 # P1-7: singleflight registry for bitmask recomputation. Concurrent cache
 # misses on the same (tenant, user) key share one 4-table join instead of
 # each firing their own; the winner alone performs the DB query + setex.
 _in_flight_bitmask: dict[str, asyncio.Task[int]] = {}
 _bitmask_lock = asyncio.Lock()
+
+# R1-OPT: process-local bitmask L1 (short TTL by design). Same staleness
+# argument as the auth-info L1: Redis DELETE on role change is the synchronous
+# happy path, so 30s bounds only the cross-process pub/sub gap — not the
+# 300s Redis TTL. Keyed on (user_id, tenant_id); the permission version hash
+# is a process-constant (_PERMISSION_VERSION_HASH), so deploys (new process =
+# empty L1) are the only version transitions and need no key component.
+_BITMASK_L1_TTL = 30.0
+_BITMASK_L1_MAXSIZE = 2048
+_BITMASK_L1_INVALIDATION_CHANNEL = "perms:bitmask:l1_invalidate"
+_bitmask_l1: TTLCache[tuple[int, str], int] = TTLCache(maxsize=_BITMASK_L1_MAXSIZE, ttl=_BITMASK_L1_TTL)
+
+
+def _bitmask_l1_key(user_id: int, tenant_id: int | UUID) -> tuple[int, str]:
+    return (int(user_id), str(tenant_id))
+
+
+def _on_bitmask_l1_invalidation(data: str) -> None:
+    if data == "*" or not data:
+        _bitmask_l1.clear()
+        return
+    user_part, _, tenant_part = data.partition(":")
+    try:
+        _bitmask_l1.pop((int(user_part), tenant_part), None)
+    except ValueError:
+        _bitmask_l1.clear()
+
+
+_bitmask_l1_invalidation_channel = InvalidationChannel(
+    channel=_BITMASK_L1_INVALIDATION_CHANNEL,
+    on_message=_on_bitmask_l1_invalidation,
+    logger_name="bitmask_l1",
+)
+
+start_bitmask_l1_invalidation_listener = _bitmask_l1_invalidation_channel.start
+stop_bitmask_l1_invalidation_listener = _bitmask_l1_invalidation_channel.stop
+
+
+async def _publish_bitmask_l1_invalidation(user_id: int, tenant_id: int | UUID) -> None:
+    await _bitmask_l1_invalidation_channel.publish(f"{int(user_id)}:{tenant_id}")
 
 
 async def get_user_permissions(
@@ -96,17 +137,22 @@ async def get_cached_permissions_bitmask(
     """
     from src.app.core.redis_provider import get_redis
 
+    l1_key = _bitmask_l1_key(user_id, tenant_id)
+    hit = _bitmask_l1.get(l1_key)
+    if hit is not None:
+        return hit
+
     redis_client = get_redis()
 
     cache_key = _get_bitmask_cache_key(user_id, tenant_id)
-
-    # Try to get bitmask from cache
     if redis_client is not None:
         try:
             cached = await redis_client.get(cache_key)
             if cached is not None:
                 # Decode bytes to int
-                return int(cached.decode() if isinstance(cached, bytes) else cached)
+                mask = int(cached.decode() if isinstance(cached, bytes) else cached)
+                _bitmask_l1[l1_key] = mask
+                return mask
         except Exception as e:
             logger.warning(
                 "Failed to read bitmask from cache",
@@ -158,6 +204,8 @@ async def _compute_and_cache_bitmask(
                 tenant_id=tenant_id,
                 error=str(e),
             )
+    # Writer-visible immediately: L1 backfill even when Redis is down.
+    _bitmask_l1[_bitmask_l1_key(user_id, tenant_id)] = mask
 
     return mask
 
@@ -297,11 +345,13 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int | UUID)
     """
     from src.app.core.redis_provider import get_redis
 
+    _bitmask_l1.pop(_bitmask_l1_key(user_id, tenant_id), None)
+    await _publish_bitmask_l1_invalidation(user_id, tenant_id)
+
     redis_client = get_redis()
 
     if redis_client is None:
         return
-
     bitmask_cache_key = _get_bitmask_cache_key(user_id, tenant_id)
 
     try:
@@ -326,6 +376,10 @@ async def invalidate_users_permissions_cache_batch(user_ids: list[int], tenant_i
         return
 
     from src.app.core.redis_provider import get_redis
+
+    for user_id in user_ids:
+        _bitmask_l1.pop(_bitmask_l1_key(user_id, tenant_id), None)
+        await _publish_bitmask_l1_invalidation(user_id, tenant_id)
 
     redis_client = get_redis()
 

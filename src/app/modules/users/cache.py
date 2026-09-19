@@ -10,12 +10,15 @@ Handles:
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
+from cachetools import TTLCache
 from structlog import get_logger
 
+from src.app.core.cache.invalidation_channel import InvalidationChannel
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.redis_provider import get_redis
 from src.app.core.tenancy.context import get_current_tenant
@@ -38,6 +41,39 @@ USER_CACHE_TTL = 300  # seconds (P-M6: raised from 60 — invalidation is alread
 USER_CACHE_PREFIX = "user:profile"
 AUTH_INFO_CACHE_TTL = 3600  # 1 hour
 AUTH_INFO_CACHE_PREFIX = "user:auth"
+
+# R1-OPT: process-local auth-info L1 (short TTL by design). The Redis TTL
+# (3600s) is only a staleness BACKSTOP — happy-path invalidation is a
+# synchronous Redis DELETE, so effective staleness is ~0. A 300s L1 keyed off
+# the same TTL would add a new stale window (Redis deleted, L1 still serving
+# revoked/is_active/token_version payloads). 8s keeps the hot-user RTT win
+# while bounding that window to the negative-cache discipline already
+# accepted for bans/IP status (5s).
+_AUTH_INFO_L1_TTL = 8.0
+_AUTH_INFO_L1_MAXSIZE = 2048
+_AUTH_INFO_L1_INVALIDATION_CHANNEL = "user_auth:l1_invalidate"
+_auth_info_l1: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=_AUTH_INFO_L1_MAXSIZE, ttl=_AUTH_INFO_L1_TTL)
+
+
+def _on_auth_info_l1_invalidation(data: str) -> None:
+    if data == "*" or not data:
+        _auth_info_l1.clear()
+    else:
+        _auth_info_l1.pop(data, None)
+
+
+_auth_info_l1_invalidation_channel = InvalidationChannel(
+    channel=_AUTH_INFO_L1_INVALIDATION_CHANNEL,
+    on_message=_on_auth_info_l1_invalidation,
+    logger_name="user_auth_l1",
+)
+
+start_auth_info_l1_invalidation_listener = _auth_info_l1_invalidation_channel.start
+stop_auth_info_l1_invalidation_listener = _auth_info_l1_invalidation_channel.stop
+
+
+async def _publish_auth_info_l1_invalidation(cache_key: str) -> None:
+    await _auth_info_l1_invalidation_channel.publish(cache_key)
 
 
 def _user_cache_key(user_id: UUID | str) -> str:
@@ -114,7 +150,15 @@ class UserCacheInvalidator:
 
     @staticmethod
     async def get_cached_user(cache_key: str) -> dict[str, Any] | None:
-        """Get cached user data if available."""
+        """Get cached user data if available (L1 auth-info short-circuit + Redis)."""
+        # L1 only covers auth-info keys — profile/email/username keys keep the
+        # existing Redis-only path (identical keys, no new staleness class).
+        if cache_key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:"):
+            hit = _auth_info_l1.get(cache_key)
+            if hit is not None:
+                # Deep copy: auth payloads nest dicts (tier); callers mutate
+                # the returned dict and shared nested refs would pollute L1.
+                return copy.deepcopy(hit)
         client = get_redis()
         if client is None:
             return None
@@ -123,6 +167,8 @@ class UserCacheInvalidator:
             cached = await client.get(cache_key)
             if cached:
                 result: dict[str, Any] = json_loads(cached)
+                if cache_key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:"):
+                    _auth_info_l1[cache_key] = copy.deepcopy(result)
                 return result
         return None
 
@@ -176,7 +222,10 @@ class UserCacheInvalidator:
 
     @staticmethod
     async def cache_user_auth_info(cache_key: str, user_with_tier: dict[str, Any]) -> None:
-        """Cache user auth info in Redis."""
+        """Cache user auth info in Redis (and refresh the L1 entry)."""
+        # Writer-process visibility is synchronous: populate L1 here so this
+        # process never serves a stale entry it just overwrote.
+        _auth_info_l1[cache_key] = copy.deepcopy(user_with_tier)
         client = get_redis()
         if client is None:
             return
@@ -216,6 +265,7 @@ class UserCacheInvalidator:
             )
         client = get_redis()
         if client is None:
+            _auth_info_l1.clear()
             return
 
         if bump_token_version and explicit_token_version is None:
@@ -244,10 +294,14 @@ class UserCacheInvalidator:
                 tenant_context = get_current_tenant()
                 if tenant_context is not None:
                     tenant_id = tenant_context.tenant_id
-
             keys, token_keys = build_user_invalidation_keys(user_id, username, email, tenant_id)
-
             poison_key = f"user:invalidation_failed:{user_id}"
+            # Synchronous local drop: this process must not serve the entry it
+            # just deleted from Redis (pub/sub is cross-process only).
+            for key in keys:
+                if key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:"):
+                    _auth_info_l1.pop(key, None)
+                    await _publish_auth_info_l1_invalidation(key)
             for attempt in (1, 2):
                 try:
                     if keys:
@@ -313,8 +367,11 @@ class UserCacheInvalidator:
             raise ValueError(
                 f"bump_token_version={bump_token_version} does not match should_bump_token_version(reason={reason!r})."
             )
+        if not users:
+            return
         client = get_redis()
-        if client is None or not users:
+        if client is None:
+            _auth_info_l1.clear()
             return
 
         tenant_context = get_current_tenant()
@@ -371,9 +428,13 @@ class UserCacheInvalidator:
             except Exception as e:
                 logger.warning("Failed to build batch-invalidation keys for user", error=e)
 
+        # Synchronous local drop + cross-worker publish for auth-info keys only.
+        for key in delete_keys:
+            if key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:"):
+                _auth_info_l1.pop(key, None)
+                await _publish_auth_info_l1_invalidation(key)
         if not delete_keys and not token_sets:
             return
-
         try:
             async with client.pipeline(transaction=False) as pipe:
                 if delete_keys:
@@ -392,9 +453,12 @@ __all__ = [
     "USER_CACHE_PREFIX",
     "USER_CACHE_TTL",
     "UserCacheInvalidator",
+    "_auth_info_l1",
     "_require_tenant_id",
     "_user_auth_cache_key",
     "_user_cache_key",
     "_user_email_cache_key",
     "_user_username_cache_key",
+    "start_auth_info_l1_invalidation_listener",
+    "stop_auth_info_l1_invalidation_listener",
 ]

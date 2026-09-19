@@ -1,7 +1,6 @@
 import time
 from dataclasses import dataclass, replace
 from typing import Any, Literal, NamedTuple, Protocol
-from urllib.parse import urlparse
 
 from fastapi import Request
 
@@ -63,7 +62,9 @@ class _RateLimitContext(NamedTuple):
 class RequestAdmissionService:
     async def evaluate(self, request: Request) -> AdmissionOutcome:
         client_ip = get_client_ip_state(request.state) or get_client_ip(request)
-        norm_path = urlparse(str(request.url)).path.rstrip("/").lower() or "/"
+        # R1-OPT: request.url.path is the already-parsed path — urlparse(str(request.url))
+        # re-serialized then re-parsed the full URL per request for an identical result.
+        norm_path = request.url.path.rstrip("/").lower() or "/"
         if request.method == "OPTIONS":
             return await self._passthrough_unless_banned(client_ip)
         if is_path_exempt(norm_path):
@@ -160,8 +161,8 @@ class RequestAdmissionService:
                             tenant_id=ctx.tenant_id,
                             anonymous_ip=client_ip,
                         )
-                        is_limited, remaining, retry_after = (
-                            await rate_limiter.check_rate_limit_algorithm(key, anon_limit, anon_period)
+                        is_limited, remaining, retry_after = await rate_limiter.check_rate_limit_algorithm(
+                            key, anon_limit, anon_period
                         )
                         limit, period = anon_limit, anon_period
             if ban_info.is_banned:
@@ -291,9 +292,7 @@ class RequestAdmissionService:
                 user_id = None
                 tier_name = None
                 tier_id = None
-        limit, period = await resolve_rate_limits(
-            ctx.path, tier_id=tier_id, tier_name=tier_name, user_id=user_id
-        )
+        limit, period = await resolve_rate_limits(ctx.path, tier_id=tier_id, tier_name=tier_name, user_id=user_id)
         raw_ip = get_client_ip_state(request.state) if not user_id else None
         if not isinstance(raw_ip, str) or not raw_ip or raw_ip == "unknown":
             raw_ip = get_client_ip(request) if not user_id else None
