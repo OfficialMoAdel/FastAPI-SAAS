@@ -48,6 +48,11 @@ _policy_invalidation_channel = InvalidationChannel(
     logger_name="rate_limit_policy_l1",
 )
 
+# I11: self-register with the central L1 registry (single lifecycle owner).
+from src.app.core.cache.l1_registry import register_l1_channel  # noqa: E402
+
+register_l1_channel("rate_limit_policy_l1", _policy_invalidation_channel)
+
 start_policy_invalidation_listener = _policy_invalidation_channel.start
 _start_policy_invalidation_listener = _policy_invalidation_channel.start
 stop_policy_invalidation_listener = _policy_invalidation_channel.stop

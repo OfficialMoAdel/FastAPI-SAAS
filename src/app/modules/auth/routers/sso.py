@@ -101,20 +101,47 @@ def _access_only_response(tokens: AuthTokenResponse | dict[str, Any]) -> Respons
 
 
 def _validate_redirect_uri(uri: str | None) -> None:
-    """Validate redirect URI to prevent open redirects."""
+    """Pin redirect targets to the configured frontend origin (I3).
+
+    The previous ``startswith(FRONTEND_URL + "/")`` check was a prefix match,
+    which let ``https://<FRONTEND>.evil.com/...`` through — classic open
+    redirect via hostname suffix confusion. This version parses both sides
+    and requires an exact ``(scheme, netloc)`` equality against the allowed
+    origin, plus rejects backslashes, double-leading-slash relative refs, and
+    non-http(s) schemes.
+    """
+    from urllib.parse import urlsplit
+
     if not uri:
         return
-    # M6: WHATWG URL parsing treats '\' as '/', so '/\evil.com' would be a
-    # protocol-relative redirect to evil.com. Reject any backslash outright.
+    # Backslash trick: WHATWG parsers treat '\\' as '/' inside authority,
+    # so '/\\evil.com' becomes a protocol-relative redirect. Reject outright.
     if "\\" in uri:
         raise _DomainValidationError("Invalid redirect URI.")
-    # Allow relative paths or URLs matching the frontend domain
-    if uri == settings.app.FRONTEND_URL or uri.startswith(settings.app.FRONTEND_URL + "/"):
+
+    allowed = urlsplit(settings.app.FRONTEND_URL)
+    if not allowed.scheme or not allowed.netloc:
+        # Misconfigured deployment — fail closed rather than fall back to
+        # permissive prefix matching.
+        raise _DomainValidationError("Frontend URL misconfigured for redirect validation.")
+
+    target = urlsplit(uri)
+    if target.scheme:
+        # Absolute URL: must be https/http and share the exact origin.
+        if target.scheme not in ("http", "https"):
+            raise _DomainValidationError("Redirect URI must use http(s).")
+        if (target.scheme, target.netloc) != (allowed.scheme, allowed.netloc):
+            raise _DomainValidationError(
+                "Redirect URI must match the permitted frontend origin."
+            )
         return
 
-    raise _DomainValidationError(
-        "Invalid redirect URI. Must be a relative path or match the permitted frontend domain."
-    )
+    # Relative path: single leading slash, no protocol-relative ('//…'),
+    # no userinfo/authority smuggling.
+    if not target.path.startswith("/") or target.path.startswith("//"):
+        raise _DomainValidationError("Relative redirect URI must start with a single '/'.")
+    if target.netloc:
+        raise _DomainValidationError("Relative redirect URI must not carry an authority component.")
 
 
 @router.get("/providers", response_model=SSOProvidersResponse)

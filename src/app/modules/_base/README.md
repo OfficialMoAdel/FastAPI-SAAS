@@ -110,7 +110,7 @@ src/app/modules/{module_name}/
 - [ ] Service inherits from `BaseService[Model]`
 - [ ] Service has `get_*_service(db)` factory function
 - [ ] Router uses `Depends()` for service injection
-- [ ] Exceptions use `ModelNotFoundError`, `DuplicateError` from `_base`
+- [ ] Exceptions use `ModelNotFoundError`, `DuplicateError` from `src.app.shared.exceptions` (canonical home — `_base` re-exports are deprecated shims)
 - [ ] Router registered in `api/v1/__init__.py`
 
 ## Service Pattern Decision Guide

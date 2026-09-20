@@ -1,3 +1,12 @@
+"""FROZEN legacy error tree (P2).
+
+This module re-exports fastcrud's HTTP-flavored exceptions. New code must
+raise ``src.app.shared.exceptions`` domain errors (AppException tree) —
+they carry the canonical status/code mapping in core/errors.py. Do not
+add new exception types here; existing import sites may keep working
+until they are migrated.
+"""
+
 from fastcrud.exceptions.http_exceptions import (
     BadRequestException,
     CustomException,

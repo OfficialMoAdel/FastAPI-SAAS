@@ -95,6 +95,8 @@ class GCRARateLimiter:
         key: str,
         limit: int,
         period: int,
+        *,
+        fail_closed: bool = False,
     ) -> GCRARateLimitResult:
         """Check if request is allowed under GCRA rate limit.
 
@@ -109,10 +111,11 @@ class GCRARateLimiter:
         if not self._redis:
             # R9 FIX: honor the operator-configured failure mode instead of an
             # unconditional fail-open that diverged from fixed-window's
-            # fail-closed default.
+            # fail-closed default. C2: fail_closed=True forces limited even
+            # when the general RATE_LIMIT_FAIL_OPEN=True.
             from src.app.core.config import settings
 
-            fail_open = settings.rate_limit.RATE_LIMIT_FAIL_OPEN
+            fail_open = settings.rate_limit.RATE_LIMIT_FAIL_OPEN and not fail_closed
             return GCRARateLimitResult(
                 is_limited=not fail_open,
                 remaining=limit if fail_open else 0,
@@ -161,7 +164,8 @@ class GCRARateLimiter:
 
             # R1 FIX: RATE_LIMIT_FAIL_OPEN lives on settings.rate_limit; reading
             # it off the root settings object silently ignores operators.
-            fail_open = settings.rate_limit.RATE_LIMIT_FAIL_OPEN
+            # C2: fail_closed=True forces limited regardless of the flag.
+            fail_open = settings.rate_limit.RATE_LIMIT_FAIL_OPEN and not fail_closed
             is_limited = not fail_open
 
             return GCRARateLimitResult(

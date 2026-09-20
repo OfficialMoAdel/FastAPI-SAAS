@@ -157,11 +157,9 @@ def test_tier_service_single_ownership():
     svc, _ = _make_service()
     assert not hasattr(svc, "_rate_limits")
     assert svc.crud.model is svc.tier_crud.model
-    from src.app.modules.rate_limits.models import RateLimit
     from src.app.modules.tiers.models import Tier
 
     assert svc.tier_crud.model is Tier
-    assert svc.rate_limit_crud.model is RateLimit
 
 
 async def test_delete_tier_fails_closed_on_db_error():

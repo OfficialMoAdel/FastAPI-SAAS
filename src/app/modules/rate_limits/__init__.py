@@ -1,5 +1,5 @@
-"""Rate limits module absorbing tier definitions and throughput rules."""
+"""Rate limits module: throughput rules attached to tiers (tiers live in modules.tiers)."""
 
-from src.app.modules.rate_limits.models import RateLimit, Tier
+from src.app.modules.rate_limits.models import RateLimit
 
-__all__ = ["RateLimit", "Tier"]
+__all__ = ["RateLimit"]

@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Union
 
@@ -58,6 +57,7 @@ from jwt.exceptions import DecodeError, ExpiredSignatureError, InvalidSignatureE
 from src.app.core.config import settings
 from src.app.core.json_utils import json_loads
 from src.app.core.logger import get_logger
+from src.app.core.security.tokens import hash_token
 
 # Type alias for PyJWT-compatible public key types
 JWTPublicKey = Union[RSAPublicKey, EllipticCurvePublicKey, Ed25519PublicKey, Ed448PublicKey]
@@ -112,7 +112,7 @@ def _decode_failure_key(token: str, verify_issuer: bool) -> tuple[str, bool]:
     The flag is part of the key because a token failing WITH issuer
     validation (e.g. legacy unstamped token) may succeed WITHOUT it.
     """
-    return (hashlib.sha256(token.encode("utf-8")).hexdigest(), verify_issuer)
+    return (hash_token(token), verify_issuer)
 
 
 def clear_decode_failure_cache() -> None:

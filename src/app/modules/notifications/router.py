@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 
 from src.app.api.deps import RequestContextDep
+from src.app.core.pagination import MAX_PER_PAGE, build_paginated_response
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.modules.notifications.schemas import (
@@ -80,7 +81,8 @@ async def list_notifications(
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
     page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(100, ge=1, le=1000, description="Page size"),
+    # P2 pagination-drift fix: cap at the shared MAX_PER_PAGE (100), not 1000.
+    per_page: int = Query(100, ge=1, le=MAX_PER_PAGE, description="Page size"),
 ) -> Any:
     """
     List notification history for the current tenant.
@@ -100,14 +102,7 @@ async def list_notifications(
         offset=offset,
     )
 
-    return {
-        "items": notifications,
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "has_next": page * per_page < total,
-        "has_previous": page > 1,
-    }
+    return build_paginated_response(items=notifications, total=total, page=page, per_page=per_page)
 
 
 # Email Template Override endpoints

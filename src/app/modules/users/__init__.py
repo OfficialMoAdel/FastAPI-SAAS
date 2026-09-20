@@ -9,10 +9,13 @@ deep `users.service` / `users.router` imports outside this package):
 """
 
 __all__ = [
+    "InvalidationReason",
     "User",
+    "UserCacheInvalidator",
     "UserService",
     "crud_users",
     "get_user_service",
+    "get_user_tenant_id",
     "users_router",
 ]
 
@@ -28,11 +31,13 @@ if TYPE_CHECKING:
     # Static-only re-exports: gives mypy real classes for the lazy
     # __getattr__ facade below (P1-20). Never executed at runtime,
     # so no circular-import cost.
+    from src.app.modules.users.cache import UserCacheInvalidator as UserCacheInvalidator
     from src.app.modules.users.crud import crud_users as crud_users
     from src.app.modules.users.models import User as User
     from src.app.modules.users.router import get_user_service as get_user_service
     from src.app.modules.users.router import router as users_router
     from src.app.modules.users.service import UserService as UserService
+    from src.app.modules.users.session_invalidation import InvalidationReason as InvalidationReason
 
 
 async def _users_token_version_lookup(username_or_email: str) -> int | None:
@@ -59,6 +64,22 @@ async def _users_tenant_lookup(username_or_email: str, db: Any) -> Any | None:
     )
     result = await db.execute(stmt)
     return result.scalar()
+
+
+async def get_user_tenant_id(db: Any, user_id: int) -> Any | None:
+    """Return the tenant of a live (non-deleted) user, else None (I10 seam).
+
+    Facade-level membership check for cross-module consumers (billing
+    webhook handlers validating checkout metadata) — callers must not
+    import ``users.models`` to run raw selects against User.
+    """
+    from sqlalchemy import select
+
+    from src.app.modules.users.models import User
+
+    stmt = select(User.tenant_id).where(User.id == user_id, User.is_deleted.is_(False))
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 def register_users_security_lookups() -> None:
@@ -93,4 +114,12 @@ def __getattr__(name: str):
         from src.app.modules.users.models import User
 
         return User
+    if name == "UserCacheInvalidator":
+        from src.app.modules.users.cache import UserCacheInvalidator
+
+        return UserCacheInvalidator
+    if name == "InvalidationReason":
+        from src.app.modules.users.session_invalidation import InvalidationReason
+
+        return InvalidationReason
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

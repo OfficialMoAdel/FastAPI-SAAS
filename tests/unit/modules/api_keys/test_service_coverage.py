@@ -187,4 +187,8 @@ async def test_validate_api_key_cache_miss_then_cache() -> None:
     ):
         result = await service.validate_api_key("rawkey")
     assert result is not None
-    fake_redis.set.assert_awaited_once()  # CacheClient seam: set with ex TTL
+    # I2 bridge: the result is cached under BOTH digests (current + legacy)
+    # so a lookup under either key hits. TTL is 300s on each.
+    assert fake_redis.set.await_count == 2
+    for call in fake_redis.set.await_args_list:
+        assert call.kwargs.get("ex") == 300

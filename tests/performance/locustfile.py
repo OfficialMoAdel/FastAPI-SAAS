@@ -7,14 +7,14 @@ Purpose: Establish baseline performance metrics before optimization.
 Traffic Distribution (simulating realistic production patterns):
 - 80% GET /api/v1/users/me (authenticated user info - THE HOT PATH)
 - 10% POST /api/v1/ai/chat (AI completions)
-- 10% POST /api/v1/auth/refresh (token refresh)
+- 10% POST /api/v1/account/refresh (token refresh)
 
 Target Metrics:
 | Endpoint        | Current p95 | Target p95 |
 |-----------------|-------------|------------|
 | /users/me       | ~50ms       | <15ms      |
 | /ai/chat        | ~200ms+     | <100ms     |
-| /auth/refresh   | ~30ms       | <10ms      |
+| /account/refresh   | ~30ms       | <10ms      |
 
 Usage:
     # Basic run (10 users, 2 min):
@@ -38,7 +38,7 @@ import os
 import time
 from typing import Any, Final
 
-from locust import HttpUser, between, events, task
+from locust import HttpUser, StopUser, between, events, task
 
 # =============================================================================
 # CONFIGURATION
@@ -215,42 +215,47 @@ class FastAPISaaSUser(HttpUser):
     # Wait between 1-3 seconds between tasks (realistic user behavior)
     wait_time = between(WAIT_TIME_MIN_S, WAIT_TIME_MAX_S)
 
-    # Store authentication tokens
+    # Store authentication token
     access_token: str | None = None
-    refresh_token: str | None = None
     ai_session_id: str | None = None
 
     def on_start(self) -> None:
         """Authenticate user before running tasks."""
         logger.info(f"User starting - authenticating as {TEST_USER_EMAIL}")
 
-        # Login to get tokens
-        response = self.client.post(
-            f"{API_V1}/auth/login",
+        with self.client.post(
+            f"{API_V1}/account/login",
             data={
                 "username": TEST_USER_EMAIL,
                 "password": TEST_USER_PASSWORD,
             },
-            name="/auth/login (setup)",
-        )
+            name="/account/login (setup)",
+            catch_response=True,
+        ) as response:
+            if response.status_code != 200:
+                logger.error(f"Authentication failed: {response.status_code} - {response.text}")
+                response.failure(f"Authentication failed: HTTP {response.status_code}")
+                raise StopUser()
 
-        if response.status_code == 200:
             data = response.json()
-            self.access_token = data.get("access_token")
-            self.refresh_token = data.get("refresh_token")
+            access_token = data.get("access_token")
+            if not access_token:
+                logger.error("Authentication response missing access_token")
+                response.failure("Authentication response missing access_token")
+                raise StopUser()
+
+            self.access_token = access_token
+            response.success()
             logger.info("Authentication successful")
-        else:
-            logger.error(f"Authentication failed: {response.status_code} - {response.text}")
-            # Don't fail completely - some endpoints might work without auth
 
     def on_stop(self) -> None:
         """Cleanup on user stop."""
         if self.access_token:
             logger.info("User stopping - logging out")
             self.client.post(
-                f"{API_V1}/auth/logout",
+                f"{API_V1}/account/logout",
                 headers=self._auth_headers(),
-                name="/auth/logout (cleanup)",
+                name="/account/logout (cleanup)",
             )
 
     def _auth_headers(self) -> dict[str, str]:
@@ -339,7 +344,7 @@ class FastAPISaaSUser(HttpUser):
     @task(TRAFFIC_TOKEN_REFRESH_WEIGHT)  # 10% of traffic
     def refresh_auth_token(self) -> None:
         """
-        POST /api/v1/auth/refresh - Token Refresh
+        POST /api/v1/account/refresh - Token Refresh
 
         Called periodically to get new access tokens.
 
@@ -348,21 +353,21 @@ class FastAPISaaSUser(HttpUser):
         self._refresh_token()
 
     def _refresh_token(self) -> None:
-        """Internal method to refresh the access token."""
-        if not self.refresh_token:
-            logger.warning("No refresh token available")
-            return
-
+        """Refresh the access token using the session refresh cookie."""
         with self.client.post(
-            f"{API_V1}/auth/refresh",
-            headers={"Authorization": f"Bearer {self.refresh_token}"},
-            name="/auth/refresh",
+            f"{API_V1}/account/refresh",
+            name="/account/refresh",
             catch_response=True,
         ) as response:
             if response.status_code == 200:
                 data = response.json()
-                self.access_token = data.get("access_token")
-                self.refresh_token = data.get("refresh_token", self.refresh_token)
+                access_token = data.get("access_token")
+                if not access_token:
+                    logger.error("Refresh response missing access_token")
+                    response.failure("Refresh response missing access_token")
+                    return
+
+                self.access_token = access_token
                 response.success()
             else:
                 response.failure(f"Refresh failed: {response.status_code}")
@@ -386,26 +391,38 @@ class ReadOnlyUser(HttpUser):
 
     def on_start(self) -> None:
         """Authenticate."""
-        response = self.client.post(
-            f"{API_V1}/auth/login",
+        with self.client.post(
+            f"{API_V1}/account/login",
             data={
                 "username": TEST_USER_EMAIL,
                 "password": TEST_USER_PASSWORD,
             },
-            name="/auth/login (setup)",
-        )
-        if response.status_code == 200:
-            self.access_token = response.json().get("access_token")
+            name="/account/login (setup)",
+            catch_response=True,
+        ) as response:
+            if response.status_code != 200:
+                logger.error(f"Authentication failed: {response.status_code} - {response.text}")
+                response.failure(f"Authentication failed: HTTP {response.status_code}")
+                raise StopUser()
+
+            data = response.json()
+            access_token = data.get("access_token")
+            if not access_token:
+                logger.error("Authentication response missing access_token")
+                response.failure("Authentication response missing access_token")
+                raise StopUser()
+
+            self.access_token = access_token
+            response.success()
 
     @task
     def get_user_info(self) -> None:
         """Just fetch user info repeatedly."""
-        if self.access_token:
-            self.client.get(
-                f"{API_V1}/users/me",
-                headers={"Authorization": f"Bearer {self.access_token}"},
-                name="/users/me (readonly)",
-            )
+        self.client.get(
+            f"{API_V1}/users/me",
+            headers={"Authorization": f"Bearer {self.access_token}"},
+            name="/users/me (readonly)",
+        )
 
 
 # =============================================================================

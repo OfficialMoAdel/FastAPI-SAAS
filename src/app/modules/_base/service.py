@@ -37,6 +37,7 @@ from sqlalchemy.orm import selectinload
 
 from src.app.core.db.tenant_crud import TenantAwareCRUD
 from src.app.core.pagination import MAX_PER_PAGE
+from src.app.shared.exceptions import ValidationError
 
 T = TypeVar("T")
 
@@ -189,7 +190,7 @@ class BaseService(Generic[T]):
         if "sort_columns" in kwargs:
             _sc = kwargs.get("sort_columns") or []
             if any(c in _SENSITIVE_COLS for c in _sc):
-                raise ValueError(f"Sorting on sensitive column denied: {_sc}")
+                raise ValidationError(f"Sorting on sensitive column denied: {_sc}")
         # P2-4: FEATURE_EAGER_LOADING flag removed; callers that want eager
         # loading must opt in via eager_loads. Callers that don't pass it
         # get a plain CRUD query (no surprise N+1 prevention, no silent
@@ -210,7 +211,7 @@ class BaseService(Generic[T]):
                 # M3: hasattr silently dropped typos (was if hasattr)
                 for key, value in kwargs.items():
                     if not hasattr(self.model, key):
-                        raise ValueError(f"Unknown filter column '{key}' on {self.model.__name__}")
+                        raise ValidationError(f"Unknown filter column '{key}' on {self.model.__name__}")
                     query = query.filter(getattr(self.model, key) == value)
 
                 # Apply sorting via direct SQLAlchemy order_by
@@ -218,7 +219,7 @@ class BaseService(Generic[T]):
                     orders = sort_orders if sort_orders else ["asc"] * len(sort_columns)
                     for col, order in zip(sort_columns, orders):
                         if not hasattr(self.model, col):
-                            raise ValueError(f"Unknown sort column '{col}' on {self.model.__name__}")
+                            raise ValidationError(f"Unknown sort column '{col}' on {self.model.__name__}")
                         attr = getattr(self.model, col)
                         query = query.order_by(attr.desc() if order == "desc" else attr.asc())
 

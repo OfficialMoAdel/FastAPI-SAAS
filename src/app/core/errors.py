@@ -51,6 +51,9 @@ class ErrorCode:
     VALIDATION_ERROR = "VALIDATION_ERROR"
     INVALID_INPUT = "INVALID_INPUT"
 
+    # Request payload errors
+    PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
+
     # Rate limiting
     RATE_LIMITED = "RATE_LIMITED"
 
@@ -705,6 +708,9 @@ def _status_to_error_code(status_code: int) -> str:
         422: ErrorCode.VALIDATION_ERROR,
         429: ErrorCode.RATE_LIMITED,
         431: ErrorCode.INVALID_INPUT,
+        # I12: 413 previously fell through to INTERNAL_ERROR — the body-limit
+        # middleware (and any StarletteHTTPException(413)) mislabeled itself.
+        413: ErrorCode.PAYLOAD_TOO_LARGE,
         500: ErrorCode.INTERNAL_ERROR,
         501: ErrorCode.NOT_IMPLEMENTED,
         502: ErrorCode.BAD_GATEWAY,

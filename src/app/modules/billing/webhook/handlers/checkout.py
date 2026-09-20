@@ -7,7 +7,6 @@ from typing import Any, Literal, cast
 from uuid import UUID
 
 import stripe
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from src.app.modules.billing import webhook as _pkg
@@ -16,6 +15,12 @@ from src.app.modules.billing.schemas import (
     SubscriptionStatus,
     UserSubscriptionCreateInternal,
 )
+from src.app.modules.billing.subscription_service import (
+    SubscriptionPlanService,
+    fetch_stripe_subscription,
+    resolve_tenant_stripe_api_key,
+)
+from src.app.modules.users import get_user_tenant_id
 
 
 async def handle_checkout_session_completed(event: stripe.Event) -> None:
@@ -60,24 +65,19 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
 
     stripe_subscription_id = session.get("subscription")
 
-    # Retrieve subscription details from Stripe via the PaymentGateway seam
+    # Retrieve subscription details from Stripe via the subscription-service seam (I10)
     if stripe_subscription_id:
         try:
-            from src.app.clients.billing.stripe import get_payment_gateway
-            from src.app.modules.billing.checkout_service import CheckoutService
-
             # B15: resolve the tenant's own Stripe key when one is configured
             # (per-tenant Stripe accounts). The gateway falls back to the
             # platform-global key when the tenant has no StripeSettings row,
             # so single-account deployments are unaffected. Key resolution
             # needs a DB session; the resolve runs in a short bypass context
             # (the webhook path has no tenant middleware context) and the
-            # Stripe HTTP call itself stays outside any DB session. Item 10:
-            # shared CheckoutService.resolve_api_key seam, not a second
-            # gateway construction.
+            # Stripe HTTP call itself stays outside any DB session.
             async with _pkg.job_bypass_context("Checkout tenant Stripe key resolve") as gw_db:
-                api_key = await CheckoutService(gw_db).resolve_api_key(tenant_id)
-            stripe_sub = await get_payment_gateway(api_key=api_key).retrieve_subscription(stripe_subscription_id)
+                api_key = await resolve_tenant_stripe_api_key(gw_db, tenant_id)
+            stripe_sub = await fetch_stripe_subscription(api_key, stripe_subscription_id)
             # P1-4 FIX: current_period_* moved from Subscription to
             # SubscriptionItem in Stripe API 2025-03-31.basil (the pinned SDK
             # sends 2025-12-15.clover, where the top-level fields are absent).
@@ -107,28 +107,23 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
             # tenant before minting the subscription. Previously metadata
             # plan_id was trusted blindly — a forged checkout could attach
             # another tenant's plan id and mint arbitrary subscriptions.
-            from src.app.modules.billing.crud import crud_subscription_plans as _plan_crud
-
+            # I10: ownership lookup via SubscriptionPlanService, not raw crud.
             async with _pkg.job_bypass_context("Checkout plan ownership check") as plan_db:
-                plan_row = await _plan_crud.get(plan_db, id=plan_id, _allow_unscoped=True)
-            if not plan_row or str(plan_row.get("tenant_id")) != str(tenant_id):
+                plan_tenant = await SubscriptionPlanService(plan_db).get_plan_tenant_id(plan_id)
+            if plan_tenant is None or str(plan_tenant) != str(tenant_id):
                 _pkg.logger.error(
                     "Checkout plan/tenant ownership mismatch — rejecting subscription creation",
                     session_id=session["id"],
                     plan_id=plan_id,
                     claimed_tenant_id=str(tenant_id),
-                    plan_tenant_id=str(plan_row.get("tenant_id")) if plan_row else None,
+                    plan_tenant_id=str(plan_tenant),
                 )
                 # P1 FIX: forged/cross-tenant metadata never heals on retry.
                 return
             # B2-06 FIX: validate that the user belongs to this tenant before minting subscription
-            from src.app.modules.users.models import User
-
+            # I10: membership check via the users facade, not users.models.
             async with _pkg.job_bypass_context("Checkout user/tenant membership check") as user_db:
-                user_res = await user_db.execute(
-                    select(User.tenant_id).where(User.id == user_id, User.is_deleted.is_(False))
-                )
-                user_tenant = user_res.scalar_one_or_none()
+                user_tenant = await get_user_tenant_id(user_db, user_id)
             if str(user_tenant) != str(tenant_id):
                 _pkg.logger.error(
                     "Checkout user/tenant membership mismatch — rejecting subscription creation",

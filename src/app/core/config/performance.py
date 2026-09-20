@@ -132,10 +132,12 @@ class QueryProfilerSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 
     QUERY_PROFILER_ENABLED: bool = Field(
-        default=True,
-        description="Enable query profiler middleware in dev/staging",
+        default=False,
+        description="Opt-in query profiler middleware (dev/staging only; never production)",
     )
-    """Enable query profiling (auto-disabled in production)."""
+    """Enable query profiling. Default OFF (P2): profiling is a diagnostic
+    tool, not a default-on surface — flip explicitly per environment.
+    Auto-disabled in production regardless of this flag."""
 
     QUERY_PROFILER_SLOW_THRESHOLD_MS: int = Field(
         default=100,

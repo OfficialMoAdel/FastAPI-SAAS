@@ -62,6 +62,11 @@ _ban_invalidation_channel = InvalidationChannel(
     logger_name="ban_l1",
 )
 
+# I11: self-register with the central L1 registry (single lifecycle owner).
+from src.app.core.cache.l1_registry import register_l1_channel  # noqa: E402
+
+register_l1_channel("ban_l1", _ban_invalidation_channel)
+
 _publish_ban_l1_invalidation = _ban_invalidation_channel.publish
 _start_ban_l1_invalidation_listener = _ban_invalidation_channel.start
 

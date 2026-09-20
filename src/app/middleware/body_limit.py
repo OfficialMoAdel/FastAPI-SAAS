@@ -9,6 +9,8 @@ Limits the maximum size of request bodies to prevent:
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from structlog import get_logger
 
+from src.app.core.errors import ErrorCode, middleware_error_response
+
 logger = get_logger(__name__)
 
 # Default max body size: 10MB
@@ -55,7 +57,7 @@ class RequestBodyLimitMiddleware:
                 count=len(content_lengths),
                 client=scope.get("client", ["unknown"])[0] if scope.get("client") else "unknown",
             )
-            await self._send_400(send, b"Bad Request - Multiple Content-Length headers")
+            await self._send_400(scope, receive, send, b"Bad Request - Multiple Content-Length headers")
             return
 
         content_length = content_lengths[0] if content_lengths else b""
@@ -71,7 +73,7 @@ class RequestBodyLimitMiddleware:
                         path=scope.get("path", ""),
                         client=scope.get("client", ["unknown"])[0] if scope.get("client") else "unknown",
                     )
-                    await self._send_413(send)
+                    await self._send_413(scope, receive, send)
                     return
             except ValueError:
                 pass  # Invalid Content-Length header, continue to stream check
@@ -110,7 +112,7 @@ class RequestBodyLimitMiddleware:
             await self.app(scope, limited_receive, _send_wrapper)
         except BodySizeLimitExceeded:
             if not response_started:
-                await self._send_413(send)
+                await self._send_413(scope, receive, send)
             else:
                 # P2 FIX (code-review): previously swallowed silently when the
                 # response had started — client hung with no error and no
@@ -122,37 +124,21 @@ class RequestBodyLimitMiddleware:
                     client=scope.get("client", ["unknown"])[0] if scope.get("client") else "unknown",
                 )
 
-    async def _send_413(self, send: Send) -> None:
-        await send(
-            {
-                "type": "http.response.start",
-                "status": 413,
-                "headers": [
-                    (b"content-type", b"text/plain"),
-                    (b"x-max-body-size", str(self.max_body_size).encode()),
-                ],
-            }
+    async def _send_413(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Emit the standard error envelope (I12: was hand-rolled text/plain)."""
+        response = middleware_error_response(
+            code=ErrorCode.PAYLOAD_TOO_LARGE,
+            message="Request body too large",
+            status_code=413,
+            headers={"x-max-body-size": str(self.max_body_size)},
         )
-        await send(
-            {
-                "type": "http.response.body",
-                "body": b"Request body too large",
-            }
-        )
+        await response(scope, receive, send)
 
-    async def _send_400(self, send: Send, message: bytes) -> None:
-        await send(
-            {
-                "type": "http.response.start",
-                "status": 400,
-                "headers": [
-                    (b"content-type", b"text/plain"),
-                ],
-            }
+    async def _send_400(self, scope: Scope, receive: Receive, send: Send, message: bytes) -> None:
+        """Emit the standard error envelope (I12: was hand-rolled text/plain)."""
+        response = middleware_error_response(
+            code=ErrorCode.INVALID_INPUT,
+            message=message.decode("utf-8", errors="replace"),
+            status_code=400,
         )
-        await send(
-            {
-                "type": "http.response.body",
-                "body": message,
-            }
-        )
+        await response(scope, receive, send)

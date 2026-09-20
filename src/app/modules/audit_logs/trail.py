@@ -6,14 +6,19 @@ It replaces raw, hand-built event_bus.publish("audit.log", {...}) payloads.
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: F401  (type re-export for callers)
+from sqlalchemy.sql.elements import ColumnElement
 from structlog import get_logger
 
 from src.app.core.config import settings
+from src.app.core.db.tenant_crud import tenant_scope
 from src.app.core.observability.log_sanitizer import LogSanitizer
 from src.app.core.tenancy.context import get_current_tenant
+from src.app.modules.audit_logs.models import AuditLog
 from src.app.modules.audit_logs.schemas import AuditLogEventData
 
 logger = get_logger(__name__)
@@ -194,9 +199,66 @@ async def audit(
         if guarantee == AuditGuarantee.REQUIRED:
             raise
 
+# =============================================================================
+# Login-activity READ contract (I9)
+# =============================================================================
+# Single owner of the login-audit shape shared by the writer
+# (audit_logs.service login audit, AuthService auth-door events) and every
+# reader (dashboard aggregation). Previously the dashboard module owned its
+# own copy of the action tuple and the `details.success` JSONB extraction,
+# so a writer-side rename silently zeroed dashboard metrics.
+#
+# Writer contract: login rows use these action names with a JSONB boolean
+# `details.success`. `->>` text extraction covers both a JSON boolean false
+# and a string "false"; coalesce keeps rows with missing details from
+# silently flipping the count.
+LOGIN_AUDIT_ACTIONS: tuple[str, str] = ("auth.login", "auth.sso_login")
+
+
+def login_activity_subquery(
+    tenant_id: str,
+    start: datetime | ColumnElement[datetime],
+    end: datetime,
+    *,
+    metric: Literal["logins", "active_users", "failed_auth"] = "logins",
+) -> ColumnElement[int]:
+    """Scalar subquery over this tenant's audit login rows (no I/O).
+
+    Args:
+        tenant_id: Tenant for row isolation (tenant_scope / RLS).
+        start: Range start — a datetime literal or a SQL expression
+            (e.g. the dashboard's COALESCE'd min-created subquery).
+        end: Range end (datetime literal).
+        metric: "logins" counts login rows; "active_users" counts distinct
+            login actors; "failed_auth" counts failed password logins only
+            (SSO rows carry their own provider-side failure semantics).
+
+    Returns:
+        A scalar subquery usable inside ``select(...)`` column lists.
+    """
+    base = [tenant_scope(AuditLog, tenant_id), AuditLog.created_at >= start, AuditLog.created_at <= end]
+    if metric == "active_users":
+        stmt = select(func.count(func.distinct(AuditLog.user_id))).where(
+            *base,
+            AuditLog.action.in_(LOGIN_AUDIT_ACTIONS),
+        )
+    elif metric == "failed_auth":
+        success_text = func.coalesce(AuditLog.details["success"].astext, "true")
+        stmt = select(func.count(AuditLog.id)).where(
+            *base,
+            AuditLog.action == LOGIN_AUDIT_ACTIONS[0],
+            success_text == "false",
+        )
+    else:  # "logins"
+        stmt = select(func.count(AuditLog.id)).where(*base, AuditLog.action.in_(LOGIN_AUDIT_ACTIONS))
+    return stmt.scalar_subquery()
+
+
 __all__ = [
+    "LOGIN_AUDIT_ACTIONS",
     "SYSTEM_TENANT_ID",
     "AuditGuarantee",
     "audit",
+    "login_activity_subquery",
     "system_tenant_id",
 ]

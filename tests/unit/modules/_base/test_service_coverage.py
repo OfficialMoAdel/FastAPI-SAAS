@@ -63,6 +63,29 @@ async def test_get_multi_eager_loading_enabled() -> None:
     assert isinstance(result, list)
 
 
+async def test_get_multi_rejects_malformed_sort_with_domain_error() -> None:
+    """C5: malformed sort/filter input is a DOMAIN validation failure (-> 400
+    via core/errors.py EXCEPTION_HANDLERS), never a raw ValueError (-> 500)."""
+    import pytest
+
+    from src.app.shared.exceptions import ValidationError
+
+    service, db = _make_service()
+    service.crud.inject_tenant_filter = MagicMock(side_effect=lambda k: k)
+    db.execute = AsyncMock()
+
+    with pytest.raises(ValidationError):
+        await service.get_multi(eager_loads=["user"], sort_columns=["hashed_password"])
+
+    with pytest.raises(ValidationError):
+        await service.get_multi(eager_loads=["user"], sort_columns=["no_such_column"])
+
+    with pytest.raises(ValidationError):
+        await service.get_multi(eager_loads=["user"], no_such_filter="x")
+
+    db.execute.assert_not_awaited()  # rejected before touching the database
+
+
 async def test_get_multi_joined_dict() -> None:
     service, _ = _make_service()
     service.crud.get_multi_joined.return_value = {"data": [{"id": 1}]}

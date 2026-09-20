@@ -73,20 +73,29 @@ Admin settings live in the `settings.admin` namespace (`src/app/core/config/serv
 ❌ DON'T: Hardcode admin credentials or security settings
 
 ### Middleware Pattern
-✅ DO: Use Starlette middleware for cross-cutting concerns
-```python
-# src/app/middleware/client_cache_middleware.py (lines 5-57)
-class ClientCacheMiddleware(BaseHTTPMiddleware):
-    """Middleware to set Cache-Control header for client-side caching."""
-    
-    def __init__(self, app: FastAPI, max_age: int = 60) -> None:
-        super().__init__(app)
-        self.max_age = max_age
+✅ DO: Write NATIVE ASGI middleware (scope/receive/send) — NOT `BaseHTTPMiddleware`.
+The hot path is native ASGI; `BaseHTTPMiddleware.dispatch` pays an anyio
+task-group + memory-stream hop that double-buffers request bodies.
+Registration order is owned by `src/app/core/guard/ordering.py::GUARD_ORDER`
+(pinned by `tests/unit/test_middleware_order.py`) — never add middleware by
+editing call sites.
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        response: Response = await call_next(request)
-        response.headers["Cache-Control"] = f"public, max-age={self.max_age}"
-        return response
+```python
+# Template matching RateLimitMiddleware / BodyLimitMiddleware:
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+class MyMiddleware:
+    """Native ASGI middleware."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        # ... guard logic; reject via core.errors.middleware_error_response ...
+        await self.app(scope, receive, send)
 ```
 
 ### Schema Organization

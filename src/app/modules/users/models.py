@@ -28,10 +28,10 @@ if TYPE_CHECKING:
     from src.app.modules.auth.models import MFAMethod
     from src.app.modules.billing.models import BillingRecord, UserSubscription
     from src.app.modules.notifications.models import Notification
-    from src.app.modules.rate_limits.models import Tier
     from src.app.modules.rbac.models import Role
     from src.app.modules.storage.models import File
     from src.app.modules.tenants.models import Tenant
+    from src.app.modules.tiers.models import Tier
 
 
 class User(Base, kw_only=True):

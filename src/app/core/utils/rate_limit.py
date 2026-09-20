@@ -26,7 +26,9 @@ class RateLimiter:
             raise Exception("Redis client is not initialized.")
         return client
 
-    async def check_rate_limit(self, key: str, limit: int, period: int) -> tuple[bool, int]:
+    async def check_rate_limit(
+        self, key: str, limit: int, period: int, *, fail_closed: bool = False
+    ) -> tuple[bool, int]:
         """
         Check if a generic key is rate limited using atomic Lua script.
 
@@ -61,19 +63,27 @@ class RateLimiter:
 
         except Exception as e:
             logger.exception("Error checking rate limit for key :", key=key, error=e)
-            # Use configurable fail-open/fail-closed behavior
+            # Use configurable fail-open/fail-closed behavior. C2: callers
+            # guarding brute-force budgets pass fail_closed=True so a Redis
+            # outage maps to limited even when the general RATE_LIMIT_FAIL_OPEN
+            # operator default is True.
             from src.app.core.config import settings
             from src.app.core.monitoring.r1_unified_metrics import record_fail_open
 
-            if settings.rate_limit.RATE_LIMIT_FAIL_OPEN:
+            fail_open = settings.rate_limit.RATE_LIMIT_FAIL_OPEN and not fail_closed
+            if fail_open:
                 record_fail_open("rate_limit")
                 return False, 0  # Allow request (fail-open)
             else:
+                if fail_closed:
+                    record_fail_open("rate_limit:fail_closed_budget")
                 return True, limit + 1  # Block request (fail-closed)
 
         return False, current_count
 
-    async def check_rate_limit_algorithm(self, key: str, limit: int, period: int) -> tuple[bool, int, int]:
+    async def check_rate_limit_algorithm(
+        self, key: str, limit: int, period: int, *, fail_closed: bool = False
+    ) -> tuple[bool, int, int]:
         """Check rate limit using configured algorithm (GCRA or Fixed Window).
 
         Returns:
@@ -89,7 +99,7 @@ class RateLimiter:
             gcra = get_gcra_rate_limiter()
             if gcra:
                 try:
-                    result = await gcra.check_rate_limit(key, limit, period)
+                    result = await gcra.check_rate_limit(key, limit, period, fail_closed=fail_closed)
                     # R6 FIX: round UP so sub-second retry windows are not
                     # truncated to 0 (0 triggered the bogus fixed-window
                     # formula upstream, reporting e.g. 400ms as a full period).
@@ -103,14 +113,15 @@ class RateLimiter:
 
         # Fixed window fallback / default
         try:
-            is_limited, current_count = await self.check_rate_limit(key, limit, period)
+            is_limited, current_count = await self.check_rate_limit(key, limit, period, fail_closed=fail_closed)
             remaining = max(0, limit - current_count)
             return is_limited, remaining, 0
         except Exception as fallback_e:
             logger.error("Rate limit check failed: %s", fallback_e)
             # R1 FIX: RATE_LIMIT_FAIL_OPEN lives on settings.rate_limit; the old
             # getattr on the root settings object silently ignored operators.
-            is_limited = not settings.rate_limit.RATE_LIMIT_FAIL_OPEN
+            # C2: fail_closed=True forces limited regardless of the operator flag.
+            is_limited = fail_closed or not settings.rate_limit.RATE_LIMIT_FAIL_OPEN
             remaining = 0 if is_limited else limit
             return is_limited, remaining, 0
 

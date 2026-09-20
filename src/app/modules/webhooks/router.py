@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 
 from src.app.api.deps import RequestContextDep
+from src.app.core.pagination import MAX_PER_PAGE, build_paginated_response
 from src.app.core.rbac import Permission, requires_permission
 from src.app.modules.webhooks.models import WebhookDeliveryStatus
 from src.app.modules.webhooks.schemas import (
@@ -41,7 +42,8 @@ async def list_webhook_endpoints(
     is_active: bool | None = Query(None, description="Filter by active status"),
     event_type: str | None = Query(None, description="Filter by event type"),
     page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(100, ge=1, le=1000, description="Page size"),
+    # P2 pagination-drift fix: cap at the shared MAX_PER_PAGE (100), not 1000.
+    per_page: int = Query(100, ge=1, le=MAX_PER_PAGE, description="Page size"),
 ) -> Any:
     """List all webhook endpoints for the current tenant."""
     from src.app.modules.webhooks.service import WebhookService
@@ -55,14 +57,7 @@ async def list_webhook_endpoints(
         per_page=per_page,
     )
 
-    return {
-        "items": endpoints,
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "has_next": page * per_page < total,
-        "has_previous": page > 1,
-    }
+    return build_paginated_response(items=endpoints, total=total, page=page, per_page=per_page)
 
 
 @router.post(
@@ -120,7 +115,8 @@ async def list_webhook_deliveries_route(
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
     page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(100, ge=1, le=1000, description="Page size"),
+    # P2 pagination-drift fix: cap at the shared MAX_PER_PAGE (100), not 1000.
+    per_page: int = Query(100, ge=1, le=MAX_PER_PAGE, description="Page size"),
 ) -> Any:
     """
     List webhook delivery history.
@@ -141,14 +137,7 @@ async def list_webhook_deliveries_route(
         per_page=per_page,
     )
 
-    return {
-        "items": deliveries,
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "has_next": page * per_page < total,
-        "has_previous": page > 1,
-    }
+    return build_paginated_response(items=deliveries, total=total, page=page, per_page=per_page)
 
 
 @router.get(

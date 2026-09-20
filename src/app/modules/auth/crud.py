@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -274,8 +273,10 @@ crud_passkey_credentials = CRUDPasskeyCredential(PasskeyCredential)
 
 
 def _hash_token(token: str) -> str:
-    """Hash a magic link token using SHA-256."""
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+    """Hash a magic link token (I2: delegated to the peppered seam)."""
+    from src.app.core.security.tokens import hash_token as _ht
+
+    return _ht(token)
 
 
 async def create_magic_link(
@@ -310,11 +311,25 @@ async def get_magic_link_by_token(
     db: AsyncSession,
     token: str,
 ) -> MagicLink | None:
-    """Get a magic link by token."""
-    hashed_token = _hash_token(token)
-    stmt = select(MagicLink).where(MagicLink.token == hashed_token)
+    """Get a magic link by token.
+
+    I2 bridge: the stored digest changed from bare SHA-256 to peppered HMAC,
+    so links issued before that change are invisible to a single-digest
+    lookup. Query both; a legacy hit is re-hashed so the row migrates
+    forward on first use (subsequent lookups hit the current digest).
+    """
+    from src.app.core.security.tokens import token_digest_candidates
+
+    current_digest, legacy_digest = token_digest_candidates(token)
+    stmt = select(MagicLink).where(MagicLink.token.in_((current_digest, legacy_digest)))
     result = await db.execute(stmt)
-    return result.scalar_one_or_none()
+    magic_link = result.scalar_one_or_none()
+
+    if magic_link is not None and magic_link.token == legacy_digest:
+        magic_link.token = current_digest
+        await db.commit()
+        await db.refresh(magic_link)
+    return magic_link
 
 
 async def mark_magic_link_used(

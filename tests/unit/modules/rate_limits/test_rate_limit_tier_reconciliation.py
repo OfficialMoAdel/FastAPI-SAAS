@@ -82,5 +82,4 @@ class TestRateLimitDirectTierResolution:
         assert rl_svc.crud.model is RateLimit
         assert t_svc.crud.model is Tier
         assert t_svc.tier_crud.model is Tier
-        assert t_svc.rate_limit_crud.model is RateLimit
         assert rl_svc._tiers.tier_crud.model is Tier

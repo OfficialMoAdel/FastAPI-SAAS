@@ -20,6 +20,14 @@ from tests.factories import TenantFactory, UserFactory
 @pytest.mark.e2e
 class TestQueryProfilerE2E:
     @pytest.fixture(autouse=True)
+    def enable_profiler(self):
+        """Opt into the profiler for these tests (P2: flag defaults OFF)."""
+        from src.app.core.config import settings
+
+        with patch.object(settings.query_profiler, "QUERY_PROFILER_ENABLED", True):
+            yield
+
+    @pytest.fixture(autouse=True)
     async def setup_e2e(self, setup_db, db_session):
         """Setup for e2e tests - create a real user in the test database."""
         # Use unique slug and emails to avoid collisions since we commit the session
@@ -189,25 +197,12 @@ class TestQueryProfilerE2E:
         get_test_app,
     ):
         """Test that query profiler returns X-Query-Count=0 when disabled."""
-        from src.app.middleware.query_profiler import QueryProfilerMiddleware
+        from src.app.core.config import settings
 
-        # Find the middleware instance in the app stack
-        app = get_test_app
-        middleware_instance = None
-        # Walk the starlette middleware stack
-        node = getattr(app, "middleware_stack", None)
-        while node is not None:
-            if isinstance(node, QueryProfilerMiddleware):
-                middleware_instance = node
-                break
-            node = getattr(node, "app", None)
-
-        original = None
-        if middleware_instance is not None:
-            original = middleware_instance._is_enabled
-            middleware_instance._is_enabled = False
-
-        try:
+        # The middleware re-evaluates the opt-in flag per request via
+        # _profiler_active(), so disabling it is a settings flip — there is
+        # no constructor-time _is_enabled field to mutate anymore.
+        with patch.object(settings.query_profiler, "QUERY_PROFILER_ENABLED", False):
             response = await e2e_client.get(
                 "/api/v1/users/me",
                 headers=self.user_headers,
@@ -217,9 +212,6 @@ class TestQueryProfilerE2E:
             # When disabled, X-Query-Count should be 0 (fallback path)
             if "X-Query-Count" in response.headers:
                 assert int(response.headers["X-Query-Count"]) == 0
-        finally:
-            if middleware_instance is not None and original is not None:
-                middleware_instance._is_enabled = original
 
     @pytest.mark.asyncio
     async def test_query_profiler_threshold_configuration(

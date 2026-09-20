@@ -53,14 +53,20 @@ def best_of_benchmark(
     iterations: int = 2000,
     warmup: int = 100,
 ) -> float:
-    """Min mean-µs/op over N batches. Load/jitter pushes timings up only,
-    so the minimum is the load-robust estimator (cf. timeit best-of-N).
-    A single mean flaked at 17.44µs under full-suite load vs 7.26µs
-    standalone for the same code — the min stays near true cost."""
-    best = min(
-        run_benchmark(f"{name}[{i}]", func, iterations=iterations, warmup=warmup)[0] for i in range(batches)
+    """Median mean-µs/op over N batches.
+
+    A batch can be made arbitrarily slow by a GC pause or a page fault
+    unrelated to the code under test, so a plain min() is not robust: on a
+    loaded runner every batch can catch a spike, and the winner is then
+    whichever batch happened to dodge one. The median ignores a single
+    unlucky batch (and, with 5 batches, any one outlier) while still
+    tracking the true cost rather than the luckiest run."""
+    results = sorted(
+        run_benchmark(f"{name}[{i}]", func, iterations=iterations, warmup=warmup)[0]
+        for i in range(batches)
     )
-    logger.info("%s best-of-%d: %.2fµs/op", name, batches, best)
+    best = results[len(results) // 2]
+    logger.info("%s batches: %s | median %.2fµs/op", name, ", ".join(f"{r:.2f}" for r in results), best)
     return best
 
 

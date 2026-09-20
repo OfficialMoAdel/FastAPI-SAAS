@@ -89,3 +89,40 @@ async def test_budget_uses_configured_engine_algorithm():
 
     method = limiter.check_rate_limit_algorithm
     assert method.await_count == 1  # single engine call, no hand-rolled scripts
+
+async def test_refresh_budget_is_rate_limited_at_configured_values():
+    """C1 regression: the refresh edge budget exists and carries Retry-After."""
+    limiter = _make_limiter(is_limited=True, remaining=0, retry_after=42)
+
+    from src.app.core.security.rate_policy import check_security_budget
+
+    verdict = await check_security_budget("refresh", "9.9.9.9", limiter=limiter)
+
+    assert verdict.is_limited
+    assert verdict.limit == 60  # refresh budget: 60/min (widened for shared-NAT safety)
+    assert verdict.period == 60
+    assert verdict.headers["Retry-After"] == "42"
+
+
+async def test_fail_closed_budget_blocks_on_outage_despite_fail_open():
+    """C2 regression: fail-closed budgets 429 on Redis outage even with
+    RATE_LIMIT_FAIL_OPEN=True; general policy still fails open."""
+    from unittest.mock import patch
+
+    from src.app.core.security.rate_policy import check_security_budget
+    from src.app.core.utils.rate_limit import RateLimiter
+
+    real = RateLimiter()
+    # The operator opted into fail-open for general API traffic...
+    with (
+        patch(
+            "src.app.core.config.settings.rate_limit.RATE_LIMIT_FAIL_OPEN",
+            True,
+        ),
+        # ...and Redis is down, which the limiter reports as an outage.
+        patch.object(RateLimiter, "get_client", side_effect=Exception("redis down")),
+    ):
+        verdict = await check_security_budget("refresh", "9.9.9.9", limiter=real)
+
+    assert verdict.is_limited
+    assert verdict.remaining == 0

@@ -248,10 +248,24 @@ class PasswordLifecycleService:
         # SECURITY FIX: Use SELECT FOR UPDATE to prevent concurrent token reuse.
         # Without this lock, two concurrent requests with the same token could both
         # pass the is_valid check before either marks the token as used.
-        hashed_token = hash_token(token)
-        stmt = select(PasswordResetToken).where(PasswordResetToken.token == hashed_token).with_for_update()
+        # I2 bridge: the stored digest changed from bare SHA-256 to peppered
+        # HMAC, so reset tokens issued before that change are invisible to a
+        # single-digest lookup. Lock-matching rows under BOTH digests, then
+        # re-hash a legacy hit so the row migrates forward on first use.
+        from src.app.core.security.tokens import token_digest_candidates
+
+        current_digest, legacy_digest = token_digest_candidates(token)
+        stmt = (
+            select(PasswordResetToken)
+            .where(PasswordResetToken.token.in_((current_digest, legacy_digest)))
+            .with_for_update()
+        )
         result = await db.execute(stmt)
         reset_token = result.scalar_one_or_none()
+
+        if reset_token is not None and reset_token.token == legacy_digest:
+            reset_token.token = current_digest
+            await db.commit()
 
         if not reset_token:
             raise UnauthorizedError("Invalid password reset token.")

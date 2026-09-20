@@ -92,11 +92,25 @@ class EmailVerificationService:
         db: AsyncSession,
     ) -> dict[str, str]:
         """Verify email using verification token."""
-        hashed_token = hash_token(token)
-        # Find token in database
-        stmt = select(EmailVerificationToken).where(EmailVerificationToken.token == hashed_token).with_for_update()
+        # I2 bridge: the stored digest changed from bare SHA-256 to peppered
+        # HMAC, so tokens issued before that change are invisible to a
+        # single-digest lookup. Query both, then re-hash a legacy hit so the
+        # row migrates forward on its first use.
+        from src.app.core.security.tokens import token_digest_candidates
+
+        current_digest, legacy_digest = token_digest_candidates(token)
+        # Find token in database (locked: prevents concurrent verification use)
+        stmt = (
+            select(EmailVerificationToken)
+            .where(EmailVerificationToken.token.in_((current_digest, legacy_digest)))
+            .with_for_update()
+        )
         result = await db.execute(stmt)
         verification_token = result.scalar_one_or_none()
+
+        if verification_token is not None and verification_token.token == legacy_digest:
+            verification_token.token = current_digest
+            await db.commit()
 
         if not verification_token:
             raise UnauthorizedError("Invalid verification token.")

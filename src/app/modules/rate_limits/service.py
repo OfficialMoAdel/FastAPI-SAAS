@@ -5,6 +5,7 @@ from typing import Any, cast
 from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.cache.client import cache_client
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
 from src.app.modules._base.service import BaseService
@@ -53,17 +54,36 @@ class RateLimitService(BaseService[RateLimit]):
         return await self._tiers.get_tier(tier_name)
 
     async def _invalidate_tier_rate_limits_cache(self, tier_id: int) -> None:
-        """Invalidate rate limits cache for a tier (B10: retrying, never bare).
+        """Invalidate every cache keyed on this tier's rate-limit rules.
 
-        P2-B: also clears the tier-policy cache entry
-        (``rate_limit:policy:tier:{id}`` in Redis + the process-local L1 +
-        cross-worker publish) via ``invalidate_tier_policy`` — without this
-        the policy resolver keeps serving the pre-mutation rules for up to
-        the policy TTL after any rate-limit create/update/delete.
+        I6: owns BOTH families locally instead of reaching into TierService's
+        private ``_invalidate_tier_cache``:
+        - ``rate_limits:tier:{id}`` — the rule-list read-through cache;
+        - ``rate_limit:policy:tier:{id}`` + L1 — the compiled zero-DB policy
+          cache (P2-B: without this the resolver serves pre-mutation rules
+          until TTL after any create/update/delete).
+
+        B10 posture preserved: retry once, then error-log so the stale window
+        is operator-visible — never fail-open on a swallowed DELETE.
         """
+        keys = [f"rate_limits:tier:{tier_id}"]
+        for attempt in (1, 2):
+            try:
+                await cache_client.delete(*keys)
+                break
+            except Exception as e:
+                if attempt == 1:
+                    logger.warning("Rate limit cache invalidation failed (retrying)", tier_id=tier_id, error=str(e))
+                else:
+                    logger.error(
+                        "Rate limit cache invalidation failed after retry — stale rules may persist until TTL",
+                        tier_id=tier_id,
+                        keys=keys,
+                        error=str(e),
+                    )
+
         from src.app.core.security.rate_limit_cache import invalidate_tier_policy
 
-        await self._tiers._invalidate_tier_cache([f"rate_limits:tier:{tier_id}"], tier_name=str(tier_id))
         await invalidate_tier_policy(tier_id)
 
     async def get_rate_limits_by_tier_id(self, tier_id: int) -> dict[str, Any]:

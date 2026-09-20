@@ -12,20 +12,19 @@ Handles:
 """
 
 import asyncio
-from typing import Any
+from typing import Any, cast
+from uuid import UUID
 
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_current_tenant
-from src.app.modules.storage.service import StorageAdminService
 from src.app.modules.user_preferences.crud import crud_user_preferences
 from src.app.modules.user_preferences.models import DEFAULT_PREFERENCES
+from src.app.modules.user_preferences.protocols import ProfileImageStore
 from src.app.modules.user_preferences.schemas import UserPreferencesUpdate
-from src.app.modules.users import crud_users
-from src.app.modules.users.cache import UserCacheInvalidator
-from src.app.modules.users.session_invalidation import InvalidationReason
+from src.app.modules.users import InvalidationReason, UserCacheInvalidator, crud_users
 from src.app.shared.exceptions import AppException, ModelNotFoundError, ValidationError
 
 logger = get_logger(__name__)
@@ -34,6 +33,52 @@ logger = get_logger(__name__)
 # Constants for image upload
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+def _build_preferences_response(prefs: Any) -> dict[str, Any]:
+    """Merge defaults, stored JSON preferences, and explicit columns (I14).
+
+    Single owner of the response shape for get_preferences and
+    update_preferences — the two bodies were copy-paste identical.
+    """
+    result = DEFAULT_PREFERENCES.copy()
+    if prefs.preferences:
+        result.update(prefs.preferences)
+
+    # Merge explicit columns
+    result.update(
+        {
+            "email_notifications_enabled": prefs.email_notifications_enabled,
+            "push_notifications_enabled": prefs.push_notifications_enabled,
+            "disabled_notification_types": prefs.disabled_notification_types,
+            "quiet_hours_enabled": prefs.quiet_hours_enabled,
+            "quiet_hours_start": prefs.quiet_hours_start,
+            "quiet_hours_end": prefs.quiet_hours_end,
+        }
+    )
+
+    result["updated_at"] = prefs.updated_at
+    return result
+
+
+async def _resolve_image_store(
+    db: AsyncSession,
+    tenant_id: UUID,
+    image_store: ProfileImageStore | None,
+) -> ProfileImageStore:
+    """Return the injected store, else acquire via the storage facade (I8).
+
+    The lazy facade-root import keeps user_preferences free of any direct
+    ``storage.service`` dependency; tests may inject a ``ProfileImageStore``
+    instead.
+    """
+    if image_store is not None:
+        return image_store
+    from src.app.modules.storage import StorageAdminService  # facade root (lazy: avoids import cycle)
+
+    # get_provider is untyped downstream; the provider satisfies the
+    # ProfileImageStore protocol structurally (upload/delete/exists/get_url).
+    return cast(ProfileImageStore, await StorageAdminService(db).get_provider(tenant_id))
 
 
 class PreferenceStorageError(AppException):
@@ -75,38 +120,7 @@ class PreferencesService:
         """
         prefs = await crud_user_preferences.get_or_create(db=db, user_id=user_id)
 
-        # Build response with defaults for any missing keys
-        result = DEFAULT_PREFERENCES.copy()
-        if prefs.preferences:
-            result.update(prefs.preferences)
-
-        # Merge explicit columns
-        result.update(
-            {
-                "email_notifications_enabled": prefs.email_notifications_enabled,
-                "push_notifications_enabled": prefs.push_notifications_enabled,
-                "disabled_notification_types": prefs.disabled_notification_types,
-                "quiet_hours_enabled": prefs.quiet_hours_enabled,
-                "quiet_hours_start": prefs.quiet_hours_start,
-                "quiet_hours_end": prefs.quiet_hours_end,
-            }
-        )
-
-        result["updated_at"] = prefs.updated_at
-
-        # We also want to return the profile_image_url if we could,
-        # but the schema `UserPreferencesResponse` might not have it.
-        # The schema definition in router.py imported from schemas.py checks that.
-        # Wait, I need to check `UserPreferencesResponse` schema.
-        # T091 created `UserPreferencesResponse`.
-        # If it doesn't have image_url, I might not need to return it here,
-        # OR I should update `UserPreferencesResponse`.
-        # T010 migration says `image_url` on users table.
-        # Usually that's returned on `UserRead`.
-        # The upload endpoint returns `dict` in my code, so that's fine.
-        # But `get_preferences` returns `dict` matching `UserPreferencesResponse`.
-
-        return result
+        return _build_preferences_response(prefs)
 
     async def update_preferences(
         self,
@@ -147,32 +161,14 @@ class PreferencesService:
             updates=update_dict,
         )
 
-        # Build response with defaults for any missing keys
-        result = DEFAULT_PREFERENCES.copy()
-        if prefs.preferences:
-            result.update(prefs.preferences)
-
-        # Merge explicit columns
-        result.update(
-            {
-                "email_notifications_enabled": prefs.email_notifications_enabled,
-                "push_notifications_enabled": prefs.push_notifications_enabled,
-                "disabled_notification_types": prefs.disabled_notification_types,
-                "quiet_hours_enabled": prefs.quiet_hours_enabled,
-                "quiet_hours_start": prefs.quiet_hours_start,
-                "quiet_hours_end": prefs.quiet_hours_end,
-            }
-        )
-
-        result["updated_at"] = prefs.updated_at
-
-        return result
+        return _build_preferences_response(prefs)
 
     async def upload_profile_image(
         self,
         db: AsyncSession,
         user_id: int,
         file: UploadFile,
+        image_store: ProfileImageStore | None = None,
     ) -> dict[str, str]:
         """Upload profile image.
 
@@ -225,15 +221,15 @@ class PreferencesService:
             raise ModelNotFoundError("User", user_id)
 
         # 4. Prepare storage — tenant-aware provider from storage settings.
-        # P2-#10: provider acquisition goes through StorageAdminService, the
-        # storage module's admin facade (tenant-aware, cached, credentials
-        # decrypted there). Deliberately NOT StorageService.put(): profile
-        # images are not File entities — no quota/File-row semantics, and the
-        # stable users/{uid}/profile.{ext} path enables old-image cleanup.
+        # P2-#10: provider acquisition goes through the storage admin facade
+        # (tenant-aware, cached, credentials decrypted there). Deliberately
+        # NOT StorageService.put(): profile images are not File entities — no
+        # quota/File-row semantics, and the stable users/{uid}/profile.{ext}
+        # path enables old-image cleanup.
         tenant_ctx = get_current_tenant()
         if tenant_ctx is None:
             raise PreferenceStorageError("upload", "Tenant context not available")
-        storage = await StorageAdminService(db).get_provider(tenant_ctx.tenant_id)
+        storage = await _resolve_image_store(db, tenant_ctx.tenant_id, image_store)
 
         filename = file.filename or "image.png"
         file_ext = filename.split(".")[-1] if "." in filename else "png"
@@ -289,29 +285,24 @@ class PreferencesService:
         self,
         db: AsyncSession,
         user_id: int,
+        image_store: ProfileImageStore | None = None,
     ) -> None:
         """Delete profile image.
 
         Args:
             db: Database session.
             user_id: User ID.
+            image_store: Optional injected store (defaults to the storage
+                facade provider).
         """
-        # 1. Get current user image path?
-        # Ideally we know the path. If we used standard path, we can guess it.
-        # But file extension might vary.
-        # Maybe we should list or just try to delete common extensions?
-        # Or better, we just allow overwriting and only support one image per user.
-        # If we stored the URL, we might parse it to get the path?
-
-        # For simplicity, we try the standard path logic or just delete what we can.
-        # Let's assume we want to delete whatever is there.
-        # But S3 delete requires key.
+        # The storage key is recovered from the stored URL (the extension
+        # varies per upload); unrecognized URL formats fail soft below.
 
         # Tenant-aware provider from the storage admin facade (P2-#10)
         tenant_ctx = get_current_tenant()
         if tenant_ctx is None:
             raise PreferenceStorageError("delete", "Tenant context not available")
-        storage = await StorageAdminService(db).get_provider(tenant_ctx.tenant_id)
+        storage = await _resolve_image_store(db, tenant_ctx.tenant_id, image_store)
         user = await crud_users.get(db=db, id=user_id)
         if not user:
             return  # Nothing to delete

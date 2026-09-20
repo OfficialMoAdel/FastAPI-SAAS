@@ -81,6 +81,12 @@ _tenant_invalidation_channel = InvalidationChannel(
     logger_name="tenant_l1",
 )
 
+# I11: self-register with the central L1 registry so the lifespan can
+# start/stop every listener without importing owner modules one-by-one.
+from src.app.core.cache.l1_registry import register_l1_channel  # noqa: E402
+
+register_l1_channel("tenant_l1", _tenant_invalidation_channel)
+
 _publish_tenant_l1_invalidation = _tenant_invalidation_channel.publish
 _start_l1_invalidation_listener = _tenant_invalidation_channel.start
 stop_l1_invalidation_listener = _tenant_invalidation_channel.stop

@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.cache.client import cache_client
 from src.app.core.logger import get_logger
 from src.app.core.schemas import MessageResponse
-from src.app.modules.rate_limits.models import RateLimit
 from src.app.modules.tiers.models import Tier
 from src.app.modules.tiers.schemas import TierCreate, TierCreateInternal, TierRead, TierUpdate
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
@@ -30,7 +29,6 @@ class TierService:
     Attributes:
         crud: Tier-primary CRUD handle (BaseService[Tier]-compatible contract).
         tier_crud: Alias of ``crud`` (P0-1 decoupling regression contract).
-        rate_limit_crud: RateLimit CRUD handle for direct rule queries.
     """
 
     def __init__(self, db: AsyncSession):
@@ -39,7 +37,6 @@ class TierService:
         # tier operations stay tier-primary.
         self.crud: Any = FastCRUD(Tier)
         self.tier_crud: Any = self.crud
-        self.rate_limit_crud: Any = FastCRUD(RateLimit)
 
     # ---------------------------------------------------------------------------
     # Tier Operations (canonical implementation — P1-18)
@@ -230,6 +227,25 @@ class TierService:
                         error=str(e),
                     )
 
+
+    async def on_deleted(self, tier_id: int) -> None:
+        """Invalidate every tier-keyed cache after a tier deletion (I6 seam).
+
+        Owns BOTH cache families keyed on a tier id:
+        - ``rate_limits:tier:{id}`` — the rule-list read-through cache owned
+          by the rate_limits module;
+        - ``rate_limit:policy:tier:{id}`` + the process-local L1 — the
+          compiled zero-DB policy cache in core/security/rate_limit_cache.
+
+        Deleting a tier without clearing the policy entry leaves the resolver
+        enforcing rules for a nonexistent tier until TTL (P2-B). Callers pass
+        only the id: no ORM model crosses the module boundary.
+        """
+        await self._invalidate_tier_cache([f"rate_limits:tier:{tier_id}"], tier_name=str(tier_id))
+        from src.app.core.security.rate_limit_cache import invalidate_tier_policy
+
+        await invalidate_tier_policy(tier_id)
+
     async def delete_tier(self, name: str) -> MessageResponse:
         """Delete a tier with referential integrity guard.
 
@@ -271,8 +287,11 @@ class TierService:
                     select(func.count()).select_from(User).where(User.tier_id == tier_id)
                 )
                 users_count = int(users_result.scalar_one() or 0)
+                # I6: lazy import avoids the module-level tiers↔rate_limits
+                # cycle; the count query itself is unchanged.
+                from src.app.modules.rate_limits.models import RateLimit as _RLModel
                 rl_result = await self.db.execute(
-                    select(func.count()).select_from(RateLimit).where(RateLimit.tier_id == tier_id)
+                    select(func.count()).select_from(_RLModel).where(_RLModel.tier_id == tier_id)
                 )
                 rl_count = int(rl_result.scalar_one() or 0)
             except Exception as e:
@@ -291,21 +310,11 @@ class TierService:
 
         await crud.delete(db=self.db, name=name)
 
-        # Invalidate rate-limit cache for the deleted tier. P2 boot-waste:
-        # `tier:{name}` was never written by any reader/writer, so only the
-        # live `rate_limits:tier:{id}` key is deleted.
-        keys = []
-        if tier_id:
-            keys.append(f"rate_limits:tier:{tier_id}")
-        if keys:
-            await self._invalidate_tier_cache(keys, tier_name=name)
-
-        # P2-B: the tier is gone, so its cached policy entry
-        # (rate_limit:policy:tier:{id} + L1) must go too — otherwise the
-        # resolver keeps enforcing rules for a deleted tier until TTL.
-        if tier_id:
-            from src.app.core.security.rate_limit_cache import invalidate_tier_policy
-
-            await invalidate_tier_policy(tier_id)
+        # I6: ONE deletion seam owns every tier-keyed cache entry. Both the
+        # rule-list cache (rate_limits module) and the compiled policy cache
+        # (core/security/rate_limit_cache) are invalidated here, so neither
+        # module reaches into the other's private methods to do it.
+        if tier_id is not None:
+            await self.on_deleted(tier_id)
 
         return MessageResponse(message="Tier deleted")

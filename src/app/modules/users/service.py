@@ -1,4 +1,11 @@
-"""User service layer - encapsulates all user business logic."""
+"""User service layer - encapsulates all user business logic.
+
+GOD-SERVICE WATCH (P3, deliberate): this module is the largest service in
+the codebase and carries several function-level imports used to dodge
+import cycles. Scope of the agreed remediation is observability/comments
+ONLY — do not split without a dedicated review of the cache/event seams
+that motivate the cycles (see PLAN Round-1 Quality P3)."""
+
 
 from __future__ import annotations
 

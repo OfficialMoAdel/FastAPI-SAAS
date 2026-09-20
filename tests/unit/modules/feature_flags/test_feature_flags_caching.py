@@ -25,7 +25,7 @@ async def test_is_enabled_cached():
     db = AsyncMock()
     service = _service(db)
 
-    with patch("src.app.modules.feature_flags.service.get_redis", return_value=redis):
+    with patch("src.app.core.redis_provider.get_redis", return_value=redis):
         result = await service.is_enabled(tenant_id, "test_flag")
 
     assert result is True
@@ -47,13 +47,13 @@ async def test_is_enabled_cache_miss_falls_back_to_tenant_jsonb():
     service = _service(db)
 
     with (
-        patch("src.app.modules.feature_flags.service.get_redis", return_value=redis),
+        patch("src.app.core.redis_provider.get_redis", return_value=redis),
         patch.object(FeatureFlagService, "get_flag_by_key_or_none", AsyncMock(return_value=None)),
     ):
         result = await service.is_enabled(tenant_id, "test_flag")
 
     assert result is True
-    redis.setex.assert_called_once()
+    redis.set.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -71,7 +71,7 @@ async def test_update_tenant_flag_invalidates_cache():
 
     service = _service(db)
 
-    with patch("src.app.modules.feature_flags.service.get_redis", return_value=redis):
+    with patch("src.app.core.redis_provider.get_redis", return_value=redis):
         await service.update_tenant_flag(tenant_id, "new_flag", True)
 
     assert mock_tenant.feature_flags == {"new_flag": True}

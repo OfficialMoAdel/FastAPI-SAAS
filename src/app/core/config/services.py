@@ -58,8 +58,28 @@ class DefaultRateLimitSettings(BaseSettings):
         # the deleted rate_limiter_dependency: 3/min, anti-enumeration)
         "magic_link_send": (3, 60),
         "passkey_login": (10, 60),
+        # Refresh-token probing per client IP (C1: middleware-level budget so
+        # rotation-marker guessing floods get an early 429 at the edge; the
+        # endpoint's own `auth` budget remains as second layer). 60/min = 1
+        # per second: far above legitimate refresh traffic (access tokens
+        # live 30 min, so a 100-user NAT peaks around 3/min) and far below a
+        # flood. Deliberately NOT auto-ban eligible — a shared NAT must never
+        # lose an hour of access over rotation retries.
+        "refresh": (60, 60),
         # AI chat completions per user (was ai/rate_limiter.py 60/60)
         "ai_chat": (60, 60),
+    }
+    # Fail-closed budgets (C2): even when RATE_LIMIT_FAIL_OPEN=True (general
+    # API availability), these identity-keyed brute-force budgets keep
+    # blocking on Redis outage. General path policy stays operator-controlled.
+    SECURITY_BUDGETS_FAIL_CLOSED: set[str] = {
+        "auth",
+        "mfa_verify",
+        "mfa_verify_global",
+        "mfa_mutate",
+        "magic_link_send",
+        "passkey_login",
+        "refresh",
     }
 
 

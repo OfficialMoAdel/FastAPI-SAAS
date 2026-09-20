@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 import anyio
 import fastapi
 from fastapi import APIRouter, Depends, FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from redis.exceptions import RedisError
@@ -53,6 +52,9 @@ from src.app.models import (  # noqa: F401
 
 # -------------- database --------------
 async def create_tables() -> None:
+    # A-M4 companion: make the schema-management path observable at boot.
+    # Alembic is the canonical schema owner; create_all here is the
+    # local-dev bootstrap only (see _resolve_create_tables_on_start).
     engine = get_async_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -321,19 +323,10 @@ def create_application(
     application = FastAPI(lifespan=lifespan, **kwargs)
     application.include_router(router)
 
-    cors_origins = settings.cors.CORS_ORIGINS
-    if cors_origins:
-        allow_credentials = True
-        if "*" in cors_origins:
-            allow_credentials = False
-
-        application.add_middleware(
-            CORSMiddleware,
-            allow_origins=cors_origins,
-            allow_credentials=allow_credentials,
-            allow_methods=settings.cors.CORS_METHODS,
-            allow_headers=settings.cors.CORS_HEADERS,
-        )
+    # C4: CORS is registered by the single middleware wiring point
+    # (core/guard/ordering.py, outermost entry) so guard short-circuits
+    # (403/429/413) also carry Access-Control-Allow-Origin. Nothing to add
+    # here — registering it in the factory would nest it INSIDE the guards.
 
     if environment != EnvironmentOption.PRODUCTION:
         docs_router = APIRouter()
@@ -471,24 +464,13 @@ async def _init_rate_limiting_and_security(redis_client: Any) -> None:
         if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
             raise
 
-    from src.app.core.security.auto_ban import _start_ban_l1_invalidation_listener
-    from src.app.core.security.rate_limit_cache import start_policy_invalidation_listener
-    from src.app.core.tenancy.cache import start_l1_invalidation_listener
+    # I11: the central registry owns L1 listener lifecycle. Importing the
+    # owner modules triggers their self-registration; one start call replaces
+    # the five hand-wired listeners that used to live here.
+    from src.app.core.cache.l1_registry import import_l1_owner_modules, start_all_l1_listeners
 
-    _start_ban_l1_invalidation_listener()
-    start_policy_invalidation_listener()
-    # T9: without this listener, tenant L1 invalidation publishes into the
-    # void and other workers serve a suspended tenant as active for up to
-    # the L1 TTL (60s).
-    start_l1_invalidation_listener()
-    # R1-OPT: auth-info (8s) + bitmask (30s) L1s need the same cross-worker
-    # fan-out, else a role revoke / deactivation stays visible to other
-    # workers until TTL expiry.
-    from src.app.core.rbac.dependencies import start_bitmask_l1_invalidation_listener
-    from src.app.modules.users.cache import start_auth_info_l1_invalidation_listener
-
-    start_auth_info_l1_invalidation_listener()
-    start_bitmask_l1_invalidation_listener()
+    import_l1_owner_modules()
+    start_all_l1_listeners()
 
 
 def apply_security_runtime_config(config: dict[str, Any]) -> list[str]:
@@ -600,24 +582,13 @@ async def _teardown_security_listeners() -> None:
     except Exception as e:  # noqa: BLE001 - P1-17: teardown must not mask shutdown
         logger.error("Failed to shutdown bcrypt thread pool", error=str(e))
 
-    from src.app.core.security.auto_ban import stop_ban_l1_invalidation_listener
-    from src.app.core.security.rate_limit_cache import stop_policy_invalidation_listener
-    from src.app.core.tenancy.cache import stop_l1_invalidation_listener
+    # I11: registry owns teardown — one call stops every registered listener.
+    from src.app.core.cache.l1_registry import stop_all_l1_listeners
 
-    await stop_ban_l1_invalidation_listener()
-    await stop_l1_invalidation_listener()
-    await stop_policy_invalidation_listener()
-    from src.app.core.rbac.dependencies import stop_bitmask_l1_invalidation_listener
-    from src.app.modules.users.cache import stop_auth_info_l1_invalidation_listener
-
-    await stop_auth_info_l1_invalidation_listener()
-    await stop_bitmask_l1_invalidation_listener()
-    try:
-        from src.app.modules.auth.http_client import close_sso_http_client
-
-        await close_sso_http_client()
-    except Exception as e:  # noqa: BLE001 - P1-17: teardown must not mask shutdown
-        logger.error("Failed to close SSO HTTP client", error=str(e))
+    await stop_all_l1_listeners()
+    # SSO HTTP client teardown is single-owned by lifespan_factory's finally
+    # (P2): it always runs — lifespan_with_admin composes that lifespan — so
+    # closing here too was a guaranteed double close on every shutdown.
 
 
 @asynccontextmanager

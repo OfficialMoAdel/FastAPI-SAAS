@@ -10,10 +10,13 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
+from src.app.core.cache.client import (
+    cache_client,  # P2: ONE Redis access surface (adapter resolves the client at call time)
+)
 from src.app.core.cache.warmer import warmer
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
-from src.app.core.redis_provider import get_redis
+from src.app.core.redis_provider import get_redis  # warmer pipeline only (see warm_feature_flags)
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules._base import BaseService, ModelNotFoundError
 from src.app.modules.feature_flags.crud import crud_feature_flag_overrides, crud_feature_flags
@@ -87,20 +90,21 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         """Get a feature flag by key, returns None if not found.
         First checks the global feature flag cache warmed by the application.
         """
-        redis_client = get_redis()
-        if redis_client:
-            try:
-                cache_key = f"feature_flag:{key}"
-                cached = await redis_client.get(cache_key)
-                if cached:
-                    data = json_loads(cached)
-                    # Return an actual FeatureFlag model to satisfy type checker,
-                    # but it's detached from session
-                    return FeatureFlag(**data)
-            except Exception as e:
-                # Q-M3: cache read failure is production-relevant (serves stale
-                # defaults while degraded) — warn, don't hide at debug.
-                logger.warning("Feature flag cache get failed", key=key, error=str(e))
+        # P2: routed through cache_client — the adapter resolves the shared
+        # client at call time and no-ops when Redis is down, so the explicit
+        # None-guard is gone. Q-M3 warning semantics preserved below.
+        try:
+            cache_key = f"feature_flag:{key}"
+            cached = await cache_client.get(cache_key)
+            if cached:
+                data = json_loads(cached)
+                # Return an actual FeatureFlag model to satisfy type checker,
+                # but it's detached from session
+                return FeatureFlag(**data)
+        except Exception as e:
+            # Q-M3: cache read failure is production-relevant (serves stale
+            # defaults while degraded) — warn, don't hide at debug.
+            logger.warning("Feature flag cache get failed", key=key, error=str(e))
 
         result = await self.crud.get(db=self.db, key=key)
         if result is None:
@@ -158,10 +162,9 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             raise ModelNotFoundError("FeatureFlag", flag_id)
 
         flag_key = flag.key if not isinstance(flag, dict) else flag.get("key")
-        redis_client = get_redis()
-        if redis_client and flag_key:
+        if flag_key:
             try:
-                await redis_client.delete(f"feature_flag:{flag_key}")
+                await cache_client.delete(f"feature_flag:{flag_key}")
             except Exception as e:
                 # Q-M3: failed invalidation leaves stale flag values until TTL
                 # — warn with the flag key so operators can flush manually.
@@ -183,10 +186,9 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         result = await self.crud.get(db=self.db, id=flag_id)
         if result:
             flag_key = result.key if not isinstance(result, dict) else result.get("key")
-            redis_client = get_redis()
-            if redis_client and flag_key:
+            if flag_key:
                 try:
-                    await redis_client.delete(f"feature_flag:{flag_key}")
+                    await cache_client.delete(f"feature_flag:{flag_key}")
                 except Exception as e:
                     # Q-M3: failed invalidation leaves the deleted flag served
                     # from cache until TTL — warn with the flag key.
@@ -281,43 +283,39 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         from src.app.core.utils.cache import build_tenant_key
 
         cache_key = build_tenant_key("features", tenant_id)
-        redis_client = get_redis()
 
-        # Fast path: serve from cache if present.
-        if redis_client:
-            try:
-                cached_value = await redis_client.get(cache_key)
-                if cached_value:
-                    return cast("dict[str, Any]", json_loads(cached_value))
-            except Exception as e:
-                # Q-M3: cache read failure serves DB-default flags while degraded.
-                logger.warning("Feature flag tenant cache get failed", cache_key=cache_key, error=str(e))
+        # Fast path: serve from cache if present (via cache_client adapter).
+        try:
+            cached_value = await cache_client.get(cache_key)
+            if cached_value:
+                return cast("dict[str, Any]", json_loads(cached_value))
+        except Exception as e:
+            # Q-M3: cache read failure serves DB-default flags while degraded.
+            logger.warning("Feature flag tenant cache get failed", cache_key=cache_key, error=str(e))
 
         async def _load() -> dict[str, Any]:
             # P2.19 FIX: re-check cache now that we hold the per-key lock,
             # so a concurrent caller that already populated it is served from cache
             # instead of stampeding the DB.
-            if redis_client:
-                try:
-                    cached_value = await redis_client.get(cache_key)
-                    if cached_value:
-                        return cast("dict[str, Any]", json_loads(cached_value))
-                except Exception as e:
-                    # Q-M3: cache read failure serves DB flags while degraded.
-                    logger.warning("Tenant feature flags cache get failed", cache_key=cache_key, error=str(e))
+            try:
+                cached_value = await cache_client.get(cache_key)
+                if cached_value:
+                    return cast("dict[str, Any]", json_loads(cached_value))
+            except Exception as e:
+                # Q-M3: cache read failure serves DB flags while degraded.
+                logger.warning("Tenant feature flags cache get failed", cache_key=cache_key, error=str(e))
 
             tenant = await self.db.get(Tenant, tenant_id)
             flags: dict[str, Any] = {}
             if tenant and tenant.feature_flags:
                 flags = tenant.feature_flags
 
-            if redis_client:
-                try:
-                    await redis_client.setex(cache_key, CACHE_TTL, json_dumps(flags, as_str=True))
-                except Exception as e:
-                    # Q-M3: cache write failure means every read pays the DB cost
-                    # until recovery — warn, don't hide at debug.
-                    logger.warning("Tenant feature flags cache write failed", cache_key=cache_key, error=str(e))
+            try:
+                await cache_client.set(cache_key, json_dumps(flags, as_str=True), ttl=CACHE_TTL)
+            except Exception as e:
+                # Q-M3: cache write failure means every read pays the DB cost
+                # until recovery — warn, don't hide at debug.
+                logger.warning("Tenant feature flags cache write failed", cache_key=cache_key, error=str(e))
             return flags
 
         return await _with_flag_lock(cache_key, _load())
@@ -367,31 +365,28 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         from src.app.core.utils.cache import build_tenant_key
 
         cache_key = build_tenant_key(f"feature:{feature_name}", tenant_id)
-        redis_client = get_redis()
 
-        # Fast path: serve from cache if present.
-        if redis_client:
-            try:
-                cached_value = await redis_client.get(cache_key)
-                if cached_value is not None:
-                    # BUG FIX: .decode() crashes when Redis has decode_responses=True
-                    # (value is already a str). Use a safe conversion for both cases.
-                    return parse_flag_bool(cached_value)
-            except Exception as e:
-                # Q-M3: cache read failure serves DB-default flags while degraded.
-                logger.warning("Feature flag tenant cache get failed", cache_key=cache_key, error=str(e))
+        # Fast path: serve from cache if present (via cache_client adapter).
+        try:
+            cached_value = await cache_client.get(cache_key)
+            if cached_value is not None:
+                # BUG FIX: .decode() crashes when Redis has decode_responses=True
+                # (value is already a str). Use a safe conversion for both cases.
+                return parse_flag_bool(cached_value)
+        except Exception as e:
+            # Q-M3: cache read failure serves DB-default flags while degraded.
+            logger.warning("Feature flag tenant cache get failed", cache_key=cache_key, error=str(e))
 
         async def _load() -> bool:
             # P2.19 FIX: re-check cache under the per-key lock (singleflight)
             # so concurrent cache misses don't all hit the DB.
-            if redis_client:
-                try:
-                    cached_value = await redis_client.get(cache_key)
-                    if cached_value is not None:
-                        return parse_flag_bool(cached_value)
-                except Exception as e:
-                    # Q-M3: cache read failure serves DB-default flags while degraded.
-                    logger.warning("Feature flag enabled-state cache get failed", cache_key=cache_key, error=str(e))
+            try:
+                cached_value = await cache_client.get(cache_key)
+                if cached_value is not None:
+                    return parse_flag_bool(cached_value)
+            except Exception as e:
+                # Q-M3: cache read failure serves DB-default flags while degraded.
+                logger.warning("Feature flag enabled-state cache get failed", cache_key=cache_key, error=str(e))
 
             # Fallback to DB (H-12 FIX: Check flag and overrides first)
             enabled = default
@@ -424,10 +419,9 @@ class FeatureFlagService(BaseService[FeatureFlag]):
                 if tenant and tenant.feature_flags:
                     enabled = parse_flag_bool(tenant.feature_flags.get(feature_name, default))
 
-            if redis_client:
-                try:
-                    await redis_client.setex(cache_key, CACHE_TTL, str(enabled).lower())
-                except Exception as e:
+            try:
+                await cache_client.set(cache_key, str(enabled).lower(), ttl=CACHE_TTL)
+            except Exception as e:
                     # Q-M3: cache write failure means every check pays the full
                     # DB+override resolution until recovery — warn.
                     logger.warning("Feature flag enabled-state cache write failed", cache_key=cache_key, error=str(e))
@@ -524,10 +518,22 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         await self.db.commit()
         await self.db.refresh(tenant)
 
-        # Invalidate cache for all updated flags
-        await self._invalidate_cache(tenant_id)
-        for flag_name in flags.keys():
-            await self._invalidate_cache(tenant_id, feature_name=flag_name)
+        # Invalidate cache for all updated flags.
+        # P2: ONE bulk round-trip for the tenant flags map plus every
+        # per-feature key, instead of two deletes per flag in a loop.
+        try:
+            from src.app.core.utils.cache import build_tenant_key
+
+            keys = [build_tenant_key("features", tenant_id)]
+            keys.extend(build_tenant_key(f"feature:{name}", tenant_id) for name in flags)
+            await cache_client.delete(*keys)
+        except Exception as e:
+            logger.warning(
+                "Tenant feature flag bulk invalidation failed",
+                tenant_id=str(tenant_id),
+                count=len(flags),
+                error=str(e),
+            )
 
         return tenant
 
@@ -537,16 +543,15 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
     async def _invalidate_cache(self, tenant_id: UUID, feature_name: str | None = None) -> None:
         """Invalidate cache for tenant feature flags."""
-        redis_client = get_redis()
-        if not redis_client:
-            return
-
         try:
             from src.app.core.utils.cache import build_tenant_key
 
-            await redis_client.delete(build_tenant_key("features", tenant_id))
+            keys = [build_tenant_key("features", tenant_id)]
             if feature_name:
-                await redis_client.delete(build_tenant_key(f"feature:{feature_name}", tenant_id))
+                keys.append(build_tenant_key(f"feature:{feature_name}", tenant_id))
+            # P2: single varargs delete via the cache_client adapter (no-ops
+            # when Redis is down; the explicit None-guard is gone).
+            await cache_client.delete(*keys)
         except Exception as e:
             # Q-M3: failed invalidation leaves stale tenant flags until TTL —
             # warn with tenant + flag identifiers so operators can flush.
@@ -585,6 +590,8 @@ async def warm_feature_flags(session: AsyncSession) -> int:
     flags = result.scalars().all()
 
     cached_count = 0
+    # Pipeline bulk write keeps the raw client on purpose: tests patch the
+    # provider seam, and the pipeline API has no adapter equivalent.
     redis_client = get_redis()
     if redis_client and flags:
         try:

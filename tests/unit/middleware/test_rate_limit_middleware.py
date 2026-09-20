@@ -318,17 +318,54 @@ def test_banned_ip_blocked_on_refresh_path(mock_ban_info, client):
 
 @patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True)
 @patch("src.app.core.security.request_admission.get_ban_info", new_callable=AsyncMock)
-def test_unbanned_ip_skips_rate_limit_on_refresh_path(mock_ban_info, client):
-    """B3 companion: a clean IP still gets the zero-Redis-ops refresh skip
-    (the endpoint's own dependency-level rate limit governs it)."""
+@patch(
+    "src.app.core.security.request_admission.check_security_budget",
+    new_callable=AsyncMock,
+)
+def test_unbanned_ip_gets_refresh_budget_at_edge(mock_budget, mock_ban_info, client):
+    """C1: a clean IP on the refresh path gets the `refresh` security budget
+    (admit + budget headers) instead of the old zero-Redis-ops skip."""
+    from src.app.core.security.rate_policy import RateLimitVerdict as _Verdict
+
     mock_ban_info.return_value = BanInfo(is_banned=False)
+    mock_budget.return_value = _Verdict(
+        is_limited=False, limit=60, period=60, remaining=59, retry_after=0,
+        key="k", headers={"X-RateLimit-Limit": "60"},
+    )
 
     response = client.post("/api/v1/auth/refresh")
 
     # The bare test app has no /api/v1/auth/refresh route — 404 proves the
-    # request passed THROUGH the middleware instead of being 403'd.
+    # request passed THROUGH the middleware instead of being 403'd/429'd.
     assert response.status_code == 404
+    assert response.headers["X-RateLimit-Limit"] == "60"
     mock_ban_info.assert_awaited_once()
+    mock_budget.assert_awaited_once()
+
+
+@patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True)
+@patch("src.app.core.security.request_admission.get_ban_info", new_callable=AsyncMock)
+@patch(
+    "src.app.core.security.request_admission.check_security_budget",
+    new_callable=AsyncMock,
+)
+def test_refresh_budget_exceeded_returns_429(mock_budget, mock_ban_info, client):
+    """C1: a refresh flood past the budget gets an early 429 + Retry-After."""
+    from src.app.core.security.rate_policy import RateLimitVerdict as _Verdict
+
+    mock_ban_info.return_value = BanInfo(is_banned=False)
+    mock_budget.return_value = _Verdict(
+        is_limited=True, limit=60, period=60, remaining=0, retry_after=42,
+        key="k", headers={"X-RateLimit-Limit": "60", "Retry-After": "42"},
+    )
+
+    # No auto-ban escalation on the refresh budget: a flood throttles, it
+    # never bans the shared NAT.
+    response = client.post("/api/v1/auth/refresh")
+
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "42"
+    assert response.json()["error"]["code"] == "RATE_LIMITED"
 
 
 # =============================================================================

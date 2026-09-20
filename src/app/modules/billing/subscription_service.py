@@ -175,6 +175,19 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         )
         return {"message": "Subscription plan deactivated"}
 
+    async def get_plan_tenant_id(self, plan_id: int) -> Any | None:
+        """Return the owning tenant of a plan, unscoped, else None (I10 seam).
+
+        Webhook handlers run in a bypass context (no tenant middleware) and
+        must validate that a checkout's claimed tenant actually owns the
+        plan before minting a subscription — they need the plan's OWNED
+        tenant, not a context-scoped lookup.
+        """
+        plan = await crud_subscription_plans.get(db=self.db, id=plan_id, _allow_unscoped=True)
+        if plan is None:
+            return None
+        return plan.get("tenant_id") if isinstance(plan, dict) else getattr(plan, "tenant_id", None)
+
 
 class UserSubscriptionService(BaseService[UserSubscription]):
     """Service for managing user subscriptions."""
@@ -469,11 +482,50 @@ def get_subscription_plan_service(db: AsyncSession) -> SubscriptionPlanService:
     return SubscriptionPlanService(db)
 
 
+
 def get_user_subscription_service(db: AsyncSession) -> UserSubscriptionService:
     """Get UserSubscriptionService instance."""
     return UserSubscriptionService(db)
 
 
+
 def get_billing_record_service(db: AsyncSession) -> BillingRecordService:
     """Get billing record service instance."""
     return BillingRecordService(db)
+
+
+# =============================================================================
+# Webhook-facing seams (I10)
+# =============================================================================
+# Checkout webhook handlers depend ONLY on billing/lifecycle.py + this
+# module — they no longer import the Stripe gateway adapter,
+# CheckoutService, billing crud, or users.models directly. These wrappers
+# are the sanctioned doors for the two outbound calls a checkout handler
+# needs.
+
+
+async def resolve_tenant_stripe_api_key(db: AsyncSession, tenant_id: UUID) -> str | None:
+    """Resolve a tenant's Stripe API key for webhook paths (I10 seam).
+
+    B15: per-tenant Stripe accounts — the checkout handler resolves the
+    tenant's own key before any Stripe call. Delegates to the shared
+    ``CheckoutService.resolve_api_key`` seam (single gateway-key
+    construction point, Item 10); lazy import avoids the checkout_service
+    ↔ subscription_service import cycle.
+    """
+    from src.app.modules.billing.checkout_service import CheckoutService
+
+    return await CheckoutService(db).resolve_api_key(tenant_id)
+
+
+async def fetch_stripe_subscription(api_key: str | None, stripe_subscription_id: str) -> Any:
+    """Retrieve a Stripe subscription via the payment-gateway adapter (I10 seam).
+
+    The ONLY place a billing webhook handler should reach Stripe for
+    subscription data; keeps the ``src.app.clients`` adapter boundary out
+    of handler code. Returns the adapter's ``stripe.Subscription``
+    (dict-like) object.
+    """
+    from src.app.clients.billing.stripe import get_payment_gateway
+
+    return await get_payment_gateway(api_key=api_key).retrieve_subscription(stripe_subscription_id)

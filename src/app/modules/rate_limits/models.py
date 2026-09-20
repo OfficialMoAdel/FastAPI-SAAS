@@ -1,19 +1,24 @@
 """Rate limit models.
 
-A-M2: the ``Tier`` entity now lives canonically in
-``src/app/modules/tiers/models.py`` (rate limits reference tiers, not the
-reverse). The import below re-exports it from here for one release so
-existing ``from src.app.modules.rate_limits.models import Tier`` sites keep
-working; new code must import from ``modules.tiers.models``.
+A-M2/I7: the ``Tier`` entity lives canonically in
+``src/app.modules.tiers.models`` (rate limits reference tiers, not the
+reverse). The one-release compatibility re-export of ``Tier`` from this
+module is REMOVED — import ``Tier`` from ``modules.tiers.models``.
 """
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
-from src.app.modules.tiers.models import Tier  # noqa: F401  (deprecated re-export, A-M2)
+
+if TYPE_CHECKING:
+    # A-M2/I7: type-only — the runtime re-export was removed to avoid dual
+    # mapper registration; the relationship's string "Tier" resolves via
+    # the SQLAlchemy mapper registry at runtime.
+    from src.app.modules.tiers.models import Tier
 
 
 class RateLimit(Base, kw_only=True):

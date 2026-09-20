@@ -2,7 +2,7 @@
 
 ## Package Identity
 
-Starlette middleware stack for tenant isolation, rate limiting, security hardening, and request observability. All middleware is registered in `src/app/main.py` — nowhere else.
+Starlette middleware stack for tenant isolation, rate limiting, security hardening, and request observability. All middleware is registered by iterating `core/guard/ordering.py::GUARD_ORDER` in `src/app/main.py` — nowhere else.
 
 ## Module Structure
 
@@ -58,7 +58,7 @@ finally:
 from src.app.core.middleware_exempt import is_path_exempt
 ```
 
-## Registration Order (from `src/app/main.py`)
+## Registration Order (from `core/guard/ordering.py` — single wiring point)
 
 Middleware is LIFO — last added runs first on request. Pinned by
 `tests/unit/test_middleware_order.py` (R1-16: the order is a security
@@ -66,8 +66,8 @@ contract — a reorder fails CI):
 
 ```
 Request flow:
-  GZip → QueryProfiler → IPFilter → BodyLimit → SecurityHeaders
-    → RateLimit → Tenant → AttackDetection → RequestID → CORS → Handler
+  CORS → GZip → QueryProfiler → IPFilter → BodyLimit → SecurityHeaders
+    → RateLimit → Tenant → AttackDetection → RequestID → Handler
 ```
 
 Key decisions (documented inline in main.py):
@@ -75,8 +75,8 @@ Key decisions (documented inline in main.py):
 - **RateLimit** runs before Tenant so a cheap 429 never pays the tenant lookup (P1-15), and before AttackDetection's expensive body scan so 429s reject first (R4)
 - **AttackDetection** runs after BodyLimit, so oversized payloads are rejected by 413 before the scan buffers them
 - **IPFilter** runs early and sets `ip_whitelisted` state consumed by RateLimit
-- **GZip** last = outermost, compresses all responses including errors
-- **CORS** innermost (added first inside `create_application`, not main.py)
+- **GZip** compresses all responses including errors
+- **CORS** outermost (last entry in `core/guard/ordering.py`) so guard short-circuits — IPFilter 403, RateLimit 429, BodyLimit 413 — still carry `Access-Control-Allow-Origin`
 
 ## Touch Points / Key Files
 
@@ -107,7 +107,7 @@ rg -n "rate_limit" src/app/middleware/
 
 - **Order matters**: registration order = reverse execution order; see the flow diagram in `main.py` before inserting a new middleware
 - **Tenant context**: must be cleared in `finally` blocks to prevent cross-request leakage
-- **CORS**: applied in `core/setup.py::create_application` (from `settings.cors`), NOT in main.py
+- **CORS**: configured from `settings.cors` in `core/guard/ordering.py::_cors_kwargs` (skipped when `CORS_ORIGINS` is empty), NOT in `create_application`
 - **Rate limiting**: applied per-user/tier via Redis GCRA; health/auth paths are exempt
 - **CORS preflight**: OPTIONS requests bypass most middleware
 

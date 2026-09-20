@@ -15,10 +15,9 @@ Performance Optimization (R2-HYBRID MED-1):
   which re-apply context to every connection acquired during the request.
 """
 
-from typing import Any
 
 from fastapi import Request, status
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.app.core.config import settings
 from src.app.core.db.database import local_session
@@ -131,18 +130,22 @@ def is_path_exempt(path: str) -> bool:
     return path in TENANT_EXEMPT_PREFIXES or path.startswith(_TENANT_EXEMPT_MATCHES)
 
 
-class TenantMiddleware(BaseHTTPMiddleware):
+class TenantMiddleware:
     """Middleware to validate X-Tenant-ID header and set tenant context.
 
-    P8: implements the NATIVE ASGI protocol (__call__ with scope/receive/send)
-    instead of Starlette's BaseHTTPMiddleware dispatch bridge — eliminating
-    the anyio task-group and memory-stream hop that copies every response
-    byte through an extra queue. Subclassing is retained only so isinstance
-    checks and test mocks keep working; BaseHTTPMiddleware.__call__ is fully
-    overridden.
+    P8: implements the NATIVE ASGI protocol (__call__ with scope/receive/send).
+    I15: no longer subclasses BaseHTTPMiddleware — the base class was kept
+    only for isinstance/mock compat while __call__ was fully overridden,
+    which misled readers into expecting dispatch-bridge semantics (and
+    mixed-transport double body buffering). Plain ASGI, matching
+    rate_limit.py / body_limit.py; patch sites construct it the same way
+    (Starlette's add_middleware passes app as the first positional arg).
     """
 
-    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return

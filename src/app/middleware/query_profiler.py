@@ -125,16 +125,17 @@ class QueryProfilerMiddleware:
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
-        self._is_enabled = self._check_enabled()
         self._engine: Engine | None = None
 
-    def _check_enabled(self) -> bool:
+    def _profiler_active(self) -> bool:
+        """Re-evaluated per request (P2): the flag is opt-in and
+        live-tunable — the app singleton constructs this middleware once at
+        import time, so the constructor snapshot must not pin the decision.
+        Production always disables it regardless of the flag.
+        """
         if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
             return False
-        enabled = settings.query_profiler.QUERY_PROFILER_ENABLED
-        if enabled is not None:
-            return bool(enabled)
-        return True
+        return bool(settings.query_profiler.QUERY_PROFILER_ENABLED)
 
     def _get_engine(self) -> Engine | None:
         if self._engine is None:
@@ -148,11 +149,7 @@ class QueryProfilerMiddleware:
         return self._engine
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        if not self._is_enabled:
+        if scope["type"] != "http" or not self._profiler_active():
             await self.app(scope, receive, send)
             return
 

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.deps.auth import AuthenticatedUser, get_optional_user
 from src.app.core.schemas import TokenData
 from src.app.core.tenancy.context import TenantContext
+from src.app.shared.exceptions import UnauthorizedError
 from tests.conftest import MockUser
 
 
@@ -138,18 +139,16 @@ class TestGetOptionalUserWithInvalidToken:
 
     @pytest.mark.asyncio
     async def test_returns_none_with_invalid_token(self, mock_request, mock_db):
-        """Test that get_optional_user returns None when token verification fails."""
+        """C3: a presented-but-unverifiable token is fail-loud (401), never anonymous."""
         # Arrange
         mock_request.headers = {"Authorization": "Bearer invalid_token"}
 
         with patch("src.app.api.deps.auth.verify_token") as mock_verify:
             mock_verify.return_value = None
 
-            # Act
-            result = await get_optional_user(mock_request, mock_db)
-
-            # Assert
-            assert result is None
+            # Act / Assert: C3 — presented-but-unverifiable token is 401, never anonymous
+            with pytest.raises(UnauthorizedError):
+                await get_optional_user(mock_request, mock_db)
 
 
 class TestGetOptionalUserRateLimitIntegration:

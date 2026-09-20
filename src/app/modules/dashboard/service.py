@@ -13,6 +13,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from src.app.core.cache.client import cache_client
 from src.app.core.db.tenant_crud import tenant_scope
 from src.app.modules.audit_logs.models import AuditLog
+from src.app.modules.audit_logs.trail import login_activity_subquery
 from src.app.modules.billing.models import BillingRecord, SubscriptionPlan, UserSubscription
 from src.app.modules.dashboard.schemas import (
     ActivityMetrics,
@@ -22,15 +23,6 @@ from src.app.modules.dashboard.schemas import (
     UserMetrics,
 )
 from src.app.modules.users.models import User
-
-# Audit-writer contract for login metrics (must match the `action` /
-# `details["success"]` shape written by AuthService._publish_login_audit and
-# the SSO login audit in sso.py): login rows use these action names with a
-# JSONB boolean `details.success`. `->>` text extraction covers both a JSON
-# boolean false and a string "false"; coalesce keeps rows with missing
-# details from silently flipping the count.
-LOGIN_ACTIONS: tuple[str, str] = ("auth.login", "auth.sso_login")
-FAILED_AUTH_SUCCESS_TEXT = func.coalesce(AuditLog.details["success"].astext, "true")
 
 
 class DashboardService:
@@ -94,11 +86,9 @@ class DashboardService:
         coalesced min-created subquery for TimeRange.ALL) — predicates are
         identical in both cases.
         """
-        # NOTE: Using deleted_at.is_(None) to check for non-deleted users
-        # This is inconsistent with most other queries that use is_deleted=False
-        # Once the User model is refactored to use only deleted_at (see TODO in
-        # src/app/modules/users/models.py), all queries should be updated to
-        # use the same pattern for checking soft-deleted records.
+        # Soft-delete predicate: is_deleted.is_(False) — the User model's
+        # canonical flag (deleted_users below intentionally ranges over
+        # deleted_at, which is a time-window query, not a liveness check).
 
         # 1. Total users
         total_sub = (
@@ -122,17 +112,8 @@ class DashboardService:
             .scalar_subquery()
         )
 
-        # 3. Active users
-        active_sub = (
-            select(func.count(func.distinct(AuditLog.user_id)))
-            .where(
-                tenant_scope(AuditLog, tenant_id),
-                AuditLog.created_at >= start,
-                AuditLog.created_at <= end_date,
-                AuditLog.action.in_(LOGIN_ACTIONS),
-            )
-            .scalar_subquery()
-        )
+        # 3. Active users — login-row contract owned by audit_logs.trail (I9)
+        active_sub = login_activity_subquery(tenant_id, start, end_date, metric="active_users")
 
         # 4. Deleted users
         deleted_sub = (
@@ -294,17 +275,8 @@ class DashboardService:
         tenant_id: str,
     ) -> tuple:
         """Build the 4 activity-aggregate scalar subqueries (no I/O)."""
-        # 1. Total logins
-        logins_sub = (
-            select(func.count(AuditLog.id))
-            .where(
-                tenant_scope(AuditLog, tenant_id),
-                AuditLog.created_at >= start,
-                AuditLog.created_at <= end_date,
-                AuditLog.action.in_(LOGIN_ACTIONS),
-            )
-            .scalar_subquery()
-        )
+        # 1. Total logins — login-row contract owned by audit_logs.trail (I9)
+        logins_sub = login_activity_subquery(tenant_id, start, end_date, metric="logins")
 
         # 2. API calls
         api_calls_sub = (
@@ -317,18 +289,8 @@ class DashboardService:
             .scalar_subquery()
         )
 
-        # 3. Failed auth
-        failed_auth_sub = (
-            select(func.count(AuditLog.id))
-            .where(
-                tenant_scope(AuditLog, tenant_id),
-                AuditLog.created_at >= start,
-                AuditLog.created_at <= end_date,
-                AuditLog.action == "auth.login",
-                FAILED_AUTH_SUCCESS_TEXT == "false",
-            )
-            .scalar_subquery()
-        )
+        # 3. Failed auth — action/success extraction owned by audit_logs.trail (I9)
+        failed_auth_sub = login_activity_subquery(tenant_id, start, end_date, metric="failed_auth")
 
         # Webhook deliveries - webhook audit actions live in the dotted
         # `webhook.*` namespace (e.g. webhook.ssrf_blocked). Prefix LIKE

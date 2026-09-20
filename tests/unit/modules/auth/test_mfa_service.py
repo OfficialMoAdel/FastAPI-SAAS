@@ -308,8 +308,9 @@ class TestGenerateBackupCodes:
         codes = await mfa_service._generate_backup_codes()
         for code in codes:
             assert code.startswith(BACKUP_CODE_PREFIX)
-            assert len(code) == 14  # BC- + 5 chars + - + 5 chars = 3 + 5 + 1 + 5 = 14
-            assert code.count("-") == 2
+            # S3/SEC-10: 80-bit codes -> BC- + four 5-char hex groups.
+            assert len(code) == 26  # 3 + (5 + 1) * 4 - 1
+            assert code.count("-") == 4
 
     @pytest.mark.asyncio
     async def test_generate_backup_codes_unique(self, mfa_service):

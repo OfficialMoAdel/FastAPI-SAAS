@@ -604,8 +604,17 @@ class MFAService:
         if not mfa_method or not mfa_method.backup_codes:
             return {"valid": False, "message": "Invalid code", "backup_codes_remaining": None}
 
-        # Reconstruct full code with prefix for verification
-        formatted_code = f"{BACKUP_CODE_PREFIX}{normalized_code[:5]}-{normalized_code[5:]}"
+        # Reconstruct full code with prefix for verification. Two layouts:
+        # 20-hex (80-bit, S3/SEC-10) as four 5-char groups, and the legacy
+        # 10-hex (40-bit) 5-5 pair still stored on not-yet-regenerated
+        # accounts (legacy fallbacks below keep those verifiable).
+        if len(normalized_code) > 10:
+            formatted_code = (
+                f"{BACKUP_CODE_PREFIX}{normalized_code[:5]}-{normalized_code[5:10]}"
+                f"-{normalized_code[10:15]}-{normalized_code[15:20]}"
+            )
+        else:
+            formatted_code = f"{BACKUP_CODE_PREFIX}{normalized_code[:5]}-{normalized_code[5:]}"
 
         matched_hash = None
 
@@ -887,13 +896,18 @@ class MFAService:
         """Generate a list of backup codes.
 
         Returns:
-            List of backup codes in format 'BC-XXXXX-XXXXX'.
+            List of backup codes in format 'BC-XXXXX-XXXXX-XXXXX-XXXXX'.
         """
         codes = []
         for _ in range(BACKUP_CODE_COUNT):
-            # Generate random 10-character code
-            code_part = secrets.token_hex(5).upper()  # 10 hex chars
-            formatted_code = f"{BACKUP_CODE_PREFIX}{code_part[:5]}-{code_part[5:]}"
+            # S3/SEC-10: 20 hex chars = 80 bits of entropy (was 10 hex / 40
+            # bits — safe only while the auth budget held, fragile in any
+            # fail-open window). Formatted as four 5-char groups.
+            code_part = secrets.token_hex(10).upper()  # 20 hex chars
+            formatted_code = (
+                f"{BACKUP_CODE_PREFIX}{code_part[:5]}-{code_part[5:10]}"
+                f"-{code_part[10:15]}-{code_part[15:20]}"
+            )
             codes.append(formatted_code)
         return codes
 

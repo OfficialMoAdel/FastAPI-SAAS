@@ -555,6 +555,8 @@ async def test_get_auth_context_cached_version_mismatch() -> None:
 
 
 async def test_get_optional_auth_context_exception() -> None:
+    """C3: a presented-but-unverifiable bearer token is fail-loud (401),
+    never silent anonymous. Anonymous is only for no credential presented."""
     request = _make_request(headers={"Authorization": "Bearer abc"})
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
@@ -563,11 +565,13 @@ async def test_get_optional_auth_context_exception() -> None:
             new=AsyncMock(side_effect=ValueError("boom")),
         ),
     ):
-        result = await get_optional_auth_context(request, _make_db())
-    assert result is None
+        with pytest.raises(UnauthorizedException):
+            await get_optional_auth_context(request, _make_db())
 
 
 async def test_get_optional_auth_context_user_lookup_exception() -> None:
+    """C3: unexpected errors (e.g. DB down) on a presented credential are
+    fail-loud (401), never silent anonymous."""
     request = _make_request(headers={"Authorization": "Bearer abc"})
     token_data = TokenData(username_or_email="bob", token_version=0)
     with (
@@ -578,40 +582,39 @@ async def test_get_optional_auth_context_user_lookup_exception() -> None:
     ):
         svc = mock_us.return_value
         svc.get_user_auth_info = AsyncMock(side_effect=RuntimeError("db down"))
-        result = await get_optional_auth_context(request, _make_db())
-    assert result is None
+        with pytest.raises(UnauthorizedException):
+            await get_optional_auth_context(request, _make_db())
 
 
 # ---------------------------------------------------------------------------
-# _verify_optional_bearer_token
-# ---------------------------------------------------------------------------
-
-
 async def test_verify_optional_revoked() -> None:
+    """C3: revoked presented token is fail-loud (401), never anonymous."""
     request = _make_request()
     request.state.is_token_blacklisted = True
-    result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
-    assert result is None
+    with pytest.raises(UnauthorizedException):
+        await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
 
 async def test_verify_optional_wrong_type() -> None:
+    """C3: wrong token_type on a presented credential is fail-loud (401)."""
     state = MagicMock()
     state.is_token_blacklisted = False
     request = _make_request(state=state)
     payload = {"jti": "j1", "token_type": "refresh", "sub": "u"}
     with patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload):
-        result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
-    assert result is None
+        with pytest.raises(UnauthorizedException):
+            await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
 
 async def test_verify_optional_no_sub() -> None:
+    """C3: missing sub on a presented credential is fail-loud (401)."""
     state = MagicMock()
     state.is_token_blacklisted = False
     request = _make_request(state=state)
     payload = {"jti": "j1", "token_type": "access"}
     with patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload):
-        result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
-    assert result is None
+        with pytest.raises(UnauthorizedException):
+            await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
 
 async def test_verify_optional_cached_email_success() -> None:
@@ -638,6 +641,7 @@ async def test_verify_optional_cached_email_success() -> None:
 
 
 async def test_verify_optional_cached_no_user() -> None:
+    """C3: unknown user for a presented credential is fail-loud (401)."""
     state = MagicMock()
     state.is_token_blacklisted = False
     request = _make_request(state=state)
@@ -649,11 +653,12 @@ async def test_verify_optional_cached_no_user() -> None:
     ):
         svc = mock_us.return_value
         svc.get_user_auth_info = AsyncMock(return_value=None)
-        result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
-    assert result is None
+        with pytest.raises(UnauthorizedException):
+            await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
 
 async def test_verify_optional_cached_deleted() -> None:
+    """C3: deleted user for a presented credential is fail-loud (401)."""
     state = MagicMock()
     state.is_token_blacklisted = False
     request = _make_request(state=state)
@@ -666,11 +671,12 @@ async def test_verify_optional_cached_deleted() -> None:
     ):
         svc = mock_us.return_value
         svc.get_user_auth_info = AsyncMock(return_value=user)
-        result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
-    assert result is None
+        with pytest.raises(UnauthorizedException):
+            await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
 
 async def test_verify_optional_cached_version_mismatch() -> None:
+    """C3: stale token_version on a presented credential is fail-loud (401)."""
     state = MagicMock()
     state.is_token_blacklisted = False
     request = _make_request(state=state)
@@ -683,28 +689,30 @@ async def test_verify_optional_cached_version_mismatch() -> None:
     ):
         svc = mock_us.return_value
         svc.get_user_auth_info = AsyncMock(return_value=user)
-        result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
-    assert result is None
+        with pytest.raises(UnauthorizedException):
+            await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
 
 async def test_verify_optional_verify_token_none() -> None:
+    """C3: verify_token returning None on a presented token is fail-loud (401)."""
     request = _make_request()
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=None)),
     ):
-        result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
-    assert result is None
+        with pytest.raises(UnauthorizedException):
+            await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
 
 async def test_verify_optional_verify_token_exception() -> None:
+    """C3: verify_token raising on a presented token is fail-loud (401)."""
     request = _make_request()
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(side_effect=ValueError("bad"))),
     ):
-        result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
-    assert result is None
+        with pytest.raises(UnauthorizedException):
+            await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
 
 async def test_verify_optional_success() -> None:
@@ -724,6 +732,7 @@ async def test_verify_optional_success() -> None:
 
 
 async def test_verify_optional_inactive() -> None:
+    """C3: inactive user on a presented credential is fail-loud (401)."""
     request = _make_request()
     token_data = TokenData(username_or_email="bob", token_version=0)
     user = {"id": 2, "email": "bob@x.com", "is_active": False, "token_version": 0}
@@ -734,11 +743,12 @@ async def test_verify_optional_inactive() -> None:
     ):
         svc = mock_us.return_value
         svc.get_user_auth_info = AsyncMock(return_value=user)
-        result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
-    assert result is None
+        with pytest.raises(UnauthorizedException):
+            await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
 
 async def test_verify_optional_tenant_mismatch() -> None:
+    """C3: tenant mismatch on a presented credential is fail-loud (403)."""
     request = _make_request()
     token_data = TokenData(username_or_email="bob", token_version=0)
     user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": 1}
@@ -751,8 +761,8 @@ async def test_verify_optional_tenant_mismatch() -> None:
     ):
         svc = mock_us.return_value
         svc.get_user_auth_info = AsyncMock(return_value=user)
-        result = await _verify_optional_bearer_token("tok", _make_db(), request, tenant)
-    assert result is None
+        with pytest.raises(ForbiddenException):
+            await _verify_optional_bearer_token("tok", _make_db(), request, tenant)
 
 
 async def test_verify_optional_state_none_runs_db_fallback() -> None:
@@ -771,8 +781,8 @@ async def test_verify_optional_state_none_runs_db_fallback() -> None:
             new=AsyncMock(return_value=True),
         ) as mock_fb,
     ):
-        result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
-    assert result is None
+        with pytest.raises(UnauthorizedException):
+            await _verify_optional_bearer_token("tok", _make_db(), request, None)
     mock_fb.assert_awaited_once()
 
 
@@ -788,9 +798,11 @@ async def test_get_optional_no_header() -> None:
 
 
 async def test_get_optional_non_bearer() -> None:
+    """C3: a presented NON-Bearer scheme is fail-loud (401), never silently
+    anonymous — only an absent credential yields None."""
     request = _make_request(headers={"Authorization": "Basic abc"})
-    result = await get_optional_auth_context(request, _make_db(), None)
-    assert result is None
+    with pytest.raises(UnauthorizedException):
+        await get_optional_auth_context(request, _make_db(), None)
 
 
 async def test_get_optional_api_key_invalid() -> None:
@@ -830,13 +842,14 @@ async def test_get_optional_bearer_success() -> None:
 
 
 async def test_get_optional_bearer_exception() -> None:
+    """C3: verify failure on a presented bearer token is fail-loud (401)."""
     request = _make_request(headers={"Authorization": "Bearer tok"})
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(side_effect=ValueError("x"))),
     ):
-        result = await get_optional_auth_context(request, _make_db(), None)
-    assert result is None
+        with pytest.raises(UnauthorizedException):
+            await get_optional_auth_context(request, _make_db(), None)
 
 
 # ---------------------------------------------------------------------------

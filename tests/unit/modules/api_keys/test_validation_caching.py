@@ -100,11 +100,12 @@ class TestAPIKeyValidationCaching:
 
             assert result is not None
             assert result["user_id"] == 1
-            # Verify cache was set (CacheClient seam: set with ex TTL)
-            mock_redis.set.assert_called_once()
-            # Verify cache TTL is 300 seconds
-            call_args = mock_redis.set.call_args
-            assert call_args[1]["ex"] == 300  # TTL
+            # I2 bridge: cached under BOTH digests (current + legacy) so a
+            # lookup under either key hits.
+            assert mock_redis.set.call_count == 2
+            # Verify cache TTL is 300 seconds on every write
+            for call_args in mock_redis.set.call_args_list:
+                assert call_args[1]["ex"] == 300  # TTL
 
     @pytest.mark.asyncio
     async def test_expired_key_in_cache_is_deleted(self, api_key_service: Any) -> None:

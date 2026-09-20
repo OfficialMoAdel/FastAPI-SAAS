@@ -1,4 +1,4 @@
-from typing import Annotated, Any, Literal, NoReturn
+from typing import Annotated, Any
 
 from fastapi import Depends, Request
 from pydantic import BaseModel
@@ -59,12 +59,19 @@ async def _is_token_blacklisted_with_fallback(token: str, jti: str | None, db: A
 
 
 async def _resolve_bearer_token(request: Request, token: str) -> str:
-    """Pull the bearer token out of the Authorization header if oauth2_scheme didn't."""
+    """Pull the bearer token out of the Authorization header if oauth2_scheme didn't.
+
+    C3: only the ``Bearer`` scheme yields a token. Any other presented
+    scheme (``Basic``, ``Digest``, ...) is fail-loud (401) rather than
+    being sliced into a pseudo-token that then degrades to anonymous.
+    """
     if token and isinstance(token, str):
         return token
     auth_header = request.headers.get("Authorization") if request is not None else None
     if auth_header:
-        _, _, raw_token = auth_header.partition(" ")
+        scheme, _, raw_token = auth_header.partition(" ")
+        if not scheme or scheme.lower() != "bearer":
+            raise UnauthorizedException("User not authenticated.")
         return raw_token
     return ""
 
@@ -124,37 +131,11 @@ async def _enforce_session_valid(
 
 
 # ---------------------------------------------------------------------------
-# H-7: shared auth primitives. One implementation, parameterized by
-# on_failure: "raise" surfaces the domain exception (strict path);
-# "return_none" raises a silent _OptionalAuthAbort that ONLY the optional
-# flow converts to None (degrade to anonymous). This kills the drift risk of
-# maintaining two parallel user-loading / session-validation / tenant-
-# matching stacks — the logic is shared; only the failure PLUMBING differs.
+# H-7/C3: shared auth primitives. ONE implementation for both the strict and
+# the optional path — the only difference is the optional path returns None
+# when NO credential was presented (handled by the caller); every failure on
+# a PRESENTED credential raises the domain exception (401/403).
 # ---------------------------------------------------------------------------
-
-
-class _OptionalAuthAbort(Exception):
-    """Internal control-flow signal for the optional path (H-7).
-
-    Raised by shared primitives in return_none mode; caught ONLY by
-    _resolve_optional_bearer_flow and converted to None. Never escapes.
-    """
-
-
-_FailureMode = Literal["raise", "return_none"]
-
-
-def _auth_fail(on_failure: _FailureMode, message: str, exc: type[Exception] = UnauthorizedException) -> NoReturn:
-    """Signal an auth failure per the caller's failure mode.
-
-    Always raises (domain exception in raise mode, _OptionalAuthAbort in
-    return_none mode) — typed NoReturn so mypy knows callers never see a
-    normal return and downstream code is unreachable after a failure.
-    """
-    if on_failure == "raise":
-        raise exc(message)
-    logger.debug("optional_auth_degraded_to_anonymous", reason=message)
-    raise _OptionalAuthAbort(message)
 
 
 async def _resolve_token_data(
@@ -162,7 +143,6 @@ async def _resolve_token_data(
     token: str,
     cached_payload: dict[str, Any] | None,
     db: AsyncSession,
-    on_failure: _FailureMode,
 ) -> tuple[Any, str, int, str | None, int | None, str | None]:
     """Shared token-data resolution: cached payload or verify_token.
 
@@ -176,13 +156,13 @@ async def _resolve_token_data(
         elif cached_blacklist is True or await _is_token_blacklisted_with_fallback(
             token, cached_payload.get("jti"), db
         ):
-            _auth_fail(on_failure, "Token has been revoked.")
+            raise UnauthorizedException("Token has been revoked.")
 
         if cached_payload.get("token_type") != TokenType.ACCESS:
-            _auth_fail(on_failure, "User not authenticated.")
+            raise UnauthorizedException("User not authenticated.")
         username_or_email = cached_payload.get("sub")
         if not username_or_email:
-            _auth_fail(on_failure, "User not authenticated.")
+            raise UnauthorizedException("User not authenticated.")
         return (
             cached_payload,
             username_or_email,
@@ -192,17 +172,11 @@ async def _resolve_token_data(
             cached_payload.get("sid") or cached_payload.get("jti"),
         )
 
-    # No cached payload — verify the token directly. The optional path
-    # degrades verify_token errors to anonymous rather than re-raising.
-    try:
-        token_data = await verify_token(token, TokenType.ACCESS, db)
-    except Exception as e:
-        if on_failure == "raise":
-            raise
-        logger.warning("optional_token_verify_failed_degrading_to_anonymous", error=str(e))
-        raise _OptionalAuthAbort("token_verify_failed") from e
+    # No cached payload — verify the token directly. verify_token failures
+    # propagate: a presented token that cannot be verified is never anonymous.
+    token_data = await verify_token(token, TokenType.ACCESS, db)
     if token_data is None:
-        _auth_fail(on_failure, "User not authenticated.")
+        raise UnauthorizedException("User not authenticated.")
     return (
         token_data,
         token_data.username_or_email,
@@ -217,7 +191,6 @@ async def _load_and_validate_user(
     db: AsyncSession,
     username_or_email: str,
     payload_version: int,
-    on_failure: _FailureMode,
 ) -> dict[str, Any]:
     """Shared user loading: fetch by email/username, validate liveness + version.
 
@@ -233,13 +206,13 @@ async def _load_and_validate_user(
         user = await user_service.get_user_auth_info(username=username_or_email)
 
     if not user:
-        _auth_fail(on_failure, "User not authenticated.")
+        raise UnauthorizedException("User not authenticated.")
     if not user.get("is_active", False):
-        _auth_fail(on_failure, "User account is no longer active.")
+        raise UnauthorizedException("User account is no longer active.")
     if user.get("is_deleted", False):
-        _auth_fail(on_failure, "User account has been deleted.")
+        raise UnauthorizedException("User account has been deleted.")
     if payload_version != user.get("token_version", 0):
-        _auth_fail(on_failure, "Session expired. Please log in again.")
+        raise UnauthorizedException("Session expired. Please log in again.")
     return user
 
 
@@ -247,28 +220,20 @@ async def _enforce_session_validity(
     session_id: str | None,
     user_id: Any,
     jwt_exp: int | None,
-    on_failure: _FailureMode,
 ) -> None:
     """Shared session-validity check (revoked sid → failure)."""
     if not session_id:
         return
-    try:
-        from src.app.core.security.session_manager import session_manager
+    from src.app.core.security.session_manager import session_manager
 
-        sess_ok = await session_manager.is_session_valid(user_id=user_id, session_id=session_id, jwt_exp=jwt_exp)
-    except Exception as e:
-        if on_failure == "raise":
-            raise
-        logger.warning("optional_session_check_failed_degrading_to_anonymous", error=str(e))
-        raise _OptionalAuthAbort("session_check_failed") from e
+    sess_ok = await session_manager.is_session_valid(user_id=user_id, session_id=session_id, jwt_exp=jwt_exp)
     if not sess_ok:
-        _auth_fail(on_failure, "Session has been revoked.")
+        raise UnauthorizedException("Session has been revoked.")
 
 
 def _enforce_user_tenant_match(
     user: dict[str, Any],
     current_tenant: Any,
-    on_failure: _FailureMode,
 ) -> None:
     """Shared tenant-mismatch check (superusers bypass)."""
     if not current_tenant or user.get("is_superuser", False):
@@ -276,17 +241,14 @@ def _enforce_user_tenant_match(
     user_tid = str(user.get("tenant_id")) if user.get("tenant_id") is not None else None
     curr_tid = str(getattr(current_tenant, "id", getattr(current_tenant, "tenant_id", None)))
     if user_tid != curr_tid:
-        if on_failure == "raise":
-            logger.warning(
-                "tenant_mismatch_detected",
-                user_id=user["id"],
-                user_tenant_id=user.get("tenant_id"),
-                requested_tenant_id=current_tenant.id,
-                requested_tenant_slug=current_tenant.slug,
-            )
-            raise ForbiddenException("User does not belong to the current tenant.")
-        logger.debug("optional_auth_degraded_to_anonymous", reason="tenant_mismatch")
-        raise _OptionalAuthAbort("tenant_mismatch")
+        logger.warning(
+            "tenant_mismatch_detected",
+            user_id=user["id"],
+            user_tenant_id=user.get("tenant_id"),
+            requested_tenant_id=getattr(current_tenant, "id", None),
+            requested_tenant_slug=getattr(current_tenant, "slug", None),
+        )
+        raise ForbiddenException("User does not belong to the current tenant.")
 
 
 async def _resolve_optional_bearer_flow(
@@ -296,29 +258,29 @@ async def _resolve_optional_bearer_flow(
     cached_payload: dict[str, Any] | None,
     current_tenant: Any,
 ) -> AuthContext | None:
-    """Non-strict (optional auth) path: returns None on any verification failure.
+    """Non-strict (optional auth) path.
 
-    H-7: runs the SAME primitives as the strict path with
-    on_failure="return_none"; their _OptionalAuthAbort signals degrade here.
-    Cached-payload path skips verify_token, so the version comparison here
-    IS the enforcement for that path — _load_and_validate_user keeps its
-    payload_version argument (jwt_service stays untouched per ADR-PR-12).
+    C3: anonymous is ONLY for "no credential presented" (empty token — the
+    caller already returned None above). A PRESENTED bearer token that fails
+    verification (bad signature, revoked, wrong type, unknown/dead user,
+    dead session, tenant mismatch, unexpected error) is fail-loud (401/403),
+    never silent anonymous — so token-forgery probes are visible and a
+    caller cannot accidentally serve the anonymous view to an attacker with
+    a garbage/revoked token. API keys follow the same rule in
+    ``resolve_principal`` (invalid presented key → 401).
     """
     try:
-        resolved = await _resolve_token_data(request, token, cached_payload, db, on_failure="return_none")
+        resolved = await _resolve_token_data(request, token, cached_payload, db)
         token_data, username_or_email, payload_version, _jti, jwt_exp, session_id = resolved
-
-        user = await _load_and_validate_user(db, username_or_email, payload_version, on_failure="return_none")
-
-        await _enforce_session_validity(session_id, user.get("id"), jwt_exp, on_failure="return_none")
-        _enforce_user_tenant_match(user, current_tenant, on_failure="return_none")
-
+        user = await _load_and_validate_user(db, username_or_email, payload_version)
+        await _enforce_session_validity(session_id, user.get("id"), jwt_exp)
+        _enforce_user_tenant_match(user, current_tenant)
         return await _create_auth_context(user, token_data, current_tenant, db)
-    except _OptionalAuthAbort:
-        return None
+    except (UnauthorizedException, ForbiddenException):
+        raise
     except Exception as e:
-        logger.warning("optional_auth_context_verify_failed_degrading_to_anonymous", error=str(e))
-        return None
+        logger.warning("optional_auth_context_verify_failed", error=str(e))
+        raise UnauthorizedException("User not authenticated.") from e
 
 
 # P1-1: API-key scope vocabulary, enforced at the resolve-principal seam
@@ -416,6 +378,8 @@ async def resolve_principal(
             if api_key:
                 api_key_user = await get_user_by_api_key(api_key, db, request)
         if api_key_user is None:
+            # C3: an invalid PRESENTED API key is fail-loud (401), never
+            # anonymous — anonymous is only for "no credential presented".
             raise UnauthorizedException("Invalid API key.")
         # P1-1: scope gate — a valid key with insufficient scopes is an
         # authorization failure (403), not anonymous, in both strict and
@@ -440,15 +404,11 @@ async def resolve_principal(
         # H-7: the strict path now consumes the SAME primitives as the
         # optional path (steps 3-4 shared implementations; the composite
         # prefetch stays inline because it is strict-only, RBAC bitmask warm).
-        resolved = await _resolve_token_data(request, token, cached_payload, db, on_failure="raise")
-        if resolved is None:
-            raise UnauthorizedException("User not authenticated.")
+        resolved = await _resolve_token_data(request, token, cached_payload, db)
         token_data, username_or_email, payload_version, jti, jwt_exp, session_id = resolved
 
         # 4. User loading & verification
-        user = await _load_and_validate_user(db, username_or_email, payload_version, on_failure="raise")
-        if user is None:
-            raise UnauthorizedException("User not authenticated.")
+        user = await _load_and_validate_user(db, username_or_email, payload_version)
         user_id = user["id"]
         user_tenant_id = user.get("tenant_id")
 
@@ -477,7 +437,7 @@ async def resolve_principal(
             request.state.cached_permissions_bitmask = (user_id, str(user_tenant_id), bitmask)
 
         # 6. Tenant isolation check
-        _enforce_user_tenant_match(user, current_tenant, on_failure="raise")
+        _enforce_user_tenant_match(user, current_tenant)
 
         return await _create_auth_context(user, token_data, current_tenant, db)
 

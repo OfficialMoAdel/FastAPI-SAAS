@@ -46,7 +46,7 @@ async def test_registry_default_wins_over_tenant_jsonb():
 
     service = FeatureFlagService(db=db)
     with (
-        patch("src.app.modules.feature_flags.service.get_redis", return_value=redis),
+        patch("src.app.core.redis_provider.get_redis", return_value=redis),
         patch.object(FeatureFlagService, "get_flag_by_key_or_none", AsyncMock(return_value=_flag(True))),
         patch.object(FeatureFlagService, "get_override", AsyncMock(return_value=None)),
     ):
@@ -65,7 +65,7 @@ async def test_override_wins_over_registry_default():
 
     service = FeatureFlagService(db=db)
     with (
-        patch("src.app.modules.feature_flags.service.get_redis", return_value=redis),
+        patch("src.app.core.redis_provider.get_redis", return_value=redis),
         patch.object(FeatureFlagService, "get_flag_by_key_or_none", AsyncMock(return_value=_flag(True))),
         patch.object(FeatureFlagService, "get_override", AsyncMock(return_value=_override(False))),
     ):
@@ -84,7 +84,7 @@ async def test_jsonb_used_only_when_unregistered():
 
     service = FeatureFlagService(db=db)
     with (
-        patch("src.app.modules.feature_flags.service.get_redis", return_value=redis),
+        patch("src.app.core.redis_provider.get_redis", return_value=redis),
         patch.object(FeatureFlagService, "get_flag_by_key_or_none", AsyncMock(return_value=None)),
     ):
         assert await service.is_enabled(tenant_id, "beta") is True

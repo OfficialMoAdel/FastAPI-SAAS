@@ -380,7 +380,13 @@ class MagicLinkRead(BaseRead):
 # ============================================================================
 
 _TOTP_TOKEN_PATTERN = re.compile(r"^\d{6}$")
-_BACKUP_CODE_PATTERN = re.compile(r"^(BC-)?[A-Z0-9]{5}-[A-Z0-9]{5}$")
+# S3/SEC-10: two layouts exist — legacy 40-bit codes (two 5-char groups,
+# still stored on accounts that have not regenerated) and current 80-bit
+# codes (four 5-char groups). The optional "BC-" prefix is normalized in by
+# the request validators.
+_BACKUP_CODE_PATTERN = re.compile(
+    r"^(?:BC-)?(?:[A-Z0-9]{5}-[A-Z0-9]{5}|[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5})$"
+)
 
 
 class MFASetupResponse(BaseModel):

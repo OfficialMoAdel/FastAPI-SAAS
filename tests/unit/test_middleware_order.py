@@ -1,19 +1,21 @@
 """R1-16 guard: middleware registration order is a security contract.
 
 Starlette executes middleware in LIFO order (last added runs first on the
-request path). The stack in ``main.py`` is added in this order
+request path). The stack in ``core/guard/ordering.py`` is added in this order
 (innermost -> outermost):
 
     RequestID, AttackDetection, Tenant, RateLimit, SecurityHeaders,
-    RequestBodyLimit, IPFilter, QueryProfiler, GZipFilter
+    RequestBodyLimit, IPFilter, QueryProfiler, GZipFilter, CORS
 
 ``add_middleware`` inserts at position 0, so ``app.user_middleware`` is in
 REQUEST EXECUTION order (outermost first):
 
-    GZip -> QueryProfiler -> IPFilter -> BodyLimit -> SecurityHeaders
-    -> RateLimit -> Tenant -> AttackDetection -> RequestID -> CORS
+    CORS -> GZip -> QueryProfiler -> IPFilter -> BodyLimit -> SecurityHeaders
+    -> RateLimit -> Tenant -> AttackDetection -> RequestID
 
-(CORSMiddleware is innermost: it is added first, inside create_application.)
+(CORS is outermost so guard short-circuits — IPFilter 403, RateLimit 429,
+BodyLimit 413 — still carry Access-Control-Allow-Origin; a cross-origin
+client would otherwise see an opaque network error instead of the status.)
 
 Reordering these silently changes trust boundaries (e.g. RateLimit must run
 before AttackDetection's expensive body scan AND before the Tenant lookup so
@@ -46,7 +48,8 @@ class TestMiddlewareOrder:
         registered = [m.cls for m in app.user_middleware]
 
         expected = [
-            GZipFilterMiddleware,  # outermost — runs first on request
+            CORSMiddleware,  # outermost — wraps every guard short-circuit (C4)
+            GZipFilterMiddleware,
             QueryProfilerMiddleware,
             IPFilterMiddleware,
             RequestBodyLimitMiddleware,
@@ -55,7 +58,6 @@ class TestMiddlewareOrder:
             TenantMiddleware,
             AttackDetectionMiddleware,
             RequestIDMiddleware,
-            CORSMiddleware,  # innermost — added first in create_application
         ]
 
         assert registered == expected, (
@@ -103,6 +105,46 @@ class TestMiddlewareOrder:
             "RateLimit must execute before TenantMiddleware on the request "
             "path so 429s skip the tenant lookup (P1-15)."
         )
+
+    def test_cors_headers_present_on_guard_rejection(self):
+        """C4 regression: a guard short-circuit (429 here) still carries CORS
+        headers, so cross-origin clients can read the real status instead of
+        an opaque network error."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from src.app.core.guard import resolve_guard_order
+        from src.app.core.security.rate_policy import RateLimitVerdict
+        from src.app.core.security.request_admission import AdmissionOutcome
+        from src.app.middleware.rate_limit import RateLimitMiddleware
+
+        verdict = RateLimitVerdict(True, 7, 60, 0, 30, "k", {"Retry-After": "30"})
+
+        class _Limited:
+            async def evaluate(self, request):
+                return AdmissionOutcome("limited", "127.0.0.1", verdict)
+
+        class _Settings:
+            class app:  # noqa: N801
+                MAX_BODY_SIZE = 1024
+
+            class cors:  # noqa: N801
+                CORS_ORIGINS = ["https://app.example.com"]
+                CORS_METHODS = ["GET"]
+                CORS_HEADERS = ["X-Tenant-ID"]
+
+        app = FastAPI()
+        for cls, kwargs in resolve_guard_order(_Settings):
+            if cls is RateLimitMiddleware:
+                app.add_middleware(cls, admission=_Limited())
+            else:
+                app.add_middleware(cls, **kwargs)
+
+        with TestClient(app) as client:
+            response = client.get("/", headers={"Origin": "https://app.example.com"})
+
+        assert response.status_code == 429
+        assert response.headers["access-control-allow-origin"] == "https://app.example.com"
 
 
 if __name__ == "__main__":

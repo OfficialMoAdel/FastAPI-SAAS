@@ -27,9 +27,10 @@ app = create_application(
 
 # Middleware stack: single wiring point is core/guard/ordering.py
 # (GUARD_ORDER, innermost → outermost registration; LIFO execution).
-# Request flow: GZip → QueryProfiler → IPFilter → BodyLimit →
+# Request flow: CORS → GZip → QueryProfiler → IPFilter → BodyLimit →
 # SecurityHeaders → RateLimit → Tenant → AttackDetection → RequestID →
-# CORS → Handler. Pinned by tests/unit/test_middleware_order.py (R1-16).
+# Handler. CORS is outermost so guard rejections (403/429/413) carry CORS
+# headers. Pinned by tests/unit/test_middleware_order.py (R1-16).
 for _mw_cls, _mw_kwargs in resolve_guard_order(settings):
     if _mw_cls.__name__ == "GZipFilterMiddleware":
         # P2-7: compresslevel 4 over zlib's default 6 — roughly 2x faster

@@ -64,7 +64,8 @@ async def get_job_status(job_id: str) -> JobStatusResponse:
 
 @router.get("/dlq", response_model=list[DLQItemResponse])
 async def get_dlq_items(
-    limit: int = Query(100, ge=1, le=1000, description="Number of items to retrieve"),
+    # P2 pagination-drift fix: align with the shared 100-item page cap.
+    limit: int = Query(100, ge=1, le=100, description="Number of items to retrieve"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
 ) -> list[DLQItemResponse]:
     """

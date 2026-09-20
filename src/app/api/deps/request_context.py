@@ -99,6 +99,16 @@ class RequestContext:
         tenant: The resolved tenant context (set by ``TenantMiddleware``
             and validated by ``get_auth_context`` for tenant membership).
         db: The request-scoped asynchronous database session.
+
+    WARNING (P2 lifecycle contract): ``db`` is bound to the REQUEST
+    lifecycle — it is closed when the request ends. Never hand a
+    ``RequestContext`` (or ``ctx.db``) to a background task / ARQ job /
+    ``asyncio.create_task`` that may outlive the request; carry ids and
+    the principal instead and open a fresh session via
+    ``core.db.database.local_session`` (worker paths use the
+    ``job_*_context`` seams). A full "ids/principal only" refactor of
+    this dataclass is tracked as follow-up work; until then this
+    contract is enforced by review, not types.
     """
 
     user: AuthenticatedUser

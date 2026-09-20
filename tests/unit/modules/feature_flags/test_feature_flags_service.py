@@ -172,11 +172,12 @@ async def test_get_tenant_flags_db_fallback(mock_redis, service, mock_db):
 
     # Needs patch for Tenant model in get, or just direct mock
     mock_db.get = AsyncMock(return_value=mock_tenant)
-    mock_redis.setex = AsyncMock()
+    # P2: the service writes through the cache_client adapter now.
+    mock_redis.set = AsyncMock()
 
     result = await service.get_tenant_flags(t_id)
     assert result == {"db_flag": False}
-    mock_redis.setex.assert_awaited_once()
+    mock_redis.set.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -267,7 +268,7 @@ async def test_get_flag_value_falls_back_to_tenant_jsonb(service):
 
     with patch.object(service, "get_flag_by_key_or_none", new_callable=AsyncMock) as mock_get_flag:
         mock_get_flag.return_value = None
-        with patch("src.app.modules.feature_flags.service.get_redis", return_value=None):
+        with patch("src.app.core.redis_provider.get_redis", return_value=None):
             assert await service.get_flag_value(t_id, "page_size") == 50
             assert await service.get_flag_value(t_id, "missing", default="fallback") == "fallback"
 

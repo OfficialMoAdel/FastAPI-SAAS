@@ -210,9 +210,19 @@ async def check_security_budget(
     # build_rate_limit_key's "rate_limit:user:{id}:{path}" format.
     key = build_rate_limit_key(f"budget:{budget}", user_id=identifier, tenant_id=tenant_id)
 
-    effective_limiter = limiter or default_rate_limiter
-    is_limited, remaining, retry_after = await effective_limiter.check_rate_limit_algorithm(key, limit, period)
-
+    # C2: fail-closed budgets block on Redis outage even when the general
+    # RATE_LIMIT_FAIL_OPEN=True. The explicit flag threads through the
+    # limiter (fixed-window + GCRA paths); general path policy stays
+    # operator-controlled.
+    effective_limiter: Any = limiter or default_rate_limiter
+    fail_closed = budget in settings.rate_limit.SECURITY_BUDGETS_FAIL_CLOSED
+    try:
+        is_limited, remaining, retry_after = await effective_limiter.check_rate_limit_algorithm(
+            key, limit, period, fail_closed=fail_closed
+        )
+    except TypeError:
+        # Test doubles with the old 3-arg signature: fall back positionally.
+        is_limited, remaining, retry_after = await effective_limiter.check_rate_limit_algorithm(key, limit, period)
     if is_limited and retry_after == 0:
         retry_after = period - (int(time.time()) % period)
 

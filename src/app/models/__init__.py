@@ -35,11 +35,11 @@ from src.app.modules.billing.models import (
 from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride  # noqa: F401
 from src.app.modules.notifications.models import EmailTemplateOverride, Notification  # noqa: F401
 from src.app.modules.posts.models import Post  # noqa: F401
-from src.app.modules.rate_limits.models import RateLimit, Tier  # noqa: F401
+from src.app.modules.rate_limits.models import RateLimit  # noqa: F401
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole  # noqa: F401
 from src.app.modules.storage.models import File, StorageProviderType, StorageSettings  # noqa: F401
 from src.app.modules.tenants.models import Tenant  # noqa: F401
-from src.app.modules.tiers.models import Tier as TierAlias  # noqa: F401
+from src.app.modules.tiers.models import Tier  # noqa: F401
 from src.app.modules.user_preferences.models import UserPreferences  # noqa: F401
 from src.app.modules.users.models import User  # noqa: F401
 from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint  # noqa: F401
@@ -76,7 +76,6 @@ __all__ = [
     "SubscriptionPlan",
     "Tenant",
     "Tier",
-    "TierAlias",
     "TokenBlacklist",
     "User",
     "UserPreferences",

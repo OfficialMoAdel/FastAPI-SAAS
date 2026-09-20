@@ -12,7 +12,10 @@ from src.app.core.logger import get_logger
 from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
+from src.app.core.security.auto_ban import increment_violations
+from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.billing.checkout_service import get_checkout_service
+from src.app.modules.billing.exceptions import WebhookVerificationError
 from src.app.modules.billing.schemas import (
     BillingRecordList,
     BillingRecordRead,
@@ -49,6 +52,7 @@ from src.app.modules.billing.webhook import (
     ingest_webhook,
     verify_webhook_signature,
 )
+from src.app.shared.exceptions import ModelNotFoundError
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 logger = get_logger(__name__)
@@ -66,7 +70,28 @@ async def stripe_webhook(
     """Handle Stripe webhooks."""
     payload = await request.body()
     sig_header = request.headers.get("Stripe-Signature")
-    return await ingest_webhook(payload, sig_header, verify_fn=verify_webhook_signature)
+    client_ip = get_client_ip(request)
+    try:
+        return await ingest_webhook(payload, sig_header, verify_fn=verify_webhook_signature)
+    except WebhookVerificationError:
+        # S1 (SEC-08): per-IP invalid-signature meter via the auto-ban seam.
+        # Repeated failures escalate to a ban (the ip_filter guard then blocks
+        # the source entirely, bounding log/HMAC cost), while legitimate
+        # Stripe retries (valid signatures) never touch this path and can
+        # never be 429'd. The global BodyLimit guard already bounds the
+        # body-read cost of each probe.
+        logger.warning(
+            "stripe_webhook_signature_invalid",
+            client_ip=client_ip,
+            has_signature=sig_header is not None,
+            payload_size=len(payload),
+        )
+        # An unresolvable client IP falls back to a bounded, segregated bucket
+        # rather than collapsing every anonymous source into one shared
+        # counter that could trip a ban for unrelated traffic.
+        accounting_key = client_ip if client_ip and client_ip != "unknown" else "unknown:no_client_ip"
+        await increment_violations(accounting_key)
+        raise
 
 
 # =============================================================================
@@ -86,20 +111,10 @@ async def get_stripe_settings(
     service = get_stripe_settings_service(db)
     stripe_settings = await service.get_settings()
     if stripe_settings is None:
-        from src.app.core.tenancy.context import get_current_tenant
-
-        tenant = get_current_tenant()
-        tenant_id = tenant.id if tenant else None
-        return {
-            "id": 0,
-            "tenant_id": tenant_id,
-            "stripe_customer_id": None,
-            "stripe_account_id": None,
-            "is_active": False,
-            "has_secret_key": False,
-            "created_at": None,
-            "updated_at": None,
-        }
+        # I13: no fabricated placeholder row — an unconfigured tenant gets the
+        # canonical 404 envelope (NOT_FOUND), not id:0 / created_at:None under
+        # a read schema (which poisons client caching/normalization logic).
+        raise ModelNotFoundError("StripeSettings", "current tenant")
     return {
         **stripe_settings,
         "has_secret_key": bool(stripe_settings.get("encrypted_secret_key")),

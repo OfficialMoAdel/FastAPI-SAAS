@@ -20,7 +20,12 @@ from src.app.core.security.auto_ban import (
     get_ban_info,
 )
 from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
-from src.app.core.security.rate_policy import RateLimitVerdict, build_rate_limit_key, resolve_rate_limits
+from src.app.core.security.rate_policy import (
+    RateLimitVerdict,
+    build_rate_limit_key,
+    check_security_budget,
+    resolve_rate_limits,
+)
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.path_utils import sanitize_path
 from src.app.core.utils.rate_limit import rate_limiter
@@ -34,6 +39,8 @@ _BAN_CHECKED_EXEMPT_PREFIXES: tuple[str, ...] = (
     "/api/v1/billing/webhook",
     "/api/v1/webhooks/stripe",
 )
+
+_REFRESH_BUDGET_PATHS: frozenset[str] = frozenset({"/api/v1/auth/refresh", "/api/v1/account/refresh"})
 
 
 @dataclass(frozen=True)
@@ -73,9 +80,6 @@ class RequestAdmissionService:
             ):
                 return await self._passthrough_unless_banned(client_ip)
             return AdmissionOutcome("passthrough", client_ip)
-        if norm_path in ("/api/v1/auth/refresh", "/api/v1/account/refresh"):
-            return await self._passthrough_unless_banned(client_ip)
-
         if settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT:
             if hasattr(request.state, "ip_whitelisted"):
                 is_white = is_whitelisted(request.state)
@@ -111,6 +115,14 @@ class RequestAdmissionService:
                         bypassed=True,
                     ),
                 )
+
+        # C1: refresh endpoints get an identity-keyed security budget at the
+        # edge (early 429 + Retry-After) instead of an unconditional skip.
+        # Placed AFTER the whitelist branch: operator-declared whitelisted IPs
+        # keep the documented counter-bypass; the endpoint's own `auth` budget
+        # still caps them (defense-in-depth).
+        if norm_path in _REFRESH_BUDGET_PATHS:
+            return await self._evaluate_refresh_budget(client_ip)
 
         ctx = await self._get_rate_limit_config(request)
         if settings.security.AUTO_BAN_ENABLED and ctx.user_id and ctx.token:
@@ -209,6 +221,26 @@ class RequestAdmissionService:
             if ban_info.is_banned:
                 return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
         return AdmissionOutcome("passthrough", client_ip)
+
+    async def _evaluate_refresh_budget(self, client_ip: str) -> AdmissionOutcome:
+        """Evaluate the refresh-token probing budget (C1).
+
+        Banned IPs stay rejected (ban boundary preserved from the old
+        ``_passthrough_unless_banned`` skip); clean IPs get the ``refresh``
+        security budget (fail-closed per C2) so rotation-marker floods get
+        an early 429 + Retry-After at the edge.
+        """
+        if settings.security.AUTO_BAN_ENABLED:
+            ban_info = await get_ban_info(client_ip)
+            if ban_info.is_banned:
+                return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
+        verdict = await check_security_budget("refresh", client_ip or "unknown")
+        if verdict.is_limited:
+            # Deliberately NOT auto-ban eligible: 429 + Retry-After only, so a
+            # shared NAT behind the budget never earns an AUTO_BAN_DURATION
+            # outage for every user behind it.
+            return AdmissionOutcome("limited", client_ip, verdict)
+        return AdmissionOutcome("admit", client_ip, verdict)
 
     async def _handle_violation(self, client_ip: str, verdict: RateLimitVerdict) -> AdmissionOutcome:
         if settings.security.AUTO_BAN_ENABLED and client_ip:

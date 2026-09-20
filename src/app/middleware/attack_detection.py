@@ -240,10 +240,11 @@ class AttackDetectionMiddleware:
     _MAX_SCAN_SIZE = 128 * 1024
     """Middleware to detect and handle malicious attack patterns.
 
-    Execution order (in relation to other middleware):
-    1. IPFilterMiddleware (whitelist check - if whitelisted, skip attack detection)
-    2. AttackDetectionMiddleware (this middleware)
-    3. RateLimitMiddleware
+    Execution order is pinned by GUARD_ORDER (src/app/core/guard/ordering.py):
+    this middleware runs AFTER RateLimit (a cheap 429 skips the expensive
+    body scan) and AFTER BodyLimit (oversized payloads 413 before the scan
+    buffers them). tests/unit/test_middleware_order.py pins the contract —
+    do not restate the sequence here.
 
     Operation modes:
     - log: Detect attacks, log them, but allow request to continue

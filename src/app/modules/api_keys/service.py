@@ -1,6 +1,5 @@
 """API Key service layer - business logic for API key management."""
 
-import hashlib
 import secrets
 from datetime import UTC, datetime
 from typing import Any
@@ -60,14 +59,18 @@ class APIKeyService(BaseService[APIKey]):
         raw_key = secrets.token_urlsafe(self.KEY_LENGTH)
         prefix = raw_key[: self.KEY_PREFIX_LENGTH]
 
-        # Hash the key for storage (using SHA-256)
-        hashed = hashlib.sha256(raw_key.encode()).hexdigest()
+        # Hash the key for storage (I2: peppered HMAC via the token seam)
+        from src.app.core.security.tokens import hash_token as _ht
+
+        hashed = _ht(raw_key)
 
         return raw_key, prefix, hashed
 
     def _hash_key(self, key: str) -> str:
-        """Hash an API key for comparison."""
-        return hashlib.sha256(key.encode()).hexdigest()
+        """Hash an API key for comparison (I2: peppered HMAC via the token seam)."""
+        from src.app.core.security.tokens import hash_token as _ht
+
+        return _ht(key)
 
     async def create_api_key(
         self,
@@ -326,19 +329,30 @@ class APIKeyService(BaseService[APIKey]):
         dict | None
             User info if valid, None otherwise
         """
-        hashed = self._hash_key(api_key)
-        cache_key = self._get_cache_key(hashed)
+        # I2 bridge: the stored digest changed from bare SHA-256 to peppered
+        # HMAC, so keys created before that change are invisible to a
+        # single-digest lookup — the row never matches and the key silently
+        # stops authenticating. Try both digests, re-hash a legacy row so
+        # it migrates forward on first use, and cache under BOTH keys so
+        # the next lookup hits the cache whichever digest ran.
+        from src.app.core.security.tokens import token_digest_candidates
+
+        current_digest, legacy_digest = token_digest_candidates(api_key)
+        cache_key = self._get_cache_key(current_digest)
+        legacy_cache_key = self._get_cache_key(legacy_digest)
 
         # Check cache first (O(1) lookup; adapter is None-safe)
-        cached = await cache_client.get(cache_key)
-        if cached is not None:
+        for candidate_cache_key in (cache_key, legacy_cache_key):
+            cached = await cache_client.get(candidate_cache_key)
+            if cached is None:
+                continue
             result = json_loads(cached)
             # Check expiration on cached data
             if result.get("expires_at"):
                 expires_at = datetime.fromisoformat(result["expires_at"])
                 if expires_at < datetime.now(UTC):
                     # Expired - delete from cache and return None
-                    await cache_client.delete(cache_key)
+                    await cache_client.delete(candidate_cache_key)
                     return None
             # BUG FIX: Also check valid_from. Without this, a rotated key that was
             # cached before its valid_from time could be used prematurely (up to 5 min).
@@ -355,19 +369,25 @@ class APIKeyService(BaseService[APIKey]):
             if tenant_state is False:
                 return None
             if tenant_state is None:
-                pass  # fall through to DB validation
-            else:
-                return {
-                    "user_id": result["user_id"],
-                    "tenant_id": result["tenant_id"],
-                    "scopes": result["scopes"],
-                    "key_id": result["key_id"],
-                }
+                break  # fall through to DB validation
+            return {
+                "user_id": result["user_id"],
+                "tenant_id": result["tenant_id"],
+                "scopes": result["scopes"],
+                "key_id": result["key_id"],
+            }
 
-        # Cache miss - query database
-        result = await self._validate_from_db(hashed)
+        # Cache miss - query database under BOTH digests
+        result = await self._validate_from_db(current_digest, legacy_digest)
         if result is None:
             return None
+
+        if result.pop("_legacy_digest", False):
+            # Migrate the stored digest forward so future lookups hit the
+            # current single-digest path. Both cache keys are written below.
+            await self.crud.update(
+                db=self.db, id=result["key_id"], object={"hashed_key": current_digest}, commit=False
+            )
 
         # Cache the result (adapter noops when Redis is down)
         cache_data = {
@@ -379,7 +399,10 @@ class APIKeyService(BaseService[APIKey]):
             # BUG FIX: Cache valid_from so it can be enforced on cache hits too.
             "valid_from": result["valid_from"].isoformat() if result.get("valid_from") else None,
         }
-        await cache_client.set(cache_key, json_dumps(cache_data, as_str=True), ttl=API_KEY_CACHE_TTL)
+        payload = json_dumps(cache_data, as_str=True)
+        await cache_client.set(cache_key, payload, ttl=API_KEY_CACHE_TTL)
+        if legacy_cache_key != cache_key:
+            await cache_client.set(legacy_cache_key, payload, ttl=API_KEY_CACHE_TTL)
 
         return {
             "user_id": result["user_id"],
@@ -388,18 +411,26 @@ class APIKeyService(BaseService[APIKey]):
             "key_id": result["key_id"],
         }
 
-    async def _validate_from_db(self, hashed_key: str) -> dict[str, Any] | None:
+    async def _validate_from_db(
+        self, current_digest: str, legacy_digest: str | None = None
+    ) -> dict[str, Any] | None:
         """Validate API key from database.
+
+        I2 bridge: accepts the legacy digest too, so keys stored under the
+        pre-pepper bare SHA-256 still resolve. A legacy match sets the
+        ``_legacy_digest`` flag so the caller re-hashes the row forward.
 
         Parameters
         ----------
-        hashed_key : str
-            SHA-256 hash of the API key
+        current_digest: Peppered HMAC digest (the write format).
+        legacy_digest: Pre-I2 bare SHA-256 digest, tried only when the
+            current digest has no row.
 
         Returns
         -------
         dict | None
-            Key info if valid, None otherwise
+            Key info if valid, None otherwise. Carries an internal
+            ``_legacy_digest`` marker for the caller's re-hash step.
         """
         from sqlalchemy import select
 
@@ -407,11 +438,12 @@ class APIKeyService(BaseService[APIKey]):
         from src.app.modules.tenants.models import Tenant
 
         # JOIN with tenant to check tenant.is_active
+        digests = (current_digest,) if legacy_digest is None else (current_digest, legacy_digest)
         stmt = (
             select(APIKey)
             .join(Tenant, APIKey.tenant_id == Tenant.id)
             .where(
-                APIKey.hashed_key == hashed_key,
+                APIKey.hashed_key.in_(digests),
                 APIKey.is_active.is_(True),
                 Tenant.is_active.is_(True),  # Prevent suspended tenant access
             )
@@ -422,6 +454,8 @@ class APIKeyService(BaseService[APIKey]):
 
         if not key:
             return None
+
+        is_legacy = bool(key.hashed_key == legacy_digest and legacy_digest is not None)
 
         # Check valid_from (grace period rotation support)
         # Key is not valid before this timestamp
@@ -453,6 +487,8 @@ class APIKeyService(BaseService[APIKey]):
             "expires_at": key.expires_at,
             # Include valid_from so cache can enforce it on hits
             "valid_from": key.valid_from if hasattr(key, "valid_from") else None,
+            # I2 bridge: tells the caller to re-hash this row forward.
+            "_legacy_digest": is_legacy,
         }
 
     async def rotate_api_key(
