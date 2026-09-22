@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.core.config import settings as app_settings
-from src.app.core.db.tenant_crud import tenant_scope
+from src.app.core.db.scoped import criterion
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.security.encryption import get_encryption
 from src.app.modules.storage.errors import (
@@ -124,7 +124,7 @@ class StorageAdminService:
 
     async def get_settings(self, tenant_id: UUID) -> StorageSettings | None:
         """Get storage settings for a tenant."""
-        result = await self.db.execute(select(StorageSettings).where(tenant_scope(StorageSettings, tenant_id)))
+        result = await self.db.execute(select(StorageSettings).where(criterion(StorageSettings, tenant_id)))
         return result.scalar_one_or_none()
 
     async def get_settings_or_raise(self, tenant_id: UUID) -> StorageSettings:
@@ -528,7 +528,7 @@ class StorageService:
 
     async def get_file(self, tenant_id: UUID, file_id: int, user_id: int | None = None) -> File | None:
         """Get file record by ID with tenant isolation."""
-        query = select(File).where(File.id == file_id, tenant_scope(File, tenant_id))
+        query = select(File).where(File.id == file_id, criterion(File, tenant_id))
         if user_id is not None:
             query = query.where(File.user_id == user_id)
         result = await self.db.execute(query)
@@ -620,7 +620,7 @@ class StorageService:
             logger.error("storage_delete_failed", storage_path=storage_path, error=str(e))
             raise StorageBackendError(f"Failed to delete file from storage: {e}") from e
 
-        stmt = delete(File).where(File.id == file_id, tenant_scope(File, tenant_id))
+        stmt = delete(File).where(File.id == file_id, criterion(File, tenant_id))
         if user_id is not None:
             stmt = stmt.where(File.user_id == user_id)
         result = await self.db.execute(stmt)
@@ -653,7 +653,7 @@ class StorageService:
         limit: int = 50,
     ) -> dict[str, Any]:
         """List files for a tenant with pagination."""
-        query = select(File).where(tenant_scope(File, tenant_id))
+        query = select(File).where(criterion(File, tenant_id))
         if user_id:
             query = query.where(File.user_id == user_id)
         if mime_type:
@@ -669,7 +669,7 @@ class StorageService:
             # P2: single RTT via COUNT(*) OVER() over the identical filtered
             # set (audit_logs pattern) instead of count-query + rows-query.
             total_col = func.count().over().label("total")
-            windowed = select(File, total_col).where(tenant_scope(File, tenant_id))
+            windowed = select(File, total_col).where(criterion(File, tenant_id))
             if user_id:
                 windowed = windowed.where(File.user_id == user_id)
             if mime_type:
@@ -751,12 +751,12 @@ class StorageService:
     get_signed_url = get_presigned_url
 
     async def _get_file_count(self, tenant_id: UUID) -> int:
-        result = await self.db.execute(select(func.count(File.id)).where(tenant_scope(File, tenant_id)))
+        result = await self.db.execute(select(func.count(File.id)).where(criterion(File, tenant_id)))
         return result.scalar() or 0
 
     async def _get_total_size(self, tenant_id: UUID) -> int:
         result = await self.db.execute(
-            select(func.coalesce(func.sum(File.size_bytes), 0)).where(tenant_scope(File, tenant_id))
+            select(func.coalesce(func.sum(File.size_bytes), 0)).where(criterion(File, tenant_id))
         )
         return result.scalar() or 0
 
@@ -770,7 +770,7 @@ class StorageService:
         stmt = (
             update(File)
             .where(
-                tenant_scope(File, tenant_id),
+                criterion(File, tenant_id),
                 File.user_id == from_user_id,
             )
             .values(user_id=to_user_id)

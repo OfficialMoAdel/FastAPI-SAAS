@@ -120,7 +120,7 @@ async def _extract_user_records(
         # Keep ids verbatim: no int() cast (UUID-string ids would crash).
         # tenant_id scoping stays optional-by-contract: raw-id callers are
         # role/permission bookkeeping (RBAC service passes self.tenant_id
-        # always; see service.py assign/remove paths). tenant_scope itself
+        # always; see service.py assign/remove paths). criterion itself
         # owns the fail-closed rule — a None tenant_id here means "caller
         # takes responsibility", not a bypass of the seam.
         user_ids = list(users_list)
@@ -128,9 +128,9 @@ async def _extract_user_records(
             User.id, User.email, User.username, User.tenant_id, User.token_version
         ).where(User.id.in_(user_ids))
         if tenant_id is not None:
-            from src.app.core.db.tenant_crud import tenant_scope
+            from src.app.core.db.scoped import criterion
 
-            stmt = stmt.where(tenant_scope(User, tenant_id))
+            stmt = stmt.where(criterion(User, tenant_id))
         result = await db.execute(stmt)
         rows = list(result.all())
         return rows, user_ids, True
@@ -290,9 +290,9 @@ async def _fetch_fresh_token_versions(
     try:
         stmt = select(User.id, User.token_version).where(User.id.in_(affected_ids))
         if tenant_id is not None:
-            from src.app.core.db.tenant_crud import tenant_scope
+            from src.app.core.db.scoped import criterion
 
-            stmt = stmt.where(tenant_scope(User, tenant_id))
+            stmt = stmt.where(criterion(User, tenant_id))
         result = await db.execute(stmt)
         rows = result.all()
         fresh: dict[Any, int] = {}
@@ -366,9 +366,9 @@ async def invalidate_user_sessions(
         if tenant_id is not None:
             # Optional-by-contract scoping (see _fetch_fresh_token_versions):
             # RBAC callers always pass their tenant; None = caller owns it.
-            from src.app.core.db.tenant_crud import tenant_scope
+            from src.app.core.db.scoped import criterion
 
-            update_stmt = update_stmt.where(tenant_scope(User, tenant_id))
+            update_stmt = update_stmt.where(criterion(User, tenant_id))
         result = await db.execute(update_stmt)
         # Rowcount guard: a 0-row bump (wrong tenant / deleted user) must not
         # proceed to cache-invalidate, or Redis and DB silently diverge.

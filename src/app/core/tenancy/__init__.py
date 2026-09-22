@@ -2,7 +2,7 @@
 
 Provides request-scoped tenant context via ContextVar for async-safe
 tenant isolation across concurrent requests, and the single tenant-filter
-criterion (:func:`tenant_scope` / :func:`scoped_query`) that every
+criterion (:func:`core.db.scoped.criterion`) that every
 tenant-shaped query composes onto.
 
 Direct imports:
@@ -12,7 +12,7 @@ Direct imports:
         clear_tenant_context,
         require_active_tenant,
     )
-    from src.app.core.tenancy.query import tenant_scope, scoped_query
+    from src.app.core.db.scoped import criterion
 """
 
 __all__ = [
@@ -30,12 +30,11 @@ __all__ = [
     "require_active_tenant",
     "resolve_tenant_by_slug",
     "set_current_tenant",
-    "scoped_query",
     "slug_cache_key",
     "tenant_cache_data_from_model",
     "tenant_context_from_cache_data",
     "tenant_from_wire",
-    "tenant_scope",
+    "criterion",
     "tenant_to_wire",
     "unbind_tenant",
 ]
@@ -62,14 +61,10 @@ def __getattr__(name: str) -> Any:
         from src.app.core.tenancy.context import require_active_tenant
 
         return require_active_tenant
-    if name == "scoped_query":
-        from src.app.core.tenancy.query import scoped_query
+    if name == "criterion":
+        from src.app.core.db.scoped import criterion
 
-        return scoped_query
-    if name == "tenant_scope":
-        from src.app.core.tenancy.query import tenant_scope
-
-        return tenant_scope
+        return criterion
     if name in {
         "is_valid_slug",
         "negative_cache_key",

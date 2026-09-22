@@ -200,7 +200,7 @@ def resolve_tenant_id(
 ) -> Any:
     """Resolve the effective tenant id — the ONE explicit-vs-context seam.
 
-    Rules (shared by every service; mirrors :func:`tenant_scope`):
+    Rules (shared by every service; mirrors :func:`core.db.scoped.criterion`):
 
     - Active context always wins; a mismatching explicit value raises
       ``ModelNotFoundError`` (enumeration-safe soft-404, never 403).

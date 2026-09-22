@@ -15,7 +15,9 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
-from src.app.core.db.tenant_crud import TenantAwareCRUD, scoped_query, tenant_scope
+from src.app.core.db.scoped import criterion, execute_scoped
+from src.app.core.db.tenant_crud import TenantAwareCRUD
+from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
 from src.app.modules.rbac.schemas import (
     PermissionBase,
@@ -33,29 +35,32 @@ class CRUDRole(TenantAwareCRUD[Role, RoleCreate, RoleUpdate, RoleUpdate, Any, Ro
 
     async def get_roles(self, db: AsyncSession, tenant_id: UUID, skip: int = 0, limit: int = 100) -> Sequence[Role]:
         """Get paginated roles for a tenant."""
-        stmt = scoped_query(Role, tenant_id).offset(skip).limit(limit).order_by(Role.id)
-        result = await db.execute(stmt)
+        scope = ExplicitTenant(tenant_id, reason="rbac:get_roles")
+        stmt = select(Role).offset(skip).limit(limit).order_by(Role.id)
+        result = await execute_scoped(stmt, db=db, model=Role, scope=scope)
         return result.scalars().all()
 
     async def get_by_name(self, db: AsyncSession, tenant_id: UUID, name: str) -> Role | None:
         """Get a role by name within a tenant."""
-        stmt = scoped_query(Role, tenant_id).where(Role.name == name)
-        result = await db.execute(stmt)
+        scope = ExplicitTenant(tenant_id, reason="rbac:get_by_name")
+        stmt = select(Role).where(Role.name == name)
+        result = await execute_scoped(stmt, db=db, model=Role, scope=scope)
         return result.scalar_one_or_none()
 
     async def get_by_id(self, db: AsyncSession, tenant_id: UUID, role_id: int) -> Role | None:
         """Get a role by ID within a tenant."""
-        stmt = scoped_query(Role, tenant_id).where(Role.id == role_id)
-        result = await db.execute(stmt)
+        scope = ExplicitTenant(tenant_id, reason="rbac:get_by_id")
+        stmt = select(Role).where(Role.id == role_id)
+        result = await execute_scoped(stmt, db=db, model=Role, scope=scope)
         return result.scalar_one_or_none()
 
     async def delete_relations(self, db: AsyncSession, role_id: int, tenant_id: UUID | None = None) -> None:
         """Delete RolePermission and UserRole relations associated with a role."""
         if tenant_id is not None:
             # RolePermission has no tenant_id: scope via parent Role IN subquery.
-            role_ids_stmt = select(Role.id).where(Role.id == role_id, tenant_scope(Role, tenant_id))
+            role_ids_stmt = select(Role.id).where(Role.id == role_id, criterion(Role, tenant_id))
             await db.execute(delete(RolePermission).where(RolePermission.role_id.in_(role_ids_stmt)))
-            await db.execute(delete(UserRole).where(UserRole.role_id == role_id, tenant_scope(UserRole, tenant_id)))
+            await db.execute(delete(UserRole).where(UserRole.role_id == role_id, criterion(UserRole, tenant_id)))
         else:
             await db.execute(delete(RolePermission).where(RolePermission.role_id == role_id))
             await db.execute(delete(UserRole).where(UserRole.role_id == role_id))
@@ -66,7 +71,7 @@ class CRUDRole(TenantAwareCRUD[Role, RoleCreate, RoleUpdate, RoleUpdate, Any, Ro
             select(Role)
             .join(UserRole, UserRole.role_id == Role.id)
             .where(UserRole.user_id == user_id)
-            .where(tenant_scope(UserRole, tenant_id))
+            .where(criterion(UserRole, tenant_id))
         )
         result = await db.execute(stmt)
         return result.scalars().all()
@@ -115,7 +120,7 @@ class CRUDAssociations:
 
     async def get_role_affected_user_ids(self, db: AsyncSession, tenant_id: UUID, role_id: int) -> list[int]:
         """Get all user IDs assigned to a role within a tenant."""
-        stmt = select(UserRole.user_id).where(UserRole.role_id == role_id).where(tenant_scope(UserRole, tenant_id))
+        stmt = select(UserRole.user_id).where(UserRole.role_id == role_id).where(criterion(UserRole, tenant_id))
         result = await db.execute(stmt)
         return list(result.scalars().all())
 
@@ -144,8 +149,9 @@ class CRUDAssociations:
 
     async def get_user_role(self, db: AsyncSession, tenant_id: UUID, user_id: int, role_id: int) -> UserRole | None:
         """Get user role assignment within a tenant."""
-        stmt = scoped_query(UserRole, tenant_id).where(UserRole.user_id == user_id, UserRole.role_id == role_id)
-        result = await db.execute(stmt)
+        scope = ExplicitTenant(tenant_id, reason="rbac:get_user_role")
+        stmt = select(UserRole).where(UserRole.user_id == user_id, UserRole.role_id == role_id)
+        result = await execute_scoped(stmt, db=db, model=UserRole, scope=scope)
         return result.scalar_one_or_none()
 
     async def remove_user_role(self, db: AsyncSession, tenant_id: UUID, user_id: int, role_id: int) -> bool:
@@ -154,7 +160,7 @@ class CRUDAssociations:
             delete(UserRole).where(
                 UserRole.user_id == user_id,
                 UserRole.role_id == role_id,
-                tenant_scope(UserRole, tenant_id),
+                criterion(UserRole, tenant_id),
             )
         )
         return _rows_affected(result)

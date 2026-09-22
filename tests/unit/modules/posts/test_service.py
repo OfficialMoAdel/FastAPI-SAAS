@@ -171,7 +171,7 @@ class TestPostServiceGet:
         mock_db.execute = AsyncMock(return_value=mock_result)
 
         with (
-            patch("src.app.modules.posts.service.tenant_scope", return_value=True),
+            patch("src.app.modules.posts.service.criterion", return_value=True),
             patch("src.app.modules.posts.service.select"),
         ):
             result = await service.get_posts_keyset(user_id=mock_user.id, limit=10)
@@ -197,7 +197,7 @@ class TestPostServiceGet:
         from src.app.core.pagination import decode_keyset_cursor
 
         with (
-            patch("src.app.modules.posts.service.tenant_scope", return_value=True),
+            patch("src.app.modules.posts.service.criterion", return_value=True),
             patch("src.app.modules.posts.service.select"),
         ):
             result = await service.get_posts_keyset(user_id=mock_user.id, limit=10)
@@ -215,7 +215,7 @@ class TestPostServiceGet:
         service = PostService(mock_db)
 
         with (
-            patch("src.app.modules.posts.service.tenant_scope", return_value=True),
+            patch("src.app.modules.posts.service.criterion", return_value=True),
             patch("src.app.modules.posts.service.select"),
         ):
             with pytest.raises(ValueError):

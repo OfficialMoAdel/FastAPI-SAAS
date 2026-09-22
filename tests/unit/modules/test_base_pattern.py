@@ -91,7 +91,7 @@ class TestBaseService:
         """Fixture to patch FastCRUD for tests."""
         from unittest.mock import patch
 
-        with patch("src.app.modules._base.service.FastCRUD") as mock_crud:
+        with patch("src.app.core.db.scoped.FastCRUD") as mock_crud:
             mock_crud.return_value = MagicMock()
             yield mock_crud
 
@@ -293,7 +293,7 @@ class TestDependencyInjection:
         mock_db = AsyncMock()
 
         # Factory should create service with model and db
-        with patch("src.app.modules._base.service.FastCRUD") as mock_crud:
+        with patch("src.app.core.db.scoped.FastCRUD") as mock_crud:
             mock_crud.return_value = MagicMock()
             factory = get_base_service(MockModel)
             service = factory(db=mock_db)

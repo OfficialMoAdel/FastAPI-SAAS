@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps.request_context import require_resource_ownership
-from src.app.core.db.tenant_crud import tenant_scope
+from src.app.core.db.scoped import criterion
 from src.app.core.pagination import build_keyset_response, paginate_keyset
 from src.app.core.principal import AuthenticatedUser
 from src.app.modules._base.service import BaseService
@@ -143,7 +143,7 @@ class PostService(BaseService[Post]):
         the 100k ``_MAX_OFFSET`` cap), while this seeks straight to the
         ``(created_at, id)`` cursor position. Mirrors the tenant-isolation
         and ordering conventions of ``audit_logs``' list query: tenant filter
-        via ``tenant_scope`` (context wins over caller args), deterministic
+        via ``criterion`` (context wins over caller args), deterministic
         ``created_at DESC, id DESC`` ordering.
 
         Args:
@@ -161,7 +161,7 @@ class PostService(BaseService[Post]):
         stmt = select(Post).where(
             Post.created_by_user_id == user_id,
             Post.is_deleted.is_(False),
-            tenant_scope(Post),  # tenant context injects the isolation filter
+            criterion(Post),  # tenant context injects the isolation filter
         )
         stmt, _decoded = paginate_keyset(stmt, Post.created_at, Post.id, cursor, limit)
 

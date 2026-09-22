@@ -220,9 +220,9 @@ class UserService:
             or_(User.email == user.email, User.username == user.username), User.is_deleted.is_(False)
         )
 
-        from src.app.core.db.tenant_crud import tenant_scope
+        from src.app.core.db.scoped import criterion
 
-        stmt = stmt.where(tenant_scope(User, tenant.id if tenant else None, allow_unscoped=True))
+        stmt = stmt.where(criterion(User, tenant.id if tenant else None, allow_unscoped=True))
         existing_user = await self.db.scalar(stmt)
 
         if existing_user:
@@ -255,7 +255,7 @@ class UserService:
                 or_(User.email == user.email, User.username == user.username),
                 User.is_deleted.is_(False),
             )
-            read_stmt = read_stmt.where(tenant_scope(User, tenant.id if tenant else None, allow_unscoped=True))
+            read_stmt = read_stmt.where(criterion(User, tenant.id if tenant else None, allow_unscoped=True))
             result = (await self.db.execute(read_stmt)).scalar_one_or_none()
             if result is None:
                 raise RuntimeError("User row unreadable immediately after successful commit")
@@ -361,7 +361,7 @@ class UserService:
 
         Enforces ``is_deleted=False`` + ``is_active=True`` + tenant scope in a
         single query, built on ``CRUDUser.get_user_with_tier_eager`` (which
-        itself composes ``tenant_scope``) — not a parallel helper. Returns the
+        itself composes ``criterion``) — not a parallel helper. Returns the
         tier-eager auth payload dict, or None when no such user exists in scope.
 
         Auth-gated reads (password/MFA/passkey/magic-link verification, RBAC
@@ -970,10 +970,10 @@ class UserService:
         # SECURITY FIX: Filter by tenant to prevent cross-tenant data exposure.
         # The /{id}/rate-limits route is superuser-only with no RequestContext
         # (superusers see all tenants), so the unscoped hatch stays here.
-        from src.app.core.db.tenant_crud import tenant_scope
+        from src.app.core.db.scoped import criterion
 
         tenant = get_current_tenant()
-        stmt = stmt.where(tenant_scope(User, tenant.id if tenant else None, allow_unscoped=True))
+        stmt = stmt.where(criterion(User, tenant.id if tenant else None, allow_unscoped=True))
         result = await self.db.execute(stmt)
         db_user = result.unique().scalar_one_or_none()
 

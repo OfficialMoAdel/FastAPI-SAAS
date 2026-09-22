@@ -110,8 +110,8 @@ class TestRegistrationGateHelper:
         tenant.is_active = False
         assert await self._allowed(mock_db, False, tenant, tenant_user_row=1) is True
 
-    async def test_closed_gate_counts_via_tenant_scope_seam(self, mock_db):
-        """P2-2: the gate counts through tenant_scope(User, tenant.id), not a hand-rolled filter."""
+    async def test_closed_gate_counts_via_criterion_seam(self, mock_db):
+        """P2-2: the gate counts through criterion(User, tenant.id), not a hand-rolled filter."""
         from src.app.core.config import settings
         from src.app.modules.auth.services import registration_gate
         from src.app.modules.users.models import User
@@ -123,7 +123,7 @@ class TestRegistrationGateHelper:
             tenant = _mock_tenant()
             with (
                 patch.object(registration_gate, "get_current_tenant", return_value=tenant),
-                patch.object(registration_gate, "tenant_scope", return_value=True) as mock_scope,
+                patch.object(registration_gate, "criterion", return_value=True) as mock_scope,
             ):
                 assert await registration_gate.is_self_registration_allowed(mock_db) is False
             mock_scope.assert_called_once_with(User, tenant.id)

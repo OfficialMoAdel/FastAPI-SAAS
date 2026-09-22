@@ -402,12 +402,12 @@ class ProductService:
         """
         tid = self._resolve_tenant("Product", product_id)
 
-        from src.app.core.db.tenant_crud import tenant_scope
+        from src.app.core.db.scoped import criterion
 
         stmt = (
             select(Product)
             .options(selectinload(Product.pricing_tiers))
-            .where(Product.id == product_id, tenant_scope(Product, tid))
+            .where(Product.id == product_id, criterion(Product, tid))
         )
         result = await self.db.execute(stmt)
         product = result.scalar_one_or_none()

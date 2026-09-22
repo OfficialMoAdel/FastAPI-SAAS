@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.db.tenant_crud import tenant_scope
+from src.app.core.db.scoped import criterion
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.principal import AuthenticatedUser
@@ -193,7 +193,7 @@ class WebhookService:
         from sqlalchemy import func, select
 
         total_col = func.count().over().label("total")
-        query = select(WebhookEndpoint, total_col).where(tenant_scope(WebhookEndpoint, tenant_id))
+        query = select(WebhookEndpoint, total_col).where(criterion(WebhookEndpoint, tenant_id))
 
         if is_active is not None:
             query = query.where(WebhookEndpoint.is_active == is_active)
@@ -214,7 +214,7 @@ class WebhookService:
             return [], 0
 
         # Out-of-range page fallback
-        count_query = select(func.count()).select_from(WebhookEndpoint).where(tenant_scope(WebhookEndpoint, tenant_id))
+        count_query = select(func.count()).select_from(WebhookEndpoint).where(criterion(WebhookEndpoint, tenant_id))
         if is_active is not None:
             count_query = count_query.where(WebhookEndpoint.is_active == is_active)
         if event_type:
@@ -226,7 +226,7 @@ class WebhookService:
         """Get a webhook endpoint by ID and tenant ID."""
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.id == endpoint_id,
-            tenant_scope(WebhookEndpoint, tenant_id),
+            criterion(WebhookEndpoint, tenant_id),
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
@@ -267,7 +267,7 @@ class WebhookService:
             .join(WebhookEndpoint)
             .where(
                 WebhookDelivery.id == delivery_id,
-                tenant_scope(WebhookEndpoint, tenant_id),
+                criterion(WebhookEndpoint, tenant_id),
             )
         )
         return result.scalar_one_or_none()
@@ -287,7 +287,7 @@ class WebhookService:
         from sqlalchemy import func, select
 
         total_col = func.count().over().label("total")
-        query = select(WebhookDelivery, total_col).where(tenant_scope(WebhookDelivery, tenant_id))
+        query = select(WebhookDelivery, total_col).where(criterion(WebhookDelivery, tenant_id))
 
         if endpoint_id:
             query = query.where(WebhookDelivery.webhook_endpoint_id == endpoint_id)
@@ -314,7 +314,7 @@ class WebhookService:
             return [], 0
 
         # Out-of-range page fallback
-        count_query = select(func.count()).select_from(WebhookDelivery).where(tenant_scope(WebhookDelivery, tenant_id))
+        count_query = select(func.count()).select_from(WebhookDelivery).where(criterion(WebhookDelivery, tenant_id))
         if endpoint_id:
             count_query = count_query.where(WebhookDelivery.webhook_endpoint_id == endpoint_id)
         if delivery_status:
@@ -366,7 +366,7 @@ class WebhookService:
                 logger.warning("Failed to read active endpoints from Redis cache", error=str(e))
 
         stmt = select(WebhookEndpoint).where(
-            tenant_scope(WebhookEndpoint, tenant_id),
+            criterion(WebhookEndpoint, tenant_id),
             WebhookEndpoint.is_active.is_(True),
             or_(
                 WebhookEndpoint.event_type == event_type,
@@ -558,7 +558,7 @@ class WebhookService:
         stmt = (
             select(WebhookDelivery)
             .join(WebhookEndpoint)
-            .where(tenant_scope(WebhookEndpoint, tenant_id))
+            .where(criterion(WebhookEndpoint, tenant_id))
             .order_by(WebhookDelivery.created_at.desc())
             .limit(limit)
             .offset(offset)
@@ -593,7 +593,7 @@ class WebhookService:
         """
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.id == endpoint_id,
-            tenant_scope(WebhookEndpoint, tenant_id),
+            criterion(WebhookEndpoint, tenant_id),
         )
         result = await self.db.execute(stmt)
         endpoint = result.scalar_one_or_none()
@@ -669,7 +669,7 @@ class WebhookService:
 
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.id == endpoint_id,
-            tenant_scope(WebhookEndpoint, tenant_id),
+            criterion(WebhookEndpoint, tenant_id),
         )
         result = await self.db.execute(stmt)
         endpoint = result.scalar_one_or_none()

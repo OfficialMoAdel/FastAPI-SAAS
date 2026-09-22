@@ -15,7 +15,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from structlog import get_logger
 
 from src.app.core.config import settings
-from src.app.core.db.tenant_crud import tenant_scope
+from src.app.core.db.scoped import criterion
 from src.app.core.observability.log_sanitizer import LogSanitizer
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules.audit_logs.models import AuditLog
@@ -225,7 +225,7 @@ def login_activity_subquery(
     """Scalar subquery over this tenant's audit login rows (no I/O).
 
     Args:
-        tenant_id: Tenant for row isolation (tenant_scope / RLS).
+        tenant_id: Tenant for row isolation (criterion / RLS).
         start: Range start — a datetime literal or a SQL expression
             (e.g. the dashboard's COALESCE'd min-created subquery).
         end: Range end (datetime literal).
@@ -236,7 +236,7 @@ def login_activity_subquery(
     Returns:
         A scalar subquery usable inside ``select(...)`` column lists.
     """
-    base = [tenant_scope(AuditLog, tenant_id), AuditLog.created_at >= start, AuditLog.created_at <= end]
+    base = [criterion(AuditLog, tenant_id), AuditLog.created_at >= start, AuditLog.created_at <= end]
     if metric == "active_users":
         stmt = select(func.count(func.distinct(AuditLog.user_id))).where(
             *base,

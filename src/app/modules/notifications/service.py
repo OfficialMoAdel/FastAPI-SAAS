@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.clients.notifications import EmailMessage, SMTPProvider, get_email_provider  # noqa: F401
-from src.app.core.db.tenant_crud import tenant_scope
+from src.app.core.db.scoped import criterion
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.redis_provider import get_redis
 from src.app.core.utils.rate_limit import rate_limiter
@@ -120,7 +120,7 @@ class NotificationService:
         override = None
         if tenant_id:
             query = select(EmailTemplateOverride).where(
-                tenant_scope(EmailTemplateOverride, tenant_id),
+                criterion(EmailTemplateOverride, tenant_id),
                 EmailTemplateOverride.template_name == template_name,
             )
             result = await self.db.execute(query)
@@ -438,8 +438,8 @@ class NotificationService:
         from sqlalchemy import func
 
         total_col = func.count().over().label("total")
-        # P2-2: tenant criterion via the tenant_scope() seam.
-        query = select(Notification, total_col).where(tenant_scope(Notification, tenant_id))
+        # P2-2: tenant criterion via the criterion() seam.
+        query = select(Notification, total_col).where(criterion(Notification, tenant_id))
 
         enum_status = None
         if status:
@@ -468,7 +468,7 @@ class NotificationService:
             return 0, []
 
         # Out-of-range page fallback
-        count_query = select(func.count()).select_from(Notification).where(tenant_scope(Notification, tenant_id))
+        count_query = select(func.count()).select_from(Notification).where(criterion(Notification, tenant_id))
         if user_id:
             count_query = count_query.where(Notification.user_id == user_id)
         if enum_status is not None:
@@ -489,7 +489,7 @@ class NotificationService:
         """Get a single notification by ID scoped to tenant and user."""
         query = select(Notification).where(
             Notification.id == notification_id,
-            tenant_scope(Notification, tenant_id),
+            criterion(Notification, tenant_id),
         )
         if user_id is not None:
             query = query.where(Notification.user_id == user_id)
@@ -583,7 +583,7 @@ class NotificationService:
         """List all email template overrides for a tenant"""
         query = (
             select(EmailTemplateOverride)
-            .where(tenant_scope(EmailTemplateOverride, tenant_id))
+            .where(criterion(EmailTemplateOverride, tenant_id))
             .limit(limit)
             .offset(offset)
         )
@@ -595,7 +595,7 @@ class NotificationService:
     ) -> EmailTemplateOverride:
         """Create or update an email template override"""
         query = select(EmailTemplateOverride).where(
-            tenant_scope(EmailTemplateOverride, tenant_id),
+            criterion(EmailTemplateOverride, tenant_id),
             EmailTemplateOverride.template_name == template_name,
         )
         result = await self.db.execute(query)
@@ -640,7 +640,7 @@ class NotificationService:
     async def delete_template_override(self, tenant_id: UUID, template_name: str) -> bool:
         """Delete an email template override returns True if deleted, False if not found"""
         query = select(EmailTemplateOverride).where(
-            tenant_scope(EmailTemplateOverride, tenant_id),
+            criterion(EmailTemplateOverride, tenant_id),
             EmailTemplateOverride.template_name == template_name,
         )
         result = await self.db.execute(query)

@@ -35,17 +35,16 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from src.app.core.db.scoped import _CRUD_CACHE, execute_scoped, scoped_crud
 from src.app.core.db.tenant_crud import TenantAwareCRUD
 from src.app.core.pagination import MAX_PER_PAGE
 from src.app.shared.exceptions import ValidationError
 
 T = TypeVar("T")
 
-# OPT P0-2: Flyweight cache for FastCRUD instances
-# FastCRUD is stateless (stores only model metadata), so we can reuse instances
-# This reduces O(N) allocations per request to O(1) for cached models
-# Note: No lock needed - FastCRUD init is synchronous and cache is populated at module load
-_CRUD_CACHE: dict[type, FastCRUD] = {}  # values may be FastCRUD or TenantAwareCRUD (subclass)
+# OPT P0-2: the flyweight cache lives in core.db.scoped (owned by scoped_crud,
+# the single construction path). _CRUD_CACHE is re-exported here — same dict
+# object — for the cache tests and the R4 perf gate importing it from this module.
 
 
 class BaseService(Generic[T]):
@@ -84,49 +83,29 @@ class BaseService(Generic[T]):
         self.model = model
         self.db = db
         self.select_schema = select_schema
-        # OPT P0-2: Reuse cached FastCRUD instance (flyweight pattern)
-        # SECURITY FIX: Use thread-safe cache access with lock
-        self.crud = self._get_or_create_crud(model)
+        # Single construction path (Phase 3): scoped_crud owns the
+        # tenant-vs-plain choice (cached flyweight) and the scope binding.
+        # The guard decision is read back ONCE here, next to the creation —
+        # never sniffed per call (the old _circuit_guard isinstance dance).
+        self.crud = scoped_crud(db=db, model=model)
+        self._needs_guard = not isinstance(self.crud, TenantAwareCRUD)
 
     @asynccontextmanager
-    async def _circuit_guard(self) -> AsyncIterator[None]:
-        from src.app.core.db.tenant_crud import TenantAwareCRUD
-        from src.app.core.resilience.db_circuit_breaker import db_circuit_guard
+    async def _guard(self) -> AsyncIterator[None]:
+        """Yield bare for tenant CRUD, guarded for plain FastCRUD.
 
-        if isinstance(self.crud, TenantAwareCRUD) or hasattr(self.crud, "inject_tenant_filter"):
-            # TenantAwareCRUD already applies db_circuit_guard internally
-            yield
-        else:
+        TenantAwareCRUD applies db_circuit_guard internally per method;
+        global-table CRUDs (plain FastCRUD — Tier, Tenant, ...) need the
+        guard here. The branch is fixed at construction (self._needs_guard).
+        """
+        if self._needs_guard:
+            from src.app.core.resilience.db_circuit_breaker import db_circuit_guard
+
             async with db_circuit_guard():
                 yield
+        else:
+            yield
 
-    @staticmethod
-    def _get_or_create_crud(model: type[T]) -> FastCRUD:
-        """Get cached CRUD instance or create new one (tenant-aware when applicable).
-
-        If the SQLAlchemy model declares a ``tenant_id`` column the returned
-        instance is a :class:`TenantAwareCRUD` so every operation is
-        automatically scoped to the current tenant from ``get_current_tenant()``,
-        preventing cross-tenant leakage. Models without ``tenant_id`` (e.g.
-        ``Tenant``, ``Tier``) continue to use plain :class:`FastCRUD`.
-        The flyweight cache is keyed by model, so the choice is stable per
-        model and lock-free (FastCRUD init is synchronous).
-        """
-        crud = _CRUD_CACHE.get(model)
-        if crud is None:
-            # Robust check: inspect actual table columns, not hasattr (which can be
-            # spoofed by descriptors / __getattr__ and caused false tenant-scoping).
-            try:
-                table = getattr(model, "__table__", None)
-                cols = getattr(table, "c", {}) if table is not None else {}
-                is_tenant_scoped = "tenant_id" in cols
-            except Exception:
-                is_tenant_scoped = True  # P0-1: fail-closed: default to tenant-scoped if introspection fails
-            if is_tenant_scoped:
-                crud = _CRUD_CACHE.setdefault(model, TenantAwareCRUD(model))  # type: ignore[arg-type]
-            else:
-                crud = _CRUD_CACHE.setdefault(model, FastCRUD(model))
-        return crud
 
     async def get(self, id: Any) -> Any | None:
         """Get a single record by ID as the configured ``select_schema``.
@@ -140,7 +119,7 @@ class BaseService(Generic[T]):
             FastCRUD dict is returned (``T | dict | None`` — narrow at the
             call site).
         """
-        async with self._circuit_guard():
+        async with self._guard():
             if self.select_schema is not None:
                 result = await self.crud.get(
                     db=self.db,
@@ -195,61 +174,60 @@ class BaseService(Generic[T]):
         # loading must opt in via eager_loads. Callers that don't pass it
         # get a plain CRUD query (no surprise N+1 prevention, no silent
         # flag-gated log line).
-        async with self._circuit_guard():
-            if eager_loads:
-                # Must select the ORM entity to use eager loading options
-                query = select(self.model)
+        if eager_loads:
+            # Must select the ORM entity to use eager loading options
+            query = select(self.model)
 
-                # Extract sorting kwargs as FastCRUD accepts them explicitly
-                sort_columns = kwargs.pop("sort_columns", None)
-                sort_orders = kwargs.pop("sort_orders", None)
+            # Extract sorting kwargs as FastCRUD accepts them explicitly
+            sort_columns = kwargs.pop("sort_columns", None)
+            sort_orders = kwargs.pop("sort_orders", None)
 
-                from src.app.core.db.tenant_crud import TenantAwareCRUD
+            # M3: hasattr silently dropped typos (was if hasattr)
+            for key, value in kwargs.items():
+                if not hasattr(self.model, key):
+                    raise ValidationError(f"Unknown filter column '{key}' on {self.model.__name__}")
+                query = query.filter(getattr(self.model, key) == value)
 
-                if isinstance(self.crud, TenantAwareCRUD):
-                    kwargs = self.crud.inject_tenant_filter(kwargs)
-                # M3: hasattr silently dropped typos (was if hasattr)
-                for key, value in kwargs.items():
-                    if not hasattr(self.model, key):
-                        raise ValidationError(f"Unknown filter column '{key}' on {self.model.__name__}")
-                    query = query.filter(getattr(self.model, key) == value)
+            # Apply sorting via direct SQLAlchemy order_by
+            if sort_columns:
+                orders = sort_orders if sort_orders else ["asc"] * len(sort_columns)
+                for col, order in zip(sort_columns, orders):
+                    if not hasattr(self.model, col):
+                        raise ValidationError(f"Unknown sort column '{col}' on {self.model.__name__}")
+                    attr = getattr(self.model, col)
+                    query = query.order_by(attr.desc() if order == "desc" else attr.asc())
 
-                # Apply sorting via direct SQLAlchemy order_by
-                if sort_columns:
-                    orders = sort_orders if sort_orders else ["asc"] * len(sort_columns)
-                    for col, order in zip(sort_columns, orders):
-                        if not hasattr(self.model, col):
-                            raise ValidationError(f"Unknown sort column '{col}' on {self.model.__name__}")
-                        attr = getattr(self.model, col)
-                        query = query.order_by(attr.desc() if order == "desc" else attr.asc())
+            for relationship in eager_loads:
+                if not hasattr(self.model, relationship):
+                    from src.app.core.logger import get_logger
 
-                for relationship in eager_loads:
-                    if not hasattr(self.model, relationship):
-                        from src.app.core.logger import get_logger
-
-                        get_logger(__name__).warning(
-                            "unknown_eager_relationship", rel=relationship, model=self.model.__name__
-                        )  # noqa: E501
-                        continue
-                    attr = getattr(self.model, relationship)
-                    query = query.options(selectinload(attr))
-                query = query.offset(offset).limit(per_page)
-                query_result = await self.db.execute(query)
-                # Remove duplicate objects if they are duplicated due to joins and relationships handling
-                return list(query_result.scalars().unique().all())
-            else:
-                result = await self.crud.get_multi(
-                    db=self.db,
-                    offset=offset,
-                    limit=per_page,
-                    return_total_count=False,
-                    schema_to_select=self.select_schema,
-                    return_as_model=self.select_schema is not None,
-                    **kwargs,
-                )
-                if isinstance(result, dict):
-                    return cast("list[T | dict[str, Any]]", result.get("data", []))
-                return cast("list[T | dict[str, Any]]", result)
+                    get_logger(__name__).warning(
+                        "unknown_eager_relationship", rel=relationship, model=self.model.__name__
+                    )  # noqa: E501
+                    continue
+                attr = getattr(self.model, relationship)
+                query = query.options(selectinload(attr))
+            query = query.offset(offset).limit(per_page)
+            # Scoping + guard come from the seam: execute_scoped resolves
+            # the tenant (fail-closed without one), applies the criterion,
+            # and executes under exactly one db_circuit_guard. Deliberately
+            # NOT wrapped in self._guard (double-guard).
+            query_result = await execute_scoped(query, db=self.db, model=self.model)
+            # Remove duplicate objects if they are duplicated due to joins and relationships handling
+            return list(query_result.scalars().unique().all())
+        async with self._guard():
+            result = await self.crud.get_multi(
+                db=self.db,
+                offset=offset,
+                limit=per_page,
+                return_total_count=False,
+                schema_to_select=self.select_schema,
+                return_as_model=self.select_schema is not None,
+                **kwargs,
+            )
+            if isinstance(result, dict):
+                return cast("list[T | dict[str, Any]]", result.get("data", []))
+            return cast("list[T | dict[str, Any]]", result)
 
     async def get_multi_joined(
         self,
@@ -300,7 +278,7 @@ class BaseService(Generic[T]):
         if per_page > MAX_PER_PAGE:
             per_page = MAX_PER_PAGE
         offset = max(0, (page - 1) * per_page)
-        async with self._circuit_guard():
+        async with self._guard():
             result = await self.crud.get_multi_joined(
                 db=self.db,
                 offset=offset,
@@ -326,7 +304,7 @@ class BaseService(Generic[T]):
             the schema is configured (FastCRUD returns it directly — no extra
             round-trip), otherwise the legacy dict/None.
         """
-        async with self._circuit_guard():
+        async with self._guard():
             if self.select_schema is not None:
                 return await self.crud.create(
                     db=self.db,
@@ -351,7 +329,7 @@ class BaseService(Generic[T]):
             then means "not found"). Without a schema the legacy union
             (``T | dict | None``) is returned.
         """
-        async with self._circuit_guard():
+        async with self._guard():
             await self.crud.update(db=self.db, object=kwargs, id=id)
         if self.select_schema is not None:
             return await self.get(id)
@@ -364,7 +342,7 @@ class BaseService(Generic[T]):
         Args:
             id: The record ID.
         """
-        async with self._circuit_guard():
+        async with self._guard():
             await self.crud.delete(db=self.db, id=id)
 
     async def get_page_with_total(
@@ -429,6 +407,9 @@ async def fetch_page_with_total(
     from src.app.core.resilience import db_circuit_guard
 
     validate_pagination_params(offset, limit)
+    # The isinstance probe is load-bearing polymorphism, not a sniff to kill:
+    # test_windowed_pagination pins parity where a plain FastCRUD over a
+    # tenant-column table reads UNSCOPED. The CRUD class chooses the contract.
     scoped = crud.inject_tenant_filter(dict(filters)) if isinstance(crud, TenantAwareCRUD) else dict(filters)
 
     async with db_circuit_guard():

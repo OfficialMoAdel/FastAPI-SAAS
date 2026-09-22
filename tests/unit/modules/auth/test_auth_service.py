@@ -746,7 +746,7 @@ class TestA2CachedAuthInfoFields:
         mock_db.execute = AsyncMock(return_value=mock_result)
 
         # Call the method that should include A2 fields.
-        # The tenant filter now lives in the tenant_scope seam; set the
+        # The tenant filter now lives in the criterion seam; set the
         # context (the seam's actual read point) instead of patching the
         # old per-module get_current_tenant call site.
         import uuid as _uuid

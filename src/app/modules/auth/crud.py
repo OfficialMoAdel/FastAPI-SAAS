@@ -10,7 +10,9 @@ from fastcrud import FastCRUD
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.db.tenant_crud import TenantAwareCRUD, scoped_query, tenant_scope
+from src.app.core.db.scoped import criterion, execute_scoped
+from src.app.core.db.tenant_crud import TenantAwareCRUD
+from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules.auth.models import (
     MagicLink,
     MFAMethod,
@@ -78,7 +80,8 @@ class CRUDUserSSOConnection(
         tenant_id: UUID | None = None,
     ) -> UserSSOConnection | None:
         """Get SSO connection by various criteria."""
-        query = scoped_query(UserSSOConnection, tenant_id)
+        scope = ExplicitTenant(tenant_id, reason="auth:sso_get_by_criteria") if tenant_id is not None else None
+        query = select(UserSSOConnection)
         if id is not None:
             query = query.where(UserSSOConnection.id == id)
         if user_id is not None:
@@ -88,7 +91,7 @@ class CRUDUserSSOConnection(
         if provider_user_id is not None:
             query = query.where(UserSSOConnection.provider_user_id == provider_user_id)
 
-        result = await db.execute(query)
+        result = await execute_scoped(query, db=db, model=UserSSOConnection, scope=scope)
         return result.scalar_one_or_none()
     async def get_by_provider_user_id(
         self,
@@ -103,7 +106,7 @@ class CRUDUserSSOConnection(
             UserSSOConnection.provider_user_id == provider_user_id,
         )
         if tenant_id is not None:
-            stmt = stmt.where(tenant_scope(UserSSOConnection, tenant_id))
+            stmt = stmt.where(criterion(UserSSOConnection, tenant_id))
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
     async def exists_for_user(
@@ -120,7 +123,7 @@ class CRUDUserSSOConnection(
                 UserSSOConnection.user_id == user_id,
                 UserSSOConnection.provider == provider,
             )
-            .where(tenant_scope(UserSSOConnection, tenant_id))
+            .where(criterion(UserSSOConnection, tenant_id))
         )
         result = await db.execute(query)
         count = result.scalar()
@@ -140,7 +143,7 @@ class CRUDUserSSOConnection(
         query = select(func.count(UserSSOConnection.id))
         if user_id is not None:
             query = query.where(UserSSOConnection.user_id == user_id)
-        query = query.where(tenant_scope(UserSSOConnection, tenant_id))
+        query = query.where(criterion(UserSSOConnection, tenant_id))
         result = await db.execute(query)
         return result.scalar() or 0
     async def delete_by_criteria(

@@ -142,9 +142,9 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
         from sqlalchemy import select as _select
 
-        from src.app.core.db.tenant_crud import tenant_scope as _tscope
+        from src.app.core.db.scoped import criterion
 
-        stmt = _select(SubscriptionPlan).where(SubscriptionPlan.id == plan_id, _tscope(SubscriptionPlan, tid))
+        stmt = _select(SubscriptionPlan).where(SubscriptionPlan.id == plan_id, criterion(SubscriptionPlan, tid))
         result = await self.db.execute(stmt)
         plan = result.scalar_one_or_none()
         if plan is None:

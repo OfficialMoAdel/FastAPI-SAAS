@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.cache.invalidation_channel import InvalidationChannel
-from src.app.core.db.tenant_crud import tenant_scope
+from src.app.core.db.scoped import criterion
 from src.app.core.logger import get_logger
 from src.app.core.rbac.bitmask import PermissionBitmask
 from src.app.core.rbac.permissions import Permission as PermissionEnum
@@ -104,7 +104,7 @@ async def get_user_permissions(
         .join(UserRole, UserRole.role_id == Role.id)
         .where(
             UserRole.user_id == user_id,
-            tenant_scope(UserRole, tenant_id),
+            criterion(UserRole, tenant_id),
         )
         .limit(1000)  # Safety bound
     )

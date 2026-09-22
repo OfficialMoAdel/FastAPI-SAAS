@@ -12,16 +12,18 @@ from uuid import UUID
 
 import structlog
 from cachetools import TTLCache
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
-from src.app.core.db.tenant_crud import scoped_query
+from src.app.core.db.scoped import execute_scoped
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.monitoring.r1_unified_metrics import record_rbac_cache_hit, record_rbac_cache_miss
 from src.app.core.rbac.dependencies import (
     invalidate_users_permissions_cache_batch,
 )
+from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules.rbac.crud import crud_associations, crud_permissions, crud_roles
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
 from src.app.modules.rbac.schemas import RoleCreate, RoleUpdate
@@ -502,8 +504,9 @@ class RoleService:
             raise ModelNotFoundError("User", user_id)
 
         # Check if already assigned
-        stmt = scoped_query(UserRole, self.tenant_id).where(UserRole.user_id == user_id, UserRole.role_id == role_id)
-        result = await self.db.execute(stmt)
+        scope = ExplicitTenant(self.tenant_id, reason="rbac:assign_role_exists_check")
+        stmt = select(UserRole).where(UserRole.user_id == user_id, UserRole.role_id == role_id)
+        result = await execute_scoped(stmt, db=self.db, model=UserRole, scope=scope)
         if result.scalar_one_or_none():
             return  # Already assigned, idempotent
 

@@ -47,19 +47,45 @@ async def test_get_multi_eager_loading_disabled() -> None:
 
 
 async def test_get_multi_eager_loading_enabled() -> None:
+    """Eager path is scoped + guarded via execute_scoped — needs a tenant
+    context now (fail-closed without one); inject_tenant_filter is no longer
+    called on this path."""
+    import uuid
+
+    import pytest
+
+    from src.app.core.tenancy.context import (
+        TenantContext,
+        clear_tenant_context,
+        set_current_tenant,
+    )
+    from src.app.shared.exceptions import TenantContextError
+
     service, db = _make_service()
-    service.crud.inject_tenant_filter = MagicMock(side_effect=lambda k: k)
-    service.crud._filter_processor = MagicMock()
-    service.crud._filter_processor.parse_filters.return_value = []
-    service.crud._query_builder = MagicMock()
-    service.crud._query_builder.apply_sorting.side_effect = lambda q, c, o: q
     db.execute.return_value = MagicMock()
     db.execute.return_value.scalars.return_value.unique.return_value.all.return_value = [
         create_autospec(PasskeyCredential, instance=True)
     ]
-    result = await service.get_multi(
-        page=1, per_page=20, eager_loads=["user"], sort_columns=["id"], sort_orders=["asc"]
+    # Fail-closed: no tenant context, no scope -> refuses before touching DB.
+    clear_tenant_context()
+    with pytest.raises(TenantContextError):
+        await service.get_multi(page=1, per_page=20, eager_loads=["user"])
+    db.execute.assert_not_awaited()
+
+    set_current_tenant(
+        TenantContext(
+            tenant_id=uuid.uuid4(),
+            tenant_slug="acme",
+            tenant_name="Acme",
+            is_active=True,
+        )
     )
+    try:
+        result = await service.get_multi(
+            page=1, per_page=20, eager_loads=["user"], sort_columns=["id"], sort_orders=["asc"]
+        )
+    finally:
+        clear_tenant_context()
     assert isinstance(result, list)
 
 
@@ -71,7 +97,6 @@ async def test_get_multi_rejects_malformed_sort_with_domain_error() -> None:
     from src.app.shared.exceptions import ValidationError
 
     service, db = _make_service()
-    service.crud.inject_tenant_filter = MagicMock(side_effect=lambda k: k)
     db.execute = AsyncMock()
 
     with pytest.raises(ValidationError):

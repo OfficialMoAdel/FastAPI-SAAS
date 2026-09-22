@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
-from src.app.core.db.tenant_crud import tenant_scope
+from src.app.core.db.scoped import criterion
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules.users.models import User
 
@@ -34,9 +34,9 @@ async def is_self_registration_allowed(db: AsyncSession) -> bool:
     tenant = get_current_tenant()
     if tenant is None or not tenant.is_active:
         return True
-    # P2-2: ownership criterion via the tenant_scope() seam (explicit-tenant
+    # P2-2: ownership criterion via the criterion() seam (explicit-tenant
     # path — the helper holds the resolved tenant; an active context still
-    # wins inside tenant_scope), not a hand-rolled tenant_id comparison.
-    stmt = select(User.id).where(tenant_scope(User, tenant.id), User.is_deleted.is_(False)).limit(1)
+    # wins inside criterion), not a hand-rolled tenant_id comparison.
+    stmt = select(User.id).where(criterion(User, tenant.id), User.is_deleted.is_(False)).limit(1)
     tenant_has_users = (await db.scalar(stmt)) is not None
     return not tenant_has_users

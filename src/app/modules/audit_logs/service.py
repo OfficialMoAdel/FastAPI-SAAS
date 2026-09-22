@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.core.db.database import get_db_context
-from src.app.core.db.tenant_crud import tenant_scope
+from src.app.core.db.scoped import criterion
 from src.app.core.json_utils import json_dumps
 from src.app.core.utils import cache as redis_cache
 from src.app.modules.audit_logs.models import AuditLog
@@ -66,7 +66,7 @@ class _AuditFilter(NamedTuple):
 
 def _compose_filters(stmt, tenant_id, f: _AuditFilter):
     """A13: single source of truth for audit-log list/export filters."""
-    stmt = stmt.where(tenant_scope(AuditLog, tenant_id))
+    stmt = stmt.where(criterion(AuditLog, tenant_id))
     if f.action is not None:
         stmt = stmt.where(AuditLog.action == f.action)
     if f.user_id is not None:
@@ -107,7 +107,7 @@ class AuditLogService:
     async def list_actions(self, tenant_id) -> list[str]:
         """A13: unique action types for a tenant (was inline in router)."""
         result = await self.db.execute(
-            select(AuditLog.action).where(tenant_scope(AuditLog, tenant_id)).distinct()
+            select(AuditLog.action).where(criterion(AuditLog, tenant_id)).distinct()
         )
         return sorted(result.scalars().all())
 
@@ -115,7 +115,7 @@ class AuditLogService:
         """Get a single audit log entry by ID scoped to tenant."""
         stmt = select(AuditLog).where(
             AuditLog.id == log_id,
-            tenant_scope(AuditLog, tenant_id),
+            criterion(AuditLog, tenant_id),
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
@@ -151,7 +151,7 @@ class AuditLogService:
         """
         from src.app.core.tenancy.context import get_current_tenant
 
-        # P1: single effective tenant — tenant_scope() lets an active context
+        # P1: single effective tenant — criterion() lets an active context
         # silently win over an explicit argument, so resolve explicitly and
         # fail loudly on mismatch instead of scoping count/event/stream apart.
         effective_tenant = criteria.tenant_id
@@ -333,7 +333,7 @@ class AuditLogService:
             List of audit log entries with eager-loaded user data
         """
         # AuditLogRead does not project nested user fields; avoid unnecessary LEFT OUTER JOIN
-        query = select(AuditLog).where(tenant_scope(AuditLog, tenant_id))
+        query = select(AuditLog).where(criterion(AuditLog, tenant_id))
 
         if user_id is not None:
             query = query.where(AuditLog.user_id == user_id)
@@ -375,7 +375,7 @@ class AuditLogService:
         not safe, so the window function is the correct consolidation.
         """
         total_col = func.count().over().label("total")
-        query = select(AuditLog, total_col).where(tenant_scope(AuditLog, tenant_id))
+        query = select(AuditLog, total_col).where(criterion(AuditLog, tenant_id))
 
         if user_id is not None:
             query = query.where(AuditLog.user_id == user_id)
@@ -404,7 +404,7 @@ class AuditLogService:
         # Out-of-range page: window function yields no rows, so total is
         # unavailable. Fall back to a cheap COUNT so pagination metadata stays
         # truthful (total must reflect the filtered set even when the page is empty).
-        count_query = select(func.count()).select_from(AuditLog).where(tenant_scope(AuditLog, tenant_id))
+        count_query = select(func.count()).select_from(AuditLog).where(criterion(AuditLog, tenant_id))
         if user_id is not None:
             count_query = count_query.where(AuditLog.user_id == user_id)
         if action is not None:

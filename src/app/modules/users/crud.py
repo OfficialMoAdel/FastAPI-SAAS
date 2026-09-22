@@ -5,7 +5,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from src.app.core.db.tenant_crud import TenantAwareCRUD, tenant_scope
+from src.app.core.db.scoped import criterion
+from src.app.core.db.tenant_crud import TenantAwareCRUD
 from src.app.core.tenancy.context import (
     get_current_tenant,  # noqa: F401 — re-exported for legacy callers of this module
 )
@@ -38,7 +39,7 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
                 activity downstream keep their current behavior.
             tenant_id: Explicit tenant scope for worker paths without an active
                 tenant context. Ignored when a context tenant is active
-                (context always wins — see ``tenant_scope``).
+                (context always wins — see ``criterion``).
 
         Returns:
             User dict with tier included, or None if not found
@@ -58,13 +59,13 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
             email_val = email or ""
             lookup_clause = func.lower(User.email) == email_val.lower()
 
-        # Tenant filter comes from the ONE seam: tenant_scope resolves the
+        # Tenant filter comes from the ONE seam: criterion resolves the
         # context itself and is fail-closed without one (usernames/emails
         # are only unique per-tenant — no global lookup without a tenant).
         stmt = select(User).options(joinedload(User.tier)).where(lookup_clause, User.is_deleted.is_(False))
         if require_active:
             stmt = stmt.where(User.is_active.is_(True))
-        stmt = stmt.where(tenant_scope(User, tenant_id))
+        stmt = stmt.where(criterion(User, tenant_id))
 
         result = await db.execute(stmt)
         user = result.unique().scalar_one_or_none()

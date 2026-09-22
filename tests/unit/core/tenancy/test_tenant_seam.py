@@ -14,9 +14,9 @@ NO_TENANT sentinel through) fails loudly.
 import uuid
 
 import pytest
-from sqlalchemy import select
 
-from src.app.core.db.tenant_crud import TenantAwareCRUD, scoped_query, tenant_scope
+from src.app.core.db.scoped import criterion
+from src.app.core.db.tenant_crud import TenantAwareCRUD
 from src.app.core.tenancy.context import (
     NO_TENANT,
     TenantContext,
@@ -156,10 +156,10 @@ class TestInjectTenantFilter:
 
 
 class TestTenantScope:
-    """Direct coverage for the tenant_scope seam (architecture candidate 1).
+    """Direct coverage for the criterion seam (architecture candidate 1).
 
-    tenant_scope() returns a criterion; scoped_query() is the Select sugar.
-    Both must mirror inject_tenant_filter's security semantics: context
+    criterion() is the ONE tenant-filter spelling and must mirror
+    inject_tenant_filter's security semantics: context
     wins, NO_TENANT rejected, missing context fail-closed unless the
     explicit escape hatch (which yields a None criterion = no filter) —
     plus the worker path: an explicit tenant_id argument is honored when
@@ -169,8 +169,8 @@ class TestTenantScope:
     def test_criterion_binds_context_tenant(self):
         ctx = _ctx()
         set_current_tenant(ctx)
-        criterion = tenant_scope(User)
-        compiled = str(criterion)
+        crit = criterion(User)
+        compiled = str(crit)
         assert "tenant_id" in compiled
 
     def test_context_wins_over_caller_argument(self):
@@ -178,74 +178,41 @@ class TestTenantScope:
         ctx = _ctx()
         set_current_tenant(ctx)
         other = uuid.uuid4()
-        criterion = tenant_scope(User, tenant_id=other)
+        crit = criterion(User, tenant_id=other)
         # RHS must be the context id, not `other`.
-        assert criterion.right.value == ctx.tenant_id
+        assert crit.right.value == ctx.tenant_id
 
     def test_explicit_tenant_id_used_without_context(self):
         """Worker path: explicit argument is the scope when context is unset."""
         tid = uuid.uuid4()
-        criterion = tenant_scope(User, tenant_id=tid)
-        assert criterion.right.value == tid
+        crit = criterion(User, tenant_id=tid)
+        assert crit.right.value == tid
 
     def test_string_tenant_id_argument_passed_through(self):
         tid = uuid.uuid4()
-        criterion = tenant_scope(User, tenant_id=str(tid))
-        assert criterion.right.value == str(tid)
+        crit = criterion(User, tenant_id=str(tid))
+        assert crit.right.value == str(tid)
 
     def test_rejects_no_context_no_argument(self):
         with pytest.raises(TenantContextError):
-            tenant_scope(User)
+            criterion(User)
 
     def test_rejects_no_tenant_sentinel(self):
         set_current_tenant(NO_TENANT)
         with pytest.raises(TenantContextError):
-            tenant_scope(User)
+            criterion(User)
 
     def test_allow_unscoped_returns_true_tautology(self):
         """Escape hatch: a true() tautology — no filter, safe to chain unconditionally."""
         from sqlalchemy import true
 
-        criterion = tenant_scope(User, allow_unscoped=True)
-        assert criterion.compare(true())
+        crit = criterion(User, allow_unscoped=True)
+        assert crit.compare(true())
 
 
     def test_none_tenant_id_argument_rejected(self):
         with pytest.raises(TenantContextError):
-            tenant_scope(User, tenant_id=None)  # no context either
-
-
-class TestScopedQuery:
-    """scoped_query: Select sugar over the tenant_scope criterion."""
-
-    def test_returns_tenant_filtered_select(self):
-        ctx = _ctx()
-        set_current_tenant(ctx)
-        stmt = scoped_query(User)
-        assert "tenant_id" in str(stmt)
-
-    def test_compose_extra_filters_and_eager_loads(self):
-        ctx = _ctx()
-        set_current_tenant(ctx)
-        stmt = scoped_query(User).where(User.is_active == True).limit(10)  # noqa: E712
-        assert "tenant_id" in str(stmt)
-        assert "is_active" in str(stmt)
-
-    def test_criterion_composes_onto_shared_select(self):
-        """The criterion form joins onto a caller-built select."""
-        ctx = _ctx()
-        set_current_tenant(ctx)
-        stmt = select(User).where(User.is_deleted.is_(False))
-        stmt = stmt.where(tenant_scope(User))
-        assert "tenant_id" in str(stmt)
-
-    def test_allow_unscoped_yields_unfiltered_select(self):
-        stmt = scoped_query(User, allow_unscoped=True)
-        # Unscoped: no tenant predicate. The tautology renders as no
-        # tenant comparison in the WHERE clause (SQLAlchemy may wrap the
-        # sole true() in an AsBoolean structure, so compare() the raw
-        # whereclause against true() is unreliable — assert on compiled SQL).
-        assert "tenant_id =" not in str(stmt)
+            criterion(User, tenant_id=None)  # no context either
 
 
 class TestGetSetClearRoundTrip:

@@ -30,10 +30,10 @@ from src.app.core.tenancy.context import (
     TenantContextError,  # noqa: F401 — re-exported; runtime raises
     get_current_tenant,
 )
-from src.app.core.tenancy.query import (
-    _resolve_tenant_id_from_context,
-    scoped_query,  # noqa: F401 — re-exported; modules import from this path
-    tenant_scope,  # noqa: F401 — re-exported; 17+ modules import from this path
+from src.app.core.tenancy.scope import (
+    ExplicitScope,
+    Unscoped,
+    resolve_effective_tenant,
 )
 
 ModelType = TypeVar("ModelType")
@@ -83,6 +83,21 @@ class TenantAwareCRUD(
         >>> users = await crud.get_multi(db)
     """
 
+    def __init__(
+        self, *args: Any, scope: ExplicitScope | None = None, **kwargs: Any
+    ) -> None:
+        """Bind an optional explicit ``scope`` (see :mod:`core.tenancy.scope`).
+
+        ``scope=None`` (default) preserves legacy behavior: every operation
+        resolves the request context and fails closed without one. A bound
+        scope covers workers holding a tenant (``ExplicitTenant``) or
+        documented system paths (``Unscoped``) — context still wins on
+        mismatch. Prefer :func:`core.db.scoped.scoped_crud` over
+        constructing this directly.
+        """
+        self._bound_scope = scope
+        super().__init__(*args, **kwargs)
+
     def inject_tenant_filter(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Inject tenant_id from context.
 
@@ -100,41 +115,46 @@ class TenantAwareCRUD(
         present the flag stayed in kwargs and reached FastCRUD, whose column
         introspection rejected it (ValueError: Invalid column '_allow_unscoped').
         """
-        tenant_id = _resolve_tenant_id_from_context()
+        from src.app.core.logger import get_logger
+
+        _m = getattr(self, "model", None)
+        _mn = getattr(_m, "__name__", type(self).__name__) if _m else type(self).__name__
+
         allow_unscoped = kwargs.pop("_allow_unscoped", False) is True
-        if tenant_id is not None:
-            if "tenant_id" in kwargs and kwargs["tenant_id"] != tenant_id:
-                from src.app.core.logger import get_logger
+        # B1/T10: caller-supplied tenant_id kwargs never survive — the
+        # resolver decides the scope; a mismatch is logged, not honored.
+        caller_tenant_id = kwargs.pop("tenant_id", None)
 
-                get_logger(__name__).warning(
-                    "tenant_id_override_blocked",
-                    requested=str(kwargs["tenant_id"]),
-                    context=str(tenant_id),
-                )
-            return {"tenant_id": tenant_id, **{k: v for k, v in kwargs.items() if k != "tenant_id"}}
+        bound = getattr(self, "_bound_scope", None)
+        if bound is not None:
+            scope: ExplicitScope | None = bound
+        elif allow_unscoped:
+            scope = Unscoped(reason=f"legacy-_allow_unscoped:{_mn}")
         else:
-            from src.app.core.logger import get_logger
+            scope = None
+        resolved = resolve_effective_tenant(scope, model_name=_mn)
 
-            _m = getattr(self, "model", None)
-            _mn = getattr(_m, "__name__", type(self).__name__) if _m else type(self).__name__
-
-            # B1/T10: caller-supplied tenant_id kwargs cannot smuggle through
-            # the unscoped branch.
-            if "tenant_id" in kwargs:
+        if caller_tenant_id is not None:
+            if resolved is not None:
+                # str-compared: a caller holding the id as str must not warn
+                # against the canonicalized context UUID. (A bound-scope
+                # mismatch is additionally warned inside the resolver —
+                # a duplicate line in a contradictory triple beats silence.)
+                if str(caller_tenant_id) != str(resolved):
+                    get_logger(__name__).warning(
+                        "tenant_id_override_blocked",
+                        requested=str(caller_tenant_id),
+                        context=str(resolved),
+                    )
+            else:
                 get_logger(__name__).warning(
                     "tenant_id_kwarg_ignored_without_context",
                     model=_mn,
-                    requested=str(kwargs.pop("tenant_id")),
+                    requested=str(caller_tenant_id),
                 )
-            if allow_unscoped:
-                get_logger(__name__).warning("tenant_context_missing_allowed_via_flag", model=_mn)
-                return kwargs
-            get_logger(__name__).error("tenant_context_missing_rejected", model=_mn)
-            raise TenantContextError(f"Tenant-scoped query on {_mn} without active tenant context")
-
-    def _inject_tenant_filter(self, kwargs: dict[str, Any]) -> dict[str, Any]:
-        """Alias for inject_tenant_filter for backward compatibility."""
-        return self.inject_tenant_filter(kwargs)
+        if resolved is None:
+            return kwargs
+        return {"tenant_id": resolved, **kwargs}
 
     async def create(self, db: AsyncSession, object: CreateSchemaType | dict[str, Any], **kwargs: Any) -> Any:
         """Create a new record, automatically injecting tenant_id from context.
