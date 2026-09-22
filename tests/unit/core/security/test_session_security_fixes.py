@@ -207,20 +207,27 @@ class TestRefreshInvalidatesBySid:
                 new_callable=AsyncMock,
                 return_value={"sid": old_sid, "absolute_exp": 123.0, "iat": 456.0},
             ),
+            # Seam runs for real; only its I/O boundaries are faked.
+            # (Whole-TokenIssuer mock would bypass the wiring under test.)
             patch(
-                "src.app.modules.auth.service.TokenIssuer"
-            ) as mock_issuer_cls,
-            patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
+                "src.app.modules.auth.services.tokens.TokenIssuer.rotate_token_pair",
+                new_callable=AsyncMock,
+                return_value=("new_access", "new_refresh"),
+            ),
+            patch("src.app.core.security.blacklist_token", new_callable=AsyncMock),
             patch(
                 "src.app.core.utils.cache.client", None
             ),  # skip refresh lock
             patch(
+                "src.app.modules.auth.services.tokens.register_login_session",
+                new_callable=AsyncMock,
+            ),
+            patch("src.app.core.events.event_bus") as mock_bus,
+            patch(
                 "src.app.core.security.session_manager.session_manager"
             ) as mock_sm,
         ):
-            mock_issuer_cls.rotate_token_pair = AsyncMock(
-                return_value=("new_access", "new_refresh")
-            )
+            mock_bus.publish = AsyncMock()
             mock_sm.invalidate_session = AsyncMock(return_value=True)
 
             result = await auth_service.refresh_access_token(

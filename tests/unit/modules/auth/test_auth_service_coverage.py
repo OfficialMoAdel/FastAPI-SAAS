@@ -178,7 +178,7 @@ class TestLogin:
         # Test with bytes result (what real Redis might return)
         mock_redis.eval = AsyncMock(return_value=b"5")
 
-        with patch("src.app.modules.auth.service.settings") as mock_settings:
+        with patch("src.app.modules.auth.services.lockout.settings") as mock_settings:
             mock_settings.AUTH_MAX_LOGIN_ATTEMPTS = 5
             mock_settings.AUTH_LOCKOUT_DURATION_SECONDS = 900
             mock_settings.ENVIRONMENT = "development"
@@ -346,7 +346,7 @@ class TestRefreshAccessToken:
         with patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify:
             mock_verify.return_value = mock_user_data
 
-            with patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock):
+            with patch("src.app.core.security.blacklist_token", new_callable=AsyncMock):
                 with patch("src.app.modules.auth.service.UserService", return_value=mock_user_service):
                     with patch(
                         "src.app.modules.auth.services.tokens.create_access_token", new_callable=AsyncMock
@@ -355,19 +355,21 @@ class TestRefreshAccessToken:
                             # S-4: session registration is orthogonal to refresh
                             # logic; it now fails closed without Redis, so mock it.
                             with patch(
-                                "src.app.core.security.login_helpers.register_login_session",
+                                "src.app.modules.auth.services.tokens.register_login_session",
                                 new_callable=AsyncMock,
                             ):
-                                mock_create.return_value = "new_access_token"
+                                with patch("src.app.core.events.event_bus") as mock_bus:
+                                    mock_bus.publish = AsyncMock()
+                                    mock_create.return_value = "new_access_token"
 
-                                mock_response.set_cookie = MagicMock()
+                                    mock_response.set_cookie = MagicMock()
 
-                                # Should call with email parameter
-                                result = await auth_service.refresh_access_token(
-                                    "valid_refresh_token", mock_response, mock_db
-                                )
+                                    # Should call with email parameter
+                                    result = await auth_service.refresh_access_token(
+                                        "valid_refresh_token", mock_response, mock_db
+                                    )
 
-                                assert result["access_token"] == "new_access_token"
+                                    assert result["access_token"] == "new_access_token"
 
 
 # ============================================================================

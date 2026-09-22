@@ -14,7 +14,6 @@ from src.app.core.security import oauth2_scheme
 from src.app.core.security.login_helpers import (
     clear_refresh_cookies,
     get_refresh_cookie,
-    set_refresh_cookie,
 )
 from src.app.core.security.session_manager import SessionManager
 from src.app.core.tenancy.context import get_current_tenant
@@ -160,8 +159,6 @@ async def refresh_access_token(
         ip_address=get_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
-    if isinstance(result, dict) and result.get("refresh_token"):
-        set_refresh_cookie(response, result["refresh_token"])
     return result
 
 

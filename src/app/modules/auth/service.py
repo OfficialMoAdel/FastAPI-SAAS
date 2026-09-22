@@ -10,10 +10,8 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
-from src.app.core.config import settings
 from src.app.core.security import (
     TokenType,
-    blacklist_token,
     blacklist_tokens,
     get_password_hash,
     needs_rehash,
@@ -442,7 +440,7 @@ class AuthService:
         # absolute_exp, original iat and the stable sid. The token string has
         # already been signature-verified by verify_token() above; this decode
         # is a local operation to surface claims TokenData does not expose.
-        from src.app.core.security.jwt_utils import decode_jwt_token, extract_claim_unverified, extract_jti_unverified
+        from src.app.core.security.jwt_utils import decode_jwt_token
 
         old_refresh_payload = await decode_jwt_token(refresh_token) or {}
 
@@ -464,103 +462,25 @@ class AuthService:
         # SECURITY FIX: Include tenant_id for tenant isolation during token refresh
         token_data = TokenIssuer.build_token_data(subject=user_data.username_or_email, user=db_user or {})
 
-        # Create new tokens FIRST to ensure atomicity. If this fails, the user is not left locked out.
-        from src.app.core.cache.client import cache_client
-
-        lock_key = None
-        if cache_client.client is not None and user_data.jti:
-            lock_key = f"refresh_lock:{user_data.jti}"
-            lock_acquired = await cache_client.set_nx(lock_key, "1", ttl=30)
-            if not lock_acquired:
-                raise UnauthorizedError("Token refresh already in progress.")
-        try:
-            # A2/A3: rotate with carried session claims instead of minting fresh ones
-            new_access_token, new_refresh_token = await TokenIssuer.rotate_token_pair(token_data, old_refresh_payload)
-
-            # Blacklist the used refresh token (Rotation) AFTER new tokens are successfully generated.
-            # Thread the already-verified payload: it is a verified decode of
-            # this exact token string (verify_token() above + decode_jwt_token()
-            # below both check the signature), so blacklist_token() reads
-            # 'exp'/'jti' directly instead of performing a third verified decode.
-            await blacklist_token(token=refresh_token, db=db, payload=old_refresh_payload)
-
-            # P2-1: plant a rotation marker so a replayed old token is
-            # detectable as theft (refresh-reuse → family revocation).
-            try:
-                from datetime import UTC
-                from datetime import datetime as dt
-
-                now_ts = dt.now(UTC).timestamp()
-                marker_ttl = int(
-                    min(
-                        max(60, float(old_refresh_payload.get("exp", now_ts + 60)) - now_ts),
-                        settings.crypt.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
-                    )
-                )
-                # The new token was minted by this process (rotate_token_pair
-                # above), so its signature is valid by construction — read jti
-                # and exp with cheap unverified base64 extraction instead of
-                # another verified decode.
-                new_jti = extract_jti_unverified(new_refresh_token)
-                new_exp_raw = extract_claim_unverified(new_refresh_token, "exp")
-                new_exp = now_ts + marker_ttl
-                if new_exp_raw is not None:
-                    try:
-                        new_exp = float(new_exp_raw)
-                    except (TypeError, ValueError):
-                        pass
-                if cache_client.client is not None and user_data.jti and new_jti:
-                    await cache_client.set(
-                        f"refresh_rotated:{user_data.jti}",
-                        json.dumps(
-                            {
-                                "user_id": db_user["id"],
-                                "sid": user_data.sid,
-                                "new_jti": new_jti,
-                                "new_exp": new_exp,
-                            }
-                        ),
-                        ttl=marker_ttl,
-                    )
-            except Exception as e:
-                logger.debug("failed to plant refresh rotation marker", error=str(e))
-        finally:
-            if lock_key:
-                try:
-                    await cache_client.delete(lock_key)
-                except Exception as e:
-                    # Bounded by ex=30, but log for incident diagnosis
-                    logger.debug("Failed to delete refresh lock key", lock_key=lock_key, error=str(e))
-        # SECURITY FIX: Invalidate old session in SessionManager to prevent session proliferation
-        # A3: keyed by the stable sid claim — the refresh token's jti never
-        # matched the registered access-token jti, so the old call was a no-op.
-        try:
-            from src.app.core.security.session_manager import session_manager as global_session_manager
-
-            if user_data.sid:
-                await global_session_manager.invalidate_session(db_user["id"], user_data.sid)
-        except Exception as e:
-            logger.warning("failed_to_invalidate_old_session_on_refresh", error=str(e))
-
-        # NOTE: refresh cookie ownership lives in the router (single owner)
-        # to avoid double Set-Cookie on refresh; service only returns the token.
-        from src.app.core.security.login_helpers import register_login_session
-
-        await register_login_session(
-            user_id=db_user["id"],
-            access_token=new_access_token,
+        # Rotation tail (lock → pair → blacklist → marker → session →
+        # cookie → audit) lives behind the TokenIssuer seam; only the
+        # verification pre-checks above stay here. The seam owns the cookie
+        # (response threaded through) — the router no longer writes it.
+        issued = await TokenIssuer.rotate_session(
+            token_data=token_data,
+            old_refresh_payload=old_refresh_payload,
+            old_refresh_token=refresh_token,
+            user=db_user,
+            db=db,
             request=request,
-            verify=False,
+            response=response,
             device_label=user_agent,
-            # The carried sid is already in hand (rotation preserves it) —
-            # no need to re-parse the minted access token to recover it.
-            session_id=old_refresh_payload.get("sid") or user_data.sid,
         )
 
         return {
-            "access_token": new_access_token,
+            "access_token": issued.access_token,
             "token_type": "bearer",
-            "refresh_token": new_refresh_token,
+            "refresh_token": issued.refresh_token,
         }
 
     async def logout(

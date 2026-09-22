@@ -45,3 +45,17 @@ persistence grilling loop, 2026-09-22.)
 - **Bypass** — an operator-declared whitelisted IP skips the counter but never
   the ban. Currently signalled by a sentinel `limit=999999` plus
   `bypassed=True`; the sentinel is leakage and should not spread.
+
+- **Issuance** — the post-authentication choreography owned by `TokenIssuer`:
+  claims → token pair → refresh cookie → session registration → login audit.
+  Every login door (password, passkey, magic-link, SSO, MFA completion) ends
+  here; no door writes cookies or registers sessions itself.
+
+- **Session rotation** — the refresh-token counterpart of Issuance, owned by
+  the same Seam (`TokenIssuer.rotate_session`): distributed lock → rotated
+  pair (sid/absolute_exp/iat preserved, never extended) → old-token blacklist
+  → rotation marker → session invalidate + re-register → cookie → audit.
+  Verification pre-checks (reuse detection, token verify, absolute-exp,
+  user-active, tenant bind) stay in `AuthService`; everything after a verified
+  payload is the Seam's. One ownership rule: exactly one cookie write, exactly
+  one session registration, on both login and refresh paths.

@@ -305,7 +305,7 @@ class TestAuthServiceTokenRefresh:
 
         # Mock settings to simulate production environment
         with (
-            patch("src.app.modules.auth.service.settings") as mock_settings,
+            patch("src.app.modules.auth.services.tokens.settings") as mock_settings,
             patch("src.app.core.security.login_helpers.settings") as mock_helpers_settings,
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
             patch(
@@ -314,15 +314,24 @@ class TestAuthServiceTokenRefresh:
             patch(
                 "src.app.modules.auth.services.tokens.create_refresh_token", new_callable=AsyncMock
             ) as mock_create_refresh,
-            patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock) as mock_blacklist,
+            patch("src.app.core.security.blacklist_token", new_callable=AsyncMock) as mock_blacklist,
             patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.auth.services.tokens.register_login_session", new_callable=AsyncMock
+            ),
+            patch("src.app.core.events.event_bus") as mock_bus,
         ):
             from src.app.core.config import EnvironmentOption
+            mock_bus.publish = AsyncMock()
 
             mock_settings.ENVIRONMENT = EnvironmentOption.PRODUCTION
             mock_settings.REFRESH_TOKEN_EXPIRE_DAYS = 7
             mock_settings.ACCESS_TOKEN_EXPIRE_MINUTES = 30
+            # Seam reads expiry via settings.crypt — pin the nested attrs too
+            # (whole-module mock would otherwise break timedelta).
+            mock_settings.crypt.ACCESS_TOKEN_EXPIRE_MINUTES = 30
+            mock_settings.crypt.REFRESH_TOKEN_EXPIRE_DAYS = 7
             mock_helpers_settings.ENVIRONMENT = EnvironmentOption.PRODUCTION
             mock_helpers_settings.REFRESH_TOKEN_EXPIRE_DAYS = 7
 
@@ -358,9 +367,8 @@ class TestAuthServiceTokenRefresh:
             # 2. New refresh token created
             mock_create_refresh.assert_called_once()
 
-            # 3. Service does NOT set cookies (P1-5: router owns cookie I/O;
-            # the service returns refresh_token in the dict for the router).
-            mock_response.set_cookie.assert_not_called()
+            # 3. Seam owns the cookie (response threaded through) — exactly one write.
+            mock_response.set_cookie.assert_called_once()
             assert result["refresh_token"] == "new_refresh_token"
 
 
@@ -594,7 +602,7 @@ class TestAuthServiceSecurityBugFixes:
 
         with (
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
-            patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
+            patch("src.app.core.security.blacklist_token", new_callable=AsyncMock),
             patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
@@ -630,7 +638,7 @@ class TestAuthServiceSecurityBugFixes:
 
         with (
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
-            patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
+            patch("src.app.core.security.blacklist_token", new_callable=AsyncMock),
             patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
@@ -655,7 +663,7 @@ class TestAuthServiceSecurityBugFixes:
         mock_token_data.token_version = 0  # Match db_user token_version
 
         with (
-            patch("src.app.modules.auth.service.settings") as mock_settings,
+            patch("src.app.modules.auth.services.tokens.settings") as mock_settings,
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
             patch(
                 "src.app.modules.auth.services.tokens.create_access_token", new_callable=AsyncMock
@@ -663,18 +671,22 @@ class TestAuthServiceSecurityBugFixes:
             patch(
                 "src.app.modules.auth.services.tokens.create_refresh_token", new_callable=AsyncMock
             ) as mock_create_refresh,
-            patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
+            patch("src.app.core.security.blacklist_token", new_callable=AsyncMock),
             patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
             # S-4: session registration is orthogonal to refresh logic; it now
             # fails closed without Redis, so mock it out in this unit test.
-            patch("src.app.core.security.login_helpers.register_login_session", new_callable=AsyncMock),
+            # (Seam-bound name: rotate_session holds the top-level import.)
+            patch("src.app.modules.auth.services.tokens.register_login_session", new_callable=AsyncMock),
         ):
             from src.app.core.config import EnvironmentOption
 
             mock_settings.ENVIRONMENT = EnvironmentOption.LOCAL
             mock_settings.REFRESH_TOKEN_EXPIRE_DAYS = 7
             mock_settings.ACCESS_TOKEN_EXPIRE_MINUTES = 30
+            # Seam reads expiry via settings.crypt — pin the nested attrs too.
+            mock_settings.crypt.ACCESS_TOKEN_EXPIRE_MINUTES = 30
+            mock_settings.crypt.REFRESH_TOKEN_EXPIRE_DAYS = 7
             mock_verify.return_value = mock_token_data
             mock_create_access.return_value = "new_access_token"
             mock_create_refresh.return_value = "new_refresh_token"
