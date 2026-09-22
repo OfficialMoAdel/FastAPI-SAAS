@@ -215,3 +215,4 @@ docs/adr/*
 architecture-review-*.html
 .benchmarks
 *.svg
+.workbuddy-ai

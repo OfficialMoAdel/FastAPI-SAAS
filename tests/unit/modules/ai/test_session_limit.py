@@ -64,13 +64,19 @@ class TestSessionLimit:
                     new_callable=AsyncMock,
                     return_value=mock_session,
                 ):
-                    from src.app.modules.ai.service import ChatSessionService
+                    # create_session re-reads the committed row to satisfy ChatSessionRead
+                    with patch(
+                        "src.app.modules.ai.crud.crud_chat_sessions.get",
+                        new_callable=AsyncMock,
+                        return_value={**mock_session, "created_at": "2026-01-01T00:00:00Z"},
+                    ):
+                        from src.app.modules.ai.service import ChatSessionService
 
-                    service = ChatSessionService(mock_db_session)
-                    result = await service.create_session(mock_user["id"], session_data)
+                        service = ChatSessionService(mock_db_session)
+                        result = await service.create_session(mock_user["id"], session_data)
 
-                    assert result["id"] == 1
-                    assert result["title"] == "Test Session"
+                        assert result["id"] == 1
+                        assert result["title"] == "Test Session"
 
     @pytest.mark.asyncio
     async def test_create_session_at_limit_fails(self, mock_db_session, mock_user, mock_tenant):
@@ -155,12 +161,18 @@ class TestSessionLimit:
                     new_callable=AsyncMock,
                     return_value=mock_session,
                 ):
-                    from src.app.modules.ai.service import ChatSessionService
+                    # create_session re-reads the committed row to satisfy ChatSessionRead
+                    with patch(
+                        "src.app.modules.ai.crud.crud_chat_sessions.get",
+                        new_callable=AsyncMock,
+                        return_value={**mock_session, "created_at": "2026-01-01T00:00:00Z"},
+                    ):
+                        from src.app.modules.ai.service import ChatSessionService
 
-                    service = ChatSessionService(mock_db_session)
-                    result = await service.create_session(mock_user["id"], session_data)
+                        service = ChatSessionService(mock_db_session)
+                        result = await service.create_session(mock_user["id"], session_data)
 
-                    assert result["id"] == 100
+                        assert result["id"] == 100
 
 
 class TestSessionLimitExceededError:

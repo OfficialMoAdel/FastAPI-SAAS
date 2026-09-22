@@ -827,6 +827,7 @@ dev = [
 dev = [
     { name = "aiosqlite" },
     { name = "faker" },
+    { name = "locust" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
     { name = "mypy" },
@@ -902,6 +903,7 @@ provides-extras = ["dev"]
 dev = [
     { name = "aiosqlite", specifier = ">=0.21.0" },
     { name = "faker", specifier = ">=37.3.0" },
+    { name = "locust", specifier = ">=2.43.0" },
     { name = "mkdocs-material", specifier = ">=9.7.1" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.0" },
     { name = "mypy", specifier = ">=1.16.0" },

@@ -215,6 +215,7 @@ dev = [
     "types-cachetools>=6.2.0.20251022",
     "ruff>=0.11.13",
     "mypy>=1.16.0",
+    "locust>=2.43.0",
 ]
 
 [tool.mypy]

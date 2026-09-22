@@ -172,9 +172,21 @@ class ChatSessionService(BaseService[AIChatSession]):
         session_data = data.model_dump()
         session_data["tenant_id"] = tenant.id
         session_data["user_id"] = user_id
-        result = await crud_chat_sessions.create(db=self.db, object=session_data)  # type: ignore
+        created = await crud_chat_sessions.create(db=self.db, object=session_data)  # type: ignore
         await self.db.commit()
-        return result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
+
+        # create() hands back only the new primary key, but ChatSessionRead
+        # also needs created_at/tenant_id/user_id/title/model. Returning that
+        # bare {"id": N} made POST /ai/sessions answer 500, so re-read the
+        # committed row to build the full response model.
+        session_id = created["id"] if isinstance(created, dict) else getattr(created, "id", None)
+        if session_id is None:
+            raise ModelNotFoundError("ChatSession", "new")
+
+        session = await crud_chat_sessions.get(db=self.db, id=session_id)
+        if session is None:
+            raise ModelNotFoundError("ChatSession", session_id)
+        return dict(session)
 
     async def get_session(self, session_id: int, user_id: int) -> dict[str, Any]:
         """Get a chat session by ID with ownership check."""

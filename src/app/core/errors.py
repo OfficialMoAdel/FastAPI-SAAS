@@ -97,6 +97,24 @@ def middleware_error_response(
     return create_error_response(code=code, message=message, status_code=status_code, headers=headers)
 
 
+def _json_safe(value: Any) -> Any:
+    """Coerce values Starlette cannot serialize into JSON-safe ones.
+
+    ``details`` payloads are assembled from domain exceptions and routinely
+    carry rich types (``UUID``, ``datetime``, ``Decimal``). Starlette's
+    ``JSONResponse`` calls ``json.dumps`` with no ``default`` hook, so a stray
+    UUID raised ``TypeError: Object of type UUID is not JSON serializable``
+    and turned a clean 4xx (e.g. session-limit 429) into a 500.
+    """
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, Mapping):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [_json_safe(v) for v in value]
+    return str(value)
+
+
 def create_error_response(
     code: str,
     message: str,
@@ -128,7 +146,7 @@ def create_error_response(
     }
 
     if details:
-        error_inner["details"] = details
+        error_inner["details"] = _json_safe(details)
 
     if request_id:
         error_inner["request_id"] = request_id

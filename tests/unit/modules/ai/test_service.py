@@ -49,6 +49,17 @@ class TestChatSessionService:
             with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud:
                 mock_crud.create = AsyncMock(return_value=MagicMock(id=1, tenant_id=1, user_id=1))
                 mock_crud.count = AsyncMock(return_value=0)
+                # create_session re-reads the committed row to satisfy ChatSessionRead
+                mock_crud.get = AsyncMock(
+                    return_value={
+                        "id": 1,
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "tenant_id": 1,
+                        "user_id": 1,
+                        "title": "Test Session",
+                        "model": "gemma3",
+                    }
+                )
 
                 service = ChatSessionService(mock_db)
                 data = ChatSessionCreate(title="Test Session")

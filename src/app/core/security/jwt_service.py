@@ -36,7 +36,7 @@ from src.app.core.config import EnvironmentOption, settings
 from src.app.core.db.crud_token_blacklist import crud_token_blacklist
 from src.app.core.db.token_blacklist import TokenBlacklist
 from src.app.core.logger import get_logger
-from src.app.core.schemas import TokenBlacklistCreate, TokenData
+from src.app.core.schemas import TokenData
 from src.app.core.security.pending_token_store import PendingTokenStore
 from src.app.core.security.token_blacklist_cache import (
     add_token_to_blacklist,
@@ -558,17 +558,40 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
                     if isinstance(tenant_id, str):
                         tenant_id = UUID(tenant_id)
 
-                    async with db.begin_nested():
-                        await crud_token_blacklist.create(
-                            db, object=TokenBlacklistCreate(token=token, expires_at=expires_at, tenant_id=tenant_id)
+                    # PERF-R1-B: persist ONE row inside ONE transaction.
+                    #
+                    # This used to write two rows — the raw JWT string and
+                    # ``jti:{jti}`` — each through its own
+                    # crud_token_blacklist.create() call, and create() commits
+                    # internally (it must NOT be wrapped in begin_nested(): the
+                    # block closes the nested transaction on exit and the
+                    # db.refresh() inside create() then raises
+                    # InvalidRequestError on the closed transaction under load).
+                    # So every refresh paid two remote COMMITs (WAL fsync on the
+                    # Postgres VM) plus two post-commit SELECTs from
+                    # db.refresh(). Measured 2026-09-22 with
+                    # scripts/profile_refresh.py: 6.41 ms of a 15.45 ms request.
+                    #
+                    # The second row is redundancy, not defence in depth:
+                    #   * hot path — is_token_blacklisted() resolves the member
+                    #     via _extract_blacklist_member(token, jti), which keys
+                    #     on ``jti:{jti}`` whenever a jti claim exists; Redis is
+                    #     the primary revocation oracle.
+                    #   * DB fallback — _check_db_fallback(jti, token) probes
+                    #     ``token = 'jti:{jti}'`` FIRST, so with a jti present
+                    #     the jti row is the row that can ever match anyway.
+                    # A jti-less (legacy) token still gets its raw-token row,
+                    # which is exactly the member that path looks up.
+                    #
+                    # db.add()+commit() instead of create(): the inserted row is
+                    # never read back, so the refresh SELECT create() issues is
+                    # pure overhead (expire_on_commit=False means the instance
+                    # stays usable regardless).
+                    db.add(
+                        TokenBlacklist(
+                            token=cache_key, expires_at=expires_at, tenant_id=tenant_id
                         )
-                        if jti:
-                            await crud_token_blacklist.create(
-                                db,
-                                object=TokenBlacklistCreate(
-                                    token=cache_key, expires_at=expires_at, tenant_id=tenant_id
-                                ),
-                            )
+                    )
                     await db.commit()
                 else:
                     # Fail-closed: still blacklist in Redis even without tenant_id
