@@ -30,9 +30,17 @@ from src.app.api.deps.auth import (
     get_user_by_api_key,
     resolve_principal,
 )
+from src.app.core.principal import (
+    DENIAL_TABLE,
+    OPTIONAL,
+    REQUIRED,
+    DenialReason,
+    denial,
+)
 from src.app.core.schemas import TokenData
-from src.app.core.tenancy.context import TenantContext
+from src.app.core.tenancy.context import TenantContext, TenantContextError
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
+from src.app.shared.exceptions import ServiceUnavailableError
 from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
 
@@ -377,7 +385,7 @@ async def test_get_user_by_api_key_tenant_mismatch() -> None:
     key_info = {"user_id": 1, "tenant_id": 5, "scopes": []}
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
-        patch("src.app.core.tenancy.context.get_current_tenant", return_value=MagicMock(tenant_id=9)),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=MagicMock(tenant_id=9)),
     ):
         svc = mock_svc_cls.return_value
         svc.validate_api_key = AsyncMock(return_value=key_info)
@@ -390,7 +398,7 @@ async def test_get_user_by_api_key_user_not_found() -> None:
     key_info = {"user_id": 1, "tenant_id": 5, "scopes": []}
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
-        patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         svc = mock_svc_cls.return_value
@@ -407,7 +415,7 @@ async def test_get_user_by_api_key_dict_user() -> None:
     user_data = {"id": 1, "username": "a", "email": "a@b.com", "is_active": True}
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
-        patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         svc = mock_svc_cls.return_value
@@ -441,7 +449,7 @@ async def test_get_user_by_api_key_obj_user() -> None:
     }
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
-        patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         svc = mock_svc_cls.return_value
@@ -459,7 +467,7 @@ async def test_get_user_by_api_key_inactive() -> None:
     user_data = {"id": 1, "username": "a", "email": "a@b.com", "is_active": False}
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
-        patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         svc = mock_svc_cls.return_value
@@ -932,7 +940,7 @@ async def test_get_current_superuser_ok() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_resolve_principal_strict_success() -> None:
+async def test_resolve_principal_required_success() -> None:
     request = _make_request()
     token_data = TokenData(username_or_email="alice", token_version=1)
     user = {"id": 10, "email": "alice@example.com", "username": "alice", "is_active": True, "token_version": 1}
@@ -944,21 +952,21 @@ async def test_resolve_principal_strict_success() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         mock_ud.return_value.auth_info = AsyncMock(return_value=_dumpable(user))
-        ctx = await resolve_principal(request, _make_db(), token="valid_tok", strict=True)
+        ctx = await resolve_principal(request, _make_db(), token="valid_tok", policy=REQUIRED)
     assert ctx is not None
     assert ctx.user.id == 10
     assert ctx.user.email == "alice@example.com"
 
 
-async def test_resolve_principal_strict_unauthenticated_raises() -> None:
+async def test_resolve_principal_required_unauthenticated_raises() -> None:
     request = _make_request()
     with pytest.raises(UnauthorizedException, match="User not authenticated"):
-        await resolve_principal(request, _make_db(), token="", strict=True)
+        await resolve_principal(request, _make_db(), token="", policy=REQUIRED)
 
 
 async def test_resolve_principal_optional_unauthenticated_returns_none() -> None:
     request = _make_request()
-    result = await resolve_principal(request, _make_db(), token="", strict=False)
+    result = await resolve_principal(request, _make_db(), token="", policy=OPTIONAL)
     assert result is None
 
 
@@ -974,9 +982,39 @@ async def test_resolve_principal_optional_success() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         mock_ud.return_value.auth_info = AsyncMock(return_value=_dumpable(user))
-        result = await resolve_principal(request, _make_db(), token="valid_tok", strict=False)
+        result = await resolve_principal(request, _make_db(), token="valid_tok", policy=OPTIONAL)
     assert result is not None
     assert result.user.id == 10
+
+
+def test_denial_table_covers_every_reason() -> None:
+    """The outcome table is total: an unmapped refusal would be a KeyError at runtime."""
+    assert set(DENIAL_TABLE) == set(DenialReason)
+
+
+def test_denial_table_status_contract() -> None:
+    """One table decides every status the principal path can emit."""
+    # A missing tenant is the one no-tenant contract (P3-#14) -> 403.
+    assert DENIAL_TABLE[DenialReason.TENANT_CONTEXT_MISSING].error is TenantContextError
+    # No credential is an authentication failure -> 401.
+    assert DENIAL_TABLE[DenialReason.NO_CREDENTIAL].error is UnauthorizedException
+    # A valid principal lacking privilege is an authorization failure -> 403.
+    assert DENIAL_TABLE[DenialReason.NOT_SUPERUSER].error is ForbiddenException
+    # An unwired DIP seam is an operator problem, not a client one -> 503.
+    assert DENIAL_TABLE[DenialReason.PROVIDER_UNWIRED].error is ServiceUnavailableError
+
+
+def test_denial_formats_scope_message() -> None:
+    """The table carries messages, so a parametrised row must interpolate."""
+    exc = denial(DenialReason.SCOPE_MISSING, scope="read")
+    assert isinstance(exc, ForbiddenException)
+    assert "read" in exc.message
+
+
+def test_denial_unknown_reason_fails_loud() -> None:
+    """An unmapped refusal is a bug, not a policy — never a silent default."""
+    with pytest.raises(KeyError):
+        denial("not_a_real_reason")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

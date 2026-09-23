@@ -238,6 +238,24 @@ async def _start_jwt_lookup_gate() -> None:
         raise
 
 
+async def _start_principal_provider_gate() -> None:
+    # Candidate 2 (one principal-resolution seam): fail fast when the
+    # principal DIP seam is unwired instead of surfacing as mass 401s.
+    # ``core.principal`` owns the ``get_auth_context`` dependency so that
+    # ``core.rbac`` need not import the api layer (H-5); ``api.deps.auth``
+    # registers the resolver at import time. The per-request path still
+    # fails closed (503); this is the loud boot gate.
+    try:
+        from src.app.core.principal import ensure_principal_provider_registered
+
+        ensure_principal_provider_registered()
+    except Exception as e:  # noqa: BLE001 — startup must stay loud, not crash on log path
+        from src.app.core.logger import get_logger as _gl
+
+        _gl(__name__).error("principal_provider_startup_check_failed", error=str(e))
+        raise
+
+
 async def _start_cache_warmer(done: asyncio.Event) -> None:
     # Warm caches after DB and Redis are ready. Fire and forget with safe
     # error handling and hard reference; ``done`` signals "startup
@@ -379,6 +397,7 @@ def lifespan_factory(
             StartupPhase("tables", partial(_start_create_tables, create_tables_on_start), None),
             StartupPhase("users_lookups", _start_users_security_lookups, None),
             StartupPhase("jwt_gate", _start_jwt_lookup_gate, None),
+            StartupPhase("principal_gate", _start_principal_provider_gate, None),
             # "warm_caches" + "_start_cache_warmer": pinned by name in
             # tests/performance/test_optimizations_r4/test_cache_warming.py
             # (source-string assertions) — keep both spellings on this row.

@@ -1,30 +1,41 @@
 from typing import Annotated, Any, NamedTuple
 
 from fastapi import Depends, Request
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
-from src.app.core.principal import AuthenticatedUser  # noqa: F401 — canonical home; re-exported for legacy importers
-from src.app.core.schemas import TokenData
+from src.app.core.principal import (
+    OPTIONAL,
+    REQUIRED,
+    AuthContext,
+    AuthenticatedUser,  # noqa: F401 — canonical home; re-exported for legacy importers
+    DenialReason,
+    PrincipalPolicy,
+    PrincipalPresence,
+    denial,
+    get_auth_context,  # noqa: F401 — re-exported; the dependency itself lives in core
+    register_principal_provider,
+)
 from src.app.core.security import TokenType, api_key_scheme, oauth2_scheme, verify_token
 from src.app.core.security.jwt_utils import get_cached_jwt_payload
-from src.app.core.tenancy.context import TenantContext, get_current_tenant
+from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules.users import UserDirectory
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
 logger = get_logger(__name__)
 
-
-class AuthContext(BaseModel):
-    user: AuthenticatedUser
-    # Q-M7: token_data is either the TokenData object returned by verify_token
-    # (core.schemas.TokenData) or the raw cached JWT payload dict (same claim
-    # fields as keys); tenant is the lightweight TenantContext (or None).
-    token_data: TokenData | dict[str, Any] | None
-    tenant: TenantContext | None
+# Q-M7: ``AuthContext.token_data`` is either the TokenData object returned by
+# verify_token (core.schemas.TokenData) or the raw cached JWT payload dict
+# (same claim fields as keys); ``tenant`` is the lightweight TenantContext
+# (or None). The model itself now lives in ``core.principal`` — the ONE
+# principal seam — and is re-exported above.
+#
+# Every refusal below is raised through ``core.principal.denial``, so the
+# status a given condition produces is decided in ONE table rather than at
+# each raise site. The messages are byte-identical to the hand-written ones
+# they replaced.
 
 
 def _create_auth_context(
@@ -71,7 +82,7 @@ async def _resolve_bearer_token(request: Request, token: str) -> str:
     if auth_header:
         scheme, _, raw_token = auth_header.partition(" ")
         if not scheme or scheme.lower() != "bearer":
-            raise UnauthorizedException("User not authenticated.")
+            raise denial(DenialReason.NO_CREDENTIAL)
         return raw_token
     return ""
 
@@ -104,13 +115,13 @@ async def _enforce_token_not_revoked(
     if probe.cached_blacklist is False:
         return  # Verified clean by middleware probe; skip redundant checks.
     if probe.is_blacklisted is True:
-        raise UnauthorizedException("Token has been revoked.")
+        raise denial(DenialReason.REVOKED_TOKEN)
     if probe.is_blacklisted is False:
         return  # Verified clean by composite Lua probe
     if probe.cached_blacklist is True or await _is_token_blacklisted_with_fallback(
         probe.token, probe.jti, db
     ):
-        raise UnauthorizedException("Token has been revoked.")
+        raise denial(DenialReason.REVOKED_TOKEN)
 
 
 async def _enforce_session_valid(
@@ -123,7 +134,7 @@ async def _enforce_session_valid(
     if not session_id:
         return
     if session_valid is False:
-        raise UnauthorizedException("Session has been revoked.")
+        raise denial(DenialReason.REVOKED_SESSION)
     if session_valid is True:
         return  # Active per composite Lua probe
     from src.app.core.security.session_manager import session_manager
@@ -134,7 +145,7 @@ async def _enforce_session_valid(
         jwt_exp=jwt_exp,
     )
     if not sess_ok:
-        raise UnauthorizedException("Session has been revoked.")
+        raise denial(DenialReason.REVOKED_SESSION)
 
 
 # ---------------------------------------------------------------------------
@@ -163,13 +174,13 @@ async def _resolve_token_data(
         elif cached_blacklist is True or await _is_token_blacklisted_with_fallback(
             token, cached_payload.get("jti"), db
         ):
-            raise UnauthorizedException("Token has been revoked.")
+            raise denial(DenialReason.REVOKED_TOKEN)
 
         if cached_payload.get("token_type") != TokenType.ACCESS:
-            raise UnauthorizedException("User not authenticated.")
+            raise denial(DenialReason.NO_CREDENTIAL)
         username_or_email = cached_payload.get("sub")
         if not username_or_email:
-            raise UnauthorizedException("User not authenticated.")
+            raise denial(DenialReason.NO_CREDENTIAL)
         return (
             cached_payload,
             username_or_email,
@@ -183,7 +194,7 @@ async def _resolve_token_data(
     # propagate: a presented token that cannot be verified is never anonymous.
     token_data = await verify_token(token, TokenType.ACCESS, db)
     if token_data is None:
-        raise UnauthorizedException("User not authenticated.")
+        raise denial(DenialReason.NO_CREDENTIAL)
     return (
         token_data,
         token_data.username_or_email,
@@ -214,13 +225,13 @@ async def _load_and_validate_user(
     user = found.model_dump() if found else None
 
     if not user:
-        raise UnauthorizedException("User not authenticated.")
+        raise denial(DenialReason.NO_CREDENTIAL)
     if not user.get("is_active", False):
-        raise UnauthorizedException("User account is no longer active.")
+        raise denial(DenialReason.INACTIVE_USER)
     if user.get("is_deleted", False):
-        raise UnauthorizedException("User account has been deleted.")
+        raise denial(DenialReason.DELETED_USER)
     if payload_version != user.get("token_version", 0):
-        raise UnauthorizedException("Session expired. Please log in again.")
+        raise denial(DenialReason.STALE_TOKEN_VERSION)
     return user
 
 
@@ -241,7 +252,7 @@ def _enforce_user_tenant_match(
             requested_tenant_id=getattr(current_tenant, "id", None),
             requested_tenant_slug=getattr(current_tenant, "slug", None),
         )
-        raise ForbiddenException("User does not belong to the current tenant.")
+        raise denial(DenialReason.TENANT_MISMATCH)
 
 
 async def _resolve_optional_bearer_flow(
@@ -273,7 +284,7 @@ async def _resolve_optional_bearer_flow(
         raise
     except Exception as e:
         logger.warning("optional_auth_context_verify_failed", error=str(e))
-        raise UnauthorizedException("User not authenticated.") from e
+        raise denial(DenialReason.NO_CREDENTIAL) from e
 
 
 # P1-1: API-key scope vocabulary, enforced at the resolve-principal seam
@@ -329,9 +340,9 @@ def enforce_api_key_scope(user: AuthenticatedUser, request: Request | None) -> N
     url = getattr(request, "url", None)
     path = getattr(url, "path", None)
     if not isinstance(method, str) or not isinstance(path, str):
-        raise ForbiddenException("API key scope cannot be verified for this request.")
+        raise denial(DenialReason.SCOPE_UNVERIFIABLE)
     if not api_key_scope_allows(scopes, method, path):
-        raise ForbiddenException(f"API key missing required scope: {_required_api_key_scope(method)}")
+        raise denial(DenialReason.SCOPE_MISSING, scope=_required_api_key_scope(method))
 
 
 async def resolve_principal(
@@ -340,7 +351,7 @@ async def resolve_principal(
     token: str | None = None,
     api_key_user: AuthenticatedUser | None = None,
     *,
-    strict: bool = True,
+    policy: PrincipalPolicy = REQUIRED,
     current_tenant: Any = None,
 ) -> AuthContext | None:
     """Unified engine to resolve and verify an authenticated principal.
@@ -351,13 +362,18 @@ async def resolve_principal(
     - API key auth (`get_user_by_api_key`)
     - optional auth dispatcher (`get_optional_auth_context`)
 
+    Every refusal it raises comes from ``core.principal.DENIAL_TABLE``, so the
+    entry points above it cannot disagree about which status a condition
+    produces.
+
     Parameters:
         request: FastAPI/ASGI Request
         db: Database session
         token: Bearer token string (if known)
         api_key_user: Pre-validated AuthenticatedUser from API key (if any)
-        strict: When True, raises on any invalid/revoked state. When False,
-                returns None (degrading to anonymous).
+        policy: ``REQUIRED`` raises when no credential was presented;
+                ``OPTIONAL`` returns None instead. A credential that IS
+                presented and fails always raises, in both modes.
         current_tenant: Tenant context (auto-resolved from context if omitted).
     """
     if current_tenant is None:
@@ -373,9 +389,9 @@ async def resolve_principal(
         if api_key_user is None:
             # C3: an invalid PRESENTED API key is fail-loud (401), never
             # anonymous — anonymous is only for "no credential presented".
-            raise UnauthorizedException("Invalid API key.")
+            raise denial(DenialReason.INVALID_API_KEY)
         # P1-1: scope gate — a valid key with insufficient scopes is an
-        # authorization failure (403), not anonymous, in both strict and
+        # authorization failure (403), not anonymous, in both required and
         # optional modes. Never degrade to anonymous here.
         enforce_api_key_scope(api_key_user, request)
         return _create_auth_context(api_key_user, None, current_tenant, db)
@@ -384,8 +400,8 @@ async def resolve_principal(
     if token is None or not token:
         token = await _resolve_bearer_token(request, token or "")
     if not token:
-        if strict:
-            raise UnauthorizedException("User not authenticated.")
+        if policy.presence is PrincipalPresence.REQUIRED:
+            raise denial(DenialReason.NO_CREDENTIAL)
         return None
 
     _enforce_token_length(token)
@@ -393,14 +409,13 @@ async def resolve_principal(
     # 3. Resolve token data (cached payload or verify_token)
     cached_payload = get_cached_jwt_payload(request) if request is not None else None
 
-    if strict:
+    if policy.presence is PrincipalPresence.REQUIRED:
         # H-7: the strict path consumes the SAME primitives as the optional
         # path (steps 3-4 shared); the composite prefetch stays inside the
         # strict helper because it is strict-only (RBAC bitmask warm).
         return await _resolve_strict_bearer_flow(request, db, token, cached_payload, current_tenant)
 
-    else:
-        return await _resolve_optional_bearer_flow(request, db, token, cached_payload, current_tenant)
+    return await _resolve_optional_bearer_flow(request, db, token, cached_payload, current_tenant)
 
 
 async def _resolve_strict_bearer_flow(
@@ -451,17 +466,6 @@ async def _resolve_strict_bearer_flow(
     return _create_auth_context(user, token_data, current_tenant, db)
 
 
-async def get_auth_context(
-    request: Request,
-    db: AsyncSession = Depends(async_get_db),
-    token: str = Depends(oauth2_scheme),
-) -> AuthContext:
-    """Get current authenticated user's context, cached per request by FastAPI."""
-    ctx = await resolve_principal(request, db, token=token, strict=True)
-    assert ctx is not None
-    return ctx
-
-
 async def get_current_user(
     request: Request,
     token: Annotated[str, Depends(oauth2_scheme)],
@@ -486,6 +490,11 @@ async def get_user_by_api_key(
 
     This dependency allows authentication using 'X-API-Key' header.
     Returns user dict if valid, None otherwise.
+
+    ``None`` conflates "no key presented" with "key did not validate"; the
+    seam (``resolve_principal``) draws the distinction by raising 401 for a
+    presented-but-invalid key. This dependency is therefore only consumed
+    *through* the seam, never depended on directly by a route.
     """
     if not api_key:
         return None
@@ -498,13 +507,11 @@ async def get_user_by_api_key(
     if not key_info:
         return None
 
-    from src.app.core.tenancy.context import get_current_tenant
-
     current_tenant = get_current_tenant()
     if current_tenant:
         key_tenant_id = key_info.get("tenant_id")
         if not key_tenant_id or str(key_tenant_id) != str(current_tenant.tenant_id):
-            raise UnauthorizedException("API key does not match the requested tenant context.")
+            raise denial(DenialReason.API_KEY_TENANT_MISMATCH)
 
     directory = UserDirectory(db)
     found = await directory.by_id(key_info["user_id"])
@@ -534,7 +541,7 @@ async def _verify_optional_bearer_token(
         request=request,
         db=db,
         token=token_value,
-        strict=False,
+        policy=OPTIONAL,
         current_tenant=current_tenant,
     )
 
@@ -545,7 +552,7 @@ async def get_optional_auth_context(
     api_key_user: AuthenticatedUser | None = Depends(get_user_by_api_key),
 ) -> AuthContext | None:
     """Get optional auth context from API key or token, validating credentials if provided."""
-    return await resolve_principal(request, db, api_key_user=api_key_user, strict=False)
+    return await resolve_principal(request, db, api_key_user=api_key_user, policy=OPTIONAL)
 
 
 async def get_optional_user(
@@ -566,8 +573,27 @@ async def get_current_superuser(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> AuthenticatedUser:
     if not current_user.is_active:
-        raise ForbiddenException("User account is no longer active.")
+        raise denial(DenialReason.INACTIVE_SUPERUSER)
     if not current_user.is_superuser:
-        raise ForbiddenException("You do not have enough privileges.")
+        raise denial(DenialReason.NOT_SUPERUSER)
 
     return current_user
+
+
+# ---------------------------------------------------------------------------
+# DIP wiring. ``core.principal`` owns the ``get_auth_context`` dependency so
+# that ``core.rbac`` can depend on it without importing this layer (H-5); the
+# actual resolution is delegated back here, where importing the module
+# facades is legal. Same registry shape as ``core.security.jwt_service``'s
+# lookup seams (PR-12) — registered at import, asserted at startup.
+# ---------------------------------------------------------------------------
+
+
+async def _principal_provider(
+    request: Request, db: AsyncSession, token: str | None = None
+) -> AuthContext | None:
+    """The production ``PrincipalProvider`` consumed by ``core.principal``."""
+    return await resolve_principal(request, db, token=token, policy=REQUIRED)
+
+
+register_principal_provider(_principal_provider)

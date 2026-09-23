@@ -9,7 +9,7 @@ import pytest
 from src.app.core.rbac import dependencies as rbac_deps
 from src.app.core.rbac.bitmask import PermissionBitmask
 from src.app.core.rbac.permissions import Permission
-from src.app.core.tenancy.context import TenantContext
+from src.app.core.tenancy.context import TenantContext, TenantContextError
 
 TENANT_ID = uuid4()
 # R1-14: requires_permission now does a positive isinstance(AuthContext) check,
@@ -79,10 +79,12 @@ async def test_tenant_mismatch_forbidden(tenant_ctx, mock_db):
 
 
 async def test_tenant_context_required(mock_db):
+    # Candidate 2: the no-tenant refusal is the one no-tenant contract
+    # (P3-#14) — TenantContextError (403), not ValidationError (400).
     user = _User()
     ctx = _AuthContext(user, None)
     dep = rbac_deps.requires_permission(Permission.USERS_READ)
-    with pytest.raises(Exception):
+    with pytest.raises(TenantContextError):
         await dep(request=_make_request(), db=mock_db, auth_context=ctx)
 
 

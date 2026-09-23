@@ -29,7 +29,6 @@ from src.app.core.rbac.permissions import Permission as PermissionEnum
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
-from src.app.shared.exceptions import ValidationError as ValidationException
 
 logger = get_logger(__name__)
 
@@ -268,8 +267,9 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
     """
     permission_slug = permission.value if isinstance(permission, PermissionEnum) else permission
 
-    from src.app.api.deps import AuthContext, get_auth_context
     from src.app.core.db.database import async_get_db
+    from src.app.core.principal import AuthContext, DenialReason, denial, get_auth_context
+    from src.app.core.tenancy.context import resolve_tenant_id
 
     async def _check_permission(
         request: Request = None,  # type: ignore[assignment]
@@ -279,32 +279,46 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
         # Single production path: tests inject a real AuthContext via
         # dependency_overrides (tests/helpers/auth.py). No token fallback,
         # no mock sniffing, no spoofed identities.
-        tenant_context = auth_context.tenant
+        #
+        # ``get_auth_context`` comes from ``core.principal``, not
+        # ``api.deps``: it is the same dependency object, but core no longer
+        # reaches into the api layer to obtain it (H-5).
         current_user = auth_context.user
+        tenant_context = auth_context.tenant
 
-        if tenant_context is None and request is not None:
-            tenant_id_in_path = request.path_params.get("tenant_id")
-            if tenant_id_in_path:
-                from src.app.core.tenancy.context import TenantContext
-                from src.app.modules.tenants.models import Tenant
-
+        if tenant_context:
+            # The principal's own tenant is authoritative — ADR-0006's
+            # "context wins" rule. It is read from the resolved principal
+            # rather than re-read from the ContextVar because the principal
+            # IS the DB-validated result of that resolution.
+            tenant_id = tenant_context.id
+        else:
+            # No tenant on the principal (absent context, or the falsy
+            # NO_TENANT sentinel on an exempt path). A ``{tenant_id}`` path
+            # param is an EXPLICIT value handed to the ONE resolution seam
+            # (ADR-0006) — never a second resolver, and never a reason to
+            # import the Tenant model. The path's transport type (``str``) is
+            # normalized to the domain type (``UUID``) here, before it crosses
+            # the seam, so downstream cache keys and scoped queries keep
+            # seeing a UUID exactly as they did before.
+            path_tenant: Any = request.path_params.get("tenant_id") if request is not None else None
+            if isinstance(path_tenant, str):
                 try:
-                    tenant_uuid = UUID(str(tenant_id_in_path))
+                    path_tenant = UUID(path_tenant)
                 except ValueError:
-                    tenant_uuid = tenant_id_in_path
-
-                stmt = select(Tenant).where(Tenant.id == tenant_uuid)
-                res = await db.execute(stmt)
-                tenant_model = res.scalar_one_or_none()
-                if tenant_model:
-                    tenant_context = TenantContext.from_model(tenant_model)
-
-        if tenant_context is None:
-            # SECURITY FIX: Never fall back to a default tenant ID.
-            # ValidationError preserves the historical 400 INVALID_INPUT
-            # (TenantContextError would map to 403 via the table).
-            raise ValidationException("Tenant context required for permission check")
-        tenant_id = tenant_context.id
+                    pass
+            tenant_id = resolve_tenant_id(
+                path_tenant,
+                entity_name="Permission",
+                entity_id=permission_slug,
+                fail_closed=False,
+            )
+        if tenant_id is None:
+            # SECURITY FIX: never fall back to a default tenant ID. One
+            # no-tenant contract (P3-#14): TenantContextError — the same class
+            # ``tenant_dependency`` and ``RequestContext.require_tenant()``
+            # raise — so every no-tenant seam speaks one status (403).
+            raise denial(DenialReason.TENANT_CONTEXT_MISSING)
 
         is_superuser = current_user.is_superuser
         user_id_val = current_user.id

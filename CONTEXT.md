@@ -46,6 +46,40 @@ persistence grilling loop, 2026-09-22.)
   the ban. Currently signalled by a sentinel `limit=999999` plus
   `bypassed=True`; the sentinel is leakage and should not spread.
 
+- **Principal** — the identity behind one request, resolved exactly once and
+  never re-derived. `resolve_principal(request, db, policy, …)` in
+  `src/app/api/deps/auth.py` is the ONE entry point; bearer-token and API-key
+  are Adapters over it. `AuthContext` (`user` + `token_data` + `tenant`) is the
+  result type and lives in `src/app/core/principal.py` so services can import
+  it cycle-free. `PrincipalPolicy` (`REQUIRED` / `OPTIONAL`) is one named value
+  replacing the `strict: bool` soup, and presence is the ONLY thing it relaxes
+  — a *presented* credential that fails always refuses (C3). The tenant half
+  has one source too: RBAC no longer queries `Tenant` from
+  `request.path_params`, it passes `explicit_tenant` into the seam and lets
+  `resolve_tenant_id` resolve it (ADR-0006).
+  Seam: `src/app/core/principal.py` (relocating the type here is what deletes
+  the `core.rbac.dependencies -> api.deps` edge).
+
+- **Denial** — the single 401/403/None decision for Principal resolution:
+  `DENIAL_TABLE: Mapping[DenialReason, Denial]` in `src/app/core/principal.py`,
+  read only through `denial(reason, **fmt)`. Every refusal — both bearer flows,
+  the API-key flow, RBAC's gate, the superuser gate — resolves its exception
+  class and message from one row, so the nine entry points cannot disagree
+  about which status a condition produces. `INACTIVE_SUPERUSER` is a deliberate
+  divergence row (403, not 401) kept named rather than hidden in a second raise
+  site; messages stay byte-identical to the pre-table raises. An unmapped
+  reason fails loud (`KeyError`) — a missing row is a bug, not a policy
+  default.
+
+- **Principal provider** — the DIP hook that lets core *own* the Principal
+  dependency while api *implements* it: `PrincipalProvider` Protocol +
+  `register_principal_provider()` in `core/principal.py`, wired at the bottom
+  of `api/deps/auth.py`, with `ensure_principal_provider_registered()` run as
+  `StartupPhase("principal_gate", …)` in `core/setup.py` so missing wiring
+  fails fast at boot instead of surfacing as mass 401s. Same shape as
+  `core/security/jwt_service.py`. Required because `resolve_principal` imports
+  the module facades (`users`, `api_keys`) — which core may not.
+
 - **Issuance** — the post-authentication choreography owned by `TokenIssuer`:
   claims → token pair → refresh cookie → session registration → login audit.
   Every login door (password, passkey, magic-link, SSO, MFA completion) ends

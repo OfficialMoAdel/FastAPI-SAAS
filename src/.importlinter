@@ -21,9 +21,7 @@ ignore_imports =
     src.app.core.errors -> src.app.modules.auth.errors
     src.app.core.errors -> src.app.modules.billing.exceptions
     src.app.core.errors -> src.app.modules.storage.errors
-    src.app.core.rbac.dependencies -> src.app.api.deps
     src.app.core.rbac.dependencies -> src.app.modules.rbac.models
-    src.app.core.rbac.dependencies -> src.app.modules.tenants.models
     src.app.core.security.rate_policy -> src.app.modules.rate_limits.models
     src.app.core.security.rate_policy -> src.app.modules.rate_limits.schemas
     src.app.core.cache.warmer -> src.app.modules.rate_limits.models
