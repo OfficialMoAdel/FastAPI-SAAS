@@ -262,9 +262,8 @@ def client():
     # Cleanup after test
     reset_rate_limiter()
 
-@patch("src.app.core.security.request_admission.rate_limiter")
 @patch("src.app.core.security.request_admission.check_ban_and_rate_limit")
-def test_rate_limit_headers_allowed(mock_combined, mock_limiter, client):
+def test_rate_limit_headers_allowed(mock_combined, client):
     """Test that rate limit headers are set correctly when request is allowed.
 
     H-3: the hot path now runs ban+GCRA in one combined call; mock the new
@@ -280,9 +279,8 @@ def test_rate_limit_headers_allowed(mock_combined, mock_limiter, client):
     assert response.headers["X-RateLimit-Remaining"] == "5"
 
 
-@patch("src.app.core.security.request_admission.rate_limiter")
 @patch("src.app.core.security.request_admission.check_ban_and_rate_limit")
-def test_rate_limit_headers_exceeded(mock_combined, mock_limiter, client):
+def test_rate_limit_headers_exceeded(mock_combined, client):
     """Test that rate limit headers are set correctly when limit is exceeded.
 
     H-3: mock the combined ban+GCRA seam (see test_rate_limit_headers_allowed)."""
@@ -375,9 +373,8 @@ def test_refresh_budget_exceeded_returns_429(mock_budget, mock_ban_info, client)
 
 @patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True)
 @patch("src.app.core.security.request_admission.get_ban_info", new_callable=AsyncMock)
-@patch("src.app.core.security.request_admission.rate_limiter")
 @patch("src.app.core.security.request_admission.check_ban_and_rate_limit")
-def test_options_skips_rate_limit(mock_combined, mock_limiter, mock_ban_info, client):
+def test_options_skips_rate_limit(mock_combined, mock_ban_info, client):
     """P1-3: CORS preflight must not burn rate-limit budget. Even with the
     combined seam armed to 429, OPTIONS passes through with zero Redis RTT."""
     mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10))
@@ -410,9 +407,8 @@ def test_options_banned_ip_blocked(mock_ban_info, client):
 
 
 @patch("src.app.core.security.request_admission.get_ban_info", new_callable=AsyncMock)
-@patch("src.app.core.security.request_admission.rate_limiter")
 @patch("src.app.core.security.request_admission.check_ban_and_rate_limit")
-def test_health_path_skips_rate_limit(mock_combined, mock_limiter, mock_ban_info, client):
+def test_health_path_skips_rate_limit(mock_combined, mock_ban_info, client):
     """P1-3: orchestrator probes (/health) bypass rate limiting entirely —
     full passthrough, not even the cheap ban lookup. The bare test app has
     no /health route, so 404 proves pass-through instead of a 429."""
@@ -426,9 +422,8 @@ def test_health_path_skips_rate_limit(mock_combined, mock_limiter, mock_ban_info
 
 
 @patch("src.app.core.security.request_admission.get_ban_info", new_callable=AsyncMock)
-@patch("src.app.core.security.request_admission.rate_limiter")
 @patch("src.app.core.security.request_admission.check_ban_and_rate_limit")
-def test_exempt_subpath_skips_rate_limit(mock_combined, mock_limiter, mock_ban_info, client):
+def test_exempt_subpath_skips_rate_limit(mock_combined, mock_ban_info, client):
     """P1-3: exempt sub-paths (/api/v1/health/live) inherit the skip via the
     shared is_path_exempt prefix rule."""
     mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10))

@@ -55,6 +55,41 @@ class LuaScript:
         self.sha1 = hashlib.sha1(self.source.encode(), usedforsecurity=False).hexdigest()
 
 
+# GCRA theoretical-arrival-time core. Redis Lua scripts are self-contained --
+# there is no include/require in the Redis sandbox, so the shared arithmetic is
+# composed Python-side into each composite script rather than copy-pasted into
+# three of them. Edit the arithmetic once, all three stay in step.
+_GCRA_TAT_FRAGMENT = """
+            local tat_ms = tonumber(redis.call('GET', __GCRA_KEY__)) or now_ms
+            local new_tat_ms = math.max(now_ms, tat_ms) + emission_interval_ms
+            local allow_at_ms = new_tat_ms - burst_tolerance_ms
+
+            if allow_at_ms > now_ms then
+                local retry_after_ms = allow_at_ms - now_ms
+                return __LIMITED__
+            else
+                redis.call('SET', __GCRA_KEY__, new_tat_ms)
+                redis.call('PEXPIRE', __GCRA_KEY__, math.ceil(period_ms + emission_interval_ms))
+                local remaining = 0
+                if emission_interval_ms > 0 then
+                    remaining = math.floor((now_ms + burst_tolerance_ms - new_tat_ms) / emission_interval_ms)
+                end
+                remaining = math.max(0, math.min(remaining, limit - 1))
+                return __ALLOWED__
+            end
+"""
+
+
+def _gcra_tat(*, key: str, limited: str, allowed: str) -> str:
+    """Compose the shared GCRA core for one script's return shape."""
+    return (
+        _GCRA_TAT_FRAGMENT
+        .replace("__GCRA_KEY__", key)
+        .replace("__LIMITED__", limited)
+        .replace("__ALLOWED__", allowed)
+    )
+
+
 class LuaScriptManager:
     """Manages Redis Lua scripts with preloading and automatic fallback.
 
@@ -155,23 +190,11 @@ class LuaScriptManager:
             local period_ms = tonumber(ARGV[5])
 
             local burst_tolerance_ms = tonumber(ARGV[4])
-            local tat_ms = tonumber(redis.call('GET', key)) or now_ms
-            local new_tat_ms = math.max(now_ms, tat_ms) + emission_interval_ms
-            local allow_at_ms = new_tat_ms - burst_tolerance_ms
-
-            if allow_at_ms > now_ms then
-                local retry_after_ms = allow_at_ms - now_ms
-                return {0, 0, retry_after_ms, new_tat_ms}
-            else
-                redis.call('SET', key, new_tat_ms)
-                redis.call('PEXPIRE', key, math.ceil(period_ms + emission_interval_ms))
-                local remaining = 0
-                if emission_interval_ms > 0 then
-                    remaining = math.floor((now_ms + burst_tolerance_ms - new_tat_ms) / emission_interval_ms)
-                end
-                remaining = math.max(0, math.min(remaining, limit - 1))
-                return {1, remaining, 0, new_tat_ms}
-            end
+            """ + _gcra_tat(
+                key="key",
+                limited="{0, 0, retry_after_ms, new_tat_ms}",
+                allowed="{1, remaining, 0, new_tat_ms}",
+            ) + """
         """,
         # Token blacklist check: atomic 4-op sequence
         # (migrated from token_blacklist_cache.BLACKLIST_CHECK_LUA_SCRIPT)
@@ -412,23 +435,11 @@ class LuaScriptManager:
             local period_ms = tonumber(ARGV[5])
             local burst_tolerance_ms = tonumber(ARGV[4])
             local key = KEYS[1]
-            local tat_ms = tonumber(redis.call('GET', key)) or now_ms
-            local new_tat_ms = math.max(now_ms, tat_ms) + emission_interval_ms
-            local allow_at_ms = new_tat_ms - burst_tolerance_ms
-
-            if allow_at_ms > now_ms then
-                local retry_after_ms = allow_at_ms - now_ms
-                return {0, 0, retry_after_ms, 0, '', 0}
-            else
-                redis.call('SET', key, new_tat_ms)
-                redis.call('PEXPIRE', key, math.ceil(period_ms + emission_interval_ms))
-                local remaining = 0
-                if emission_interval_ms > 0 then
-                    remaining = math.floor((now_ms + burst_tolerance_ms - new_tat_ms) / emission_interval_ms)
-                end
-                remaining = math.max(0, math.min(remaining, limit - 1))
-                return {1, remaining, 0, 0, '', 0}
-            end
+            """ + _gcra_tat(
+                key="key",
+                limited="{0, 0, retry_after_ms, 0, '', 0}",
+                allowed="{1, remaining, 0, 0, '', 0}",
+            ) + """
         """,
         # P0-2: Blacklist + ban check + GCRA in ONE round-trip (authed hot path).
         # Merges the middleware's sequential is_token_blacklisted Lua probe +
@@ -484,22 +495,11 @@ class LuaScriptManager:
             local burst_tolerance_ms = tonumber(ARGV[base + 2])
             local period_ms = tonumber(ARGV[base + 3])
             local now_ms = tonumber(ARGV[4])
-            local tat_ms = tonumber(redis.call('GET', gcra_key)) or now_ms
-            local new_tat_ms = math.max(now_ms, tat_ms) + emission_interval_ms
-            local allow_at_ms = new_tat_ms - burst_tolerance_ms
-
-            if allow_at_ms > now_ms then
-                return {is_blacklisted, 0, 0, allow_at_ms - now_ms, 0, '', 0}
-            else
-                redis.call('SET', gcra_key, new_tat_ms)
-                redis.call('PEXPIRE', gcra_key, math.ceil(period_ms + emission_interval_ms))
-                local remaining = 0
-                if emission_interval_ms > 0 then
-                    remaining = math.floor((now_ms + burst_tolerance_ms - new_tat_ms) / emission_interval_ms)
-                end
-                remaining = math.max(0, math.min(remaining, limit - 1))
-                return {is_blacklisted, 1, remaining, 0, 0, '', 0}
-            end
+            """ + _gcra_tat(
+                key="gcra_key",
+                limited="{is_blacklisted, 0, 0, retry_after_ms, 0, '', 0}",
+                allowed="{is_blacklisted, 1, remaining, 0, 0, '', 0}",
+            ) + """
         """,
         # P2: DLQ source-filtered pop - server-side oldest-first scan + LREM.
         "dlq_pop_filtered": """

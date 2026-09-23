@@ -115,11 +115,11 @@ async def test_render_template(mock_jinja, service, mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.notifications.service.rate_limiter")
+@patch("src.app.modules.notifications.service.consume", new_callable=AsyncMock)
 @patch("src.app.core.utils.queue.pool", new_callable=AsyncMock)
 async def test_send_email_success(mock_arq_pool, mock_rate_limiter, service, mock_db):
     t_id = uuid4()
-    mock_rate_limiter.check_rate_limit = AsyncMock(return_value=(False, {}))
+    mock_rate_limiter.return_value = (False, 0, 0, False)
     mock_arq_pool.enqueue_job = AsyncMock()
     mock_db.add = MagicMock()
     mock_db.commit = AsyncMock()
@@ -154,12 +154,12 @@ async def test_send_email_skipped_by_prefs(service, mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.notifications.service.rate_limiter")
+@patch("src.app.modules.notifications.service.consume", new_callable=AsyncMock)
 async def test_send_email_rate_limit_exceeded(mock_rate_limiter, service, mock_db):
     from src.app.shared.exceptions import RateLimitExceededError
 
     t_id = uuid4()
-    mock_rate_limiter.check_rate_limit = AsyncMock(return_value=(True, {}))
+    mock_rate_limiter.return_value = (True, 0, 0, False)
     mock_db.add = MagicMock()
     mock_db.commit = AsyncMock()
 

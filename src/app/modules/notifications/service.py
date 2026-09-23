@@ -17,8 +17,8 @@ from src.app.clients.notifications import EmailMessage, SMTPProvider, get_email_
 from src.app.core.db.scoped import execute_scoped
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.redis_provider import get_redis
+from src.app.core.security.rate_policy import consume
 from src.app.core.tenancy.scope import ExplicitTenant
-from src.app.core.utils.rate_limit import rate_limiter
 from src.app.core.utils.retry import with_retry
 from src.app.modules.notifications.models import EmailTemplateOverride, Notification, NotificationStatus
 from src.app.modules.tiers.entitlement import DEFAULT_ENTITLEMENT as _DEFAULT_QUOTA
@@ -232,13 +232,16 @@ class NotificationService:
         # accepted trade-off, the rejected request consumes one hourly slot.
         rate_limit_key_min = f"notif:min:{tenant_id}" if tenant_id else f"notif:min:global:{to_email}"
         rate_limit_key_hour = f"notif:hour:{tenant_id}" if tenant_id else f"notif:hour:global:{to_email}"
-        (is_limited_min, _), (is_limited_hour, _) = await asyncio.gather(
-            rate_limiter.check_rate_limit(
+        # Cross the one rate-policy seam so these budgets honour
+        # RATE_LIMIT_ALGORITHM like every other consumer (they previously
+        # pinned the fixed-window engine regardless of configuration).
+        (is_limited_min, _, _, _), (is_limited_hour, _, _, _) = await asyncio.gather(
+            consume(
                 rate_limit_key_min,
                 EMAIL_RATE_LIMIT_PER_MINUTE,
                 EMAIL_RATE_LIMIT_MINUTE_WINDOW_SECONDS,
             ),
-            rate_limiter.check_rate_limit(
+            consume(
                 rate_limit_key_hour,
                 EMAIL_RATE_LIMIT_PER_HOUR,
                 EMAIL_RATE_LIMIT_HOUR_WINDOW_SECONDS,

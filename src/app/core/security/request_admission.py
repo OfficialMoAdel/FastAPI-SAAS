@@ -21,14 +21,18 @@ from src.app.core.security.auto_ban import (
 )
 from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
 from src.app.core.security.rate_policy import (
+    BYPASS_LIMIT,
+    BYPASS_PERIOD,
     RateLimitVerdict,
     build_rate_limit_key,
+    build_verdict,
     check_security_budget,
+    consume,
     resolve_rate_limits,
+    uses_gcra,
 )
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.path_utils import sanitize_path
-from src.app.core.utils.rate_limit import rate_limiter
 
 logger = get_logger("src.app.middleware.rate_limit")
 
@@ -99,20 +103,14 @@ class RequestAdmissionService:
                 return AdmissionOutcome(
                     "admit",
                     client_ip,
-                    RateLimitVerdict(
-                        is_limited=False,
-                        limit=999999,
-                        period=60,
-                        remaining=999999,
-                        retry_after=0,
+                    build_verdict(
                         key="whitelisted",
-                        headers={
-                            "X-RateLimit-Limit": "999999",
-                            "X-RateLimit-Remaining": "999999",
-                            "X-RateLimit-Period": "60",
-                            "X-RateLimit-Whitelisted": "true",
-                        },
+                        limit=BYPASS_LIMIT,
+                        period=BYPASS_PERIOD,
+                        is_limited=False,
+                        remaining=BYPASS_LIMIT,
                         bypassed=True,
+                        extra={"X-RateLimit-Whitelisted": "true"},
                     ),
                 )
 
@@ -125,7 +123,12 @@ class RequestAdmissionService:
             return await self._evaluate_refresh_budget(client_ip)
 
         ctx = await self._get_rate_limit_config(request)
-        if settings.security.AUTO_BAN_ENABLED and ctx.user_id and ctx.token:
+        degraded = False
+        # The merged composite hard-codes GCRA arithmetic — that is what buys
+        # its single round-trip. Taking it while the operator configured the
+        # fixed-window engine would silently serve GCRA here and fixed window
+        # everywhere else, so the algorithm gets the last word.
+        if settings.security.AUTO_BAN_ENABLED and uses_gcra() and ctx.user_id and ctx.token:
             (
                 is_blacklisted,
                 limit,
@@ -150,66 +153,37 @@ class RequestAdmissionService:
                     "Blacklisted/unknown token detected in rate limiter | user_id=%s | treating as anonymous",
                     ctx.user_id,
                 )
-                if ctx.tier_id_raw is not None:
-                    # P1: a downgraded identity must not keep premium tier
-                    # policy. The merged helper now resolves the anonymous
-                    # candidate with tier_id=None itself; this re-check is a
-                    # belt-and-braces guard for any residual mismatch (and
-                    # covers callers that pre-date the helper fix).
-                    anon_limit, anon_period = await resolve_rate_limits(
-                        ctx.path, tier_id=None, tier_name=None, user_id=None
-                    )
-                    if (anon_limit, anon_period) != (limit, period):
-                        logger.warning(
-                            "Downgraded token kept tier policy; re-checking anonymous budget"
-                            " | user_id=%s | tier_id=%s | path=%s",
-                            ctx.user_id,
-                            ctx.tier_id_raw,
-                            ctx.path,
-                        )
-                        key = build_rate_limit_key(
-                            ctx.path,
-                            user_id=None,
-                            tenant_id=ctx.tenant_id,
-                            anonymous_ip=client_ip,
-                        )
-                        is_limited, remaining, retry_after = await rate_limiter.check_rate_limit_algorithm(
-                            key, anon_limit, anon_period
-                        )
-                        limit, period = anon_limit, anon_period
             if ban_info.is_banned:
                 return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
         else:
             limit, period, key = await self._resolve_legacy_config(request, ctx)
-            if settings.security.AUTO_BAN_ENABLED:
+            if settings.security.AUTO_BAN_ENABLED and uses_gcra():
                 ban_info, (is_limited, remaining, retry_after) = await check_ban_and_rate_limit(
                     client_ip, key, limit, period
                 )
                 if ban_info.is_banned:
                     return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
             else:
-                is_limited, remaining, retry_after = await rate_limiter.check_rate_limit_algorithm(key, limit, period)
+                # Non-GCRA operators pay one extra round-trip here: the ban
+                # check and the counter run separately so the counter uses the
+                # engine they actually configured.
+                if settings.security.AUTO_BAN_ENABLED:
+                    ban_info = await get_ban_info(client_ip)
+                    if ban_info.is_banned:
+                        return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
+                is_limited, remaining, retry_after, degraded = await consume(key, limit, period)
 
-        headers = {
-            "X-RateLimit-Limit": str(limit),
-            "X-RateLimit-Remaining": str(remaining),
-            "X-RateLimit-Period": str(period),
-        }
         if is_limited:
-            if retry_after == 0:
-                retry_after = period - (int(time.time()) % period)
-            if retry_after > 0:
-                headers["Retry-After"] = str(int(retry_after))
             logger.warning("Rate limit exceeded | key=%s | limit=%s | period=%s", key, limit, period)
 
-        verdict = RateLimitVerdict(
-            is_limited=is_limited,
+        verdict = build_verdict(
+            key=key,
             limit=limit,
             period=period,
+            is_limited=is_limited,
             remaining=remaining,
             retry_after=retry_after,
-            key=key,
-            headers=headers,
+            degraded=degraded,
         )
         if is_limited:
             return await self._handle_violation(client_ip, verdict)

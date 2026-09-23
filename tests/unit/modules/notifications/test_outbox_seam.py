@@ -166,10 +166,10 @@ class TestHandleNotificationRequestEventOutbox:
 
     @pytest.mark.asyncio
     @patch("src.app.core.utils.queue.pool")
-    @patch("src.app.modules.notifications.service.rate_limiter.check_rate_limit", new_callable=AsyncMock)
+    @patch("src.app.modules.notifications.service.consume", new_callable=AsyncMock)
     async def test_outbox_row_created_and_task_enqueued(self, mock_rate, mock_arq) -> None:
         """Creates PENDING Notification record and directly enqueues send_email_task to ARQ."""
-        mock_rate.return_value = (False, {})
+        mock_rate.return_value = (False, 0, 0, False)
         mock_arq.enqueue_job = AsyncMock()
 
         mock_db = AsyncMock()
@@ -219,10 +219,10 @@ class TestHandleNotificationRequestEventOutbox:
 
     @pytest.mark.asyncio
     @patch("src.app.core.utils.queue.pool", None)
-    @patch("src.app.modules.notifications.service.rate_limiter.check_rate_limit", new_callable=AsyncMock)
+    @patch("src.app.modules.notifications.service.consume", new_callable=AsyncMock)
     async def test_outbox_marked_failed_when_queue_unavailable(self, mock_rate) -> None:
         """When ARQ is unavailable, notification is recorded as FAILED rather than lost."""
-        mock_rate.return_value = (False, {})
+        mock_rate.return_value = (False, 0, 0, False)
 
         mock_db = AsyncMock()
         mock_session_ctx = AsyncMock()
@@ -391,10 +391,10 @@ class TestAuthCriticalExemption:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("template_name", ["email_verification", "magic_link", "password_reset"])
     @patch("src.app.core.utils.queue.pool")
-    @patch("src.app.modules.notifications.service.rate_limiter.check_rate_limit", new_callable=AsyncMock)
+    @patch("src.app.modules.notifications.service.consume", new_callable=AsyncMock)
     async def test_p1_1_auth_critical_templates_bypass_preferences(self, mock_rate, mock_arq, template_name) -> None:
         """Auth-critical templates are never skipped by user preferences or quiet hours."""
-        mock_rate.return_value = (False, {})
+        mock_rate.return_value = (False, 0, 0, False)
         mock_arq.enqueue_job = AsyncMock()
 
         mock_db = AsyncMock()

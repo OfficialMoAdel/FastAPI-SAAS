@@ -32,6 +32,156 @@ class RateLimitVerdict:
     bypassed: bool = False
 
 
+# A bypassed caller never reaches a counter, so limit/period are meaningless.
+# One pair of named constants beats a bare 999999 at every call site — the
+# sentinel is a fact about Bypass, not about the caller.
+BYPASS_LIMIT = 999999
+BYPASS_PERIOD = 60
+
+
+def build_verdict(
+    *,
+    key: str,
+    limit: int,
+    period: int,
+    is_limited: bool,
+    remaining: int,
+    retry_after: int | float = 0,
+    bypassed: bool = False,
+    degraded: bool = False,
+    extra: dict[str, str] | None = None,
+) -> RateLimitVerdict:
+    """Assemble the canonical rate-limit verdict.
+
+    The ONE place a counter result becomes a Verdict. Header grammar and the
+    ``retry_after == 0`` fallback live here and nowhere else — both the
+    per-request admission path and the endpoint Security budgets cross this
+    seam, so they cannot drift apart.
+
+    Args:
+        key: Bucket key the counter was consumed from.
+        limit: Configured limit for the bucket.
+        period: Window in seconds.
+        is_limited: Whether the caller is over budget.
+        remaining: Tokens left, as reported by the engine.
+        retry_after: Seconds until the caller may retry (0 = unknown).
+        bypassed: Operator-declared whitelist skipped the counter. A bypassed
+            verdict is never limited — the ban boundary is enforced elsewhere.
+        degraded: The configured engine failed and the fixed-window engine
+            served the check. Surfaced as a response header so the swap is
+            observable instead of silent.
+        extra: Additional headers for a specific caller (e.g. the whitelist
+            marker). Caller-specific, never part of the core grammar.
+    """
+    resolved_retry_after = int(retry_after)
+    if is_limited and resolved_retry_after == 0:
+        # Both engines can report "limited" with no retry hint when the window
+        # is sub-second. Truncating to 0 told clients to retry immediately;
+        # fall back to the remainder of the current period.
+        resolved_retry_after = period - (int(time.time()) % period) if period else 0
+
+    headers = {
+        "X-RateLimit-Limit": str(limit),
+        "X-RateLimit-Remaining": str(remaining),
+        "X-RateLimit-Period": str(period),
+    }
+    if is_limited and resolved_retry_after > 0:
+        headers["Retry-After"] = str(resolved_retry_after)
+    if degraded:
+        headers["X-RateLimit-Algorithm"] = "fixed-window (degraded)"
+    if bypassed:
+        headers["X-RateLimit-Bypassed"] = "true"
+    if extra:
+        headers.update(extra)
+
+    return RateLimitVerdict(
+        is_limited=is_limited,
+        limit=limit,
+        period=period,
+        remaining=remaining,
+        retry_after=resolved_retry_after,
+        key=key,
+        headers=headers,
+        bypassed=bypassed,
+    )
+
+
+def uses_gcra() -> bool:
+    """Whether the operator configured the GCRA engine.
+
+    The ONE place that answers "which engine". The merged ban/blacklist Lua
+    composites hard-code GCRA arithmetic (that is what buys their single
+    round-trip), so callers must consult this before taking a composite path
+    — otherwise ``RATE_LIMIT_ALGORITHM=fixed_window`` silently gets GCRA on
+    the authenticated hot path and fixed window everywhere else.
+    """
+    return settings.rate_limit.RATE_LIMIT_ALGORITHM.lower() == "gcra"
+
+
+async def consume(
+    key: str,
+    limit: int,
+    period: int,
+    *,
+    fail_closed: bool = False,
+    limiter: Any = None,
+) -> tuple[bool, int, int, bool]:
+    """Consume one token from a rate-limit bucket.
+
+    The ONE place that chooses an engine, and the ONE place a GCRA failure can
+    degrade to the fixed-window engine. Every rate-limit consumer in the app
+    crosses this seam, so algorithm policy cannot leak to call sites.
+
+    Args:
+        key: Bucket key.
+        limit: Configured limit.
+        period: Window in seconds.
+        fail_closed: Override the operator fail-open default (brute-force
+            budgets pass True so a Redis outage maps to limited).
+        limiter: Injected engine. The test seam — an injected engine replaces
+            dispatch entirely and must expose ``check_rate_limit_algorithm``.
+
+    Returns:
+        ``(is_limited, remaining, retry_after, degraded)``.
+    """
+    if limiter is not None:
+        is_limited, remaining, retry_after = await limiter.check_rate_limit_algorithm(
+            key, limit, period, fail_closed=fail_closed
+        )
+        return is_limited, remaining, retry_after, False
+
+    degraded = False
+    if uses_gcra():
+        from src.app.core.utils.gcra_rate_limit import get_gcra_rate_limiter
+
+        gcra = get_gcra_rate_limiter()
+        if gcra is not None:
+            try:
+                result = await gcra.check_rate_limit(key, limit, period, fail_closed=fail_closed)
+                # R6 FIX: round UP so sub-second retry windows are not
+                # truncated to 0 (0 triggered the fixed-window formula
+                # upstream, reporting e.g. 400ms as a full period).
+                import math
+
+                retry_after = int(math.ceil(result.retry_after)) if result.is_limited else 0
+                return result.is_limited, result.remaining, retry_after, False
+            except Exception as exc:
+                # A silent swap to a different algorithm is worse than the
+                # outage it hides: log at error level and mark the verdict so
+                # the degradation is visible in the response.
+                logger.error(
+                    "GCRA rate limit check failed; degrading to fixed window | key=%s | error=%s",
+                    key,
+                    exc,
+                )
+                degraded = True
+
+    is_limited, current_count = await default_rate_limiter.check_rate_limit(
+        key, limit, period, fail_closed=fail_closed
+    )
+    return is_limited, max(0, limit - current_count), 0, degraded
+
+
 async def resolve_rate_limits(
     path: str,
     tier_id: int | str | None = None,
@@ -214,42 +364,31 @@ async def check_security_budget(
     # RATE_LIMIT_FAIL_OPEN=True. The explicit flag threads through the
     # limiter (fixed-window + GCRA paths); general path policy stays
     # operator-controlled.
-    effective_limiter: Any = limiter or default_rate_limiter
     fail_closed = budget in settings.rate_limit.SECURITY_BUDGETS_FAIL_CLOSED
-    try:
-        is_limited, remaining, retry_after = await effective_limiter.check_rate_limit_algorithm(
-            key, limit, period, fail_closed=fail_closed
-        )
-    except TypeError:
-        # Test doubles with the old 3-arg signature: fall back positionally.
-        is_limited, remaining, retry_after = await effective_limiter.check_rate_limit_algorithm(key, limit, period)
-    if is_limited and retry_after == 0:
-        retry_after = period - (int(time.time()) % period)
+    is_limited, remaining, retry_after, degraded = await consume(
+        key, limit, period, fail_closed=fail_closed, limiter=limiter
+    )
 
-    headers = {
-        "X-RateLimit-Limit": str(limit),
-        "X-RateLimit-Remaining": str(remaining),
-        "X-RateLimit-Period": str(period),
-    }
-    if is_limited and retry_after > 0:
-        headers["Retry-After"] = str(int(retry_after))
-
-    return RateLimitVerdict(
-        is_limited=is_limited,
+    return build_verdict(
+        key=key,
         limit=limit,
         period=period,
+        is_limited=is_limited,
         remaining=remaining,
         retry_after=retry_after,
-        key=key,
-        headers=headers,
-        bypassed=False,
+        degraded=degraded,
     )
 
 
 __all__ = [
+    "BYPASS_LIMIT",
+    "BYPASS_PERIOD",
     "RateLimitVerdict",
     "build_rate_limit_key",
+    "build_verdict",
     "check_security_budget",
+    "consume",
     "resolve_anonymous_user_id",
     "resolve_rate_limits",
+    "uses_gcra",
 ]

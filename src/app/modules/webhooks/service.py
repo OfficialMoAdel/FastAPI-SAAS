@@ -526,8 +526,8 @@ class WebhookService:
         prevents timing-based endpoint enumeration (404s still consume
         quota).
         """
+        from src.app.core.security.rate_policy import consume
         from src.app.core.utils.path_utils import sanitize_path
-        from src.app.core.utils.rate_limit import rate_limiter
         from src.app.modules.tiers.entitlement import resolve_path_limit
         from src.app.shared.exceptions import RateLimitExceededError
 
@@ -541,7 +541,12 @@ class WebhookService:
         # entitlement seam (same row query and 10/60 fallback as before).
         limit, period = await resolve_path_limit(self.db, tier_id, rate_limit_path)
 
-        is_limited, _ = await rate_limiter.check_rate_limit(f"webhook:test:{tenant_id}", limit, period)
+        # Cross the one rate-policy seam so this budget honours
+        # RATE_LIMIT_ALGORITHM (it previously pinned the fixed-window engine
+        # regardless of configuration).
+        is_limited, _remaining, _retry_after, _degraded = await consume(
+            f"webhook:test:{tenant_id}", limit, period
+        )
         if is_limited:
             raise RateLimitExceededError(f"Rate limit exceeded: {limit} tests per {period} seconds", retry_after=period)
 
