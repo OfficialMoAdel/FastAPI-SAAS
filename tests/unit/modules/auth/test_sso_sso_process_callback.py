@@ -8,6 +8,20 @@ from src.app.modules.auth.providers.apple import AppleProvider
 from src.app.modules.auth.schemas import SSOProvider
 from src.app.modules.auth.services.mfa import MFAService
 from src.app.modules.auth.services.sso import SSOService
+
+
+def _dumpable(user):
+    """Wrap a raw user dict the way UserDirectory seam methods return it.
+
+    Seam methods return validated models; callers immediately ``.model_dump()``.
+    Mocking at the seam therefore means returning an object whose
+    ``model_dump()`` yields the fixture dict (``None`` stays ``None``).
+    """
+    if user is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = user
+    return m
 from src.app.shared.exceptions import ValidationError
 
 
@@ -93,6 +107,7 @@ async def test_process_callback_exchange_failed(
 @patch("src.app.modules.auth.services.sso_settings.sso_settings_service.get_decrypted_settings")
 @patch.object(SSOService, "_get_provider_instance")
 @patch("src.app.modules.auth.services.sso.crud_user_sso_connections")
+@patch("src.app.modules.auth.services.sso.UserDirectory")
 @patch("src.app.modules.auth.services.sso.UserService")
 @patch("src.app.modules.auth.services.tokens.create_access_token")
 @patch("src.app.modules.auth.services.tokens.create_refresh_token")
@@ -100,6 +115,7 @@ async def test_process_callback_success(
     mock_create_refresh,
     mock_create_access,
     mock_user_service_cls,
+    mock_user_dir_cls,
     mock_crud_sso,
     mock_get_provider,
     mock_get_settings,
@@ -131,8 +147,9 @@ async def test_process_callback_success(
     mock_crud_sso.get_by_criteria = AsyncMock(return_value=MagicMock(user_id=1, id=uuid4()))
     mock_crud_sso.update = AsyncMock()
 
+    mock_user_dir = MagicMock()
     mock_user_svc = MagicMock()
-    mock_user_svc.get = AsyncMock(
+    mock_user_dir.by_id = AsyncMock(
         return_value={
             "id": 1,
             "email": "test@example.com",
@@ -142,8 +159,8 @@ async def test_process_callback_success(
             "tenant_id": uuid4(),
         }
     )
-    mock_user_svc.get_user_auth_info = AsyncMock(
-        return_value={
+    mock_user_dir.auth_info = AsyncMock(
+        return_value=_dumpable({
             "id": 1,
             "email": "test@example.com",
             "username": "testuser",
@@ -152,8 +169,9 @@ async def test_process_callback_success(
             "tier_id": 1,
             "token_version": 1,
             "is_active": True,
-        }
+        })
     )
+    mock_user_dir_cls.return_value = mock_user_dir
     mock_user_service_cls.return_value = mock_user_svc
 
     mock_create_access.return_value = "jwt_access"
@@ -178,6 +196,7 @@ async def test_process_callback_success(
 @patch("src.app.modules.auth.services.sso_settings.sso_settings_service.get_decrypted_settings")
 @patch.object(SSOService, "_get_provider_instance")
 @patch("src.app.modules.auth.services.sso.crud_user_sso_connections")
+@patch("src.app.modules.auth.services.sso.UserDirectory")
 @patch("src.app.modules.auth.services.sso.UserService")
 @patch("src.app.modules.auth.services.tokens.create_access_token")
 @patch("src.app.modules.auth.services.tokens.create_refresh_token")
@@ -185,6 +204,7 @@ async def test_process_callback_connect_mode(
     mock_create_refresh,
     mock_create_access,
     mock_user_service_cls,
+    mock_user_dir_cls,
     mock_crud_sso,
     mock_get_provider,
     mock_get_settings,
@@ -216,8 +236,9 @@ async def test_process_callback_connect_mode(
     mock_crud_sso.get_by_criteria = AsyncMock(return_value=None)
     mock_crud_sso.create = AsyncMock()
 
+    mock_user_dir = MagicMock()
     mock_user_svc = MagicMock()
-    mock_user_svc.get = AsyncMock(
+    mock_user_dir.by_id = AsyncMock(
         return_value={
             "id": 2,
             "email": "github@example.com",
@@ -227,8 +248,8 @@ async def test_process_callback_connect_mode(
             "tenant_id": uuid4(),
         }
     )
-    mock_user_svc.get_user_auth_info = AsyncMock(
-        return_value={
+    mock_user_dir.auth_info = AsyncMock(
+        return_value=_dumpable({
             "id": 2,
             "email": "github@example.com",
             "username": "ghuser",
@@ -237,8 +258,9 @@ async def test_process_callback_connect_mode(
             "tier_id": 1,
             "token_version": 1,
             "is_active": True,
-        }
+        })
     )
+    mock_user_dir_cls.return_value = mock_user_dir
     mock_user_service_cls.return_value = mock_user_svc
 
     mock_create_access.return_value = "jwt_access"
@@ -262,6 +284,7 @@ async def test_process_callback_connect_mode(
 @patch("src.app.modules.auth.services.sso_settings.sso_settings_service.get_decrypted_settings")
 @patch.object(SSOService, "_get_provider_instance")
 @patch("src.app.modules.auth.services.sso.crud_user_sso_connections")
+@patch("src.app.modules.auth.services.sso.UserDirectory")
 @patch("src.app.modules.auth.services.sso.UserService")
 @patch("src.app.modules.auth.services.tokens.create_access_token")
 @patch("src.app.modules.auth.services.tokens.create_refresh_token")
@@ -269,6 +292,7 @@ async def test_process_callback_apple_custom_flow(
     mock_create_refresh,
     mock_create_access,
     mock_user_service_cls,
+    mock_user_dir_cls,
     mock_crud_sso,
     mock_get_provider,
     mock_get_settings,
@@ -300,9 +324,10 @@ async def test_process_callback_apple_custom_flow(
     mock_crud_sso.get_by_criteria = AsyncMock(return_value=None)
     mock_crud_sso.create = AsyncMock()
 
+    mock_user_dir = MagicMock()
     mock_user_svc = MagicMock()
     # Mocking new user creation logic
-    mock_user_svc.get_by_email = AsyncMock(return_value=None)
+    mock_user_dir.by_email = AsyncMock(return_value=None)
     mock_new_user = MagicMock()
     mock_new_user.id = 3
     mock_new_user.email = "apple@example.com"
@@ -312,8 +337,8 @@ async def test_process_callback_apple_custom_flow(
     mock_new_user.is_active = True
     mock_user_svc.create = AsyncMock(return_value=mock_new_user)
 
-    mock_user_svc.get_user_auth_info = AsyncMock(
-        return_value={
+    mock_user_dir.auth_info = AsyncMock(
+        return_value=_dumpable({
             "id": 3,
             "email": "apple@example.com",
             "username": "appleuser",
@@ -322,8 +347,9 @@ async def test_process_callback_apple_custom_flow(
             "tier_id": 2,
             "token_version": 1,
             "is_active": True,
-        }
+        })
     )
+    mock_user_dir_cls.return_value = mock_user_dir
     mock_user_service_cls.return_value = mock_user_svc
     # _create_sso_user awaits user_svc.crud.update -> must be awaitable
     mock_user_svc.crud.update = AsyncMock()

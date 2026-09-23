@@ -191,7 +191,9 @@ class TestRegistrationGate:
         from src.app.core.db.database import async_get_db
 
         mock_db = AsyncMock()
-        mock_db.scalar = AsyncMock(return_value=tenant_user_rows)
+        mock_gate_count = Mock()
+        mock_gate_count.scalar.return_value = tenant_user_rows
+        mock_db.execute = AsyncMock(return_value=mock_gate_count)
         app.dependency_overrides[async_get_db] = lambda: mock_db
         monkeypatch.setattr(
             "src.app.modules.auth.services.registration_gate.get_current_tenant", lambda: self._mock_tenant()

@@ -9,6 +9,7 @@ Disconnect provider: Remove SSO provider from account (with last-auth-method che
 """
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -157,10 +158,12 @@ class TestCanDisconnectLogic:
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch("src.app.modules.auth.services.sso.UserService") as mock_user_service_cls:
+        with patch("src.app.modules.auth.services.sso.UserDirectory") as mock_user_service_cls:
             # Mock user service to return user with password
             mock_user_service = MagicMock()
-            mock_user_service.get = AsyncMock(return_value={"id": 123, "hashed_password": "hashed_pw_value"})
+            mock_user_service.by_id = AsyncMock(
+                return_value=SimpleNamespace(**{"id": 123, "hashed_password": "hashed_pw_value"})
+            )
             mock_user_service_cls.return_value = mock_user_service
 
             result = await service._can_disconnect(
@@ -177,10 +180,10 @@ class TestCanDisconnectLogic:
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch("src.app.modules.auth.services.sso.UserService") as mock_user_service_cls:
+        with patch("src.app.modules.auth.services.sso.UserDirectory") as mock_user_service_cls:
             # Mock user service to return user without password
             mock_user_service = MagicMock()
-            mock_user_service.get = AsyncMock(return_value={"id": 123, "hashed_password": None})
+            mock_user_service.by_id = AsyncMock(return_value=SimpleNamespace(**{"id": 123, "hashed_password": None}))
             mock_user_service_cls.return_value = mock_user_service
 
             with patch(
@@ -204,10 +207,10 @@ class TestCanDisconnectLogic:
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch("src.app.modules.auth.services.sso.UserService") as mock_user_service_cls:
+        with patch("src.app.modules.auth.services.sso.UserDirectory") as mock_user_service_cls:
             # Mock user service to return user without password
             mock_user_service = MagicMock()
-            mock_user_service.get = AsyncMock(return_value={"id": 123, "hashed_password": None})
+            mock_user_service.by_id = AsyncMock(return_value=SimpleNamespace(**{"id": 123, "hashed_password": None}))
             mock_user_service_cls.return_value = mock_user_service
 
             with patch(

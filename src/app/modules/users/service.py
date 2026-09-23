@@ -18,11 +18,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from src.app.core.db.scoped import execute_scoped
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.logger import get_logger
 from src.app.core.principal import AuthenticatedUser
 from src.app.core.security import blacklist_token, get_password_hash
 from src.app.core.tenancy.context import get_current_tenant, require_tenant_match
+from src.app.core.tenancy.scope import ExplicitTenant, Unscoped
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules._base.service import fetch_page_with_total
 from src.app.modules.audit_logs import AuditGuarantee, audit
@@ -38,10 +40,7 @@ logger = get_logger(__name__)
 
 from src.app.modules.users.cache import (
     UserCacheInvalidator,
-    _user_auth_cache_key,
-    _user_cache_key,
     _user_email_cache_key,
-    _user_username_cache_key,
 )
 
 
@@ -220,10 +219,13 @@ class UserService:
             or_(User.email == user.email, User.username == user.username), User.is_deleted.is_(False)
         )
 
-        from src.app.core.db.scoped import criterion
-
-        stmt = stmt.where(criterion(User, tenant.id if tenant else None, allow_unscoped=True))
-        existing_user = await self.db.scalar(stmt)
+        scope = (
+            ExplicitTenant(tenant_id=tenant.id, reason="legacy-criterion:User")
+            if tenant is not None
+            else Unscoped(reason="legacy-criterion:User")
+        )
+        dup_result = await execute_scoped(stmt, db=self.db, model=User, scope=scope)
+        existing_user = dup_result.scalar()
 
         if existing_user:
             # S-M2: uniform duplicate response — which field collided is an
@@ -255,8 +257,13 @@ class UserService:
                 or_(User.email == user.email, User.username == user.username),
                 User.is_deleted.is_(False),
             )
-            read_stmt = read_stmt.where(criterion(User, tenant.id if tenant else None, allow_unscoped=True))
-            result = (await self.db.execute(read_stmt)).scalar_one_or_none()
+            scope = (
+                ExplicitTenant(tenant_id=tenant.id, reason="legacy-criterion:User")
+                if tenant is not None
+                else Unscoped(reason="legacy-criterion:User")
+            )
+            read_result = await execute_scoped(read_stmt, db=self.db, model=User, scope=scope)
+            result: User | None = read_result.scalar_one_or_none()
             if result is None:
                 raise RuntimeError("User row unreadable immediately after successful commit")
 
@@ -329,25 +336,10 @@ class UserService:
         dict[str, Any] | None
             User dict with tier info, or None if not found
         """
-        identifier = email if email else username
-        if not identifier:
-            return None
+        from src.app.modules.users.directory import UserDirectory
 
-        cache_key = _user_auth_cache_key(identifier)
-
-        # Try cache
-        cached = await self._get_cached_user(cache_key)
-        if cached:
-            return cached
-
-        # Fetch from DB via the tier-eager CRUD (H-4: repository indirection removed)
-        user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, username=username, email=email)
-        if not user_with_tier:
-            return None
-
-        # Cache it
-        await UserCacheInvalidator.cache_user_auth_info(cache_key, user_with_tier)
-        return user_with_tier
+        info = await UserDirectory(self.db).auth_info(username=username, email=email)
+        return info.model_dump(mode="json") if info else None
 
     async def get_active_user(
         self,
@@ -380,14 +372,10 @@ class UserService:
             Explicit tenant scope for worker paths without an active tenant
             context. Ignored when a context tenant is active.
         """
-        return await self.crud.get_user_with_tier_eager(
-            db=self.db,
-            id=id,
-            username=username,
-            email=email,
-            require_active=True,
-            tenant_id=tenant_id,
-        )
+        from src.app.modules.users.directory import UserDirectory
+
+        user = await UserDirectory(self.db).active(id=id, username=username, email=email, tenant_id=tenant_id)
+        return user.model_dump(mode="json") if user else None
 
     async def get_tenant_user(
         self,
@@ -405,14 +393,10 @@ class UserService:
         (strip roles from deactivated users). Authentication paths keep
         using :meth:`get_active_user`.
         """
-        return await self.crud.get_user_with_tier_eager(
-            db=self.db,
-            id=id,
-            username=username,
-            email=email,
-            require_active=False,
-            tenant_id=tenant_id,
-        )
+        from src.app.modules.users.directory import UserDirectory
+
+        user = await UserDirectory(self.db).member(id=id, username=username, email=email, tenant_id=tenant_id)
+        return user.model_dump(mode="json") if user else None
 
     async def get_by_username(self, username: str) -> dict[str, Any]:
         """Get a user by username with Redis caching.
@@ -432,20 +416,9 @@ class UserService:
             If user not found
         """
 
-        # Try cache first - return cached data directly to avoid DB query
-        cached = await self._get_cached_user(_user_username_cache_key(username))
-        if cached:
-            logger.debug("Cache hit for username", username=username)
-            return cached
+        from src.app.modules.users.directory import UserDirectory
 
-        db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
-        if db_user is None:
-            raise ModelNotFoundError("User", username)
-
-        await self._cache_user(db_user)
-        from src.app.modules.users.schemas import UserRead
-
-        return UserRead.model_validate(db_user).model_dump(mode="json")
+        return (await UserDirectory(self.db).by_username(username)).model_dump(mode="json")
 
     async def get(self, user_id: Any) -> dict[str, Any] | None:
         """Get a user by ID with Redis caching.
@@ -460,19 +433,10 @@ class UserService:
         dict[str, Any] | None
             User dict or None if not found
         """
-        # Try cache first - return cached data directly to avoid DB query
-        cached = await self._get_cached_user(_user_cache_key(user_id))
-        if cached:
-            logger.debug("Cache hit for user", user_id=user_id)
-            return cached
+        from src.app.modules.users.directory import UserDirectory
 
-        user = await self.crud.get(db=self.db, id=user_id, is_deleted=False)
-        if user:
-            await self._cache_user(user)
-            from src.app.modules.users.schemas import UserRead
-
-            return UserRead.model_validate(user).model_dump(mode="json")
-        return None
+        user = await UserDirectory(self.db).by_id(user_id)
+        return user.model_dump(mode="json") if user else None
 
     async def get_profile(
         self,
@@ -485,19 +449,10 @@ class UserService:
         Cross-tenant lookups raise ModelNotFoundError so they are
         indistinguishable from nonexistent users (404, not 403).
         """
-        try:
-            user = await self.get(int(identifier))
-        except (ValueError, TypeError):
-            try:
-                user = await self.get_by_username(identifier)
-            except ModelNotFoundError:
-                user = None
-        if user is None:
-            raise ModelNotFoundError("User", identifier)
-        user_tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
-        if tenant_id is not None and str(user_tenant_id) != str(tenant_id):
-            raise ModelNotFoundError("User", identifier)
-        return user
+        from src.app.modules.users.directory import UserDirectory
+
+        user = await UserDirectory(self.db).profile(identifier, tenant_id=tenant_id)
+        return user.model_dump(mode="json")
 
     async def resolve_current_profile(self, current_user: Any) -> dict[str, Any] | None:
         """Resolve the full profile for the authenticated principal.
@@ -970,11 +925,13 @@ class UserService:
         # SECURITY FIX: Filter by tenant to prevent cross-tenant data exposure.
         # The /{id}/rate-limits route is superuser-only with no RequestContext
         # (superusers see all tenants), so the unscoped hatch stays here.
-        from src.app.core.db.scoped import criterion
-
         tenant = get_current_tenant()
-        stmt = stmt.where(criterion(User, tenant.id if tenant else None, allow_unscoped=True))
-        result = await self.db.execute(stmt)
+        scope = (
+            ExplicitTenant(tenant_id=tenant.id, reason="legacy-criterion:User")
+            if tenant is not None
+            else Unscoped(reason="legacy-criterion:User")
+        )
+        result = await execute_scoped(stmt, db=self.db, model=User, scope=scope)
         db_user = result.unique().scalar_one_or_none()
 
         if db_user is None:

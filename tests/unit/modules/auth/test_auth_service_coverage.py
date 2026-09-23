@@ -24,6 +24,15 @@ from src.app.modules.auth.services.mfa import MFAService
 # ============================================================================
 
 
+def _dumpable(d):
+    """Wrap a user fixture dict as a directory return (model with .model_dump)."""
+    if d is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = d
+    return m
+
+
 @pytest.fixture
 def auth_service():
     """Create AuthService instance."""
@@ -85,31 +94,30 @@ class TestAuthenticateUser:
     async def test_authenticate_user_with_email(self, auth_service, mock_db):
         """Test authenticate_user with email format (line 90)."""
         mock_user_service = MagicMock()
-        mock_user_service.get_user_auth_info = AsyncMock(
-            return_value={
+        mock_user_service.auth_info = AsyncMock(
+            return_value=_dumpable({
                 "id": 1,
                 "username": "testuser",
                 "email": "test@example.com",
                 "hashed_password": "$2b$12$validhash",
                 "is_active": True,
-            }
-        )
+            }))
 
-        with patch("src.app.modules.auth.service.UserService", return_value=mock_user_service):
+        with patch("src.app.modules.auth.service.UserDirectory", return_value=mock_user_service):
             with patch("src.app.modules.auth.service.verify_password", new_callable=AsyncMock) as mock_verify:
                 mock_verify.return_value = True
                 result = await auth_service.authenticate_user("test@example.com", "password", mock_db)
 
                 assert result is not None
-                mock_user_service.get_user_auth_info.assert_called_once_with(email="test@example.com")
+                mock_user_service.auth_info.assert_called_once_with(email="test@example.com")
 
     @pytest.mark.asyncio
     async def test_authenticate_user_not_found_uses_dummy_hash(self, auth_service, mock_db):
         """Test that non-existent user uses dummy hash for timing attack prevention."""
         mock_user_service = MagicMock()
-        mock_user_service.get_user_auth_info = AsyncMock(return_value=None)
+        mock_user_service.auth_info = AsyncMock(return_value=_dumpable(None))
 
-        with patch("src.app.modules.auth.service.UserService", return_value=mock_user_service):
+        with patch("src.app.modules.auth.service.UserDirectory", return_value=mock_user_service):
             with patch("src.app.modules.auth.service.verify_password", new_callable=AsyncMock) as mock_verify:
                 result = await auth_service.authenticate_user("nonexistent@test.com", "wrongpassword", mock_db)
 
@@ -341,13 +349,13 @@ class TestRefreshAccessToken:
         }
 
         mock_user_service = MagicMock()
-        mock_user_service.get_user_auth_info = AsyncMock(return_value=mock_db_user)
+        mock_user_service.auth_info = AsyncMock(return_value=_dumpable(mock_db_user))
 
         with patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify:
             mock_verify.return_value = mock_user_data
 
             with patch("src.app.core.security.blacklist_token", new_callable=AsyncMock):
-                with patch("src.app.modules.auth.service.UserService", return_value=mock_user_service):
+                with patch("src.app.modules.auth.service.UserDirectory", return_value=mock_user_service):
                     with patch(
                         "src.app.modules.auth.services.tokens.create_access_token", new_callable=AsyncMock
                     ) as mock_create:
@@ -423,13 +431,13 @@ class TestLogout:
         mock_user_data.username_or_email = "testuser"
 
         mock_user_service = MagicMock()
-        mock_user_service.get_user_auth_info = AsyncMock(return_value=None)
+        mock_user_service.auth_info = AsyncMock(return_value=_dumpable(None))
 
         with patch("src.app.modules.auth.service.blacklist_tokens", new_callable=AsyncMock):
             with patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify:
                 mock_verify.return_value = mock_user_data
 
-                with patch("src.app.modules.auth.service.UserService", return_value=mock_user_service):
+                with patch("src.app.modules.auth.service.UserDirectory", return_value=mock_user_service):
                     # Should not raise even if user not found
                     result = await auth_service.logout(
                         access_token="access_token",
@@ -457,13 +465,13 @@ class TestLogout:
         }
 
         mock_user_service = MagicMock()
-        mock_user_service.get_user_auth_info = AsyncMock(return_value=mock_db_user)
+        mock_user_service.auth_info = AsyncMock(return_value=_dumpable(mock_db_user))
 
         with patch("src.app.modules.auth.service.blacklist_tokens", new_callable=AsyncMock):
             with patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify:
                 mock_verify.return_value = mock_user_data
 
-                with patch("src.app.modules.auth.service.UserService", return_value=mock_user_service):
+                with patch("src.app.modules.auth.service.UserDirectory", return_value=mock_user_service):
                     with patch("src.app.core.security.session_manager.session_manager") as mock_session_mgr:
                         mock_session_mgr.invalidate_session = AsyncMock(side_effect=RedisError("Redis error"))
 
@@ -543,9 +551,9 @@ class TestChangePassword:
 
         mock_db.get = AsyncMock(return_value=None)
 
-        with patch("src.app.modules.auth.services.passwords.UserService") as mock_get_service:
+        with patch("src.app.modules.auth.services.passwords.UserDirectory") as mock_get_service:
             mock_user_service = MagicMock()
-            mock_user_service.get_active_user = AsyncMock(return_value=None)
+            mock_user_service.active = AsyncMock(return_value=_dumpable(None))
             mock_get_service.return_value = mock_user_service
 
             with pytest.raises(UnauthorizedError) as exc_info:
@@ -563,11 +571,11 @@ class TestChangePassword:
         """Test change password with inactive user."""
         from src.app.shared.exceptions import UnauthorizedError
 
-        with patch("src.app.modules.auth.services.passwords.UserService") as mock_get_service:
+        with patch("src.app.modules.auth.services.passwords.UserDirectory") as mock_get_service:
             mock_user_service = MagicMock()
             # The active-gated seam filters inactive users out (returns None),
             # so an inactive user hits the same "not found" path.
-            mock_user_service.get_active_user = AsyncMock(return_value=None)
+            mock_user_service.active = AsyncMock(return_value=_dumpable(None))
             mock_get_service.return_value = mock_user_service
 
             with pytest.raises(UnauthorizedError):
@@ -582,9 +590,9 @@ class TestChangePassword:
     @pytest.mark.asyncio
     async def test_request_password_reset_user_not_found(self, password_service, mock_db):
         """Test password reset request for non-existent user - still returns success."""
-        with patch("src.app.modules.auth.services.passwords.UserService") as mock_get_service:
+        with patch("src.app.modules.auth.services.passwords.UserDirectory") as mock_get_service:
             mock_user_service = MagicMock()
-            mock_user_service.get_active_user = AsyncMock(return_value=None)
+            mock_user_service.active = AsyncMock(return_value=_dumpable(None))
             mock_get_service.return_value = mock_user_service
 
             with patch("src.app.modules.auth.services.passwords.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
@@ -604,9 +612,9 @@ class TestChangePassword:
         """Test password reset for inactive user - returns success for security."""
         # Note: the active-gated named-lookup seam filters inactive users out,
         # so this tests the security timing equalization path
-        with patch("src.app.modules.auth.services.passwords.UserService") as mock_get_service:
+        with patch("src.app.modules.auth.services.passwords.UserDirectory") as mock_get_service:
             mock_user_service = MagicMock()
-            mock_user_service.get_active_user = AsyncMock(return_value=None)
+            mock_user_service.active = AsyncMock(return_value=_dumpable(None))
             mock_get_service.return_value = mock_user_service
 
             with patch("src.app.modules.auth.services.passwords.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
@@ -830,11 +838,16 @@ class TestSendVerificationEmail:
     @pytest.mark.asyncio
     async def test_send_verification_email_user_not_found_or_verified(self, email_service, mock_db):
         """Test verification email for non-existent or already verified user (line 825)."""
-        with patch("src.app.modules.auth.services.email_verification.UserService") as mock_get_service:
+        with (
+            patch("src.app.modules.auth.services.email_verification.UserDirectory") as mock_get_service,
+            patch("src.app.modules.auth.services.email_verification.UserService") as mock_svc_cls,
+        ):
             mock_user_service = MagicMock()
             mock_user_service.crud = MagicMock()
-            mock_user_service.crud.get = AsyncMock(return_value=None)
+            mock_user_service.by_email = AsyncMock(return_value=_dumpable(None))
+            mock_user_service.by_id = AsyncMock(return_value=_dumpable(None))
             mock_get_service.return_value = mock_user_service
+            mock_svc_cls.return_value = mock_user_service
 
             with patch(
                 "src.app.modules.auth.services.email_verification.asyncio.sleep", new_callable=AsyncMock
@@ -861,10 +874,15 @@ class TestSendVerificationEmail:
             "is_active": True,
         }
 
-        with patch("src.app.modules.auth.services.email_verification.UserService") as mock_get_service:
+        with (
+            patch("src.app.modules.auth.services.email_verification.UserDirectory") as mock_get_service,
+            patch("src.app.modules.auth.services.email_verification.UserService") as mock_svc_cls,
+        ):
             mock_user_service = MagicMock()
-            mock_user_service.crud.get = AsyncMock(return_value=mock_user)
+            mock_user_service.by_email = AsyncMock(return_value=_dumpable(mock_user))
+            mock_user_service.by_id = AsyncMock(return_value=_dumpable(mock_user))
             mock_get_service.return_value = mock_user_service
+            mock_svc_cls.return_value = mock_user_service
 
             with patch(
                 "src.app.modules.auth.services.email_verification.asyncio.sleep", new_callable=AsyncMock
@@ -946,10 +964,15 @@ class TestVerifyEmail:
 
         with patch("src.app.modules.auth.services.email_verification.select"):
             with patch("src.app.modules.auth.services.email_verification.EmailVerificationToken"):
-                with patch("src.app.modules.auth.services.email_verification.UserService") as mock_get_service:
+                with (
+                    patch("src.app.modules.auth.services.email_verification.UserDirectory") as mock_get_service,
+                    patch("src.app.modules.auth.services.email_verification.UserService") as mock_svc_cls,
+                ):
                     mock_user_service = MagicMock()
-                    mock_user_service.crud.get = AsyncMock(return_value=None)
+                    mock_user_service.by_email = AsyncMock(return_value=_dumpable(None))
+                    mock_user_service.by_id = AsyncMock(return_value=_dumpable(None))
                     mock_get_service.return_value = mock_user_service
+                    mock_svc_cls.return_value = mock_user_service
                     mock_db.execute = AsyncMock(return_value=mock_result)
 
                     with pytest.raises(UnauthorizedError) as exc_info:
@@ -981,12 +1004,17 @@ class TestVerifyEmail:
 
         with patch("src.app.modules.auth.services.email_verification.select"):
             with patch("src.app.modules.auth.services.email_verification.EmailVerificationToken"):
-                with patch("src.app.modules.auth.services.email_verification.UserService") as mock_get_service:
+                with (
+                    patch("src.app.modules.auth.services.email_verification.UserDirectory") as mock_get_service,
+                    patch("src.app.modules.auth.services.email_verification.UserService") as mock_svc_cls,
+                ):
                     mock_user_service = MagicMock()
-                    mock_user_service.crud.get = AsyncMock(return_value=mock_user)
+                    mock_user_service.by_email = AsyncMock(return_value=_dumpable(mock_user))
+                    mock_user_service.by_id = AsyncMock(return_value=_dumpable(mock_user))
                     mock_user_service.crud.update = AsyncMock()
                     mock_user_service._invalidate_user_cache = AsyncMock()
                     mock_get_service.return_value = mock_user_service
+                    mock_svc_cls.return_value = mock_user_service
                     mock_db.execute = AsyncMock(return_value=mock_result)
 
                     with pytest.raises(UnauthorizedError) as exc_info:

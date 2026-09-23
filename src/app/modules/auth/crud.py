@@ -10,7 +10,7 @@ from fastcrud import FastCRUD
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.db.scoped import criterion, execute_scoped
+from src.app.core.db.scoped import execute_scoped
 from src.app.core.db.tenant_crud import TenantAwareCRUD
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules.auth.models import (
@@ -106,8 +106,14 @@ class CRUDUserSSOConnection(
             UserSSOConnection.provider_user_id == provider_user_id,
         )
         if tenant_id is not None:
-            stmt = stmt.where(criterion(UserSSOConnection, tenant_id))
-        result = await db.execute(stmt)
+            result = await execute_scoped(
+                stmt,
+                db=db,
+                model=UserSSOConnection,
+                scope=ExplicitTenant(tenant_id=tenant_id, reason="legacy-criterion:UserSSOConnection"),
+            )
+        else:
+            result = await db.execute(stmt)
         return result.scalar_one_or_none()
     async def exists_for_user(
         self,
@@ -123,9 +129,13 @@ class CRUDUserSSOConnection(
                 UserSSOConnection.user_id == user_id,
                 UserSSOConnection.provider == provider,
             )
-            .where(criterion(UserSSOConnection, tenant_id))
         )
-        result = await db.execute(query)
+        scope = (
+            ExplicitTenant(tenant_id=tenant_id, reason="legacy-criterion:UserSSOConnection")
+            if tenant_id is not None
+            else None
+        )
+        result = await execute_scoped(query, db=db, model=UserSSOConnection, scope=scope)
         count = result.scalar()
         return (count or 0) > 0
 
@@ -143,8 +153,12 @@ class CRUDUserSSOConnection(
         query = select(func.count(UserSSOConnection.id))
         if user_id is not None:
             query = query.where(UserSSOConnection.user_id == user_id)
-        query = query.where(criterion(UserSSOConnection, tenant_id))
-        result = await db.execute(query)
+        scope = (
+            ExplicitTenant(tenant_id=tenant_id, reason="legacy-criterion:UserSSOConnection")
+            if tenant_id is not None
+            else None
+        )
+        result = await execute_scoped(query, db=db, model=UserSSOConnection, scope=scope)
         return result.scalar() or 0
     async def delete_by_criteria(
         self,

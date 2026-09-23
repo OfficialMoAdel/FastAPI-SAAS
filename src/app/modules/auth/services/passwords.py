@@ -18,7 +18,7 @@ from src.app.core.security import get_password_hash, verify_password
 from src.app.core.security.tokens import hash_token
 from src.app.modules.audit_logs import AuditGuarantee, audit
 from src.app.modules.auth.models import PasswordResetToken, generate_reset_token
-from src.app.modules.users import UserService
+from src.app.modules.users import UserDirectory, UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
 from src.app.shared.exceptions import UnauthorizedError, ValidationError
 
@@ -44,9 +44,11 @@ class PasswordLifecycleService:
         # SECURITY FIX: Only active users can change their password
         # Ensure we properly fallback to False when checking active status in cached payload manually
         user_service = UserService(db)
-        user = await user_service.get_active_user(id=user_id)
-        if not user:
+        directory = UserDirectory(db)
+        found = await directory.active(id=user_id)
+        if found is None:
             raise UnauthorizedError("User not found.")
+        user = found.model_dump(mode="json")
 
         # Verify current password
         if not await verify_password(current_password, user["hashed_password"]):
@@ -172,14 +174,13 @@ class PasswordLifecycleService:
         """
         # BUG FIX: Also require is_active=True to prevent inactive accounts from
         # resetting their password without going through account reactivation.
-        user_service = UserService(db)
-        user = await user_service.get_active_user(email=email)
+        directory = UserDirectory(db)
+        found = await directory.active(email=email)
+        user = found.model_dump(mode="json") if found is not None else None
 
         # S5 FIX: Block password reset for SSO-only accounts
         if user:
-            hashed_pw = (
-                user.get("hashed_password", "") if isinstance(user, dict) else getattr(user, "hashed_password", "")
-            )
+            hashed_pw = user.get("hashed_password", "")
             if str(hashed_pw).startswith("!SSO_ONLY"):
                 # Treat SSO-only accounts same as non-existent (timing equalized below)
                 user = None
@@ -220,8 +221,7 @@ class PasswordLifecycleService:
             hashed_token = hash_token(raw_token)
 
             try:
-                user_service = UserService(db)
-                await user_service.crud.get(db=db, id=-1)
+                await directory.by_id(-1)
             except Exception:
                 pass
 
@@ -277,6 +277,9 @@ class PasswordLifecycleService:
                 raise UnauthorizedError("This password reset token has expired.")
             raise UnauthorizedError("Invalid password reset token.")
 
+        # SANCTIONED BYPASS: account-status check must see deleted rows —
+        # UserDirectory reads are non-deleted by design. The crud.update write
+        # below also stays: UserService.update requires ownership + schema.
         # SECURITY FIX: Get user WITHOUT is_deleted filter to check account status
         user_service = UserService(db)
         user = await user_service.crud.get(db=db, id=reset_token.user_id)
@@ -320,7 +323,7 @@ class PasswordLifecycleService:
         # and the SQL bump happens exactly once. Password reset is a
         # CREDENTIAL_CHANGE; the bump forces re-auth of every active session
         # and prevents the lost-password attacker from reusing a captured JWT.
-        tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+        tenant_id = user.get("tenant_id")
         await user_service.invalidate_sessions(
             user,
             InvalidationReason.CREDENTIAL_CHANGE,

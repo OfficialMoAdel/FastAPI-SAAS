@@ -11,7 +11,7 @@ from src.app.core.schemas import TokenData
 from src.app.core.security import TokenType, api_key_scheme, oauth2_scheme, verify_token
 from src.app.core.security.jwt_utils import get_cached_jwt_payload
 from src.app.core.tenancy.context import TenantContext, get_current_tenant
-from src.app.modules.users import UserService
+from src.app.modules.users import UserDirectory
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
@@ -199,11 +199,12 @@ async def _load_and_validate_user(
     cheap same-row re-check (harmless duplicate of verify_token's verdict).
     The registry inversion in jwt_service is untouched (PR-12 DIP).
     """
-    user_service = UserService(db)
+    directory = UserDirectory(db)
     if "@" in username_or_email:
-        user = await user_service.get_user_auth_info(email=username_or_email)
+        found = await directory.auth_info(email=username_or_email)
     else:
-        user = await user_service.get_user_auth_info(username=username_or_email)
+        found = await directory.auth_info(username=username_or_email)
+    user = found.model_dump() if found else None
 
     if not user:
         raise UnauthorizedException("User not authenticated.")
@@ -504,24 +505,14 @@ async def get_user_by_api_key(
         if not key_tenant_id or str(key_tenant_id) != str(current_tenant.tenant_id):
             raise UnauthorizedException("API key does not match the requested tenant context.")
 
-    user_service = UserService(db)
-    user_data = await user_service.get(key_info["user_id"])
+    directory = UserDirectory(db)
+    found = await directory.by_id(key_info["user_id"])
 
-    if not user_data:
+    if not found:
         return None
 
-    if not isinstance(user_data, dict):
-        user_dict = {
-            "id": user_data.id,
-            "username": user_data.username,
-            "email": user_data.email,
-            "tenant_id": user_data.tenant_id,
-            "is_active": user_data.is_active,
-            "is_superuser": user_data.is_superuser,
-            "token_version": user_data.token_version,
-        }
-    else:
-        user_dict = user_data
+    # by_id returns UserRead: dump then add the API-key keys.
+    user_dict = found.model_dump()
 
     if user_dict.get("is_active", True) and not user_dict.get("is_deleted", False):
         user_dict["api_key_scopes"] = key_info.get("scopes", [])

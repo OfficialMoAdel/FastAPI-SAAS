@@ -23,7 +23,7 @@ from src.app.modules.auth.schemas import (
 )
 from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.tenants.models import Tenant
-from src.app.modules.users import UserService
+from src.app.modules.users import UserDirectory, UserService
 from src.app.modules.users.schemas import UserCreate
 from src.app.shared.exceptions import (
     DuplicateError,
@@ -285,7 +285,7 @@ class SSOService:
                 else:
                     await self._link_account(db, connect_user_id, provider, user_info)
 
-                found_user_data = await UserService(db).get(connect_user_id)
+                found_user_data = await UserDirectory(db).by_id(connect_user_id)
                 if not found_user_data:
                     raise ModelNotFoundError("User", message="User to connect not found")
             else:
@@ -297,7 +297,7 @@ class SSOService:
                         ),
                         id=connection.id,
                     )
-                    found_user_data = await UserService(db).get(connection.user_id)
+                    found_user_data = await UserDirectory(db).by_id(connection.user_id)
                     if not found_user_data:
                         raise ModelNotFoundError("User", message="Associated user not found")
                 else:
@@ -313,7 +313,10 @@ class SSOService:
                     if not verified:
                         raise ValidationError("Unverified provider emails are not permitted for security reasons")
 
-                    user_by_email = await UserService(db).get_by_email(user_info.email)
+                    try:
+                        user_by_email = await UserDirectory(db).by_email(user_info.email)
+                    except ModelNotFoundError:
+                        user_by_email = None
 
                     if user_by_email:
                         # M27: Security - prevent account takeover via IdP
@@ -394,12 +397,17 @@ class SSOService:
                 raise UnauthorizedError("Account is disabled")
 
             # Fetch fully normalized User object with tier eager loaded for token claims
-            email_val = found_user_data.email if hasattr(found_user_data, "email") else found_user_data["email"]
-            user_svc = UserService(db)
-            normalized_user = await user_svc.get_user_auth_info(email=email_val)
+            if isinstance(found_user_data, dict):
+                email_val = found_user_data["email"]
+            else:
+                email_val = found_user_data.email
+            normalized = await UserDirectory(db).auth_info(email=email_val)
 
-            if not normalized_user:
+            if normalized is None:
                 raise UnauthorizedError("Account not found")
+            # Issuance boundary: TokenIssuer/mfa challenge read user[...] —
+            # dump once here so the b8 seam stays shut.
+            normalized_user = normalized.model_dump(mode="json")
 
             # SECURITY FIX: Check if MFA is enabled before issuing access token
             from src.app.modules.auth.services.mfa import get_mfa_service
@@ -595,11 +603,9 @@ class SSOService:
 
         # Check if user has a real password (SSO-only accounts store a sentinel
         # "!SSO_ONLY_ACCOUNT_NO_PASSWORD" placeholder, which is NOT a valid password).
-        user = await UserService(db).get(user_id)
-        if user:
-            hashed_pw = (
-                user.get("hashed_password") if isinstance(user, dict) else getattr(user, "hashed_password", None)
-            )
+        found = await UserDirectory(db).by_id(user_id)
+        if found is not None:
+            hashed_pw = getattr(found, "hashed_password", None)
             if hashed_pw and not str(hashed_pw).startswith("!SSO_ONLY"):
                 return True
 

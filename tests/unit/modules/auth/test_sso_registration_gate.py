@@ -15,6 +15,20 @@ from fastapi import Request
 from src.app.modules.auth.schemas import SSOProvider
 from src.app.modules.auth.services.mfa import MFAService
 from src.app.modules.auth.services.sso import SSOService
+
+
+def _dumpable(user):
+    """Wrap a raw user dict the way UserDirectory seam methods return it.
+
+    Seam methods return validated models; callers immediately ``.model_dump()``.
+    Mocking at the seam therefore means returning an object whose
+    ``model_dump()`` yields the fixture dict (``None`` stays ``None``).
+    """
+    if user is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = user
+    return m
 from src.app.shared.exceptions import ForbiddenError
 
 
@@ -86,7 +100,9 @@ class TestRegistrationGateHelper:
         try:
             from src.app.modules.auth.services import registration_gate
 
-            mock_db.scalar = AsyncMock(return_value=tenant_user_row)
+            mock_result = MagicMock()
+            mock_result.scalar.return_value = tenant_user_row
+            mock_db.execute = AsyncMock(return_value=mock_result)
             with patch.object(registration_gate, "get_current_tenant", return_value=tenant):
                 return await registration_gate.is_self_registration_allowed(mock_db)
         finally:
@@ -110,8 +126,8 @@ class TestRegistrationGateHelper:
         tenant.is_active = False
         assert await self._allowed(mock_db, False, tenant, tenant_user_row=1) is True
 
-    async def test_closed_gate_counts_via_criterion_seam(self, mock_db):
-        """P2-2: the gate counts through criterion(User, tenant.id), not a hand-rolled filter."""
+    async def test_closed_gate_counts_via_execute_scoped_seam(self, mock_db):
+        """P2-2: the gate counts through the execute_scoped seam, not a hand-rolled filter."""
         from src.app.core.config import settings
         from src.app.modules.auth.services import registration_gate
         from src.app.modules.users.models import User
@@ -119,19 +135,26 @@ class TestRegistrationGateHelper:
         original = settings.auth.AUTH_OPEN_REGISTRATION
         settings.auth.AUTH_OPEN_REGISTRATION = False
         try:
-            mock_db.scalar = AsyncMock(return_value=1)
+            mock_count = MagicMock()
+            mock_count.scalar.return_value = 1
             tenant = _mock_tenant()
             with (
                 patch.object(registration_gate, "get_current_tenant", return_value=tenant),
-                patch.object(registration_gate, "criterion", return_value=True) as mock_scope,
+                patch.object(
+                    registration_gate, "execute_scoped", new=AsyncMock(return_value=mock_count)
+                ) as mock_seam,
             ):
                 assert await registration_gate.is_self_registration_allowed(mock_db) is False
-            mock_scope.assert_called_once_with(User, tenant.id)
+            mock_seam.assert_awaited_once()
+            assert mock_seam.await_args.kwargs["model"] is User
+            assert mock_seam.await_args.kwargs["scope"].tenant_id == tenant.id
         finally:
             settings.auth.AUTH_OPEN_REGISTRATION = original
 
 
-def _drive_new_user_callback_patches(mock_get_manager, mock_get_provider, mock_crud_sso, mock_user_service_cls):
+def _drive_new_user_callback_patches(
+    mock_get_manager, mock_get_provider, mock_crud_sso, mock_user_service_cls, mock_user_dir_cls
+):
     """Common stub stack driving process_callback into the new-user branch."""
     mock_manager = AsyncMock()
     mock_manager.consume.return_value = {
@@ -155,10 +178,12 @@ def _drive_new_user_callback_patches(mock_get_manager, mock_get_provider, mock_c
     mock_crud_sso.get_by_provider_user_id = AsyncMock(return_value=None)
     mock_crud_sso.get_by_criteria = AsyncMock(return_value=None)
 
+    mock_user_dir = MagicMock()
+    mock_user_dir.by_email = AsyncMock(return_value=None)
     mock_user_svc = MagicMock()
     mock_user_svc.get_by_email = AsyncMock(return_value=None)
-    mock_user_svc.get_user_auth_info = AsyncMock(
-        return_value={
+    mock_user_dir.auth_info = AsyncMock(
+        return_value=_dumpable({
             "id": 7,
             "email": "new-sso@example.com",
             "username": "newsso",
@@ -167,8 +192,9 @@ def _drive_new_user_callback_patches(mock_get_manager, mock_get_provider, mock_c
             "tier_id": 1,
             "token_version": 1,
             "is_active": True,
-        }
+        })
     )
+    mock_user_dir_cls.return_value = mock_user_dir
     mock_user_service_cls.return_value = mock_user_svc
     return mock_user_info
 
@@ -179,6 +205,7 @@ def _drive_new_user_callback_patches(mock_get_manager, mock_get_provider, mock_c
 @patch("src.app.modules.auth.services.sso_settings.sso_settings_service.get_decrypted_settings")
 @patch.object(SSOService, "_get_provider_instance")
 @patch("src.app.modules.auth.services.sso.crud_user_sso_connections")
+@patch("src.app.modules.auth.services.sso.UserDirectory")
 @patch("src.app.modules.auth.services.sso.UserService")
 @patch("src.app.modules.auth.services.tokens.create_access_token")
 @patch("src.app.modules.auth.services.tokens.create_refresh_token")
@@ -186,6 +213,7 @@ async def test_sso_callback_rejected_for_existing_tenant(
     mock_create_refresh,
     mock_create_access,
     mock_user_service_cls,
+    mock_user_dir_cls,
     mock_crud_sso,
     mock_get_provider,
     mock_get_settings,
@@ -197,7 +225,9 @@ async def test_sso_callback_rejected_for_existing_tenant(
     gate_closed,
 ):
     """Gate closed + tenant already has users -> ForbiddenError, no user created."""
-    _drive_new_user_callback_patches(mock_get_manager, mock_get_provider, mock_crud_sso, mock_user_service_cls)
+    _drive_new_user_callback_patches(
+        mock_get_manager, mock_get_provider, mock_crud_sso, mock_user_service_cls, mock_user_dir_cls
+    )
     mock_create_access.return_value = "jwt_access"
     mock_create_refresh.return_value = "jwt_refresh"
     mock_db.scalar = AsyncMock(return_value=1)
@@ -220,6 +250,7 @@ async def test_sso_callback_rejected_for_existing_tenant(
 @patch("src.app.modules.auth.services.sso_settings.sso_settings_service.get_decrypted_settings")
 @patch.object(SSOService, "_get_provider_instance")
 @patch("src.app.modules.auth.services.sso.crud_user_sso_connections")
+@patch("src.app.modules.auth.services.sso.UserDirectory")
 @patch("src.app.modules.auth.services.sso.UserService")
 @patch("src.app.modules.auth.services.tokens.create_access_token")
 @patch("src.app.modules.auth.services.tokens.create_refresh_token")
@@ -227,6 +258,7 @@ async def test_sso_callback_allowed_for_first_user_bootstrap(
     mock_create_refresh,
     mock_create_access,
     mock_user_service_cls,
+    mock_user_dir_cls,
     mock_crud_sso,
     mock_get_provider,
     mock_get_settings,
@@ -238,10 +270,14 @@ async def test_sso_callback_allowed_for_first_user_bootstrap(
     gate_closed,
 ):
     """Gate closed but tenant has NO users -> bootstrap allowed."""
-    _drive_new_user_callback_patches(mock_get_manager, mock_get_provider, mock_crud_sso, mock_user_service_cls)
+    _drive_new_user_callback_patches(
+        mock_get_manager, mock_get_provider, mock_crud_sso, mock_user_service_cls, mock_user_dir_cls
+    )
     mock_create_access.return_value = "jwt_access"
     mock_create_refresh.return_value = "jwt_refresh"
-    mock_db.scalar = AsyncMock(return_value=None)
+    mock_gate_count = MagicMock()
+    mock_gate_count.scalar.return_value = None
+    mock_db.execute = AsyncMock(return_value=mock_gate_count)
 
     created = {
         "id": 7,
@@ -272,6 +308,7 @@ async def test_sso_callback_allowed_for_first_user_bootstrap(
 @patch("src.app.modules.auth.services.sso_settings.sso_settings_service.get_decrypted_settings")
 @patch.object(SSOService, "_get_provider_instance")
 @patch("src.app.modules.auth.services.sso.crud_user_sso_connections")
+@patch("src.app.modules.auth.services.sso.UserDirectory")
 @patch("src.app.modules.auth.services.sso.UserService")
 @patch("src.app.modules.auth.services.tokens.create_access_token")
 @patch("src.app.modules.auth.services.tokens.create_refresh_token")
@@ -279,6 +316,7 @@ async def test_sso_callback_allowed_when_gate_open(
     mock_create_refresh,
     mock_create_access,
     mock_user_service_cls,
+    mock_user_dir_cls,
     mock_crud_sso,
     mock_get_provider,
     mock_get_settings,
@@ -290,7 +328,9 @@ async def test_sso_callback_allowed_when_gate_open(
     gate_open,
 ):
     """AUTH_OPEN_REGISTRATION=True restores open signup via SSO too."""
-    _drive_new_user_callback_patches(mock_get_manager, mock_get_provider, mock_crud_sso, mock_user_service_cls)
+    _drive_new_user_callback_patches(
+        mock_get_manager, mock_get_provider, mock_crud_sso, mock_user_service_cls, mock_user_dir_cls
+    )
     mock_create_access.return_value = "jwt_access"
     mock_create_refresh.return_value = "jwt_refresh"
     # Even a populated tenant is accepted when the gate is open.

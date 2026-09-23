@@ -29,7 +29,6 @@ from src.app.modules.auth.errors import (
 )
 from src.app.modules.auth.schemas import LoginMFAResponse, LoginTokenResponse, MagicLinkSendResponse
 from src.app.modules.auth.services.tokens import TokenIssuer
-from src.app.modules.users.crud import crud_users
 
 logger = get_logger(__name__)
 
@@ -251,7 +250,10 @@ class MagicLinkService:
                 user_id = int(bound_user_id)
             except (TypeError, ValueError) as exc:
                 raise InvalidMagicLinkError("Invalid token data") from exc
-            user = await crud_users.get_user_with_tier_eager(db=self.db, id=user_id)
+            from src.app.modules.users import UserDirectory
+
+            bound = await UserDirectory(self.db).member(id=user_id)
+            user = bound.model_dump(mode="json") if bound else None
             if user is None:
                 raise InvalidMagicLinkError("User not found")
             # Tenant isolation: get_user_with_tier_eager already filters by the
@@ -322,8 +324,10 @@ class MagicLinkService:
         Returns:
             User dict with tier if found, None otherwise.
         """
-        result = await crud_users.get_user_with_tier_eager(db=self.db, email=email)
-        return result
+        from src.app.modules.users import UserDirectory
+
+        member = await UserDirectory(self.db).member(email=email)
+        return member.model_dump(mode="json") if member else None
 
     async def _queue_magic_link_email(
         self,

@@ -4,6 +4,7 @@ Components are imported lazily to avoid circular imports.
 Cross-module imports MUST use the package root (P1-20: ruff TID252 bans
 deep `users.service` / `users.router` imports outside this package):
     from src.app.modules.users import UserService, get_user_service
+    from src.app.modules.users import UserDirectory
     from src.app.modules.users import router as users_router
     from src.app.modules.users.crud import crud_users
 """
@@ -12,7 +13,9 @@ __all__ = [
     "InvalidationReason",
     "User",
     "UserCacheInvalidator",
+    "UserDirectory",
     "UserService",
+    "get_user_directory",
     "crud_users",
     "get_user_service",
     "get_user_tenant_id",
@@ -33,6 +36,8 @@ if TYPE_CHECKING:
     # so no circular-import cost.
     from src.app.modules.users.cache import UserCacheInvalidator as UserCacheInvalidator
     from src.app.modules.users.crud import crud_users as crud_users
+    from src.app.modules.users.directory import UserDirectory as UserDirectory
+    from src.app.modules.users.directory import get_user_directory as get_user_directory
     from src.app.modules.users.models import User as User
     from src.app.modules.users.router import get_user_service as get_user_service
     from src.app.modules.users.router import router as users_router
@@ -106,6 +111,14 @@ def __getattr__(name: str):
         from src.app.modules.users.service import UserService
 
         return UserService
+    if name == "UserDirectory":
+        from src.app.modules.users.directory import UserDirectory
+
+        return UserDirectory
+    if name == "get_user_directory":
+        from src.app.modules.users.directory import get_user_directory
+
+        return get_user_directory
     if name == "crud_users":
         from src.app.modules.users.crud import crud_users
 

@@ -304,7 +304,7 @@ class TestMagicLinkService:
         with (
             patch.object(service, "_get_magic_link_manager", return_value=manager),
             patch("src.app.modules.auth.crud.get_magic_link_by_token", return_value=None),
-            patch("src.app.modules.auth.services.magic_link.crud_users.get_user_with_tier_eager") as lookup,
+            patch("src.app.modules.users.directory.crud_users.get_user_with_tier_eager") as lookup,
             patch.object(service, "_create_auth_tokens") as issue,
         ):
             with pytest.raises(InvalidMagicLinkError, match="Invalid token data"):

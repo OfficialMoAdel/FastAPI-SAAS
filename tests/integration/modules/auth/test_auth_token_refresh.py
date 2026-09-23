@@ -26,6 +26,20 @@ def mock_response():
     return response
 
 
+def _dumpable(user: dict | None):
+    """Wrap a raw user dict the way UserDirectory seam methods return it.
+
+    Seam methods return validated models; callers immediately ``.model_dump()``.
+    Mocking at the seam therefore means returning an object whose
+    ``model_dump()`` yields the fixture dict (None stays None).
+    """
+    if user is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = user
+    return m
+
+
 class TestTokenRefreshWithCaching:
     """Integration tests for token refresh with auth info caching.
 
@@ -91,15 +105,12 @@ class TestTokenRefreshWithCaching:
 
         with (
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
-            patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
-            patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
+            patch("src.app.modules.auth.service.UserDirectory") as mock_get_user_directory,
         ):
             mock_verify.return_value = mock_token_data
 
             # Return the deleted user from cache simulation
-            mock_user_service = MagicMock()
-            mock_user_service.get_user_auth_info = AsyncMock(return_value=deleted_user)
-            mock_get_user_service.return_value = mock_user_service
+            mock_get_user_directory.return_value.auth_info = AsyncMock(return_value=_dumpable(deleted_user))
 
             # Should raise UnauthorizedException due to is_deleted=True
             with pytest.raises(UnauthorizedError) as exc_info:

@@ -20,6 +20,19 @@ from webauthn.helpers.structs import PublicKeyCredentialDescriptor, PublicKeyCre
 from src.app.modules.auth.services.mfa import MFAService
 
 
+def _dumpable(user: dict | None):
+    """Wrap a raw user dict the way UserDirectory seam methods return it.
+
+    Seam methods return validated models; callers immediately ``.model_dump()``.
+    Mocking at the seam therefore means returning an object whose
+    ``model_dump()`` yields the fixture dict (``None`` stays ``None``).
+    """
+    if user is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = user
+    return m
+
 class TestPasskeyServiceExists:
     """Verify PasskeyService module structure."""
 
@@ -1018,7 +1031,11 @@ async def test_get_user_for_credential():
     mock_cred = MagicMock()
     mock_cred.user_id = 1
 
-    result = await service._get_user_for_credential(mock_db, mock_cred)
+    with patch("src.app.modules.users.UserDirectory") as mock_ud_cls:
+        mock_ud_cls.return_value.active = AsyncMock(
+            return_value=_dumpable({"id": 1, "email": "test@example.com"})
+        )
+        result = await service._get_user_for_credential(mock_db, mock_cred)
 
     assert result is not None
     assert result["id"] == 1
@@ -1040,7 +1057,9 @@ async def test_get_user_for_credential_not_found():
     mock_cred = MagicMock()
     mock_cred.user_id = 999
 
-    result = await service._get_user_for_credential(mock_db, mock_cred)
+    with patch("src.app.modules.users.UserDirectory") as mock_ud_cls:
+        mock_ud_cls.return_value.active = AsyncMock(return_value=None)
+        result = await service._get_user_for_credential(mock_db, mock_cred)
 
     assert result is None
 

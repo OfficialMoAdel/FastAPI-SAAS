@@ -22,10 +22,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.cache.invalidation_channel import InvalidationChannel
-from src.app.core.db.scoped import criterion
+from src.app.core.db.scoped import execute_scoped
 from src.app.core.logger import get_logger
 from src.app.core.rbac.bitmask import PermissionBitmask
 from src.app.core.rbac.permissions import Permission as PermissionEnum
+from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 from src.app.shared.exceptions import ValidationError as ValidationException
@@ -102,13 +103,15 @@ async def get_user_permissions(
         .join(RolePermission, RolePermission.permission_id == Permission.id)
         .join(Role, Role.id == RolePermission.role_id)
         .join(UserRole, UserRole.role_id == Role.id)
-        .where(
-            UserRole.user_id == user_id,
-            criterion(UserRole, tenant_id),
-        )
+        .where(UserRole.user_id == user_id)
         .limit(1000)  # Safety bound
     )
-    result = await db.execute(stmt)
+    result = await execute_scoped(
+        stmt,
+        db=db,
+        model=UserRole,
+        scope=ExplicitTenant(tenant_id, reason='legacy-criterion:UserRole'),
+    )
     return set(result.scalars().all())
 
 

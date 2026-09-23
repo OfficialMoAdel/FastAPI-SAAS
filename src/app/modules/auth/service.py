@@ -22,7 +22,7 @@ from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.audit_logs import AuditGuarantee, audit
 from src.app.modules.auth.services.lockout import LoginLockoutPolicy
 from src.app.modules.auth.services.tokens import TokenIssuer
-from src.app.modules.users import UserService
+from src.app.modules.users import UserDirectory, UserService
 from src.app.shared.exceptions import ServiceUnavailableError, UnauthorizedError
 
 logger = get_logger(__name__)
@@ -59,10 +59,12 @@ class AuthService:
         db: AsyncSession,
     ) -> dict[str, Any] | None:
         """Resolve user auth info by email or username with caching (PR-06 deduplication)."""
-        user_service = UserService(db)
+        directory = UserDirectory(db)
         if "@" in username_or_email:
-            return await user_service.get_user_auth_info(email=username_or_email)
-        return await user_service.get_user_auth_info(username=username_or_email)
+            found = await directory.auth_info(email=username_or_email)
+        else:
+            found = await directory.auth_info(username=username_or_email)
+        return found.model_dump() if found else None
 
     async def _revoke_session(
         self,

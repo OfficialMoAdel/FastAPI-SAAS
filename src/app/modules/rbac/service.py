@@ -497,9 +497,9 @@ class RoleService:
         # work for inactive users (onboarding: assign-then-activate; cleanup:
         # strip roles from deactivated users). Enforces is_deleted=False +
         # tenant scope in one place instead of a hand-rolled scoped_query.
-        from src.app.modules.users import UserService
+        from src.app.modules.users import UserDirectory
 
-        user_record = await UserService(self.db).get_tenant_user(id=user_id, tenant_id=self.tenant_id)
+        user_record = await UserDirectory(self.db).member(id=user_id, tenant_id=self.tenant_id)
         if user_record is None:
             raise ModelNotFoundError("User", user_id)
 
@@ -548,9 +548,9 @@ class RoleService:
         # Same membership seam as the assign path — non-deleted,
         # tenant-scoped, no active gate (cleanup must strip roles from
         # deactivated users).
-        from src.app.modules.users import UserService
+        from src.app.modules.users import UserDirectory
 
-        user_record = await UserService(self.db).get_tenant_user(id=user_id, tenant_id=self.tenant_id)
+        user_record = await UserDirectory(self.db).member(id=user_id, tenant_id=self.tenant_id)
         if user_record is None:
             raise ModelNotFoundError("User", user_id)
 

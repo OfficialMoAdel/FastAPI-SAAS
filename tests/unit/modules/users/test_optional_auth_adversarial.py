@@ -16,6 +16,16 @@ from src.app.core.tenancy.context import TenantContext
 from src.app.shared.exceptions import ForbiddenError, UnauthorizedError
 
 
+def _dumpable(d):
+    """Wrap a fixture dict as a model-like with .model_dump()."""
+    if d is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = d
+    return m
+
+
+
 @pytest.fixture
 def mock_request():
     """Mock FastAPI Request."""
@@ -59,16 +69,16 @@ async def test_case_1_valid_jwt_token(mock_request, mock_db, mock_tenant):
 
     with (
         patch("src.app.api.deps.auth.verify_token") as mock_verify,
-        patch("src.app.api.deps.auth.UserService") as MockUserService,
+        patch("src.app.api.deps.auth.UserDirectory") as MockUserDirectory,
         patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant,
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
     ):
         mock_verify.return_value = TokenData(username_or_email="test@example.com", token_version=1)
         mock_get_tenant.return_value = mock_tenant
 
-        mock_user_service = AsyncMock()
-        mock_user_service.get_user_auth_info.return_value = user_dict
-        MockUserService.return_value = mock_user_service
+        mock_directory = AsyncMock()
+        mock_directory.auth_info.return_value = _dumpable(user_dict)
+        MockUserDirectory.return_value = mock_directory
 
         result = await get_optional_auth_context(mock_request, db=mock_db)
 
@@ -96,16 +106,16 @@ async def test_case_2_suspended_user_token(mock_request, mock_db, mock_tenant):
 
     with (
         patch("src.app.api.deps.auth.verify_token") as mock_verify,
-        patch("src.app.api.deps.auth.UserService") as MockUserService,
+        patch("src.app.api.deps.auth.UserDirectory") as MockUserDirectory,
         patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant,
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
     ):
         mock_verify.return_value = MagicMock(username_or_email="suspended@example.com", token_version=1)
         mock_get_tenant.return_value = mock_tenant
 
-        mock_user_service = AsyncMock()
-        mock_user_service.get_user_auth_info.return_value = user_dict
-        MockUserService.return_value = mock_user_service
+        mock_directory = AsyncMock()
+        mock_directory.auth_info.return_value = _dumpable(user_dict)
+        MockUserDirectory.return_value = mock_directory
 
         with pytest.raises((UnauthorizedError, ForbiddenError)):
             await get_optional_auth_context(mock_request, db=mock_db)
@@ -129,16 +139,16 @@ async def test_case_3_deleted_user_token(mock_request, mock_db, mock_tenant):
 
     with (
         patch("src.app.api.deps.auth.verify_token") as mock_verify,
-        patch("src.app.api.deps.auth.UserService") as MockUserService,
+        patch("src.app.api.deps.auth.UserDirectory") as MockUserDirectory,
         patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant,
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
     ):
         mock_verify.return_value = MagicMock(username_or_email="deleted@example.com", token_version=1)
         mock_get_tenant.return_value = mock_tenant
 
-        mock_user_service = AsyncMock()
-        mock_user_service.get_user_auth_info.return_value = user_dict
-        MockUserService.return_value = mock_user_service
+        mock_directory = AsyncMock()
+        mock_directory.auth_info.return_value = _dumpable(user_dict)
+        MockUserDirectory.return_value = mock_directory
 
         with pytest.raises((UnauthorizedError, ForbiddenError)):
             await get_optional_auth_context(mock_request, db=mock_db)
@@ -162,7 +172,7 @@ async def test_case_4_expired_token_version(mock_request, mock_db, mock_tenant):
 
     with (
         patch("src.app.api.deps.auth.verify_token") as mock_verify,
-        patch("src.app.api.deps.auth.UserService") as MockUserService,
+        patch("src.app.api.deps.auth.UserDirectory") as MockUserDirectory,
         patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant,
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
     ):
@@ -170,9 +180,9 @@ async def test_case_4_expired_token_version(mock_request, mock_db, mock_tenant):
         mock_verify.return_value = MagicMock(username_or_email="expired@example.com", token_version=1)
         mock_get_tenant.return_value = mock_tenant
 
-        mock_user_service = AsyncMock()
-        mock_user_service.get_user_auth_info.return_value = user_dict
-        MockUserService.return_value = mock_user_service
+        mock_directory = AsyncMock()
+        mock_directory.auth_info.return_value = _dumpable(user_dict)
+        MockUserDirectory.return_value = mock_directory
 
         with pytest.raises((UnauthorizedError, ForbiddenError)):
             await get_optional_auth_context(mock_request, db=mock_db)
@@ -196,16 +206,16 @@ async def test_case_5_tenant_mismatch(mock_request, mock_db, mock_tenant):
 
     with (
         patch("src.app.api.deps.auth.verify_token") as mock_verify,
-        patch("src.app.api.deps.auth.UserService") as MockUserService,
+        patch("src.app.api.deps.auth.UserDirectory") as MockUserDirectory,
         patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant,
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
     ):
         mock_verify.return_value = MagicMock(username_or_email="mismatch@example.com", token_version=1)
         mock_get_tenant.return_value = mock_tenant
 
-        mock_user_service = AsyncMock()
-        mock_user_service.get_user_auth_info.return_value = user_dict
-        MockUserService.return_value = mock_user_service
+        mock_directory = AsyncMock()
+        mock_directory.auth_info.return_value = _dumpable(user_dict)
+        MockUserDirectory.return_value = mock_directory
 
         with pytest.raises((UnauthorizedError, ForbiddenError)):
             await get_optional_auth_context(mock_request, db=mock_db)

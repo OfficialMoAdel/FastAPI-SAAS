@@ -16,7 +16,12 @@ import pytest
 import sqlalchemy.event
 
 from src.app.core.principal import AuthenticatedUser
-from src.app.modules.users.schemas import UserCreate, UserTierUpdate, UserUpdate
+from src.app.modules.users.schemas import (
+    UserAuthInfo,
+    UserCreate,
+    UserTierUpdate,
+    UserUpdate,
+)
 from src.app.modules.users.service import UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
@@ -163,15 +168,18 @@ class TestUserServiceCreate:
         B8: crud.create returns None (FastCRUD without schema_to_select),
         so create() commits then re-reads the row — mock the re-read.
         """
-        # Mock: no existing user found
-        mock_db.scalar.return_value = None
+        # Mock: no existing user found (dup-check flows via execute_scoped -> db.execute)
+        mock_dup_check = MagicMock()
+        mock_dup_check.scalar.return_value = None
 
         # Mock the post-commit re-read to return the created user
         created_user = MagicMock()
         created_user.id = 1
         created_user.username = mock_user_create.username
         created_user.email = mock_user_create.email
-        mock_db.execute.return_value.scalar_one_or_none.return_value = created_user
+        mock_reread = MagicMock()
+        mock_reread.scalar_one_or_none.return_value = created_user
+        mock_db.execute = AsyncMock(side_effect=[mock_dup_check, mock_reread])
 
         with patch.object(user_service.crud, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = None  # honest FastCRUD contract
@@ -697,20 +705,43 @@ class TestSetUserStatus:
 
 
 class TestGetActiveUser:
-    """Pin UserService.get_active_user: the auth-gated named-lookup seam (fix #3)."""
+    """Pin UserService.get_active_user: delegates to UserDirectory.active."""
+
+    _FULL_ACTIVE = {
+        "id": 1,
+        "username": "testuser",
+        "email": "test@example.com",
+        "name": "Test User",
+        "profile_image_url": "https://example.com/profile.jpg",
+        "is_active": True,
+        "is_deleted": False,
+        "tenant_id": "550e8400-e29b-41d4-a716-446655440000",
+        "tier_id": 1,
+        "token_version": 0,
+        "hashed_password": "hashed",
+        "created_at": "2024-01-01T00:00:00+00:00",
+        "updated_at": "2024-01-01T00:00:00+00:00",
+        "tier": {
+            "id": 1,
+            "name": "free",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "updated_at": "2024-01-01T00:00:00+00:00",
+        },
+    }
 
     @pytest.mark.asyncio
     async def test_delegates_to_seam_with_active_gate(self, user_service):
-        """get_active_user forwards id/username/email with require_active=True."""
-        payload = {"id": 1, "username": "testuser", "is_active": True, "is_deleted": False}
-        with patch.object(
-            user_service.crud, "get_user_with_tier_eager", new_callable=AsyncMock
+        """get_active_user forwards to UserDirectory.active with require_active=True."""
+        with patch(
+            "src.app.modules.users.directory.crud_users.get_user_with_tier_eager",
+            new_callable=AsyncMock,
         ) as mock_seam:
-            mock_seam.return_value = payload
+            mock_seam.return_value = dict(self._FULL_ACTIVE)
 
             result = await user_service.get_active_user(username="testuser")
 
-            assert result == payload
+            expected = UserAuthInfo.model_validate(dict(self._FULL_ACTIVE)).model_dump(mode="json")
+            assert result == expected
             mock_seam.assert_awaited_once_with(
                 db=user_service.db,
                 id=None,
@@ -726,12 +757,14 @@ class TestGetActiveUser:
         import uuid as _uuid
 
         tenant_id = _uuid.uuid4()
-        with patch.object(
-            user_service.crud, "get_user_with_tier_eager", new_callable=AsyncMock
+        with patch(
+            "src.app.modules.users.directory.crud_users.get_user_with_tier_eager",
+            new_callable=AsyncMock,
         ) as mock_seam:
-            mock_seam.return_value = {"id": 9}
-
-            await user_service.get_active_user(id=9, tenant_id=tenant_id)
+            payload = dict(self._FULL_ACTIVE, id=9)
+            mock_seam.return_value = payload
+            result = await user_service.get_active_user(id=9, tenant_id=tenant_id)
+            assert result == UserAuthInfo.model_validate(payload).model_dump(mode="json")
             mock_seam.assert_awaited_once_with(
                 db=user_service.db,
                 id=9,
@@ -742,8 +775,10 @@ class TestGetActiveUser:
             )
 
             mock_seam.reset_mock()
-            mock_seam.return_value = {"id": 10}
-            await user_service.get_active_user(email="a@example.com")
+            payload = dict(self._FULL_ACTIVE, id=10, email="a@example.com")
+            mock_seam.return_value = payload
+            result = await user_service.get_active_user(email="a@example.com")
+            assert result == UserAuthInfo.model_validate(payload).model_dump(mode="json")
             mock_seam.assert_awaited_once_with(
                 db=user_service.db,
                 id=None,
@@ -756,8 +791,9 @@ class TestGetActiveUser:
     @pytest.mark.asyncio
     async def test_none_passthrough(self, user_service):
         """No active user in scope surfaces as None (callers raise 404)."""
-        with patch.object(
-            user_service.crud, "get_user_with_tier_eager", new_callable=AsyncMock
+        with patch(
+            "src.app.modules.users.directory.crud_users.get_user_with_tier_eager",
+            new_callable=AsyncMock,
         ) as mock_seam:
             mock_seam.return_value = None
 

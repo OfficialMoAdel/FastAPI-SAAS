@@ -11,12 +11,26 @@ Regression test for P1-2: User Caching in Redis
 
 from __future__ import annotations
 
+import json as _json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.app.modules.users.session_invalidation import InvalidationReason
+
+_FULL_AUTH = {
+    "id": 10,
+    "created_at": "2026-01-01T00:00:00",
+    "name": "Test User",
+    "username": "testuser",
+    "email": "test@example.com",
+    "profile_image_url": "https://example.com/a.png",
+    "tenant_id": "550e8400-e29b-41d4-a716-446655440001",
+    "hashed_password": "hashed",
+    "tier": {"id": 1, "created_at": "2026-01-01T00:00:00", "name": "free"},
+}
+_FULL_AUTH_JSON = _json.dumps(_FULL_AUTH)
 
 
 def _create_mock_tenant() -> MagicMock:
@@ -56,11 +70,7 @@ class TestUserAuthInfoCaching:
         mock_client = AsyncMock()
         with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
             with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
-                mock_client.get = AsyncMock(
-                    return_value='{"id": "550e8400-e29b-41d4-a716-446655440000", '
-                    '"username": "testuser", "email": "test@example.com", '
-                    '"tier": {"id": 1, "name": "free"}}'
-                )
+                mock_client.get = AsyncMock(return_value=_FULL_AUTH_JSON)
 
                 result = await user_service.get_user_auth_info(username="testuser")
 
@@ -83,11 +93,7 @@ class TestUserAuthInfoCaching:
         mock_client = AsyncMock()
         with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
             with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
-                mock_client.get = AsyncMock(
-                    return_value='{"id": "550e8400-e29b-41d4-a716-446655440000", '
-                    '"username": "testuser", "email": "test@example.com", '
-                    '"tier": {"id": 1, "name": "free"}}'
-                )
+                mock_client.get = AsyncMock(return_value=_FULL_AUTH_JSON)
 
                 result = await user_service.get_user_auth_info(email="test@example.com")
 
@@ -96,24 +102,22 @@ class TestUserAuthInfoCaching:
                 assert result["email"] == cached_data["email"]
 
     @pytest.mark.asyncio
-    async def test_cache_miss_queries_db_and_caches_result(self, user_service: Any) -> None:
+    async def test_cache_miss_queries_db_and_caches_result(
+        self, user_service: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Cache miss should query DB and cache the result."""
         mock_tenant = _create_mock_tenant()
-        user_data = {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "username": "testuser",
-            "email": "test@example.com",
-            "tier": {"id": 1, "name": "free"},
-        }
-
         mock_client = AsyncMock()
+        mock_eager = AsyncMock(return_value=_FULL_AUTH)
+        monkeypatch.setattr(
+            "src.app.modules.users.directory.crud_users.get_user_with_tier_eager",
+            mock_eager,
+        )
         with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
             with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
                 mock_client.get = AsyncMock(return_value=None)  # Cache miss
                 mock_client.setex = AsyncMock()
 
-                # Mock CRUD response
-                user_service.crud.get_user_with_tier_eager = AsyncMock(return_value=user_data)
 
                 result = await user_service.get_user_auth_info(username="testuser")
 
@@ -127,7 +131,7 @@ class TestUserAuthInfoCaching:
     @pytest.mark.asyncio
     async def test_cache_key_format_username(self, user_service: Any) -> None:
         """Cache key for username should use user:auth: prefix with tenant ID."""
-        from src.app.modules.users.service import _user_auth_cache_key
+        from src.app.modules.users.cache import _user_auth_cache_key
 
         mock_tenant = _create_mock_tenant()
         with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
@@ -138,7 +142,7 @@ class TestUserAuthInfoCaching:
     @pytest.mark.asyncio
     async def test_cache_key_format_email(self, user_service: Any) -> None:
         """Cache key for email should use user:auth: prefix with tenant ID."""
-        from src.app.modules.users.service import _user_auth_cache_key
+        from src.app.modules.users.cache import _user_auth_cache_key
 
         mock_tenant = _create_mock_tenant()
         with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
@@ -242,27 +246,25 @@ class TestUserCachingWithoutRedis:
         return UserService(mock_db_session)
 
     @pytest.mark.asyncio
-    async def test_get_user_auth_info_works_without_redis(self, user_service: Any) -> None:
+    async def test_get_user_auth_info_works_without_redis(
+        self, user_service: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Should fall back to DB when Redis is unavailable."""
         mock_tenant = _create_mock_tenant()
-        user_data = {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "username": "testuser",
-            "email": "test@example.com",
-            "tier": {"id": 1, "name": "free"},
-        }
-
+        mock_eager = AsyncMock(return_value=_FULL_AUTH)
+        monkeypatch.setattr(
+            "src.app.modules.users.directory.crud_users.get_user_with_tier_eager",
+            mock_eager,
+        )
         with patch("src.app.modules.users.cache.get_redis", return_value=None):
             with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
-
-                user_service.crud.get_user_with_tier_eager = AsyncMock(return_value=user_data)
 
                 result = await user_service.get_user_auth_info(username="testuser")
 
                 assert result is not None
                 assert result["username"] == "testuser"
                 # DB should be queried
-                user_service.crud.get_user_with_tier_eager.assert_called_once()
+                mock_eager.assert_called_once()
 
 
 class TestUserCacheBatchInvalidation:

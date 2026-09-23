@@ -15,11 +15,12 @@ from uuid import UUID, uuid4
 from sqlalchemy import insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.db.scoped import criterion
+from src.app.core.db.scoped import execute_scoped
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.principal import AuthenticatedUser
 from src.app.core.security.encryption import decrypt_data, encrypt_data
+from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules._base import ModelNotFoundError
 from src.app.modules.webhooks import delivery as delivery_module
 from src.app.modules.webhooks.delivery import (
@@ -193,7 +194,7 @@ class WebhookService:
         from sqlalchemy import func, select
 
         total_col = func.count().over().label("total")
-        query = select(WebhookEndpoint, total_col).where(criterion(WebhookEndpoint, tenant_id))
+        query = select(WebhookEndpoint, total_col)
 
         if is_active is not None:
             query = query.where(WebhookEndpoint.is_active == is_active)
@@ -203,7 +204,11 @@ class WebhookService:
         offset = (page - 1) * per_page
         query = query.order_by(WebhookEndpoint.created_at.desc()).limit(per_page).offset(offset)
 
-        result = await self.db.execute(query)
+        result = await execute_scoped(query, db=self.db, model=WebhookEndpoint,
+            scope=ExplicitTenant(
+                tenant_id, reason='legacy-criterion:WebhookEndpoint'
+            ),
+        )
         rows = result.unique().all()
         if rows:
             total = int(rows[0][1])
@@ -214,21 +219,27 @@ class WebhookService:
             return [], 0
 
         # Out-of-range page fallback
-        count_query = select(func.count()).select_from(WebhookEndpoint).where(criterion(WebhookEndpoint, tenant_id))
+        count_query = select(func.count()).select_from(WebhookEndpoint)
         if is_active is not None:
             count_query = count_query.where(WebhookEndpoint.is_active == is_active)
         if event_type:
             count_query = count_query.where(WebhookEndpoint.event_type == event_type)
-        total_result = await self.db.execute(count_query)
+        total_result = await execute_scoped(count_query, db=self.db, model=WebhookEndpoint,
+            scope=ExplicitTenant(
+                tenant_id, reason='legacy-criterion:WebhookEndpoint'
+            ),
+        )
         return [], total_result.scalar_one()
+
 
     async def get_endpoint_by_id(self, endpoint_id: UUID, tenant_id: UUID) -> WebhookEndpoint | None:
         """Get a webhook endpoint by ID and tenant ID."""
-        stmt = select(WebhookEndpoint).where(
-            WebhookEndpoint.id == endpoint_id,
-            criterion(WebhookEndpoint, tenant_id),
+        stmt = select(WebhookEndpoint).where(WebhookEndpoint.id == endpoint_id)
+        result = await execute_scoped(stmt, db=self.db, model=WebhookEndpoint,
+            scope=ExplicitTenant(
+                tenant_id, reason='legacy-criterion:WebhookEndpoint'
+            ),
         )
-        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def update_endpoint(self, endpoint: WebhookEndpoint, update_data: dict[str, Any]) -> WebhookEndpoint:
@@ -262,13 +273,15 @@ class WebhookService:
 
     async def get_delivery_by_id(self, delivery_id: UUID, tenant_id: UUID) -> WebhookDelivery | None:
         """Get a delivery by ID for a specific tenant."""
-        result = await self.db.execute(
+        stmt = (
             select(WebhookDelivery)
             .join(WebhookEndpoint)
-            .where(
-                WebhookDelivery.id == delivery_id,
-                criterion(WebhookEndpoint, tenant_id),
-            )
+            .where(WebhookDelivery.id == delivery_id)
+        )
+        result = await execute_scoped(stmt, db=self.db, model=WebhookEndpoint,
+            scope=ExplicitTenant(
+                tenant_id, reason='legacy-criterion:WebhookEndpoint'
+            ),
         )
         return result.scalar_one_or_none()
 
@@ -287,7 +300,7 @@ class WebhookService:
         from sqlalchemy import func, select
 
         total_col = func.count().over().label("total")
-        query = select(WebhookDelivery, total_col).where(criterion(WebhookDelivery, tenant_id))
+        query = select(WebhookDelivery, total_col)
 
         if endpoint_id:
             query = query.where(WebhookDelivery.webhook_endpoint_id == endpoint_id)
@@ -303,7 +316,11 @@ class WebhookService:
         offset = (page - 1) * per_page
         query = query.order_by(WebhookDelivery.created_at.desc()).limit(per_page).offset(offset)
 
-        result = await self.db.execute(query)
+        result = await execute_scoped(query, db=self.db, model=WebhookDelivery,
+            scope=ExplicitTenant(
+                tenant_id, reason='legacy-criterion:WebhookDelivery'
+            ),
+        )
         rows = result.unique().all()
         if rows:
             total = int(rows[0][1])
@@ -314,7 +331,7 @@ class WebhookService:
             return [], 0
 
         # Out-of-range page fallback
-        count_query = select(func.count()).select_from(WebhookDelivery).where(criterion(WebhookDelivery, tenant_id))
+        count_query = select(func.count()).select_from(WebhookDelivery)
         if endpoint_id:
             count_query = count_query.where(WebhookDelivery.webhook_endpoint_id == endpoint_id)
         if delivery_status:
@@ -325,7 +342,11 @@ class WebhookService:
             count_query = count_query.where(WebhookDelivery.created_at >= start_date)
         if end_date:
             count_query = count_query.where(WebhookDelivery.created_at <= end_date)
-        total_result = await self.db.execute(count_query)
+        total_result = await execute_scoped(count_query, db=self.db, model=WebhookDelivery,
+            scope=ExplicitTenant(
+                tenant_id, reason='legacy-criterion:WebhookDelivery'
+            ),
+        )
         return [], total_result.scalar_one()
 
     async def _invalidate_endpoints_cache(self, tenant_id: UUID | str) -> None:
@@ -366,7 +387,6 @@ class WebhookService:
                 logger.warning("Failed to read active endpoints from Redis cache", error=str(e))
 
         stmt = select(WebhookEndpoint).where(
-            criterion(WebhookEndpoint, tenant_id),
             WebhookEndpoint.is_active.is_(True),
             or_(
                 WebhookEndpoint.event_type == event_type,
@@ -375,7 +395,11 @@ class WebhookService:
                 WebhookEndpoint.event_type.like("%[%"),
             ),
         )
-        result = await self.db.execute(stmt)
+        result = await execute_scoped(stmt, db=self.db, model=WebhookEndpoint,
+            scope=ExplicitTenant(
+                tenant_id, reason='legacy-criterion:WebhookEndpoint'
+            ),
+        )
         candidates = list(result.scalars().all())
         matching = [ep for ep in candidates if ep.event_type == event_type or _glob_match(event_type, ep.event_type)]
 
@@ -558,13 +582,16 @@ class WebhookService:
         stmt = (
             select(WebhookDelivery)
             .join(WebhookEndpoint)
-            .where(criterion(WebhookEndpoint, tenant_id))
             .order_by(WebhookDelivery.created_at.desc())
             .limit(limit)
             .offset(offset)
         )
 
-        result = await self.db.execute(stmt)
+        result = await execute_scoped(stmt, db=self.db, model=WebhookEndpoint,
+            scope=ExplicitTenant(
+                tenant_id, reason='legacy-criterion:WebhookEndpoint'
+            ),
+        )
         return list(result.scalars().all())
 
     async def get_signing_secret(
@@ -591,11 +618,12 @@ class WebhookService:
         ModelNotFoundError
             If endpoint not found
         """
-        stmt = select(WebhookEndpoint).where(
-            WebhookEndpoint.id == endpoint_id,
-            criterion(WebhookEndpoint, tenant_id),
+        stmt = select(WebhookEndpoint).where(WebhookEndpoint.id == endpoint_id)
+        result = await execute_scoped(stmt, db=self.db, model=WebhookEndpoint,
+            scope=ExplicitTenant(
+                tenant_id, reason='legacy-criterion:WebhookEndpoint'
+            ),
         )
-        result = await self.db.execute(stmt)
         endpoint = result.scalar_one_or_none()
 
         if not endpoint:
@@ -667,11 +695,12 @@ class WebhookService:
         """
         from src.app.modules.webhooks.utils import generate_signing_secret
 
-        stmt = select(WebhookEndpoint).where(
-            WebhookEndpoint.id == endpoint_id,
-            criterion(WebhookEndpoint, tenant_id),
+        stmt = select(WebhookEndpoint).where(WebhookEndpoint.id == endpoint_id)
+        result = await execute_scoped(stmt, db=self.db, model=WebhookEndpoint,
+            scope=ExplicitTenant(
+                tenant_id, reason='legacy-criterion:WebhookEndpoint'
+            ),
         )
-        result = await self.db.execute(stmt)
         endpoint = result.scalar_one_or_none()
 
         if not endpoint:

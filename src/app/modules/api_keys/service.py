@@ -14,7 +14,8 @@ from src.app.core.logger import get_logger
 
 logger = get_logger(__name__)
 from src.app.core.cache.client import cache_client
-from src.app.core.db.scoped import criterion
+from src.app.core.db.scoped import execute_scoped
+from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules._base.service import BaseService
 from src.app.modules.api_keys.models import APIKey
 from src.app.modules.api_keys.schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
@@ -97,8 +98,11 @@ class APIKeyService(BaseService[APIKey]):
         # SECURITY FIX: Prevent duplicate API key names within the same tenant
         from sqlalchemy import select
 
-        stmt = select(APIKey).where(criterion(APIKey, tenant_id), APIKey.name == api_key_data.name)
-        existing_result = await self.db.execute(stmt)
+        stmt = select(APIKey).where(APIKey.name == api_key_data.name)
+        existing_result = await execute_scoped(
+            stmt, db=self.db, model=APIKey,
+            scope=ExplicitTenant(tenant_id, reason='legacy-criterion:APIKey'),
+        )
         if existing_result.scalar_one_or_none():
             raise DuplicateError("name", api_key_data.name)
 
@@ -233,10 +237,12 @@ class APIKeyService(BaseService[APIKey]):
         # giving callers an existence oracle over other tenants' key ids.
         key_stmt = select(APIKey).where(
             APIKey.id == key_id,
-            criterion(APIKey, tenant_id),
             APIKey.user_id == user_id,
         )
-        key_result = await self.db.execute(key_stmt)
+        key_result = await execute_scoped(
+            key_stmt, db=self.db, model=APIKey,
+            scope=ExplicitTenant(tenant_id, reason='legacy-criterion:APIKey'),
+        )
         key = key_result.scalar_one_or_none()
 
         if key is None:
@@ -540,10 +546,12 @@ class APIKeyService(BaseService[APIKey]):
         # Scope lookup to tenant and user to eliminate existence oracle (K-R1-01)
         old_key_stmt = select(APIKey).where(
             APIKey.id == key_id,
-            criterion(APIKey, tenant_id),
             APIKey.user_id == user_id,
         )
-        old_key_result = await self.db.execute(old_key_stmt)
+        old_key_result = await execute_scoped(
+            old_key_stmt, db=self.db, model=APIKey,
+            scope=ExplicitTenant(tenant_id, reason='legacy-criterion:APIKey'),
+        )
         old_key = old_key_result.scalar_one_or_none()
 
         if old_key is None:

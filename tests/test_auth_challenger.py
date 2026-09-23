@@ -20,6 +20,20 @@ MOCK_TENANT_A_ID = UUID("00000000-0000-0000-0000-00000000000a")
 MOCK_TENANT_B_ID = UUID("00000000-0000-0000-0000-00000000000b")
 
 
+def _dumpable(user: dict | None):
+    """Wrap a raw user dict the way UserDirectory seam methods return it.
+
+    Seam methods return validated models; callers immediately ``.model_dump()``.
+    Mocking at the seam therefore means returning an object whose
+    ``model_dump()`` yields the fixture dict (None stays None).
+    """
+    if user is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = user
+    return m
+
+
 @asynccontextmanager
 async def mock_get_redis_client():
     mock_client = AsyncMock()
@@ -66,7 +80,7 @@ async def test_auth_single_db_lookup_and_single_jwt_decode(get_test_app) -> None
         return mock_tenant
 
     # Mock User Service lookup
-    mock_get_user_auth = AsyncMock(return_value=mock_user)
+    mock_get_user_auth = AsyncMock(return_value=_dumpable(mock_user))
 
     # Mock permissions lookup
     mock_has_perm = AsyncMock(return_value=True)
@@ -87,7 +101,7 @@ async def test_auth_single_db_lookup_and_single_jwt_decode(get_test_app) -> None
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         with (
             patch("src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug", new=mock_get_tenant_by_slug),
-            patch("src.app.modules.users.service.UserService.get_user_auth_info", new=mock_get_user_auth),
+            patch("src.app.modules.users.directory.UserDirectory.auth_info", new=mock_get_user_auth),
             patch("src.app.core.rbac.dependencies.has_permission_cached", new=mock_has_perm),
             patch("jwt.decode", spy_jwt_decode),
             # Mock redis cache
@@ -155,7 +169,7 @@ async def test_superuser_tenant_isolation_blocked(get_test_app) -> None:
         return None
 
     # Mock User Service lookup
-    mock_get_user_auth = AsyncMock(return_value=mock_superuser)
+    mock_get_user_auth = AsyncMock(return_value=_dumpable(mock_superuser))
 
     # Generate token (claims user belongs to Tenant A)
     token = await create_access_token({"sub": "admin@tenant-a.com", "tenant_id": str(MOCK_TENANT_A_ID)})
@@ -171,7 +185,7 @@ async def test_superuser_tenant_isolation_blocked(get_test_app) -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         with (
             patch("src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug", new=mock_get_tenant_by_slug),
-            patch("src.app.modules.users.service.UserService.get_user_auth_info", new=mock_get_user_auth),
+            patch("src.app.modules.users.directory.UserDirectory.auth_info", new=mock_get_user_auth),
             # Mock redis cache
             patch("src.app.core.utils.cache.client", mock_redis),
             patch("src.app.modules.security.service.get_redis_client", new=mock_get_redis_client),

@@ -12,6 +12,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from src.app.core.cache.client import cache_client
 from src.app.core.db.scoped import criterion
+from src.app.core.resilience.db_circuit_breaker import db_circuit_guard
 from src.app.modules.audit_logs.models import AuditLog
 from src.app.modules.audit_logs.trail import login_activity_subquery
 from src.app.modules.billing.models import BillingRecord, SubscriptionPlan, UserSubscription
@@ -59,8 +60,9 @@ class DashboardService:
         else:  # ALL
             # Query for actual minimum date in database for this tenant
             query = select(func.min(User.created_at)).where(criterion(User, tenant_id))
-            result = await db.execute(query)
-            min_date = result.scalar()
+            async with db_circuit_guard():
+                result = await db.execute(query)
+                min_date = result.scalar()
             start_date = min_date if min_date else end_date - timedelta(days=365)
 
         return start_date, end_date
@@ -155,8 +157,9 @@ class DashboardService:
         query = select(
             *self._user_subqueries(start_date, end_date, tenant_id)
         )
-        result = await db.execute(query)
-        row = result.one()
+        async with db_circuit_guard():
+            result = await db.execute(query)
+            row = result.one()
 
         return self._row_to_user_metrics(row)
 
@@ -180,8 +183,9 @@ class DashboardService:
         query = select(
             *self._revenue_subqueries(start_date, end_date, tenant_id)
         )
-        result = await db.execute(query)
-        row = result.one()
+        async with db_circuit_guard():
+            result = await db.execute(query)
+            row = result.one()
 
         return self._row_to_revenue_metrics(row)
 
@@ -263,8 +267,9 @@ class DashboardService:
         query = select(
             *self._activity_subqueries(start_date, end_date, tenant_id)
         )
-        result = await db.execute(query)
-        row = result.one()
+        async with db_circuit_guard():
+            result = await db.execute(query)
+            row = result.one()
 
         return self._row_to_activity_metrics(row)
 
@@ -338,8 +343,9 @@ class DashboardService:
         ]
         if include_min_created:
             columns.append(self._min_created_subquery(tenant_id))
-        result = await db.execute(select(*columns))
-        row = result.one()
+        async with db_circuit_guard():
+            result = await db.execute(select(*columns))
+            row = result.one()
         users = self._row_to_user_metrics(row, 0)
         revenue = self._row_to_revenue_metrics(row, 4)
         activity = self._row_to_activity_metrics(row, 7)

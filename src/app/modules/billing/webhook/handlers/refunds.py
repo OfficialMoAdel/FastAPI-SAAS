@@ -7,6 +7,8 @@ from sqlalchemy import func as _func
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from src.app.core.db.scoped import execute_scoped
+from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules.billing import webhook as _pkg
 from src.app.modules.billing.models import BillingRecord
 from src.app.modules.billing.schemas import (
@@ -146,13 +148,15 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
             # over the same id list in the same txn is equivalent to per-id
             # exists(); same rows, same commit boundary.
             refund_ids = [refund["id"] for refund in refunds]
-            from src.app.core.db.scoped import criterion
-
-            existing_result = await db.execute(
+            existing_result = await execute_scoped(
                 select(BillingRecord.stripe_refund_id).where(
-                    criterion(BillingRecord, tenant_id),
                     BillingRecord.stripe_refund_id.in_(refund_ids),
-                )
+                ),
+                db=db,
+                model=BillingRecord,
+                scope=ExplicitTenant(
+                    tenant_id=tenant_id, reason="legacy-criterion:BillingRecord"
+                ),
             )
             already_recorded = set(existing_result.scalars().all())
 

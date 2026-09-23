@@ -202,9 +202,10 @@ class MFAService:
         # challenge time — never by the mutable username, which can be
         # changed/renamed between challenge and completion. The stored
         # username is then asserted to match as a tamper check.
-        from src.app.modules.users.crud import crud_users
+        from src.app.modules.users import UserDirectory
 
-        user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
+        member = await UserDirectory(db).member(id=user_id)
+        user = member.model_dump() if member else None
         if not user or user.get("is_deleted") or not user.get("is_active", False):
             raise UnauthorizedError("User account is no longer active")
         if str(user.get("username") or "") != str(username):
@@ -253,10 +254,10 @@ class MFAService:
 
         # Audit log: MFA setup initiated
         try:
-            from src.app.modules.users.crud import crud_users
+            from src.app.modules.users import UserDirectory
 
-            user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
-            tenant_id = user.get("tenant_id") if user else None
+            member = await UserDirectory(db).member(id=user_id)
+            tenant_id = member.tenant_id if member else None
         except Exception as exc:
             logger.warning("mfa_audit_attribution_lookup_failed", error_type=type(exc).__name__)
         else:
@@ -370,10 +371,10 @@ class MFAService:
 
         # Audit log: MFA enabled
         try:
-            from src.app.modules.users.crud import crud_users
+            from src.app.modules.users import UserDirectory
 
-            user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
-            tenant_id = user.get("tenant_id") if user else None
+            member = await UserDirectory(db).member(id=user_id)
+            tenant_id = member.tenant_id if member else None
         except Exception as exc:
             logger.warning("mfa_audit_attribution_lookup_failed", error_type=type(exc).__name__)
         else:
@@ -527,10 +528,10 @@ class MFAService:
 
                 # Audit log: MFA verification success
                 try:
-                    from src.app.modules.users.crud import crud_users
+                    from src.app.modules.users import UserDirectory
 
-                    user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
-                    tenant_id = user.get("tenant_id") if user else None
+                    member = await UserDirectory(db).member(id=user_id)
+                    tenant_id = member.tenant_id if member else None
                 except Exception as exc:
                     logger.warning("mfa_audit_attribution_lookup_failed", error_type=type(exc).__name__)
                 else:
@@ -551,10 +552,10 @@ class MFAService:
 
         # Audit log: MFA verification failed
         try:
-            from src.app.modules.users.crud import crud_users
+            from src.app.modules.users import UserDirectory
 
-            user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
-            tenant_id = user.get("tenant_id") if user else None
+            member = await UserDirectory(db).member(id=user_id)
+            tenant_id = member.tenant_id if member else None
         except Exception as exc:
             logger.warning("mfa_audit_attribution_lookup_failed", error_type=type(exc).__name__)
         else:
@@ -669,10 +670,10 @@ class MFAService:
 
             # Audit log: Backup code used
             try:
-                from src.app.modules.users.crud import crud_users
+                from src.app.modules.users import UserDirectory
 
-                user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
-                tenant_id = user.get("tenant_id") if user else None
+                member = await UserDirectory(db).member(id=user_id)
+                tenant_id = member.tenant_id if member else None
             except Exception as exc:
                 logger.warning("mfa_audit_attribution_lookup_failed", error_type=type(exc).__name__)
             else:
@@ -718,12 +719,13 @@ class MFAService:
             UnauthorizedError: If verification fails.
         """
         from src.app.core.security import verify_password
-        from src.app.modules.users import UserService
+        from src.app.modules.users import UserDirectory
 
         # Verify user exists and password is correct (auth-gated read seam)
-        user = await UserService(db).get_active_user(id=user_id)
-        if not user:
+        info = await UserDirectory(db).active(id=user_id)
+        if not info:
             raise UnauthorizedError("Invalid credentials")
+        user = info.model_dump()
 
         if not await verify_password(password, user.get("hashed_password", "")):
             raise UnauthorizedError("Invalid credentials")
@@ -748,7 +750,7 @@ class MFAService:
         logger.info("mfa_disabled", user_id=user_id)
 
         # Audit log: MFA disabled
-        tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+        tenant_id = user.get("tenant_id")
         await audit(
             action=MFA_ACTION_DISABLE,
             entity_type="mfa",
@@ -837,12 +839,13 @@ class MFAService:
             UnauthorizedError: If verification fails.
         """
         from src.app.core.security import verify_password
-        from src.app.modules.users import UserService
+        from src.app.modules.users import UserDirectory
 
         # Verify user exists and password is correct (auth-gated read seam)
-        user = await UserService(db).get_active_user(id=user_id)
-        if not user:
+        info = await UserDirectory(db).active(id=user_id)
+        if not info:
             raise UnauthorizedError("Invalid credentials")
+        user = info.model_dump()
 
         if not await verify_password(password, user.get("hashed_password", "")):
             raise UnauthorizedError("Invalid credentials")
@@ -876,7 +879,7 @@ class MFAService:
         logger.info("mfa_backup_codes_regenerated", user_id=user_id)
 
         # Audit log: Backup codes regenerated
-        tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+        tenant_id = user.get("tenant_id")
         await audit(
             action=MFA_ACTION_BACKUP_CODES_REGENERATED,
             entity_type="mfa",

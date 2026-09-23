@@ -222,12 +222,12 @@ class PasskeyService:
     async def list_credentials(self, db: AsyncSession, user_id: int) -> list[Any]:
         """List all passkey credentials for a user."""
         from src.app.core.tenancy.context import get_current_tenant
-        from src.app.modules.users.crud import crud_users
+        from src.app.modules.users import UserDirectory
 
         tenant = get_current_tenant()
         if tenant:
-            user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
-            if user and user.get("tenant_id") != tenant.id:
+            member = await UserDirectory(db).member(id=user_id)
+            if member and member.tenant_id != tenant.id:
                 raise ModelNotFoundError("PasskeyCredential", user_id, message="Passkey credentials not found.")
 
         return await crud_passkey_credentials.get_by_user(db=db, user_id=user_id)
@@ -235,12 +235,12 @@ class PasskeyService:
     async def delete_credential(self, db: AsyncSession, user_id: int, credential_id: int) -> None:
         """Delete a passkey credential."""
         from src.app.core.tenancy.context import get_current_tenant
-        from src.app.modules.users.crud import crud_users
+        from src.app.modules.users import UserDirectory
 
         tenant = get_current_tenant()
         if tenant:
-            user = await crud_users.get_user_with_tier_eager(db=db, id=user_id)
-            if user and user.get("tenant_id") != tenant.id:
+            member = await UserDirectory(db).member(id=user_id)
+            if member and member.tenant_id != tenant.id:
                 raise ModelNotFoundError("PasskeyCredential", credential_id, message="Passkey credential not found.")
 
         cred = await crud_passkey_credentials.get_credential(db=db, id=credential_id)
@@ -673,56 +673,15 @@ class PasskeyService:
 
     async def _get_user_for_credential(self, db: AsyncSession, credential: Any) -> dict[str, Any] | None:
         """Get the user associated with a passkey credential with tier eager-loaded."""
-        from sqlalchemy import select
-        from sqlalchemy.orm import joinedload
+        from src.app.modules.users import UserDirectory
 
-        from src.app.modules.users.models import User
-
-        # Query user by ID with tier eager-loaded
-        stmt = (
-            select(User)
-            .options(joinedload(User.tier))
-            .where(User.id == credential.user_id, User.is_deleted.is_(False), User.is_active.is_(True))
-        )
-        result = await db.execute(stmt)
-        user = result.unique().scalar_one_or_none()
-
-        if not user:
+        # Tier-eager auth payload via the directory (active-gated +
+        # tenant-scoped like every other login door); dumped to dict at
+        # the issuance boundary below.
+        member = await UserDirectory(db).active(id=credential.user_id)
+        if member is None:
             return None
-
-        # Direct dict construction for consistency with auth service patterns
-        user_dict: dict[str, Any] = {
-            "id": user.id,
-            "created_at": user.created_at,
-            "updated_at": user.updated_at,
-            "name": user.name,
-            "username": user.username,
-            "email": user.email,
-            "hashed_password": user.hashed_password,
-            "profile_image_url": user.profile_image_url,
-            "tier_id": user.tier_id,
-            "tenant_id": user.tenant_id,
-            "is_superuser": user.is_superuser,
-            "is_active": user.is_active,  # BUG FIX: was missing, causing user.get("is_active") to return None
-            "is_deleted": user.is_deleted,
-            "is_email_verified": user.is_email_verified,
-            # BUG FIX: token_version was missing. Without it, _generate_auth_tokens
-            # defaults to 0, meaning revoked sessions (via token_version increment)
-            # could still be accepted if the user re-authenticates via passkey.
-            "token_version": user.token_version,
-        }
-
-        if user.tier:
-            user_dict["tier"] = {
-                "id": user.tier.id,
-                "created_at": user.tier.created_at,
-                "updated_at": user.tier.updated_at,
-                "name": user.tier.name,
-            }
-        else:
-            user_dict["tier"] = None
-
-        return user_dict
+        return member.model_dump(mode="json")
 
     async def _generate_auth_tokens(
         self, user: dict, request: Request | None = None, response: Any = None

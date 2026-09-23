@@ -2,7 +2,7 @@
 
 from collections.abc import Iterator
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from fastapi import Request, Response
@@ -15,6 +15,19 @@ from src.app.modules.auth.services.tokens import IssuedSession
 from src.app.shared.exceptions import RateLimitExceededError, UnauthorizedError, ValidationError
 
 
+def _dumpable(user: dict | None):
+    """Wrap a raw user dict the way UserDirectory seam methods return it.
+
+    Seam methods return validated models; callers immediately ``.model_dump()``.
+    Mocking at the seam therefore means returning an object whose
+    ``model_dump()`` yields the fixture dict (``None`` stays ``None``).
+    """
+    if user is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = user
+    return m
+
 @pytest.fixture
 def completion() -> Iterator[SimpleNamespace]:
     """Keep orchestration real; isolate stores, verification, and issuance."""
@@ -25,7 +38,7 @@ def completion() -> Iterator[SimpleNamespace]:
     store.remaining_ttl.return_value = 300
     store.consume.return_value = pending
     user = {"id": 12345, "username": "alice", "is_active": True, "is_deleted": False}
-    users = Mock(get_user_auth_info=AsyncMock(return_value=user))
+    users = Mock(member=AsyncMock(return_value=_dumpable(user)))
     issued = IssuedSession(access_token="access", refresh_token="refresh")
     with (
         patch.object(mfa, "check_security_budget", new_callable=AsyncMock) as budget,
@@ -33,8 +46,8 @@ def completion() -> Iterator[SimpleNamespace]:
         patch.object(mfa, "get_client_ip", return_value="192.0.2.1") as ip,
         patch.object(mfa, "get_mfa_pending_token_manager", return_value=store) as manager,
         patch(
-            "src.app.modules.users.crud.crud_users.get_user_with_tier_eager",
-            new=users.get_user_auth_info,
+            "src.app.modules.users.UserDirectory",
+            return_value=users,
         ) as user_service,
         patch.object(service, "verify_totp_token", new_callable=AsyncMock, return_value={"valid": True}) as verify,
         patch.object(mfa.TokenIssuer, "issue_session", new_callable=AsyncMock, return_value=issued) as issue,
@@ -46,7 +59,7 @@ def completion() -> Iterator[SimpleNamespace]:
         order = Mock()
         for name, dependency in [
             ("budget", budget), ("redis", redis), ("peek", store.peek), ("ttl", store.remaining_ttl),
-            ("verify", verify), ("consume", store.consume), ("lookup", users.get_user_auth_info), ("issue", issue),
+            ("verify", verify), ("consume", store.consume), ("lookup", users.member), ("issue", issue),
         ]:
             order.attach_mock(dependency, name)
         yield SimpleNamespace(
@@ -130,7 +143,7 @@ class TestCompleteLogin:
             await _complete(env)
         env.verify.assert_not_awaited()
         env.store.consume.assert_not_awaited()
-        env.users.get_user_auth_info.assert_not_awaited()
+        env.users.member.assert_not_awaited()
         env.issue.assert_not_awaited()
 
     @pytest.mark.parametrize("ttl,allowed", [
@@ -182,7 +195,7 @@ class TestCompleteLogin:
             await _complete(env)
         env.verify.assert_awaited_once()
         env.store.consume.assert_not_awaited()
-        env.users.get_user_auth_info.assert_not_awaited()
+        env.users.member.assert_not_awaited()
         env.issue.assert_not_awaited()
 
     async def test_consume_miss_prevents_lookup_and_issuance(self, completion: SimpleNamespace) -> None:
@@ -193,7 +206,7 @@ class TestCompleteLogin:
         env.verify.assert_awaited_once()
         env.store.consume.assert_awaited_once_with(env.request.mfa_token)
         assert [c[0] for c in env.order.mock_calls][-2:] == ["verify", "consume"]
-        env.users.get_user_auth_info.assert_not_awaited()
+        env.users.member.assert_not_awaited()
         env.issue.assert_not_awaited()
 
     @pytest.mark.parametrize(
@@ -201,11 +214,11 @@ class TestCompleteLogin:
     )
     async def test_inactive_user_denies_issuance(self, completion: SimpleNamespace, user: dict | None) -> None:
         env = completion
-        env.users.get_user_auth_info.return_value = user
+        env.users.member.return_value = _dumpable(user) if user is not None else None
         with pytest.raises(UnauthorizedError, match="no longer active"):
             await _complete(env)
         env.store.consume.assert_awaited_once_with(env.request.mfa_token)
-        env.users.get_user_auth_info.assert_awaited_once_with(db=env.db, id=12345)
+        env.users.member.assert_awaited_once_with(id=12345)
         env.issue.assert_not_awaited()
 
     @pytest.mark.parametrize("codes", [{"totp_token": "123456"}, {"backup_code": "BC-ABCDE-12345"}])
@@ -227,7 +240,7 @@ class TestCompleteLogin:
             redis_client=env.redis.return_value,
         )
         env.store.consume.assert_awaited_once_with(env.request.mfa_token)
-        env.users.get_user_auth_info.assert_awaited_once_with(db=env.db, id=12345)
+        env.users.member.assert_awaited_once_with(id=12345)
         env.issue.assert_awaited_once_with(
             env.user, channel="mfa", request=env.http, response=env.response, subject="alice", verify=False,
         )
@@ -237,7 +250,7 @@ class TestCompleteLogin:
         env.user["username"] = "renamed"
         with pytest.raises(UnauthorizedError, match="Invalid MFA pending token"):
             await _complete(env)
-        env.users.get_user_auth_info.assert_awaited_once_with(db=env.db, id=12345)
+        env.users.member.assert_awaited_once_with(id=12345)
         env.issue.assert_not_awaited()
 
     @pytest.mark.parametrize("ttl", [-1, -2])
@@ -301,13 +314,17 @@ async def test_login_doors_bind_mfa_to_client_ip(door: str) -> None:
             provider = AsyncMock()
             provider.exchange_code_for_token.return_value = {"access_token": "provider-token"}
             provider.get_user_info.return_value = Mock(provider_user_id="provider-user", email=user["email"])
-            users = Mock(get=AsyncMock(return_value=user), get_user_auth_info=AsyncMock(return_value=user))
+            users = Mock(
+                by_id=AsyncMock(return_value=user),
+                by_email=AsyncMock(return_value=user),
+                auth_info=AsyncMock(return_value=_dumpable(user)),
+            )
             stack.enter_context(patch("src.app.core.redis_provider.get_redis", return_value=redis))
             stack.enter_context(patch.object(sso, "get_sso_state_manager", return_value=manager))
             stack.enter_context(patch.object(service, "_get_provider_instance", return_value=provider))
             stack.enter_context(patch("src.app.modules.auth.services.sso_settings.sso_settings_service.get_decrypted_settings"))
             stack.enter_context(patch.object(sso, "get_current_tenant", return_value=Mock(id=1)))
-            stack.enter_context(patch.object(sso, "UserService", return_value=users))
+            stack.enter_context(patch.object(sso, "UserDirectory", return_value=users))
             connections = stack.enter_context(patch.object(sso, "crud_user_sso_connections"))
             connections.get_by_provider_user_id = AsyncMock(return_value=Mock(user_id=12345, id=1))
             connections.update = AsyncMock()

@@ -31,6 +31,21 @@ def claims(token: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(payload_b64))
 
 
+
+
+def _dumpable(user: dict | None):
+    """Wrap a raw user dict the way UserDirectory seam methods return it.
+
+    Seam methods return validated models; callers immediately ``.model_dump()``.
+    Mocking at the seam therefore means returning an object whose
+    ``model_dump()`` yields the fixture dict (``None`` stays ``None``).
+    """
+    if user is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = user
+    return m
+
 # ---------------------------------------------------------------------------
 # A3/A2: sid + absolute_exp claim lifecycle
 # ---------------------------------------------------------------------------
@@ -198,10 +213,8 @@ class TestRefreshInvalidatesBySid:
                 return_value=token_data,
             ),
             patch(
-                "src.app.modules.users.service.UserService.get_user_auth_info",
-                new_callable=AsyncMock,
-                return_value=db_user,
-            ),
+                "src.app.modules.auth.service.UserDirectory",
+            ) as mock_ud,
             patch(
                 "src.app.core.security.jwt_utils.decode_jwt_token",
                 new_callable=AsyncMock,
@@ -229,6 +242,7 @@ class TestRefreshInvalidatesBySid:
         ):
             mock_bus.publish = AsyncMock()
             mock_sm.invalidate_session = AsyncMock(return_value=True)
+            mock_ud.return_value.auth_info = AsyncMock(return_value=_dumpable(db_user))
 
             result = await auth_service.refresh_access_token(
                 "old_refresh_token", mock_response, mock_db
@@ -282,10 +296,10 @@ class TestTriStateBlacklist:
                 "src.app.api.deps.auth._is_token_blacklisted_with_fallback",
                 new=AsyncMock(return_value=True),
             ) as mock_fb,
-            patch("src.app.api.deps.auth.UserService") as mock_us,
+            patch("src.app.api.deps.auth.UserDirectory") as mock_us,
         ):
             svc = mock_us.return_value
-            svc.get_user_auth_info = AsyncMock(return_value=user)
+            svc.auth_info = AsyncMock(return_value=_dumpable(user))
 
             with pytest.raises(Exception) as exc_info:
                 await get_auth_context(request, _make_db(), "tok")
@@ -318,10 +332,10 @@ class TestTriStateBlacklist:
                 new=AsyncMock(return_value=True),
             ) as mock_fb,
             patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-            patch("src.app.api.deps.auth.UserService") as mock_us,
+            patch("src.app.api.deps.auth.UserDirectory") as mock_us,
         ):
             svc = mock_us.return_value
-            svc.get_user_auth_info = AsyncMock(return_value=user)
+            svc.auth_info = AsyncMock(return_value=_dumpable(user))
             ctx = await get_auth_context(request, _make_db(), "tok")
             assert ctx.user.id == 1
             mock_fb.assert_not_awaited()
@@ -348,10 +362,10 @@ class TestTriStateBlacklist:
                 "src.app.api.deps.auth._is_token_blacklisted_with_fallback",
                 new=AsyncMock(return_value=True),
             ) as mock_fb,
-            patch("src.app.api.deps.auth.UserService") as mock_us,
+            patch("src.app.api.deps.auth.UserDirectory") as mock_us,
         ):
             svc = mock_us.return_value
-            svc.get_user_auth_info = AsyncMock(return_value=user)
+            svc.auth_info = AsyncMock(return_value=_dumpable(user))
             with pytest.raises(Exception) as exc_info:
                 await get_auth_context(request, _make_db(), "tok")
             mock_fb.assert_awaited_once()

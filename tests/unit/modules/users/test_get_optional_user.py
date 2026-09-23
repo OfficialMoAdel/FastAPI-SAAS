@@ -17,6 +17,16 @@ from src.app.shared.exceptions import UnauthorizedError
 from tests.conftest import MockUser
 
 
+def _dumpable(d):
+    """Wrap a fixture dict as a model-like with .model_dump()."""
+    if d is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = d
+    return m
+
+
+
 @pytest.fixture
 def mock_request():
     """Mock FastAPI Request object."""
@@ -68,14 +78,14 @@ class TestGetOptionalUserWithValidToken:
         )
 
         with patch("src.app.api.deps.auth.verify_token") as mock_verify:
-            with patch("src.app.api.deps.auth.UserService") as MockUserService:
+            with patch("src.app.api.deps.auth.UserDirectory") as MockUserDirectory:
                 with patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant:
                     mock_verify.return_value = TokenData(username_or_email="test@example.com", token_version=1)
                     mock_get_tenant.return_value = mock_tenant
 
-                    mock_user_service = AsyncMock()
-                    mock_user_service.get_user_auth_info.return_value = mock_user_dict
-                    MockUserService.return_value = mock_user_service
+                    mock_directory = AsyncMock()
+                    mock_directory.auth_info.return_value = _dumpable(mock_user_dict)
+                    MockUserDirectory.return_value = mock_directory
 
                     # Act
                     result = await get_optional_user(mock_request, mock_db)
@@ -101,14 +111,14 @@ class TestGetOptionalUserWithValidToken:
         )
 
         with patch("src.app.api.deps.auth.verify_token") as mock_verify:
-            with patch("src.app.api.deps.auth.UserService") as MockUserService:
+            with patch("src.app.api.deps.auth.UserDirectory") as MockUserDirectory:
                 with patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant:
                     mock_verify.return_value = TokenData(username_or_email="user@test.com", token_version=1)
                     mock_get_tenant.return_value = mock_tenant
 
-                    mock_user_service = AsyncMock()
-                    mock_user_service.get_user_auth_info.return_value = mock_user_dict
-                    MockUserService.return_value = mock_user_service
+                    mock_directory = AsyncMock()
+                    mock_directory.auth_info.return_value = _dumpable(mock_user_dict)
+                    MockUserDirectory.return_value = mock_directory
 
                     # Act
                     result = await get_optional_user(mock_request, mock_db)
@@ -169,14 +179,14 @@ class TestGetOptionalUserRateLimitIntegration:
         )
 
         with patch("src.app.api.deps.auth.verify_token") as mock_verify:
-            with patch("src.app.api.deps.auth.UserService") as MockUserService:
+            with patch("src.app.api.deps.auth.UserDirectory") as MockUserDirectory:
                 with patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant:
                     mock_verify.return_value = TokenData(username_or_email="premium@example.com", token_version=1)
                     mock_get_tenant.return_value = mock_tenant
 
-                    mock_user_service = AsyncMock()
-                    mock_user_service.get_user_auth_info.return_value = mock_user_dict
-                    MockUserService.return_value = mock_user_service
+                    mock_directory = AsyncMock()
+                    mock_directory.auth_info.return_value = _dumpable(mock_user_dict)
+                    MockUserDirectory.return_value = mock_directory
 
                     # Act
                     result = await get_optional_user(mock_request, mock_db)

@@ -144,6 +144,44 @@ class UserRead(UserReadPublic):
     is_superuser: bool = False
 
 
+class UserTierAuthInfo(BaseModel):
+    """Tier slice carried on the tier-eager auth payload (directory seam)."""
+
+    id: int
+    created_at: datetime
+    updated_at: datetime | None = None
+    name: str
+
+
+class UserAuthInfo(BaseModel):
+    """Typed tier-eager auth payload returned by the UserDirectory seam.
+
+    Mirrors the ``CRUDUser.get_user_with_tier_eager`` dict 1:1 (including
+    ``hashed_password`` / ``token_version`` / nested ``tier``, which
+    :class:`UserRead` deliberately lacks) so auth-gated readers
+    (password/MFA/passkey/magic-link verification, RBAC membership) keep
+    every field they consume. Plain ``str`` fields, no validators — existing
+    DB values may predate current request-time regex rules.
+    """
+
+    id: int
+    created_at: datetime
+    updated_at: datetime | None = None
+    name: str
+    username: str
+    email: str
+    profile_image_url: str
+    tenant_id: UUID
+    tier_id: int | None = None
+    hashed_password: str
+    is_superuser: bool = False
+    is_deleted: bool = False
+    is_active: bool = True
+    is_email_verified: bool = False
+    token_version: int = 0
+    tier: UserTierAuthInfo | None = None
+
+
 class UserCreate(UserBase, BaseCreate):
     """API request schema for creating a user."""
 

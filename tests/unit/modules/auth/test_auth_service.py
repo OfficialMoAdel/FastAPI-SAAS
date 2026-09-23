@@ -22,6 +22,15 @@ from src.app.modules.auth.services.mfa import MFAService
 from src.app.modules.users.session_invalidation import InvalidationReason
 
 
+def _dumpable(d):
+    """Wrap a user fixture dict as a directory return (model with .model_dump)."""
+    if d is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = d
+    return m
+
+
 @pytest.fixture
 def auth_service():
     """Create an AuthService instance."""
@@ -103,7 +112,7 @@ class TestAuthServiceLockout:
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
             patch(
-                "src.app.modules.users.service.UserService.get_user_auth_info", new_callable=AsyncMock
+                "src.app.modules.users.directory.UserDirectory.auth_info", new_callable=AsyncMock
             ) as mock_get_user,
         ):
             mock_auth.return_value = None  # Authentication fails
@@ -222,7 +231,7 @@ class TestAuthServiceLockout:
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
             patch(
-                "src.app.modules.users.service.UserService.get_user_auth_info", new_callable=AsyncMock
+                "src.app.modules.users.directory.UserDirectory.auth_info", new_callable=AsyncMock
             ) as mock_get_user,
         ):
             mock_auth.return_value = None
@@ -247,7 +256,7 @@ class TestAuthServiceLockout:
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
             patch(
-                "src.app.modules.users.service.UserService.get_user_auth_info", new_callable=AsyncMock
+                "src.app.modules.users.directory.UserDirectory.auth_info", new_callable=AsyncMock
             ) as mock_get_user,
         ):
             mock_auth.return_value = None
@@ -315,7 +324,7 @@ class TestAuthServiceTokenRefresh:
                 "src.app.modules.auth.services.tokens.create_refresh_token", new_callable=AsyncMock
             ) as mock_create_refresh,
             patch("src.app.core.security.blacklist_token", new_callable=AsyncMock) as mock_blacklist,
-            patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
+            patch("src.app.modules.auth.service.UserDirectory") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.auth.services.tokens.register_login_session", new_callable=AsyncMock
@@ -339,10 +348,10 @@ class TestAuthServiceTokenRefresh:
             mock_create_access.return_value = "new_access_token"
             mock_create_refresh.return_value = "new_refresh_token"
 
-            # Mock the UserService returned by get_user_service
+            # Mock the UserDirectory returned by get_user_directory
             mock_user_service = MagicMock()
-            mock_user_service.get_user_auth_info = AsyncMock(
-                return_value={
+            mock_user_service.auth_info = AsyncMock(
+                return_value=_dumpable({
                     "id": 1,
                     "username": "testuser",
                     "tier_id": 1,
@@ -350,8 +359,7 @@ class TestAuthServiceTokenRefresh:
                     "is_deleted": False,
                     "is_active": True,
                     "token_version": 0,
-                }
-            )
+                }))
             mock_get_user_service.return_value = mock_user_service
 
             result = await auth_service.refresh_access_token("valid_refresh_token", mock_response, mock_db)
@@ -431,13 +439,13 @@ class TestAuthServiceEmailFlows:
         }
 
         with (
-            patch("src.app.modules.auth.services.passwords.UserService") as mock_get_service,
+            patch("src.app.modules.auth.services.passwords.UserDirectory") as mock_get_service,
             patch("src.app.core.events.notifications.event_bus.publish", new_callable=AsyncMock) as mock_publish,
             patch("src.app.modules.auth.services.passwords.PasswordResetToken") as mock_token_model,
             patch("src.app.modules.auth.services.passwords.settings") as mock_settings,
         ):
             mock_user_service = MagicMock()
-            mock_user_service.get_active_user = AsyncMock(return_value=mock_user)
+            mock_user_service.active = AsyncMock(return_value=_dumpable(mock_user))
             mock_get_service.return_value = mock_user_service
             mock_settings.app.FRONTEND_URL = "http://test-frontend"
             mock_settings.FRONTEND_URL = "http://test-frontend"
@@ -455,7 +463,7 @@ class TestAuthServiceEmailFlows:
             await PasswordLifecycleService().request_password_reset("test@example.com", mock_db)
 
             # Check user lookup (active-gated named-lookup seam)
-            mock_user_service.get_active_user.assert_called_once_with(email="test@example.com")
+            mock_user_service.active.assert_called_once_with(email="test@example.com")
 
             # Check token saved
             mock_db.add.assert_called()
@@ -484,15 +492,18 @@ class TestAuthServiceEmailFlows:
         }
 
         with (
-            patch("src.app.modules.auth.services.email_verification.UserService") as mock_get_service,
+            patch("src.app.modules.auth.services.email_verification.UserDirectory") as mock_get_service,
+            patch("src.app.modules.auth.services.email_verification.UserService") as mock_svc_cls,
             patch("src.app.modules.auth.services.email_verification.EmailVerificationToken") as mock_token_cls,
             patch("src.app.modules.auth.services.email_verification.settings") as mock_settings,
             patch("src.app.core.events.notifications.event_bus.publish", new_callable=AsyncMock) as mock_publish,
         ):
             mock_user_service = MagicMock()
             mock_user_service.crud = MagicMock()
-            mock_user_service.crud.get = AsyncMock(return_value=mock_user)
+            mock_user_service.by_email = AsyncMock(return_value=_dumpable(mock_user))
+            mock_user_service.by_id = AsyncMock(return_value=_dumpable(mock_user))
             mock_get_service.return_value = mock_user_service
+            mock_svc_cls.return_value = mock_user_service
 
             mock_settings.FRONTEND_URL = "http://test-frontend"
 
@@ -529,16 +540,19 @@ class TestAuthServiceEmailFlows:
         mock_user = {"id": 99, "is_email_verified": False, "is_active": True}
 
         with (
-            patch("src.app.modules.auth.services.email_verification.UserService") as mock_get_service,
+            patch("src.app.modules.auth.services.email_verification.UserDirectory") as mock_get_service,
+            patch("src.app.modules.auth.services.email_verification.UserService") as mock_svc_cls,
         ):
             mock_user_service = MagicMock()
             mock_user_service.crud = MagicMock()
-            mock_user_service.crud.get = AsyncMock(return_value=mock_user)
+            mock_user_service.by_email = AsyncMock(return_value=_dumpable(mock_user))
+            mock_user_service.by_id = AsyncMock(return_value=_dumpable(mock_user))
             mock_user_service.crud.update = AsyncMock()
             mock_user_service._invalidate_user_cache = AsyncMock()
             # 1B: verify_email routes the bump through the seam.
             mock_user_service.invalidate_sessions = AsyncMock()
             mock_get_service.return_value = mock_user_service
+            mock_svc_cls.return_value = mock_user_service
 
             # Create a mock token object returned by DB query
             mock_token = MagicMock()
@@ -556,7 +570,7 @@ class TestAuthServiceEmailFlows:
             result = await EmailVerificationService().verify_email("verify_token_123", mock_db)
 
             # Assertions
-            mock_user_service.crud.get.assert_called_once()
+            mock_user_service.by_id.assert_called_once_with(99)
             mock_user_service.crud.update.assert_called_once()
             mock_db.delete.assert_called_once_with(mock_token)
             # 1B: user update + token delete + SQL bump commit atomically
@@ -603,23 +617,22 @@ class TestAuthServiceSecurityBugFixes:
         with (
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
             patch("src.app.core.security.blacklist_token", new_callable=AsyncMock),
-            patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
+            patch("src.app.modules.auth.service.UserDirectory") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             mock_verify.return_value = mock_token_data
 
             # Simulate deleted user in cache
             mock_user_service = MagicMock()
-            mock_user_service.get_user_auth_info = AsyncMock(
-                return_value={
+            mock_user_service.auth_info = AsyncMock(
+                return_value=_dumpable({
                     "id": 1,
                     "username": "deleteduser",
                     "is_deleted": True,  # User was deleted
                     "is_active": False,
                     "tier_id": 1,
                     "tier": {"name": "basic"},
-                }
-            )
+                }))
             mock_get_user_service.return_value = mock_user_service
 
             with pytest.raises(UnauthorizedError) as exc_info:
@@ -639,14 +652,14 @@ class TestAuthServiceSecurityBugFixes:
         with (
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
             patch("src.app.core.security.blacklist_token", new_callable=AsyncMock),
-            patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
+            patch("src.app.modules.auth.service.UserDirectory") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             mock_verify.return_value = mock_token_data
 
             # User not found (returns None)
             mock_user_service = MagicMock()
-            mock_user_service.get_user_auth_info = AsyncMock(return_value=None)
+            mock_user_service.auth_info = AsyncMock(return_value=_dumpable(None))
             mock_get_user_service.return_value = mock_user_service
 
             with pytest.raises(UnauthorizedError) as exc_info:
@@ -672,7 +685,7 @@ class TestAuthServiceSecurityBugFixes:
                 "src.app.modules.auth.services.tokens.create_refresh_token", new_callable=AsyncMock
             ) as mock_create_refresh,
             patch("src.app.core.security.blacklist_token", new_callable=AsyncMock),
-            patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
+            patch("src.app.modules.auth.service.UserDirectory") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
             # S-4: session registration is orthogonal to refresh logic; it now
             # fails closed without Redis, so mock it out in this unit test.
@@ -693,8 +706,8 @@ class TestAuthServiceSecurityBugFixes:
 
             # Active user (is_deleted=False)
             mock_user_service = MagicMock()
-            mock_user_service.get_user_auth_info = AsyncMock(
-                return_value={
+            mock_user_service.auth_info = AsyncMock(
+                return_value=_dumpable({
                     "id": 1,
                     "username": "activeuser",
                     "is_deleted": False,
@@ -703,8 +716,7 @@ class TestAuthServiceSecurityBugFixes:
                     "tier_id": 1,
                     "tier": {"name": "premium"},
                     "token_version": 0,
-                }
-            )
+                }))
             mock_get_user_service.return_value = mock_user_service
 
             result = await auth_service.refresh_access_token("valid_refresh_token", mock_response, mock_db)
@@ -1005,7 +1017,7 @@ class TestP21RefreshHardening:
 
         with (
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
-            patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
+            patch("src.app.modules.auth.service.UserDirectory") as mock_get_user_service,
             patch(
                 "src.app.core.security.jwt_utils.decode_jwt_token", new_callable=AsyncMock
             ) as mock_decode,
@@ -1015,16 +1027,15 @@ class TestP21RefreshHardening:
             mock_decode.return_value = {"tenant_id": str(token_tenant)}
 
             mock_user_service = MagicMock()
-            mock_user_service.get_user_auth_info = AsyncMock(
-                return_value={
+            mock_user_service.auth_info = AsyncMock(
+                return_value=_dumpable({
                     "id": 1,
                     "username": "testuser",
                     "tenant_id": user_tenant,
                     "is_deleted": False,
                     "is_active": True,
                     "token_version": 0,
-                }
-            )
+                }))
             mock_get_user_service.return_value = mock_user_service
 
             with pytest.raises(UnauthorizedError) as exc_info:

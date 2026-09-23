@@ -59,3 +59,11 @@ persistence grilling loop, 2026-09-22.)
   user-active, tenant bind) stay in `AuthService`; everything after a verified
   payload is the Seam's. One ownership rule: exactly one cookie write, exactly
   one session registration, on both login and refresh paths.
+
+- **Payment gateway** — the Stripe Seam owned by `src/app/clients/billing/`
+  (`PaymentGateway` Protocol, `StripeGateway` Adapter): key resolution
+  (per-tenant SELECT + decrypt + miss-cache + mismatch fail-closed + global
+  fallback), transient-only retry, per-call idempotency keys. The module side
+  (`subscription_service.retrieve_subscription_for_tenant`) owns resolve →
+  build → retrieve as ONE call so the resolved key never crosses a module
+  boundary as a naked string; the Adapter never leaves `clients/`.

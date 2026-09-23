@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps.request_context import require_resource_ownership
-from src.app.core.db.scoped import criterion
+from src.app.core.db.scoped import execute_scoped
 from src.app.core.pagination import build_keyset_response, paginate_keyset
 from src.app.core.principal import AuthenticatedUser
 from src.app.modules._base.service import BaseService
@@ -158,14 +158,14 @@ class PostService(BaseService[Post]):
             ``limit`` — no ``total`` (counting the remaining set is the exact
             O(N) cost keyset avoids).
         """
+        # Tenant isolation filter injected by the seam (scope=None resolves context).
         stmt = select(Post).where(
             Post.created_by_user_id == user_id,
             Post.is_deleted.is_(False),
-            criterion(Post),  # tenant context injects the isolation filter
         )
         stmt, _decoded = paginate_keyset(stmt, Post.created_at, Post.id, cursor, limit)
 
-        result = await self.db.execute(stmt)
+        result = await execute_scoped(stmt, db=self.db, model=Post, scope=None)
         posts = list(result.scalars().all())
 
         return build_keyset_response(

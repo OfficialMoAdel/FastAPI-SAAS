@@ -1,7 +1,7 @@
 """Tests for src.app.api.deps.auth covering auth context resolution, token
 verification, API key auth, optional auth, superuser checks, and scope gating.
 
-External dependencies (UserService, verify_token, JWT cache, tenant context,
+External dependencies (UserDirectory, verify_token, JWT cache, tenant context,
 API key service) are mocked.
 """
 
@@ -49,6 +49,20 @@ def _make_request(headers: dict[str, str] | None = None, state: Any = None) -> M
 
 def _make_db() -> MagicMock:
     return MagicMock()
+
+
+def _dumpable(user: dict | None) -> MagicMock | None:
+    """Wrap a raw user dict the way UserDirectory seam methods return it.
+
+    Seam methods return validated models; callers immediately ``.model_dump()``.
+    Mocking at the seam therefore means returning an object whose
+    ``model_dump()`` yields the fixture dict (``None`` stays ``None``).
+    """
+    if user is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = user
+    return m
 
 
 @pytest.fixture(autouse=True)
@@ -189,10 +203,10 @@ async def test_get_auth_context_cached_success() -> None:
             "src.app.api.deps.auth._is_token_blacklisted_with_fallback",
             new=AsyncMock(return_value=False),
         ),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         ctx = await get_auth_context(request, _make_db(), "tok")
     assert ctx.user.id == 1
 
@@ -205,10 +219,10 @@ async def test_get_auth_context_verify_token_success() -> None:
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         ctx = await get_auth_context(request, _make_db(), "tok")
     assert ctx.user.id == 2
 
@@ -220,10 +234,10 @@ async def test_get_auth_context_user_not_found() -> None:
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=None)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=None)
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, _make_db(), "tok")
 
@@ -236,10 +250,10 @@ async def test_get_auth_context_inactive() -> None:
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, _make_db(), "tok")
 
@@ -252,10 +266,10 @@ async def test_get_auth_context_deleted() -> None:
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, _make_db(), "tok")
 
@@ -268,10 +282,10 @@ async def test_get_auth_context_version_mismatch() -> None:
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, _make_db(), "tok")
 
@@ -285,10 +299,10 @@ async def test_get_auth_context_tenant_mismatch() -> None:
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=tenant),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(ForbiddenException):
             await get_auth_context(request, _make_db(), "tok")
 
@@ -309,10 +323,10 @@ async def test_get_auth_context_superuser_tenant_ok() -> None:
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=tenant),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         ctx = await get_auth_context(request, _make_db(), "tok")
     assert ctx.user.id == 2
 
@@ -377,12 +391,12 @@ async def test_get_user_by_api_key_user_not_found() -> None:
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
         patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         svc = mock_svc_cls.return_value
         svc.validate_api_key = AsyncMock(return_value=key_info)
-        us = mock_us.return_value
-        us.get = AsyncMock(return_value=None)
+        directory = mock_ud.return_value
+        directory.by_id = AsyncMock(return_value=None)
         result = await get_user_by_api_key("key", _make_db(), request)
     assert result is None
 
@@ -394,12 +408,12 @@ async def test_get_user_by_api_key_dict_user() -> None:
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
         patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         svc = mock_svc_cls.return_value
         svc.validate_api_key = AsyncMock(return_value=key_info)
-        us = mock_us.return_value
-        us.get = AsyncMock(return_value=user_data)
+        directory = mock_ud.return_value
+        directory.by_id = AsyncMock(return_value=_dumpable(user_data))
         result = await get_user_by_api_key("key", _make_db(), request)
     assert result is not None
     assert result.id == 1
@@ -416,15 +430,24 @@ async def test_get_user_by_api_key_obj_user() -> None:
     user_obj.is_active = True
     user_obj.is_superuser = False
     user_obj.token_version = 0
+    user_obj.model_dump.return_value = {
+        "id": 1,
+        "username": "a",
+        "email": "a@b.com",
+        "tenant_id": 5,
+        "is_active": True,
+        "is_superuser": False,
+        "token_version": 0,
+    }
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
         patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         svc = mock_svc_cls.return_value
         svc.validate_api_key = AsyncMock(return_value=key_info)
-        us = mock_us.return_value
-        us.get = AsyncMock(return_value=user_obj)
+        directory = mock_ud.return_value
+        directory.by_id = AsyncMock(return_value=user_obj)
         result = await get_user_by_api_key("key", _make_db(), request)
     assert result is not None
     assert result.id == 1
@@ -437,12 +460,12 @@ async def test_get_user_by_api_key_inactive() -> None:
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
         patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         svc = mock_svc_cls.return_value
         svc.validate_api_key = AsyncMock(return_value=key_info)
-        us = mock_us.return_value
-        us.get = AsyncMock(return_value=user_data)
+        directory = mock_ud.return_value
+        directory.by_id = AsyncMock(return_value=_dumpable(user_data))
         result = await get_user_by_api_key("key", _make_db(), request)
     assert result is None
 
@@ -496,10 +519,10 @@ async def test_get_auth_context_cached_email_user() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         ctx = await get_auth_context(request, _make_db(), "tok")
     assert ctx.user.id == 1
 
@@ -512,10 +535,10 @@ async def test_get_auth_context_cached_no_user() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=None)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=None)
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, _make_db(), "tok")
 
@@ -529,10 +552,10 @@ async def test_get_auth_context_cached_deleted() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, _make_db(), "tok")
 
@@ -546,10 +569,10 @@ async def test_get_auth_context_cached_version_mismatch() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, _make_db(), "tok")
 
@@ -578,10 +601,10 @@ async def test_get_optional_auth_context_user_lookup_exception() -> None:
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(side_effect=RuntimeError("db down"))
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(side_effect=RuntimeError("db down"))
         with pytest.raises(UnauthorizedException):
             await get_optional_auth_context(request, _make_db())
 
@@ -631,10 +654,10 @@ async def test_verify_optional_cached_email_success() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
     assert result is not None
     assert result.user.id == 1
@@ -649,10 +672,10 @@ async def test_verify_optional_cached_no_user() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=None)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=None)
         with pytest.raises(UnauthorizedException):
             await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
@@ -667,10 +690,10 @@ async def test_verify_optional_cached_deleted() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(UnauthorizedException):
             await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
@@ -685,10 +708,10 @@ async def test_verify_optional_cached_version_mismatch() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(UnauthorizedException):
             await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
@@ -722,10 +745,10 @@ async def test_verify_optional_success() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         ctx = await _verify_optional_bearer_token("tok", _make_db(), request, None)
     assert ctx is not None
     assert ctx.user.id == 2
@@ -739,10 +762,10 @@ async def test_verify_optional_inactive() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(UnauthorizedException):
             await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
@@ -757,10 +780,10 @@ async def test_verify_optional_tenant_mismatch() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(ForbiddenException):
             await _verify_optional_bearer_token("tok", _make_db(), request, tenant)
 
@@ -832,10 +855,10 @@ async def test_get_optional_bearer_success() -> None:
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        svc = mock_us.return_value
-        svc.get_user_auth_info = AsyncMock(return_value=user)
+        directory = mock_ud.return_value
+        directory.auth_info = AsyncMock(return_value=_dumpable(user))
         ctx = await get_optional_auth_context(request, _make_db(), None)
     assert ctx is not None
     assert ctx.user.id == 2
@@ -918,9 +941,9 @@ async def test_resolve_principal_strict_success() -> None:
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        mock_us.return_value.get_user_auth_info = AsyncMock(return_value=user)
+        mock_ud.return_value.auth_info = AsyncMock(return_value=_dumpable(user))
         ctx = await resolve_principal(request, _make_db(), token="valid_tok", strict=True)
     assert ctx is not None
     assert ctx.user.id == 10
@@ -948,9 +971,9 @@ async def test_resolve_principal_optional_success() -> None:
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
-        patch("src.app.api.deps.auth.UserService") as mock_us,
+        patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        mock_us.return_value.get_user_auth_info = AsyncMock(return_value=user)
+        mock_ud.return_value.auth_info = AsyncMock(return_value=_dumpable(user))
         result = await resolve_principal(request, _make_db(), token="valid_tok", strict=False)
     assert result is not None
     assert result.user.id == 10

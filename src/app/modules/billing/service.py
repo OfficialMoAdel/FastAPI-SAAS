@@ -92,6 +92,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.app.core.config import settings
+from src.app.core.db.scoped import execute_scoped
 from src.app.core.logger import get_logger
 from src.app.core.security.encryption import CredentialEncryption
 from src.app.core.tenancy.context import (  # noqa: F401 — get_current_tenant re-exported for test patch targets
@@ -99,6 +100,7 @@ from src.app.core.tenancy.context import (  # noqa: F401 — get_current_tenant 
     require_active_tenant,
     resolve_tenant_id,
 )
+from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules._base.service import fetch_page_with_total
 from src.app.shared.exceptions import ModelNotFoundError
 
@@ -402,14 +404,15 @@ class ProductService:
         """
         tid = self._resolve_tenant("Product", product_id)
 
-        from src.app.core.db.scoped import criterion
-
         stmt = (
             select(Product)
             .options(selectinload(Product.pricing_tiers))
-            .where(Product.id == product_id, criterion(Product, tid))
+            .where(Product.id == product_id)
         )
-        result = await self.db.execute(stmt)
+        result = await execute_scoped(
+            stmt, db=self.db, model=Product,
+            scope=ExplicitTenant(tenant_id=tid, reason="legacy-criterion:Product"),
+        )
         product = result.scalar_one_or_none()
 
         if product is None:

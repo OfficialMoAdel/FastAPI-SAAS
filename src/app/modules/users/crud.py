@@ -5,11 +5,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from src.app.core.db.scoped import criterion
+from src.app.core.db.scoped import execute_scoped
 from src.app.core.db.tenant_crud import TenantAwareCRUD
 from src.app.core.tenancy.context import (
     get_current_tenant,  # noqa: F401 — re-exported for legacy callers of this module
 )
+from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreateInternal, UserDelete, UserRead, UserUpdate, UserUpdateInternal
 
@@ -65,9 +66,8 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
         stmt = select(User).options(joinedload(User.tier)).where(lookup_clause, User.is_deleted.is_(False))
         if require_active:
             stmt = stmt.where(User.is_active.is_(True))
-        stmt = stmt.where(criterion(User, tenant_id))
-
-        result = await db.execute(stmt)
+        scope = ExplicitTenant(tenant_id, reason='legacy-criterion:User') if tenant_id is not None else None
+        result = await execute_scoped(stmt, db=db, model=User, scope=scope)
         user = result.unique().scalar_one_or_none()
 
         if not user:

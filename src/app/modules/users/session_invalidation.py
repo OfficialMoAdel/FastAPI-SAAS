@@ -128,10 +128,17 @@ async def _extract_user_records(
             User.id, User.email, User.username, User.tenant_id, User.token_version
         ).where(User.id.in_(user_ids))
         if tenant_id is not None:
-            from src.app.core.db.scoped import criterion
+            from src.app.core.db.scoped import execute_scoped
+            from src.app.core.tenancy.scope import ExplicitTenant
 
-            stmt = stmt.where(criterion(User, tenant_id))
-        result = await db.execute(stmt)
+            result = await execute_scoped(
+                stmt,
+                db=db,
+                model=User,
+                scope=ExplicitTenant(tenant_id=tenant_id, reason="legacy-criterion:User"),
+            )
+        else:
+            result = await db.execute(stmt)
         rows = list(result.all())
         return rows, user_ids, True
 
@@ -290,10 +297,17 @@ async def _fetch_fresh_token_versions(
     try:
         stmt = select(User.id, User.token_version).where(User.id.in_(affected_ids))
         if tenant_id is not None:
-            from src.app.core.db.scoped import criterion
+            from src.app.core.db.scoped import execute_scoped
+            from src.app.core.tenancy.scope import ExplicitTenant
 
-            stmt = stmt.where(criterion(User, tenant_id))
-        result = await db.execute(stmt)
+            result = await execute_scoped(
+                stmt,
+                db=db,
+                model=User,
+                scope=ExplicitTenant(tenant_id=tenant_id, reason="legacy-criterion:User"),
+            )
+        else:
+            result = await db.execute(stmt)
         rows = result.all()
         fresh: dict[Any, int] = {}
         for row in rows:

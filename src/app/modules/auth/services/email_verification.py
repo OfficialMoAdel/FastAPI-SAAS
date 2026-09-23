@@ -16,7 +16,7 @@ from src.app.core.config import settings
 from src.app.core.security.tokens import hash_token
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.auth.models import EmailVerificationToken, generate_verification_token
-from src.app.modules.users import UserService
+from src.app.modules.users import UserDirectory, UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
 from src.app.shared.exceptions import UnauthorizedError
 
@@ -36,8 +36,14 @@ class EmailVerificationService:
 
         # BUG FIX: Allow unverified (inactive) accounts to request verification.
         # But prevent admin-disabled (inactive AND verified) accounts from abusing this.
-        user_service = UserService(db)
-        user = await user_service.crud.get(db=db, email=email, is_deleted=False)
+        from src.app.shared.exceptions import ModelNotFoundError
+
+        directory = UserDirectory(db)
+        try:
+            found = await directory.by_email(email)
+        except ModelNotFoundError:
+            found = None
+        user = found.model_dump(mode="json") if found is not None else None
 
         is_active = bool(get_user_attr(user, "is_active", False))
         is_email_verified = bool(get_user_attr(user, "is_email_verified", False))
@@ -120,9 +126,11 @@ class EmailVerificationService:
 
         # Get user
         user_service = UserService(db)
-        user = await user_service.crud.get(db=db, id=verification_token.user_id, is_deleted=False)
-        if not user:
+        directory = UserDirectory(db)
+        found = await directory.by_id(verification_token.user_id)
+        if found is None:
             raise UnauthorizedError("User not found.")
+        user = found.model_dump(mode="json")
 
         # BUG FIX: Reject verification for admin-disabled accounts.
         # But if they are inactive ONLY because they are unverified, we activate them here.
@@ -132,6 +140,7 @@ class EmailVerificationService:
             # Already verified but inactive -> Admin disabled
             raise UnauthorizedError("This account is inactive. Please contact support.")
 
+        # SANCTIONED WRITE: UserService.update requires ownership + schema.
         # Update user status to verified and active
         await user_service.crud.update(
             db=db, id=verification_token.user_id, object={"is_email_verified": True, "is_active": True}, commit=False

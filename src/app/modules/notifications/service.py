@@ -14,9 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.clients.notifications import EmailMessage, SMTPProvider, get_email_provider  # noqa: F401
-from src.app.core.db.scoped import criterion
+from src.app.core.db.scoped import execute_scoped
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.redis_provider import get_redis
+from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.core.utils.rate_limit import rate_limiter
 from src.app.core.utils.retry import with_retry
 from src.app.modules.notifications.models import EmailTemplateOverride, Notification, NotificationStatus
@@ -120,10 +121,14 @@ class NotificationService:
         override = None
         if tenant_id:
             query = select(EmailTemplateOverride).where(
-                criterion(EmailTemplateOverride, tenant_id),
                 EmailTemplateOverride.template_name == template_name,
             )
-            result = await self.db.execute(query)
+            result = await execute_scoped(
+                query,
+                db=self.db,
+                model=EmailTemplateOverride,
+                scope=ExplicitTenant(tenant_id, reason="legacy-criterion:EmailTemplateOverride"),
+            )
             override = result.scalar_one_or_none()
 
         if override:
@@ -438,8 +443,8 @@ class NotificationService:
         from sqlalchemy import func
 
         total_col = func.count().over().label("total")
-        # P2-2: tenant criterion via the criterion() seam.
-        query = select(Notification, total_col).where(criterion(Notification, tenant_id))
+        # P2-2: tenant scoping via the execute_scoped seam.
+        query = select(Notification, total_col)
 
         enum_status = None
         if status:
@@ -457,7 +462,12 @@ class NotificationService:
 
         query = query.order_by(Notification.created_at.desc()).limit(limit).offset(offset)
 
-        result = await self.db.execute(query)
+        result = await execute_scoped(
+            query,
+            db=self.db,
+            model=Notification,
+            scope=ExplicitTenant(tenant_id, reason="legacy-criterion:Notification"),
+        )
         rows = result.unique().all()
         if rows:
             total = int(rows[0][1])
@@ -468,7 +478,7 @@ class NotificationService:
             return 0, []
 
         # Out-of-range page fallback
-        count_query = select(func.count()).select_from(Notification).where(criterion(Notification, tenant_id))
+        count_query = select(func.count()).select_from(Notification)
         if user_id:
             count_query = count_query.where(Notification.user_id == user_id)
         if enum_status is not None:
@@ -477,7 +487,12 @@ class NotificationService:
             count_query = count_query.where(Notification.created_at >= start_date)
         if end_date:
             count_query = count_query.where(Notification.created_at <= end_date)
-        total_result = await self.db.execute(count_query)
+        total_result = await execute_scoped(
+            count_query,
+            db=self.db,
+            model=Notification,
+            scope=ExplicitTenant(tenant_id, reason="legacy-criterion:Notification"),
+        )
         return total_result.scalar_one(), []
 
     async def get_notification(
@@ -489,11 +504,15 @@ class NotificationService:
         """Get a single notification by ID scoped to tenant and user."""
         query = select(Notification).where(
             Notification.id == notification_id,
-            criterion(Notification, tenant_id),
         )
         if user_id is not None:
             query = query.where(Notification.user_id == user_id)
-        result = await self.db.execute(query)
+        result = await execute_scoped(
+            query,
+            db=self.db,
+            model=Notification,
+            scope=ExplicitTenant(tenant_id, reason="legacy-criterion:Notification"),
+        )
         return result.scalar_one_or_none()
     async def should_send_notification(
         self,
@@ -583,11 +602,15 @@ class NotificationService:
         """List all email template overrides for a tenant"""
         query = (
             select(EmailTemplateOverride)
-            .where(criterion(EmailTemplateOverride, tenant_id))
             .limit(limit)
             .offset(offset)
         )
-        result = await self.db.execute(query)
+        result = await execute_scoped(
+            query,
+            db=self.db,
+            model=EmailTemplateOverride,
+            scope=ExplicitTenant(tenant_id, reason="legacy-criterion:EmailTemplateOverride"),
+        )
         return list(result.scalars().all())
 
     async def create_template_override(
@@ -595,11 +618,15 @@ class NotificationService:
     ) -> EmailTemplateOverride:
         """Create or update an email template override"""
         query = select(EmailTemplateOverride).where(
-            criterion(EmailTemplateOverride, tenant_id),
             EmailTemplateOverride.template_name == template_name,
         )
-        result = await self.db.execute(query)
-        existing = result.scalar_one_or_none()
+        result = await execute_scoped(
+            query,
+            db=self.db,
+            model=EmailTemplateOverride,
+            scope=ExplicitTenant(tenant_id, reason="legacy-criterion:EmailTemplateOverride"),
+        )
+        existing: EmailTemplateOverride | None = result.scalar_one_or_none()
 
         if existing:
             # Update existing
@@ -640,10 +667,14 @@ class NotificationService:
     async def delete_template_override(self, tenant_id: UUID, template_name: str) -> bool:
         """Delete an email template override returns True if deleted, False if not found"""
         query = select(EmailTemplateOverride).where(
-            criterion(EmailTemplateOverride, tenant_id),
             EmailTemplateOverride.template_name == template_name,
         )
-        result = await self.db.execute(query)
+        result = await execute_scoped(
+            query,
+            db=self.db,
+            model=EmailTemplateOverride,
+            scope=ExplicitTenant(tenant_id, reason="legacy-criterion:EmailTemplateOverride"),
+        )
         override = result.scalar_one_or_none()
 
         if not override:

@@ -455,7 +455,7 @@ class TestRoleServiceUserAssignment:
         mock_assignment_result.scalar_one_or_none.return_value = None
 
         # Calls: (1) assignment check. The user check runs through
-        # UserService.get_tenant_user (mocked); the SQL bump + fresh
+        # UserDirectory.member (mocked); the SQL bump + fresh
         # read + commit are owned by the invalidate_user_sessions seam.
         mock_db.execute = AsyncMock(return_value=mock_assignment_result)
 
@@ -463,15 +463,15 @@ class TestRoleServiceUserAssignment:
         mock_db.add = MagicMock()
 
         with (
-            patch("src.app.modules.users.service.UserService") as mock_user_service_cls,
+            patch("src.app.modules.users.UserDirectory") as mock_user_dir_cls,
             patch(
                 "src.app.modules.users.session_invalidation.invalidate_user_sessions", new_callable=AsyncMock
             ) as mock_seam,
         ):
-            mock_user_service_cls.return_value.get_tenant_user = AsyncMock(return_value=mock_user_record)
+            mock_user_dir_cls.return_value.member = AsyncMock(return_value=mock_user_record)
             await role_service.assign_role_to_user(user_id=123, role_id=mock_role.id)
 
-            mock_user_service_cls.return_value.get_tenant_user.assert_awaited_once_with(
+            mock_user_dir_cls.return_value.member.assert_awaited_once_with(
                 id=123, tenant_id=MockUser.DEFAULT_TENANT_ID
             )
             mock_db.add.assert_called_once()
@@ -490,13 +490,13 @@ class TestRoleServiceUserAssignment:
         """Test assigning role when the user seam finds no tenant user in scope."""
         role_service.get_role = AsyncMock(return_value=mock_role)
 
-        with patch("src.app.modules.users.service.UserService") as mock_user_service_cls:
-            mock_user_service_cls.return_value.get_tenant_user = AsyncMock(return_value=None)
+        with patch("src.app.modules.users.UserDirectory") as mock_user_dir_cls:
+            mock_user_dir_cls.return_value.member = AsyncMock(return_value=None)
 
             with pytest.raises(ModelNotFoundError):
                 await role_service.assign_role_to_user(user_id=999, role_id=mock_role.id)
 
-            mock_user_service_cls.return_value.get_tenant_user.assert_awaited_once_with(
+            mock_user_dir_cls.return_value.member.assert_awaited_once_with(
                 id=999, tenant_id=MockUser.DEFAULT_TENANT_ID
             )
             mock_db.add.assert_not_called()
@@ -521,8 +521,8 @@ class TestRoleServiceUserAssignment:
         # Only call: assignment check (user check is mocked via the seam).
         mock_db.execute = AsyncMock(return_value=mock_assignment_result)
 
-        with patch("src.app.modules.users.service.UserService") as mock_user_service_cls:
-            mock_user_service_cls.return_value.get_tenant_user = AsyncMock(return_value=mock_user_record)
+        with patch("src.app.modules.users.UserDirectory") as mock_user_dir_cls:
+            mock_user_dir_cls.return_value.member = AsyncMock(return_value=mock_user_record)
 
             await role_service.assign_role_to_user(user_id=123, role_id=mock_role.id)
 
@@ -548,7 +548,7 @@ class TestRoleServiceUserAssignment:
         mock_user_record = {"id": 123, "tenant_id": MockUser.DEFAULT_TENANT_ID}
 
         with (
-            patch("src.app.modules.users.service.UserService") as mock_user_service_cls,
+            patch("src.app.modules.users.UserDirectory") as mock_user_dir_cls,
             patch.object(
                 crud_associations, "remove_user_role", new_callable=AsyncMock, return_value=True
             ) as mock_remove,
@@ -556,10 +556,10 @@ class TestRoleServiceUserAssignment:
                 "src.app.modules.users.session_invalidation.invalidate_user_sessions", new_callable=AsyncMock
             ) as mock_seam,
         ):
-            mock_user_service_cls.return_value.get_tenant_user = AsyncMock(return_value=mock_user_record)
+            mock_user_dir_cls.return_value.member = AsyncMock(return_value=mock_user_record)
             await role_service.remove_role_from_user(user_id=123, role_id=1)
 
-            mock_user_service_cls.return_value.get_tenant_user.assert_awaited_once_with(
+            mock_user_dir_cls.return_value.member.assert_awaited_once_with(
                 id=123, tenant_id=MockUser.DEFAULT_TENANT_ID
             )
             # Atomic path: single DELETE statement, no loaded-object db.delete.
@@ -579,15 +579,15 @@ class TestRoleServiceUserAssignment:
     async def test_remove_role_user_not_found(self, role_service, mock_db):
         """Test removing a role when the user seam finds no tenant user in scope."""
         with (
-            patch("src.app.modules.users.service.UserService") as mock_user_service_cls,
+            patch("src.app.modules.users.UserDirectory") as mock_user_dir_cls,
             patch.object(crud_associations, "remove_user_role", new_callable=AsyncMock) as mock_remove,
         ):
-            mock_user_service_cls.return_value.get_tenant_user = AsyncMock(return_value=None)
+            mock_user_dir_cls.return_value.member = AsyncMock(return_value=None)
 
             with pytest.raises(ModelNotFoundError):
                 await role_service.remove_role_from_user(user_id=999, role_id=1)
 
-            mock_user_service_cls.return_value.get_tenant_user.assert_awaited_once_with(
+            mock_user_dir_cls.return_value.member.assert_awaited_once_with(
                 id=999, tenant_id=MockUser.DEFAULT_TENANT_ID
             )
             mock_remove.assert_not_called()

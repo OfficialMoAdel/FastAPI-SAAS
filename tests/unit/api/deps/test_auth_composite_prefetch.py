@@ -13,6 +13,16 @@ from src.app.shared.exceptions import ForbiddenError
 from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
 
+def _dumpable(payload):
+    """Wrap a fixture dict so ``.model_dump()`` returns it (directory returns models)."""
+    if payload is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = payload
+    return m
+
+
+
 class TestCompositeAuthPrefetch:
     """Test suite for composite auth prefetch and sequential fallbacks."""
 
@@ -171,7 +181,10 @@ class TestCompositeAuthPrefetch:
 
         with (
             patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=mock_payload),
-            patch("src.app.modules.users.service.UserService.get_user_auth_info", AsyncMock(return_value=mock_user)),
+            patch(
+                "src.app.modules.users.directory.UserDirectory.auth_info",
+                new=AsyncMock(return_value=_dumpable(mock_user)),
+            ),
             patch(
                 "src.app.core.security.auth_prefetch.execute_composite_auth_prefetch",
                 AsyncMock(return_value=(True, True, None)),
@@ -210,7 +223,10 @@ class TestCompositeAuthPrefetch:
 
         with (
             patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=mock_payload),
-            patch("src.app.modules.users.service.UserService.get_user_auth_info", AsyncMock(return_value=mock_user)),
+            patch(
+                "src.app.modules.users.directory.UserDirectory.auth_info",
+                new=AsyncMock(return_value=_dumpable(mock_user)),
+            ),
             patch(
                 "src.app.core.security.auth_prefetch.execute_composite_auth_prefetch",
                 AsyncMock(return_value=(False, False, None)),

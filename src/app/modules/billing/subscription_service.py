@@ -3,17 +3,22 @@
 Business logic for subscription plans, user subscriptions, and billing records.
 """
 
+from __future__ import annotations
+
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.db.scoped import execute_scoped
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import (
     require_active_tenant,
     resolve_tenant_id,
 )
+from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules._base.service import BaseService, fetch_page_with_total
 from src.app.modules.billing.crud import (
     crud_billing_records,
@@ -39,6 +44,9 @@ from src.app.modules.billing.schemas import (
     UserSubscriptionUpdate,
 )
 from src.app.shared.exceptions import ForbiddenError, ModelNotFoundError, StripeError
+
+if TYPE_CHECKING:
+    from src.app.clients.billing.stripe import PaymentGateway
 
 logger = get_logger(__name__)
 
@@ -142,10 +150,15 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
         from sqlalchemy import select as _select
 
-        from src.app.core.db.scoped import criterion
-
-        stmt = _select(SubscriptionPlan).where(SubscriptionPlan.id == plan_id, criterion(SubscriptionPlan, tid))
-        result = await self.db.execute(stmt)
+        stmt = _select(SubscriptionPlan).where(SubscriptionPlan.id == plan_id)
+        result = await execute_scoped(
+            stmt,
+            db=self.db,
+            model=SubscriptionPlan,
+            scope=ExplicitTenant(
+                tenant_id=tid, reason="legacy-criterion:SubscriptionPlan"
+            ),
+        )
         plan = result.scalar_one_or_none()
         if plan is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
@@ -529,3 +542,32 @@ async def fetch_stripe_subscription(api_key: str | None, stripe_subscription_id:
     from src.app.clients.billing.stripe import get_payment_gateway
 
     return await get_payment_gateway(api_key=api_key).retrieve_subscription(stripe_subscription_id)
+
+async def retrieve_subscription_for_tenant(
+    db: AsyncSession,
+    tenant_id: UUID,
+    stripe_subscription_id: str,
+    *,
+    gateway_factory: Callable[..., PaymentGateway] | None = None,
+) -> Any:
+    """Retrieve a Stripe subscription for a tenant through ONE gateway seam.
+
+    Fuses the webhook two-step (``resolve_tenant_stripe_api_key`` +
+    ``fetch_stripe_subscription``) so the resolved key never crosses a module
+    boundary as a naked string: resolve → build → retrieve happen here and
+    the handler makes one call. ``gateway_factory`` overrides gateway
+    construction (called as ``factory(api_key=...)``; fakes inject here in
+    tests). The default path is identical to the old two-step — same resolve
+    seam, same ``fetch_stripe_subscription`` primitive.
+    """
+    from src.app.modules.billing.checkout_service import CheckoutService
+
+    checkout = (
+        CheckoutService(db, gateway_factory=gateway_factory)
+        if gateway_factory is not None
+        else CheckoutService(db)
+    )
+    api_key = await checkout.resolve_api_key(tenant_id)
+    if gateway_factory is None:
+        return await fetch_stripe_subscription(api_key, stripe_subscription_id)
+    return await gateway_factory(api_key=api_key).retrieve_subscription(stripe_subscription_id)

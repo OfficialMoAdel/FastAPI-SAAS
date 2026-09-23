@@ -16,6 +16,19 @@ from src.app.modules.auth.services.mfa import (
 )
 
 
+def _dumpable(user: dict | None):
+    """Wrap a raw user dict the way UserDirectory seam methods return it.
+
+    Seam methods return validated models; callers immediately ``.model_dump()``.
+    Mocking at the seam therefore means returning an object whose
+    ``model_dump()`` yields the fixture dict (``None`` stays ``None``).
+    """
+    if user is None:
+        return None
+    m = MagicMock()
+    m.model_dump.return_value = user
+    return m
+
 @pytest.fixture
 def mfa_service():
     """Create MFAService instance for testing."""
@@ -436,8 +449,8 @@ class TestDisableMFA:
 
         mock_user = {"id": mock_user_id, "hashed_password": "hashed", "tenant_id": 1}
 
-        with patch("src.app.modules.users.service.UserService") as mock_user_service_cls:
-            mock_user_service_cls.return_value.get_active_user = AsyncMock(return_value=mock_user)
+        with patch("src.app.modules.users.UserDirectory") as mock_user_service_cls:
+            mock_user_service_cls.return_value.active = AsyncMock(return_value=_dumpable(mock_user))
             with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=True):
                 with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=None):
                     with pytest.raises(ValidationError, match="not enabled"):
@@ -462,8 +475,8 @@ class TestDisableMFA:
         }
         mock_user = {"id": mock_user_id, "hashed_password": "hashed", "tenant_id": 1}
 
-        with patch("src.app.modules.users.service.UserService") as mock_user_service_cls:
-            mock_user_service_cls.return_value.get_active_user = AsyncMock(return_value=mock_user)
+        with patch("src.app.modules.users.UserDirectory") as mock_user_service_cls:
+            mock_user_service_cls.return_value.active = AsyncMock(return_value=_dumpable(mock_user))
             with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=True):
                 with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method):
                     with patch.object(
@@ -495,8 +508,8 @@ class TestDisableMFA:
         }
         mock_user = {"id": mock_user_id, "hashed_password": "hashed", "tenant_id": 1}
 
-        with patch("src.app.modules.users.service.UserService") as mock_user_service_cls:
-            mock_user_service_cls.return_value.get_active_user = AsyncMock(return_value=mock_user)
+        with patch("src.app.modules.users.UserDirectory") as mock_user_service_cls:
+            mock_user_service_cls.return_value.active = AsyncMock(return_value=_dumpable(mock_user))
             with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=True):
                 with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method):
                     with patch.object(crud_mfa_methods, "delete", new_callable=AsyncMock):

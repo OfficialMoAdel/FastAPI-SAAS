@@ -71,9 +71,9 @@ class CRUDRole(TenantAwareCRUD[Role, RoleCreate, RoleUpdate, RoleUpdate, Any, Ro
             select(Role)
             .join(UserRole, UserRole.role_id == Role.id)
             .where(UserRole.user_id == user_id)
-            .where(criterion(UserRole, tenant_id))
         )
-        result = await db.execute(stmt)
+        scope = ExplicitTenant(tenant_id, reason='rbac:get_user_roles')
+        result = await execute_scoped(stmt, db=db, model=UserRole, scope=scope)
         return result.scalars().all()
 
 
@@ -120,8 +120,9 @@ class CRUDAssociations:
 
     async def get_role_affected_user_ids(self, db: AsyncSession, tenant_id: UUID, role_id: int) -> list[int]:
         """Get all user IDs assigned to a role within a tenant."""
-        stmt = select(UserRole.user_id).where(UserRole.role_id == role_id).where(criterion(UserRole, tenant_id))
-        result = await db.execute(stmt)
+        stmt = select(UserRole.user_id).where(UserRole.role_id == role_id)
+        scope = ExplicitTenant(tenant_id, reason='rbac:get_role_affected_user_ids')
+        result = await execute_scoped(stmt, db=db, model=UserRole, scope=scope)
         return list(result.scalars().all())
 
     async def get_role_permission(self, db: AsyncSession, role_id: int, permission_id: int) -> RolePermission | None:
