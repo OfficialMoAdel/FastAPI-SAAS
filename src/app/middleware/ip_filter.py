@@ -4,7 +4,7 @@ This middleware checks incoming requests against IP whitelist and blacklist
 stored in Redis. Whitelisted IPs bypass restrictions, blacklisted IPs are blocked.
 """
 
-from fastapi import Request, status
+from fastapi import Request
 from starlette.types import ASGIApp
 
 from src.app.core.config import settings
@@ -146,13 +146,9 @@ class IPFilterMiddleware:
                         client_ip=client_ip,
                         user_agent=user_agent,
                     )
-                    from src.app.core.errors import ErrorCode, middleware_error_response
+                    from src.app.core.errors import middleware_reject
 
-                    response = middleware_error_response(
-                        code=ErrorCode.FORBIDDEN,
-                        message="Forbidden - Bad bot detected",
-                        status_code=status.HTTP_403_FORBIDDEN,
-                    )
+                    response = middleware_reject("bad_bot")
                     return await response(scope, receive, send)
 
         # Check blacklist and whitelist in a single Redis pipeline
@@ -169,13 +165,9 @@ class IPFilterMiddleware:
                 log_security_event(event)
 
                 logger.warning("IP blocked - blacklisted for", client_ip=client_ip, path=path)
-                from src.app.core.errors import ErrorCode, middleware_error_response
+                from src.app.core.errors import middleware_reject
 
-                response = middleware_error_response(
-                    code=ErrorCode.FORBIDDEN,
-                    message="Forbidden - IP is blacklisted",
-                    status_code=status.HTTP_403_FORBIDDEN,
-                )
+                response = middleware_reject("blacklisted_ip")
                 return await response(scope, receive, send)
 
             if settings.security.IP_WHITELIST_ENABLED and is_whitelisted:

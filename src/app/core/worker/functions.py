@@ -11,7 +11,7 @@ from sqlalchemy import text
 from src.app.core.logger import get_logger
 from src.app.core.utils.job_wrapper import monitor_job
 from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
-from src.app.modules.webhooks.service import WebhookService
+from src.app.modules.webhooks.delivery import deliver
 
 logger = get_logger(__name__)
 
@@ -61,9 +61,8 @@ async def deliver_webhook_task(ctx: Worker, delivery_id: UUID | str, tenant_id: 
 
     # Now process with proper tenant context
     async with job_tenant_context(tenant_id) as db:
-        service = WebhookService(db)
         try:
-            await service.deliver_webhook(delivery_id)
+            await deliver(db, delivery_id)
             return f"Webhook {delivery_id} delivered."
         except Exception as e:
             logger.error(f"Failed to deliver webhook {delivery_id}: {e}")

@@ -1,7 +1,8 @@
 import asyncio
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import _AsyncGeneratorContextManager, asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from functools import partial
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import anyio
 import fastapi
@@ -137,6 +138,194 @@ async def set_threadpool_tokens(number_of_tokens: int = 100) -> None:
     limiter.total_tokens = number_of_tokens
 
 
+class StartupPhase(NamedTuple):
+    """One boot step: ``(name, startup, teardown)`` — order is data.
+
+    The composer runs startups in list order and teardowns in reverse;
+    shared teardown without a matching startup (pools owned elsewhere,
+    logging shutdown) rides the ``tail`` list in listed order. Card 10:
+    the two lifespan closures hard-coded this choreography inline
+    (implicit order, teardown split across two functions, untestable);
+    now both are built from these rows.
+    """
+
+    name: str
+    startup: Callable[[], Awaitable[None]]
+    teardown: Callable[[], Awaitable[None]] | None = None
+
+
+@asynccontextmanager
+async def compose_phases(
+    phases: Sequence[StartupPhase],
+    tail: Sequence[Callable[[], Awaitable[None]]] = (),
+    teardown_on_startup_failure: bool = False,
+) -> AsyncGenerator[None, None]:
+    """Run phase startups in order, yield, then reverse teardowns + tail.
+
+    Startup-failure handling differs per composer, kept verbatim from the
+    legacy bodies: the factory's ``try/finally`` always ran every close
+    even when a startup step raised (``teardown_on_startup_failure=True``);
+    ``lifespan_with_admin`` runs its tail only on the clean path
+    (``False`` — a failed admin phase unwinds through the factory
+    lifespan, whose own teardown still runs).
+    """
+    try:
+        for phase in phases:
+            await phase.startup()
+    except BaseException:
+        if teardown_on_startup_failure:
+            for phase in reversed(phases):
+                if phase.teardown is not None:
+                    await phase.teardown()
+            for teardown in tail:
+                await teardown()
+        raise
+    try:
+        yield
+    finally:
+        for phase in reversed(phases):
+            if phase.teardown is not None:
+                await phase.teardown()
+        for teardown in tail:
+            await teardown()
+
+
+async def _start_redis_cache_pool(enabled: bool) -> None:
+    if enabled:
+        await create_redis_cache_pool()
+
+
+async def _stop_redis_cache_pool(enabled: bool) -> None:
+    if enabled:
+        await close_redis_cache_pool()
+
+
+async def _start_redis_queue_pool(enabled: bool) -> None:
+    if enabled:
+        await create_redis_queue_pool()
+
+
+async def _stop_redis_queue_pool(enabled: bool) -> None:
+    if enabled:
+        await close_redis_queue_pool()
+
+
+async def _start_create_tables(enabled: bool) -> None:
+    if enabled:
+        await create_tables()
+
+
+async def _start_users_security_lookups() -> None:
+    # Explicit user-domain security lookup wiring (deterministic;
+    # backstops the import-time registration in users/__init__.py).
+    from src.app.modules.users import register_users_security_lookups
+
+    register_users_security_lookups()
+
+
+async def _start_jwt_lookup_gate() -> None:
+    # P1 FIX (code-review): fail fast when the JWT DIP seams are
+    # unwired instead of surfacing as mass 401s at runtime. The
+    # per-request path still fails closed; this is the loud gate.
+    try:
+        from src.app.core.security.jwt_service import ensure_jwt_lookups_registered
+
+        ensure_jwt_lookups_registered()
+    except Exception as e:  # noqa: BLE001 — startup must stay loud, not crash on log path
+        from src.app.core.logger import get_logger as _gl
+
+        _gl(__name__).error("jwt_lookups_startup_check_failed", error=str(e))
+        raise
+
+
+async def _start_cache_warmer(done: asyncio.Event) -> None:
+    # Warm caches after DB and Redis are ready. Fire and forget with safe
+    # error handling and hard reference; ``done`` signals "startup
+    # teardown is allowed", not "caches are warm" (P3-5 note at the call
+    # site — the warmer completes asynchronously).
+    from src.app.core.cache.warmer import warm_caches
+
+    async def _warm_caches_background() -> None:
+        from src.app.core.logger import get_logger
+
+        logger = get_logger(__name__)
+
+        try:
+            if cache.client:
+                # Distributed lock to prevent all workers from hitting DB simultaneously
+                lock_key = "system:startup:cache_warmup_lock"
+                acquired = await cache.client.set(lock_key, "1", nx=True, ex=300)
+                if acquired:
+                    logger.info("Acquired startup cache warming lock, starting warmup...")
+                    await warm_caches()
+                    logger.info("Startup cache warmup complete.")
+                else:
+                    logger.debug("Another worker is handling cache warmup, skipping.")
+            else:
+                await warm_caches()
+        except Exception as e:  # noqa: BLE001 - P1-17: background warming is best-effort by design
+            logger.warning("Cache warming failed: %s", e)
+
+    from src.app.core.utils.background_task import create_safe_task
+
+    create_safe_task(_warm_caches_background(), name="cache_warming_startup")
+    done.set()
+
+
+async def _remove_init_event(app: FastAPI) -> None:
+    if hasattr(app.state, "initialization_complete"):
+        delattr(app.state, "initialization_complete")
+
+
+async def _dispose_engine() -> None:
+    # Dispose database engine to release connection pool
+    import src.app.core.db.database as db_module
+
+    try:
+        engine = db_module.get_async_engine()
+        await engine.dispose()
+    except Exception as exc:  # noqa: BLE001
+        # R1-17: engine may not exist if startup failed — but a real
+        # dispose failure must be visible, not swallowed.
+        logger.warning("engine_dispose_failed", error=str(exc))
+    db_module._async_engine = None
+
+
+async def _close_sso_http_client() -> None:
+    # Close SSO HTTP client pool
+    from src.app.modules.auth.http_client import close_sso_http_client
+
+    await close_sso_http_client()
+
+
+async def _close_webhook_http_client() -> None:
+    # Close Webhook HTTP client pool
+    from src.app.modules.webhooks.http_client import close_webhook_http_client
+
+    await close_webhook_http_client()
+
+
+async def _shutdown_ai_providers() -> None:
+    # Close AI providers
+    from src.app.modules.ai.factory import AIProviderFactory
+
+    await AIProviderFactory.shutdown_all()
+
+
+async def _start_pool_metrics() -> None:
+    _init_pool_metrics()
+
+
+async def _start_event_bus_and_queue(redis_client: Any) -> None:
+    _init_event_bus_and_queue(redis_client)
+
+
+async def _teardown_logging() -> None:
+    from src.app.core.logger import shutdown_logging
+
+    shutdown_logging()
+
+
 def lifespan_factory(
     settings: Settings | Any,
     create_tables_on_start: bool = True,
@@ -175,107 +364,41 @@ def lifespan_factory(
         redis_cache_enabled = settings.redis_cache.REDIS_CACHE_ENABLED
         redis_queue_enabled = settings.redis_queue.REDIS_QUEUE_ENABLED
 
-        try:
-            if redis_cache_enabled:
-                await create_redis_cache_pool()
-
-            if redis_queue_enabled:
-                await create_redis_queue_pool()
-
-            if create_tables_on_start:
-                await create_tables()
-
-            # Explicit user-domain security lookup wiring (deterministic;
-            # backstops the import-time registration in users/__init__.py).
-            from src.app.modules.users import register_users_security_lookups
-
-            register_users_security_lookups()
-
-            # P1 FIX (code-review): fail fast when the JWT DIP seams are
-            # unwired instead of surfacing as mass 401s at runtime. The
-            # per-request path still fails closed; this is the loud gate.
-            try:
-                from src.app.core.security.jwt_service import ensure_jwt_lookups_registered
-
-                ensure_jwt_lookups_registered()
-            except Exception as e:  # noqa: BLE001 — startup must stay loud, not crash on log path
-                from src.app.core.logger import get_logger as _gl
-
-                _gl(__name__).error("jwt_lookups_startup_check_failed", error=str(e))
-                raise
-
-            # Warm caches after DB and Redis are ready
-
-            from src.app.core.cache.warmer import warm_caches
-
-            async def _warm_caches_background() -> None:
-                from src.app.core.logger import get_logger
-
-                logger = get_logger(__name__)
-                try:
-                    if cache.client:
-                        # Distributed lock to prevent all workers from hitting DB simultaneously
-                        lock_key = "system:startup:cache_warmup_lock"
-                        acquired = await cache.client.set(lock_key, "1", nx=True, ex=300)
-                        if acquired:
-                            logger.info("Acquired startup cache warming lock, starting warmup...")
-                            await warm_caches()
-                            logger.info("Startup cache warmup complete.")
-                        else:
-                            logger.debug("Another worker is handling cache warmup, skipping.")
-                    else:
-                        await warm_caches()
-                except Exception as e:  # noqa: BLE001 - P1-17: background warming is best-effort by design
-                    logger.warning("Cache warming failed: %s", e)
-
-            # Fire and forget with safe error handling and hard reference
-            from src.app.core.utils.background_task import create_safe_task
-
-            create_safe_task(_warm_caches_background(), name="cache_warming_startup")
-
-            initialization_complete.set()
-
-            yield
-
-        finally:
-            if hasattr(app.state, "initialization_complete"):
-                delattr(app.state, "initialization_complete")
-
-            # Dispose database engine to release connection pool
-            import src.app.core.db.database as db_module
-
-            try:
-                engine = db_module.get_async_engine()
-                await engine.dispose()
-            except Exception as exc:  # noqa: BLE001
-                # R1-17: engine may not exist if startup failed — but a real
-                # dispose failure must be visible, not swallowed.
-                logger.warning("engine_dispose_failed", error=str(exc))
-            db_module._async_engine = None
-
-            if redis_cache_enabled:
-                await close_redis_cache_pool()
-
-            if redis_queue_enabled:
-                await close_redis_queue_pool()
-
+        phases = [
+            StartupPhase("threadpool", set_threadpool_tokens, None),
+            StartupPhase(
+                "redis_cache",
+                partial(_start_redis_cache_pool, redis_cache_enabled),
+                partial(_stop_redis_cache_pool, redis_cache_enabled),
+            ),
+            StartupPhase(
+                "redis_queue",
+                partial(_start_redis_queue_pool, redis_queue_enabled),
+                partial(_stop_redis_queue_pool, redis_queue_enabled),
+            ),
+            StartupPhase("tables", partial(_start_create_tables, create_tables_on_start), None),
+            StartupPhase("users_lookups", _start_users_security_lookups, None),
+            StartupPhase("jwt_gate", _start_jwt_lookup_gate, None),
+            # "warm_caches" + "_start_cache_warmer": pinned by name in
+            # tests/performance/test_optimizations_r4/test_cache_warming.py
+            # (source-string assertions) — keep both spellings on this row.
+            StartupPhase("warm_caches", partial(_start_cache_warmer, initialization_complete), None),
+        ]
+        # Teardown pairing: the pool closes ride their phases (reverse
+        # order: queue before cache — independent pools, both closed before
+        # the shared pool below, so the reorder is behavior-preserving).
+        # Everything else keeps its verbatim finally-block position in tail.
+        factory_tail: list[Callable[[], Awaitable[None]]] = [
+            partial(_remove_init_event, app),
+            _dispose_engine,
             # Close the shared Redis connection pool AFTER clients are closed
-            await close_redis_pool()
-
-            # Close SSO HTTP client pool
-            from src.app.modules.auth.http_client import close_sso_http_client
-
-            await close_sso_http_client()
-
-            # Close Webhook HTTP client pool
-            from src.app.modules.webhooks.http_client import close_webhook_http_client
-
-            await close_webhook_http_client()
-
-            # Close AI providers
-            from src.app.modules.ai.factory import AIProviderFactory
-
-            await AIProviderFactory.shutdown_all()
+            close_redis_pool,
+            _close_sso_http_client,
+            _close_webhook_http_client,
+            _shutdown_ai_providers,
+        ]
+        async with compose_phases(phases, tail=factory_tail, teardown_on_startup_failure=True):
+            yield
 
     return lifespan
 
@@ -610,16 +733,15 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         from src.app.core.redis_provider import get_redis
 
         redis_client = get_redis()
-        _init_pool_metrics()
-        _init_event_bus_and_queue(redis_client)
-        await _init_rate_limiting_and_security(redis_client)
-        await _load_security_runtime_config()
-        await _warm_startup_caches()
-        await _init_admin()
-
-        yield
-
-        await _teardown_security_listeners()
-        from src.app.core.logger import shutdown_logging
-
-        shutdown_logging()
+        admin_phases = [
+            StartupPhase("pool_metrics", _start_pool_metrics, None),
+            StartupPhase("event_bus_queue", partial(_start_event_bus_and_queue, redis_client), None),
+            StartupPhase(
+                "rate_limiting_security", partial(_init_rate_limiting_and_security, redis_client), None
+            ),
+            StartupPhase("runtime_config", _load_security_runtime_config, None),
+            StartupPhase("warm_caches", _warm_startup_caches, None),
+            StartupPhase("admin", _init_admin, None),
+        ]
+        async with compose_phases(admin_phases, tail=(_teardown_security_listeners, _teardown_logging)):
+            yield

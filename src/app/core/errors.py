@@ -17,7 +17,7 @@ handlers, the table, and the global catch-all.
 """
 
 from collections.abc import Callable, Coroutine, Mapping
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
@@ -95,6 +95,112 @@ def middleware_error_response(
     :func:`create_error_response`, minus request-id (unavailable pre-route).
     """
     return create_error_response(code=code, message=message, status_code=status_code, headers=headers)
+
+
+RejectKind = Literal[
+    "banned_ip",
+    "admission_unavailable",
+    "internal_error",
+    "auto_banned",
+    "rate_limited",
+    "tenant_header_missing",
+    "tenant_access_denied",
+    "tenant_inactive",
+    "payload_too_large",
+    "invalid_input",
+    "attack_blocked",
+    "attack_banned",
+    "bad_bot",
+    "blacklisted_ip",
+]
+
+
+class RejectRow(NamedTuple):
+    """One owned middleware rejection row: code + status + message template.
+
+    ``message`` is a ``str.format`` template resolved from ``middleware_reject``
+    ``**params``; ``headers_builder`` derives headers from the same params
+    (primitives only — no guard-layer imports, no layering violations).
+    """
+
+    code: str
+    status: int
+    message: str
+    headers_builder: Callable[[Mapping[str, Any]], dict[str, str]] | None = None
+
+
+def _banned_ip_headers(params: Mapping[str, Any]) -> dict[str, str]:
+    """X-Banned / X-Ban-Reason + conditional Retry-After from ban primitives."""
+    import time
+
+    headers = {"X-Banned": "true", "X-Ban-Reason": str(params.get("ban_reason") or "Auto-ban")}
+    expires_at = params.get("ban_expires_at")
+    if expires_at:
+        retry_after = int(float(expires_at) - time.time()) + 1
+        if retry_after > 0:
+            headers["Retry-After"] = str(retry_after)
+    return headers
+
+
+def _max_size_headers(params: Mapping[str, Any]) -> dict[str, str]:
+    return {"x-max-body-size": str(params["max_size"])}
+
+
+# Owned rejection rows (card 6): every guard rejection resolves from here so
+# code/message/status/headers cannot drift between call sites. Strings are
+# verbatim what the guards previously hand-built.
+REJECT_CATALOG: dict[str, RejectRow] = {
+    "banned_ip": RejectRow(
+        ErrorCode.FORBIDDEN, 403, "Forbidden: IP address banned due to abuse", _banned_ip_headers
+    ),
+    "admission_unavailable": RejectRow(
+        ErrorCode.SERVICE_UNAVAILABLE, 503, "Request admission temporarily unavailable"
+    ),
+    "internal_error": RejectRow(ErrorCode.INTERNAL_ERROR, 500, "Internal server error"),
+    "auto_banned": RejectRow(
+        ErrorCode.FORBIDDEN, 403, "Forbidden: IP banned after {violation_count} rate limit violations"
+    ),
+    "rate_limited": RejectRow(ErrorCode.RATE_LIMITED, 429, "Rate limit exceeded"),
+    "tenant_header_missing": RejectRow(
+        ErrorCode.VALIDATION_ERROR, 400, "Missing required header: {header}"
+    ),
+    "tenant_access_denied": RejectRow(ErrorCode.FORBIDDEN, 403, "Access denied"),
+    "tenant_inactive": RejectRow(ErrorCode.FORBIDDEN, 403, "Tenant inactive. Contact support."),
+    "payload_too_large": RejectRow(
+        ErrorCode.PAYLOAD_TOO_LARGE, 413, "Request body too large", _max_size_headers
+    ),
+    "invalid_input": RejectRow(ErrorCode.INVALID_INPUT, 400, "{message}"),
+    "attack_blocked": RejectRow(
+        ErrorCode.VALIDATION_ERROR, 400, "Bad Request - Attack pattern detected"
+    ),
+    "attack_banned": RejectRow(ErrorCode.FORBIDDEN, 403, "Forbidden - Attack detected and IP banned"),
+    "bad_bot": RejectRow(ErrorCode.FORBIDDEN, 403, "Forbidden - Bad bot detected"),
+    "blacklisted_ip": RejectRow(ErrorCode.FORBIDDEN, 403, "Forbidden - IP is blacklisted"),
+}
+
+
+def middleware_reject(
+    kind: RejectKind,
+    *,
+    headers: Mapping[str, str] | None = None,
+    **params: Any,
+) -> JSONResponse:
+    """Resolve a rejection row from the catalog and build its envelope.
+
+    Guards call this with a kind + primitives instead of hand-building
+    code/message/status/headers at each call site. Unknown kinds fail loud
+    (``ValueError``) — a typo must never become a shapeless 500.
+    ``headers`` merges over table-built headers (for verdict passthrough).
+    """
+    try:
+        row = REJECT_CATALOG[kind]
+    except KeyError:
+        raise ValueError(f"Unknown middleware reject kind: {kind!r}") from None
+    message = row.message.format(**params)
+    built = dict(row.headers_builder(params)) if row.headers_builder is not None else {}
+    if headers is not None:
+        built.update(headers)
+    return middleware_error_response(code=row.code, message=message, status_code=row.status, headers=built or None)
 
 
 def _json_safe(value: Any) -> Any:

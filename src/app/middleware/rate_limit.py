@@ -1,12 +1,10 @@
 """Native ASGI adapter for request admission, preserving streaming responses."""
 
-import time
-
-from fastapi import Request, status
+from fastapi import Request
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from src.app.core.errors import ErrorCode, middleware_error_response
+from src.app.core.errors import middleware_reject
 from src.app.core.logger import get_logger
 from src.app.core.security.auto_ban import BanInfo
 from src.app.core.security.logging import SecurityEvent, SecurityEventType, log_security_event
@@ -38,19 +36,10 @@ async def _reject_banned_ip(
         extra={"ban_reason": ban_info.reason, "expires_at": ban_info.expires_at},
     )
     log_security_event(security_event)
-    headers = {
-        "X-Banned": "true",
-        "X-Ban-Reason": ban_info.reason or "Auto-ban",
-    }
-    if ban_info.expires_at:
-        retry_after = int(ban_info.expires_at - time.time()) + 1
-        if retry_after > 0:
-            headers["Retry-After"] = str(retry_after)
-    response = middleware_error_response(
-        code=ErrorCode.FORBIDDEN,
-        message="Forbidden: IP address banned due to abuse",
-        status_code=status.HTTP_403_FORBIDDEN,
-        headers=headers,
+    response = middleware_reject(
+        "banned_ip",
+        ban_reason=ban_info.reason,
+        ban_expires_at=ban_info.expires_at,
     )
     await response(scope, receive, send)
 
@@ -78,22 +67,14 @@ class RateLimitMiddleware:
             # An unfinished evaluation cannot establish ban/auth safety.
             # Counter fail-open policy belongs to the admission helpers.
             logger.exception("Request admission backend unavailable")
-            response = middleware_error_response(
-                code=ErrorCode.SERVICE_UNAVAILABLE,
-                message="Request admission temporarily unavailable",
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+            response = middleware_reject("admission_unavailable")
             await response(scope, receive, send)
             return
         except Exception:
             # Translate only evaluation failures; downstream errors and
             # BaseException cancellation must propagate without a second response.
             logger.exception("Request admission evaluation failed")
-            response = middleware_error_response(
-                code=ErrorCode.INTERNAL_ERROR,
-                message="Internal server error",
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            response = middleware_reject("internal_error")
             await response(scope, receive, send)
             return
         if outcome.action == "passthrough":
@@ -105,11 +86,7 @@ class RateLimitMiddleware:
                 logger.error(
                     "RateLimitMiddleware: reject_banned without ban_info; failing closed",
                 )
-                response = middleware_error_response(
-                    code=ErrorCode.INTERNAL_ERROR,
-                    message="Internal server error",
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
+                response = middleware_reject("internal_error")
                 await response(scope, receive, send)
                 return
             await _reject_banned_ip(outcome.client_ip, request, ban_info, scope, receive, send)
@@ -121,29 +98,22 @@ class RateLimitMiddleware:
                 "RateLimitMiddleware: action %s without verdict; failing closed",
                 outcome.action,
             )
-            response = middleware_error_response(
-                code=ErrorCode.INTERNAL_ERROR,
-                message="Internal server error",
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            response = middleware_reject("internal_error")
             await response(scope, receive, send)
             return
         headers = verdict.headers
         if outcome.action == "reject_auto_ban":
-            response = middleware_error_response(
-                code=ErrorCode.FORBIDDEN,
-                message=f"Forbidden: IP banned after {outcome.violation_count} rate limit violations",
-                status_code=status.HTTP_403_FORBIDDEN,
-                headers=headers,
+            response = middleware_reject(
+                "auto_banned",
+                headers=verdict.headers,
+                violation_count=outcome.violation_count,
             )
             await response(scope, receive, send)
             return
         if outcome.action == "limited":
-            response = middleware_error_response(
-                code=ErrorCode.RATE_LIMITED,
-                message="Rate limit exceeded",
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                headers=headers,
+            response = middleware_reject(
+                "rate_limited",
+                headers=verdict.headers,
             )
             await response(scope, receive, send)
             return

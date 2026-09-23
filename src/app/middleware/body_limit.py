@@ -9,7 +9,7 @@ Limits the maximum size of request bodies to prevent:
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from structlog import get_logger
 
-from src.app.core.errors import ErrorCode, middleware_error_response
+from src.app.core.errors import middleware_reject
 
 logger = get_logger(__name__)
 
@@ -126,19 +126,12 @@ class RequestBodyLimitMiddleware:
 
     async def _send_413(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Emit the standard error envelope (I12: was hand-rolled text/plain)."""
-        response = middleware_error_response(
-            code=ErrorCode.PAYLOAD_TOO_LARGE,
-            message="Request body too large",
-            status_code=413,
-            headers={"x-max-body-size": str(self.max_body_size)},
-        )
+        response = middleware_reject("payload_too_large", max_size=self.max_body_size)
         await response(scope, receive, send)
 
     async def _send_400(self, scope: Scope, receive: Receive, send: Send, message: bytes) -> None:
         """Emit the standard error envelope (I12: was hand-rolled text/plain)."""
-        response = middleware_error_response(
-            code=ErrorCode.INVALID_INPUT,
-            message=message.decode("utf-8", errors="replace"),
-            status_code=400,
+        response = middleware_reject(
+            "invalid_input", message=message.decode("utf-8", errors="replace")
         )
         await response(scope, receive, send)

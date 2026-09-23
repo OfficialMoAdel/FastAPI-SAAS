@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.app.modules.storage.admin import ResolvedStorage
 from src.app.modules.storage.local_storage import LocalStorage
 from src.app.modules.storage.schemas import FileUpdate
 from src.app.modules.storage.service import (
@@ -28,13 +29,25 @@ def mock_storage_service():
     # B6: upload/download/delete now resolve the provider synchronously from
     # already-fetched settings via get_provider_for_settings.
     service.get_provider_for_settings = MagicMock()
+
+    def _resolve(tenant_id):
+        settings = service.get_settings_or_raise.return_value
+        return ResolvedStorage(
+            provider=service.get_provider_for_settings.return_value,
+            provider_name=settings.provider,
+            max_file_size_mb=settings.max_file_size_mb,
+            allowed_file_types=settings.allowed_file_types,
+            max_file_count=settings.max_file_count,
+            storage_quota_bytes=settings.storage_quota_bytes,
+        )
+
+    service.resolve = AsyncMock(side_effect=_resolve)
     return service
 
 
 @pytest.fixture
 def file_service(mock_db, mock_storage_service):
-    service = FileService(mock_db)
-    service._storage_service = mock_storage_service
+    service = FileService(mock_db, admin=mock_storage_service)
     return service
 
 
@@ -575,4 +588,4 @@ async def test_download_stream_performs_zero_db_fetches(file_service, mock_stora
 
     assert chunks == [b"chunk1"]
     file_service.get_file_or_raise.assert_awaited_once()
-    mock_storage_service.get_settings_or_raise.assert_awaited_once()
+    mock_storage_service.resolve.assert_awaited_once()

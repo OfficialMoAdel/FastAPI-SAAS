@@ -34,8 +34,7 @@ async def job_tenant_context(
     Example:
         async def deliver_webhook_task(ctx, delivery_id, tenant_id):
             async with job_tenant_context(tenant_id) as db:
-                service = WebhookService(db)
-                await service.deliver_webhook(delivery_id)
+                await deliver(db, delivery_id)
     """
     from src.app.core.db.rls import rls_context
     from src.app.core.tenancy.lifecycle import bind_tenant, fabricate_job_tenant, preserved_tenant

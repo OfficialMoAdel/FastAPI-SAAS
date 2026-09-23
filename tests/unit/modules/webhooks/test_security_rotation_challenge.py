@@ -98,7 +98,6 @@ async def test_trigger_webhooks_persists_null_signature_during_grace_period(webh
     endpoint.id = uuid4()
 
     webhook_service.get_active_endpoints = AsyncMock(return_value=[endpoint])
-    webhook_service._enqueue_delivery = AsyncMock()
 
     # We need to mock DB insert execute returning the created delivery
     from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus
@@ -168,7 +167,6 @@ async def test_trigger_webhooks_persists_null_signature_after_expiration(webhook
     endpoint.id = uuid4()
 
     webhook_service.get_active_endpoints = AsyncMock(return_value=[endpoint])
-    webhook_service._enqueue_delivery = AsyncMock()
 
     # Mock DB insert returning the created delivery
     from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus

@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 
 from src.app.modules._base import ModelNotFoundError
+from src.app.modules.webhooks.delivery import deliver
 from src.app.modules.webhooks.service import WEBHOOK_RETRY_DELAYS, WebhookService
 
 
@@ -235,14 +236,14 @@ class TestWebhookServiceTrigger:
             captured["delivery"] = delivery
 
         mock_db.add.side_effect = _fake_add
-        webhook_service._enqueue_delivery = AsyncMock()
 
-        delivery = await webhook_service.trigger_endpoint(
-            endpoint=mock_webhook_endpoint, event_type="user.created", payload={"id": 1}
-        )
+        with patch("src.app.modules.webhooks.delivery.enqueue", new_callable=AsyncMock):
+            delivery = await webhook_service.trigger_endpoint(
+                endpoint=mock_webhook_endpoint, event_type="user.created", payload={"id": 1}
+            )
 
-        assert delivery.signature is None
-        assert captured["delivery"].signature is None
+            assert delivery.signature is None
+            assert captured["delivery"].signature is None
 
     @pytest.mark.asyncio
     async def test_trigger_endpoint_undecryptable_secret_still_triggers(
@@ -250,21 +251,25 @@ class TestWebhookServiceTrigger:
     ):
         """An undecryptable secret must not fail the trigger — send time handles it."""
         mock_webhook_endpoint.secret = "bad_secret"
-        webhook_service._enqueue_delivery = AsyncMock()
 
-        with patch("src.app.modules.webhooks.service.decrypt_data", side_effect=Exception("Decrypt fail")):
+        with (
+            patch("src.app.modules.webhooks.delivery.enqueue", new_callable=AsyncMock),
+            patch("src.app.modules.webhooks.service.decrypt_data", side_effect=Exception("Decrypt fail")),
+        ):
             delivery = await webhook_service.trigger_endpoint(
                 endpoint=mock_webhook_endpoint, event_type="user.created", payload={"id": 1}
             )
 
-        assert delivery.signature is None
+            assert delivery.signature is None
 
     @pytest.mark.asyncio
-    async def test_enqueue_delivery_no_pool(self, webhook_service):
+    async def test_enqueue_delivery_no_pool(self):
         """Test enqueueing when redis pool is not initialized."""
+        from src.app.modules.webhooks.delivery import enqueue
+
         # Patch the pool import inside the method
         with patch("src.app.core.utils.queue.pool", None):
-            await webhook_service._enqueue_delivery(uuid4())
+            await enqueue(uuid4())
             # Should not raise, just log warning (verified by coverage)
 
 
@@ -299,7 +304,7 @@ class TestWebhookServiceDelivery:
         self._setup_execute_mock(mock_db, None)
 
         with pytest.raises(ModelNotFoundError) as exc:
-            await webhook_service.deliver_webhook(uuid4())
+            await deliver(mock_db, uuid4())
 
         assert "WebhookDelivery" in str(exc.value)
 
@@ -311,7 +316,7 @@ class TestWebhookServiceDelivery:
         self._setup_execute_mock(mock_db, mock_webhook_delivery, endpoint=None)
 
         with pytest.raises(ModelNotFoundError) as exc:
-            await webhook_service.deliver_webhook(mock_webhook_delivery.id)
+            await deliver(mock_db, mock_webhook_delivery.id)
 
         assert "WebhookEndpoint" in str(exc.value)
 
@@ -341,7 +346,7 @@ class TestWebhookServiceDelivery:
             patch("src.app.modules.webhooks.delivery._handle_failure", new_callable=AsyncMock) as patch_handle,
         ):
 
-            result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
+            result = await deliver(mock_db, mock_webhook_delivery.id)
 
             # Should return delivery without making request
             assert result == mock_webhook_delivery
@@ -367,7 +372,7 @@ class TestWebhookServiceDelivery:
             self._patch_signing(),
             patch("src.app.modules.webhooks.delivery.validate_webhook_url", side_effect=SSRFProtectionError("Blocked")),
         ):
-            result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
+            result = await deliver(mock_db, mock_webhook_delivery.id)
 
             assert result.status == WebhookDeliveryStatus.FAILED
             assert "SSRF protection" in result.response_body
@@ -393,7 +398,7 @@ class TestWebhookServiceDelivery:
                 mock_client.post.side_effect = CircuitBreakerOpen("Circuit open", 60)
                 mock_client_fn.return_value = mock_client
 
-                await webhook_service.deliver_webhook(mock_webhook_delivery.id)
+                await deliver(mock_db, mock_webhook_delivery.id)
 
                 patch_handle.assert_called_once()
                 assert mock_webhook_delivery.attempt_count == 1
@@ -427,7 +432,7 @@ class TestWebhookServiceDelivery:
                     "src.app.core.resilience.registry.get_webhook_breaker",
                     return_value=mock_circuit,
                 ):
-                    await webhook_service.deliver_webhook(mock_webhook_delivery.id)
+                    await deliver(mock_db, mock_webhook_delivery.id)
 
                     mock_circuit.record_failure.assert_called_once()
                     patch_handle.assert_called_once()
@@ -464,7 +469,7 @@ class TestWebhookServiceDelivery:
                     "src.app.core.resilience.registry.get_webhook_breaker",
                     return_value=mock_circuit,
                 ):
-                    result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
+                    result = await deliver(mock_db, mock_webhook_delivery.id)
 
                     assert result.status == WebhookDeliveryStatus.DELIVERED
                     assert result.response_status == 200
@@ -504,7 +509,7 @@ class TestWebhookServiceDelivery:
                 ):
                     mock_webhook_delivery.attempt_count = 0
 
-                    result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
+                    result = await deliver(mock_db, mock_webhook_delivery.id)
 
                     assert result.status == WebhookDeliveryStatus.PENDING
                     assert result.next_retry_at is not None
@@ -539,7 +544,7 @@ class TestWebhookServiceDelivery:
                     return_value=mock_circuit,
                 ):
                     mock_webhook_delivery.attempt_count = 5
-                    result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
+                    result = await deliver(mock_db, mock_webhook_delivery.id)
 
                     assert result.status == WebhookDeliveryStatus.FAILED
 
@@ -559,13 +564,13 @@ class TestWebhookServiceDelivery:
         from src.app.modules.webhooks.models import WebhookDeliveryStatus
 
         mock_db.get.return_value = mock_webhook_delivery
-        webhook_service._enqueue_delivery = AsyncMock()
 
-        result = await webhook_service.retry_delivery(mock_webhook_delivery.id)
+        with patch("src.app.modules.webhooks.delivery.enqueue", new_callable=AsyncMock) as mock_enqueue:
+            result = await webhook_service.retry_delivery(mock_webhook_delivery.id)
 
         assert result.status == WebhookDeliveryStatus.PENDING
         assert result.attempt_count == 0
-        webhook_service._enqueue_delivery.assert_called_once()
+        mock_enqueue.assert_called_once_with(mock_webhook_delivery.id)
 
     """Tests for webhook service initialization."""
 
@@ -579,7 +584,6 @@ class TestWebhookServiceDelivery:
         assert hasattr(webhook_service, "create_endpoint")
         assert hasattr(webhook_service, "get_active_endpoints")
         assert hasattr(webhook_service, "trigger_webhooks")
-        assert hasattr(webhook_service, "deliver_webhook")
         assert hasattr(webhook_service, "get_delivery_history")
         # Fix #6: trigger-time legacy signing is dead — these must stay gone.
         assert not hasattr(webhook_service, "_generate_signature")

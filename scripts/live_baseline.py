@@ -386,7 +386,19 @@ async def n1_upload_txn_split(engine, redis_client) -> None:
         provider = _SlowFakeProvider(UPLOAD_DELAY)
         async with maker() as db:
             svc = FileService(db)
-            svc._storage_service.get_provider = lambda tid: _awaitable(provider)  # type: ignore[method-assign]
+            async def _fake_resolve(tid):
+                from src.app.modules.storage.admin import ResolvedStorage
+
+                return ResolvedStorage(
+                    provider=provider,  # type: ignore[arg-type]
+                    provider_name='local',
+                    max_file_size_mb=1024,
+                    allowed_file_types=None,
+                    max_file_count=10**6,
+                    storage_quota_bytes=10**12,
+                )
+
+            svc.admin.resolve = _fake_resolve  # type: ignore[method-assign]
             content = b"baseline harness plain text content"
             rec = await svc.upload_file(
                 tenant_id=tenant_id,
@@ -412,8 +424,6 @@ async def n1_upload_txn_split(engine, redis_client) -> None:
             "holds_overlapping_upload": len(overlapping),
         }
 
-    async def _awaitable(x):
-        return x
 
     try:
         off = await _run(False)

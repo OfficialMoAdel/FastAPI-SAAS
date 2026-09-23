@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.app.modules.storage.admin import ResolvedStorage
 from src.app.modules.storage.service import FileService
 from src.app.modules.tenants.models import Tenant
 
@@ -220,14 +221,25 @@ async def test_quota_query_fusion(file_service_from_phase2, mock_db):
         mock_settings.max_file_size_mb = 10
         mock_settings.allowed_file_types = ["text/plain"]
 
-        file_service_from_phase2._storage_service.get_settings_or_raise = AsyncMock(return_value=mock_settings)
-        file_service_from_phase2._storage_service.get_provider = AsyncMock()
+        mock_admin = MagicMock()
+        mock_admin.get_settings_or_raise = AsyncMock(return_value=mock_settings)
+        file_service_from_phase2.admin = mock_admin
 
         # Mock provider upload
         mock_provider = AsyncMock()
         mock_provider.upload.return_value.success = True
         # B6: upload resolves the provider synchronously from the already-fetched settings.
-        file_service_from_phase2._storage_service.get_provider_for_settings = MagicMock(return_value=mock_provider)
+        mock_admin.get_provider_for_settings = MagicMock(return_value=mock_provider)
+        mock_admin.resolve = AsyncMock(
+            side_effect=lambda tid: ResolvedStorage(
+                provider=mock_provider,
+                provider_name=mock_settings.provider,
+                max_file_size_mb=mock_settings.max_file_size_mb,
+                allowed_file_types=mock_settings.allowed_file_types,
+                max_file_count=mock_settings.max_file_count,
+                storage_quota_bytes=mock_settings.storage_quota_bytes,
+            )
+        )
 
         # Call upload_file
         await file_service_from_phase2.upload_file(

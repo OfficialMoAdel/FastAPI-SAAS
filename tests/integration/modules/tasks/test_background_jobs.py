@@ -33,7 +33,7 @@ async def test_flush_audit_logs_task_uses_rls_bypass():
 
 @pytest.mark.asyncio
 async def test_deliver_webhook_task_uses_rls_context():
-    """Verify deliver_webhook_task passes the RLS session to WebhookService."""
+    """Verify deliver_webhook_task passes the RLS session to the delivery seam."""
     mock_session = AsyncMock()
     mock_cm = MagicMock()
     mock_cm.__aenter__.return_value = mock_session
@@ -54,17 +54,13 @@ async def test_deliver_webhook_task_uses_rls_context():
         patch("src.app.core.worker.functions.job_bypass_context", return_value=mock_bypass_cm),
         patch("src.app.core.worker.functions.job_tenant_context", return_value=mock_cm) as mock_tenant_ctx_factory,
     ):
-        with patch("src.app.core.worker.functions.WebhookService") as MockService:
-            mock_service_instance = MockService.return_value
-            mock_service_instance.deliver_webhook = AsyncMock()
-
+        with patch("src.app.core.worker.functions.deliver", new_callable=AsyncMock) as mock_deliver:
             await deliver_webhook_task(MagicMock(), "d290f1ee-6c54-4b01-90e6-d701748f0851")
 
             # Verify job_tenant_context called with correct tenant_id
             mock_tenant_ctx_factory.assert_called_once_with(123)
 
-            # Verify WebhookService initialized with the session from job_tenant_context
-            MockService.assert_called_once_with(mock_session)
-
-            # Verify delivery method called
-            mock_service_instance.deliver_webhook.assert_called_once()
+            # Verify the delivery seam got the RLS session and the UUID form
+            args = mock_deliver.call_args[0]
+            assert args[0] is mock_session
+            assert str(args[1]) == "d290f1ee-6c54-4b01-90e6-d701748f0851"

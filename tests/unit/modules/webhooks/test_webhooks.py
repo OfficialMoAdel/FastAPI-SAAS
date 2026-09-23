@@ -217,14 +217,16 @@ async def test_trigger_webhooks_enqueues_job(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_enqueue_delivery_uses_arq(service):
-    """Test that _enqueue_delivery uses the global queue pool."""
+async def test_enqueue_delivery_uses_arq():
+    """Test that delivery.enqueue uses the global queue pool."""
+    from src.app.modules.webhooks.delivery import enqueue
+
     delivery_id = uuid4()
 
     # Mock the pool in src.app.core.utils.queue
     mock_pool = AsyncMock()
     with patch("src.app.core.utils.queue.pool", mock_pool):
-        await service._enqueue_delivery(delivery_id)
+        await enqueue(delivery_id)
 
         # orjson worker path: ids pass as str (UUID → str is a no-op decode
         # in the worker; the job NAME is the wire contract).
@@ -236,7 +238,7 @@ async def test_enqueue_delivery_uses_arq(service):
 
 @pytest.mark.asyncio
 async def test_deliver_webhook_task_execution():
-    """Test that the worker task calls the service method."""
+    """Test that the worker task calls the delivery module directly."""
 
     delivery_id = uuid4()
     ctx = MagicMock(spec=Worker)
@@ -250,13 +252,9 @@ async def test_deliver_webhook_task_execution():
     # Mock job_tenant_context to return a db for webhook delivery
     mock_tenant_db = AsyncMock()
 
-    # Mock WebhookService.deliver_webhook
-    mock_service_instance = MagicMock()
-    mock_service_instance.deliver_webhook = AsyncMock()
-
     with patch("src.app.core.worker.functions.job_bypass_context") as mock_bypass_ctx:
         with patch("src.app.core.worker.functions.job_tenant_context") as mock_tenant_ctx:
-            with patch("src.app.core.worker.functions.WebhookService") as MockServiceClass:
+            with patch("src.app.core.worker.functions.deliver", new_callable=AsyncMock) as mock_deliver:
                 # Setup bypass context manager
                 mock_bypass_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_bypass_db)
                 mock_bypass_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
@@ -265,12 +263,7 @@ async def test_deliver_webhook_task_execution():
                 mock_tenant_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_tenant_db)
                 mock_tenant_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
 
-                # Setup service
-                MockServiceClass.return_value = mock_service_instance
-
                 await deliver_webhook_task(ctx, delivery_id)
 
-                # Service should be instantiated
-                MockServiceClass.assert_called_once_with(mock_tenant_db)
-                # deliver_webhook should be called with the delivery_id
-                mock_service_instance.deliver_webhook.assert_called_once_with(delivery_id)
+                # Delivery runs behind the delivery-module seam, no service involved
+                mock_deliver.assert_called_once_with(mock_tenant_db, delivery_id)

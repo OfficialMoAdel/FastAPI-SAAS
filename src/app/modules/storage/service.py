@@ -1,9 +1,12 @@
-"""Storage service layer - encapsulates file operations and tenant storage settings.
+"""Storage service layer - tenant file operations (transfer) over providers.
 
 Deep module unifying:
 - File persistence, MIME verification, and atomic quota enforcement
-- Tenant storage settings, Fernet encryption at rest, and credential validation
-- Storage provider resolution (S3, Azure Blob, Local)
+- Transfers against S3, Azure Blob, and Local providers
+
+Tenant storage configuration, Fernet encryption at rest, credential
+validation, and provider resolution live in storage.admin; this module
+consumes the narrow ResolvedStorage policy object across that seam.
 """
 
 from __future__ import annotations
@@ -13,57 +16,34 @@ import re
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, BinaryIO
 from uuid import UUID
 
-from cachetools import TTLCache
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.core.config import settings as app_settings
 from src.app.core.db.scoped import criterion, execute_scoped
-from src.app.core.json_utils import json_dumps, json_loads
-from src.app.core.security.encryption import get_encryption
 from src.app.core.tenancy.scope import ExplicitTenant
+from src.app.modules.storage.admin import ResolvedStorage, StorageAdminService
 from src.app.modules.storage.errors import (
     FileEntityNotFoundError,
     FileTypeNotAllowedError,
-    InvalidCredentialsError,
     QuotaExceededError,
     StorageBackendError,
-    StorageNotConfiguredError,
 )
-from src.app.modules.storage.interfaces import StorageProvider
 from src.app.modules.storage.local_storage import LocalStorage
 from src.app.modules.storage.metrics import storage_metrics
-from src.app.modules.storage.models import File, StorageProviderType, StorageSettings
+from src.app.modules.storage.models import File
 from src.app.modules.storage.schemas import (
     FileRead,
     FileUpdate,
     QuotaResponse,
-    StorageSettingsCreate,
-    StorageSettingsRead,
-    StorageSettingsUpdate,
-)
-from src.app.modules.storage.schemas import (
-    StorageProviderType as SchemaProviderType,
 )
 from src.app.modules.tenants.models import Tenant
 
 logger = get_logger(__name__)
-
-# B6: provider instance cache. boto3/Azure clients are designed for reuse;
-# constructing one per operation (SELECT settings -> Fernet decrypt ->
-# boto3.client) costs a fresh connection pool per upload/download/delete.
-# Keyed (tenant_id, updated_at): any settings mutation bumps updated_at
-# (onupdate), rotating the key so a new provider is built on next use.
-# Stale entries age out via TTL. Not tenant-scoped by context — keyed by
-# explicit tenant_id argument, so cross-tenant leakage is impossible.
-_PROVIDER_CACHE: TTLCache[tuple[UUID, datetime | None], StorageProvider] = TTLCache(
-    maxsize=512, ttl=600
-)
 
 
 # ============================================================================
@@ -112,226 +92,10 @@ class StoredObject:
         await self._service.delete_file(self._file.tenant_id, self._file.id)
 
 
-# ============================================================================
-# StorageAdminService: Tenant Storage Configuration
-# ============================================================================
+# NOTE: StorageAdminService (tenant configuration, credentials, provider cache)
+# lives in storage.admin; re-exported here for facade compatibility.
 
 
-class StorageAdminService:
-    """Service for managing tenant storage settings and credential encryption."""
-
-    def __init__(self, db: AsyncSession) -> None:
-        self.db = db
-
-    async def get_settings(self, tenant_id: UUID) -> StorageSettings | None:
-        """Get storage settings for a tenant."""
-        result = await execute_scoped(
-            select(StorageSettings),
-            db=self.db,
-            model=StorageSettings,
-            scope=ExplicitTenant(tenant_id=tenant_id, reason="legacy-criterion:StorageSettings"),
-        )
-        return result.scalar_one_or_none()
-
-    async def get_settings_or_raise(self, tenant_id: UUID) -> StorageSettings:
-        """Get storage settings or raise StorageNotConfiguredError."""
-        settings = await self.get_settings(tenant_id)
-        if not settings:
-            raise StorageNotConfiguredError("Storage not configured. Contact your tenant administrator.")
-        return settings
-
-    async def create_settings(
-        self,
-        tenant_id: UUID,
-        data: StorageSettingsCreate,
-    ) -> StorageSettings:
-        """Create storage settings for a tenant, validating credentials beforehand."""
-        credentials = self._extract_credentials(data)
-        await self._validate_credentials(StorageProviderType(data.provider.value), credentials)
-
-        credentials_json = str(json_dumps(credentials, as_str=True))
-        encryption = get_encryption()
-        encrypted = encryption.encrypt_credential(credentials_json.encode())
-
-        settings = StorageSettings(
-            tenant_id=tenant_id,
-            provider=StorageProviderType(data.provider.value).value,
-            credentials_encrypted=encrypted,
-            bucket_name=credentials.get("bucket_name") or credentials.get("container_name"),
-            region=credentials.get("region"),
-            max_file_size_mb=data.max_file_size_mb,
-            allowed_file_types=data.allowed_file_types,
-            max_file_count=data.max_file_count,
-            storage_quota_bytes=data.storage_quota_bytes,
-        )
-        self.db.add(settings)
-        await self.db.commit()
-        await self.db.refresh(settings)
-
-        logger.info("Storage settings created for tenant", tenant_id=str(tenant_id), provider=data.provider)
-        return settings
-
-    async def update_settings(
-        self,
-        tenant_id: UUID,
-        data: StorageSettingsUpdate,
-    ) -> StorageSettings:
-        """Update storage settings for a tenant."""
-        settings = await self.get_settings_or_raise(tenant_id)
-
-        new_credentials = self._extract_credentials_optional(data)
-        if data.provider is not None and data.provider.value != settings.provider and not new_credentials:
-            raise InvalidCredentialsError(
-                f"Credentials required when switching storage provider from {settings.provider} "
-                f"to {data.provider.value}"
-            )
-
-        if new_credentials:
-            provider_type = (
-                StorageProviderType(data.provider.value)
-                if data.provider is not None
-                else StorageProviderType(settings.provider)
-            )
-            await self._validate_credentials(provider_type, new_credentials)
-
-            credentials_json = str(json_dumps(new_credentials, as_str=True))
-            encryption = get_encryption()
-            settings.credentials_encrypted = encryption.encrypt_credential(credentials_json.encode())
-
-            settings.bucket_name = (
-                new_credentials.get("bucket_name")
-                or new_credentials.get("container_name")
-                or settings.bucket_name
-            )
-            settings.region = new_credentials.get("region") or settings.region
-
-        if data.provider is not None:
-            settings.provider = StorageProviderType(data.provider.value).value
-        if data.max_file_size_mb is not None:
-            settings.max_file_size_mb = data.max_file_size_mb
-        if data.allowed_file_types is not None:
-            settings.allowed_file_types = data.allowed_file_types
-        if data.max_file_count is not None:
-            settings.max_file_count = data.max_file_count
-        if data.storage_quota_bytes is not None:
-            settings.storage_quota_bytes = data.storage_quota_bytes
-
-        await self.db.commit()
-        await self.db.refresh(settings)
-
-        logger.info("Storage settings updated for tenant", tenant_id=str(tenant_id), provider=settings.provider)
-        return settings
-
-    async def get_provider(self, tenant_id: UUID) -> StorageProvider:
-        """Get a configured StorageProvider instance for a tenant.
-
-        B6: instances are cached per (tenant_id, settings.updated_at) —
-        boto3/Azure clients are designed for reuse; a fresh client per
-        operation built a new connection pool for every upload/download.
-        Any settings mutation bumps updated_at, rotating the cache key.
-        """
-        settings = await self.get_settings_or_raise(tenant_id)
-        return self.get_provider_for_settings(settings)
-
-    def get_provider_for_settings(self, settings: StorageSettings) -> StorageProvider:
-        """Return a cached provider for already-fetched settings.
-
-        Callers that already hold the settings row (upload/download/delete)
-        use this to avoid the second SELECT that get_provider would issue.
-        """
-        cache_key = (settings.tenant_id, settings.updated_at)
-        cached = _PROVIDER_CACHE.get(cache_key)
-        if cached is not None:
-            return cached
-        credentials = self._decrypt_credentials(settings)
-        provider = self._create_provider(StorageProviderType(settings.provider), credentials)
-        _PROVIDER_CACHE[cache_key] = provider
-        return provider
-
-    def to_read_schema(self, settings: StorageSettings) -> StorageSettingsRead:
-        """Convert model to read schema with masked credentials."""
-        return StorageSettingsRead(
-            id=settings.id,
-            tenant_id=settings.tenant_id,
-            provider=SchemaProviderType(settings.provider),
-            bucket_name=settings.bucket_name,
-            region=settings.region,
-            max_file_size_mb=settings.max_file_size_mb,
-            allowed_file_types=settings.allowed_file_types,
-            max_file_count=settings.max_file_count,
-            storage_quota_bytes=settings.storage_quota_bytes,
-            has_credentials=settings.credentials_encrypted is not None,
-            created_at=settings.created_at,
-            updated_at=settings.updated_at,
-        )
-
-    def _extract_credentials(self, data: StorageSettingsCreate) -> dict[str, Any]:
-        if data.provider == StorageProviderType.S3:
-            if not data.s3_credentials:
-                raise InvalidCredentialsError("S3 credentials required for S3 provider")
-            return data.s3_credentials.model_dump()
-        if data.provider == StorageProviderType.AZURE:
-            if not data.azure_credentials:
-                raise InvalidCredentialsError("Azure credentials required for Azure provider")
-            return data.azure_credentials.model_dump()
-        if data.provider == StorageProviderType.LOCAL:
-            if not data.local_credentials:
-                raise InvalidCredentialsError("Local credentials required for Local provider")
-            return data.local_credentials.model_dump()
-        raise ValueError(f"Unknown provider: {data.provider}")
-
-    def _extract_credentials_optional(self, data: StorageSettingsUpdate) -> dict[str, Any] | None:
-        if data.s3_credentials:
-            return data.s3_credentials.model_dump()
-        if data.azure_credentials:
-            return data.azure_credentials.model_dump()
-        if data.local_credentials:
-            return data.local_credentials.model_dump()
-        return None
-
-    def _decrypt_credentials(self, settings: StorageSettings) -> dict[str, str]:
-        if not settings.credentials_encrypted:
-            return {}
-        encryption = get_encryption()
-        decrypted = encryption.decrypt_credential(settings.credentials_encrypted).decode()
-        result: dict[str, str] = json_loads(decrypted)
-        return result
-
-    async def _validate_credentials(
-        self,
-        provider: StorageProviderType,
-        credentials: dict[str, Any],
-    ) -> None:
-        storage = self._create_provider(provider, credentials)
-        try:
-            if provider == StorageProviderType.LOCAL:
-                # P2-5: writability probe — exists() cannot catch read-only
-                # mounts, and LocalStorage.validate_connection() had no callers.
-                probe = getattr(storage, "validate_connection", None)
-                if probe is None or not await probe():
-                    raise InvalidCredentialsError(
-                        f"Local storage path is not writable: {credentials.get('base_path', '?')}"
-                    )
-            else:
-                await storage.exists("__connection_test__")
-        except Exception as e:
-            logger.error("Credential validation failed", provider=provider.value, error=str(e))
-            raise InvalidCredentialsError(f"Failed to validate {provider.value} credentials: {e}") from e
-        finally:
-            if hasattr(storage, "close"):
-                await storage.close()
-
-    def _create_provider(
-        self,
-        provider: StorageProviderType,
-        credentials: dict[str, Any],
-    ) -> StorageProvider:
-        from src.app.clients.storage.registry import StorageProviderRegistry
-
-        return StorageProviderRegistry.create(provider, credentials)
-
-
-# ============================================================================
 # StorageService: Core File Lifecycle & Operational Facade
 # ============================================================================
 
@@ -343,10 +107,9 @@ class StorageService:
     and provider orchestration behind a single interface.
     """
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, admin: StorageAdminService | None = None) -> None:
         self.db = db
-        self.admin = StorageAdminService(db)
-        self._storage_service = self.admin
+        self.admin = admin or StorageAdminService(db)
 
     # ------------------------------------------------------------------------
     # Core Entry Point: put() / upload_file()
@@ -393,18 +156,17 @@ class StorageService:
         is_public: bool = False,
     ) -> File:
         """Upload a file with full validation, quota, and rollback compensation."""
-        storage_svc = getattr(self, "_storage_service", self.admin)
-        settings = await storage_svc.get_settings_or_raise(tenant_id)
+        resolved = await self.admin.resolve(tenant_id)
 
         # Check file size limit
-        max_size = settings.max_file_size_mb * 1024 * 1024
+        max_size = resolved.max_file_size_mb * 1024 * 1024
         if size_bytes > max_size:
-            raise QuotaExceededError(f"File size {size_bytes} exceeds limit of {settings.max_file_size_mb}MB")
+            raise QuotaExceededError(f"File size {size_bytes} exceeds limit of {resolved.max_file_size_mb}MB")
 
         # Check client-side claimed file type
-        if settings.allowed_file_types and mime_type not in settings.allowed_file_types:
+        if resolved.allowed_file_types and mime_type not in resolved.allowed_file_types:
             raise FileTypeNotAllowedError(
-                f"File type '{mime_type}' is not allowed. Permitted types: {settings.allowed_file_types}"
+                f"File type '{mime_type}' is not allowed. Permitted types: {resolved.allowed_file_types}"
             )
 
         # Magic byte validation to prevent MIME spoofing
@@ -429,7 +191,7 @@ class StorageService:
             raise FileTypeNotAllowedError("Invalid file content: missing expected file signature.")
 
         if actual_mime and actual_mime != mime_type:
-            if settings.allowed_file_types and actual_mime not in settings.allowed_file_types:
+            if resolved.allowed_file_types and actual_mime not in resolved.allowed_file_types:
                 raise FileTypeNotAllowedError(f"Spoofed file detected. Actual type '{actual_mime}' is not allowed.")
 
         # Generate unique storage path
@@ -442,20 +204,20 @@ class StorageService:
 
         # Check quotas in one query
         current_count, current_size = await self._get_quota_stats(tenant_id)
-        if current_count >= settings.max_file_count:
-            raise QuotaExceededError(f"File count limit reached ({settings.max_file_count} files)")
+        if current_count >= resolved.max_file_count:
+            raise QuotaExceededError(f"File count limit reached ({resolved.max_file_count} files)")
 
-        if current_size + size_bytes > settings.storage_quota_bytes:
+        if current_size + size_bytes > resolved.storage_quota_bytes:
             raise QuotaExceededError(
-                f"Storage quota exceeded. Used: {current_size}, Limit: {settings.storage_quota_bytes}"
+                f"Storage quota exceeded. Used: {current_size}, Limit: {resolved.storage_quota_bytes}"
             )
 
-        provider = storage_svc.get_provider_for_settings(settings)
+        provider = resolved.provider
 
         # FEATURE_UPLOAD_TXN_SPLIT: end read txn before storage network I/O
-        max_file_count = settings.max_file_count
-        storage_quota_bytes = settings.storage_quota_bytes
-        provider_name = settings.provider
+        max_file_count = resolved.max_file_count
+        storage_quota_bytes = resolved.storage_quota_bytes
+        provider_name = resolved.provider_name
         if app_settings.performance.FEATURE_UPLOAD_TXN_SPLIT:
             await self.db.rollback()
 
@@ -555,38 +317,36 @@ class StorageService:
     async def download(self, tenant_id: UUID, file_id: int, user_id: int | None = None) -> Download:
         """Resolve a stored file for streaming download."""
         file = await self.get_file_or_raise(tenant_id, file_id, user_id)
-        storage_svc = getattr(self, "_storage_service", self.admin)
-        settings = await storage_svc.get_settings_or_raise(tenant_id)
+        resolved = await self.admin.resolve(tenant_id)
         file_dto = FileRead.model_validate(file, from_attributes=True)
 
         def stream_factory() -> AsyncIterator[bytes]:
-            # P2: file row + settings already resolved above — the stream
+        # P2: file row already resolved above - the stream
             # performs 0 DB RTTs before first byte (previously re-fetched
             # both). Fail-fast bonus: misconfigured storage now 404s here
             # instead of dying mid-stream after 200 headers.
-            return self._stream_from_prefetched(file, settings)
+            return self._stream_from_prefetched(file, resolved)
 
         return Download(file=file_dto, _stream_factory=stream_factory)
 
     async def _stream_from_prefetched(
         self,
         file: File,
-        settings: StorageSettings,
+        resolved: ResolvedStorage,
     ) -> AsyncGenerator[bytes, None]:
-        """Stream chunks for an already-resolved file row + settings."""
-        storage_svc = getattr(self, "_storage_service", self.admin)
-        provider = storage_svc.get_provider_for_settings(settings)
+        """Stream chunks for an already-resolved file row + resolved policy."""
+        provider = resolved.provider
 
         tid = str(file.tenant_id)
         logger.info("file_download_started", file_id=file.id, tenant_id=tid, storage_path=file.storage_path)
 
-        with storage_metrics.measure_download(tid, settings.provider):
+        with storage_metrics.measure_download(tid, resolved.provider_name):
             async for chunk in provider.download(file.storage_path):
                 yield chunk
 
         storage_metrics.record_download(
             tenant_id=tid,
-            provider=settings.provider,
+            provider=resolved.provider_name,
             size_bytes=file.size_bytes,
             success=True,
         )
@@ -598,10 +358,9 @@ class StorageService:
         user_id: int | None = None,
     ) -> AsyncGenerator[bytes, None]:
         """Stream file chunks from physical storage provider."""
-        storage_svc = getattr(self, "_storage_service", self.admin)
         file = await self.get_file_or_raise(tenant_id, file_id, user_id)
-        settings = await storage_svc.get_settings_or_raise(tenant_id)
-        async for chunk in self._stream_from_prefetched(file, settings):
+        resolved = await self.admin.resolve(tenant_id)
+        async for chunk in self._stream_from_prefetched(file, resolved):
             yield chunk
 
     # ------------------------------------------------------------------------
@@ -614,10 +373,9 @@ class StorageService:
 
     async def delete_file(self, tenant_id: UUID, file_id: int, user_id: int | None = None) -> None:
         """Storage-first idempotent delete + row cleanup + quota decrement."""
-        storage_svc = getattr(self, "_storage_service", self.admin)
         file = await self.get_file_or_raise(tenant_id, file_id, user_id)
-        settings = await storage_svc.get_settings_or_raise(tenant_id)
-        provider = storage_svc.get_provider_for_settings(settings)
+        resolved = await self.admin.resolve(tenant_id)
+        provider = resolved.provider
         file_size = file.size_bytes
         storage_path = file.storage_path
 
@@ -646,7 +404,7 @@ class StorageService:
         logger.info("file_deleted", file_id=file_id, tenant_id=str(tenant_id), size_bytes=file_size)
         storage_metrics.record_delete(
             tenant_id=str(tenant_id),
-            provider=settings.provider,
+            provider=resolved.provider_name,
             size_bytes=file_size,
             success=True,
         )
@@ -761,10 +519,9 @@ class StorageService:
         long-lived bearer URLs past the HTTP validation.
         """
         expires_in = max(60, min(int(expires_in), 3600))
-        storage_svc = getattr(self, "_storage_service", self.admin)
         file = await self.get_file_or_raise(tenant_id, file_id, user_id)
-        settings = await storage_svc.get_settings_or_raise(tenant_id)
-        provider = storage_svc.get_provider_for_settings(settings)
+        resolved = await self.admin.resolve(tenant_id)
+        provider = resolved.provider
         if isinstance(provider, LocalStorage):
             return f"/api/v1/files/{file.id}"
         return await provider.get_url(file.storage_path, expires_in)
@@ -822,12 +579,11 @@ class StorageService:
 
     async def get_usage(self, tenant_id: UUID) -> QuotaResponse:
         """Get storage usage statistics for a tenant."""
-        storage_svc = getattr(self, "_storage_service", self.admin)
-        settings = await storage_svc.get_settings_or_raise(tenant_id)
+        resolved = await self.admin.resolve(tenant_id)
         file_count, storage_bytes = await self._get_quota_stats(tenant_id)
 
-        max_count = settings.max_file_count
-        max_bytes = settings.storage_quota_bytes
+        max_count = resolved.max_file_count
+        max_bytes = resolved.storage_quota_bytes
         pct = (storage_bytes / max_bytes * 100.0) if max_bytes > 0 else 0.0
 
         return QuotaResponse(

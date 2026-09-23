@@ -16,7 +16,7 @@ Performance Optimization (R2-HYBRID MED-1):
 """
 
 
-from fastapi import Request, status
+from fastapi import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.app.core.config import settings
@@ -164,13 +164,9 @@ class TenantMiddleware:
 
             # Non-exempt path without header -> 400 Missing required header
             logger.warning("Tenant resolution failed: missing_header | path=%s", path)
-            from src.app.core.errors import ErrorCode, middleware_error_response
+            from src.app.core.errors import middleware_reject
 
-            response = middleware_error_response(
-                code=ErrorCode.VALIDATION_ERROR,
-                message=f"Missing required header: {TENANT_HEADER}",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
+            response = middleware_reject("tenant_header_missing", header=TENANT_HEADER)
             await response(scope, receive, send)
             return
 
@@ -190,25 +186,17 @@ class TenantMiddleware:
                 return
 
             logger.warning("Tenant resolution failed: invalid_slug | slug=%s", tenant_slug)
-            from src.app.core.errors import ErrorCode, middleware_error_response
+            from src.app.core.errors import middleware_reject
 
-            response = middleware_error_response(
-                code=ErrorCode.FORBIDDEN,
-                message="Access denied",
-                status_code=status.HTTP_403_FORBIDDEN,
-            )
+            response = middleware_reject("tenant_access_denied")
             await response(scope, receive, send)
             return
 
         if not getattr(tenant, "is_active", True):
             logger.warning("Tenant resolution failed: inactive_tenant | slug=%s", tenant_slug)
-            from src.app.core.errors import ErrorCode, middleware_error_response
+            from src.app.core.errors import middleware_reject
 
-            response = middleware_error_response(
-                code=ErrorCode.FORBIDDEN,
-                message="Tenant inactive. Contact support.",
-                status_code=status.HTTP_403_FORBIDDEN,
-            )
+            response = middleware_reject("tenant_inactive")
             await response(scope, receive, send)
             return
 

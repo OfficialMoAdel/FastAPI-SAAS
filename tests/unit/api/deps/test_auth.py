@@ -88,7 +88,7 @@ async def test_authenticated_user_attr_access() -> None:
 
 async def test_create_auth_context_from_dict() -> None:
     user = {"id": 1, "email": "a@b.com", "username": "a"}
-    ctx = await _create_auth_context(user, {"sub": "a"}, None, _make_db())
+    ctx = _create_auth_context(user, {"sub": "a"}, None, _make_db())
     assert isinstance(ctx.user, AuthenticatedUser)
     assert ctx.user.id == 1
     assert ctx.token_data == {"sub": "a"}
@@ -96,7 +96,7 @@ async def test_create_auth_context_from_dict() -> None:
 
 async def test_create_auth_context_from_obj() -> None:
     user = AuthenticatedUser(id=2, email="c@d.com")
-    ctx = await _create_auth_context(user, None, None, _make_db())
+    ctx = _create_auth_context(user, None, None, _make_db())
     assert ctx.user.id == 2
     assert ctx.tenant is None
 

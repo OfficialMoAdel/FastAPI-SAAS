@@ -67,3 +67,39 @@ persistence grilling loop, 2026-09-22.)
   (`subscription_service.retrieve_subscription_for_tenant`) owns resolve →
   build → retrieve as ONE call so the resolved key never crosses a module
   boundary as a naked string; the Adapter never leaves `clients/`.
+- **Reject catalog** — the owned table of middleware rejection rows
+  (`REJECT_CATALOG` in `src/app/core/errors.py`): every guard rejection
+  (rate_limit, tenant, body_limit, attack_detection, ip_filter) resolves
+  code/message/status/headers from one row via `middleware_reject(kind=...)`
+  instead of hand-building envelopes. Strings are verbatim what the guards
+  previously built; header math (Retry-After, x-max-body-size) lives in
+  row builders over primitives. Unknown kinds fail loud (`ValueError`).
+  Seam: `middleware_reject` in `src/app/core/errors.py`; the old
+  `middleware_error_response` remains as the envelope builder underneath.
+
+- **Transfer/Admin split** — the storage Seam: `StorageService` owns file
+  transfer (upload/download/delete/quota/metrics) and consumes a narrow
+  `ResolvedStorage` policy object (provider + provider_name + size/type/count/
+  quota limits); `StorageAdminService` (in `storage.admin`) owns tenant
+  settings, credential decrypt, and the provider cache, assembling the object
+  via `resolve(tenant_id)`. Transfer never touches the settings row or
+  decrypt; settings/credential/quota-policy fixes land on one side only.
+  Seam: `StorageService(db, admin=None)` constructor injection in
+  `src/app/modules/storage/service.py`.
+
+- **Delivery split** — the webhook Seam: `delivery.deliver` /
+  `delivery.enqueue` in `src/app/modules/webhooks/delivery.py` own the
+  whole delivery lifecycle (lock → sign → send → backoff → DLQ/metrics);
+  `WebhookService` owns endpoint CRUD + `trigger_*` fan-out + the
+  endpoint-side `retry_delivery` state reset, calling `delivery.enqueue`
+  direct. ARQ workers call `deliver(db, delivery_id)` with no service
+  between. The deleted `deliver_webhook` / `_enqueue_delivery`
+  pass-throughs must not come back.
+  Seam: `deliver` / `enqueue` in `src/app/modules/webhooks/delivery.py`.
+
+- **Startup phases** — the boot Seam: `StartupPhase(name, startup, teardown)` rows in `src/app/core/setup.py` own one boot step each; `compose_phases` runs startups in list order, then reverse teardowns + the `tail` list.
+  Order is data — reordering boot means reordering rows, not editing a
+  130-line closure. The factory runs full teardown even when a startup
+  step raises (`teardown_on_startup_failure=True`, legacy try/finally
+  semantics); `lifespan_with_admin` runs its tail only on the clean path.
+  Seam: `compose_phases` in `src/app/core/setup.py`.

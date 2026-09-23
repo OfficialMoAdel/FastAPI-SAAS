@@ -509,7 +509,7 @@ class WebhookService:
 
         self.db.add(delivery)
         await self.db.commit()
-        await self._enqueue_delivery(delivery.id, tenant_id=delivery.tenant_id)
+        await delivery_module.enqueue(delivery.id, tenant_id=delivery.tenant_id)
 
         logger.info("Triggered webhook delivery for endpoint", delivery_id=delivery.id, endpoint_id=endpoint.id)
         return delivery
@@ -547,16 +547,9 @@ class WebhookService:
 
     # ------------------------------------------------------------------
     # Delivery lifecycles live in webhooks/delivery.py (enqueue/deliver/
-    # recover). These thin delegates keep the historical service surface.
+    # recover). retry_delivery below owns the endpoint-side state reset;
+    # the actual (re)enqueue goes straight to the delivery module.
     # ------------------------------------------------------------------
-
-    async def deliver_webhook(self, delivery_id: UUID, endpoint: WebhookEndpoint | None = None) -> WebhookDelivery:
-        """Deliver a webhook (delegates to the delivery module's retry loop)."""
-        return await delivery_module.deliver(self.db, delivery_id, endpoint=endpoint)
-
-    async def _enqueue_delivery(self, delivery_id: UUID, defer_by: int = 0, tenant_id: UUID | None = None) -> None:
-        """Enqueue webhook delivery task (delegates to the delivery module)."""
-        await delivery_module.enqueue(delivery_id, defer_by=defer_by, tenant_id=tenant_id)
 
     async def retry_delivery(self, delivery_id: UUID) -> WebhookDelivery:
         """Retry a failed delivery."""
@@ -569,7 +562,7 @@ class WebhookService:
         delivery.next_retry_at = None
 
         await self.db.commit()
-        await self._enqueue_delivery(delivery.id)
+        await delivery_module.enqueue(delivery.id)
         return delivery
 
     async def get_delivery_history(

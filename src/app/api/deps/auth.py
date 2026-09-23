@@ -1,4 +1,4 @@
-from typing import Annotated, Any
+from typing import Annotated, Any, NamedTuple
 
 from fastapi import Depends, Request
 from pydantic import BaseModel
@@ -27,7 +27,7 @@ class AuthContext(BaseModel):
     tenant: TenantContext | None
 
 
-async def _create_auth_context(
+def _create_auth_context(
     user: Any,
     token_data: Any,
     tenant: Any,
@@ -87,29 +87,36 @@ def _enforce_token_length(token: str) -> None:
         raise HTTPException(status_code=431, detail="Request header field too large")
 
 
+class _BlacklistProbe(NamedTuple):
+    """Bundled tri-state revocation inputs (strict path → _enforce_token_not_revoked)."""
+
+    token: str
+    jti: str | None
+    cached_blacklist: bool | None
+    is_blacklisted: bool | None
+
+
 async def _enforce_token_not_revoked(
-    request: Request,
-    token: str,
-    jti: str | None,
-    cached_blacklist: bool | None,
-    is_blacklisted: bool | None,
+    probe: _BlacklistProbe,
     db: AsyncSession,
 ) -> None:
     """Tri-state blacklist check: middleware probe / composite Lua / DB fallback."""
-    if cached_blacklist is False:
+    if probe.cached_blacklist is False:
         return  # Verified clean by middleware probe; skip redundant checks.
-    if is_blacklisted is True:
+    if probe.is_blacklisted is True:
         raise UnauthorizedException("Token has been revoked.")
-    if is_blacklisted is False:
+    if probe.is_blacklisted is False:
         return  # Verified clean by composite Lua probe
-    if cached_blacklist is True or await _is_token_blacklisted_with_fallback(token, jti, db):
+    if probe.cached_blacklist is True or await _is_token_blacklisted_with_fallback(
+        probe.token, probe.jti, db
+    ):
         raise UnauthorizedException("Token has been revoked.")
 
 
 async def _enforce_session_valid(
     session_id: str | None,
     session_valid: bool | None,
-    user_id: int,
+    user_id: Any,
     jwt_exp: int | None,
 ) -> None:
     """Session validity with degraded fallback to is_session_valid when composite returned None."""
@@ -217,21 +224,6 @@ async def _load_and_validate_user(
     return user
 
 
-async def _enforce_session_validity(
-    session_id: str | None,
-    user_id: Any,
-    jwt_exp: int | None,
-) -> None:
-    """Shared session-validity check (revoked sid → failure)."""
-    if not session_id:
-        return
-    from src.app.core.security.session_manager import session_manager
-
-    sess_ok = await session_manager.is_session_valid(user_id=user_id, session_id=session_id, jwt_exp=jwt_exp)
-    if not sess_ok:
-        raise UnauthorizedException("Session has been revoked.")
-
-
 def _enforce_user_tenant_match(
     user: dict[str, Any],
     current_tenant: Any,
@@ -274,9 +266,9 @@ async def _resolve_optional_bearer_flow(
         resolved = await _resolve_token_data(request, token, cached_payload, db)
         token_data, username_or_email, payload_version, _jti, jwt_exp, session_id = resolved
         user = await _load_and_validate_user(db, username_or_email, payload_version)
-        await _enforce_session_validity(session_id, user.get("id"), jwt_exp)
+        await _enforce_session_valid(session_id, None, user.get("id"), jwt_exp)
         _enforce_user_tenant_match(user, current_tenant)
-        return await _create_auth_context(user, token_data, current_tenant, db)
+        return _create_auth_context(user, token_data, current_tenant, db)
     except (UnauthorizedException, ForbiddenException):
         raise
     except Exception as e:
@@ -386,7 +378,7 @@ async def resolve_principal(
         # authorization failure (403), not anonymous, in both strict and
         # optional modes. Never degrade to anonymous here.
         enforce_api_key_scope(api_key_user, request)
-        return await _create_auth_context(api_key_user, None, current_tenant, db)
+        return _create_auth_context(api_key_user, None, current_tenant, db)
 
     # 2. Bearer Token extraction & length check
     if token is None or not token:
@@ -402,48 +394,61 @@ async def resolve_principal(
     cached_payload = get_cached_jwt_payload(request) if request is not None else None
 
     if strict:
-        # H-7: the strict path now consumes the SAME primitives as the
-        # optional path (steps 3-4 shared implementations; the composite
-        # prefetch stays inline because it is strict-only, RBAC bitmask warm).
-        resolved = await _resolve_token_data(request, token, cached_payload, db)
-        token_data, username_or_email, payload_version, jti, jwt_exp, session_id = resolved
-
-        # 4. User loading & verification
-        user = await _load_and_validate_user(db, username_or_email, payload_version)
-        user_id = user["id"]
-        user_tenant_id = user.get("tenant_id")
-
-        # 5. Composite auth-prefetch & revocation enforcement
-        from src.app.core.security.auth_prefetch import execute_composite_auth_prefetch
-
-        # P0-3: the middleware's Redis blacklist probe (stored tri-state on
-        # request.state) makes the composite's blacklist leg redundant when
-        # definite — skip it and save those ops. None (Redis down at
-        # middleware time) keeps the full composite check.
-        cached_blacklist = getattr(request.state, "is_token_blacklisted", None) if request is not None else None
-        is_blacklisted, session_valid, bitmask = await execute_composite_auth_prefetch(
-            token=token,
-            jti=jti,
-            user_id=user_id,
-            session_id=session_id,
-            tenant_id=user_tenant_id,
-            check_bitmask=True,
-            check_blacklist=(cached_blacklist is None),
-        )
-
-        await _enforce_token_not_revoked(request, token, jti, cached_blacklist, is_blacklisted, db)
-        await _enforce_session_valid(session_id, session_valid, user_id, jwt_exp)
-
-        if bitmask is not None and request is not None and user_tenant_id is not None:
-            request.state.cached_permissions_bitmask = (user_id, str(user_tenant_id), bitmask)
-
-        # 6. Tenant isolation check
-        _enforce_user_tenant_match(user, current_tenant)
-
-        return await _create_auth_context(user, token_data, current_tenant, db)
+        # H-7: the strict path consumes the SAME primitives as the optional
+        # path (steps 3-4 shared); the composite prefetch stays inside the
+        # strict helper because it is strict-only (RBAC bitmask warm).
+        return await _resolve_strict_bearer_flow(request, db, token, cached_payload, current_tenant)
 
     else:
         return await _resolve_optional_bearer_flow(request, db, token, cached_payload, current_tenant)
+
+
+async def _resolve_strict_bearer_flow(
+    request: Request,
+    db: AsyncSession,
+    token: str,
+    cached_payload: dict[str, Any] | None,
+    current_tenant: Any,
+) -> AuthContext:
+    """Strict bearer flow, symmetric with _resolve_optional_bearer_flow."""
+    resolved = await _resolve_token_data(request, token, cached_payload, db)
+    token_data, username_or_email, payload_version, jti, jwt_exp, session_id = resolved
+
+    # 4. User loading & verification
+    user = await _load_and_validate_user(db, username_or_email, payload_version)
+    user_id = user["id"]
+    user_tenant_id = user.get("tenant_id")
+
+    # 5. Composite auth-prefetch & revocation enforcement
+    from src.app.core.security.auth_prefetch import execute_composite_auth_prefetch
+
+    # P0-3: the middleware's Redis blacklist probe (stored tri-state on
+    # request.state) makes the composite's blacklist leg redundant when
+    # definite — skip it and save those ops. None (Redis down at
+    # middleware time) keeps the full composite check.
+    cached_blacklist = getattr(request.state, "is_token_blacklisted", None) if request is not None else None
+    is_blacklisted, session_valid, bitmask = await execute_composite_auth_prefetch(
+        token=token,
+        jti=jti,
+        user_id=user_id,
+        session_id=session_id,
+        tenant_id=user_tenant_id,
+        check_bitmask=True,
+        check_blacklist=(cached_blacklist is None),
+    )
+
+    await _enforce_token_not_revoked(
+        _BlacklistProbe(token, jti, cached_blacklist, is_blacklisted), db
+    )
+    await _enforce_session_valid(session_id, session_valid, user_id, jwt_exp)
+
+    if bitmask is not None and request is not None and user_tenant_id is not None:
+        request.state.cached_permissions_bitmask = (user_id, str(user_tenant_id), bitmask)
+
+    # 6. Tenant isolation check
+    _enforce_user_tenant_match(user, current_tenant)
+
+    return _create_auth_context(user, token_data, current_tenant, db)
 
 
 async def get_auth_context(
@@ -465,11 +470,7 @@ async def get_current_user(
 ) -> AuthenticatedUser:
     """Get current authenticated user by consuming get_auth_context."""
     if not token or not isinstance(token, str):
-        auth_header = request.headers.get("Authorization") if request is not None else None
-        if auth_header:
-            _, _, token = auth_header.partition(" ")
-        else:
-            token = ""
+        token = await _resolve_bearer_token(request, token or "")
 
     if not auth_context or not isinstance(auth_context, AuthContext):
         auth_context = await get_auth_context(request, db, token)

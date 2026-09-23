@@ -51,9 +51,12 @@ class TestWebhookN1Fix:
         # And that we access the eagerly loaded relationship
         assert "endpoint = delivery.webhook_endpoint" in source
 
-    def test_service_delegates_to_delivery_module(self) -> None:
-        """The service surface reaches the delivery loop (delegate wiring)."""
+    def test_service_has_no_delivery_delegates(self) -> None:
+        """Card 8: the pure pass-throughs are gone — enqueue goes direct,
+        delivery runs behind the delivery-module seam."""
         from src.app.modules.webhooks import service
 
         source = inspect.getsource(service)
-        assert "delivery_module.deliver" in source
+        assert "def deliver_webhook" not in source
+        assert "def _enqueue_delivery" not in source
+        assert "delivery_module.enqueue" in source

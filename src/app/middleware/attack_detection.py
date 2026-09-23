@@ -19,7 +19,7 @@ import re
 import unicodedata
 from enum import Enum
 
-from fastapi import Request, Response, status
+from fastapi import Request, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.app.core.config import settings
@@ -583,13 +583,9 @@ class AttackDetectionMiddleware:
 
         # Mode: block - return 400 Bad Request
         if self._mode == "block":
-            from src.app.core.errors import ErrorCode, middleware_error_response
+            from src.app.core.errors import middleware_reject
 
-            return middleware_error_response(
-                code=ErrorCode.VALIDATION_ERROR,
-                message="Bad Request - Attack pattern detected",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
+            return middleware_reject("attack_blocked")
 
         # Mode: ban - add to blacklist and return 403 Forbidden
         if self._mode == "ban":
@@ -609,13 +605,9 @@ class AttackDetectionMiddleware:
                 logger.error("Failed to add IP to blacklist during ban: %s", str(e))
                 # Fall back to block behavior but still return 403
 
-            from src.app.core.errors import ErrorCode, middleware_error_response
+            from src.app.core.errors import middleware_reject
 
-            return middleware_error_response(
-                code=ErrorCode.FORBIDDEN,
-                message="Forbidden - Attack detected and IP banned",
-                status_code=status.HTTP_403_FORBIDDEN,
-            )
+            return middleware_reject("attack_banned")
 
         return None
 

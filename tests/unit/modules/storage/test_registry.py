@@ -17,10 +17,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.app.clients.storage.registry import StorageProviderRegistry
+from src.app.modules.storage.admin import _PROVIDER_CACHE
 from src.app.modules.storage.interfaces import StorageProvider
 from src.app.modules.storage.local_storage import LocalStorage
 from src.app.modules.storage.models import StorageProviderType, StorageSettings
-from src.app.modules.storage.service import _PROVIDER_CACHE, StorageAdminService
+from src.app.modules.storage.service import StorageAdminService
 
 
 @pytest.fixture(autouse=True)
