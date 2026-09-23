@@ -11,22 +11,29 @@ forbidden_modules =
     src.app.modules
     src.app.api
     src.app.middleware
+# 2026-09-23 (FastAPI_saas-21ak): the default is `error`, which means an
+# ignore_imports entry that matches nothing raises MissingImport and aborts
+# the contract BEFORE any edge is evaluated. That is how this gate sat inert:
+# five stale entries (renamed/refactored modules) made every run exit 1 while
+# checking zero edges. `warn` keeps the signal — stale entries are printed on
+# every run — without letting list rot disable the whole check.
+unmatched_ignore_imports_alerting = warn
 ignore_imports =
     # H-5: pre-existing layering violations, documented in
     # PLAN_FOR_ADVANCED_OPTIMIZATIONS_ROUND_0.md (H-5) — module-level edges
     # across 12 core files. The contract runs with these ignored so CI is
     # green today and CATCHES NEW violations; the composition-root refactor
     # (app/events.py pattern) shrinks this list over time.
-    src.app.core.errors -> src.app.modules.ai.unified_errors
-    src.app.core.errors -> src.app.modules.auth.errors
-    src.app.core.errors -> src.app.modules.billing.exceptions
-    src.app.core.errors -> src.app.modules.storage.errors
+    #
+    # Candidate 3 (AppException HTTP mapping) removed the last
+    # src.app.core.errors -> src.app.modules.* edge: every domain exception
+    # now declares its own http_status/response_code/log_*/http_details()
+    # beside itself, and core registers ONE fallback handler for the
+    # AppException tree instead of importing feature modules to build a
+    # mapping table. core.errors no longer imports any feature module.
     src.app.core.rbac.dependencies -> src.app.modules.rbac.models
     src.app.core.security.rate_policy -> src.app.modules.rate_limits.models
-    src.app.core.security.rate_policy -> src.app.modules.rate_limits.schemas
-    src.app.core.cache.warmer -> src.app.modules.rate_limits.models
     src.app.core.cache.warmer -> src.app.modules.tenants.models
-    src.app.core.cache.warmer -> src.app.modules.feature_flags.service
     src.app.core.setup -> src.app.api.deps
     src.app.core.setup -> src.app.modules.ai.factory
     src.app.core.setup -> src.app.modules.auth.http_client
@@ -35,11 +42,29 @@ ignore_imports =
     src.app.core.tenancy.context -> src.app.modules.tenants.models
     src.app.core.worker.functions -> src.app.modules.audit_logs.service
     src.app.core.worker.functions -> src.app.modules.billing.webhook.idempotency
-    src.app.core.worker.functions -> src.app.modules.webhooks.service
-    src.app.core.worker.rls_context -> src.app.modules.audit_logs.trail
     src.app.core.worker.settings -> src.app.modules.auth.tasks
     src.app.core.worker.settings -> src.app.modules.notifications.service
     src.app.core.worker.settings -> src.app.modules.webhooks.delivery
+    # --- Added 2026-09-23 (FastAPI_saas-21ak). -----------------------------
+    # These seven edges were ALREADY unignored; they were invisible only
+    # because the five stale entries above aborted the contract first. Each is
+    # a genuine pre-existing core -> feature-module violation, recorded here so
+    # the gate can finally run. Do not treat this list as an endorsement —
+    # these are the remaining H-5 debt, and the composition-root refactor
+    # should retire them one by one.
+    #
+    # Candidate 3, pass 5 retired the core.errors -> modules.user_preferences
+    # .service edge (PreferenceStorageError now declares its own mapping), so
+    # its entry is gone too — core.errors imports NO feature module at all.
+    src.app.core.cache.l1_registry -> src.app.modules.users.cache
+    src.app.core.guard.ip_rules -> src.app.modules.security.service
+    # Not itself a modules edge: core.setup -> admin.initialize is the first
+    # hop of the chain core.setup -> admin.initialize -> admin.views ->
+    # modules.tiers.models. Ignoring the first hop is what breaks the chain.
+    src.app.core.setup -> src.app.admin.initialize
+    src.app.core.tenancy.resolver -> src.app.modules.tenants.models
+    src.app.core.worker.functions -> src.app.modules.webhooks.delivery
+    src.app.core.worker.rls_context -> src.app.modules.audit_logs
     # Composition-root indirection (plan §6: app/events.py IS the pattern):
     # the bus handler-registry and the model-registration file aggregate
     # every module by design. These two edges are the registration seams,

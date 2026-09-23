@@ -25,6 +25,7 @@ from src.app.modules.user_preferences.models import DEFAULT_PREFERENCES
 from src.app.modules.user_preferences.protocols import ProfileImageStore
 from src.app.modules.user_preferences.schemas import UserPreferencesUpdate
 from src.app.modules.users import InvalidationReason, UserCacheInvalidator, crud_users
+from src.app.shared.error_codes import ErrorCode
 from src.app.shared.exceptions import AppException, ModelNotFoundError, ValidationError
 
 logger = get_logger(__name__)
@@ -88,7 +89,17 @@ class PreferenceStorageError(AppException):
     ``src.app.modules.storage.errors.StorageError`` while bypassing the
     storage module's registered tree, so raises fell through to the
     unregistered-exception 500 catch-all instead of a translated row.
+
+    Candidate 3, pass 5: it now declares its own 400 mapping, which is what
+    finally lets ``core.errors`` stop importing this module — the last
+    ``core -> modules`` edge out of the exception-mapping hub.
     """
+
+    http_status = 400
+    response_code = ErrorCode.INVALID_INPUT
+    log_message = "Profile image storage operation failed"
+    # A backend upload/delete failing is an operational incident.
+    log_error = True
 
     def __init__(self, operation: str, detail: str):
         self.operation = operation
@@ -97,6 +108,18 @@ class PreferenceStorageError(AppException):
         # Keep behavior: ``detail`` stays the raw backend detail, not the
         # composed message (AppException.__init__ mirrors message into detail).
         self.detail = detail
+
+    def http_details(self) -> dict[str, Any]:
+        """Envelope ``details``: the operation, and the RAW backend reason.
+
+        ``reason`` reads ``self.detail`` — the raw backend string, deliberately
+        not the composed ``message``, so a client sees the provider's own words
+        rather than our wrapper sentence.
+        """
+        return {
+            "operation": getattr(self, "operation", ""),
+            "reason": getattr(self, "detail", str(self)),
+        }
 
 
 class PreferencesService:

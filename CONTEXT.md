@@ -111,6 +111,44 @@ persistence grilling loop, 2026-09-22.)
   Seam: `middleware_reject` in `src/app/core/errors.py`; the old
   `middleware_error_response` remains as the envelope builder underneath.
 
+- **HTTP presentation** — how a domain exception presents at the API boundary,
+  declared **beside the exception** instead of as a row in core. `AppException`
+  carries `http_status` / `response_code` / `public_message` / `log_message` /
+  `log_error` plus two overridable payload hooks, `http_details()` (the envelope
+  `details`) and `http_headers()` (transport headers *derived* from the
+  exception's state — `RateLimitExceededError` turns `retry_after` into
+  `Retry-After`). ONE generic handler in `src/app/core/errors.py` resolves them
+  through `resolve_http_status()` / `resolve_response_code()` /
+  `resolve_public_message()` / `http_details()` / `http_headers()`.
+  Static families declare the attributes (`StorageBackendError.http_status = 502`);
+  a family whose status is chosen per *instance* overrides
+  `resolve_http_status()` / `resolve_response_code()` instead (`AuthError` and
+  `StripeError` derive both from `self.status_code` — a method, not a property,
+  because mypy forbids narrowing the writable `ClassVar` to a read-only property).
+  `response_code` is the envelope `error.code` — deliberately NOT `error_code`,
+  which already means a *provider* code on `AIProviderError` /
+  `PaymentRequiredError` and surfaces in `details["error_code"]`.
+  `public_message` overrides the instance message when the public string must
+  differ from the internal one (non-leaking policy); `UnauthorizedError` goes
+  further and declares **no** `http_details()`, so its `reason` never reaches
+  the client even though `ForbiddenError`'s does.
+  ONE source of truth as of candidate 3: there is **no mapping table**. Storage,
+  billing, auth, ai, shared and user_preferences all declare their own mapping
+  beside the exception, so every domain error resolves through the single
+  generic handler. A handler registered for a *more specific* class still wins
+  over it, because Starlette resolves by walking `type(exc).__mro__` and taking
+  the first registered class (`CacheException` relies on this for its
+  deliberate 500).
+  A whole tree migrates with one declaration: `AIProviderError` states the
+  mapping once and its 12 subclasses inherit it — exactly what the single core
+  row used to do via the MRO walk. `AIServerError.status_code` is the
+  *provider's* status, carried for diagnostics only and deliberately NOT
+  honoured as the envelope status (it stays the tree's static 502).
+  Seam: the `AppException` presentation attributes + `_make_app_exception_handler`
+  in `src/app/core/errors.py`. `core.errors` imports **no feature module at all**,
+  which is what finally cleared the last `core.errors -> modules.*` edge from
+  the H-5 import contract.
+
 - **Transfer/Admin split** — the storage Seam: `StorageService` owns file
   transfer (upload/download/delete/quota/metrics) and consumes a narrow
   `ResolvedStorage` policy object (provider + provider_name + size/type/count/

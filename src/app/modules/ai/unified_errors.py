@@ -8,9 +8,11 @@ T135: Unified AI Error Exceptions
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from src.app.modules.ai.providers import AIProviderError
+from src.app.shared.error_codes import ErrorCode
 from src.app.shared.exceptions import AppException
 
 
@@ -124,6 +126,13 @@ class AIServerError(AIProviderError):
     """Raised when AI provider experiences an internal server error.
 
     These are temporary failures on the provider's side.
+
+    NOTE: ``status_code`` here is the **provider's** status, carried for
+    diagnostics only. It is deliberately NOT the envelope status — this
+    class inherits the tree's static 502 from ``AIProviderError``. Do not
+    add an ``http_status``/``resolve_http_status`` here that honours it:
+    that would be a silent behaviour change, and a provider echoing 429 or
+    401 would leak through as our own status.
     """
 
     def __init__(
@@ -232,6 +241,11 @@ class SessionLimitExceededError(AppException):
         current_count: The current number of sessions.
     """
 
+    http_status = 429
+    response_code = ErrorCode.SESSION_LIMIT_EXCEEDED
+    log_message = "Session limit exceeded"
+    log_error = False
+
     def __init__(
         self,
         tenant_id: int | UUID,
@@ -251,6 +265,21 @@ class SessionLimitExceededError(AppException):
         self.message = f"Session limit exceeded. Maximum {limit} concurrent sessions allowed per tenant."
         self.detail = self.message
         super().__init__(self.message)
+
+    def http_details(self) -> dict[str, Any]:
+        """Envelope ``details``: which tenant, against which ceiling.
+
+        ``current_count`` is omitted when unknown rather than sent as
+        ``null`` — the caller's retry logic distinguishes "we know you have
+        N sessions" from "we only know you're over".
+        """
+        details: dict[str, Any] = {
+            "tenant_id": getattr(self, "tenant_id", None),
+            "limit": getattr(self, "limit", None),
+        }
+        if getattr(self, "current_count", None) is not None:
+            details["current_count"] = self.current_count
+        return details
 
 
 __all__ = [

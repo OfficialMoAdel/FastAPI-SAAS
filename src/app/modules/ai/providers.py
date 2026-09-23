@@ -18,13 +18,25 @@ except ImportError:
     validate = None
 
 from src.app.core.logger import get_logger
+from src.app.shared.error_codes import ErrorCode
 from src.app.shared.exceptions import AppException
 
 logger = get_logger(__name__)
 
 
 class AIProviderError(AppException):
-    """Base exception for AI provider errors."""
+    """Base exception for AI provider errors.
+
+    Root of the 12-class AI error tree in ``unified_errors``: every
+    subclass inherits this one HTTP presentation, so a single declaration
+    here replaced the single core-table row that used to cover the whole
+    tree via Starlette's MRO walk.
+    """
+
+    http_status = 502
+    response_code = ErrorCode.BAD_GATEWAY
+    log_message = "AI provider error"
+    log_error = True
 
     def __init__(
         self,
@@ -41,6 +53,23 @@ class AIProviderError(AppException):
         # P2-6: server-directed wait (parsed `Retry-After` on 429), honored
         # by with_retry(retry_after_attr="retry_after"). None = use backoff.
         self.retry_after = retry_after
+
+    def http_details(self) -> dict[str, Any]:
+        """Envelope ``details``: the provider and its own error code.
+
+        ``error_code`` here is the *provider's* code (e.g. OpenAI's
+        ``rate_limit_exceeded``), which is why the envelope-level code is
+        named ``response_code`` on ``AppException`` — the two must not be
+        conflated.
+
+        ``getattr`` with a default rather than direct access: a subclass is
+        free to skip ``super().__init__`` and this must not turn a 502 into
+        a 500.
+        """
+        return {
+            "provider": getattr(self, "provider", ""),
+            "error_code": getattr(self, "error_code", ""),
+        }
 
 
 class AITokenUsage(BaseModel):

@@ -1,19 +1,40 @@
 """Unit tests for standardized error responses and exception handlers."""
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.app.core.errors import (
     ErrorCode,
-    build_exception_table,
     create_error_response,
     setup_exception_handlers,
 )
 from src.app.core.exceptions.cache_exceptions import CacheException
 from src.app.modules.ai.providers import AIProviderError
-from src.app.modules.ai.unified_errors import SessionLimitExceededError
-from src.app.modules.auth.errors import AuthError, InvalidMagicLinkError, SSOGatewayError
+from src.app.modules.ai.unified_errors import (
+    AIAuthenticationError,
+    AIConnectionError,
+    AIContentPolicyError,
+    AIInvalidRequestError,
+    AIModelNotFoundError,
+    AIProviderUnavailableError,
+    AIQuotaExceededError,
+    AIRateLimitError,
+    AIResponseParseError,
+    AIServerError,
+    AIServiceUnavailableError,
+    AITimeoutError,
+    SessionLimitExceededError,
+)
+from src.app.modules.auth.errors import (
+    AuthError,
+    InvalidMagicLinkError,
+    MagicLinkAlreadyUsedError,
+    MagicLinkRateLimitError,
+    MagicLinkUserInactiveError,
+    SSOGatewayError,
+)
 from src.app.modules.billing.exceptions import (
     PaymentRequiredError,
     SubscriptionRequiredError,
@@ -417,14 +438,27 @@ def test_sso_gateway_bad_gateway_handler():
 
 
 def test_rate_limit_custom_retry_after_header():
-    """Item 7: per-instance retry_after flows through the table headers hook."""
+    """Per-instance retry_after reaches the client as a real header.
+
+    Since pass 5 there is no RateLimitExceededError row, so this now exercises
+    the generic AppException fallback end-to-end — proving http_headers() is
+    actually consulted and merged, not just implemented.
+    """
     response = client.get("/test/rate-limit-custom-retry")
     assert response.status_code == 429
     assert response.headers["Retry-After"] == "17"
 
 
 def test_cache_exception_handler():
-    """CacheException (framework handler) must map to 500 without leaking detail."""
+    """CacheException (framework handler) must map to 500 without leaking detail.
+
+    Also the precedence guard: Starlette resolves handlers by walking
+    ``type(exc).__mro__`` and taking the FIRST registered class, so the
+    ``CacheException`` handler beats the generic ``AppException`` fallback even
+    though ``CacheException`` is a subclass of it. Pass 5 re-pointed this role
+    here (it used to be proved by a table row) because ``CacheException`` is a
+    live case that survives pass 6 deleting the table machinery.
+    """
     response = client.get("/test/cache-error")
     assert response.status_code == 500
     data = response.json()
@@ -432,40 +466,308 @@ def test_cache_exception_handler():
     assert data["error"]["message"] == "Internal Server Error"
 
 
-def test_exception_table_status_mapping():
-    """Phase 2: every domain error maps to its expected HTTP status via the table."""
-    by_class = {spec.exc_class: spec for spec in build_exception_table()}
-    expected_static: dict[type, int] = {
-        ModelNotFoundError: 404,
-        DuplicateError: 409,
-        ForbiddenError: 403,
-        ValidationError: 400,
-        RateLimitExceededError: 429,
-        TenantContextError: 403,
-        ServiceUnavailableError: 503,
-        UnauthorizedError: 401,
-        PaymentRequiredError: 402,
-        WebhookVerificationError: 400,
-        WebhookNotConfiguredError: 501,
-        FileEntityNotFoundError: 404,
-        StorageNotConfiguredError: 404,  # FIX: missing resource, not validation error
-        FileTypeNotAllowedError: 400,
-        QuotaExceededError: 507,
-        StorageBackendError: 502,
-        InvalidCredentialsError: 400,
-        SessionLimitExceededError: 429,
-        # H4/P1-#4: rows added by the registration audit — previously these
-        # fell through to the 500 catch-all.
-        SubscriptionRequiredError: 402,
-        AIProviderError: 502,
-        PreferenceStorageError: 400,
-        StorageError: 500,
+# Candidate 3, pass 1: the storage family migrated OFF the table. Its mapping
+# now lives beside the exceptions, so core no longer imports the storage module
+# (the `core.errors -> modules.storage.errors` layering edge is deleted).
+# NOTE: the "no longer a table row" assertions that lived here are gone — as of
+# pass 6 there is no table at all, so asserting absence from it would be
+# vacuous. The mapping itself is pinned by the parametrized test below, and the
+# "core.errors imports no feature module" invariant is pinned in
+# tests/unit/core/test_exception_registration.py.
+
+
+@pytest.mark.parametrize(
+    ("exc_class", "expected_status", "expected_code"),
+    [
+        (StorageError, 500, ErrorCode.INTERNAL_ERROR),
+        (StorageNotConfiguredError, 404, ErrorCode.NOT_FOUND),
+        (InvalidCredentialsError, 400, ErrorCode.INVALID_INPUT),
+        (FileEntityNotFoundError, 404, ErrorCode.NOT_FOUND),
+        (FileTypeNotAllowedError, 400, ErrorCode.INVALID_INPUT),
+        (QuotaExceededError, 507, ErrorCode.STORAGE_QUOTA_EXCEEDED),
+        (StorageBackendError, 502, ErrorCode.STORAGE_BACKEND_ERROR),
+    ],
+)
+def test_storage_family_declares_its_own_mapping(exc_class, expected_status, expected_code):
+    """The mapping that used to be a core row is now declared on the class."""
+    assert exc_class.http_status == expected_status
+    assert exc_class.response_code == expected_code
+
+
+def test_public_message_overrides_the_instance_message():
+    """A class-level public_message wins over whatever the raiser passed.
+
+    This is the non-leaking policy the old table rows encoded: storage
+    failures must not surface provider internals to the client.
+    """
+    exc = QuotaExceededError("bucket acme-prod-files exceeded 10GB")
+    assert exc.resolve_public_message() == "Storage quota exceeded."
+    # The internal message is still available for logs/debugging.
+    assert str(exc) == "bucket acme-prod-files exceeded 10GB"
+
+
+def test_domain_errors_no_longer_use_a_bespoke_row():
+    """Every family migrated in candidate 3 now resolves via the fallback.
+
+    Exercised over HTTP rather than by introspecting the table, so it keeps
+    working after the table is deleted.
+    """
+    response = client.get("/test/stripe-error")
+    assert response.status_code == 402
+    assert response.json()["error"]["code"] == ErrorCode.INVALID_INPUT
+
+
+# Candidate 3, pass 3: the auth family migrated OFF the table. Unlike storage
+# and billing, its mapping is DERIVED from the instance status, because the
+# family carries its status per instance (SSOGatewayError is 502 or 504).
+@pytest.mark.parametrize(
+    ("status_code", "expected_code"),
+    [
+        (400, ErrorCode.INVALID_INPUT),
+        (401, ErrorCode.UNAUTHORIZED),
+        (403, ErrorCode.FORBIDDEN),
+        (410, ErrorCode.GONE),
+        (429, ErrorCode.RATE_LIMITED),
+        (502, ErrorCode.BAD_GATEWAY),
+        (504, ErrorCode.SERVICE_UNAVAILABLE),
+        (418, ErrorCode.INTERNAL_ERROR),  # unmapped status falls back, as before
+    ],
+)
+def test_auth_mapping_is_derived_from_the_instance_status(status_code, expected_code):
+    """The old row did `lambda exc: exc.status_code` + `_auth_code`; so does the class."""
+    exc = AuthError(detail="nope", status_code=status_code)
+    assert exc.resolve_http_status() == status_code
+    assert exc.resolve_response_code() == expected_code
+
+
+def test_auth_subclasses_keep_their_own_status_through_the_derivation():
+    """Every magic-link subclass must still present its own status/code."""
+    assert InvalidMagicLinkError().resolve_http_status() == 400
+    assert InvalidMagicLinkError().resolve_response_code() == ErrorCode.INVALID_INPUT
+
+    assert MagicLinkAlreadyUsedError().resolve_http_status() == 410
+    assert MagicLinkAlreadyUsedError().resolve_response_code() == ErrorCode.GONE
+
+    assert MagicLinkRateLimitError().resolve_http_status() == 429
+    assert MagicLinkRateLimitError().resolve_response_code() == ErrorCode.RATE_LIMITED
+
+    assert MagicLinkUserInactiveError().resolve_http_status() == 403
+    assert MagicLinkUserInactiveError().resolve_response_code() == ErrorCode.FORBIDDEN
+
+
+def test_sso_gateway_error_derives_status_and_code_together():
+    """The runtime 502/504 pair is exactly why this family is instance-derived."""
+    timeout = SSOGatewayError(detail="Provider timeout.", status_code=504)
+    assert timeout.resolve_http_status() == 504
+    assert timeout.resolve_response_code() == ErrorCode.SERVICE_UNAVAILABLE
+
+    bad_gateway = SSOGatewayError(detail="Provider error.", status_code=502)
+    assert bad_gateway.resolve_http_status() == 502
+    assert bad_gateway.resolve_response_code() == ErrorCode.BAD_GATEWAY
+
+
+# Candidate 3, pass 2: the billing family migrated OFF the table.
+@pytest.mark.parametrize(
+    ("exc_class", "expected_status", "expected_code"),
+    [
+        (PaymentRequiredError, 402, ErrorCode.PAYMENT_REQUIRED),
+        (SubscriptionRequiredError, 402, ErrorCode.PAYMENT_REQUIRED),
+        (WebhookVerificationError, 400, ErrorCode.INVALID_INPUT),
+        (WebhookNotConfiguredError, 501, ErrorCode.NOT_IMPLEMENTED),
+    ],
+)
+def test_billing_family_declares_its_own_mapping(exc_class, expected_status, expected_code):
+    """The mapping that used to be a core row is now declared on the class."""
+    assert exc_class.http_status == expected_status
+    assert exc_class.response_code == expected_code
+
+
+def test_payment_details_come_from_the_exception():
+    """The details payload moved from core's _payment_details to the class.
+
+    This is the pass-2 shape of the seam: client-visible structure is the
+    exception's job, so core no longer needs a per-family builder.
+    """
+    exc = PaymentRequiredError("Payment failed", error_code="card_declined", decline_code="insufficient_funds")
+    assert exc.http_details() == {"error_code": "card_declined", "decline_code": "insufficient_funds"}
+
+    # decline_code is omitted (not null) when Stripe did not supply one.
+    assert PaymentRequiredError("Payment failed", error_code="card_declined").http_details() == {
+        "error_code": "card_declined"
     }
-    assert set(by_class) == set(expected_static) | {StripeError, AuthError}
-    for exc_class, expected_status in expected_static.items():
-        spec = by_class[exc_class]
-        assert not callable(spec.status)
-        assert spec.status == expected_status
-    # Dynamic-status rows resolve from the instance (covered over HTTP above).
-    assert callable(by_class[StripeError].status)
-    assert callable(by_class[AuthError].status)
+
+
+def test_app_exception_default_has_no_details_payload():
+    """A class that declares nothing must not invent a details payload."""
+    assert QuotaExceededError("nope").http_details() is None
+
+
+# Candidate 3, pass 4: the ai family migrated OFF the table — and this was the
+# last feature-module edge out of core.errors. AIProviderError covers the whole
+# 12-class tree with ONE declaration (subclasses inherit it), which is exactly
+# what the single core row used to do via Starlette's MRO walk.
+_AI_TREE = {
+    AIAuthenticationError,
+    AIRateLimitError,
+    AIQuotaExceededError,
+    AIModelNotFoundError,
+    AIInvalidRequestError,
+    AIContentPolicyError,
+    AIServerError,
+    AIServiceUnavailableError,
+    AITimeoutError,
+    AIConnectionError,
+    AIResponseParseError,
+    AIProviderUnavailableError,
+}
+
+
+def test_ai_provider_error_covers_the_whole_tree():
+    """One declaration on the root serves all 12 subclasses, as the row did."""
+    for exc_class in _AI_TREE:
+        assert issubclass(exc_class, AIProviderError)
+        assert exc_class.http_status == 502
+        assert exc_class.response_code == ErrorCode.BAD_GATEWAY
+        assert exc_class.log_error is True
+
+
+def test_ai_server_error_does_not_activate_its_provider_status():
+    """Regression guard for a behaviour change the migration must NOT make.
+
+    AIServerError carries the *provider's* status_code for diagnostics. The
+    old core row was a static 502 and ignored it; so must the class. If
+    someone "fixes" this by honouring status_code, a provider echoing 429 or
+    401 would leak through as our own envelope status.
+    """
+    assert AIServerError(status_code=429).resolve_http_status() == 502
+    assert AIServerError(status_code=503).resolve_response_code() == ErrorCode.BAD_GATEWAY
+
+
+def test_ai_provider_details_come_from_the_exception():
+    """The details payload moved from core's _ai_provider_details to the class."""
+    exc = AIProviderError("boom", error_code="rate_limit_exceeded", provider="openai")
+    assert exc.http_details() == {"provider": "openai", "error_code": "rate_limit_exceeded"}
+
+    # provider is optional; the key is present with a falsy value, as before.
+    assert AIProviderError("boom", error_code="server_error").http_details() == {
+        "provider": None,
+        "error_code": "server_error",
+    }
+
+
+def test_ai_provider_error_uses_the_instance_message():
+    """public_message is unset, so the raiser's message reaches the client."""
+    exc = AIProviderError("OpenAI returned 529", error_code="server_error", provider="openai")
+    assert exc.resolve_public_message() == "OpenAI returned 529"
+    assert exc.resolve_log_message() == "AI provider error"
+
+
+def test_session_limit_declares_its_own_mapping():
+    """The 429/SESSION_LIMIT_EXCEEDED row is now a class declaration."""
+    assert SessionLimitExceededError.http_status == 429
+    assert SessionLimitExceededError.response_code == ErrorCode.SESSION_LIMIT_EXCEEDED
+    assert SessionLimitExceededError.log_error is False
+
+
+def test_session_limit_details_omit_an_unknown_current_count():
+    """current_count is omitted (not null) when the raiser did not supply it."""
+    assert SessionLimitExceededError(tenant_id=7).http_details() == {"tenant_id": 7, "limit": 100}
+    assert SessionLimitExceededError(tenant_id=7, limit=50, current_count=50).http_details() == {
+        "tenant_id": 7,
+        "limit": 50,
+        "current_count": 50,
+    }
+
+
+# Candidate 3, pass 5: the shared family (the leaf's own classes) + the last
+# feature-module row (PreferenceStorageError). After this the table is empty,
+# so the generic AppException fallback serves every domain error.
+@pytest.mark.parametrize(
+    ("exc_class", "expected_status", "expected_code", "expected_log_error"),
+    [
+        (ModelNotFoundError, 404, ErrorCode.NOT_FOUND, False),
+        (DuplicateError, 409, ErrorCode.ALREADY_EXISTS, False),
+        (ForbiddenError, 403, ErrorCode.FORBIDDEN, False),
+        (ValidationError, 400, ErrorCode.VALIDATION_ERROR, False),
+        (RateLimitExceededError, 429, ErrorCode.RATE_LIMITED, False),
+        (TenantContextError, 403, ErrorCode.FORBIDDEN, False),
+        (ServiceUnavailableError, 503, ErrorCode.SERVICE_UNAVAILABLE, True),
+        (UnauthorizedError, 401, ErrorCode.UNAUTHORIZED, False),
+    ],
+)
+def test_shared_family_declares_its_own_mapping(
+    exc_class, expected_status, expected_code, expected_log_error
+):
+    """The mapping that used to be a core row is now declared on the class."""
+    assert exc_class.http_status == expected_status
+    assert exc_class.response_code == expected_code
+    assert exc_class.log_error is expected_log_error
+
+
+def test_stripe_error_derives_status_and_code_from_the_instance():
+    """The one shared class with a per-instance status (the raiser passes it)."""
+    assert StripeError("nope", status_code=402).resolve_http_status() == 402
+    assert StripeError("nope", status_code=402).resolve_response_code() == ErrorCode.INVALID_INPUT
+    # 5xx maps to SERVICE_UNAVAILABLE (not BAD_GATEWAY) — mirrors the old _stripe_code.
+    assert StripeError("down", status_code=503).resolve_response_code() == ErrorCode.SERVICE_UNAVAILABLE
+
+
+def test_shared_details_payloads_come_from_the_exception():
+    """The three payload builders that lived in core now live on the classes."""
+    assert ModelNotFoundError("User", 42).http_details() == {"model": "User", "identifier": "42"}
+    # PRE-EXISTING QUIRK, preserved verbatim: `identifier` defaults to None and
+    # the builder does str(getattr(exc, "identifier", "")). The attribute
+    # EXISTS (as None), so the getattr default never applies and the client sees
+    # the string "None". Ugly, but it is what the old core helper produced, and
+    # this migration must not change the envelope. Fixing it is its own change.
+    assert ModelNotFoundError("User").http_details() == {"model": "User", "identifier": "None"}
+
+    assert DuplicateError("email", "a@b.c").http_details() == {"field": "email", "value": "a@b.c"}
+
+    assert ForbiddenError(reason="not_owner").http_details() == {"reason": "not_owner"}
+    assert TenantContextError(reason="no_tenant").http_details() == {"reason": "no_tenant"}
+
+
+def test_unauthorized_error_does_not_leak_its_reason():
+    """It carries a `reason` but must NOT surface it — the old row had no details.
+
+    The distinction between "token_expired" and "bad_signature" is useful to an
+    attacker, so this asymmetry with ForbiddenError is deliberate.
+    """
+    exc = UnauthorizedError(reason="token_expired")
+    assert exc.reason == "token_expired"
+    assert exc.http_details() is None
+
+
+def test_rate_limit_retry_after_is_derived_lazily():
+    """http_headers() replaces the row's `lambda exc: {"Retry-After": ...}`.
+
+    Lazy derivation is the point: a retry_after mutated after construction must
+    still reach the client, which an eagerly-populated dict could not do.
+    """
+    exc = RateLimitExceededError("Slow down", retry_after=17)
+    assert exc.http_headers() == {"Retry-After": "17"}
+
+    exc.retry_after = 3
+    assert exc.http_headers() == {"Retry-After": "3"}
+
+    # Defaults to 60 when a subclass never set retry_after, as the row did.
+    assert RateLimitExceededError("Slow down").http_headers() == {"Retry-After": "60"}
+
+
+def test_app_exception_has_no_headers_by_default():
+    """A class that declares nothing must not invent transport headers."""
+    assert ValidationError("nope").http_headers() is None
+
+
+def test_preference_storage_error_declares_its_own_mapping():
+    """The last feature-module row — its migration is what freed core.errors."""
+    assert PreferenceStorageError.http_status == 400
+    assert PreferenceStorageError.response_code == ErrorCode.INVALID_INPUT
+    assert PreferenceStorageError.log_error is True
+
+    exc = PreferenceStorageError("upload", "backend said no")
+    # reason is the RAW backend detail, not the composed message.
+    assert exc.http_details() == {"operation": "upload", "reason": "backend said no"}
+    assert exc.resolve_public_message() == "Storage upload failed: backend said no"
+
