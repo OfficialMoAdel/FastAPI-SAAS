@@ -158,7 +158,7 @@ class TestDLQBoundedSize:
 
         with patch("src.app.core.config.settings", settings_mock):
             with patch("src.app.core.monitoring.update_dlq_size"):
-                with patch("src.app.core.events.logger") as mock_logger:
+                with patch("src.app.core.dead_letter.logger") as mock_logger:
                     await event_bus.add_to_dlq(
                         event_name="user.created",
                         handler_name="send_welcome_email",
@@ -189,7 +189,7 @@ class TestDLQBoundedSize:
         settings_mock.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
         with patch("src.app.core.config.settings", settings_mock):
             with patch("src.app.core.monitoring.update_dlq_size"):
-                with patch("src.app.core.events.logger") as mock_logger:
+                with patch("src.app.core.dead_letter.logger") as mock_logger:
                     await event_bus.add_to_dlq(
                         event_name="user.created",
                         handler_name="send_welcome_email",
@@ -322,7 +322,7 @@ class TestDLQErrorHandling:
         bus = EventBus()
         bus._redis_client = None
 
-        with patch("src.app.core.events.logger") as mock_logger:
+        with patch("src.app.core.dead_letter.logger") as mock_logger:
             await bus.add_to_dlq("event", "handler", {}, "error", 1)
 
             # Should log warning about missing Redis

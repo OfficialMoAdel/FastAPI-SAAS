@@ -72,29 +72,26 @@ def _get_clear_cookie_str() -> str:
     return f'sso_state=""; Max-Age=0; Path=/; HttpOnly; {secure_flag}SameSite=Lax'
 
 
-def _access_only_response(tokens: AuthTokenResponse | dict[str, Any]) -> Response:
-    """M4: never expose the refresh token in the JSON body.
-
-    Mirrors passkey/magic_link flows: the refresh token travels in an HttpOnly
-    cookie set via set_refresh_cookie; the body carries only the access token.
-    Returns a raw Response so the stripped field cannot be re-serialized.
-    """
-    from src.app.core.security.login_helpers import set_refresh_cookie
-
+def _access_only_response(
+    tokens: AuthTokenResponse | dict[str, Any], issuance_response: Response
+) -> Response:
+    """Build the access-only JSON response and transport Issuance cookies."""
     if isinstance(tokens, AuthTokenResponse):
         body: dict[str, Any] = {
             "access_token": tokens.access_token,
             "token_type": tokens.token_type,
             "expires_in": tokens.expires_in,
         }
-        refresh_token: Any = tokens.refresh_token
     else:
-        body = {k: v for k, v in tokens.items() if k != "refresh_token"}
-        refresh_token = tokens.get("refresh_token")
-
+        body = {key: value for key, value in tokens.items() if key != "refresh_token"}
     json_response = ORJSONResponse(content=body)
-    if isinstance(refresh_token, str) and refresh_token:
-        set_refresh_cookie(json_response, refresh_token)
+
+    # TokenIssuer owns the refresh-cookie write. This adapter only transports
+    # Set-Cookie headers onto the raw response required by the SSO callback.
+    for name, value in issuance_response.raw_headers:
+        if name.lower() == b"set-cookie":
+            json_response.raw_headers.append((name, value))
+
     # Clear the login-CSRF state cookie on the same response we hand back.
     json_response.delete_cookie("sso_state")
     return json_response
@@ -231,8 +228,9 @@ async def handle_callback(
             state=state,
             request=request,
             db=db,
+            response=response,
         )
-        return _access_only_response(tokens)  # M4
+        return _access_only_response(tokens, response)
     except _DomainAppException as e:
         raise _with_cleared_cookie(e)
     except httpx.TimeoutException:
@@ -296,8 +294,9 @@ async def handle_post_callback(
             request=request,
             db=db,
             user_data=user_data,
+            response=response,
         )
-        return _access_only_response(tokens)  # M4
+        return _access_only_response(tokens, response)
     except _DomainAppException as e:
         raise _with_cleared_cookie(e)
     except httpx.TimeoutException:

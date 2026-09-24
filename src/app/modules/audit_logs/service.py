@@ -14,8 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.core.db.database import get_db_context
-from src.app.core.db.scoped import criterion
+from src.app.core.db.scoped import execute_scoped, stream_scoped
 from src.app.core.json_utils import json_dumps
+from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.core.utils import cache as redis_cache
 from src.app.modules.audit_logs.models import AuditLog
 from src.app.modules.audit_logs.schemas import AuditExportCriteria
@@ -64,9 +65,8 @@ class _AuditFilter(NamedTuple):
     end_date: datetime | None
 
 
-def _compose_filters(stmt, tenant_id, f: _AuditFilter):
+def _compose_filters(stmt, f: _AuditFilter):
     """A13: single source of truth for audit-log list/export filters."""
-    stmt = stmt.where(criterion(AuditLog, tenant_id))
     if f.action is not None:
         stmt = stmt.where(AuditLog.action == f.action)
     if f.user_id is not None:
@@ -106,23 +106,33 @@ class AuditLogService:
 
     async def list_actions(self, tenant_id) -> list[str]:
         """A13: unique action types for a tenant (was inline in router)."""
-        result = await self.db.execute(
-            select(AuditLog.action).where(criterion(AuditLog, tenant_id)).distinct()
+        result = await execute_scoped(
+            select(AuditLog.action).distinct(),
+            db=self.db,
+            model=AuditLog,
+            scope=ExplicitTenant(tenant_id=tenant_id, reason="audit:list_actions"),
         )
         return sorted(result.scalars().all())
 
     async def get_log(self, log_id: UUID, tenant_id: UUID) -> AuditLog | None:
         """Get a single audit log entry by ID scoped to tenant."""
-        stmt = select(AuditLog).where(
-            AuditLog.id == log_id,
-            criterion(AuditLog, tenant_id),
+        stmt = select(AuditLog).where(AuditLog.id == log_id)
+        result = await execute_scoped(
+            stmt,
+            db=self.db,
+            model=AuditLog,
+            scope=ExplicitTenant(tenant_id=tenant_id, reason="audit:get_log"),
         )
-        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
     async def export_count(self, tenant_id, f: _AuditFilter) -> int:
         """A13: count of rows matching the export filter."""
-        stmt = _compose_filters(select(func.count()).select_from(AuditLog), tenant_id, f)
-        result = await self.db.execute(stmt)
+        stmt = _compose_filters(select(func.count()).select_from(AuditLog), f)
+        result = await execute_scoped(
+            stmt,
+            db=self.db,
+            model=AuditLog,
+            scope=ExplicitTenant(tenant_id=tenant_id, reason="audit:export_count"),
+        )
         count: int = result.scalar_one()
         return int(count)
 
@@ -190,7 +200,7 @@ class AuditLogService:
         # DetachedInstanceError). The WHERE below must use this plain value.
         export_id = export_log.id
         stmt = (
-            _compose_filters(select(AuditLog), effective_tenant, filters)
+            _compose_filters(select(AuditLog), filters)
             .where(AuditLog.id != export_id)
             .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
             .limit(EXPORT_MAX_RECORDS)
@@ -199,8 +209,12 @@ class AuditLogService:
         export_format = criteria.format
 
         async def generate() -> AsyncGenerator[bytes, None]:
-            result = await self.db.stream(stmt)
-            try:
+            async with stream_scoped(
+                stmt,
+                db=self.db,
+                model=AuditLog,
+                scope=ExplicitTenant(tenant_id=effective_tenant, reason="audit:stream_export"),
+            ) as result:
                 output = io.StringIO()
                 writer = csv.writer(output)
                 if export_format == "csv":
@@ -227,8 +241,7 @@ class AuditLogService:
                     except Exception as exc:
                         # P2: a mid-stream serialization failure must never read
                         # as a clean export — emit a sentinel row describing the
-                        # skipped record, then propagate so the truncation is
-                        # loud (the finally below still closes the cursor).
+                        # skipped record, then propagate so the truncation is loud.
                         logger.warning(
                             "audit_export_row_failed",
                             error_type=type(exc).__name__,
@@ -248,8 +261,6 @@ class AuditLogService:
                     first = False
                 if export_format == "json":
                     yield b"\n]"
-            finally:
-                await result.close()
 
         return generate()
 
@@ -337,7 +348,7 @@ class AuditLogService:
             List of audit log entries with eager-loaded user data
         """
         # AuditLogRead does not project nested user fields; avoid unnecessary LEFT OUTER JOIN
-        query = select(AuditLog).where(criterion(AuditLog, tenant_id))
+        query = select(AuditLog)
 
         if user_id is not None:
             query = query.where(AuditLog.user_id == user_id)
@@ -355,7 +366,12 @@ class AuditLogService:
         # P2-5: tie-breaker on id so equal created_at values order deterministically
         query = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).offset(offset)
 
-        result = await self.db.execute(query)
+        result = await execute_scoped(
+            query,
+            db=self.db,
+            model=AuditLog,
+            scope=ExplicitTenant(tenant_id=tenant_id, reason="audit:query_logs"),
+        )
         return list(result.unique().scalars().all())
 
     async def query_logs_with_total(
@@ -379,7 +395,7 @@ class AuditLogService:
         not safe, so the window function is the correct consolidation.
         """
         total_col = func.count().over().label("total")
-        query = select(AuditLog, total_col).where(criterion(AuditLog, tenant_id))
+        query = select(AuditLog, total_col)
 
         if user_id is not None:
             query = query.where(AuditLog.user_id == user_id)
@@ -397,7 +413,12 @@ class AuditLogService:
         # P2-5: tie-breaker on id so equal created_at values order deterministically
         query = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).offset(offset)
 
-        result = await self.db.execute(query)
+        result = await execute_scoped(
+            query,
+            db=self.db,
+            model=AuditLog,
+            scope=ExplicitTenant(tenant_id=tenant_id, reason="audit:query_logs_with_total"),
+        )
         rows = result.unique().all()
         if rows:
             total = int(rows[0][1])
@@ -408,7 +429,7 @@ class AuditLogService:
         # Out-of-range page: window function yields no rows, so total is
         # unavailable. Fall back to a cheap COUNT so pagination metadata stays
         # truthful (total must reflect the filtered set even when the page is empty).
-        count_query = select(func.count()).select_from(AuditLog).where(criterion(AuditLog, tenant_id))
+        count_query = select(func.count()).select_from(AuditLog)
         if user_id is not None:
             count_query = count_query.where(AuditLog.user_id == user_id)
         if action is not None:
@@ -421,7 +442,12 @@ class AuditLogService:
             count_query = count_query.where(AuditLog.created_at >= start_date)
         if end_date:
             count_query = count_query.where(AuditLog.created_at <= end_date)
-        count_result = await self.db.execute(count_query)
+        count_result = await execute_scoped(
+            count_query,
+            db=self.db,
+            model=AuditLog,
+            scope=ExplicitTenant(tenant_id=tenant_id, reason="audit:query_logs_with_total"),
+        )
         return [], count_result.scalar_one()
 
     async def get_audit_logs_for_tenant_async(

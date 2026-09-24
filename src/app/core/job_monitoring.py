@@ -1,10 +1,10 @@
 # NOTE (P2-E): the ~10 ``type: ignore`` comments below are deliberate —
 # the redis-py async client returns untyped ``Any`` for get/scan/pipeline
 # results, and these call sites re-shape into typed containers immediately.
-import time
 from datetime import UTC, datetime
 from typing import Any
 
+from src.app.core.dead_letter import DeadLetterQueue
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
 
@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 # Constants
 JOB_PREFIX = "arq:job:"
 JOB_STATS_PREFIX = "arq:stats:"
-DLQ_KEY = "arq:dlq"  # Dead Letter Queue key
+DLQ_KEY = DeadLetterQueue.key  # Backward-compatible name; policy lives in DeadLetterQueue.
 
 
 class JobMonitoringService:
@@ -106,21 +106,14 @@ class JobMonitoringService:
         if not client:
             return
 
-        from src.app.core.json_utils import json_dumps
+        dlq = DeadLetterQueue(redis_client=client)
+        dlq_entry = dlq.arq_entry(job_id, function_name, error)
 
         async with client.pipeline() as pipe:
             key = f"{JOB_STATS_PREFIX}{function_name}"
 
             pipe.hincrby(key, "failed", 1)
-
-            # Add to Dead Letter Queue (use JSON to safely handle pipes/newlines in errors)
-            dlq_entry = json_dumps(
-                {"job_id": job_id, "function": function_name, "error": error, "timestamp": time.time()},
-                as_str=True,
-            )
-            pipe.lpush(DLQ_KEY, dlq_entry)
-            # Trim DLQ to prevent infinite growth (e.g., keep last 1000)
-            pipe.ltrim(DLQ_KEY, 0, 999)
+            dlq.stage(pipe, dlq_entry)
 
             await pipe.execute()  # type: ignore[misc]
 
@@ -181,62 +174,18 @@ class JobMonitoringService:
         """
         Get items from the Dead Letter Queue.
         """
-        client = get_redis()
-        if not client:
-            return []
-
-
-        # LRANGE is 0-based inclusive
-        items = await client.lrange(DLQ_KEY, offset, offset + limit - 1)  # type: ignore[misc]
-        parsed_items = []
-
-        for item in items:
-            item_str = item.decode("utf-8") if isinstance(item, bytes) else item
-            try:
-                if item_str.startswith("{"):
-                    from src.app.core.json_utils import json_loads
-
-                    # New JSON format
-                    data = json_loads(item_str)
-                    data["timestamp_iso"] = datetime.fromtimestamp(data["timestamp"], tz=UTC).isoformat()
-                    parsed_items.append(data)
-                else:
-                    # Legacy Format: job_id|function_name|error|timestamp
-                    # Use rsplit to safely extract timestamp from the right, in case error contains '|'
-                    parts = item_str.rsplit("|", 1)
-                    if len(parts) == 2:
-                        timestamp = float(parts[1])
-                        rest = parts[0]
-                        # Now split the rest from the left
-                        first_parts = rest.split("|", 2)
-                        if len(first_parts) >= 3:
-                            parsed_items.append(
-                                {
-                                    "job_id": first_parts[0],
-                                    "function": first_parts[1],
-                                    "error": first_parts[2],
-                                    "timestamp": timestamp,
-                                    "timestamp_iso": datetime.fromtimestamp(timestamp, tz=UTC).isoformat(),
-                                }
-                            )
-                        else:
-                            parsed_items.append({"raw": item_str, "error": "parse_error"})
-                    else:
-                        parsed_items.append({"raw": item_str, "error": "parse_error"})
-            except Exception as e:  # noqa: BLE001 - P1-17: unparsable item kept as raw, never breaks listing
-                logger.error("Failed to parse DLQ item. Item: %s | Error: %s", item_str, e)
-                parsed_items.append({"raw": item_str, "error": str(e)})
-
-        return parsed_items
+        return await DeadLetterQueue(redis_client=get_redis()).read(
+            limit=limit,
+            offset=offset,
+            include_invalid=True,
+            include_legacy=True,
+        )
 
     async def get_dlq_size(self) -> int:
         """
         Get the current size of the Dead Letter Queue.
         """
-        client = get_redis()
-        if not client:
-            return 0
-        return await client.llen(DLQ_KEY)  # type: ignore[misc, no-any-return]
+        return await DeadLetterQueue(redis_client=get_redis()).size()
 
     async def clear_dlq(self) -> bool:
         """
@@ -245,7 +194,7 @@ class JobMonitoringService:
         client = get_redis()
         if not client:
             return False
-        await client.delete(DLQ_KEY)  # type: ignore[no-any-return]
+        await DeadLetterQueue(redis_client=client).clear()
         return True
 
     async def get_summary(self) -> dict[str, Any]:

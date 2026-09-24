@@ -190,8 +190,12 @@ class TestAuthServiceLockout:
             mock_access.return_value = "access_token"
             mock_refresh.return_value = "refresh_token"
 
-            await auth_service.login("testuser", "correct_password", mock_response, mock_request, mock_db, mock_redis)
+            result = await auth_service.login(
+                "testuser", "correct_password", mock_response, mock_request, mock_db, mock_redis
+            )
 
+            assert result["access_token"] == "access_token"
+            assert "refresh_token" not in result
             # Verify counter was cleared
             mock_redis.delete.assert_called_once_with("login_attempts:testuser")
 
@@ -377,7 +381,7 @@ class TestAuthServiceTokenRefresh:
 
             # 3. Seam owns the cookie (response threaded through) — exactly one write.
             mock_response.set_cookie.assert_called_once()
-            assert result["refresh_token"] == "new_refresh_token"
+            assert "refresh_token" not in result
 
 
 class TestAuthServiceLogout:

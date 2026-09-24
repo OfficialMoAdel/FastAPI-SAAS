@@ -3,7 +3,7 @@ from typing import Any, cast
 from uuid import UUID
 
 import httpx
-from fastapi import Request
+from fastapi import Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
@@ -145,6 +145,7 @@ class SSOService:
         code: str,
         state: str,
         user_data: dict[str, Any] | None = None,
+        response: Response | None = None,
     ) -> AuthTokenResponse | dict[str, Any]:
         """Handle OAuth2 callback, verify state, and authenticate user.
 
@@ -427,6 +428,7 @@ class SSOService:
                 normalized_user,
                 channel="sso",
                 request=request,
+                response=response,
                 extra_claims={
                     "id": normalized_user.get("id"),
                     "email": normalized_user.get("email"),
@@ -439,7 +441,6 @@ class SSOService:
 
             return AuthTokenResponse(
                 access_token=issued.access_token,
-                refresh_token=issued.refresh_token,
                 expires_in=issued.expires_in,
                 token_type="bearer",
             )

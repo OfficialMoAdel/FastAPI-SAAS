@@ -1100,5 +1100,5 @@ async def test_generate_auth_tokens():
             result = await service._generate_auth_tokens(mock_user)
 
             assert "access_token" in result
-            assert "refresh_token" in result
+            assert "refresh_token" not in result
             assert result["token_type"] == "bearer"

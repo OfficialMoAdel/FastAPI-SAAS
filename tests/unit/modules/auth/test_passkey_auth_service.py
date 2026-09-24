@@ -371,7 +371,6 @@ class TestPasskeyAuthenticationVerification:
                             with patch.object(service, "_generate_auth_tokens") as mock_tokens:
                                 mock_tokens.return_value = {
                                     "access_token": "access-123",
-                                    "refresh_token": "refresh-456",
                                     "token_type": "bearer",
                                     "expires_in": 3600,
                                 }
@@ -396,9 +395,9 @@ class TestPasskeyAuthenticationVerification:
                                         challenge_id="test-challenge-id",
                                     )
 
-                                    # Should return auth tokens
+                                    # Should return access-only auth data
                                     assert "access_token" in result
-                                    assert "refresh_token" in result
+                                    assert "refresh_token" not in result
 
     @pytest.mark.asyncio
     async def test_verify_authentication_updates_last_used_at(self):

@@ -29,7 +29,11 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True)
 class IssuedSession:
-    """Result of a successful session issuance across any auth door."""
+    """Internal result of a successful session issuance across any auth door.
+
+    ``refresh_token`` stays inside the Issuance implementation. HTTP-facing
+    callers must use :meth:`access_response`, which cannot serialize it.
+    """
 
     access_token: str
     refresh_token: str
@@ -37,6 +41,14 @@ class IssuedSession:
     @property
     def expires_in(self) -> int:
         return int(settings.crypt.ACCESS_TOKEN_EXPIRE_MINUTES) * 60
+
+    def access_response(self) -> dict[str, str | int]:
+        """Return the response-safe access-token projection for callers."""
+        return {
+            "access_token": self.access_token,
+            "token_type": "bearer",
+            "expires_in": self.expires_in,
+        }
 
 
 # Device-info label used when a login flow has no Request available

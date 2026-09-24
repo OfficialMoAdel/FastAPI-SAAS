@@ -166,10 +166,6 @@ async def login_complete(
         response=response,
     )
 
-    # Cookie written by the issuance seam; pop the refresh token so the
-    # JSON body carries only the access token (M4 parity with SSO).
-    result.pop("refresh_token", None)
-
     if result.get("mfa_required"):
         return LoginMFAResponse(**result)
 

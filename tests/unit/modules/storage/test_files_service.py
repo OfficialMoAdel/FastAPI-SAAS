@@ -553,6 +553,34 @@ async def test_list_files_filtered_empty_page_zero_offset_no_second_query(file_s
 
 
 @pytest.mark.asyncio
+async def test_list_files_filtered_out_of_range_count_uses_scoped_execution(
+    file_service, mock_db, monkeypatch
+):
+    """An empty page after page one keeps the total count tenant-scoped."""
+    tenant_id = uuid4()
+    page_result = MagicMock()
+    page_result.all.return_value = []
+    count_result = MagicMock()
+    count_result.scalar.return_value = 3
+    calls = []
+
+    async def fake_execute_scoped(stmt, *, db, model, scope):
+        calls.append((stmt, db, model, scope))
+        return page_result if len(calls) == 1 else count_result
+
+    monkeypatch.setattr("src.app.modules.storage.service.execute_scoped", fake_execute_scoped)
+
+    result = await file_service.list_files(tenant_id=tenant_id, user_id=1, offset=100)
+
+    assert result["total_count"] == 3
+    assert result["data"] == []
+    assert len(calls) == 2
+    assert calls[1][2].__name__ == "File"
+    assert calls[1][3].tenant_id == tenant_id
+    mock_db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_download_stream_performs_zero_db_fetches(file_service, mock_storage_service):
     """P2: download() resolves row+settings once; the stream re-fetches neither."""
     tenant_id = uuid4()

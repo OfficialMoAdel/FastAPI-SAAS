@@ -397,7 +397,7 @@ class MagicLinkService:
             request: Optional FastAPI request for audit attribution.
 
         Returns:
-            Dict with access_token, refresh_token, token_type, expires_in.
+            Dict with access-token response data; the refresh token is delivered by the Issuance cookie seam.
         """
         issued = await TokenIssuer.issue_session(
             user,
@@ -405,12 +405,7 @@ class MagicLinkService:
             request=request,
             response=response,
         )
-        return {
-            "access_token": issued.access_token,
-            "refresh_token": issued.refresh_token,
-            "token_type": "bearer",
-            "expires_in": issued.expires_in,
-        }
+        return issued.access_response()
 
 
 async def get_magic_link_service(

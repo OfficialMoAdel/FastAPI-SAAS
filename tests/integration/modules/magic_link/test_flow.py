@@ -12,6 +12,7 @@ This test validates the complete end-to-end flow:
 """
 
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -31,6 +32,7 @@ class TestMagicLinkE2EFlow:
             "email": "magic-link-test@example.com",
             "id": 1,
             "is_active": True,
+            "tenant_id": uuid4(),
         }
 
     @pytest.mark.asyncio
@@ -60,6 +62,10 @@ class TestMagicLinkE2EFlow:
             patch(
                 "src.app.core.security.tokens.TokenGenerator.generate_magic_link_token",
                 return_value="test_magic_link_token_12345678901234567890",
+            ),
+            patch(
+                "src.app.modules.auth.crud.create_magic_link",
+                new_callable=AsyncMock,
             ),
         ):
             # Setup mock user as dict (service uses dict-style access)

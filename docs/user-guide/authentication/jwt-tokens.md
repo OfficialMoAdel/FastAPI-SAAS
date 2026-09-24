@@ -43,6 +43,8 @@ Refresh tokens are longer-lived credentials used solely to generate new access t
 
 **Why HTTP-Only Cookies?** This prevents malicious JavaScript from accessing refresh tokens, providing protection against XSS attacks while allowing automatic renewal.
 
+`TokenIssuer` is the sole refresh-cookie writer. Login and refresh services expose only the access-token projection to routers; the refresh token is never a JSON response field. SSO transports the `Set-Cookie` header written by Issuance without rebuilding a token from response data.
+
 ## Token Creation
 
 Understanding how tokens are created helps you customize the authentication system for your specific needs.

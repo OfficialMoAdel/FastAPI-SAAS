@@ -149,7 +149,7 @@ async def test_dlq_alert_threshold_warning(mock_redis_client, mock_settings):
 
     with patch("src.app.core.config.settings", mock_settings):
         with patch("src.app.core.monitoring.update_dlq_size"):
-            with patch("src.app.core.events.logger") as mock_logger:
+            with patch("src.app.core.dead_letter.logger") as mock_logger:
                 await event_bus.add_to_dlq(
                     event_name="test.event",
                     handler_name="test_handler",
@@ -164,7 +164,7 @@ async def test_dlq_alert_threshold_warning(mock_redis_client, mock_settings):
     # Find the capacity warning call
     capacity_warning = None
     for call in mock_logger.warning.call_args_list:
-        if "DLQ approaching capacity" in call[0][0]:
+        if "Dead-letter queue approaching capacity" in call[0][0]:
             capacity_warning = call
             break
 
@@ -195,7 +195,7 @@ async def test_dlq_no_alert_below_threshold(mock_redis_client, mock_settings):
 
     with patch("src.app.core.config.settings", mock_settings):
         with patch("src.app.core.monitoring.update_dlq_size"):
-            with patch("src.app.core.events.logger") as mock_logger:
+            with patch("src.app.core.dead_letter.logger") as mock_logger:
                 await event_bus.add_to_dlq(
                     event_name="test.event",
                     handler_name="test_handler",

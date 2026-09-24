@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.resilience.db_circuit_breaker import db_circuit_guard
 from src.app.core.tenancy.context import (
     TenantContextError,  # noqa: F401 — re-exported; runtime raises
-    get_current_tenant,
+    get_current_tenant,  # noqa: F401 — legacy patch target retained for compatibility
 )
 from src.app.core.tenancy.scope import (
     ExplicitScope,
@@ -156,6 +156,35 @@ class TenantAwareCRUD(
             return kwargs
         return {"tenant_id": resolved, **kwargs}
 
+    def _resolve_write_tenant(self, operation: str) -> Any:
+        """Resolve the tenant for a write through the canonical scope decision.
+
+        Reads may use the documented ``Unscoped`` escape hatch, but writes must
+        never create or re-parent rows without a tenant. An explicit tenant
+        scope is valid for workers; request context still wins on mismatch.
+        """
+        model = getattr(self, "model", None)
+        model_name = getattr(model, "__name__", type(self).__name__)
+        bound_scope = getattr(self, "_bound_scope", None)
+        if isinstance(bound_scope, Unscoped):
+            raise TenantContextError(
+                f"Tenant-scoped {operation} cannot use an unscoped scope"
+            )
+
+        tenant_id = resolve_effective_tenant(bound_scope, model_name=model_name)
+        if tenant_id is None:
+            raise TenantContextError(
+                f"Tenant-scoped {operation} executed without an active tenant context"
+            )
+        if isinstance(tenant_id, str):
+            try:
+                return uuid.UUID(tenant_id)
+            except (ValueError, TypeError) as exc:
+                raise ValueError(
+                    f"Invalid tenant_id format: {tenant_id!r}. Must be a valid UUID."
+                ) from exc
+        return tenant_id
+
     async def create(self, db: AsyncSession, object: CreateSchemaType | dict[str, Any], **kwargs: Any) -> Any:
         """Create a new record, automatically injecting tenant_id from context.
 
@@ -170,38 +199,28 @@ class TenantAwareCRUD(
         -------
             The created model instance or selected schema.
         """
-        tenant = get_current_tenant()
-        if tenant:
-            tenant_id = tenant.id
-            # Fix for SQLite tests where cached tenant from Redis is a dictionary with string IDs
-            if isinstance(tenant_id, str):
-                try:
-                    tenant_id = uuid.UUID(tenant_id)
-                except (ValueError, TypeError) as exc:
-                    raise ValueError(f"Invalid tenant_id format: {tenant_id!r}. Must be a valid UUID.") from exc
+        tenant_id = self._resolve_write_tenant("create")
 
-            # Inject tenant_id if not already present, or overwrite if maliciously provided
-            if isinstance(object, dict):
-                # Ensure we don't mutate the original dictionary
-                object = dict(object)
-                object["tenant_id"] = tenant_id
-                # FastCRUD.create requires a Pydantic model, not a raw dict.
-                # Convert the dict to the configured CreateSchemaType so the
-                # documented `object: CreateSchemaType | dict` contract holds.
-                create_schema = getattr(self, "create_schema", None)
-                if create_schema is None:
-                    raise TypeError(
-                        f"{type(self).__name__} received a dict for `create` but has "
-                        "no `create_schema` configured. Pass a Pydantic model instead, "
-                        "or set `create_schema` on the CRUD class."
-                    )
-                object = create_schema(**object)
-            elif isinstance(object, BaseModel):
-                # Forcibly overwrite tenant_id to prevent cross-tenant data creation
-                if hasattr(object, "tenant_id"):
-                    object.tenant_id = tenant_id
-        else:
-            raise TenantContextError("Tenant-scoped create executed without an active tenant context")
+        # Inject tenant_id if not already present, or overwrite if maliciously provided
+        if isinstance(object, dict):
+            # Ensure we don't mutate the original dictionary
+            object = dict(object)
+            object["tenant_id"] = tenant_id
+            # FastCRUD.create requires a Pydantic model, not a raw dict.
+            # Convert the dict to the configured CreateSchemaType so the
+            # documented `object: CreateSchemaType | dict` contract holds.
+            create_schema = getattr(self, "create_schema", None)
+            if create_schema is None:
+                raise TypeError(
+                    f"{type(self).__name__} received a dict for `create` but has "
+                    "no `create_schema` configured. Pass a Pydantic model instead, "
+                    "or set `create_schema` on the CRUD class."
+                )
+            object = create_schema(**object)
+        elif isinstance(object, BaseModel):
+            # Forcibly overwrite tenant_id to prevent cross-tenant data creation
+            if hasattr(object, "tenant_id"):
+                object.tenant_id = tenant_id
 
         async with db_circuit_guard():
             return await super().create(db, object, **kwargs)  # type: ignore[arg-type]
@@ -289,19 +308,18 @@ class TenantAwareCRUD(
             object: The update data.
             **kwargs: Filter criteria for the update.
         """
+        tenant_id = self._resolve_write_tenant("update")
+
         # M7: strip/forbid payload tenant_id rewrite
         if isinstance(object, dict) and "tenant_id" in object:
             object = {k: v for k, v in object.items() if k != "tenant_id"}
         elif isinstance(object, BaseModel) and hasattr(object, "tenant_id"):
-            tenant = get_current_tenant()
-            if tenant:  # B1: truthiness rejects NO_TENANT sentinel too
-                try:
-                    object.tenant_id = tenant.id  # type: ignore[attr-defined]
-                except (AttributeError, ValueError, TypeError, ValidationError) as e:
-                    # P1 FIX (code-review): fail closed — never proceed with an
-                    # uncoerced payload that may still carry attacker tenant_id
-                    # in the SET clause (WHERE-scoping does not protect SET).
-                    raise TenantContextError(f"Cannot enforce tenant on update payload: {e}") from e
+            try:
+                object.tenant_id = tenant_id  # type: ignore[attr-defined]
+            except (AttributeError, ValueError, TypeError, ValidationError) as e:
+                # Fail closed — never proceed with an uncoerced payload that
+                # may still carry attacker tenant_id in the SET clause.
+                raise TenantContextError(f"Cannot enforce tenant on update payload: {e}") from e
         kwargs = self.inject_tenant_filter(kwargs)
         async with db_circuit_guard():
             await super().update(db, object, **kwargs)

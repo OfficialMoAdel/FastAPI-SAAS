@@ -320,11 +320,7 @@ class AuthService:
         # (auth.login_issued event); failure-path audits below remain here
         # because they occur before issuance.
 
-        return {
-            "access_token": issued.access_token,
-            "token_type": "bearer",
-            "refresh_token": issued.refresh_token,
-        }
+        return issued.access_response()
 
     async def _reject_reused_refresh_token(
         self,
@@ -479,11 +475,7 @@ class AuthService:
             device_label=user_agent,
         )
 
-        return {
-            "access_token": issued.access_token,
-            "token_type": "bearer",
-            "refresh_token": issued.refresh_token,
-        }
+        return issued.access_response()
 
     async def logout(
         self,

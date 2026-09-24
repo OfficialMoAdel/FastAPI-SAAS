@@ -6,16 +6,17 @@ Behavioral parity of the legacy delegates lives in test_tenant_seam.py.
 """
 
 import uuid
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from src.app.core.db.scoped import (
     _CRUD_CACHE,
     criterion,
     execute_scoped,
     scoped_crud,
+    stream_scoped,
 )
 from src.app.core.db.tenant_crud import TenantAwareCRUD
 from src.app.core.tenancy.context import (
@@ -168,6 +169,40 @@ class TestExecuteScoped:
         assert str(tid).replace("-", "") in str(
             stmt.compile(compile_kwargs={"literal_binds": True})
         ).replace("-", "")
+
+    async def test_explicit_scope_applies_to_update(self) -> None:
+        tid = uuid.uuid4()
+        db = AsyncMock()
+        await execute_scoped(
+            update(User).where(User.id == 1).values(is_active=False),
+            db=db,
+            model=User,
+            scope=ExplicitTenant(tenant_id=tid, reason="worker"),
+        )
+        stmt = db.execute.await_args.args[0]
+        assert "tenant_id" in str(stmt)
+        assert str(tid).replace("-", "") in str(
+            stmt.compile(compile_kwargs={"literal_binds": True})
+        ).replace("-", "")
+
+    async def test_stream_scoped_keeps_scope_and_closes_result(self) -> None:
+        tid = uuid.uuid4()
+        result = MagicMock()
+        result.close = AsyncMock()
+        db = AsyncMock()
+        db.stream.return_value = result
+
+        async with stream_scoped(
+            select(User),
+            db=db,
+            model=User,
+            scope=ExplicitTenant(tenant_id=tid, reason="worker"),
+        ) as streamed:
+            assert streamed is result
+            stmt = db.stream.await_args.args[0]
+            assert "tenant_id" in str(stmt)
+
+        result.close.assert_awaited_once()
 
 
 class TestCriterion:

@@ -189,7 +189,6 @@ class TestMagicLinkService:
                 "_create_auth_tokens",
                 return_value={
                     "access_token": "access_123",
-                    "refresh_token": "refresh_456",
                     "token_type": "bearer",
                     "expires_in": 3600,
                 },
@@ -199,6 +198,7 @@ class TestMagicLinkService:
 
         assert result is not None
         assert result.access_token is not None
+        assert not hasattr(result, "refresh_token")
 
     @pytest.mark.asyncio
     async def test_verify_magic_link_invalid_token_raises(self, fake_redis, mock_db):
@@ -242,7 +242,6 @@ class TestMagicLinkService:
                 "_create_auth_tokens",
                 return_value={
                     "access_token": "access_123",
-                    "refresh_token": "refresh_456",
                     "token_type": "bearer",
                     "expires_in": 3600,
                 },
@@ -285,7 +284,6 @@ class TestMagicLinkService:
                 "_create_auth_tokens",
                 return_value={
                     "access_token": "access_123",
-                    "refresh_token": "refresh_456",
                     "token_type": "bearer",
                     "expires_in": 3600,
                 },

@@ -13,11 +13,13 @@ Two entry points over the ONE scope decision
   same rule as a WHERE clause. New code should prefer the factories.
 """
 
-from typing import Any
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any, cast
 
 from fastcrud import FastCRUD
 from sqlalchemy import true
-from sqlalchemy.engine import Result
+from sqlalchemy.engine import CursorResult, Result
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ColumnElement, Select
 
@@ -120,24 +122,44 @@ def scoped_crud(
     return crud
 
 
+ScopedResult = Result[Any] | CursorResult[Any]
+
+
 async def execute_scoped(
+    stmt: Any,
+    *,
+    db: AsyncSession,
+    model: Any,
+    scope: ExplicitScope | None = None,
+) -> ScopedResult:
+    """Scope ``stmt`` to the effective tenant and execute it under the guard.
+
+    The statement may be a SELECT, UPDATE, or DELETE. The guard applies exactly
+    once here — callers must NOT wrap this in ``db_circuit_guard`` themselves.
+    """
+    resolved = resolve_effective_tenant(scope, model_name=_model_name(model))
+    stmt = stmt.where(_constrain(model, resolved))
+    async with db_circuit_guard():
+        return cast(ScopedResult, await db.execute(stmt))
+
+
+@asynccontextmanager
+async def stream_scoped(
     stmt: Select,
     *,
     db: AsyncSession,
     model: Any,
     scope: ExplicitScope | None = None,
-) -> Result[Any]:
-    """Scope ``stmt`` to the effective tenant and execute it under the guard.
-
-    The guard applies exactly once here — callers must NOT wrap this in
-    ``db_circuit_guard`` themselves (``TenantAwareCRUD`` methods guard
-    internally; ``BaseService`` adds the guard only for plain-``FastCRUD``
-    models — never wrap this call).
-    """
+) -> AsyncIterator[Any]:
+    """Scope and stream a SELECT while keeping the database guard active."""
     resolved = resolve_effective_tenant(scope, model_name=_model_name(model))
     stmt = stmt.where(_constrain(model, resolved))
     async with db_circuit_guard():
-        return await db.execute(stmt)
+        result = await db.stream(stmt)
+        try:
+            yield result
+        finally:
+            await result.close()
 
 
 def criterion(
@@ -177,4 +199,4 @@ def criterion(
     return _constrain(model, resolved)
 
 
-__all__ = ["criterion", "execute_scoped", "scoped_crud"]
+__all__ = ["criterion", "execute_scoped", "scoped_crud", "stream_scoped"]

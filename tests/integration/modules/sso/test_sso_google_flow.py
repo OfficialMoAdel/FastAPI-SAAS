@@ -19,6 +19,7 @@ from uuid import uuid4
 import pytest
 from fastapi import status
 
+from src.app.core.security.login_helpers import set_refresh_cookie
 from src.app.main import app
 from src.app.modules.auth.services.sso import get_sso_service
 
@@ -29,6 +30,15 @@ def _create_mock_sso_service(**method_returns):
     for method_name, return_value in method_returns.items():
         if isinstance(return_value, Exception):
             setattr(mock_service, method_name, AsyncMock(side_effect=return_value))
+        elif method_name == "process_callback" and isinstance(return_value, dict):
+            async def callback_with_cookie(*args, _result=return_value, **kwargs):
+                response = kwargs.get("response")
+                refresh_token = _result.get("refresh_token")
+                if response is not None and refresh_token:
+                    set_refresh_cookie(response, refresh_token)
+                return _result
+
+            setattr(mock_service, method_name, AsyncMock(side_effect=callback_with_cookie))
         else:
             setattr(mock_service, method_name, AsyncMock(return_value=return_value))
     return mock_service

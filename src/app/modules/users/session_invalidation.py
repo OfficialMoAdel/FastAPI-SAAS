@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.db.scoped import execute_scoped
 from src.app.core.logger import get_logger
 from src.app.core.utils.cache import build_tenant_key
 
@@ -380,10 +381,16 @@ async def invalidate_user_sessions(
         if tenant_id is not None:
             # Optional-by-contract scoping (see _fetch_fresh_token_versions):
             # RBAC callers always pass their tenant; None = caller owns it.
-            from src.app.core.db.scoped import criterion
+            from src.app.core.tenancy.scope import ExplicitTenant
 
-            update_stmt = update_stmt.where(criterion(User, tenant_id))
-        result = await db.execute(update_stmt)
+            result = await execute_scoped(
+                update_stmt,
+                db=db,
+                model=User,
+                scope=ExplicitTenant(tenant_id=tenant_id, reason="users:token_version_bump"),
+            )
+        else:
+            result = await db.execute(update_stmt)
         # Rowcount guard: a 0-row bump (wrong tenant / deleted user) must not
         # proceed to cache-invalidate, or Redis and DB silently diverge.
         # Never rollback the caller's session or return silent success here:

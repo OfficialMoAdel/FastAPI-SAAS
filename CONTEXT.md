@@ -8,12 +8,18 @@ persistence grilling loop, 2026-09-22.)
 
 - **Tenant-scoped persistence** — the invariant that every read/write on a
   `tenant_id`-bearing table is scoped to the active tenant context, fail-closed
-  without one. One Seam owns the rule; `TenantAwareCRUD` (CRUD path) and
-  `tenant_scope()` (hand-built `select()` path) are Adapters over it. Escape
-  hatch (`_allow_unscoped` / `allow_unscoped`) is explicit and logged.
-  Seam: `src/app/core/tenancy/` + `src/app/core/db/tenant_crud.py`
-  (to be unified). See ADR-0005 (tenant-only RLS), ADR-0006 (one
-  `resolve_tenant_id` Seam).
+  without one. One Seam owns the rule: `scoped_crud()` and
+  `TenantAwareCRUD` cover CRUD; `execute_scoped()` covers hand-built
+  `SELECT` / `UPDATE` / `DELETE` statements and owns the database guard; and
+  `stream_scoped()` keeps that guard active for streamed `SELECT` results.
+  `TenantAwareCRUD.create()` and `update()` use the same scope decision as
+  reads: an explicit tenant scope is valid for workers, request context wins
+  on mismatch, and unscoped writes fail closed. The `_allow_unscoped` /
+  `allow_unscoped` escape hatch remains explicit and logged for documented
+  read/system paths. Global paths and multi-model dashboard subqueries are
+  intentional exceptions. Seam: `src/app/core/tenancy/` +
+  `src/app/core/db/scoped.py` + `src/app/core/db/tenant_crud.py`. See ADR-0005
+  (tenant-only RLS), ADR-0006 (one `resolve_tenant_id` Seam).
 
 - **Admission** — the per-request decision `RateLimitMiddleware` makes *before*
   routing: let through, limit, or reject. Emits an `AdmissionOutcome` whose
@@ -148,6 +154,14 @@ persistence grilling loop, 2026-09-22.)
   in `src/app/core/errors.py`. `core.errors` imports **no feature module at all**,
   which is what finally cleared the last `core.errors -> modules.*` edge from
   the H-5 import contract.
+
+- **Dead-letter queue** — the shared failure queue at `arq:dlq` for ARQ job
+  failures and EventBus handler failures. `DeadLetterQueue` owns the envelope
+  codec, `arq` / `event_bus` source semantics, bounded retention, retry/clear,
+  and legacy-key migration. `EventBus` and `JobMonitoringService` delegate
+  their queue operations to this module; the monitor alone decodes legacy
+  pipe-delimited rows for administrative compatibility. Seam:
+  `src/app/core/dead_letter.py`.
 
 - **L1 invalidation seam** — the process-local cache Seam: `L1Cache(name,
   channel, codec, caches=[...])` in `src/app/core/cache/l1.py` owns the whole

@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from src.app.core.config import settings as app_settings
-from src.app.core.db.scoped import criterion, execute_scoped
+from src.app.core.db.scoped import execute_scoped
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules.storage.admin import ResolvedStorage, StorageAdminService
 from src.app.modules.storage.errors import (
@@ -389,12 +389,17 @@ class StorageService:
             logger.error("storage_delete_failed", storage_path=storage_path, error=str(e))
             raise StorageBackendError(f"Failed to delete file from storage: {e}") from e
 
-        stmt = delete(File).where(File.id == file_id, criterion(File, tenant_id))
+        stmt = delete(File).where(File.id == file_id)
         if user_id is not None:
             stmt = stmt.where(File.user_id == user_id)
-        result = await self.db.execute(stmt)
+        result = await execute_scoped(
+            stmt,
+            db=self.db,
+            model=File,
+            scope=ExplicitTenant(tenant_id=tenant_id, reason="legacy-criterion:File"),
+        )
 
-        if result.rowcount == 0:
+        if int(getattr(result, "rowcount", 0) or 0) == 0:
             logger.warning("file_already_deleted_concurrently", file_id=file_id, tenant_id=str(tenant_id))
             return
 
@@ -423,10 +428,13 @@ class StorageService:
     ) -> dict[str, Any]:
         """List files for a tenant with pagination."""
         query = select(File)
+        filters = []
         if user_id:
-            query = query.where(File.user_id == user_id)
+            filters.append(File.user_id == user_id)
         if mime_type:
-            query = query.where(File.mime_type == mime_type)
+            filters.append(File.mime_type == mime_type)
+        if filters:
+            query = query.where(*filters)
 
         if not user_id and not mime_type:
             file_count, _ = await self._get_quota_stats(tenant_id)
@@ -444,10 +452,8 @@ class StorageService:
             # set (audit_logs pattern) instead of count-query + rows-query.
             total_col = func.count().over().label("total")
             windowed = select(File, total_col)
-            if user_id:
-                windowed = windowed.where(File.user_id == user_id)
-            if mime_type:
-                windowed = windowed.where(File.mime_type == mime_type)
+            if filters:
+                windowed = windowed.where(*filters)
             windowed = windowed.order_by(File.created_at.desc()).offset(offset).limit(limit)
             result = await execute_scoped(
                 windowed,
@@ -462,8 +468,15 @@ class StorageService:
             elif offset == 0:
                 total_count = 0
             else:
-                count_query = select(func.count()).select_from(query.subquery())
-                total_result = await self.db.execute(count_query)
+                count_query = select(func.count(File.id))
+                if filters:
+                    count_query = count_query.where(*filters)
+                total_result = await execute_scoped(
+                    count_query,
+                    db=self.db,
+                    model=File,
+                    scope=ExplicitTenant(tenant_id=tenant_id, reason="legacy-criterion:File"),
+                )
                 total_count = total_result.scalar() or 0
 
         items_list = [FileRead.model_validate(f, from_attributes=True) for f in files]
@@ -555,15 +568,17 @@ class StorageService:
         """Transfer file ownership between users."""
         stmt = (
             update(File)
-            .where(
-                criterion(File, tenant_id),
-                File.user_id == from_user_id,
-            )
+            .where(File.user_id == from_user_id)
             .values(user_id=to_user_id)
         )
-        result = await self.db.execute(stmt)
+        result = await execute_scoped(
+            stmt,
+            db=self.db,
+            model=File,
+            scope=ExplicitTenant(tenant_id=tenant_id, reason="legacy-criterion:File"),
+        )
         await self.db.commit()
-        count = result.rowcount
+        count = int(getattr(result, "rowcount", 0) or 0)
         logger.info("Transferred files ownership", count=count, from_user_id=from_user_id, to_user_id=to_user_id)
         return count
 

@@ -28,10 +28,9 @@ from src.app.modules._base import BaseCreate, BaseList, BaseRead, BaseUpdate
 
 
 class AuthTokenResponse(BaseModel):
-    """Full authentication token response for new auth flows."""
+    """Access-only authentication response for SSO service callers."""
 
     access_token: str = Field(..., description="JWT access token")
-    refresh_token: str | None = Field(default=None, description="JWT refresh token")
     token_type: str = Field(default="bearer", description="Token type")
     expires_in: int = Field(..., description="Access token expiration time in seconds")
 
@@ -44,14 +43,10 @@ class LoginRequest(BaseModel):
 
 
 class LoginTokenResponse(BaseModel):
-    """Login success response schema."""
+    """Login success response without a JSON refresh-token field."""
 
     access_token: str
     token_type: str = "bearer"
-    # NOTE: transport-only field — routers read it directly via attribute access.
-    # Never round-trip this model through model_dump() → re-validation: the
-    # excluded refresh_token would be silently dropped.
-    refresh_token: str | None = Field(default=None, exclude=True)
 
 class LoginMFAResponse(BaseModel):
     """Login MFA required response schema."""

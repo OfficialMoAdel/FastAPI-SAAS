@@ -50,8 +50,11 @@ Password (login), MFA, passkey, magic-link, and SSO doors verify credentials,
 then hand off to `services/tokens.py::TokenIssuer.issue_session` — the one
 choreography for claims → token pair → refresh cookie (when a response is
 threaded through) → session registration → `auth.login_issued` audit event.
-Routers only wire request/response; `service.py::AuthService` owns login,
-refresh, and logout orchestration. Password reset/change and email
+`IssuedSession.access_response()` is the only router-facing projection; it
+contains access metadata and never a refresh-token field. Routers only wire
+request/response; `service.py::AuthService` owns login, refresh, and logout
+orchestration. SSO may transport `Set-Cookie` headers from the Issuance
+response, but it must not recreate a refresh token from a response body. Password reset/change and email
 verification belong to their subservices
 (`services/passwords.py::PasswordLifecycleService`,
 `services/email_verification.py::EmailVerificationService`) — call them
@@ -137,6 +140,7 @@ rg -n "class .*Provider" src/app/modules/auth/providers/
 ## Common Gotchas
 
 - **Cookie vs header**: access token in `Authorization: Bearer`, refresh token in an HTTP-only cookie (`login_helpers` in core/security names/sets it)
+- **Issuance**: `TokenIssuer` is the sole refresh-cookie writer; auth routers consume only `IssuedSession.access_response()`
 - **Logout**: must blacklist BOTH tokens and invalidate the Redis session — loud on failure (no silent swallow)
 - **MFA**: login may return a challenge (`LoginMFAResponse`), not tokens — handle both response shapes
 - **Secrets**: never log or return tokens; log sanitization strips JWTs automatically

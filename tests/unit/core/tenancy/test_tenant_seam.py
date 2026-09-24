@@ -12,8 +12,11 @@ NO_TENANT sentinel through) fails loudly.
 """
 
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
+from fastcrud import FastCRUD
+from pydantic import BaseModel
 
 from src.app.core.db.scoped import criterion
 from src.app.core.db.tenant_crud import TenantAwareCRUD
@@ -25,6 +28,7 @@ from src.app.core.tenancy.context import (
     require_active_tenant,
     set_current_tenant,
 )
+from src.app.core.tenancy.scope import ExplicitTenant, Unscoped
 from src.app.modules.users.models import User
 from src.app.shared.exceptions import TenantContextError
 
@@ -153,6 +157,82 @@ class TestInjectTenantFilter:
         finally:
             ctx_mod._current_tenant.reset(token)
 
+
+
+class _WritePayload(BaseModel):
+    tenant_id: uuid.UUID | None = None
+    value: str = "value"
+
+
+class TestTenantAwareWrites:
+    @pytest.mark.asyncio
+    async def test_create_uses_explicit_scope_without_context(self, monkeypatch):
+        tenant_id = uuid.uuid4()
+        scoped_crud = TenantAwareCRUD(
+            model=User,
+            scope=ExplicitTenant(tenant_id=tenant_id, reason="worker"),
+        )
+        create = AsyncMock(return_value="created")
+        monkeypatch.setattr(FastCRUD, "create", create)
+        payload = _WritePayload(tenant_id=uuid.uuid4())
+
+        assert await scoped_crud.create(AsyncMock(), payload) == "created"
+        assert payload.tenant_id == tenant_id
+        create.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_create_context_wins_over_bound_scope(self, monkeypatch):
+        context = _ctx()
+        set_current_tenant(context)
+        scoped_crud = TenantAwareCRUD(
+            model=User,
+            scope=ExplicitTenant(tenant_id=uuid.uuid4(), reason="worker"),
+        )
+        create = AsyncMock(return_value="created")
+        monkeypatch.setattr(FastCRUD, "create", create)
+        payload = _WritePayload(tenant_id=uuid.uuid4())
+
+        await scoped_crud.create(AsyncMock(), payload)
+
+        assert payload.tenant_id == context.tenant_id
+        create.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_create_rejects_missing_context_and_scope(self, monkeypatch):
+        create = AsyncMock()
+        monkeypatch.setattr(FastCRUD, "create", create)
+        crud = TenantAwareCRUD(model=User)
+
+        with pytest.raises(TenantContextError, match="without active tenant context"):
+            await crud.create(AsyncMock(), _WritePayload())
+        create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_create_rejects_unscoped_bound_scope(self, monkeypatch):
+        create = AsyncMock()
+        monkeypatch.setattr(FastCRUD, "create", create)
+        unscoped_crud = TenantAwareCRUD(model=User, scope=Unscoped(reason="system"))
+
+        with pytest.raises(TenantContextError, match="cannot use an unscoped scope"):
+            await unscoped_crud.create(AsyncMock(), _WritePayload())
+        create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_uses_explicit_scope_and_rewrites_payload(self, monkeypatch):
+        tenant_id = uuid.uuid4()
+        scoped_crud = TenantAwareCRUD(
+            model=User,
+            scope=ExplicitTenant(tenant_id=tenant_id, reason="worker"),
+        )
+        update = AsyncMock()
+        monkeypatch.setattr(FastCRUD, "update", update)
+        payload = _WritePayload(tenant_id=uuid.uuid4())
+
+        await scoped_crud.update(AsyncMock(), payload, id=1)
+
+        assert payload.tenant_id == tenant_id
+        update.assert_awaited_once()
+        assert update.await_args.kwargs["tenant_id"] == tenant_id
 
 
 class TestTenantScope:

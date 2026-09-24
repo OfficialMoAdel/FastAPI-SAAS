@@ -114,7 +114,6 @@ class TestMagicLinkVerifyEndpoint:
         ) as mock_verify:
             mock_verify.return_value = Mock(
                 access_token="access_token_123",
-                refresh_token="refresh_token_456",
                 token_type="bearer",
                 expires_in=3600,
             )
@@ -128,7 +127,8 @@ class TestMagicLinkVerifyEndpoint:
         data = response.json()
         assert "access_token" in data
         assert "token_type" in data
-        # refresh_token is set as HttpOnly cookie, not in JSON body
+        # refresh_token is not part of the JSON body
+        assert "refresh_token" not in data
         # expires_in is not part of LoginTokenResponse schema
 
     async def test_verify_magic_link_invalid_token_returns_400(self, async_client):

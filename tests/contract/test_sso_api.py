@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, Mock
 
 from fastapi import status
 
+from src.app.core.security.login_helpers import set_refresh_cookie
 from src.app.main import app
 from src.app.modules.auth.services.sso import get_sso_service
 
@@ -156,7 +157,12 @@ class TestSSOCallbackEndpoint:
             "token_type": "bearer",
             "expires_in": 1800,
         }
-        mock_service = _create_mock_sso_service(process_callback=mock_tokens)
+        async def mock_callback(*args, **kwargs):
+            set_refresh_cookie(kwargs["response"], "test_refresh_token")
+            return mock_tokens
+
+        mock_service = Mock()
+        mock_service.process_callback = AsyncMock(side_effect=mock_callback)
         with override_sso_service(mock_service):
             response = client.get(
                 "/api/v1/account/sso/google/callback?code=test_code&state=test_state",

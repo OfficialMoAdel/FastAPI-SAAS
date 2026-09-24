@@ -187,7 +187,7 @@ async def test_process_callback_success(
         response = await service.process_callback(mock_db, mock_request, SSOProvider.GOOGLE, "code", "state")
 
     assert response.access_token == "jwt_access"
-    assert response.refresh_token == "jwt_refresh"
+    assert not hasattr(response, "refresh_token")
 
 
 @pytest.mark.asyncio

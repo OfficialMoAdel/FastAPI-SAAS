@@ -323,7 +323,7 @@ class PasskeyService:
             response: Optional FastAPI response; when given, the refresh
                 cookie is written by the issuance seam.
         Returns:
-            dict: Authentication tokens (access_token, refresh_token, etc.).
+            dict: Access-token response data; the refresh token is delivered by the Issuance cookie seam.
 
         Raises:
             ValidationError: If verification fails, challenge expired, or replay attempt.
@@ -705,12 +705,7 @@ class PasskeyService:
             request=request,
             response=response,
         )
-        return {
-            "access_token": issued.access_token,
-            "refresh_token": issued.refresh_token,
-            "token_type": "bearer",
-            "expires_in": issued.expires_in,
-        }
+        return issued.access_response()
 
 
 passkey_service = PasskeyService()
