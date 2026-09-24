@@ -278,13 +278,14 @@ def reset_circuit_breaker_registry():
     Prevents asyncio.Lock binding issues when event loops change between tests.
     This is critical for test isolation during coverage runs.
     """
-    from src.app.core.resilience.db_circuit_breaker import db_circuit
-    from src.app.core.resilience.registry import ServiceType, get_registry, reset_registry
+    from src.app.core.resilience.registry import reset_registry
     from src.app.core.utils.circuit_breaker import reset_all_circuit_breakers
 
+    # reset_registry() restores the declared default set itself, so there is no
+    # hand-registration here any more: the registry owns which breakers exist,
+    # not this fixture.
     reset_registry()
     reset_all_circuit_breakers()
-    get_registry().register("database", db_circuit, service_type=ServiceType.DATABASE)
 
     yield
 

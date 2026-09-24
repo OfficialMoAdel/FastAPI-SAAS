@@ -14,7 +14,6 @@ from src.app.core.logger import get_logger
 from src.app.core.utils.circuit_breaker import (
     CircuitBreaker,
     CircuitState,
-    webhook_circuit,
 )
 
 logger = get_logger(__name__)
@@ -373,10 +372,17 @@ def get_registry() -> CircuitBreakerRegistry:
 
 
 def reset_registry() -> None:
-    """Reset the global registry (for test isolation).
+    """Reset the global registry (for test isolation) and restore the defaults.
 
     Clears the singleton and forces recreation on next access.
     This prevents asyncio.Lock binding issues when event loops change.
+
+    The recreation replays :func:`default_breakers`, because clearing the
+    registry used to drop every named singleton with it — including
+    ``database``, which ``tests/conftest.py`` then hand-registered back. Without
+    the replay, a breaker disappears from the admin panel for the whole of
+    every test run: the test suite was compensating for a defect instead of
+    production owning the invariant.
     """
     global _registry
     if _registry is not None:
@@ -384,6 +390,33 @@ def reset_registry() -> None:
         # Note: We do NOT set _registry._lock = None to prevent stranding
         # coroutines that are currently waiting on the lock.
     _registry = None
+    # Scoped webhook breakers are registry-owned state too: if they survive the
+    # reset while their registrations do not, get_webhook_breaker() would hand
+    # back a cached breaker that is no longer registered — invisible again.
+    _scoped_webhook_breakers.clear()
+    _register_defaults(get_registry())
+
+
+def _register_defaults(registry: CircuitBreakerRegistry) -> None:
+    """Replay the declared default set into ``registry``.
+
+    Every breaker built with :func:`create_circuit_breaker` registers itself as
+    a side effect of construction, so a freshly imported process is already
+    complete. This replay exists for the case where construction already
+    happened and the registry did not: after :func:`reset_registry`.
+    """
+    # Deferred: breakers imports this module (for create_circuit_breaker), so a
+    # module-level import would close the cycle.
+    from src.app.core.resilience.breakers import default_breakers
+
+    for row in default_breakers():
+        if registry.get(row.name) is None:
+            registry.register(
+                name=row.name,
+                breaker=row.breaker,
+                service_type=row.service_type,
+                description=row.description,
+            )
 
 
 def get_circuit_breaker(name: str) -> CircuitBreaker | None:
@@ -498,6 +531,10 @@ def get_webhook_breaker(scope: str | None = None) -> CircuitBreaker:
         The scoped breaker, creating (and registering) it on first use.
     """
     if scope is None:
+        # Deferred: ``breakers`` imports this module (for create_circuit_breaker),
+        # so importing it at module level would close the cycle.
+        from src.app.core.resilience.breakers import webhook_circuit
+
         return webhook_circuit
 
     registry = get_registry()

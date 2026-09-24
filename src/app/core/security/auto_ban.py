@@ -391,11 +391,11 @@ async def check_ban_blacklist_and_rate_limit(
     from src.app.core.security.token_blacklist_cache import (
         BLACKLIST_KEY,
         NEGATIVE_CACHE_KEY,
-        _circuit_breaker,
         _extract_blacklist_member,
         _get_available_redis_client_for_blacklist,
         _token_cache_key,
         is_token_blacklisted,
+        token_cache_circuit,
     )
     from src.app.core.utils.lua_manager import get_lua_manager
 
@@ -493,7 +493,7 @@ async def check_ban_blacklist_and_rate_limit(
         is_limited, remaining, retry_after = await _rl.check_rate_limit_algorithm(sel_key, sel_limit, sel_period)
         return seq_verdict, sel_limit, sel_period, sel_key, ban_info, (is_limited, remaining, retry_after)
 
-    await _circuit_breaker.record_success()
+    await token_cache_circuit.record_success()
     merged_verdict = bool(int(raw_bl))
     is_b = int(is_banned) == 1
     ban_info = BanInfo(

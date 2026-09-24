@@ -410,7 +410,7 @@ class TestTriStateBlacklist:
         breaker.is_closed = False  # circuit open -> gate blocks Redis
         with (
             _patch_setting("TOKEN_CACHE_FAILURE_MODE", "fail_closed"),
-            patch("src.app.core.security.token_blacklist_cache._circuit_breaker", breaker),
+            patch("src.app.core.security.token_blacklist_cache.token_cache_circuit", breaker),
         ):
             client, fail_closed = _get_available_redis_client_for_blacklist()
         assert client is None
@@ -423,7 +423,7 @@ class TestTriStateBlacklist:
         breaker.is_closed = False  # circuit open -> gate blocks Redis
         with (
             _patch_setting("TOKEN_CACHE_FAILURE_MODE", "fail_open"),
-            patch("src.app.core.security.token_blacklist_cache._circuit_breaker", breaker),
+            patch("src.app.core.security.token_blacklist_cache.token_cache_circuit", breaker),
         ):
             result = await is_token_blacklisted("some-token")
         assert result is None

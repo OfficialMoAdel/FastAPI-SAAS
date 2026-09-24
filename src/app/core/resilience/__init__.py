@@ -7,6 +7,11 @@ This module provides resilience patterns including:
 - Helper functions for accessing the global registry
 """
 
+from src.app.core.resilience.breakers import (
+    arq_circuit,
+    email_circuit,
+    webhook_circuit,
+)
 from src.app.core.resilience.db_circuit_breaker import (
     DB_INFRASTRUCTURE_ERRORS,
     db_circuit,
@@ -49,6 +54,10 @@ __all__ = [
     "db_circuit",
     "db_circuit_guard",
     "DB_INFRASTRUCTURE_ERRORS",
+    # Named singletons (see breakers.py for why construction lives there)
+    "webhook_circuit",
+    "email_circuit",
+    "arq_circuit",
 ]
 
 

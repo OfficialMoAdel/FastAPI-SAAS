@@ -18,10 +18,10 @@ from src.app.core.security.token_blacklist_cache import (
     BLACKLIST_KEY,
     NEGATIVE_CACHE_KEY,
     NEGATIVE_CACHE_TTL,
-    _circuit_breaker,
     _extract_blacklist_member,
     _get_redis_client,
     _token_cache_key,
+    token_cache_circuit,
 )
 from src.app.core.utils.lua_manager import get_lua_manager
 
@@ -65,7 +65,7 @@ async def execute_composite_auth_prefetch(
     if redis_client is None:
         redis_client = _get_redis_client()
 
-    if redis_client is None or not _circuit_breaker.is_closed:
+    if redis_client is None or not token_cache_circuit.is_closed:
         return None, None, None
 
     negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token, jti)}"
@@ -114,7 +114,7 @@ async def execute_composite_auth_prefetch(
             logger.debug("Composite auth prefetch returned error flag from Lua; using fallback paths")
             return None, None, None
 
-        await _circuit_breaker.record_success()
+        await token_cache_circuit.record_success()
 
         is_blacklisted: bool | None = None
         session_valid: bool | None = None
@@ -142,6 +142,6 @@ async def execute_composite_auth_prefetch(
         return is_blacklisted, session_valid, bitmask
 
     except Exception as e:
-        await _circuit_breaker.record_failure(e)
+        await token_cache_circuit.record_failure(e)
         logger.warning("Composite auth prefetch failed, falling back to sequential checks", error=str(e))
         return None, None, None

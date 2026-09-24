@@ -200,6 +200,42 @@ persistence grilling loop, 2026-09-22.)
   pass-throughs must not come back.
   Seam: `deliver` / `enqueue` in `src/app/modules/webhooks/delivery.py`.
 
+- **Breaker** — a named `CircuitBreaker` singleton protecting one outbound
+  dependency, owned by `src/app/core/resilience/breakers.py`: `webhook`,
+  `email`, `arq_queue`, plus `database` and `token_cache_circuit` (constructed
+  by their own modules). The admin panel observes and resets breakers
+  **through the registry only**, so a breaker that is not registered is
+  invisible to operations — it cannot be seen or reset during an incident.
+  The invariant is therefore "a named breaker is built by
+  `create_circuit_breaker()`, which registers as a side effect of
+  construction", not "someone remembered to register it". A bare
+  `CircuitBreaker(...)` is for tests and per-endpoint scopes; it is not a
+  named production breaker.
+  What it does NOT own: the algorithm (`core/utils/circuit_breaker.py`), the
+  DB-domain layer built on top of it (`core/resilience/db_circuit_breaker.py`),
+  or the registry itself. Construction lives in `breakers.py` rather than
+  beside the algorithm because `registry.py` imports
+  `core/utils/circuit_breaker.py` at module level, so that module cannot import
+  the registry back — the cycle that made the old `_register_default_breakers()`
+  a `pass` with a commented-out call. `core.utils.circuit_breaker` re-exports
+  the names lazily (`__getattr__`, the `modules/tenants/__init__.py` pattern),
+  so import sites are unchanged and object identity is preserved.
+  Seam: `src/app/core/resilience/breakers.py`.
+
+- **Default breaker set** — the declared table (`default_breakers()`) that
+  `reset_registry()` replays whenever it recreates the registry. It exists
+  because clearing the registry used to drop every registration with it, and
+  `tests/conftest.py` compensated by hand-registering `database` back — the
+  suite manufacturing an invariant production did not own. With the replay the
+  set is a property of the registry rather than of import order, and deleting
+  that hand-registration is what proves the constraint is gone.
+  `reset_registry()` also clears `_scoped_webhook_breakers`: those are
+  registry-owned, and leaving them cached while their registrations were
+  dropped would hand back invisible breakers.
+  What it does NOT own: thresholds, recovery timeouts, or which scopes exist —
+  those stay with each breaker.
+  Seam: `default_breakers()` in `src/app/core/resilience/breakers.py`.
+
 - **Startup phases** — the boot Seam: `StartupPhase(name, startup, teardown)` rows in `src/app/core/setup.py` own one boot step each; `compose_phases` runs startups in list order, then reverse teardowns + the `tail` list.
   Order is data — reordering boot means reordering rows, not editing a
   130-line closure. The factory runs full teardown even when a startup

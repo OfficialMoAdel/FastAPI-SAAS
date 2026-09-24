@@ -10,7 +10,7 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import wraps
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from src.app.core.logger import get_logger
 
@@ -323,74 +323,62 @@ def circuit_breaker(
     return decorator
 
 
-# Pre-configured circuit breakers for common services
-webhook_circuit = CircuitBreaker(
-    name="webhook",
-    failure_threshold=5,
-    recovery_timeout=60.0,
-    success_threshold=2,
+# ---------------------------------------------------------------------------
+# Named circuit-breaker singletons
+#
+# ``webhook_circuit`` / ``email_circuit`` / ``arq_circuit`` are constructed in
+# ``core/resilience/breakers.py`` and re-exported from here lazily.
+#
+# They moved because a bare ``CircuitBreaker(...)`` does not register, and the
+# admin panel reads only the registry — so these three were invisible to
+# operations (unobservable, unresettable during an incident) while
+# ``database`` and ``token_cache_circuit`` were visible purely because they are
+# built with ``create_circuit_breaker()``, which registers as a side effect of
+# construction. Moving them to the registering constructor closes the
+# asymmetry.
+#
+# They moved *there* rather than being registered here because ``registry.py``
+# imports this module at module level, so this module cannot import the
+# registry back — the exact cycle that made ``_register_default_breakers()`` a
+# ``pass`` with a commented-out call.
+#
+# P2-B: per-endpoint webhook breakers live in ``registry.get_webhook_breaker``
+# (``webhook:{scope}``), which registers each scope on first use. The global
+# below is what ``get_webhook_breaker(None)`` hands back.
+# ---------------------------------------------------------------------------
+
+_LAZY_BREAKERS = (
+    "arq_circuit",
+    "email_circuit",
+    "reset_all_circuit_breakers",
+    "webhook_circuit",
 )
 
-# P2-B: per-endpoint webhook breakers. The single ``webhook_circuit`` above
-# is shared by every tenant and receiver URL: one dead receiver trips it
-# and every other tenant's deliveries start skipping (plus failures
-# accumulate across unrelated endpoints — the W3 reset only papers over
-# it). Scoped breakers isolate blast radius to the failing endpoint.
-# They now live in ``core/resilience/registry.py`` (get_webhook_breaker)
-# so the admin panel — which reads that registry — reports the breakers
-# production traffic actually rides.
-
-email_circuit = CircuitBreaker(
-    name="email",
-    failure_threshold=3,
-    recovery_timeout=120.0,  # Email servers may need longer recovery
-    success_threshold=1,
-)
-
-# Circuit breaker for ARQ/Redis queue operations (used by EventBus)
-arq_circuit = CircuitBreaker(
-    name="arq_queue",
-    failure_threshold=5,
-    recovery_timeout=30.0,  # Shorter timeout for Redis recovery
-    success_threshold=2,
-)
+if TYPE_CHECKING:
+    # Static-only re-exports: gives mypy the real objects for the lazy
+    # __getattr__ facade below. Never executed at runtime.
+    from src.app.core.resilience.breakers import arq_circuit as arq_circuit
+    from src.app.core.resilience.breakers import email_circuit as email_circuit
+    from src.app.core.resilience.breakers import (
+        reset_all_circuit_breakers as reset_all_circuit_breakers,
+    )
+    from src.app.core.resilience.breakers import webhook_circuit as webhook_circuit
 
 
-def _register_default_breakers() -> None:
-    """Register default circuit breakers.
+def __getattr__(name: str) -> Any:
+    """Resolve the named breakers from their owning module.
 
-    This is called at module load time to ensure critical breakers exist.
+    Lazy so ``core.utils.circuit_breaker`` never imports the registry at module
+    level (see the note above); identity is preserved, so
+    ``get_webhook_breaker(None) is webhook_circuit`` still holds.
     """
-    # Import inside function to avoid circular imports
-    # from src.app.core.resilience.registry import ServiceType, get_registry
+    if name in _LAZY_BREAKERS:
+        from src.app.core.resilience import breakers
 
-    # We cannot import from registry due to circular imports
-    # The registry module imports CircuitBreaker from this module
-    # So we should rely on explicit registration in resilience/__init__.py or app startup
-    pass
+        return getattr(breakers, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-# Auto-register defaults on import
-# _register_default_breakers()
-
-
-def reset_all_circuit_breakers() -> None:
-    """Reset all module-level circuit breakers for test isolation.
-
-    This function resets both the state and the asyncio.Lock for each
-    module-level circuit breaker. Call this in test fixtures to prevent
-    'Lock bound to different event loop' errors during coverage runs.
-    """
-    from src.app.core.resilience.db_circuit_breaker import db_circuit
-
-    for breaker in (webhook_circuit, email_circuit, arq_circuit, db_circuit):
-        breaker.reset()
-        breaker.reset_lock()
-    # P2-B: scoped webhook breakers (registry-owned) are test-isolation
-    # state too. Import lazily: registry imports this module at top level.
-    from src.app.core.resilience.registry import _scoped_webhook_breakers
-
-    for breaker in _scoped_webhook_breakers.values():
-        breaker.reset()
-        breaker.reset_lock()
-    _scoped_webhook_breakers.clear()
+# ``reset_all_circuit_breakers`` moved with them: it has to know every named
+# breaker, so it belongs next to the named breakers. It is re-exported lazily
+# above for its existing import sites (tests/conftest.py).

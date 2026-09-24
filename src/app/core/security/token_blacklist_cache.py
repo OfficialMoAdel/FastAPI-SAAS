@@ -34,7 +34,7 @@ from src.app.shared.exceptions import ServiceUnavailableError
 # instead of rolling its own state like the legacy TokenCacheCircuitBreaker.
 # success_threshold=1 preserves the legacy "first success closes the circuit"
 # behavior; failure_threshold=5 / recovery_timeout=30 match the old defaults.
-_circuit_breaker = create_circuit_breaker(
+token_cache_circuit = create_circuit_breaker(
     name="token_cache_circuit",
     failure_threshold=5,
     recovery_timeout=30.0,
@@ -59,7 +59,7 @@ def _get_available_redis_client_for_blacklist() -> tuple[Redis | None, bool]:
         If Redis is unavailable, returns (None, False) for fail-open behavior.
     """
     fail_closed = settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed"
-    if not _circuit_breaker.is_closed:
+    if not token_cache_circuit.is_closed:
         # A1: the breaker's job is to stop hammering a failing Redis — NOT to
         # downgrade the configured failure mode. Under fail_closed, report
         # unknown-as-blacklisted so callers (deps DB fallback, verify_token)
@@ -188,11 +188,11 @@ async def is_token_blacklisted(token: str, jti: str | None = None) -> bool | Non
                 str(settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL),
             ],
         )
-        await _circuit_breaker.record_success()
+        await token_cache_circuit.record_success()
         return bool(int(result))
 
     except Exception as e:
-        await _circuit_breaker.record_failure(e)
+        await token_cache_circuit.record_failure(e)
         logger.warning("Redis blacklist check failed", error=e)
         # SECURITY FIX: Fail closed if configured
         if settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed":
