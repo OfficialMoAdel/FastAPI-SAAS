@@ -9,7 +9,7 @@ from typing import Any
 
 from cachetools import TTLCache
 
-from src.app.core.cache.invalidation_channel import InvalidationChannel
+from src.app.core.cache.l1 import IntKeyCodec, L1Cache
 from src.app.core.config import settings
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
@@ -26,41 +26,22 @@ _tier_policy_l1: TTLCache[int, list[dict[str, Any]] | None] = TTLCache(maxsize=2
 # policy list it was compiled from.
 _tier_policy_path_map: TTLCache[int, dict[str, tuple[int | None, int | None]]] = TTLCache(maxsize=256, ttl=300)
 
-# INFO-R11 FIX: cross-worker L1 invalidation. Tier policy updates publish on
-# this channel so every process drops its in-memory entry immediately instead
-# of serving stale policies for up to 300s.
+# INFO-R11 FIX: cross-worker L1 invalidation. Tier policy updates publish on this
+# channel so every process drops its in-memory entry immediately instead of
+# serving stale policies for up to 300s.
 _POLICY_INVALIDATION_CHANNEL = "rate_limit_policy:invalidate"
 
-
-def _on_policy_invalidation(data: str) -> None:
-    if data == "*":
-        _tier_policy_l1.clear()
-        _tier_policy_path_map.clear()
-    elif data and str(data).isdigit():
-        tier_id = int(data)
-        _tier_policy_l1.pop(tier_id, None)
-        _tier_policy_path_map.pop(tier_id, None)
-
-
-_policy_invalidation_channel = InvalidationChannel(
+# The seam owns the grammar. IntKeyCodec is the fail-OPEN codec: a payload that
+# is not a digit is IGNORED rather than broadcast, so a malformed message cannot
+# flush the whole fleet's policy cache. Both layers are passed together so the
+# compiled path map can never outlive the policy list it was built from.
+_policy_l1_seam = L1Cache(
+    name="rate_limit_policy_l1",
     channel=_POLICY_INVALIDATION_CHANNEL,
-    on_message=_on_policy_invalidation,
+    codec=IntKeyCodec(),
+    caches=[_tier_policy_l1, _tier_policy_path_map],
     logger_name="rate_limit_policy_l1",
 )
-
-# I11: self-register with the central L1 registry (single lifecycle owner).
-from src.app.core.cache.l1_registry import register_l1_channel  # noqa: E402
-
-register_l1_channel("rate_limit_policy_l1", _policy_invalidation_channel)
-
-start_policy_invalidation_listener = _policy_invalidation_channel.start
-_start_policy_invalidation_listener = _policy_invalidation_channel.start
-stop_policy_invalidation_listener = _policy_invalidation_channel.stop
-
-
-async def _publish_policy_invalidation(tier_id: int) -> None:
-    await _policy_invalidation_channel.publish(str(tier_id))
-
 
 # Redis key patterns
 POLICY_KEY_PREFIX = "rate_limit:policy:tier:"

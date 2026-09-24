@@ -609,7 +609,7 @@ async def _init_rate_limiting_and_security(redis_client: Any) -> None:
     # I11: the central registry owns L1 listener lifecycle. Importing the
     # owner modules triggers their self-registration; one start call replaces
     # the five hand-wired listeners that used to live here.
-    from src.app.core.cache.l1_registry import import_l1_owner_modules, start_all_l1_listeners
+    from src.app.core.cache.l1 import import_l1_owner_modules, start_all_l1_listeners
 
     import_l1_owner_modules()
     start_all_l1_listeners()
@@ -725,7 +725,7 @@ async def _teardown_security_listeners() -> None:
         logger.error("Failed to shutdown bcrypt thread pool", error=str(e))
 
     # I11: registry owns teardown — one call stops every registered listener.
-    from src.app.core.cache.l1_registry import stop_all_l1_listeners
+    from src.app.core.cache.l1 import stop_all_l1_listeners
 
     await stop_all_l1_listeners()
     # SSO HTTP client teardown is single-owned by lifespan_factory's finally

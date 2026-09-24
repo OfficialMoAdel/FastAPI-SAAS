@@ -16,7 +16,7 @@ from typing import Any
 
 from cachetools import TTLCache
 
-from src.app.core.cache.invalidation_channel import InvalidationChannel
+from src.app.core.cache.l1 import L1Cache, PrefixedKeyCodec
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
@@ -41,43 +41,38 @@ BAN_COUNT_KEY_PREFIX = "security:ban_count:{ip}"
 # acceptable for a rate-limiting defense (not a primary security boundary).
 _BAN_NEGATIVE_TTL = 5  # P1-6: was already 5; now also fenced by pub/sub invalidation channel
 _ban_negative_cache: TTLCache[str, bool] = TTLCache(maxsize=10000, ttl=_BAN_NEGATIVE_TTL)
-# P1-6: cross-worker L1 invalidation channel. ban_ip/unban_ip publish here
-# so every web process drops its in-process TTLCache entry immediately
-# instead of serving stale "not banned" for up to _BAN_NEGATIVE_TTL (5s).
-# Mirrors the tenant L1 pattern at middleware/tenant.py:45-72.
+# P1-6: cross-worker L1 invalidation. ban_ip/unban_ip publish here so every web
+# process drops its in-process TTLCache entry immediately instead of serving
+# stale "not banned" for up to _BAN_NEGATIVE_TTL (5s).
 _BAN_L1_INVALIDATION_CHANNEL = "ban:l1_invalidate"
+_BAN_KEY_PREFIX = "ban:"
+
+
+def _ban_cache_key(client_ip: str) -> str:
+    return f"{_BAN_KEY_PREFIX}{client_ip}"
+
+
+# The seam owns the grammar. This is the one owner whose wire payload is NOT the
+# cache key: the channel carries a bare IP while the cache is keyed "ban:{ip}",
+# so the transform lives in the codec instead of at each publish site.
+_ban_l1_seam = L1Cache(
+    name="ban_l1",
+    channel=_BAN_L1_INVALIDATION_CHANNEL,
+    codec=PrefixedKeyCodec(prefix=_BAN_KEY_PREFIX),
+    caches=[_ban_negative_cache],
+    logger_name="ban_l1",
+)
 
 
 def invalidate_ban_negative_cache(client_ip: str | None = None) -> None:
     """Drop one (or all) entries from this process's ban negative cache."""
     if client_ip is None or client_ip == "*":
-        _ban_negative_cache.clear()
+        _ban_l1_seam.clear()
     else:
-        _ban_negative_cache.pop(_ban_cache_key(client_ip), None)
+        _ban_l1_seam.drop(_ban_cache_key(client_ip))
 
 
-_ban_invalidation_channel = InvalidationChannel(
-    channel=_BAN_L1_INVALIDATION_CHANNEL,
-    on_message=lambda ip: invalidate_ban_negative_cache(ip if ip != "*" else None),
-    logger_name="ban_l1",
-)
-
-# I11: self-register with the central L1 registry (single lifecycle owner).
-from src.app.core.cache.l1_registry import register_l1_channel  # noqa: E402
-
-register_l1_channel("ban_l1", _ban_invalidation_channel)
-
-_publish_ban_l1_invalidation = _ban_invalidation_channel.publish
-_start_ban_l1_invalidation_listener = _ban_invalidation_channel.start
-
-
-async def stop_ban_l1_invalidation_listener() -> None:
-    """Cancel the background subscriber (idempotent, awaitable)."""
-    await _ban_invalidation_channel.stop()
-
-
-def _ban_cache_key(client_ip: str) -> str:
-    return f"ban:{client_ip}"
+_publish_ban_l1_invalidation = _ban_l1_seam.publish
 
 
 # TTL for violations counter - configurable via settings

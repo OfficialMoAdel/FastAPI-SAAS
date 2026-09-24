@@ -172,9 +172,11 @@ async def test_policy_invalidation_clears_path_map(mock_redis) -> None:
     await get_tier_policy_limits(1, "/api/v1/posts")
     assert 1 in _tier_policy_path_map
 
-    # Simulate the pub/sub invalidation handler for a single tier.
-    from src.app.core.security.rate_limit_cache import _on_policy_invalidation
+    # Simulate the pub/sub invalidation handler for a single tier. The handler
+    # is now the shared L1 seam's `handle` (src/app/core/cache/l1.py), which
+    # drops both layers of the key-space in lockstep.
+    from src.app.core.security.rate_limit_cache import _policy_l1_seam
 
-    _on_policy_invalidation("1")
+    _policy_l1_seam.handle("1")
     assert 1 not in _tier_policy_path_map
     assert 1 not in _tier_policy_l1

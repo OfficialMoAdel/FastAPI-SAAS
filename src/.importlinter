@@ -56,7 +56,7 @@ ignore_imports =
     # Candidate 3, pass 5 retired the core.errors -> modules.user_preferences
     # .service edge (PreferenceStorageError now declares its own mapping), so
     # its entry is gone too — core.errors imports NO feature module at all.
-    src.app.core.cache.l1_registry -> src.app.modules.users.cache
+    src.app.core.cache.l1 -> src.app.modules.users.cache
     src.app.core.guard.ip_rules -> src.app.modules.security.service
     # Not itself a modules edge: core.setup -> admin.initialize is the first
     # hop of the chain core.setup -> admin.initialize -> admin.views ->

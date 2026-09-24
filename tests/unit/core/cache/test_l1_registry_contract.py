@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.app.core.cache import l1_registry
-from src.app.core.cache.l1_registry import (
+from src.app.core.cache import l1
+from src.app.core.cache.l1 import (
     import_l1_owner_modules,
     registered_l1_channels,
     start_all_l1_listeners,
@@ -93,4 +93,4 @@ class TestL1RegistryContract:
             # Channels own their own listener handles; stop via the registry.
             import asyncio
 
-            asyncio.run(l1_registry.stop_all_l1_listeners())
+            asyncio.run(l1.stop_all_l1_listeners())

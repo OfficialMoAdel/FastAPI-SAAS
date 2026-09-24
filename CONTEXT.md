@@ -149,6 +149,37 @@ persistence grilling loop, 2026-09-22.)
   which is what finally cleared the last `core.errors -> modules.*` edge from
   the H-5 import contract.
 
+- **L1 invalidation seam** — the process-local cache Seam: `L1Cache(name,
+  channel, codec, caches=[...])` in `src/app/core/cache/l1.py` owns the whole
+  invalidation half of a per-process `TTLCache` key-space. Five sit behind it:
+  `tenant_l1` (60s, plus its parsed-object memo), `ban_l1` (5s),
+  `rate_limit_policy_l1` (300s, plus its compiled path map), `bitmask_l1` (30s)
+  and `auth_info_l1` (8s). It owns the three things each owner used to re-derive
+  by hand: the **broadcast token** (`"*"`, and `""` for the two owners that treat
+  empty as broadcast), the **drop-local-then-publish ordering** (pub/sub does not
+  echo to the publisher, so publishing first leaves this process serving the
+  entry it just invalidated), and the **companion-lockstep rule** — passing every
+  layer in `caches` makes "a parsed entry can never outlive the dict it was built
+  from" structural instead of a comment.
+  Only the *key grammar* varies, and it is a declaration: `RawKeyCodec` (the
+  payload IS the cache key), `PrefixedKeyCodec` (the payload omits a prefix — the
+  ban cache is keyed `ban:{ip}` while its channel carries a bare IP),
+  `IntKeyCodec` (fail-**open**: a malformed tier id becomes `IGNORE`, so it
+  cannot flush the fleet's policy cache) and `PairKeyCodec` (fail-**safe**: an
+  unparseable bitmask payload broadcasts, so it cannot leave a revoked permission
+  cached). Those two opposite policies are deliberate and pinned by test.
+  It also owns the **registry**: `L1Cache.__init__` self-registers, so
+  `import_l1_owner_modules()` + `start_all_l1_listeners()` are the single
+  lifecycle entry point. The five-line import list inside
+  `import_l1_owner_modules` is the one remaining enumeration and stays explicit —
+  Python has no reliable auto-discovery, and scanning would reintroduce the silent
+  publish-into-the-void failure the registry exists to prevent.
+  What it does NOT own: TTLs, `maxsize` values, the eventual-consistency bound
+  (ADR-0004 keeps those by decision), or the read/write path — it *wraps* the
+  existing `TTLCache` objects, so `get`/`put` stay direct with no hot-path
+  indirection.
+  Seam: `L1Cache` in `src/app/core/cache/l1.py`.
+
 - **Transfer/Admin split** — the storage Seam: `StorageService` owns file
   transfer (upload/download/delete/quota/metrics) and consumes a narrow
   `ResolvedStorage` policy object (provider + provider_name + size/type/count/

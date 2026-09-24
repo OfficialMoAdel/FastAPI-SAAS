@@ -27,7 +27,7 @@ from uuid import UUID
 
 from cachetools import TTLCache
 
-from src.app.core.cache.invalidation_channel import InvalidationChannel
+from src.app.core.cache.l1 import L1Cache, RawKeyCodec
 from src.app.core.redis_provider import get_redis
 from src.app.core.tenancy.context import TenantContext
 
@@ -65,31 +65,34 @@ _TENANT_LOCKS: dict[str, dict] = {}
 _L1_INVALIDATION_CHANNEL = "tenant:l1_invalidate"
 
 
-def invalidate_tenant_l1(slug: str | None = None) -> None:
-    """Drop one (or all) entries from this process's L1 tenant cache."""
-    if slug is None or slug == "*":
-        _L1_TENANT_CACHE.clear()
-        _L1_TENANT_PARSED.clear()
-    else:
-        _L1_TENANT_CACHE.pop(slug, None)
-        _L1_TENANT_PARSED.pop(slug, None)
-
-
-_tenant_invalidation_channel = InvalidationChannel(
+# The seam owns the grammar (a "*" payload means "drop everything") and the
+# drop-then-publish ordering. Both layers are passed together so the parsed memo
+# can never outlive the dict entry it was built from — that invariant used to
+# live in a comment on _L1_TENANT_PARSED and in the hands of each reviewer.
+_tenant_l1_seam = L1Cache(
+    name="tenant_l1",
     channel=_L1_INVALIDATION_CHANNEL,
-    on_message=lambda msg: invalidate_tenant_l1(None if msg == "*" else msg),
+    codec=RawKeyCodec(),
+    caches=[_L1_TENANT_CACHE, _L1_TENANT_PARSED],
     logger_name="tenant_l1",
 )
 
-# I11: self-register with the central L1 registry so the lifespan can
-# start/stop every listener without importing owner modules one-by-one.
-from src.app.core.cache.l1_registry import register_l1_channel  # noqa: E402
 
-register_l1_channel("tenant_l1", _tenant_invalidation_channel)
+def invalidate_tenant_l1(slug: str | None = None) -> None:
+    """Drop one (or all) entries from this process's L1 tenant cache."""
+    if slug is None or slug == "*":
+        _tenant_l1_seam.clear()
+    else:
+        _tenant_l1_seam.drop(slug)
 
-_publish_tenant_l1_invalidation = _tenant_invalidation_channel.publish
-_start_l1_invalidation_listener = _tenant_invalidation_channel.start
-stop_l1_invalidation_listener = _tenant_invalidation_channel.stop
+
+# middleware/tenant.py re-exports these three names for existing test/script
+# importers, so they stay alive during migration (swept later if nothing uses
+# them). New code should reach for the seam.
+_tenant_invalidation_channel = _tenant_l1_seam.channel
+_publish_tenant_l1_invalidation = _tenant_l1_seam.publish
+_start_l1_invalidation_listener = _tenant_l1_seam.start
+stop_l1_invalidation_listener = _tenant_l1_seam.stop
 
 
 @asynccontextmanager

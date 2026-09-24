@@ -21,7 +21,7 @@ from fastapi import Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.cache.invalidation_channel import InvalidationChannel
+from src.app.core.cache.l1 import L1Cache, PairKeyCodec
 from src.app.core.db.scoped import execute_scoped
 from src.app.core.logger import get_logger
 from src.app.core.rbac.bitmask import PermissionBitmask
@@ -56,34 +56,21 @@ def _bitmask_l1_key(user_id: int, tenant_id: int | UUID) -> tuple[int, str]:
     return (int(user_id), str(tenant_id))
 
 
-def _on_bitmask_l1_invalidation(data: str) -> None:
-    if data == "*" or not data:
-        _bitmask_l1.clear()
-        return
-    user_part, _, tenant_part = data.partition(":")
-    try:
-        _bitmask_l1.pop((int(user_part), tenant_part), None)
-    except ValueError:
-        _bitmask_l1.clear()
-
-
-_bitmask_l1_invalidation_channel = InvalidationChannel(
+# The seam owns the grammar. PairKeyCodec is the fail-SAFE codec: an unparseable
+# payload broadcasts, because it must not leave a revoked permission cached.
+# "" broadcasts too, matching the original handler. The codec also preserves a
+# subtle asymmetry — a bare digit like "5" parses to the key (5, "") and matches
+# nothing, rather than clearing the cache.
+_bitmask_l1_seam = L1Cache(
+    name="bitmask_l1",
     channel=_BITMASK_L1_INVALIDATION_CHANNEL,
-    on_message=_on_bitmask_l1_invalidation,
+    codec=PairKeyCodec(empty_is_broadcast=True),
+    caches=[_bitmask_l1],
     logger_name="bitmask_l1",
 )
 
-# I11: self-register with the central L1 registry (single lifecycle owner).
-from src.app.core.cache.l1_registry import register_l1_channel  # noqa: E402
-
-register_l1_channel("bitmask_l1", _bitmask_l1_invalidation_channel)
-
-start_bitmask_l1_invalidation_listener = _bitmask_l1_invalidation_channel.start
-stop_bitmask_l1_invalidation_listener = _bitmask_l1_invalidation_channel.stop
-
-
 async def _publish_bitmask_l1_invalidation(user_id: int, tenant_id: int | UUID) -> None:
-    await _bitmask_l1_invalidation_channel.publish(f"{int(user_id)}:{tenant_id}")
+    await _bitmask_l1_seam.publish(f"{int(user_id)}:{tenant_id}")
 
 
 async def get_user_permissions(

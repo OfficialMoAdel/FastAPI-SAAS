@@ -18,7 +18,7 @@ from uuid import UUID
 from cachetools import TTLCache
 from structlog import get_logger
 
-from src.app.core.cache.invalidation_channel import InvalidationChannel
+from src.app.core.cache.l1 import L1Cache, RawKeyCodec
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.redis_provider import get_redis
 from src.app.core.tenancy.context import get_current_tenant
@@ -54,31 +54,21 @@ _AUTH_INFO_L1_MAXSIZE = 2048
 _AUTH_INFO_L1_INVALIDATION_CHANNEL = "user_auth:l1_invalidate"
 _auth_info_l1: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=_AUTH_INFO_L1_MAXSIZE, ttl=_AUTH_INFO_L1_TTL)
 
-
-def _on_auth_info_l1_invalidation(data: str) -> None:
-    if data == "*" or not data:
-        _auth_info_l1.clear()
-    else:
-        _auth_info_l1.pop(data, None)
-
-
-_auth_info_l1_invalidation_channel = InvalidationChannel(
+# I11: constructing the seam self-registers with the central L1 registry, so the
+# lifespan still starts/stops every listener without importing owner modules
+# one-by-one. The grammar that used to live in `_on_auth_info_l1_invalidation` —
+# "" and "*" both mean "drop everything", anything else is a cache key — is now
+# declared once in src/app/core/cache/l1.py.
+_auth_info_l1_seam = L1Cache(
+    name="auth_info_l1",
     channel=_AUTH_INFO_L1_INVALIDATION_CHANNEL,
-    on_message=_on_auth_info_l1_invalidation,
+    codec=RawKeyCodec(empty_is_broadcast=True),
+    caches=[_auth_info_l1],
     logger_name="user_auth_l1",
 )
 
-# I11: self-register with the central L1 registry (single lifecycle owner).
-from src.app.core.cache.l1_registry import register_l1_channel  # noqa: E402
-
-register_l1_channel("auth_info_l1", _auth_info_l1_invalidation_channel)
-
-start_auth_info_l1_invalidation_listener = _auth_info_l1_invalidation_channel.start
-stop_auth_info_l1_invalidation_listener = _auth_info_l1_invalidation_channel.stop
-
-
 async def _publish_auth_info_l1_invalidation(cache_key: str) -> None:
-    await _auth_info_l1_invalidation_channel.publish(cache_key)
+    await _auth_info_l1_seam.publish(cache_key)
 
 
 def _user_cache_key(user_id: UUID | str) -> str:
@@ -305,8 +295,8 @@ class UserCacheInvalidator:
             # just deleted from Redis (pub/sub is cross-process only).
             for key in keys:
                 if key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:"):
-                    _auth_info_l1.pop(key, None)
-                    await _publish_auth_info_l1_invalidation(key)
+                    # Drop locally, then fan out — the seam owns that ordering.
+                    await _auth_info_l1_seam.invalidate(key)
             for attempt in (1, 2):
                 try:
                     if keys:
@@ -436,8 +426,7 @@ class UserCacheInvalidator:
         # Synchronous local drop + cross-worker publish for auth-info keys only.
         for key in delete_keys:
             if key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:"):
-                _auth_info_l1.pop(key, None)
-                await _publish_auth_info_l1_invalidation(key)
+                await _auth_info_l1_seam.invalidate(key)
         if not delete_keys and not token_sets:
             return
         try:
@@ -464,6 +453,4 @@ __all__ = [
     "_user_cache_key",
     "_user_email_cache_key",
     "_user_username_cache_key",
-    "start_auth_info_l1_invalidation_listener",
-    "stop_auth_info_l1_invalidation_listener",
 ]
