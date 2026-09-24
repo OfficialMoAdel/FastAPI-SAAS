@@ -17,7 +17,8 @@ from src.app.modules.billing.schemas import (
 )
 from src.app.modules.billing.subscription_service import (
     SubscriptionPlanService,
-    retrieve_subscription_for_tenant,
+    fetch_stripe_subscription,
+    resolve_tenant_stripe_api_key,
 )
 from src.app.modules.users import get_user_tenant_id
 
@@ -64,16 +65,16 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
 
     stripe_subscription_id = session.get("subscription")
 
-    # Retrieve subscription details from Stripe via the fused gateway seam
-    # (resolve → build → retrieve in one call; the resolved key never
-    # surfaces in handler code). Key resolution needs a DB session; the
-    # seam runs in a short bypass context (the webhook path has no tenant
-    # middleware context) and the Stripe HTTP call itself stays outside
-    # any DB session.
+    # Retrieve subscription details from Stripe via the gateway seam.
+    # Key resolution needs a DB session but the Stripe HTTP call must NOT
+    # hold one: resolve inside a short bypass context (the webhook path has
+    # no tenant middleware context), then fetch outside it so a slow Stripe
+    # never pins a pooled DB connection.
     if stripe_subscription_id:
         try:
-            async with _pkg.job_bypass_context("Checkout tenant Stripe subscription retrieve") as gw_db:
-                stripe_sub = await retrieve_subscription_for_tenant(gw_db, tenant_id, stripe_subscription_id)
+            async with _pkg.job_bypass_context("Checkout tenant Stripe key resolve") as gw_db:
+                api_key = await resolve_tenant_stripe_api_key(gw_db, tenant_id)
+            stripe_sub = await fetch_stripe_subscription(api_key, stripe_subscription_id)
             # P1-4 FIX: current_period_* moved from Subscription to
             # SubscriptionItem in Stripe API 2025-03-31.basil (the pinned SDK
             # sends 2025-12-15.clover, where the top-level fields are absent).

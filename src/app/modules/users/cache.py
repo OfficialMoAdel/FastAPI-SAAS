@@ -67,10 +67,6 @@ _auth_info_l1_seam = L1Cache(
     logger_name="user_auth_l1",
 )
 
-async def _publish_auth_info_l1_invalidation(cache_key: str) -> None:
-    await _auth_info_l1_seam.publish(cache_key)
-
-
 def _user_cache_key(user_id: UUID | str) -> str:
     """Generate cache key for user profile.
 

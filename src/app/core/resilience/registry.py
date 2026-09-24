@@ -5,6 +5,7 @@ enabling centralized configuration, monitoring, and control.
 """
 
 import asyncio
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -410,6 +411,10 @@ def _register_defaults(registry: CircuitBreakerRegistry) -> None:
     from src.app.core.resilience.breakers import default_breakers
 
     for row in default_breakers():
+        # Replayed rows are module-level singletons: a previous test (or prior
+        # uptime) may have left failure counts / OPEN state behind. Reset on
+        # replay so reset_registry() restores defaults, not just registrations.
+        row.breaker.reset()
         if registry.get(row.name) is None:
             registry.register(
                 name=row.name,
@@ -518,6 +523,10 @@ def auto_register(
 # limit; the oldest scope is evicted past the cap.
 _WEBHOOK_BREAKER_MAX_SCOPES = 1024
 _scoped_webhook_breakers: dict[str, CircuitBreaker] = {}
+# Sync check-then-act guard: first-use creation runs no awaits (asyncio-atomic),
+# but worker threads share this dict — one lock keeps construction+registration
+# atomic so two threads cannot build-and-register competing breakers per scope.
+_scoped_webhook_lock = threading.Lock()
 
 
 def get_webhook_breaker(scope: str | None = None) -> CircuitBreaker:
@@ -538,23 +547,24 @@ def get_webhook_breaker(scope: str | None = None) -> CircuitBreaker:
         return webhook_circuit
 
     registry = get_registry()
-    breaker = _scoped_webhook_breakers.get(scope)
-    if breaker is None:
-        if len(_scoped_webhook_breakers) >= _WEBHOOK_BREAKER_MAX_SCOPES:
-            oldest_scope = next(iter(_scoped_webhook_breakers))
-            del _scoped_webhook_breakers[oldest_scope]
-            registry.unregister(f"webhook:{oldest_scope}")
-        breaker = CircuitBreaker(
-            name=f"webhook:{scope}",
-            failure_threshold=5,
-            recovery_timeout=60.0,
-            success_threshold=2,
-        )
-        _scoped_webhook_breakers[scope] = breaker
-        registry.register(
-            f"webhook:{scope}",
-            breaker,
-            description="Per-endpoint webhook delivery breaker",
-            service_type=ServiceType.WEBHOOK,
-        )
-    return breaker
+    with _scoped_webhook_lock:
+        breaker = _scoped_webhook_breakers.get(scope)
+        if breaker is None:
+            if len(_scoped_webhook_breakers) >= _WEBHOOK_BREAKER_MAX_SCOPES:
+                oldest_scope = next(iter(_scoped_webhook_breakers))
+                del _scoped_webhook_breakers[oldest_scope]
+                registry.unregister(f"webhook:{oldest_scope}")
+            breaker = CircuitBreaker(
+                name=f"webhook:{scope}",
+                failure_threshold=5,
+                recovery_timeout=60.0,
+                success_threshold=2,
+            )
+            _scoped_webhook_breakers[scope] = breaker
+            registry.register(
+                f"webhook:{scope}",
+                breaker,
+                description="Per-endpoint webhook delivery breaker",
+                service_type=ServiceType.WEBHOOK,
+            )
+        return breaker

@@ -75,9 +75,11 @@ GRAMMAR_CASES = [
     ("bitmask/empty-broadcasts", PairKeyCodec(empty_is_broadcast=True), ((1, "t"),), "", ()),
     ("bitmask/malformed-clears-fail-safe", PairKeyCodec(empty_is_broadcast=True), ((1, "t"),), "abc:t", ()),
     ("bitmask/key", PairKeyCodec(empty_is_broadcast=True), ((1, "t"), (2, "t")), "1:t", ((2, "t"),)),
-    # A bare digit parses to (5, "") and matches nothing — it does NOT clear.
-    # Asymmetric with the case above, preserved from the original handler.
-    ("bitmask/bare-digit-does-not-clear", PairKeyCodec(empty_is_broadcast=True), ((1, "t"),), "5", ((1, "t"),)),
+    # A bare digit has no separator, so it is malformed and broadcasts
+    # fail-safe (PairKeyCodec docstring): partition() never fails, so the
+    # separator check — not ValueError — is what closes the revoked-bitmask
+    # hole. Asymmetric with IntKeyCodec (fail-open) by design.
+    ("bitmask/bare-digit-clears-fail-safe", PairKeyCodec(empty_is_broadcast=True), ((1, "t"),), "5", ()),
     # auth_info_l1 — modules/users/cache.py. "" broadcasts; payload IS the key.
     ("auth/broadcast", RawKeyCodec(empty_is_broadcast=True), ("k1", "k2"), "*", ()),
     ("auth/empty-broadcasts", RawKeyCodec(empty_is_broadcast=True), ("k1",), "", ()),

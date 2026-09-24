@@ -159,9 +159,9 @@ class PairKeyCodec:
     unparseable bitmask payload must not leave a revoked permission cached, so
     it clears everything.
 
-    Only a genuine ``ValueError`` broadcasts. A payload such as ``"5"`` parses
-    to the key ``(5, "")``, which simply matches nothing — that asymmetry is
-    preserved from the original handler, not an oversight.
+    A payload without the separator (e.g. ``"5"``) is malformed and
+    broadcasts — ``partition`` never fails, so separator presence is checked
+    explicitly rather than relying on ``ValueError`` alone.
     """
 
     separator: str = ":"
@@ -172,6 +172,8 @@ class PairKeyCodec:
         return f"{first}{self.separator}{second}"
 
     def parse(self, payload: str) -> Hashable | _Sentinel:
+        if self.separator not in payload:
+            return BROADCAST
         first, _, second = payload.partition(self.separator)
         try:
             return (int(first), second)
@@ -242,11 +244,20 @@ class L1Cache:
         Pub/sub does not echo to the publisher, so publishing first would leave
         this process serving the very entry it just invalidated. ``None`` means
         "everything", locally and on the wire.
+
+        The local drop goes through the codec round-trip
+        (``parse(encode(key))``) so a caller-held key outside the wire domain
+        (e.g. a bare IP for the prefixed ban cache) drops the same entry the
+        remotes drop — local and remote always agree.
         """
         if key is None:
             self.clear()
         else:
-            self.drop(key)
+            normalized = self._codec.parse(self._codec.encode(key))
+            if normalized is BROADCAST:
+                self.clear()
+            elif normalized is not IGNORE:
+                self.drop(normalized)
         await self.publish(None if key is None else self._codec.encode(key))
 
     async def publish(self, payload: str | None = None) -> None:

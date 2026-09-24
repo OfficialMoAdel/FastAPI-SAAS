@@ -48,20 +48,28 @@ class UserDirectory:
         self.db = db
 
     async def auth_info(
-        self, *, username: str | None = None, email: str | None = None
+        self, *, username: str | None = None, email: str | None = None, tenant_id: Any = None
     ) -> UserAuthInfo | None:
-        """Tier-eager auth payload, cached (moved from ``UserService.get_user_auth_info``)."""
+        """Tier-eager auth payload, cached (moved from ``UserService.get_user_auth_info``).
+
+        ``tenant_id`` scopes both the cache key and the DB lookup, matching
+        ``active`` / ``member``. ``None`` falls back to the ambient tenant
+        context (pre-auth callers); callers that already hold a tenant must
+        pass it explicitly so the key never collapses to ``global:``.
+        """
         identifier = email if email else username
         if not identifier:
             return None
 
-        cache_key = _user_auth_cache_key(identifier)
+        cache_key = _user_auth_cache_key(identifier, tenant_id)
 
         cached = await UserCacheInvalidator.get_cached_user(cache_key)
         if cached:
             return UserAuthInfo.model_validate(cached)
 
-        user_with_tier = await crud_users.get_user_with_tier_eager(db=self.db, username=username, email=email)
+        user_with_tier = await crud_users.get_user_with_tier_eager(
+            db=self.db, username=username, email=email, tenant_id=tenant_id
+        )
         if not user_with_tier:
             return None
 

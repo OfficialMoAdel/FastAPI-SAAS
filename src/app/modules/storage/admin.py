@@ -7,6 +7,7 @@ Transfer lives in :mod:`src.app.modules.storage.service`.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -14,6 +15,7 @@ from uuid import UUID
 
 from cachetools import TTLCache
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
@@ -26,6 +28,7 @@ from src.app.modules.storage.interfaces import StorageProvider
 from src.app.modules.storage.models import StorageProviderType, StorageSettings
 from src.app.modules.storage.schemas import StorageProviderType as SchemaProviderType
 from src.app.modules.storage.schemas import StorageSettingsCreate, StorageSettingsRead, StorageSettingsUpdate
+from src.app.shared.exceptions import DuplicateError
 
 logger = get_logger(__name__)
 
@@ -39,6 +42,10 @@ logger = get_logger(__name__)
 _PROVIDER_CACHE: TTLCache[tuple[UUID, datetime | None], StorageProvider] = TTLCache(
     maxsize=512, ttl=600
 )
+
+# Bound for the credential-validation network probe (S3/Azure ``exists``).
+# Without it a hung endpoint pins an admin worker indefinitely.
+_CREDENTIAL_PROBE_TIMEOUT = 10.0
 
 @dataclass(frozen=True)
 class ResolvedStorage:
@@ -104,7 +111,17 @@ class StorageAdminService:
             storage_quota_bytes=data.storage_quota_bytes,
         )
         self.db.add(settings)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError as e:
+            # Create race: a concurrent request inserted first (the router
+            # pre-checks existence, but check-then-insert is not atomic).
+            await self.db.rollback()
+            raise DuplicateError(
+                "storage_settings",
+                str(tenant_id),
+                message="Storage settings already exist for this tenant. Use PATCH to update.",
+            ) from e
         await self.db.refresh(settings)
 
         logger.info("Storage settings created for tenant", tenant_id=str(tenant_id), provider=data.provider)
@@ -252,7 +269,14 @@ class StorageAdminService:
                         f"Local storage path is not writable: {credentials.get('base_path', '?')}"
                     )
             else:
-                await storage.exists("__connection_test__")
+                # Bound the network probe: without a timeout a hung S3/Azure
+                # endpoint pins an admin worker indefinitely. TimeoutError is
+                # an Exception subclass, so the handler below maps it to
+                # InvalidCredentialsError like any other probe failure.
+                await asyncio.wait_for(
+                    storage.exists("__connection_test__"),
+                    timeout=_CREDENTIAL_PROBE_TIMEOUT,
+                )
         except Exception as e:
             logger.error("Credential validation failed", provider=provider.value, error=str(e))
             raise InvalidCredentialsError(f"Failed to validate {provider.value} credentials: {e}") from e
