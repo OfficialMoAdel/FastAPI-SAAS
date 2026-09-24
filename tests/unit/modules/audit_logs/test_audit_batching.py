@@ -298,6 +298,7 @@ async def test_flush_quarantines_bad_records_and_restores_fifo(db_fails) -> None
 
     pipe.execute = AsyncMock(side_effect=execute)
     client.rpush = AsyncMock(side_effect=quarantine)
+    client.ltrim = AsyncMock()  # F15: quarantine restore trims the DLQ to BUFFER_MAXLEN
     client.llen = AsyncMock(return_value=1)
     db = MagicMock(spec=AsyncSession)
     if db_fails:

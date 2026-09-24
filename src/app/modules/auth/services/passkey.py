@@ -201,9 +201,15 @@ class PasskeyService:
         # Compute SHA256 hash of decrypted credential_id for O(log n) lookup
         credential_id_hash = hashlib.sha256(verification.credential_id).hexdigest()
 
-        # 4. Store credential in DB
+        # 4. Store credential in DB (tenant stamped from the registering
+        # user — fail closed: an unscoped credential would be invisible to
+        # every tenant RLS context, i.e. a self-inflicted lockout).
+        owner_tenant = get_user_attr(user, "tenant_id")
+        if owner_tenant is None:
+            raise ValidationError("Cannot register passkey: account has no tenant assignment.")
         cred_in = PasskeyCredentialCreate(
             user_id=user_id,
+            tenant_id=owner_tenant,
             credential_id=encrypted_cred_id,
             credential_id_hash=credential_id_hash,
             public_key=encrypted_public_key,

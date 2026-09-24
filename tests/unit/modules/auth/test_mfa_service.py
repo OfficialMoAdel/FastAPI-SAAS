@@ -38,7 +38,12 @@ def mfa_service():
 @pytest.fixture
 def mock_db():
     """Mock database session."""
-    return AsyncMock(spec=AsyncSession)
+    db = AsyncMock(spec=AsyncSession)
+    # H1: MFA ownership guards read .user_id off db.get() rows — default
+    # the mock row to the suite's canonical user so success-path tests
+    # model an owned row (mismatch is pinned by isolation tests).
+    db.get.return_value.user_id = 12345
+    return db
 
 
 @pytest.fixture
@@ -161,10 +166,15 @@ class TestEnableMFA:
                     )
                     # P1: enable now enforces the service-level lockout; mock
                     # it here (lockout itself is covered by dedicated tests).
+                    # H1: enable stamps the owner's tenant — mock the directory.
                     with (
                         patch.object(mfa_service, "_check_mfa_lockout", new_callable=AsyncMock),
                         patch("src.app.core.utils.cache.client") as mock_redis,
+                        patch("src.app.modules.users.UserDirectory") as mock_directory,
                     ):
+                        mock_directory.return_value.member = AsyncMock(
+                            return_value=MagicMock(tenant_id="12345678-1234-4234-8234-123456789abc")
+                        )
                         mock_redis.get = AsyncMock(return_value=b"JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
                         mock_redis.delete = AsyncMock()
                         result = await mfa_service.enable_mfa(

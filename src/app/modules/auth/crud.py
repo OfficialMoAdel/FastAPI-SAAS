@@ -300,6 +300,7 @@ async def create_magic_link(
     db: AsyncSession,
     *,
     user_id: int,
+    tenant_id: UUID,
     token: str,
     action: str,
     ip_address: str | None = None,
@@ -312,6 +313,7 @@ async def create_magic_link(
 
     magic_link = MagicLink(
         user_id=user_id,
+        tenant_id=tenant_id,
         token=hashed_token,
         action=action,
         expires_at=expires_at,

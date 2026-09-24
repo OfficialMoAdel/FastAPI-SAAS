@@ -55,7 +55,9 @@ class TestP1HighPriorityRegressions:
              patch("pyotp.TOTP.verify", return_value=True), \
              patch.object(service, "_encrypt_secret", return_value="enc_secret"), \
              patch.object(service, "_generate_backup_codes", return_value=["c1", "c2"]), \
-             patch.object(service, "_hash_backup_code", return_value="hashed_code"):
+             patch.object(service, "_hash_backup_code", return_value="hashed_code"), \
+             patch("src.app.modules.users.UserDirectory.member", new_callable=AsyncMock) as mock_member:
+            mock_member.return_value = MagicMock(tenant_id=uuid.uuid4())
             mock_redis = AsyncMock()
             mock_redis.get.return_value = b"JBSWY3DPEHPK3PXP"
             mock_get_redis.return_value = mock_redis

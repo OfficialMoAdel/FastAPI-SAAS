@@ -93,6 +93,10 @@ class BanInfo:
 
     is_banned: bool
     reason: str | None = None
+    # F38: None means "no expiry timestamp available" (non-positive TTL or
+    # missing ban data) — NOT "already expired". Consumers must treat None
+    # as still-banned (request_admission.py guards with `if expires_at:`);
+    # never invent `expires_at = now` at a read site.
     expires_at: float | None = None
     ban_count: int = 0
 
@@ -584,7 +588,13 @@ async def ban_ip(
         _ban_negative_cache.pop(_ban_cache_key(client_ip), None)
         # P1-6: cross-worker fan-out (best-effort — never fail the unban
         # on a publish error).
-        await _publish_ban_l1_invalidation(client_ip)
+        # F9: the Lua ban above already succeeded — a publish failure must
+        # not flip this to `return False` (callers read that as "not
+        # banned"). Guard the fan-out so success stays success.
+        try:
+            await _publish_ban_l1_invalidation(client_ip)
+        except Exception as fanout_exc:  # noqa: BLE001
+            logger.warning("ban_l1_fanout_failed", client_ip=client_ip, error=str(fanout_exc))
 
         # Log security event
         event = create_security_event(
@@ -634,7 +644,12 @@ async def unban_ip(client_ip: str) -> bool:
 
         # Evict the local in-process cache and broadcast invalidation to all workers
         _ban_negative_cache.pop(_ban_cache_key(client_ip), None)
-        await _publish_ban_l1_invalidation(client_ip)
+        # F9: the delete above already succeeded — a publish failure must not
+        # flip this to `return False`. Best-effort fan-out (see ban_ip).
+        try:
+            await _publish_ban_l1_invalidation(client_ip)
+        except Exception as fanout_exc:  # noqa: BLE001
+            logger.warning("unban_l1_fanout_failed", client_ip=client_ip, error=str(fanout_exc))
         if result > 0:
             logger.info("IP unbanned | ip=%s", client_ip)
 
@@ -724,7 +739,11 @@ async def get_all_banned_ips() -> list[dict]:
                     ips = []
                     for key in ban_keys:
                         key_str = key.decode() if isinstance(key, bytes) else key
-                        ip = key_str.replace("security:ban:", "")
+                        # F20: strip the prefix, not every occurrence — an
+                        # IPv6 address contains ":" but never the full
+                        # "security:ban:" substring, so replace() was only
+                        # latently wrong; removeprefix states the intent.
+                        ip = key_str.removeprefix("security:ban:")
                         ips.append(ip)
 
                     # Fetch all ban data concurrently
@@ -808,12 +827,19 @@ async def get_violation_stats(client_ip: str | None = None) -> dict:
         total_ips = 0
         total_violations = 0
         cursor = 0
+        # F19: SCAN may return duplicate keys across iterations — dedupe so
+        # the admin stats neither over-count IPs nor re-GET the same key.
+        # (Counts remain approximate by nature: keys can appear/vanish
+        # mid-scan. This is an observability endpoint, not a billing input.)
+        seen: set[str] = set()
 
         while True:
             cursor, keys = await redis_client.scan(cursor, match="security:violations:*", count=100)
-            total_ips += len(keys)
+            fresh = [k for k in keys if k not in seen]
+            seen.update(keys)
+            total_ips += len(fresh)
 
-            for key in keys:
+            for key in fresh:
                 count = await redis_client.get(key)
                 if count:
                     total_violations += int(count)

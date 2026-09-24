@@ -313,6 +313,7 @@ class PasskeyAuthenticationOptionsResponse(BaseModel):
 
 class PasskeyCredentialCreate(BaseCreate):
     user_id: int
+    tenant_id: UUID
     credential_id: bytes
     public_key: bytes
     device_type: str = "passkey"

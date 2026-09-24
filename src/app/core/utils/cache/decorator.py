@@ -19,6 +19,51 @@ from src.app.core.utils import cache as _state
 _CACHE_KEY_VERSION = "v2"
 
 
+# Argument names that must never be mistaken for a resource id when
+# inferring one (F21): pagination / sizing ints are not identities.
+_NON_ID_ARG_NAMES = frozenset({"page", "limit", "offset", "per_page", "page_size", "size"})
+
+
+def _resolve_user_id(kwargs: dict[str, Any]) -> Any:
+    """Resolve the authorized user id from handler kwargs (F23).
+
+    Prefers the explicit ``current_user`` kwarg; falls back to the
+    ``RequestContext`` (``ctx``) principal — endpoints taking
+    ``ctx: RequestContextDep`` have no ``current_user`` kwarg, and without
+    this fallback ``user_scoped=True`` silently degraded to tenant-shared
+    keys. Returns None when no principal is present.
+    """
+    cu = kwargs.get("current_user")
+    if isinstance(cu, dict):
+        user_id = cu.get("id")
+        if user_id is not None:
+            return user_id
+    elif cu is not None:
+        user_id = getattr(cu, "id", None)
+        if user_id is not None:
+            return user_id
+    ctx = kwargs.get("ctx")
+    if ctx is not None:
+        user_id = getattr(ctx, "user_id", None)
+        if user_id is not None:
+            return user_id
+    return None
+
+
+def _scoped_invalidation_pattern(pattern: str, tenant_id: str | None, user_id: Any) -> str:
+    """Scope a pattern-index entry exactly like the invalidation lookup (F2).
+
+    Register and invalidate MUST compute the identical index key, or the
+    O(1) lookup never fires. Mirrors the tenant/user namespacing of
+    ``_build_cache_key`` (including the ``public:`` namespace).
+    """
+    if user_id is not None:
+        pattern = f"user:{user_id}:{pattern}"
+    if tenant_id is None:
+        return f"public:{pattern}"
+    return _state.build_tenant_key(pattern, tenant_id)
+
+
 @functools.lru_cache(maxsize=256)
 def _write_adapter(model: type, *, is_list: bool) -> TypeAdapter:
     """Memoized validation adapter for the cache write path (P2 single pass).
@@ -53,6 +98,12 @@ def _infer_resource_id(kwargs: dict[str, Any], resource_id_type: type | tuple[ty
     """
     resource_id: int | str | None = None
     for arg_name, arg_value in kwargs.items():
+        # F21: bools are ints, and pagination ints are not identities —
+        # without these guards `page=2` could become the cache key.
+        if isinstance(arg_value, bool):
+            continue
+        if arg_name in _NON_ID_ARG_NAMES:
+            continue
         if isinstance(arg_value, resource_id_type):
             resource_id = arg_value
             break
@@ -134,8 +185,21 @@ def _format_extra_data(to_invalidate_extra: dict[str, str], kwargs: dict[str, An
     formatted_extra = {}
     for prefix, id_template in to_invalidate_extra.items():
         formatted_prefix = _format_prefix(prefix, kwargs)
-        id = _state._extract_data_inside_brackets(id_template)[0]
-        formatted_extra[formatted_prefix] = kwargs[id]
+        # F22: fail loudly at request time with the template + missing name
+        # instead of IndexError/KeyError deep in the invalidation path.
+        names = _state._extract_data_inside_brackets(id_template)
+        if not names:
+            raise ValueError(
+                f"to_invalidate_extra id template {id_template!r} must contain "
+                "a {kwarg} placeholder naming the id argument"
+            )
+        id_name = names[0]
+        if id_name not in kwargs:
+            raise ValueError(
+                f"to_invalidate_extra id {id_name!r} (from {id_template!r}) "
+                "is not an argument of the decorated handler"
+            )
+        formatted_extra[formatted_prefix] = kwargs[id_name]
 
     return formatted_extra
 
@@ -211,11 +275,9 @@ def _build_cache_key(
 
     user_id: Any = None
     if user_scoped:
-        cu = kwargs.get("current_user")
-        if isinstance(cu, dict):
-            user_id = cu.get("id")
-        elif cu is not None:
-            user_id = getattr(cu, "id", None)
+        # F23: fall back to the RequestContext principal — handlers taking
+        # `ctx` have no `current_user` kwarg.
+        user_id = _resolve_user_id(kwargs)
 
     formatted_key_prefix = _format_prefix(key_prefix, kwargs)
     # P-M1 key version: entries written before the fail-closed write path
@@ -482,11 +544,18 @@ def cache(  # noqa: C901
                     async with client.pipeline(transaction=False) as pipe:
                         pipe.setex(cache_key, expiration, serialized_data)
 
-                        # Pattern-based invalidation registration
+                        # Pattern-based invalidation registration (F2): index
+                        # under the tenant/user-scoped pattern — identical to
+                        # the lookup in the invalidation branch below — or the
+                        # O(1) lookup never fires under tenant context.
                         if invalidation_patterns:
+                            _reg_tenant = _state.get_current_tenant()
+                            _reg_tenant_id = str(_reg_tenant.tenant_id) if _reg_tenant is not None else None
+                            _reg_user_id = _resolve_user_id(kwargs) if user_scoped else None
                             formatted_patterns = [_format_prefix(p, kwargs) for p in invalidation_patterns]
                             for pattern in formatted_patterns:
-                                idx_key = _state._pattern_index_key(pattern)
+                                scoped = _scoped_invalidation_pattern(pattern, _reg_tenant_id, _reg_user_id)
+                                idx_key = _state._pattern_index_key(scoped)
                                 pipe.sadd(idx_key, cache_key)
                                 # P1-9: index outlives the data key (tenant-index
                                 # convention at the tenant branches below).
@@ -510,11 +579,6 @@ def cache(  # noqa: C901
                                 pipe.sadd(sharded_idx_key, cache_key)
                                 pipe.expire(sharded_idx_key, expiration * 2)
 
-                        # Release refresh lock if we acquired it
-                        refresh_lock_key = getattr(request.state, "cache_refresh_lock_key", None)
-                        if refresh_lock_key:
-                            pipe.delete(refresh_lock_key)
-
                         await pipe.execute()
                 except Exception as e:
                     _state.stampede_logger.warning(
@@ -522,16 +586,27 @@ def cache(  # noqa: C901
                         error=str(e),
                         cache_key=cache_key,
                     )
+                finally:
+                    # F35: one path owns the refresh-lock release, so a
+                    # failing pipeline no longer leaks it to the 5s expiry.
+                    refresh_lock_key = getattr(request.state, "cache_refresh_lock_key", None)
+                    if refresh_lock_key:
+                        try:
+                            await client.delete(refresh_lock_key)
+                        except Exception:
+                            pass
 
                 return Response(content=serialized_data, media_type="application/json")
 
             else:
-                # OPT-6: Pipeline cache invalidation (N deletes → 1 roundtrip)
+                # F3: extra keys go through the same key builder (tenant +
+                # user + version namespacing) — a bare `{prefix}:{id}`
+                # never matches a real entry.
                 keys_to_delete = [cache_key]
                 if to_invalidate_extra is not None:
                     formatted_extra = _format_extra_data(to_invalidate_extra, kwargs)
                     for prefix, id in formatted_extra.items():
-                        keys_to_delete.append(f"{prefix}:{id}")
+                        keys_to_delete.append(_build_cache_key(prefix, id, kwargs, user_scoped))
 
                 if keys_to_delete:
                     # P2-4: fail OPEN — the mutation above already succeeded;
@@ -553,19 +628,14 @@ def cache(  # noqa: C901
                     # so pattern invalidation never wipes another tenant's / user's keys.
                     _tenant = _state.get_current_tenant()
                     _tenant_id = str(_tenant.tenant_id) if _tenant is not None else None
-                    _user_id: Any = None
-                    if user_scoped:
-                        _cu = kwargs.get("current_user")
-                        if isinstance(_cu, dict):
-                            _user_id = _cu.get("id")
-                        elif _cu is not None:
-                            _user_id = getattr(_cu, "id", None)
+                    _user_id: Any = _resolve_user_id(kwargs) if user_scoped else None
 
                     for pattern in pattern_to_invalidate_extra:
                         formatted_pattern = _format_prefix(pattern, kwargs)
-                        if _user_id is not None:
-                            formatted_pattern = f"user:{_user_id}:{formatted_pattern}"
-                        scoped_pattern = _state.build_tenant_key(formatted_pattern, _tenant_id)
+                        # F2: same scoping function as the registration side.
+                        scoped_pattern = _scoped_invalidation_pattern(
+                            formatted_pattern, _tenant_id, _user_id
+                        )
 
                         # P1-12: O(1) pattern-index only. The old SCAN fallback
                         # was O(N) over the whole keyspace on every write

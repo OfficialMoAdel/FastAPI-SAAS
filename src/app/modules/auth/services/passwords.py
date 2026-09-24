@@ -220,10 +220,10 @@ class PasswordLifecycleService:
             raw_token = generate_reset_token()
             hashed_token = hash_token(raw_token)
 
-            try:
-                await directory.by_id(-1)
-            except Exception:
-                pass
+            # M6/N1: the old dummy `directory.by_id(-1)` SELECT is deleted — by_id
+            # returns None for missing rows (never raises), so the try/except
+            # was dead code and the real-branch cost never came from the DB
+            # round-trip anyway. Timing equalization is the sleep below alone.
 
             # SECURITY FIX: Equalize timing for enumeration prevention.
             # NOTE: Do NOT publish a real notification event here — the dummy path

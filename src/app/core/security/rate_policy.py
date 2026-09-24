@@ -283,8 +283,10 @@ async def resolve_anonymous_user_id(request: Request) -> str:  # noqa: C901
                 email_str = str(body["email"]).lower().strip()
                 email_hash = hashlib.sha256(email_str.encode()).hexdigest()[:16]
                 return f"email:{email_hash}"
-        except Exception:
-            pass
+        except Exception as exc:
+            # H2: log-and-fall-through — an unreadable body just means no
+            # per-email identity; the IP fallback below still applies.
+            logger.debug("anonymous identity body parse failed", error=str(exc))
 
     client_ip: str | None = None
     if request is not None:

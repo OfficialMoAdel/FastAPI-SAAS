@@ -291,6 +291,12 @@ class PasskeyCredential(Base, kw_only=True):
     __tablename__ = "passkey_credentials"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
@@ -357,6 +363,12 @@ class MagicLink(Base, kw_only=True):
     __tablename__ = "magic_links"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
@@ -421,6 +433,12 @@ class MFAMethod(Base, kw_only=True):
     )
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     secret: Mapped[str] = mapped_column(String, nullable=False)
     name: Mapped[str | None] = mapped_column(String(50), nullable=True, init=False)

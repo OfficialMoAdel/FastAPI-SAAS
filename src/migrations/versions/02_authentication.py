@@ -43,6 +43,7 @@ def upgrade() -> None:
     op.create_table(
         "passkey_credentials",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("credential_id", sa.LargeBinary(), nullable=False),
         sa.Column("public_key", sa.LargeBinary(), nullable=False),
@@ -55,9 +56,13 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_passkey_credentials")),
         sa.ForeignKeyConstraint(
+            ["tenant_id"], ["tenants.id"], name=op.f("fk_passkey_credentials_tenant_id"), ondelete="CASCADE"
+        ),
+        sa.ForeignKeyConstraint(
             ["user_id"], ["users.id"], name=op.f("fk_passkey_credentials_user_id"), ondelete="CASCADE"
         ),
     )
+    op.create_index("idx_passkey_credentials_tenant_id", "passkey_credentials", ["tenant_id"])
     op.create_index("idx_passkey_credentials_user_id", "passkey_credentials", ["user_id"])
     op.create_index("idx_passkey_credential_id_hash", "passkey_credentials", ["credential_id_hash"], unique=True)
 
@@ -65,6 +70,7 @@ def upgrade() -> None:
     op.create_table(
         "magic_links",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("token", sa.String(length=255), nullable=False),
         sa.Column("action", sa.String(length=50), nullable=False, server_default=sa.text("'login'")),
@@ -73,9 +79,13 @@ def upgrade() -> None:
         sa.Column("ip_address", postgresql.INET(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_magic_links")),
+        sa.ForeignKeyConstraint(
+            ["tenant_id"], ["tenants.id"], name=op.f("fk_magic_links_tenant_id"), ondelete="CASCADE"
+        ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_magic_links_user_id"), ondelete="CASCADE"),
     )
     op.create_index("idx_magic_links_token", "magic_links", ["token"], unique=True)
+    op.create_index("idx_magic_links_tenant_id", "magic_links", ["tenant_id"])
     op.create_index("idx_magic_links_user_id", "magic_links", ["user_id"])
     op.create_index("idx_magic_links_expires_at", "magic_links", ["expires_at"])
 
@@ -83,6 +93,7 @@ def upgrade() -> None:
     op.create_table(
         "mfa_methods",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False, server_default=sa.text("gen_random_uuid()")),
+        sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(length=50), nullable=False),
         sa.Column("type", sa.String(length=20), nullable=False),
@@ -93,10 +104,14 @@ def upgrade() -> None:
         sa.Column("is_primary", sa.Boolean(), server_default="false", nullable=False),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.ForeignKeyConstraint(
+            ["tenant_id"], ["tenants.id"], name=op.f("fk_mfa_methods_tenant_id"), ondelete="CASCADE"
+        ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_mfa_methods_user_id"), ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_mfa_methods")),
         sa.UniqueConstraint("user_id", "type", name=op.f("uq_user_mfa_type")),
     )
+    op.create_index("ix_mfa_methods_tenant_id", "mfa_methods", ["tenant_id"])
     op.create_index("ix_mfa_methods_user_id", "mfa_methods", ["user_id"])
     op.create_index("ix_mfa_methods_type", "mfa_methods", ["type"])
 

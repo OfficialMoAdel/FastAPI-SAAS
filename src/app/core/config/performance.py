@@ -8,7 +8,9 @@ class EventSettings(BaseSettings):
     """Settings for event handling."""
 
     EVENT_HANDLER_TIMEOUT_SECONDS: float = 30.0
-    EVENT_HANDLER_TIMEOUT_CRITICAL: float = 60.0  # For known slow handlers
+    # F12: EVENT_HANDLER_TIMEOUT_CRITICAL removed — it had exactly one repo
+    # hit (this definition); every consumer used _SECONDS. If per-handler
+    # timeouts are ever needed, re-add alongside a consumer (cf. B13 below).
     EVENT_BUS_CONCURRENCY: int = 50  # Max concurrent sync handlers
     EVENT_BUS_RETRY_DELAYS: list[int] = Field(default=[60, 300, 900])
     """M-9: event-bus retry backoff in seconds (was hardcoded [60, 300, 900]).

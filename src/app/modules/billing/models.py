@@ -259,6 +259,10 @@ class WebhookEvent(Base, kw_only=True):
 
     Stores the Stripe event IDs that have already been processed to prevent
     duplicate handling of webhook events when Redis is unavailable.
+
+    Scope note: keyed by the provider-global Stripe event id, so this table
+    is intentionally tenant-blind — the idempotency domain is the Stripe
+    account, not the tenant.
     """
 
     __tablename__ = "webhook_events"

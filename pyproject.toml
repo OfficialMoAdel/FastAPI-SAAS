@@ -173,6 +173,11 @@ max-complexity = 24
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 
+# Coverage ratchet: unit suite measured 84.73% (Sep 2026). fail_under = 80
+# leaves a buffer for refactors while failing the build on real backslides.
+[tool.coverage.report]
+fail_under = 80
+
 [tool.pytest.ini_options]
 filterwarnings = [
     "ignore::PendingDeprecationWarning:starlette.formparsers",

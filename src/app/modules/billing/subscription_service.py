@@ -199,7 +199,8 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         plan = await crud_subscription_plans.get(db=self.db, id=plan_id, _allow_unscoped=True)
         if plan is None:
             return None
-        return plan.get("tenant_id") if isinstance(plan, dict) else getattr(plan, "tenant_id", None)
+        # F4: crud returns dicts (FastCRUD raw-dict default) — no ORM branch.
+        return plan.get("tenant_id")
 
 
 class UserSubscriptionService(BaseService[UserSubscription]):
@@ -297,21 +298,16 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tid)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
-        if (
-            user_id is not None
-            and (
-                subscription.get("user_id")
-                if isinstance(subscription, dict)
-                else getattr(subscription, "user_id", None)
-            )
-            != user_id
-        ):
+        # F4: crud returns dicts (FastCRUD raw-dict default) — no ORM branch.
+        # F29: owner mismatch is 404, not 403 — avoids an existence oracle.
+        if user_id is not None and subscription.get("user_id") != user_id:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
         await crud_user_subscriptions.update(db=self.db, object=update_data, id=subscription_id)
-        result = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
+        # F5: re-read stays inside the tenant scope (was an unscoped PK read).
+        result = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tid)
         return dict(result) if result else {}
 
     async def cancel_subscription_for_user(
@@ -329,9 +325,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         from src.app.api.deps.request_context import require_resource_ownership
 
         subscription = await self.get_subscription(subscription_id)
-        sub_user_id = (
-            subscription.get("user_id") if isinstance(subscription, dict) else getattr(subscription, "user_id", None)
-        )
+        sub_user_id = subscription.get("user_id")
         try:
             require_resource_ownership(sub_user_id, user_id, is_superuser)
         except ForbiddenError:
@@ -346,15 +340,9 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
-        if (
-            user_id is not None
-            and (
-                subscription.get("user_id")
-                if isinstance(subscription, dict)
-                else getattr(subscription, "user_id", None)
-            )
-            != user_id
-        ):
+        # F29: owner mismatch is 404 (see update_subscription) — the user-facing
+        # 403 lives only in cancel_subscription_for_user via require_resource_ownership.
+        if user_id is not None and subscription.get("user_id") != user_id:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
         # B14: call Stripe BEFORE taking the DB row lock. FastCRUD's
@@ -364,17 +352,9 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         # SELECTs ... FOR UPDATE on the same subscription. If the process dies
         # between the Stripe call and the DB commit below, the
         # customer.subscription.updated webhook re-syncs cancel_at_period_end.
-        stripe_subscription_id = (
-            subscription.get("stripe_subscription_id")
-            if isinstance(subscription, dict)
-            else getattr(subscription, "stripe_subscription_id", None)
-        )
+        stripe_subscription_id = subscription.get("stripe_subscription_id")
         if stripe_subscription_id:
-            tenant_id = (
-                subscription.get("tenant_id")
-                if isinstance(subscription, dict)
-                else getattr(subscription, "tenant_id", None)
-            )
+            tenant_id = subscription.get("tenant_id")
             from src.app.clients.billing.stripe import get_payment_gateway
 
             gateway = get_payment_gateway(self.db)
@@ -407,7 +387,8 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         )
 
         await self.db.commit()
-        result = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
+        # F5: re-read stays inside the tenant scope (was an unscoped PK read).
+        result = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tid)
         return dict(result) if result else {}
 
 
@@ -454,7 +435,7 @@ class BillingRecordService(BaseService[BillingRecord]):
         from src.app.api.deps.request_context import require_resource_ownership
 
         record = await self.get_record(record_id)
-        record_user_id = record.get("user_id") if isinstance(record, dict) else getattr(record, "user_id", None)
+        record_user_id = record.get("user_id")
         try:
             require_resource_ownership(record_user_id, user_id, is_superuser)
         except ForbiddenError:

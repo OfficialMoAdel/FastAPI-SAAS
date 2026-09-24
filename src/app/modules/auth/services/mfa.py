@@ -39,6 +39,7 @@ from src.app.modules.auth.schemas import (
 )
 from src.app.modules.auth.services.tokens import IssuedSession, TokenIssuer
 from src.app.shared.exceptions import (
+    ModelNotFoundError,
     RateLimitExceededError,
     ServiceUnavailableError,
     UnauthorizedError,
@@ -353,9 +354,19 @@ class MFAService:
         # Hash backup codes for storage concurrently
         backup_codes_hashed = await asyncio.gather(*[self._hash_backup_code(code, user_id) for code in backup_codes])
 
-        # Create MFA method record
+        # Create MFA method record, stamped with the owner's tenant so the
+        # row stays visible to (and isolated under) the account's RLS
+        # context. Resolve fail-closed: member is tenant-scoped, so a None
+        # here means cross-tenant or unknown — never stamp blind.
+        from src.app.modules.users import UserDirectory
+
+        owner = await UserDirectory(db).member(id=user_id)
+        owner_tenant = owner.tenant_id if owner else None
+        if owner_tenant is None:
+            raise ValidationError("Cannot enable MFA: account has no tenant assignment.")
         mfa_method = MFAMethod(
             user_id=user_id,
+            tenant_id=owner_tenant,
             secret=encrypted_secret,
         )
         mfa_method.backup_codes = backup_codes_hashed
@@ -516,8 +527,12 @@ class MFAService:
                     if not is_fresh:
                         raise ValidationError("TOTP token has already been used. Please wait for a new code.")
 
-                # Update last_used_at - fetch model instance
+                # Update last_used_at - fetch model instance. H1: the
+                # unscoped PK read is ownership-guarded — a cross-user id
+                # resolves to a soft-404, never a foreign row.
                 mfa_method = await db.get(MFAMethod, mfa_method_dict["id"])
+                if mfa_method and mfa_method.user_id != user_id:
+                    raise ModelNotFoundError("MFAMethod", mfa_method_dict["id"])
                 if mfa_method:
                     # BUG FIX: Use UTC-aware datetime
                     mfa_method.last_used_at = datetime.now(UTC)
@@ -870,8 +885,10 @@ class MFAService:
             await asyncio.gather(*[self._hash_backup_code(code, user_id) for code in backup_codes])
         )
 
-        # Fetch model instance to update
+        # Fetch model instance to update (H1: ownership-guarded — see above).
         mfa_method = await db.get(MFAMethod, mfa_method_dict["id"])
+        if mfa_method and mfa_method.user_id != user_id:
+            raise ModelNotFoundError("MFAMethod", mfa_method_dict["id"])
         if mfa_method:
             mfa_method.backup_codes = backup_codes_hashed
             await db.commit()

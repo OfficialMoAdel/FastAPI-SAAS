@@ -9,7 +9,10 @@ and field specifications.
 """
 
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+# H1: passkey credentials are tenant-stamped; every constructor site pins it.
+TEST_TENANT_ID = UUID("11111111-1111-4111-8111-111111111111")
 
 
 class TestPasskeyCredentialModel:
@@ -33,6 +36,7 @@ class TestPasskeyCredentialModel:
 
         required_columns = [
             "id",
+            "tenant_id",
             "user_id",
             "credential_id",
             "public_key",
@@ -56,6 +60,18 @@ class TestPasskeyCredentialModel:
         id_col = PasskeyCredential.__table__.columns["id"]
         assert id_col.primary_key is True
         assert id_col.autoincrement is True
+
+    def test_tenant_id_is_foreign_key(self):
+        """H1: tenant_id references tenants with CASCADE (RLS isolation root)."""
+        from src.app.modules.auth.models import PasskeyCredential
+
+        col = PasskeyCredential.__table__.columns["tenant_id"]
+        assert col.nullable is False
+        assert len(col.foreign_keys) == 1
+
+        fk = list(col.foreign_keys)[0]
+        assert "tenants.id" in str(fk.target_fullname)
+        assert fk.ondelete == "CASCADE"
 
     def test_user_id_is_foreign_key(self):
         """Verify user_id references users table with CASCADE delete."""
@@ -153,6 +169,7 @@ class TestPasskeyCredentialInstantiation:
 
         credential = PasskeyCredential(
             user_id=1,
+            tenant_id=TEST_TENANT_ID,
             credential_id=b"test-credential-id",
             public_key=b"test-public-key",
             device_type="Security Key",
@@ -172,6 +189,7 @@ class TestPasskeyCredentialInstantiation:
 
         credential = PasskeyCredential(
             user_id=1,
+            tenant_id=TEST_TENANT_ID,
             credential_id=b"test-credential-id",
             public_key=b"test-public-key",
             counter=5,
@@ -194,6 +212,7 @@ class TestPasskeyCredentialInstantiation:
 
         credential = PasskeyCredential(
             user_id=1,
+            tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
             device_type="Test",
@@ -208,6 +227,7 @@ class TestPasskeyCredentialInstantiation:
 
         credential = PasskeyCredential(
             user_id=1,
+            tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
             device_type="Test",
@@ -227,6 +247,7 @@ class TestPasskeyCredentialValidTransports:
 
         credential = PasskeyCredential(
             user_id=1,
+            tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
             device_type="YubiKey",
@@ -240,6 +261,7 @@ class TestPasskeyCredentialValidTransports:
 
         credential = PasskeyCredential(
             user_id=1,
+            tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
             device_type="YubiKey NFC",
@@ -253,6 +275,7 @@ class TestPasskeyCredentialValidTransports:
 
         credential = PasskeyCredential(
             user_id=1,
+            tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
             device_type="Bluetooth Key",
@@ -266,6 +289,7 @@ class TestPasskeyCredentialValidTransports:
 
         credential = PasskeyCredential(
             user_id=1,
+            tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
             device_type="Touch ID",
@@ -279,6 +303,7 @@ class TestPasskeyCredentialValidTransports:
 
         credential = PasskeyCredential(
             user_id=1,
+            tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
             device_type="iPhone Passkey",
@@ -292,6 +317,7 @@ class TestPasskeyCredentialValidTransports:
 
         credential = PasskeyCredential(
             user_id=1,
+            tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
             device_type="YubiKey 5",

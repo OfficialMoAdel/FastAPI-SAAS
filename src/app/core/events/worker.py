@@ -49,6 +49,13 @@ async def process_event_handler(
                 error=f"Malformed tenant context: {e}",
                 attempt_count=job_try,
             )
+            # F32: this early return skipped the finally below, leaking the
+            # previous job's tenant into the next one on this worker. bind
+            # failed so nothing new was installed, but unbind anyway — it is
+            # idempotent and closes the leak even if a prior job misbehaved.
+            from src.app.core.tenancy.lifecycle import unbind_tenant as _unbind
+
+            _unbind()
             return
         _pkg.logger.debug("Tenant context restored for background task")
 
@@ -134,7 +141,10 @@ async def process_event_handler(
             # CancelledError/RetryJob). A bare raise of a plain exception sets
             # result=e, finish=True and DELETES the job -> zero retries. Raise
             # Retry with the configured backoff so the job re-runs.
-            delays = _pkg.EventBus.RETRY_DELAYS
+            # F10: resolve the backoff live (same getattr+fallback the bus
+            # uses) — the old class-attr read ignored EVENT_BUS_RETRY_DELAYS
+            # overrides, so web and worker disagreed on retry cadence.
+            delays = list(getattr(_pkg.settings, "EVENT_BUS_RETRY_DELAYS", None) or _pkg.EventBus.RETRY_DELAYS)
             from arq.worker import Retry
 
             raise Retry(defer=delays[min(job_try - 1, len(delays) - 1)]) from e

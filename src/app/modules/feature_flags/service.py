@@ -42,6 +42,11 @@ CACHE_TTL = 300  # 5 minutes
 # others wait and then read the freshly-written cache value.
 _flag_cache_locks: dict[str, asyncio.Lock] = {}
 
+# F37: bound the singleflight lock table (cardinality = tenants x flags).
+# Evicting a live lock only loses batching for one miss, never correctness
+# (the next contender creates a fresh lock), so FIFO eviction is safe.
+_FLAG_LOCK_CAP = 4096
+
 
 async def _with_flag_lock(key: str, coro: Awaitable[T]) -> T:
     """Run `coro` under a per-key lock (singleflight)."""
@@ -50,6 +55,9 @@ async def _with_flag_lock(key: str, coro: Awaitable[T]) -> T:
     lock = _flag_cache_locks.get(key)
     if lock is None:
         lock = asyncio.Lock()
+        if len(_flag_cache_locks) >= _FLAG_LOCK_CAP:
+            for old in list(_flag_cache_locks)[: _FLAG_LOCK_CAP // 10]:
+                _flag_cache_locks.pop(old, None)
         _flag_cache_locks[key] = lock
     async with lock:
         return await coro
@@ -165,6 +173,10 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         if flag_key:
             try:
                 await cache_client.delete(f"feature_flag:{flag_key}")
+                # F1: registry mutations must purge per-tenant decisions
+                # fleet-wide — tenant:*:feature:{key} / :features /
+                # :feature_value:{key} survive 300s otherwise.
+                await self._purge_registry_caches(flag_key)
             except Exception as e:
                 # Q-M3: failed invalidation leaves stale flag values until TTL
                 # — warn with the flag key so operators can flush manually.
@@ -189,6 +201,9 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             if flag_key:
                 try:
                     await cache_client.delete(f"feature_flag:{flag_key}")
+                    # F1: see update_flag — a deleted registry row must also
+                    # stop serving per-tenant decisions.
+                    await self._purge_registry_caches(flag_key)
                 except Exception as e:
                     # Q-M3: failed invalidation leaves the deleted flag served
                     # from cache until TTL — warn with the flag key.
@@ -329,7 +344,45 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         ``is_enabled``: tenant override → registry default → tenant JSONB →
         ``default``. The registry ``default_value`` column is boolean, so
         non-boolean defaults only exist in overrides / tenant JSONB.
+
+        Freshness contract (F27, shared with :meth:`is_enabled`): decisions
+        are cached per tenant for ``CACHE_TTL`` (300s). Registry mutations
+        (``update_flag``/``delete_flag``) and override mutations purge via
+        ``_invalidate_cache``/``_purge_registry_caches``, so the two
+        accessors can disagree only within one TTL window after an
+        unpurged write — never indefinitely.
         """
+        from src.app.core.utils.cache import build_tenant_key
+
+        cache_key = build_tenant_key(f"feature_value:{feature_name}", tenant_id)
+
+        try:
+            cached = await cache_client.get(cache_key)
+            if cached is not None:
+                return json_loads(cached)
+        except Exception as e:
+            logger.warning("Feature flag value cache get failed", cache_key=cache_key, error=str(e))
+
+        async def _load() -> Any:
+            try:
+                cached = await cache_client.get(cache_key)
+                if cached is not None:
+                    return json_loads(cached)
+            except Exception as e:
+                logger.warning("Feature flag value cache get failed", cache_key=cache_key, error=str(e))
+
+            value = await self._resolve_flag_value(tenant_id, feature_name, default)
+
+            try:
+                await cache_client.set(cache_key, json_dumps(value, as_str=True), ttl=CACHE_TTL)
+            except Exception as e:
+                logger.warning("Feature flag value cache write failed", cache_key=cache_key, error=str(e))
+            return value
+
+        return await _with_flag_lock(cache_key, _load())
+
+    async def _resolve_flag_value(self, tenant_id: UUID, feature_name: str, default: Any = None) -> Any:
+        """Uncached B7 precedence resolution shared by ``get_flag_value``."""
         flag = await self.get_flag_by_key_or_none(feature_name)
         if flag is not None:
             flag_id = int(get_user_attr(flag, "id", 0))
@@ -360,6 +413,9 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         through this method read as ``False`` unless literally ``"true"``.
         Use :meth:`get_flag_value` or :meth:`get_tenant_flags` for typed
         values.
+
+        Freshness: cached per tenant for ``CACHE_TTL`` (300s); see
+        :meth:`get_flag_value` for the shared contract.
         """
 
         from src.app.core.utils.cache import build_tenant_key
@@ -549,6 +605,8 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             keys = [build_tenant_key("features", tenant_id)]
             if feature_name:
                 keys.append(build_tenant_key(f"feature:{feature_name}", tenant_id))
+                # F27: get_flag_value caches symmetrically with is_enabled.
+                keys.append(build_tenant_key(f"feature_value:{feature_name}", tenant_id))
             # P2: single varargs delete via the cache_client adapter (no-ops
             # when Redis is down; the explicit None-guard is gone).
             await cache_client.delete(*keys)
@@ -559,6 +617,38 @@ class FeatureFlagService(BaseService[FeatureFlag]):
                 "Tenant feature flag cache invalidation failed",
                 tenant_id=str(tenant_id),
                 feature_name=feature_name,
+                error=str(e),
+            )
+
+    async def _purge_registry_caches(self, flag_key: str) -> None:
+        """Purge one registry row's per-tenant decisions fleet-wide (F1).
+
+        ``update_flag``/``delete_flag`` change what every tenant resolves,
+        but decisions are cached under ``tenant:{tid}:...`` keys this
+        service cannot enumerate from the adapter. SCAN the three key
+        shapes directly on the raw client; a down Redis no-ops (fail-open,
+        entries expire via TTL).
+        """
+        client = cache_client.client
+        if client is None:
+            return
+        try:
+            for pattern in (
+                f"tenant:*:feature:{flag_key}",
+                f"tenant:*:feature_value:{flag_key}",
+                "tenant:*:features",
+            ):
+                cursor = 0
+                while True:
+                    cursor, keys = await client.scan(cursor, match=pattern, count=500)
+                    if keys:
+                        await client.delete(*keys)
+                    if cursor == 0:
+                        break
+        except Exception as e:
+            logger.warning(
+                "Feature flag registry purge failed",
+                flag_key=flag_key,
                 error=str(e),
             )
 
@@ -598,12 +688,19 @@ async def warm_feature_flags(session: AsyncSession) -> int:
             pipe = redis_client.pipeline()
             for flag in flags:
                 cache_key = f"feature_flag:{flag.key}"
+                # F28: warm every constructor-accepted column, not a subset.
+                # Server-generated fields (uuid/created_at/updated_at) and
+                # relationships are init=False, so a warmed dict can never
+                # carry them — readers get a detached registry row and must
+                # only use registry fields (key/id/default_value/value_type/
+                # flag_metadata/is_system/description).
                 flag_data = {
                     "id": flag.id,
                     "key": flag.key,
                     "description": flag.description,
                     "default_value": flag.default_value,
                     "value_type": flag.value_type,
+                    "flag_metadata": flag.flag_metadata or {},
                     "is_system": flag.is_system,
                 }
                 pipe.setex(cache_key, CACHE_TTL, json_dumps(flag_data, as_str=True))

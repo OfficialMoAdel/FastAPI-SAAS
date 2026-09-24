@@ -289,7 +289,12 @@ class TestPasskeyServiceVerification:
 
         service = PasskeyService()
         mock_db = AsyncMock()
-        mock_user = {"id": 1, "username": "testuser", "email": "test@example.com"}
+        mock_user = {
+            "id": 1,
+            "username": "testuser",
+            "email": "test@example.com",
+            "tenant_id": "11111111-1111-4111-8111-111111111111",
+        }
 
         # Mock stored challenge
         mock_challenge_data = {
@@ -338,7 +343,12 @@ class TestPasskeyServiceVerification:
 
         service = PasskeyService()
         mock_db = AsyncMock()
-        mock_user = {"id": 1, "username": "testuser", "email": "test@example.com"}
+        mock_user = {
+            "id": 1,
+            "username": "testuser",
+            "email": "test@example.com",
+            "tenant_id": "11111111-1111-4111-8111-111111111111",
+        }
 
         mock_challenge_data = {
             "challenge": b"test-challenge",

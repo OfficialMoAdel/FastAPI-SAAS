@@ -48,6 +48,9 @@ TENANT_TABLES = [
     "password_reset_tokens",
     "email_verification_tokens",
     "user_sso_connections",
+    "passkey_credentials",  # H1: credential tables carry tenant_id (02) — RLS enforced
+    "magic_links",
+    "mfa_methods",
     "users",
 ]
 

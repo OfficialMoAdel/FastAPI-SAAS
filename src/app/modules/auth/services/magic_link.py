@@ -127,13 +127,21 @@ class MagicLinkService:
             },
         )
 
-        # Store in database for audit trail with hashed token (H-14)
+        # Store in database for audit trail with hashed token (H-14).
+        # Tenant-stamped fail-closed: without the owner's tenant the row
+        # would be invisible to every RLS context after the H1 migration.
+        from src.app.shared.exceptions import ServiceUnavailableError as _SvcUnavailable
+
+        send_tenant = user.get("tenant_id")
+        if send_tenant is None:
+            raise _SvcUnavailable("Magic link setup is currently unavailable.")
         from src.app.modules.auth.crud import create_magic_link
 
         try:
             await create_magic_link(
                 db=self.db,
                 user_id=user["id"],
+                tenant_id=send_tenant,
                 token=token,
                 action="login",
                 ip_address=ip_address,
@@ -269,6 +277,17 @@ class MagicLinkService:
             user = await self._get_user_by_email(email)
             if user is None:
                 raise InvalidMagicLinkError("User not found")
+
+        # H1: the DB row is bound to the user it was issued for — a
+        # resolved user that is not the row's owner means the link is
+        # being replayed against a different account (e.g. email
+        # reassignment). Fail as not-found, never cross the binding.
+        if db_link is not None and db_link.user_id != user["id"]:
+            logger.warning(
+                "Magic link user binding mismatch",
+                extra={"operation": "verify_magic_link"},
+            )
+            raise InvalidMagicLinkError("User not found")
 
         # Check if user is active
         if user.get("is_deleted", False) or not user.get("is_active", False):

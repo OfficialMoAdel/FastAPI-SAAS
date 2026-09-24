@@ -44,7 +44,16 @@ _BAN_CHECKED_EXEMPT_PREFIXES: tuple[str, ...] = (
     "/api/v1/webhooks/stripe",
 )
 
-_REFRESH_BUDGET_PATHS: frozenset[str] = frozenset({"/api/v1/auth/refresh", "/api/v1/account/refresh"})
+# Refresh-budget paths get an identity-keyed security budget at the edge
+# (early 429 + Retry-After). Matching is pre-routing on the raw path string,
+# so "/api/v1/auth/refresh" is covered deliberately even though no such route
+# exists today (the real route is /api/v1/account/refresh): refresh floods
+# throttle at the edge regardless of route existence, and a future /auth/*
+# refresh route inherits the budget. Pinned by
+# test_refresh_budget_exceeded_returns_429 — do not "clean up" this entry.
+_REFRESH_BUDGET_PATHS: frozenset[str] = frozenset(
+    {"/api/v1/account/refresh", "/api/v1/auth/refresh"}
+)
 
 
 @dataclass(frozen=True)
@@ -247,8 +256,10 @@ class RequestAdmissionService:
                         ban_retry_after = int(fresh_ban_info.expires_at - time.time()) + 1
                         if ban_retry_after > 0:
                             ban_headers["Retry-After"] = str(ban_retry_after)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # H2: log-and-continue — the ban verdict stands without
+                    # Retry-After when the fresh TTL read fails.
+                    logger.debug("auto-ban TTL refresh failed", error=str(exc))
                 verdict = replace(verdict, headers=ban_headers)
                 return AdmissionOutcome("reject_auto_ban", client_ip, verdict, violation_count=violation_count)
         return AdmissionOutcome("limited", client_ip, verdict)

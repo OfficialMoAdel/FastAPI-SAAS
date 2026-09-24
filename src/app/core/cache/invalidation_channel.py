@@ -84,8 +84,16 @@ class InvalidationChannel:
         self._task.cancel()
         try:
             await self._task
-        except (asyncio.CancelledError, Exception):
-            pass
+        except asyncio.CancelledError:
+            # M4: never swallow cancellation — the caller may itself be in a
+            # cancelled scope, and masking it breaks propagation (plus it hid
+            # real shutdown hangs behind a clean return).
+            raise
+        except Exception as exc:
+            # H2: log-and-continue — a non-cancellation error while joining
+            # the listener (e.g. an exception the task itself raised) must
+            # not fail shutdown, but must not vanish either.
+            self._logger.debug("invalidation listener join failed", error=str(exc))
         self._task = None
 
 

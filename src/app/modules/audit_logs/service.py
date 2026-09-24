@@ -3,7 +3,7 @@
 import csv
 import io
 from collections.abc import AsyncGenerator
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import UUID
 
@@ -185,9 +185,13 @@ class AuditLogService:
             entity_id=None,
             details={"format": criteria.format, "record_count": count},
         )
+        # F16: read the id while the session is still open (post-commit attribute
+        # access issues a refresh SELECT; after the session closes it raises
+        # DetachedInstanceError). The WHERE below must use this plain value.
+        export_id = export_log.id
         stmt = (
             _compose_filters(select(AuditLog), effective_tenant, filters)
-            .where(AuditLog.id != export_log.id)
+            .where(AuditLog.id != export_id)
             .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
             .limit(EXPORT_MAX_RECORDS)
             .execution_options(yield_per=1000)
@@ -477,12 +481,17 @@ async def _direct_insert_log(log_data: dict[str, Any]) -> None:
     # Use the session context directly: get_db_context logs exception tracebacks
     # that can include SQL parameters. Audit failures are logged safely at audit().
     async with local_session() as db:
+        # F14: explicit required-field validation — a malformed payload must
+        # fail as a loud ValueError here, not as a KeyError mid-construct.
+        tenant_id_val = log_data.get("tenant_id")
+        if tenant_id_val is None:
+            raise ValueError("audit payload missing required 'tenant_id'")
         try:
-            user_id = int(log_data["user_id"]) if log_data["user_id"] is not None else None
+            user_id = int(log_data["user_id"]) if log_data.get("user_id") is not None else None
         except (ValueError, TypeError):
             user_id = None
         log_entry = AuditLog(
-            tenant_id=UUID(log_data["tenant_id"]),
+            tenant_id=UUID(str(tenant_id_val)),
             user_id=user_id,
             action=log_data["action"],
             entity_type=log_data["entity_type"],
@@ -491,7 +500,12 @@ async def _direct_insert_log(log_data: dict[str, Any]) -> None:
             ip_address=log_data["ip_address"],
             user_agent=log_data["user_agent"],
         )
-        log_entry.created_at = datetime.fromisoformat(log_data["created_at"])
+        # F14 (cont.): created_at is stamped by trail.audit(), but a direct caller
+        # must not KeyError — fall back to now instead of crashing REQUIRED.
+        created_at_raw = log_data.get("created_at")
+        log_entry.created_at = (
+            datetime.fromisoformat(created_at_raw) if created_at_raw else datetime.now(UTC)
+        )
         db.add(log_entry)
         await db.commit()
 
@@ -578,6 +592,9 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     if rejected_payloads:
         try:
             await client.rpush(AUDIT_LOG_DEAD_LETTER_KEY, *rejected_payloads)  # type: ignore[misc]
+            # F15: bound the DLQ like the normal path bounds the buffer (:466) —
+            # without this, a poison-payload flood grows the list without limit.
+            await client.ltrim(AUDIT_LOG_DEAD_LETTER_KEY, -AUDIT_LOG_BUFFER_MAXLEN, -1)  # type: ignore[misc]
         except RedisError:
             # Quarantine did not accept the records: restore the entire window.
             await client.lpush(AUDIT_LOG_BUFFER_KEY, *reversed(logs_data))  # type: ignore[misc]

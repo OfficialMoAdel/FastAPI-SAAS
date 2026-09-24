@@ -14,6 +14,16 @@ from src.app.core.events.priority import EventPriority
 _UNSET = object()
 
 
+def _concurrency_limit() -> int:
+    """Read the sync-handler concurrency bound live from settings (F13).
+
+    ``getattr`` + fallback mirrors the RETRY_DELAYS pattern: tests patch
+    ``_pkg.settings`` with a MagicMock, and a missing attribute must fall
+    back to the configured default (50) rather than raising.
+    """
+    return int(getattr(_pkg.settings, "EVENT_BUS_CONCURRENCY", None) or 50)
+
+
 class EventBus:
     """Central event bus for decoupled module communication.
 
@@ -54,7 +64,7 @@ class EventBus:
         # when the attribute is missing.
         self.RETRY_DELAYS = list(getattr(_pkg.settings, "EVENT_BUS_RETRY_DELAYS", None) or type(self).RETRY_DELAYS)
         # P3-2: Semaphore to bound concurrent sync execution
-        self._concurrency_semaphore = asyncio.Semaphore(_pkg.settings.EVENT_BUS_CONCURRENCY)
+        self._concurrency_semaphore = asyncio.Semaphore(_concurrency_limit())
 
     @property
     def is_ready(self) -> bool:
@@ -330,8 +340,14 @@ class EventBus:
             # when the process crashed between the two: the key was already
             # set, so every retry was treated as a duplicate and never
             # re-enqueued. Checking duplicates read-only first, then marking
-            # post-enqueue, preserves exactly-once *handling* semantics while
-            # making crash recovery possible (the re-publish wins).
+            # post-enqueue, trades exactly-once for at-least-once handling
+            # with crash recovery (the re-publish wins).
+            # F11: the old comment claimed "exactly-once handling" — false
+            # under concurrency (two publishers can both peek False and both
+            # enqueue). Delivery is AT-LEAST-ONCE: handlers MUST be
+            # idempotent; event_id dedup is best-effort, not a correctness
+            # guarantee. The atomic `_check_idempotency` primitive remains for
+            # callers that need claim semantics (F31).
             if event_id and self.redis_client:
                 is_duplicate = await self._peek_idempotency(event_id)
                 if is_duplicate:
@@ -905,7 +921,15 @@ class EventBus:
             return []
 
         entries = await client.lrange(self.DLQ_REDIS_KEY, 0, limit - 1)
-        parsed = [_pkg.json_loads(entry) for entry in entries]
+        # F17: decode defensively — one poisoned entry must not fail the
+        # whole read (siblings already guard; this path did not).
+        parsed: list[Any] = []
+        for entry in entries:
+            try:
+                parsed.append(_pkg.json_loads(entry))
+            except Exception:  # noqa: BLE001
+                _pkg.logger.warning("event_bus_dlq_entry_undecodable")
+                continue
         if source is not None:
             parsed = [e for e in parsed if isinstance(e, dict) and e.get("source", "arq") == source]
         return parsed
@@ -1068,6 +1092,12 @@ class EventBus:
             if isinstance(parsed, dict):
                 parsed.setdefault("source", "event_bus")
                 raw = _pkg.json_dumps(parsed, as_str=True)
+            else:
+                # F18: legacy/non-dict entries were re-pushed untagged, so the
+                # source filter silently mislabeled them "arq". Envelope them
+                # so every unified-DLQ entry is a tagged dict; the original
+                # payload is preserved verbatim under "payload".
+                raw = _pkg.json_dumps({"source": "event_bus", "payload": parsed}, as_str=True)
             await client.lpush(self.DLQ_REDIS_KEY, raw)
             moved += 1
         return moved
@@ -1106,4 +1136,8 @@ def reset_event_bus() -> None:
     existing._redis_client = fresh._redis_client
     existing._arq_queue = fresh._arq_queue
     existing.RETRY_DELAYS = fresh.RETRY_DELAYS  # M-9: keep backoff in lock-step
+    # F13: the semaphore is construction-time state — a reset that keeps the
+    # old one leaks the previous limit (and any acquired permits). Recreate
+    # it so tests that patch EVENT_BUS_CONCURRENCY actually take effect.
+    existing._concurrency_semaphore = asyncio.Semaphore(_concurrency_limit())
     _pkg.logger.debug("Event bus singleton reset")

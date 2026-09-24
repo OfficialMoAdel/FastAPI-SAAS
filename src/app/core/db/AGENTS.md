@@ -165,6 +165,7 @@ See migration `src/migrations/versions/08_enable_rls_policies.py` for full list.
 - sso_providers
 - magic_links
 - passkey_credentials
+- mfa_methods
 
 ### Performance Impact
 Measured overhead: < 10% for typical queries (baseline vs RLS-enabled). See `tests/performance/test_rls_performance.py` for benchmarks.

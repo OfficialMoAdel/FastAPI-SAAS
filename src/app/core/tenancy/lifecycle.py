@@ -136,11 +136,11 @@ def bound_tenant(tenant: TenantContext | None) -> Iterator[TenantContext | None]
 
 @contextmanager
 def preserved_tenant() -> Iterator[TenantContext | None]:
-    """Snapshot the caller's context and restore it on exit.
+    """Yield the current tenant, restoring it on exit (save/restore guard).
 
-    The override shape: spans that temporarily replace the ambient
-    context (SSO callback, ARQ job setup) and must hand it back
-    untouched — including when the previous value was ``None``.
+    This sets nothing: the body is expected to bind its own context
+    (SSO callback, ARQ job setup) and this guard hands the previous
+    value — including ``None`` — back afterwards.
     """
     previous = get_current_tenant()
     try:

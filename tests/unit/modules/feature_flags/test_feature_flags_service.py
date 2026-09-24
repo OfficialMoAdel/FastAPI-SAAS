@@ -30,6 +30,7 @@ def make_mock_flag(id=1, key="test", default_value=False, desc="desc", is_system
     m.default_value = default_value
     m.description = desc
     m.value_type = "boolean"
+    m.flag_metadata = {}
     m.is_system = is_system
     return m
 

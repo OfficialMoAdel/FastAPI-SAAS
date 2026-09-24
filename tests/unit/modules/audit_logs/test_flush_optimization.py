@@ -146,6 +146,7 @@ class TestFlushAuditLogBuffer:
         mock_redis_cache.client = MagicMock()
         mock_redis_cache.client.rpush = AsyncMock()
         mock_redis_cache.client.lpush = AsyncMock()
+        mock_redis_cache.client.ltrim = AsyncMock()  # F15: quarantine restore trims the DLQ
 
         mock_pipe = MagicMock()
         _acm(mock_pipe)

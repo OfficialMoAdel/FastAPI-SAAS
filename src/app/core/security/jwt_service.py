@@ -374,7 +374,12 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
         from src.app.core.cache.client import cache_client
         from src.app.core.utils.cache import build_tenant_key
 
-        cache_key = build_tenant_key(f"user:{username_or_email}:token_version", tenant_id)
+        # Qwen-F1: normalize the subject exactly like session_invalidation
+        # (username.lower().strip()) — legacy mixed-case DB rows authenticate
+        # with a verbatim `sub`, but invalidation writes the lowercased key.
+        # Without this, a stale version survives ≤300 s after password change.
+        normalized_subject = username_or_email.lower().strip()
+        cache_key = build_tenant_key(f"user:{normalized_subject}:token_version", tenant_id)
 
         cached_version = None
         try:

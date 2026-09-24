@@ -72,6 +72,10 @@ class TestMagicLinkService:
         db_link = MagicMock()
         # Fresh (unused) link: replay guard treats any non-None used_at as used.
         db_link.used_at = None
+        # H1: binding check compares db_link.user_id to the resolved user —
+        # default the mock row to the owned user (mismatch is pinned by
+        # isolation tests).
+        db_link.user_id = 1
         mock_result.scalar_one_or_none.return_value = db_link
         db.execute.return_value = mock_result
         return db
@@ -87,6 +91,8 @@ class TestMagicLinkService:
             "is_deleted": False,
             "tier_id": 1,
             "tier": {"name": "basic"},
+            # H1: send stamps the owner's tenant fail-closed.
+            "tenant_id": "11111111-1111-4111-8111-111111111111",
         }
 
     def test_magic_link_service_exists(self):
