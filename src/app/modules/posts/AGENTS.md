@@ -51,7 +51,7 @@ class PostService(BaseService[Post]):
 
 ### Ownership Checking
 - All update/delete operations call `_check_ownership()`, which delegates to
-  the ONE ownership seam (`api/deps/request_context.py::require_resource_ownership`)
+  the core ownership seam (`core/security/ownership.py::require_resource_ownership`)
 - Raises `ForbiddenError` if user is not owner; superusers bypass via the seam
 - Use `TenantContext` dependency injection for tenant_id
 

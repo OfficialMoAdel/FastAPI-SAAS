@@ -60,7 +60,7 @@ async def send_magic_link(
     if verdict.is_limited:
         raise RateLimitExceededError(
             f"Too many magic link requests. Please try again in {verdict.period} seconds.",
-            retry_after=verdict.retry_after or verdict.period,
+            retry_after=verdict.retry_after_seconds(),
         )
 
     # Extract client info for audit logging

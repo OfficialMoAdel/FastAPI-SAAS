@@ -43,7 +43,8 @@ async def test_batch_enqueue():
     async def handler2(data):
         pass
 
-    bus._handlers["test.event"] = [handler1, handler2]
+    bus.register_handler("test.event", handler1)
+    bus.register_handler("test.event", handler2)
 
     # Enable batch enqueue
     settings.EVENT_BUS_USE_BATCH_ENQUEUE = True
@@ -78,10 +79,11 @@ async def test_concurrency_semaphore():
         await asyncio.sleep(0.1)
         active_handlers -= 1
 
-    bus._handlers["test.sync"] = [slow_handler, slow_handler]
+    bus.register_handler("test.sync", slow_handler)
+    bus.register_handler("test.sync", slow_handler)
 
     # Execute sync
-    await bus._publish_sync("test.sync", {}, bus._handlers["test.sync"])
+    await bus._publish_sync("test.sync", {}, bus.get_handlers("test.sync"))
 
     # Wait for tasks to complete (since _publish_sync uses create_task)
     await asyncio.sleep(0.3)

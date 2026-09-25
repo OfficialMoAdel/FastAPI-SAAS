@@ -51,7 +51,7 @@ async def async_client():
 
     with (
         patch("src.app.core.utils.rate_limit.rate_limiter.check_rate_limit", mock_rate_check),
-        patch("src.app.modules.security.service.get_redis_client", mock_redis_context),
+        patch("src.app.core.guard.ip_rules.get_redis_client", mock_redis_context),
         patch("src.app.core.guard.ip_rules.RedisIpRules", return_value=mock_ip_rules),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

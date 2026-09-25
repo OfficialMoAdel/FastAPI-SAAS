@@ -107,7 +107,7 @@ class TestEventBusPerformance:
         from src.app.core.events import EventPriority, event_bus
 
         # Clear existing handlers
-        event_bus._handlers.clear()
+        event_bus.clear_handlers()
 
         results = []
 

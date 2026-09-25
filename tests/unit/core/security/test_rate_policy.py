@@ -101,7 +101,7 @@ async def test_request_admission_whitelisted():
     assert isinstance(verdict, RateLimitVerdict)
     assert verdict.is_limited is False
     assert verdict.bypassed is True
-    assert verdict.headers["X-RateLimit-Whitelisted"] == "true"
+    assert verdict.headers == {"X-RateLimit-Bypassed": "true"}
 
 
 @pytest.mark.asyncio
@@ -191,6 +191,22 @@ def test_build_verdict_owns_the_header_grammar():
         "Retry-After": "7",
     }
     assert verdict.is_limited is True
+
+
+def test_build_verdict_omits_quota_headers_for_bypass():
+    verdict = build_verdict(
+        key="whitelisted",
+        limit=None,
+        period=None,
+        is_limited=False,
+        remaining=None,
+        bypassed=True,
+    )
+
+    assert verdict.headers == {"X-RateLimit-Bypassed": "true"}
+    assert verdict.limit is None
+    assert verdict.period is None
+    assert verdict.remaining is None
 
 
 def test_build_verdict_marks_degradation():

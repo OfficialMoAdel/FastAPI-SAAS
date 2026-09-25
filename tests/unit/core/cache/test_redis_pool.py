@@ -114,8 +114,8 @@ class TestPoolLifecycle:
         """Verify lifespan context manager handles pool lifecycle."""
         from pathlib import Path
 
-        setup_path = Path(__file__).parents[4] / "src" / "app" / "core" / "setup.py"
-        source = setup_path.read_text()
+        composition_path = Path(__file__).parents[4] / "src" / "app" / "composition.py"
+        source = composition_path.read_text()
 
         # Pool created on startup
         assert "create_redis_cache_pool" in source

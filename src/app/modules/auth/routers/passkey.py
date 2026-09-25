@@ -47,7 +47,7 @@ async def passkey_login_rate_limit(request: Request) -> None:
     if verdict.is_limited:
         raise RateLimitExceededError(
             "Too many login attempts. Please try again later.",
-            retry_after=verdict.retry_after or verdict.period,
+            retry_after=verdict.retry_after_seconds(),
         )
 
 

@@ -20,9 +20,9 @@ class TestEventBusIntegration:
     @pytest.fixture(autouse=True)
     def clear_handlers(self):
         """Clear event handlers before each test."""
-        event_bus._handlers.clear()
+        event_bus.clear_handlers()
         yield
-        event_bus._handlers.clear()
+        event_bus.clear_handlers()
 
     async def test_event_publish_subscribe(self):
         """Verify basic publish/subscribe works."""
@@ -164,9 +164,9 @@ class TestEventBusWithRedis:
     @pytest.fixture(autouse=True)
     def clear_handlers(self):
         """Clear event handlers before each test."""
-        event_bus._handlers.clear()
+        event_bus.clear_handlers()
         yield
-        event_bus._handlers.clear()
+        event_bus.clear_handlers()
 
     async def test_cache_invalidation_event(self, real_redis, clean_redis):
         """Test event triggers cache invalidation."""
@@ -254,9 +254,9 @@ class TestEventBusConcurrency:
     @pytest.fixture(autouse=True)
     def clear_handlers(self):
         """Clear event handlers before each test."""
-        event_bus._handlers.clear()
+        event_bus.clear_handlers()
         yield
-        event_bus._handlers.clear()
+        event_bus.clear_handlers()
 
     async def test_concurrent_event_publishing(self):
         """Test concurrent event publishing doesn't cause issues."""

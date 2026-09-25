@@ -127,7 +127,7 @@ class MFAService:
         if verdict.is_limited:
             raise RateLimitExceededError(
                 f"Too many MFA verification attempts. Please try again in {verdict.period} seconds.",
-                retry_after=verdict.retry_after or verdict.period,
+                retry_after=verdict.retry_after_seconds(),
             )
 
         client = get_redis()
@@ -182,7 +182,7 @@ class MFAService:
         if global_verdict.is_limited:
             raise RateLimitExceededError(
                 f"Too many MFA verification attempts. Please try again in {global_verdict.period} seconds.",
-                retry_after=global_verdict.retry_after or global_verdict.period,
+                retry_after=global_verdict.retry_after_seconds(),
             )
 
         verify_result = await self.verify_totp_token(

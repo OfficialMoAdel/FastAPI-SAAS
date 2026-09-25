@@ -21,11 +21,20 @@ from pathlib import Path
 import pytest
 
 CONTRACT_SECTION = "importlinter:contract:forbidden-core-to-modules"
+FEATURE_CONTRACT_SECTION = "importlinter:contract:forbidden-feature-implementation-to-api"
 SOURCE_PACKAGE = "src.app.core"
 FORBIDDEN_PACKAGES = ("src.app.modules", "src.app.api", "src.app.middleware")
 
 # tests/core/ -> repo root -> src/.importlinter
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "src" / ".importlinter"
+
+
+def _feature_contract() -> configparser.SectionProxy:
+    assert CONFIG_PATH.is_file(), f"architecture contract not found at {CONFIG_PATH}"
+    parser = configparser.ConfigParser()
+    parser.read(CONFIG_PATH, encoding="utf-8")
+    assert parser.has_section(FEATURE_CONTRACT_SECTION)
+    return parser[FEATURE_CONTRACT_SECTION]
 
 
 def _contract() -> configparser.SectionProxy:
@@ -62,6 +71,17 @@ def test_contract_declares_the_expected_packages() -> None:
     forbidden = contract["forbidden_modules"].split()
     for package in FORBIDDEN_PACKAGES:
         assert package in forbidden
+
+
+def test_feature_implementation_contract_is_explicit_and_narrow() -> None:
+    contract = _feature_contract()
+    assert contract["type"] == "forbidden"
+    assert contract["source_modules"].split() == [
+        "src.app.modules.posts.service",
+        "src.app.modules.billing.subscription_service",
+    ]
+    assert contract["forbidden_modules"].split() == ["src.app.api"]
+    assert "ignore_imports" not in contract
 
 
 def test_unmatched_ignores_do_not_abort_the_contract() -> None:

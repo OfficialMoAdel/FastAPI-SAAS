@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.app.core.config import settings
-from src.app.modules.security.service import IPFilterService
+from src.app.core.guard.ip_rules import IPFilterService
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def mock_redis():
     mock_pipe = AsyncMock()
     mock_pipe.__aenter__.return_value = mock_pipe
     mock.pipeline = MagicMock(return_value=mock_pipe)
-    with patch("src.app.modules.security.service.cache.async_get_redis") as mock_get:
+    with patch("src.app.core.guard.ip_rules.cache.async_get_redis") as mock_get:
 
         async def mock_gen():
             yield mock

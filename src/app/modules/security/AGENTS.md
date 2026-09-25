@@ -46,6 +46,14 @@ curl -X DELETE \
 
 ## Architecture
 
+### IP rules ownership
+
+IP filtering is implemented by the core-side `core/guard/ip_rules.py` module. The
+`IpRules` protocol remains the injected seam for `IPFilterMiddleware` and
+`AttackDetectionMiddleware`; `RedisIpRules` is the production adapter. This
+module's `service.py` contains compatibility re-exports only, while the router
+imports the core-owned administrative instance directly.
+
 ### Module Structure
 
 ```
@@ -60,6 +68,7 @@ The security module follows the **Facade Pattern**:
 - **Wrapper Layer:** Provides convenience endpoints at `/security/*`
 - **Delegation:** All business logic delegated to `passkey_service`
 - **No Duplication:** No duplicate service layer; reuses existing passkey module
+- **IP filtering:** Delegates administrative operations to `core.guard.ip_rules.ip_filter_service`
 
 ### Dependencies
 

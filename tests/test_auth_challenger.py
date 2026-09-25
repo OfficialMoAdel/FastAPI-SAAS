@@ -106,7 +106,7 @@ async def test_auth_single_db_lookup_and_single_jwt_decode(get_test_app) -> None
             patch("jwt.decode", spy_jwt_decode),
             # Mock redis cache
             patch("src.app.core.utils.cache.client", mock_redis),
-            patch("src.app.modules.security.service.get_redis_client", new=mock_get_redis_client),
+            patch("src.app.core.guard.ip_rules.get_redis_client", new=mock_get_redis_client),
             patch("src.app.core.security.token_blacklist_cache.is_token_blacklisted", AsyncMock(return_value=False)),
             patch("src.app.core.security.is_token_blacklisted", AsyncMock(return_value=False)),
         ):
@@ -188,7 +188,7 @@ async def test_superuser_tenant_isolation_blocked(get_test_app) -> None:
             patch("src.app.modules.users.directory.UserDirectory.auth_info", new=mock_get_user_auth),
             # Mock redis cache
             patch("src.app.core.utils.cache.client", mock_redis),
-            patch("src.app.modules.security.service.get_redis_client", new=mock_get_redis_client),
+            patch("src.app.core.guard.ip_rules.get_redis_client", new=mock_get_redis_client),
             patch("src.app.core.security.token_blacklist_cache.is_token_blacklisted", AsyncMock(return_value=False)),
             patch("src.app.core.security.is_token_blacklisted", AsyncMock(return_value=False)),
         ):

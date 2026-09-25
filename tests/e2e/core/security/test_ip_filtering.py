@@ -7,7 +7,7 @@ Covers whitelist, blacklist, and bad bot filtering scenarios.
 import pytest
 from httpx import AsyncClient
 
-from src.app.modules.security.service import ip_filter_service
+from src.app.core.guard.ip_rules import ip_filter_service
 
 # Skip all tests if Redis is not available
 pytestmark = pytest.mark.asyncio

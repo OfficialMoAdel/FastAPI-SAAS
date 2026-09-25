@@ -90,7 +90,7 @@ class TestIPStatusNegativeCacheBench:
     """1b: warm negative-cache hit must not touch Redis."""
 
     async def test_warm_hit_skips_redis(self) -> None:
-        from src.app.modules.security.service import IPFilterService, _ip_status_negative_cache
+        from src.app.core.guard.ip_rules import IPFilterService, _ip_status_negative_cache
 
         _ip_status_negative_cache.clear()
         _ip_status_negative_cache["203.0.113.9"] = (False, False)
@@ -101,7 +101,7 @@ class TestIPStatusNegativeCacheBench:
         ctx.__aenter__ = AsyncMock(return_value=redis)
         ctx.__aexit__ = AsyncMock(return_value=False)
         with (
-            patch("src.app.modules.security.service.get_redis_client", return_value=ctx),
+            patch("src.app.core.guard.ip_rules.get_redis_client", return_value=ctx),
         ):
             result = await svc.check_ip_status("203.0.113.9")
         assert result == (False, False)

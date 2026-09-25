@@ -1585,7 +1585,6 @@ def mock_event_bus(monkeypatch):
     mock_bus.publish_sync = MagicMock()
     mock_bus.start = AsyncMock()
     mock_bus.stop = AsyncMock()
-    mock_bus._handlers = {}  # Required for handler registry tests
 
     # Patch the event_bus singleton
     monkeypatch.setattr("src.app.core.events.event_bus", mock_bus)

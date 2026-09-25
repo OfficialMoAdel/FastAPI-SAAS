@@ -37,7 +37,7 @@ class TestCriticalEventNonBlocking:
             slow_handler_finished.set()
 
         # Manually register handler
-        event_bus._handlers["test.slow_event"] = [slow_handler]
+        event_bus.register_handler("test.slow_event", slow_handler)
 
         start = time.perf_counter()
         await event_bus.publish(
@@ -68,7 +68,8 @@ class TestCriticalEventNonBlocking:
             handler_finished_count += 1
 
         # Register 3 slow handlers
-        event_bus._handlers["test.multi_event"] = [slow_handler, slow_handler, slow_handler]
+        for _ in range(3):
+            event_bus.register_handler("test.multi_event", slow_handler)
 
         start = time.perf_counter()
         await event_bus.publish(
@@ -98,7 +99,8 @@ class TestCriticalEventNonBlocking:
             success_handler_called.set()
 
         # Register both handlers - failing first
-        event_bus._handlers["test.error_event"] = [failing_handler, success_handler]
+        event_bus.register_handler("test.error_event", failing_handler)
+        event_bus.register_handler("test.error_event", success_handler)
 
         # Should not raise
         await event_bus.publish(
@@ -140,7 +142,7 @@ class TestCriticalEventNonBlocking:
             received_data = data
             handler_called.set()
 
-        event_bus._handlers["test.data_event"] = [capture_handler]
+        event_bus.register_handler("test.data_event", capture_handler)
 
         test_data = {"user_id": "123", "action": "test"}
         await event_bus.publish(
@@ -183,7 +185,7 @@ class TestCriticalEventWithRedis:
             await asyncio.sleep(0.3)
             handler_called.set()
 
-        event_bus._handlers["test.idempotent_event"] = [slow_handler]
+        event_bus.register_handler("test.idempotent_event", slow_handler)
 
         start = time.perf_counter()
         await event_bus.publish(
@@ -222,7 +224,7 @@ class TestCriticalEventWithRedis:
             nonlocal handler_called
             handler_called = True
 
-        event_bus._handlers["test.duplicate_event"] = [handler]
+        event_bus.register_handler("test.duplicate_event", handler)
 
         start = time.perf_counter()
         await event_bus.publish(

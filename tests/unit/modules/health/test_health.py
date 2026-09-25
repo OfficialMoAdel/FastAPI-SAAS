@@ -9,13 +9,12 @@ from src.app.core.health import HealthResult
 
 @pytest.fixture
 def mock_health_checks():
-    # check_database_health and check_redis_health are imported at top-level in router,
-    # so we must patch them WHERE THEY ARE USED (in the router module).
-    # check_redis_queue_health is imported inside the function, so we must patch it at SOURCE.
+    # All probe functions are imported at module scope, so patch them where
+    # the route resolves them.
     with (
         patch("src.app.modules.health.router.check_database_health", new_callable=AsyncMock) as db_mock,
         patch("src.app.modules.health.router.check_redis_health", new_callable=AsyncMock) as redis_mock,
-        patch("src.app.core.health.check_redis_queue_health", new_callable=AsyncMock) as queue_mock,
+        patch("src.app.modules.health.router.check_redis_queue_health", new_callable=AsyncMock) as queue_mock,
     ):
         yield db_mock, redis_mock, queue_mock
 
@@ -61,6 +60,20 @@ async def test_ready_check_success(async_client: AsyncClient, mock_health_checks
     assert data["redis"] == "healthy"
     assert data["queue"] == "healthy"
     assert data["events"] == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_ready_check_degraded_is_not_ready(async_client: AsyncClient, mock_health_checks, mock_event_bus):
+    """Only the all-components-healthy state is HTTP-ready."""
+    db_mock, redis_mock, queue_mock = mock_health_checks
+    db_mock.return_value = HealthResult(status="healthy")
+    redis_mock.return_value = HealthResult(status="healthy")
+    queue_mock.return_value = HealthResult(status="degraded", error="Pool not initialized")
+
+    response = await async_client.get("/api/v1/ready")
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert response.json()["status"] == "degraded"
 
 
 @pytest.mark.asyncio

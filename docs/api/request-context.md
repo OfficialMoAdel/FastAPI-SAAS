@@ -45,7 +45,9 @@ async def upload_file(
 - `ctx.has_tenant` — `False` for tenant-less/sentinel paths (`NO_TENANT`).
 - `ctx.require_tenant()` — tenant or `ForbiddenException`.
 - `ctx.owns(owner_id)` / `ctx.require_ownership(owner_id)` — centralizes the
-  ownership-check bug class (superusers exempt).
+  ownership-check bug class (superusers exempt). The pure policy lives in
+  `src/app/core/security/ownership.py`; this API type only adapts it for
+  request use.
 
 ## Migration guide
 

@@ -155,8 +155,8 @@ class TestHandlerPreregistration:
         """Verify handler registry has handlers after startup."""
         from src.app.core.events import event_bus
 
-        # Registry should exist
-        assert hasattr(event_bus, "_handlers") or hasattr(event_bus, "handlers")
+        assert hasattr(event_bus, "handler_count")
+        assert hasattr(event_bus, "clear_handlers")
 
     @pytest.mark.asyncio
     async def test_no_cold_start_delay(self, perf_timer):

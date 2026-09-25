@@ -1,27 +1,27 @@
-"""P3-#15: one lifespan home — phases live in core/setup.py, main.py stays thin."""
+"""Candidate 05: lifecycle mechanism and application wiring have separate homes."""
 
 import inspect
 
-import src.app.core.setup as core_setup
+import src.app.composition as composition
 import src.app.main as main_module
+from src.app.composition import apply_security_runtime_config, lifespan_with_admin
 from src.app.core.config import settings
-from src.app.core.setup import apply_security_runtime_config, lifespan_with_admin
 
 
 class TestLifespanHome:
-    def test_main_reexports_setup_lifespan(self) -> None:
+    def test_main_reexports_composition_lifespan(self) -> None:
         # main.py is a thin composition root: the lifespan object it wires
-        # into the app IS setup.py's — not a local copy.
+        # into the app is the one assembled by the application composition root.
         assert main_module.lifespan_with_admin is lifespan_with_admin
-        assert main_module.lifespan_with_admin is core_setup.lifespan_with_admin
+        assert main_module.lifespan_with_admin is composition.lifespan_with_admin
 
     def test_main_defines_no_lifespan_phases(self) -> None:
         source = inspect.getsource(main_module)
         for marker in ("def _init_", "def _warm_", "def _teardown_", "def _load_", "setattr(settings"):
             assert marker not in source, f"main.py should not contain {marker!r}"
 
-    def test_phases_live_in_setup(self) -> None:
-        source = inspect.getsource(core_setup)
+    def test_phases_live_in_composition(self) -> None:
+        source = inspect.getsource(composition)
         for name in (
             "_warm_token_blacklist_cache",
             "_init_pool_metrics",

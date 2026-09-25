@@ -1,9 +1,9 @@
 """Health-check library — the canonical check implementations (A-M7).
 
 Consumers: ``modules/health/router.py`` (the canonical HTTP surface for
-/health and /ready) and ``api/monitoring.py`` (richer ops endpoints that
-delegate their DB probe here). Keeping the probes in core/ and only the
-HTTP surface in modules/ preserves the core→modules layering contract.
+/health and /ready) and ``api/monitoring.py`` (compatibility readiness alias
+plus richer ops endpoints that delegate their probes here). Keeping the probes
+and readiness policy in core/ preserves the core→modules layering contract.
 """
 
 import asyncio
@@ -43,6 +43,24 @@ class HealthResult:
         if self.error is not None:
             result["error"] = self.error
         return result
+
+
+def resolve_readiness_status(
+    database: HealthResult,
+    redis: HealthResult,
+    queue: HealthResult,
+    events_ready: bool,
+) -> str:
+    """Resolve one readiness answer from all required runtime dependencies.
+
+    ``healthy`` is the only ready state. A non-database dependency failure is
+    ``degraded`` in the body but must still return HTTP 503 at the route.
+    """
+    if database.status == "healthy" and redis.status == "healthy" and queue.status == "healthy" and events_ready:
+        return "healthy"
+    if database.status == "unhealthy":
+        return "unhealthy"
+    return "degraded"
 
 
 async def check_database_health(db: AsyncSession) -> HealthResult:

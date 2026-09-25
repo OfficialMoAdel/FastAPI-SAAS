@@ -12,7 +12,7 @@ src/app/api/
 ├── deps/              # Shared dependency injection seams
 │   ├── auth.py            # get_current_user, get_current_superuser, optional auth
 │   ├── core.py            # DB session, pagination, common deps
-│   ├── request_context.py # RequestContext resolution (principal/tenant seams)
+│   ├── request_context.py # RequestContext adapter; re-exports core ownership policy
 │   └── tenant.py          # Tenant-scoping dependencies
 ├── monitoring.py      # API monitoring endpoints
 ├── openapi.py         # setup_custom_openapi(app) — single OpenAPI wiring point
@@ -69,6 +69,7 @@ async def create_post(
 - App-level wiring: `src/app/api/__init__.py::get_router`
 - OpenAPI schema: `src/app/api/openapi.py::setup_custom_openapi` (wired once in `main.py`)
 - Deps: `src/app/api/deps/auth.py`, `core.py`, `request_context.py`, `tenant.py`
+- Ownership policy: `src/app/core/security/ownership.py` (API context only adapts it)
 - Admin endpoints: `src/app/api/v1/admin/circuit_breakers.py`, `jobs.py`
 
 ## JIT Index Hints

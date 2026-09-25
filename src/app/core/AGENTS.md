@@ -8,7 +8,8 @@ Shared infrastructure layer: grouped settings, async database, security services
 
 ```
 src/app/core/
-├── setup.py            # create_application(), lifespan_factory(), pool/cache init (composition root helpers)
+├── setup.py            # Reusable infrastructure startup/teardown hooks
+├── runtime.py          # Generic StartupPhase/compose_phases lifecycle mechanism
 ├── config/             # Grouped Pydantic Settings namespaces
 │   ├── __init__.py         # Exports `settings`, `Settings`, `EnvironmentOption`
 │   ├── app.py, auth.py, cache.py, crypt.py, database.py, environment.py,
@@ -16,7 +17,7 @@ src/app/core/
 ├── db/                 # Engine, sessions, RLS, token blacklist DB  → [db/AGENTS.md](db/AGENTS.md)
 ├── security/           # JWT, passwords, blacklist cache, ban, encryption → [security/AGENTS.md](security/AGENTS.md)
 ├── cache/              # Redis cache client, deps, invalidation channel, warmer
-├── events/             # Internal event bus + DLQ
+├── events/             # Internal event bus, public registration seam, + DLQ
 ├── exceptions/         # FastCRUD-derived HTTP-shaped exceptions (http_exceptions.py, cache_exceptions.py)
 ├── monitoring/         # Metrics collection
 ├── observability/      # structlog config, log sanitizer
@@ -71,7 +72,7 @@ redis: Annotated[Redis, Depends(async_get_redis)]            # router (from core
 ❌ DON'T: Construct `redis.Redis(...)` directly in services or read module-level globals.
 
 ### Error handling — central translation
-Domain exceptions derive from `AppException` (`src/app/shared/exceptions.py`). `core/errors.py` builds the `EXCEPTION_HANDLERS` table (`build_exception_table` + `_make_table_handler`) and registers it via `setup_exception_handlers(app)` in `core/setup.py::create_application`. Services stay HTTP-free; routers don't catch anything.
+Domain exceptions derive from `AppException` (`src/app/shared/exceptions.py`). `core/errors.py` builds the `EXCEPTION_HANDLERS` table (`build_exception_table` + `_make_table_handler`) and is registered by `src/app/composition.py::create_application`. Services stay HTTP-free; routers don't catch anything.
 ❌ DON'T: Raise raw `HTTPException(409, ...)` from a service, or re-create `_base/exceptions` (deleted). HTTP-shaped exceptions (`core/exceptions/http_exceptions.py`) are the exception for routers that need them directly.
 
 ### Resilience
@@ -87,7 +88,9 @@ Tenant context lives in contextvars (`core/tenancy/context.py` — always `clear
 
 ## Touch Points
 
-- Composition root: `main.py` + `core/setup.py::create_application` / `lifespan_factory`
+- Composition roots: `main.py` + `src/app/composition.py` for web wiring;
+  `core/setup.py` for reusable infrastructure hooks; `core/runtime.py` for the
+  phase mechanism
 - Error translation: `core/errors.py::setup_exception_handlers`
 - Redis: `core/redis_provider.py`
 - Logger: `core/logger.py::get_logger` + `core/observability/log_sanitizer.py` (redacts JWTs, API keys, DB URLs, emails, cards, bearer/session tokens)

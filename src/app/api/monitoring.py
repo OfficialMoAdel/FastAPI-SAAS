@@ -16,6 +16,13 @@ from pydantic import BaseModel
 
 from src.app.api.deps import get_current_superuser
 from src.app.core.config import settings
+from src.app.core.health import (
+    HealthResult,
+    check_database_health,
+    check_redis_health,
+    check_redis_queue_health,
+    resolve_readiness_status,
+)
 from src.app.core.monitoring.r1_unified_metrics import get_r1_metrics
 
 router = APIRouter()
@@ -179,19 +186,43 @@ async def liveness_probe() -> dict[str, str]:
     return {"status": "alive"}
 
 
+async def _collect_readiness_results() -> tuple[HealthResult, HealthResult, HealthResult, bool]:
+    from src.app.core.db.database import local_session
+    from src.app.core.events import event_bus
+    from src.app.core.redis_provider import get_redis
+
+    async with local_session() as db:
+        database_result = await check_database_health(db)
+    redis = get_redis()
+    redis_result = await check_redis_health(redis) if redis is not None else HealthResult(
+        status="degraded", error="Redis not configured"
+    )
+    queue_result = await check_redis_queue_health()
+    return database_result, redis_result, queue_result, event_bus.is_ready
+
+
 @router.get("/health/ready", response_model=None)
 async def readiness_probe() -> dict[str, str] | JSONResponse:
-    """Readiness probe - checks if the application is ready to serve traffic.
-
-    Not-ready is signaled with HTTP 503 so orchestrators can gate traffic on
-    the status code instead of parsing the body.
-    """
+    """Compatibility alias for the canonical readiness dependency set."""
     try:
-        db_status = await check_database()
-        if db_status.get("status") == "healthy":
+        database, redis, queue, events_ready = await _collect_readiness_results()
+        overall_status = resolve_readiness_status(database, redis, queue, events_ready)
+        if overall_status == "healthy":
             return {"status": "ready"}
-        return JSONResponse(status_code=503, content={"status": "not_ready", "reason": "database_unhealthy"})
-    except Exception:  # noqa: BLE001 - P1-17: readiness reports not_ready, never raises
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "reason": overall_status,
+                "checks": {
+                    "database": database.status,
+                    "redis": redis.status,
+                    "queue": queue.status,
+                    "events": "healthy" if events_ready else "unhealthy",
+                },
+            },
+        )
+    except Exception:  # noqa: BLE001 - readiness reports not_ready, never raises
         return JSONResponse(status_code=503, content={"status": "not_ready", "reason": "health_check_failed"})
 
 

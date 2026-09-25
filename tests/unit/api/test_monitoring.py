@@ -16,6 +16,7 @@ from src.app.api.monitoring import (
     metrics_json,
     readiness_probe,
 )
+from src.app.core.health import HealthResult
 
 
 @pytest.mark.asyncio
@@ -215,23 +216,39 @@ async def test_liveness_probe() -> None:
 
 @pytest.mark.asyncio
 async def test_readiness_probe_ready() -> None:
-    with patch("src.app.api.monitoring.check_database", new_callable=AsyncMock, return_value={"status": "healthy"}):
+    healthy = HealthResult(status="healthy")
+    with patch(
+        "src.app.api.monitoring._collect_readiness_results",
+        new=AsyncMock(return_value=(healthy, healthy, healthy, True)),
+    ):
         res = await readiness_probe()
         assert res == {"status": "ready"}
 
 
 @pytest.mark.asyncio
 async def test_readiness_probe_not_ready() -> None:
-    with patch("src.app.api.monitoring.check_database", new_callable=AsyncMock, return_value={"status": "unhealthy"}):
+    database = HealthResult(status="unhealthy")
+    healthy = HealthResult(status="healthy")
+    with patch(
+        "src.app.api.monitoring._collect_readiness_results",
+        new=AsyncMock(return_value=(database, healthy, healthy, True)),
+    ):
         res = await readiness_probe()
         assert isinstance(res, JSONResponse)
         assert res.status_code == 503
-        assert json.loads(bytes(res.body)) == {"status": "not_ready", "reason": "database_unhealthy"}
+        assert json.loads(bytes(res.body)) == {
+            "status": "not_ready",
+            "reason": "unhealthy",
+            "checks": {"database": "unhealthy", "redis": "healthy", "queue": "healthy", "events": "healthy"},
+        }
 
 
 @pytest.mark.asyncio
 async def test_readiness_probe_exception() -> None:
-    with patch("src.app.api.monitoring.check_database", new_callable=AsyncMock, side_effect=Exception("DB Error")):
+    with patch(
+        "src.app.api.monitoring._collect_readiness_results",
+        new=AsyncMock(side_effect=Exception("probe failed")),
+    ):
         res = await readiness_probe()
         assert isinstance(res, JSONResponse)
         assert res.status_code == 503

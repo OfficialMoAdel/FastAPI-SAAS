@@ -53,40 +53,12 @@ from src.app.api.deps.auth import get_current_user
 from src.app.api.deps.tenant import tenant_dependency
 from src.app.core.db.database import async_get_db
 from src.app.core.principal import AuthenticatedUser
+from src.app.core.security.ownership import owns_resource, require_resource_ownership
 from src.app.core.tenancy.context import (  # noqa: F401 — re-exported canonical domain error
     NO_TENANT,
     TenantContext,
     TenantContextError,
 )
-from src.app.shared.exceptions import ForbiddenError as ForbiddenException
-
-
-def owns_resource(actor_user_id: object, owner_user_id: object) -> bool:
-    """Whether ``actor_user_id`` owns a resource belonging to ``owner_user_id``.
-
-    Item 8: the pure ownership predicate behind :meth:`RequestContext.owns`.
-    String comparison so int/str id mismatches across ORM/dict rows can
-    never bypass the check.
-    """
-    return str(owner_user_id) == str(actor_user_id)
-
-
-def require_resource_ownership(
-    owner_user_id: object,
-    actor_user_id: object,
-    is_superuser: bool = False,
-) -> None:
-    """Raise unless ``actor_user_id`` owns the resource.
-
-    Item 8: the ONE ownership seam for services and routers. Superusers
-    bypass; everyone else must own the resource. Raises the shared domain
-    ``ForbiddenError`` (the central table maps it to 403).
-
-    Raises:
-        ForbiddenError: If the resource belongs to another user.
-    """
-    if not is_superuser and not owns_resource(actor_user_id, owner_user_id):
-        raise ForbiddenException("You do not have permission to access this resource.")
 
 
 @dataclass(frozen=True, slots=True)

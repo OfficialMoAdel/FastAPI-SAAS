@@ -7,7 +7,7 @@ Supports priority-based event handling:
 This package decomposes the former single-module ``events.py`` by concern:
 
 - :mod:`.priority` — ``EventPriority`` levels
-- :mod:`.bus` — the ``EventBus`` class, singleton and reset helper
+- :mod:`.bus` — the ``EventBus`` class, singleton, and public registration/reset interface
 - :mod:`.worker` — the ARQ worker entry point (``process_event_handler``)
 
 Shared seam

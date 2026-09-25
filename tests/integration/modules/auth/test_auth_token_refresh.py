@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 
 from src.app.modules.auth.service import AuthService
+from tests.helpers.redis import wait_for_redis_key_expiry
 
 
 @pytest.fixture
@@ -160,7 +161,6 @@ class TestTokenRefreshWithCaching:
     @pytest.mark.asyncio
     async def test_auth_cache_ttl_expiration(self, real_redis):
         """Test that auth cache expires after TTL."""
-        import asyncio
         import json
 
         cache_key = "auth:user:ttltest"
@@ -172,11 +172,10 @@ class TestTokenRefreshWithCaching:
         # Verify it exists
         assert await real_redis.get(cache_key) is not None
 
-        # Wait for expiration
-        await asyncio.sleep(2.5)
-
-        # Verify it's gone
-        assert await real_redis.get(cache_key) is None
+        try:
+            await wait_for_redis_key_expiry(real_redis, cache_key)
+        finally:
+            await real_redis.delete(cache_key)
 
 
 class TestAuthInfoCacheIntegrity:

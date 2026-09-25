@@ -74,7 +74,7 @@ async def check_mfa_rate_limit(
     if verdict.is_limited:
         raise RateLimitExceededError(
             f"Too many MFA verification attempts. Please try again in {verdict.period} seconds.",
-            retry_after=verdict.retry_after or verdict.period,
+            retry_after=verdict.retry_after_seconds(),
         )
 
 

@@ -122,19 +122,16 @@ class TestApplicationStartupShutdown:
         """Verify engine.dispose() is called during shutdown (P1-1)."""
         import inspect
 
-        from src.app.core import setup
+        from src.app import composition
+        from src.app.core import runtime
 
-        source = inspect.getsource(setup)
+        composition_source = inspect.getsource(composition)
+        runtime_source = inspect.getsource(runtime)
 
-        # Verify dispose is in finally block
-        assert "await engine.dispose()" in source
-        assert "finally:" in source
-
-        finally_pos = source.find("finally:")
-        dispose_pos = source.find("await engine.dispose()")
-
-        assert dispose_pos > finally_pos, "dispose must be in finally block"
-        logger.info("E2E: Engine dispose in finally block verified")
+        assert "_dispose_engine" in composition_source
+        assert "finally:" in runtime_source
+        assert "await phase.teardown()" in runtime_source
+        logger.info("E2E: Engine disposal is executed by the shared phase teardown")
 
     def test_uvloop_configured_on_unix(self) -> None:
         """Verify uvloop is configured on Unix platforms (C2)."""

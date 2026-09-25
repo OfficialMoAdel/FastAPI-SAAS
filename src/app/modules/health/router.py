@@ -17,7 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
-from src.app.core.health import check_database_health, check_redis_health, check_redis_queue_health
+from src.app.core.health import (
+    check_database_health,
+    check_redis_health,
+    check_redis_queue_health,
+    resolve_readiness_status,
+)
 from src.app.core.schemas import HealthCheck, ReadyCheck
 from src.app.core.utils.cache import async_get_redis
 
@@ -48,33 +53,18 @@ async def ready(
 ) -> JSONResponse:
     from src.app.core.events import event_bus
 
-    # R2 #12: Run independent health checks in parallel
     database_result, redis_result, queue_result = await asyncio.gather(
         check_database_health(db=db),
         check_redis_health(redis=redis),
         check_redis_queue_health(),
     )
-    LOGGER.debug(f"Database health check status: {database_result}")
-    LOGGER.debug(f"Redis health check status: {redis_result}")
-    LOGGER.debug(f"Redis queue health check status: {queue_result}")
-    events_status = event_bus.is_ready
-    LOGGER.debug(f"Event bus readiness status: {events_status}")
-
-    is_database_healthy = database_result.status == "healthy"
-    is_redis_healthy = redis_result.status == "healthy"
-    is_queue_healthy = queue_result.status == "healthy"
-
-    if is_database_healthy and is_redis_healthy and is_queue_healthy and events_status:
-        overall_status = STATUS_HEALTHY
-    elif not is_database_healthy:
-        overall_status = STATUS_UNHEALTHY
-    else:
-        overall_status = "degraded"
-
-    http_status = (
-        status.HTTP_200_OK if overall_status in (STATUS_HEALTHY, "degraded") else status.HTTP_503_SERVICE_UNAVAILABLE
+    overall_status = resolve_readiness_status(
+        database=database_result,
+        redis=redis_result,
+        queue=queue_result,
+        events_ready=event_bus.is_ready,
     )
-
+    http_status = status.HTTP_200_OK if overall_status == STATUS_HEALTHY else status.HTTP_503_SERVICE_UNAVAILABLE
     response = {
         "status": overall_status,
         "environment": settings.env.ENVIRONMENT.value,
@@ -83,7 +73,7 @@ async def ready(
         "database": database_result.status,
         "redis": redis_result.status,
         "queue": queue_result.status,
-        "events": STATUS_HEALTHY if events_status else STATUS_UNHEALTHY,
+        "events": STATUS_HEALTHY if event_bus.is_ready else STATUS_UNHEALTHY,
         "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
     }
 

@@ -23,29 +23,30 @@ class RateLimitVerdict:
     """The complete verdict and HTTP headers returned by the rate policy engine."""
 
     is_limited: bool
-    limit: int
-    period: int
-    remaining: int
+    limit: int | None
+    period: int | None
+    remaining: int | None
     retry_after: int
     key: str
     headers: dict[str, str]
     bypassed: bool = False
 
-
-# A bypassed caller never reaches a counter, so limit/period are meaningless.
-# One pair of named constants beats a bare 999999 at every call site — the
-# sentinel is a fact about Bypass, not about the caller.
-BYPASS_LIMIT = 999999
-BYPASS_PERIOD = 60
+    def retry_after_seconds(self) -> int:
+        """Return a numeric retry delay for a limited, counter-backed verdict."""
+        if self.retry_after > 0:
+            return self.retry_after
+        if self.period is None:
+            raise ValueError("A limited rate-limit verdict requires a period")
+        return self.period
 
 
 def build_verdict(
     *,
     key: str,
-    limit: int,
-    period: int,
+    limit: int | None,
+    period: int | None,
     is_limited: bool,
-    remaining: int,
+    remaining: int | None,
     retry_after: int | float = 0,
     bypassed: bool = False,
     degraded: bool = False,
@@ -53,38 +54,21 @@ def build_verdict(
 ) -> RateLimitVerdict:
     """Assemble the canonical rate-limit verdict.
 
-    The ONE place a counter result becomes a Verdict. Header grammar and the
-    ``retry_after == 0`` fallback live here and nowhere else — both the
-    per-request admission path and the endpoint Security budgets cross this
-    seam, so they cannot drift apart.
-
-    Args:
-        key: Bucket key the counter was consumed from.
-        limit: Configured limit for the bucket.
-        period: Window in seconds.
-        is_limited: Whether the caller is over budget.
-        remaining: Tokens left, as reported by the engine.
-        retry_after: Seconds until the caller may retry (0 = unknown).
-        bypassed: Operator-declared whitelist skipped the counter. A bypassed
-            verdict is never limited — the ban boundary is enforced elsewhere.
-        degraded: The configured engine failed and the fixed-window engine
-            served the check. Surfaced as a response header so the swap is
-            observable instead of silent.
-        extra: Additional headers for a specific caller (e.g. the whitelist
-            marker). Caller-specific, never part of the core grammar.
+    Numeric quota fields are optional because a bypassed caller never reaches
+    a counter. ``None`` means no quota was evaluated and is never serialized
+    as a fabricated number.
     """
     resolved_retry_after = int(retry_after)
     if is_limited and resolved_retry_after == 0:
-        # Both engines can report "limited" with no retry hint when the window
-        # is sub-second. Truncating to 0 told clients to retry immediately;
-        # fall back to the remainder of the current period.
         resolved_retry_after = period - (int(time.time()) % period) if period else 0
 
-    headers = {
-        "X-RateLimit-Limit": str(limit),
-        "X-RateLimit-Remaining": str(remaining),
-        "X-RateLimit-Period": str(period),
-    }
+    headers: dict[str, str] = {}
+    if limit is not None:
+        headers["X-RateLimit-Limit"] = str(limit)
+    if remaining is not None:
+        headers["X-RateLimit-Remaining"] = str(remaining)
+    if period is not None:
+        headers["X-RateLimit-Period"] = str(period)
     if is_limited and resolved_retry_after > 0:
         headers["Retry-After"] = str(resolved_retry_after)
     if degraded:
@@ -383,8 +367,6 @@ async def check_security_budget(
 
 
 __all__ = [
-    "BYPASS_LIMIT",
-    "BYPASS_PERIOD",
     "RateLimitVerdict",
     "build_rate_limit_key",
     "build_verdict",

@@ -49,8 +49,9 @@ persistence grilling loop, 2026-09-22.)
   identity (including `tier_id`) so it cannot keep premium per-path policy.
 
 - **Bypass** — an operator-declared whitelisted IP skips the counter but never
-  the ban. Currently signalled by a sentinel `limit=999999` plus
-  `bypassed=True`; the sentinel is leakage and should not spread.
+  the ban. No quota counter ran, so `RateLimitVerdict` limit/period/remaining
+  are `None` and no numeric `X-RateLimit-*` quota headers are emitted. The one
+  canonical signal is `X-RateLimit-Bypassed: true`.
 
 - **Principal** — the identity behind one request, resolved exactly once and
   never re-derived. `resolve_principal(request, db, policy, …)` in
@@ -76,6 +77,32 @@ persistence grilling loop, 2026-09-22.)
   site; messages stay byte-identical to the pre-table raises. An unmapped
   reason fails loud (`KeyError`) — a missing row is a bug, not a policy
   default.
+
+- **Runtime composition** — the ordered phase plan and concrete application
+  startup/teardown wiring. `compose_phases` in `src/app/core/runtime.py` is the
+  reusable mechanism; `src/app/composition.py` owns the web phase rows and
+  FastAPI assembly; the worker registry remains its own process composition
+  root. Core setup owns reusable infrastructure hooks, not feature wiring.
+  Seam: `StartupPhase` + `compose_phases`.
+
+- **Readiness** — the single traffic-gating answer across database, Redis,
+  queue, and EventBus registration. Only the all-healthy state returns HTTP
+  200; degraded dependency state remains visible in the body but returns HTTP
+  503. `/api/v1/ready` is canonical; `/api/health/ready` is a compatibility
+  alias using the same dependency policy. Seam: `resolve_readiness_status()` in
+  `src/app/core/health.py`.
+
+- **Event registration** — the application wiring step that supplies the
+  complete handler batch to `EventBus.register_handlers()`. `EventBus` owns the
+  private registry, readiness flag, reset, and handler count; application code
+  supplies handlers and tests observe behavior through the public interface.
+  Seam: `src/app/events.py` + `src/app/core/events/bus.py`.
+
+- **Resource ownership** — the framework-independent policy that a
+  non-superuser actor may act only on resources whose owner matches. The policy
+  lives in `src/app/core/security/ownership.py`; API request context re-exports
+  it for compatibility, while feature services import the core policy directly.
+  Seam: `owns_resource` / `require_resource_ownership`.
 
 - **Principal provider** — the DIP hook that lets core *own* the Principal
   dependency while api *implements* it: `PrincipalProvider` Protocol +
@@ -162,6 +189,12 @@ persistence grilling loop, 2026-09-22.)
   their queue operations to this module; the monitor alone decodes legacy
   pipe-delimited rows for administrative compatibility. Seam:
   `src/app/core/dead_letter.py`.
+
+- **IP rules** — the request-guard policy for IP allow/deny reads and writes.
+  `IpRules` is the injected Seam used by IP filtering and attack detection;
+  `RedisIpRules` is the production Adapter backed by the core-owned
+  `IPFilterService`. The security module's `service.py` is a compatibility
+  facade, not the implementation. Seam: `src/app/core/guard/ip_rules.py`.
 
 - **L1 invalidation seam** — the process-local cache Seam: `L1Cache(name,
   channel, codec, caches=[...])` in `src/app/core/cache/l1.py` owns the whole

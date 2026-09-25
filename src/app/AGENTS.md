@@ -24,12 +24,7 @@ uv run python -c "from src.app.main import app; print('App loaded successfully')
 ✅ DO: Keep main.py thin — all wiring is delegated
 ```python
 # src/app/main.py (condensed)
-from src.app.core.setup import create_application, lifespan_factory
-
-async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
-    # phases: logging → env validation → default lifespan → redis init →
-    # rate limiting/security → cache warmup → admin mount → teardown
-    ...
+from src.app.composition import create_application, lifespan_with_admin
 
 app = create_application(
     router=get_router(),
@@ -45,7 +40,7 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(TenantMiddleware)
 # ... GZip outermost; full ordering documented inline in main.py
 ```
-❌ DON'T: Add setup logic (routes, handlers, admin mount) directly to main.py — extend `core/setup.py` or a lifespan phase.
+❌ DON'T: Add setup logic (routes, handlers, admin mount) directly to main.py — extend `src/app/composition.py` or a lifespan phase. `core/runtime.py` contains only the reusable phase mechanism.
 
 ### Admin Interface Configuration
 ✅ DO: Use configurable admin panel with proper security
@@ -115,15 +110,17 @@ Only cross-cutting schemas live at `src/app/schemas/` (currently `job.py`).
 ```python
 # Domain errors: src/app/shared/exceptions.py (all derive from AppException)
 # HTTP translation table: src/app/core/errors.py (EXCEPTION_HANDLERS + _make_table_handler)
-# Registered once in core/setup.py::create_application → setup_exception_handlers(app)
+# Registered once in src/app/composition.py::create_application → setup_exception_handlers(app)
 ```
 ❌ DON'T: Register per-route `@app.exception_handler` blocks in main.py or raise raw `HTTPException` from services.
 
 ## Touch Points / Key Files
 
 ### Main Application
-- Composition root: `src/app/main.py` — `create_application()` from `core/setup.py`, `lifespan_with_admin`, LIFO middleware stack, `setup_custom_openapi`
-- Setup helpers: `src/app/core/setup.py` — app factory, lifespan factory, CORS, docs control
+- Composition root: `src/app/main.py` — `create_application()` and `lifespan_with_admin` from `src/app/composition.py`, LIFO middleware stack, `setup_custom_openapi`
+- Application wiring: `src/app/composition.py` — web phase plan, lifespan factory, app factory, CORS/docs control
+- Runtime mechanism: `src/app/core/runtime.py` — reusable `StartupPhase` / `compose_phases`
+- Infrastructure hooks: `src/app/core/setup.py` — Redis/table startup and teardown primitives
 
 ### Admin Interface
 - Admin Init: `src/app/admin/initialize.py` - CRUDAdmin configuration (mounted inside lifespan)

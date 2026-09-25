@@ -54,6 +54,11 @@ merge.) Tier path policy for general traffic lives in the same module
 4. **Allow/Deny**: request proceeds or returns 429 Too Many Requests with
    `Retry-After` / `X-RateLimit-*` headers
 
+An operator-declared IP bypass skips the counter, not the ban boundary. Its
+verdict has no numeric quota fields and emits only `X-RateLimit-Bypassed: true`;
+it does not fabricate `X-RateLimit-Limit`, `X-RateLimit-Remaining`, or
+`X-RateLimit-Period` values.
+
 ## User Tier System
 
 ### Default Tiers

@@ -6,10 +6,10 @@ from fastcrud import compute_offset, paginated_response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps.request_context import require_resource_ownership
 from src.app.core.db.scoped import execute_scoped
 from src.app.core.pagination import build_keyset_response, paginate_keyset
 from src.app.core.principal import AuthenticatedUser
+from src.app.core.security.ownership import require_resource_ownership
 from src.app.modules._base.service import BaseService
 from src.app.modules.posts.models import Post
 from src.app.modules.posts.schemas import PostCreate, PostCreateInternal, PostRead, PostUpdate

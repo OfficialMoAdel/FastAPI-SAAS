@@ -26,7 +26,7 @@ import pytest
 from httpx import AsyncClient
 
 from src.app.core.config import settings
-from src.app.modules.security.service import IPFilterService
+from src.app.core.guard.ip_rules import IPFilterService
 
 logger = logging.getLogger(__name__)
 

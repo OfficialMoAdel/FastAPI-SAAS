@@ -4,12 +4,13 @@ Tests validate API key caching behavior with actual Redis connections,
 verifying lookup patterns, expiration, and invalidation on revocation.
 """
 
-import asyncio
 import hashlib
 import json
 from uuid import uuid4
 
 import pytest
+
+from tests.helpers.redis import wait_for_redis_key_expiry
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -100,12 +101,10 @@ class TestAPIKeyCachingIntegration:
         # Cache with very short TTL
         await real_redis.setex(cache_key, 2, json.dumps({"is_active": True}))
 
-        # Wait for expiration
-        await asyncio.sleep(2.5)
-
-        # Expired key should not be returned
-        cached = await real_redis.get(cache_key)
-        assert cached is None
+        try:
+            await wait_for_redis_key_expiry(real_redis, cache_key)
+        finally:
+            await real_redis.delete(cache_key)
 
 
 class TestAPIKeyScopeValidation:
@@ -189,11 +188,10 @@ class TestAPIKeyRateLimiting:
         # Verify exists
         assert await real_redis.get(counter_key) == "50"
 
-        # Wait for expiration
-        await asyncio.sleep(2.5)
-
-        # Window should reset
-        assert await real_redis.get(counter_key) is None
+        try:
+            await wait_for_redis_key_expiry(real_redis, counter_key)
+        finally:
+            await real_redis.delete(counter_key)
 
     async def test_sliding_window_pattern(self, real_redis, clean_redis):
         """Test sliding window rate limiting pattern."""

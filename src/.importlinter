@@ -2,6 +2,15 @@
 root_packages =
     src
 
+[importlinter:contract:forbidden-feature-implementation-to-api]
+name = Feature implementation must not import API adapters
+type = forbidden
+source_modules =
+    src.app.modules.posts.service
+    src.app.modules.billing.subscription_service
+forbidden_modules =
+    src.app.api
+
 [importlinter:contract:forbidden-core-to-modules]
 name = Core must not depend on modules (H-5)
 type = forbidden
@@ -34,11 +43,6 @@ ignore_imports =
     src.app.core.rbac.dependencies -> src.app.modules.rbac.models
     src.app.core.security.rate_policy -> src.app.modules.rate_limits.models
     src.app.core.cache.warmer -> src.app.modules.tenants.models
-    src.app.core.setup -> src.app.api.deps
-    src.app.core.setup -> src.app.modules.ai.factory
-    src.app.core.setup -> src.app.modules.auth.http_client
-    src.app.core.setup -> src.app.modules.users
-    src.app.core.setup -> src.app.modules.webhooks.http_client
     src.app.core.tenancy.context -> src.app.modules.tenants.models
     src.app.core.worker.functions -> src.app.modules.audit_logs.service
     src.app.core.worker.functions -> src.app.modules.billing.webhook.idempotency
@@ -46,7 +50,7 @@ ignore_imports =
     src.app.core.worker.settings -> src.app.modules.notifications.service
     src.app.core.worker.settings -> src.app.modules.webhooks.delivery
     # --- Added 2026-09-23 (FastAPI_saas-21ak). -----------------------------
-    # These seven edges were ALREADY unignored; they were invisible only
+    # These remaining edges were ALREADY unignored; they were invisible only
     # because the five stale entries above aborted the contract first. Each is
     # a genuine pre-existing core -> feature-module violation, recorded here so
     # the gate can finally run. Do not treat this list as an endorsement —
@@ -56,12 +60,9 @@ ignore_imports =
     # Candidate 3, pass 5 retired the core.errors -> modules.user_preferences
     # .service edge (PreferenceStorageError now declares its own mapping), so
     # its entry is gone too — core.errors imports NO feature module at all.
+    # Candidate 05 moved application phase assembly to src.app.composition;
+    # core.setup now owns only reusable lifecycle infrastructure.
     src.app.core.cache.l1 -> src.app.modules.users.cache
-    src.app.core.guard.ip_rules -> src.app.modules.security.service
-    # Not itself a modules edge: core.setup -> admin.initialize is the first
-    # hop of the chain core.setup -> admin.initialize -> admin.views ->
-    # modules.tiers.models. Ignoring the first hop is what breaks the chain.
-    src.app.core.setup -> src.app.admin.initialize
     src.app.core.tenancy.resolver -> src.app.modules.tenants.models
     src.app.core.worker.functions -> src.app.modules.webhooks.delivery
     src.app.core.worker.rls_context -> src.app.modules.audit_logs

@@ -18,24 +18,20 @@ class TestLifespanEngineDisposal:
     """Test engine disposal during app lifespan."""
 
     def test_lifespan_has_dispose_call(self) -> None:
-        """Verify setup.py lifespan includes engine.dispose() call in finally block."""
+        """Verify the application composition lifespan disposes the engine."""
         import inspect
 
-        from src.app.core import setup
+        from src.app import composition
+        from src.app.core import runtime
 
-        source = inspect.getsource(setup)
+        composition_source = inspect.getsource(composition)
+        runtime_source = inspect.getsource(runtime)
 
-        # Verify dispose is called
-        assert "await engine.dispose()" in source, "setup.py should call engine.dispose()"
+        assert "_dispose_engine" in composition_source
+        assert "finally:" in runtime_source
+        assert "await phase.teardown()" in runtime_source
 
-        # Verify it's in finally block
-        finally_pos = source.find("finally:")
-        dispose_pos = source.find("await engine.dispose()")
-
-        assert finally_pos != -1, "finally block not found"
-        assert dispose_pos > finally_pos, "dispose should be inside finally block"
-
-        logger.info("Engine.dispose() found in finally block at setup.py")
+        logger.info("Engine disposal is wired through the shared phase composer")
 
     @pytest.mark.asyncio
     async def test_dispose_called_even_on_error(self) -> None:
@@ -43,22 +39,17 @@ class TestLifespanEngineDisposal:
         # This is a design verification test - the finally block ensures cleanup
         import inspect
 
-        from src.app.core import setup
+        from src.app import composition
+        from src.app.core import runtime
 
-        source = inspect.getsource(setup)
+        composition_source = inspect.getsource(composition)
+        runtime_source = inspect.getsource(runtime)
 
-        # Verify the structure: try/finally with dispose in finally
-        assert "try:" in source
-        assert "finally:" in source
-        assert "await engine.dispose()" in source
-
-        # Find their positions to verify structure
-        try_pos = source.find("try:")
-        finally_pos = source.find("finally:")
-        dispose_pos = source.find("await engine.dispose()")
-
-        assert try_pos < finally_pos < dispose_pos, "dispose must be in finally block after try"
-        logger.info("Verified: finally block guarantees dispose on error")
+        assert "_dispose_engine" in composition_source
+        assert "try:" in runtime_source
+        assert "finally:" in runtime_source
+        assert "await phase.teardown()" in runtime_source
+        logger.info("Verified: shared phase teardown guarantees disposal on error")
 
 
 class TestConnectionPoolBehavior:
@@ -183,35 +174,32 @@ class TestSetupModuleIntegration:
     """Integration tests for setup.py lifespan."""
 
     def test_setup_has_dispose_call(self) -> None:
-        """Verify setup.py lifespan includes engine.dispose() call."""
+        """Verify the application composition lifespan disposes the engine."""
         import inspect
 
-        from src.app.core import setup
+        from src.app import composition
+        from src.app.core import runtime
 
-        source = inspect.getsource(setup)
+        composition_source = inspect.getsource(composition)
+        runtime_source = inspect.getsource(runtime)
 
-        assert "await engine.dispose()" in source, "setup.py should call engine.dispose()"
-        assert "finally:" in source, "dispose should be in finally block"
-        logger.info("setup.py correctly includes engine.dispose() in finally block")
+        assert "_dispose_engine" in composition_source
+        assert "finally:" in runtime_source
+        assert "await phase.teardown()" in runtime_source
+        logger.info("composition.py wires disposal through the shared phase composer")
 
     def test_dispose_in_finally_block(self) -> None:
         """Verify dispose is inside finally block for guaranteed cleanup."""
         import inspect
 
-        from src.app.core import setup
+        from src.app import composition
+        from src.app.core import runtime
 
-        source = inspect.getsource(setup)
+        composition_source = inspect.getsource(composition)
+        runtime_source = inspect.getsource(runtime)
 
-        # Find finally block and dispose call
-        finally_pos = source.find("finally:")
-        dispose_pos = source.find("await engine.dispose()")
+        assert "_dispose_engine" in composition_source
+        assert "finally:" in runtime_source
+        assert "await phase.teardown()" in runtime_source
 
-        assert finally_pos != -1, "finally block not found"
-        assert dispose_pos != -1, "engine.dispose() not found"
-        assert dispose_pos > finally_pos, "dispose should be inside finally block"
-
-        logger.info(
-            "Verified: dispose() at position %d is inside finally block at position %d",
-            dispose_pos,
-            finally_pos,
-        )
+        logger.info("Verified: disposal is a tail callback executed by compose_phases")

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.scoped import execute_scoped
 from src.app.core.logger import get_logger
+from src.app.core.security.ownership import require_resource_ownership
 from src.app.core.tenancy.context import (
     require_active_tenant,
     resolve_tenant_id,
@@ -322,8 +323,6 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         Raises:
             ForbiddenError: If the subscription is not owned by the user.
         """
-        from src.app.api.deps.request_context import require_resource_ownership
-
         subscription = await self.get_subscription(subscription_id)
         sub_user_id = subscription.get("user_id")
         try:
@@ -432,8 +431,6 @@ class BillingRecordService(BaseService[BillingRecord]):
         Raises:
             ForbiddenError: If the record is not owned by the user.
         """
-        from src.app.api.deps.request_context import require_resource_ownership
-
         record = await self.get_record(record_id)
         record_user_id = record.get("user_id")
         try:

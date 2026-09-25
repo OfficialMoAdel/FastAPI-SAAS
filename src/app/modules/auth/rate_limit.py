@@ -36,5 +36,5 @@ async def check_auth_rate_limit(request: Request) -> None:
     if verdict.is_limited:
         raise RateLimitExceededError(
             f"Too many authentication attempts. Please try again in {verdict.period} seconds.",
-            retry_after=verdict.retry_after or verdict.period,
+            retry_after=verdict.retry_after_seconds(),
         )

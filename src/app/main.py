@@ -2,7 +2,7 @@
 
 Thin composition root (P3-#15): the app factory, the lifespan, and the
 middleware stack. All startup/shutdown orchestration lives in
-``src.app.core.setup`` (``lifespan_with_admin`` + phases); nothing is
+``src.app.composition`` (``lifespan_with_admin`` + phases); nothing is
 wired here.
 """
 
@@ -13,9 +13,9 @@ load_dotenv()
 from fastapi.responses import ORJSONResponse
 
 from src.app.api import get_router
+from src.app.composition import create_application, lifespan_with_admin
 from src.app.core.config import settings
 from src.app.core.guard import resolve_guard_order
-from src.app.core.setup import create_application, lifespan_with_admin
 
 app = create_application(
     router=get_router(),

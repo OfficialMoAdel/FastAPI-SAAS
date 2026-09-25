@@ -180,7 +180,7 @@ class TestP12CacheWarmingInLifespan:
         """Verify warm_caches is imported and called in lifespan_factory."""
         import inspect
 
-        from src.app.core.setup import lifespan_factory
+        from src.app.composition import lifespan_factory
 
         # Get the source code of lifespan_factory
         source = inspect.getsource(lifespan_factory)

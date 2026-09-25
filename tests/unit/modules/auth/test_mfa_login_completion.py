@@ -8,6 +8,7 @@ import pytest
 from fastapi import Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.security.rate_policy import RateLimitVerdict
 from src.app.modules.auth.schemas import LoginMFAResponse, MFACompleteLoginRequest, MFAVerifyRequest
 from src.app.modules.auth.services import mfa
 from src.app.modules.auth.services.mfa import MFAService
@@ -82,7 +83,15 @@ class TestCompleteLogin:
         self, completion: SimpleNamespace, retry_after: int, expected: int
     ) -> None:
         env = completion
-        env.budget.return_value = SimpleNamespace(is_limited=True, period=60, retry_after=retry_after)
+        env.budget.return_value = RateLimitVerdict(
+            is_limited=True,
+            limit=5,
+            period=60,
+            remaining=0,
+            retry_after=retry_after,
+            key="mfa_verify",
+            headers={},
+        )
         with pytest.raises(RateLimitExceededError) as exc:
             await _complete(env)
         assert exc.value.retry_after == expected
@@ -98,8 +107,8 @@ class TestCompleteLogin:
         account. When it trips, the attempt dies before any factor verify."""
         env = completion
         env.budget.side_effect = [
-            SimpleNamespace(is_limited=False, period=60, retry_after=0),
-            SimpleNamespace(is_limited=True, period=60, retry_after=17),
+            RateLimitVerdict(False, 5, 60, 4, 0, "mfa_verify", {}),
+            RateLimitVerdict(True, 5, 60, 0, 17, "mfa_verify_global", {}),
         ]
         env.request = MFACompleteLoginRequest(mfa_token="b" * 32, totp_token="654321")
         with pytest.raises(RateLimitExceededError) as exc:

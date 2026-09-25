@@ -24,6 +24,7 @@ from structlog import get_logger
 from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.api.deps.auth import AuthenticatedUser
 from src.app.core.config import settings
+from src.app.core.guard.ip_rules import ip_filter_service
 from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
 from src.app.core.security.auto_ban import (
     ban_ip,
@@ -52,7 +53,6 @@ from src.app.modules.security.schemas import (
     IPViolationStats,
     ViolationStats,
 )
-from src.app.modules.security.service import ip_filter_service
 
 router = APIRouter(prefix="/security", tags=["security"])
 

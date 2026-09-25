@@ -11,6 +11,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
+from src.app.core.security.rate_policy import RateLimitVerdict
 from src.app.shared.exceptions import RateLimitExceededError as RateLimitException
 
 
@@ -173,15 +174,21 @@ class TestMFARateLimiting:
 
     def test_complete_login_endpoint_rate_limits_after_5_attempts(self, client_with_rate_limit):
         """Should rate limit after 5 failed complete login attempts."""
-        from types import SimpleNamespace
-
         attempt_count = 0
 
         async def mock_check_security_budget(budget, identifier):
             nonlocal attempt_count
             attempt_count += 1
             assert (budget, identifier) == ("mfa_verify", "a" * 32)
-            return SimpleNamespace(is_limited=attempt_count > 5, period=60, retry_after=23)
+            return RateLimitVerdict(
+                is_limited=attempt_count > 5,
+                limit=5,
+                period=60,
+                remaining=0 if attempt_count > 5 else 4,
+                retry_after=23,
+                key="mfa_verify",
+                headers={},
+            )
 
         headers = {"X-Tenant-ID": "test-tenant"}
 
@@ -260,14 +267,12 @@ class TestMFARateLimiting:
 
     def test_rate_limit_uses_token_as_identifier(self, client_with_rate_limit):
         """Completion charges the service verification budget to the pending token."""
-        from types import SimpleNamespace
-
         token = "a" * 32
         with (
             patch(
                 "src.app.modules.auth.services.mfa.check_security_budget",
                 new_callable=AsyncMock,
-                return_value=SimpleNamespace(is_limited=False),
+                return_value=RateLimitVerdict(False, 5, 60, 4, 0, "mfa_verify", {}),
             ) as budget,
             patch("src.app.modules.auth.services.mfa.get_redis", return_value=None),
         ):

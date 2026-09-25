@@ -2,7 +2,7 @@
 
 import asyncio
 from collections import defaultdict
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterable
 from typing import Any, cast
 
 from arq.connections import ArqRedis
@@ -12,6 +12,7 @@ from src.app.core.dead_letter import DeadLetterQueue
 from src.app.core.events.priority import EventPriority
 
 _UNSET = object()
+EventHandler = Callable[..., Coroutine[Any, Any, None]]
 
 
 def _concurrency_limit() -> int:
@@ -160,19 +161,35 @@ class EventBus:
 
         return decorator
 
-    def register_handler(
-        self,
-        event_name: str,
-        handler: Callable[..., Coroutine[Any, Any, None]],
-    ) -> None:
-        """Register a handler function for an event explicitly.
-
-        Args:
-            event_name: Name of event to subscribe to
-            handler: Async function to handle the event
-        """
+    def register_handler(self, event_name: str, handler: EventHandler) -> None:
+        """Register one handler without changing readiness state."""
         self._handlers[event_name].append(handler)
         _pkg.logger.info("Event handler registered", event_name=event_name, handler=handler.__name__)
+
+    def register_handlers(self, handlers: Iterable[tuple[str, EventHandler]]) -> int:
+        """Register a handler batch and mark the bus ready on success."""
+        count = 0
+        for event_name, handler in handlers:
+            self.register_handler(event_name, handler)
+            count += 1
+        self._registration_complete = True
+        return count
+
+    @property
+    def handler_count(self) -> int:
+        """Return the number of registered handlers across all events."""
+        return sum(len(handlers) for handlers in self._handlers.values())
+
+    def clear_handlers(self) -> None:
+        """Remove all handlers and return the bus to its pre-registration state."""
+        self._handlers.clear()
+        self._registration_complete = False
+
+    def reset(self) -> None:
+        """Reset runtime state while preserving this EventBus instance."""
+        fresh = type(self)()
+        self.__dict__.clear()
+        self.__dict__.update(fresh.__dict__)
 
     # TTL for processed event IDs (24 hours)
     IDEMPOTENCY_TTL_SECONDS = 86400
@@ -875,26 +892,7 @@ event_bus = EventBus()
 
 
 def reset_event_bus() -> None:
-    """Reset the event bus singleton for test isolation.
-
-    Resets the existing singleton in place rather than rebinding it: most
-    publishers bind the singleton at import time
-    (``from src.app.core.events import event_bus``), so replacing ``_pkg.event_bus``
-    would leave those modules publishing to a stale instance while tests inspect
-    the new one.
-
-    Use this in test fixtures to ensure clean state between tests.
-    """
-    fresh = EventBus()
+    """Reset the EventBus singleton without replacing its identity."""
     existing = _pkg.event_bus
-    # Copy fresh state onto the existing instance so all import-time bindings observe it.
-    existing._handlers = fresh._handlers
-    existing._registration_complete = fresh._registration_complete
-    existing._redis_client = fresh._redis_client
-    existing._arq_queue = fresh._arq_queue
-    existing.RETRY_DELAYS = fresh.RETRY_DELAYS  # M-9: keep backoff in lock-step
-    # F13: the semaphore is construction-time state — a reset that keeps the
-    # old one leaks the previous limit (and any acquired permits). Recreate
-    # it so tests that patch EVENT_BUS_CONCURRENCY actually take effect.
-    existing._concurrency_semaphore = asyncio.Semaphore(_concurrency_limit())
+    existing.reset()
     _pkg.logger.debug("Event bus singleton reset")

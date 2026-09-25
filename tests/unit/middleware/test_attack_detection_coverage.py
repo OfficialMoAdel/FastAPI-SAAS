@@ -62,7 +62,7 @@ def _status_of(sent: list[dict]) -> int | None:
 
 @pytest.fixture
 def middleware():
-    with patch("src.app.modules.security.service.IPFilterService"):
+    with patch("src.app.core.guard.ip_rules.IPFilterService"):
         mw = AttackDetectionMiddleware(app=MagicMock())
     mw._enabled = True
     mw._log_full_request = False

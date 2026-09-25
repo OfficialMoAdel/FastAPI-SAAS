@@ -9,7 +9,7 @@ Tests cover:
 """
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -75,6 +75,46 @@ class TestEventBusSubscription:
         """Test getting handlers for non-existent event returns empty list."""
         handlers = fresh_event_bus.get_handlers("nonexistent.event")
         assert handlers == []
+
+    def test_register_handlers_marks_bus_ready(self, fresh_event_bus) -> None:
+        """A successful registration batch owns readiness state."""
+        async def handler(data: dict) -> None:
+            pass
+
+        count = fresh_event_bus.register_handlers([("user.created", handler)])
+
+        assert count == 1
+        assert fresh_event_bus.handler_count == 1
+        assert fresh_event_bus.is_ready is True
+
+    def test_clear_handlers_resets_readiness(self, fresh_event_bus) -> None:
+        """Clearing test handlers returns the bus to its initial state."""
+        async def handler(data: dict) -> None:
+            pass
+
+        fresh_event_bus.register_handlers([("user.created", handler)])
+        fresh_event_bus.clear_handlers()
+
+        assert fresh_event_bus.handler_count == 0
+        assert fresh_event_bus.is_ready is False
+
+    def test_reset_preserves_bus_identity(self, fresh_event_bus) -> None:
+        """Reset clears state without replacing publishers' bus reference."""
+        async def handler(data: dict) -> None:
+            pass
+
+        fresh_event_bus.register_handlers([("user.created", handler)])
+        fresh_event_bus.reset()
+
+        assert fresh_event_bus.handler_count == 0
+        assert fresh_event_bus.is_ready is False
+
+    def test_register_all_handlers_delegates_application_wiring(self, fresh_event_bus) -> None:
+        """The bus owns the interface while the application supplies handlers."""
+        with patch("src.app.events.register_application_event_handlers") as register_handlers:
+            fresh_event_bus.register_all_handlers()
+
+        register_handlers.assert_called_once_with(fresh_event_bus)
 
 
 class TestEventBusPublishing:
@@ -302,8 +342,9 @@ class TestGlobalEventBus:
         assert isinstance(event_bus, EventBus)
 
     def test_global_event_bus_handlers_storage(self) -> None:
-        """Test global event_bus stores handlers."""
-        assert hasattr(event_bus, "_handlers")
+        """Test global event_bus exposes its handler registry."""
+        assert isinstance(event_bus.handler_count, int)
+        assert event_bus.get_handlers("missing.event") == []
 
 
 class TestCriticalFailureDLQ:

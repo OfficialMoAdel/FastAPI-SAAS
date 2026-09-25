@@ -118,8 +118,8 @@ async def test_setup_uses_shared_pool():
             assert "job_deserializer" in call_kwargs, "worker expects JSON-encoded job payloads"
 
             # Verify same pool used + installed into legacy globals via set_clients
-            assert setup.cache.pool is mock_pool
-            assert setup.cache.client is mock_redis_cls.return_value
+            assert cache_module.pool is mock_pool
+            assert cache_module.client is mock_redis_cls.return_value
     finally:
         # Restore globals so mock instances don't leak into other tests
         cache_module.client = None

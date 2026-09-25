@@ -21,8 +21,6 @@ from src.app.core.security.auto_ban import (
 )
 from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
 from src.app.core.security.rate_policy import (
-    BYPASS_LIMIT,
-    BYPASS_PERIOD,
     RateLimitVerdict,
     build_rate_limit_key,
     build_verdict,
@@ -114,12 +112,11 @@ class RequestAdmissionService:
                     client_ip,
                     build_verdict(
                         key="whitelisted",
-                        limit=BYPASS_LIMIT,
-                        period=BYPASS_PERIOD,
+                        limit=None,
+                        period=None,
                         is_limited=False,
-                        remaining=BYPASS_LIMIT,
+                        remaining=None,
                         bypassed=True,
-                        extra={"X-RateLimit-Whitelisted": "true"},
                     ),
                 )
 

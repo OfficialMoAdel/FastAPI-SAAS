@@ -1909,33 +1909,37 @@ Liveness probe - indicates if the application is running. This endpoint should r
 }
 ```
 
-### GET /api/v1/health/ready
+### GET /api/v1/ready
 
-Readiness probe - indicates if the application is ready to serve traffic. This endpoint checks database and Redis connectivity.
+Canonical readiness probe. It checks the database, Redis, ARQ queue, and EventBus registration. Only the all-healthy state returns HTTP 200; degraded dependency state returns HTTP 503 while preserving the component statuses in the body.
 
 **Response (200 OK):**
 ```json
 {
-  "status": "ready",
-  "checks": {
-    "database": "healthy",
-    "redis": "healthy"
-  },
+  "status": "healthy",
+  "app": "healthy",
+  "database": "healthy",
+  "redis": "healthy",
+  "queue": "healthy",
+  "events": "healthy",
   "timestamp": "2024-01-15T10:30:00Z"
 }
 ```
 
-**Error Response (503 Service Unavailable):**
+**Response (503 Service Unavailable):**
 ```json
 {
-  "status": "not_ready",
-  "checks": {
-    "database": "healthy",
-    "redis": "unhealthy"
-  },
+  "status": "degraded",
+  "app": "healthy",
+  "database": "healthy",
+  "redis": "healthy",
+  "queue": "degraded",
+  "events": "healthy",
   "timestamp": "2024-01-15T10:30:00Z"
 }
 ```
+
+`/api/health/ready` remains a compatibility alias with the same dependency policy and HTTP status semantics.
 
 ### GET /api/v1/health/detailed
 

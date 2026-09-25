@@ -120,7 +120,9 @@ rg -n "log_security_event|SecurityEventType" src/app/
 - **Whitelist ≠ trust**: a whitelisted IP skips the blacklist and (when
   `IP_WHITELIST_BYPASS_RATE_LIMIT`) rate limiting, but is still authenticated
   and authorized like any other caller. Whitelist membership is an admission
-  signal, not an identity — never gate privileged actions on it.
+  signal, not an identity — never gate privileged actions on it. A bypass emits
+  only `X-RateLimit-Bypassed: true`; it has no numeric quota headers because no
+  counter ran.
 
 ## Pre-PR Checks
 
