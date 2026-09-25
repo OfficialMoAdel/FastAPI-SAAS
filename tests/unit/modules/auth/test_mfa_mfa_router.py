@@ -11,7 +11,8 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from src.app.core.security.rate_policy import RateLimitVerdict
+from src.app.core.security.budgets import Identity, SecurityAction
+from src.app.shared.exceptions import RateLimitExceededError
 from src.app.shared.exceptions import RateLimitExceededError as RateLimitException
 
 
@@ -69,8 +70,8 @@ class TestMFARateLimiting:
         """Should rate limit after 5 failed verify attempts."""
         attempt_count = 0
 
-        async def mock_check_mfa_rate_limit(request, identifier=None):
-            """Mock MFA rate limiter that tracks attempts and raises after limit."""
+        async def mock_check(action, identity, **_kwargs):
+            """Mock the budget seam: track attempts and raise after the limit."""
             nonlocal attempt_count
             attempt_count += 1
 
@@ -83,9 +84,9 @@ class TestMFARateLimiting:
         }
 
         with patch(
-            "src.app.modules.auth.routers.mfa.check_mfa_rate_limit",
+            "src.app.modules.auth.routers.mfa.check",
             new_callable=AsyncMock,
-            side_effect=mock_check_mfa_rate_limit,
+            side_effect=mock_check,
         ):
             from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
@@ -117,8 +118,8 @@ class TestMFARateLimiting:
         attempt_count = 0
         is_limited = False
 
-        async def mock_check_mfa_rate_limit(request, identifier=None):
-            """Mock MFA rate limiter with simulated period expiry."""
+        async def mock_check(action, identity, **_kwargs):
+            """Mock the budget seam with a simulated period expiry."""
             nonlocal attempt_count, is_limited
             attempt_count += 1
 
@@ -132,9 +133,9 @@ class TestMFARateLimiting:
         }
 
         with patch(
-            "src.app.modules.auth.routers.mfa.check_mfa_rate_limit",
+            "src.app.modules.auth.routers.mfa.check",
             new_callable=AsyncMock,
-            side_effect=mock_check_mfa_rate_limit,
+            side_effect=mock_check,
         ):
             from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
@@ -176,19 +177,13 @@ class TestMFARateLimiting:
         """Should rate limit after 5 failed complete login attempts."""
         attempt_count = 0
 
-        async def mock_check_security_budget(budget, identifier):
+        async def mock_check(action, identity, **_kwargs):
             nonlocal attempt_count
             attempt_count += 1
-            assert (budget, identifier) == ("mfa_verify", "a" * 32)
-            return RateLimitVerdict(
-                is_limited=attempt_count > 5,
-                limit=5,
-                period=60,
-                remaining=0 if attempt_count > 5 else 4,
-                retry_after=23,
-                key="mfa_verify",
-                headers={},
-            )
+            assert action is SecurityAction.MFA_VERIFY_PENDING
+            assert identity.token == "a" * 32
+            if attempt_count > 5:
+                raise RateLimitExceededError("Too many MFA verification attempts.", retry_after=23)
 
         headers = {"X-Tenant-ID": "test-tenant"}
 
@@ -196,9 +191,9 @@ class TestMFARateLimiting:
         valid_mfa_token = "a" * 32  # 32 char token
 
         with patch(
-            "src.app.modules.auth.services.mfa.check_security_budget",
+            "src.app.modules.auth.services.mfa.check",
             new_callable=AsyncMock,
-            side_effect=mock_check_security_budget,
+            side_effect=mock_check,
         ) as budget:
             with patch("src.app.modules.auth.services.mfa.get_redis", return_value=None) as redis:
                 # Make 5 failed attempts with invalid MFA pending token
@@ -231,11 +226,13 @@ class TestMFARateLimiting:
 
     def test_rate_limit_uses_user_id_as_identifier(self, client_with_rate_limit):
         """Rate limiting should be per-user, not per-request."""
+        from src.app.core.security.budgets import KeyKind
+
         captured_identifiers = []
 
-        async def mock_check_mfa_rate_limit(request, identifier=None):
-            """Mock that captures the rate limit identifier."""
-            captured_identifiers.append(identifier)
+        async def mock_check(action, identity, **_kwargs):
+            """Mock that captures the identity fact the door supplies."""
+            captured_identifiers.append(identity.user_id)
 
         headers = {
             "Authorization": "Bearer test-token",
@@ -243,9 +240,9 @@ class TestMFARateLimiting:
         }
 
         with patch(
-            "src.app.modules.auth.routers.mfa.check_mfa_rate_limit",
+            "src.app.modules.auth.routers.mfa.check",
             new_callable=AsyncMock,
-            side_effect=mock_check_mfa_rate_limit,
+            side_effect=mock_check,
         ):
             with patch(
                 "src.app.modules.auth.services.mfa.MFAService.verify_totp_token",
@@ -260,19 +257,23 @@ class TestMFARateLimiting:
                         headers=headers,
                     )
 
-                # All identifiers should be the same (user-based)
+                # All identities are the same (user-based). The door now hands
+                # the seam the raw int rather than stringifying at the call
+                # site; the seam normalises to str in the key builder, so the
+                # key bytes are unchanged.
                 assert len(captured_identifiers) == 3
-                assert len(set(captured_identifiers)) == 1  # All same identifier
-                assert captured_identifiers[0] == "1"  # user_id from mock
+                assert len(set(captured_identifiers)) == 1  # All same identity
+                assert captured_identifiers[0] == 1  # user_id from mock
+                assert KeyKind.USER.render(captured_identifiers[0]) == "1"
 
     def test_rate_limit_uses_token_as_identifier(self, client_with_rate_limit):
         """Completion charges the service verification budget to the pending token."""
+
         token = "a" * 32
         with (
             patch(
-                "src.app.modules.auth.services.mfa.check_security_budget",
+                "src.app.modules.auth.services.mfa.check",
                 new_callable=AsyncMock,
-                return_value=RateLimitVerdict(False, 5, 60, 4, 0, "mfa_verify", {}),
             ) as budget,
             patch("src.app.modules.auth.services.mfa.get_redis", return_value=None),
         ):
@@ -282,7 +283,9 @@ class TestMFARateLimiting:
                 headers={"X-Tenant-ID": "test-tenant"},
             )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
-        budget.assert_awaited_once_with("mfa_verify", token)
+        # The pending-token meter is charged before the store is touched; the
+        # per-account meter is never reached, because the peek needs Redis.
+        budget.assert_awaited_once_with(SecurityAction.MFA_VERIFY_PENDING, Identity(token=token))
 
 
 class TestMFAEndpointAuthentication:
@@ -389,13 +392,13 @@ class TestMFAMutateRateLimiting:
 
         seen: dict = {}
 
-        async def fake_check(request, identifier=None, budget="mfa_verify"):
-            seen.update({"identifier": identifier, "budget": budget})
+        async def fake_check(action, identity, **_kwargs):
+            seen.update({"action": action, "identity": identity})
 
-        with patch.object(mfa_router, "check_mfa_rate_limit", side_effect=fake_check):
+        with patch.object(mfa_router, "check", side_effect=fake_check):
             asyncio.get_event_loop().run_until_complete(mfa_router.check_mfa_mutate_rate_limit(Mock(), 42))
 
-        assert seen == {"identifier": "42", "budget": "mfa_mutate"}
+        assert seen == {"action": SecurityAction.MFA_MUTATE, "identity": Identity(user_id=42)}
 
     def test_disable_enforces_mutate_limit(self, client_with_rate_limit):
         """Should return 429 when the mutate limiter trips on /disable."""

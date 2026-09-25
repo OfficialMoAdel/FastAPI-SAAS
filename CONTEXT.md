@@ -41,6 +41,24 @@ persistence grilling loop, 2026-09-22.)
   is known. Keys on identity, not path. Contrast **Path policy** — the
   `(limit, period)` resolved for a path + tier, checked at the edge before
   routing. Same Verdict Seam underneath, different when and what they key on.
+  `src/app/core/security/budgets.py` owns it end to end: the door supplies a
+  `SecurityAction` plus an `Identity` of *facts* (user_id / ip / token /
+  email_hash) and the Module derives the legs, the key namespace, the
+  fail-closed policy, and the refusal. The key namespace comes from
+  `leg.budget`, never from the action and never from caller input, so a door
+  cannot assemble or re-key a meter. Two entry points: `check` raises the one
+  `RateLimitExceededError`, `probe` returns the Verdict for the two callers
+  whose transport response is shaped by the numbers (admission, AI Depends).
+  MFA meters were separated into three declared actions — step-up verify
+  (`POST /mfa/verify`, account), pending token (`POST /mfa/complete-login`,
+  pre-peek), and per-account global (post-peek) — on 2026-09-26; **no key
+  bytes changed**, the settings-sniff branch that chose the account meter's
+  name at runtime is retired, and `validate_budget_definitions()` fails boot
+  if a leg names an unconfigured budget. The three doors are separate limits
+  and must never be collapsed into one: they are metered independently and
+  converge only on the durable Lua lockout. The lockout is *declared* on the
+  two verification actions, not composed, and contract tests pin that both
+  doors still route through it.
 
 - **Ban vs blacklist** — different things; do not conflate. **ban** = an IP
   rejected outright for a duration, escalating via auto-ban after N violations;

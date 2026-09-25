@@ -1,6 +1,6 @@
 """Unit tests for the AI rate-limiting Depends adapter.
 
-The adapter delegates its decision to the engine's ``check_security_budget``
+The adapter delegates its decision to the security-budget seam
 ("ai_chat" budget) and keeps its sanctioned HTTPException 429 shape
 (T099: 60 req/user/min default; T100: HTTP 429 with Retry-After and
 X-RateLimit headers). These tests pin that HTTP contract through the
@@ -58,7 +58,7 @@ class TestRateLimitDependency:
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
         with patch(
-            "src.app.modules.ai.middleware.check_security_budget",
+            "src.app.modules.ai.middleware.probe",
             new_callable=AsyncMock,
             return_value=_verdict(remaining=59, retry_after=60),
         ):
@@ -75,7 +75,7 @@ class TestRateLimitDependency:
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
         with patch(
-            "src.app.modules.ai.middleware.check_security_budget",
+            "src.app.modules.ai.middleware.probe",
             new_callable=AsyncMock,
             return_value=_verdict(remaining=15, retry_after=45),
         ):
@@ -92,7 +92,7 @@ class TestRateLimitDependency:
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
         with patch(
-            "src.app.modules.ai.middleware.check_security_budget",
+            "src.app.modules.ai.middleware.probe",
             new_callable=AsyncMock,
             return_value=_verdict(is_limited=True, remaining=0, retry_after=30),
         ):
@@ -109,7 +109,7 @@ class TestRateLimitDependency:
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
         with patch(
-            "src.app.modules.ai.middleware.check_security_budget",
+            "src.app.modules.ai.middleware.probe",
             new_callable=AsyncMock,
             return_value=_verdict(is_limited=True, remaining=0, retry_after=45),
         ):
@@ -124,7 +124,7 @@ class TestRateLimitDependency:
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
         with patch(
-            "src.app.modules.ai.middleware.check_security_budget",
+            "src.app.modules.ai.middleware.probe",
             new_callable=AsyncMock,
             return_value=_verdict(is_limited=True, remaining=0, retry_after=60),
         ):
@@ -137,18 +137,20 @@ class TestRateLimitDependency:
             assert headers["X-RateLimit-Reset"] == "60"
 
     @pytest.mark.asyncio
-    async def test_rate_limit_keys_on_user_id_via_engine_budget(self, mock_response, mock_current_user):
+    async def test_rate_limit_keys_on_user_id_via_the_budget_seam(self, mock_response, mock_current_user):
         """The adapter keys the budget on the authenticated user's id."""
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
         with patch(
-            "src.app.modules.ai.middleware.check_security_budget",
+            "src.app.modules.ai.middleware.probe",
             new_callable=AsyncMock,
             return_value=_verdict(),
         ) as mock_check:
             await check_rate_limit_dependency(mock_response, mock_current_user)
 
-            mock_check.assert_called_once_with("ai_chat", "1")
+            from src.app.core.security.budgets import Identity, SecurityAction
+
+        mock_check.assert_called_once_with(SecurityAction.AI_CHAT, Identity(user_id=1))
 
     @pytest.mark.asyncio
     async def test_rate_limit_with_zero_remaining(self, mock_response, mock_current_user):
@@ -156,7 +158,7 @@ class TestRateLimitDependency:
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
         with patch(
-            "src.app.modules.ai.middleware.check_security_budget",
+            "src.app.modules.ai.middleware.probe",
             new_callable=AsyncMock,
             return_value=_verdict(remaining=0, retry_after=30),
         ):

@@ -489,9 +489,9 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
             new_callable=AsyncMock,
             return_value=(False, 0),
         ),
-        # Mock MFA rate limit check
+        # Mock MFA security-budget check (the seam raises; it returns nothing)
         patch(
-            "src.app.modules.auth.routers.mfa.check_mfa_rate_limit",
+            "src.app.modules.auth.routers.mfa.check",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -593,9 +593,9 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
             new_callable=AsyncMock,
             return_value=(False, 0),
         ),
-        # Mock MFA rate limit check
+        # Mock MFA security-budget check (the seam raises; it returns nothing)
         patch(
-            "src.app.modules.auth.routers.mfa.check_mfa_rate_limit",
+            "src.app.modules.auth.routers.mfa.check",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -783,9 +783,9 @@ async def full_mock_context(get_test_app):
             new_callable=AsyncMock,
             return_value=(False, 0),
         ),
-        # Mock MFA rate limit check
+        # Mock MFA security-budget check (the seam raises; it returns nothing)
         patch(
-            "src.app.modules.auth.routers.mfa.check_mfa_rate_limit",
+            "src.app.modules.auth.routers.mfa.check",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -829,9 +829,9 @@ async def unauthenticated_mock_context(get_test_app):
             new_callable=AsyncMock,
             return_value=(False, 0),
         ),
-        # Mock MFA rate limit check
+        # Mock MFA security-budget check (the seam raises; it returns nothing)
         patch(
-            "src.app.modules.auth.routers.mfa.check_mfa_rate_limit",
+            "src.app.modules.auth.routers.mfa.check",
             new_callable=AsyncMock,
             return_value=None,
         ),

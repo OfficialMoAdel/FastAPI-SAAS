@@ -317,7 +317,7 @@ def test_banned_ip_blocked_on_refresh_path(mock_ban_info, client):
 @patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True)
 @patch("src.app.core.security.request_admission.get_ban_info", new_callable=AsyncMock)
 @patch(
-    "src.app.core.security.request_admission.check_security_budget",
+    "src.app.core.security.request_admission.probe",
     new_callable=AsyncMock,
 )
 def test_unbanned_ip_gets_refresh_budget_at_edge(mock_budget, mock_ban_info, client):
@@ -344,7 +344,7 @@ def test_unbanned_ip_gets_refresh_budget_at_edge(mock_budget, mock_ban_info, cli
 @patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True)
 @patch("src.app.core.security.request_admission.get_ban_info", new_callable=AsyncMock)
 @patch(
-    "src.app.core.security.request_admission.check_security_budget",
+    "src.app.core.security.request_admission.probe",
     new_callable=AsyncMock,
 )
 def test_refresh_budget_exceeded_returns_429(mock_budget, mock_ban_info, client):

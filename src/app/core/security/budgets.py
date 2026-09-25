@@ -308,22 +308,22 @@ def _definition(action: SecurityAction) -> BudgetDef:
 def _render_leg(leg: Leg, identity: Identity, action: SecurityAction) -> str:
     """Render one leg's identity fact, or fail loud when it is missing.
 
-    An optional leg with no fact becomes the literal ``unknown`` bucket,
-    preserving today's behaviour for a request with no resolvable client IP
-    (``request_admission`` used to pass ``client_ip or "unknown"``).
+    A falsy fact is treated as absent, which preserves today's bytes for an
+    optional leg: the doors used to pass ``client_ip or "unknown"``, so an
+    empty string and a None both keyed the literal ``unknown`` bucket. For a
+    required leg a falsy fact now fails loud instead of silently landing in
+    ``build_rate_limit_key``'s anonymous branch, which is the fail-loud
+    behaviour the seam is for.
     """
     fact = identity.fact_for(leg.kind)
-    if fact is None:
+    if not fact:
         if leg.required:
             raise ValueError(
                 f"security action {str(action)!r} requires identity fact "
                 f"{leg.kind.identity_field!r} for its {leg.budget} leg"
             )
         return "unknown"
-    rendered = leg.kind.render(fact)
-    if not rendered:
-        raise ValueError(f"security action {str(action)!r} rendered an empty {leg.kind.identity_field} identity")
-    return rendered
+    return leg.kind.render(fact)
 
 
 def _leg_key(leg: Leg, rendered: str, tenant_id: Any) -> str:

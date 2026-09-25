@@ -79,6 +79,17 @@ async def _start_jwt_lookup_gate() -> None:
         raise
 
 
+async def _start_security_budget_gate() -> None:
+    # Every leg's budget name now comes from the security-budget seam's table,
+    # so an operator who removes an entry (e.g. mfa_verify_global) would
+    # otherwise hit a KeyError on the first MFA verification in production.
+    # This is also what retires the old call-site settings sniff, which
+    # silently charged a different budget when the preferred one was absent.
+    from src.app.core.security.budgets import validate_budget_definitions
+
+    validate_budget_definitions()
+
+
 async def _start_principal_provider_gate() -> None:
     # Candidate 2 (one principal-resolution seam): fail fast when the
     # principal DIP seam is unwired instead of surfacing as mass 401s.
@@ -239,6 +250,7 @@ def lifespan_factory(
             StartupPhase("users_lookups", _start_users_security_lookups, None),
             StartupPhase("jwt_gate", _start_jwt_lookup_gate, None),
             StartupPhase("principal_gate", _start_principal_provider_gate, None),
+            StartupPhase("security_budget_gate", _start_security_budget_gate, None),
             # "warm_caches" + "_start_cache_warmer": pinned by name in
             # tests/performance/test_optimizations_r4/test_cache_warming.py
             # (source-string assertions) — keep both spellings on this row.

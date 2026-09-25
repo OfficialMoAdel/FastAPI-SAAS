@@ -19,12 +19,12 @@ from src.app.core.security.auto_ban import (
     check_ban_blacklist_and_rate_limit,
     get_ban_info,
 )
+from src.app.core.security.budgets import Identity, SecurityAction, probe
 from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
 from src.app.core.security.rate_policy import (
     RateLimitVerdict,
     build_rate_limit_key,
     build_verdict,
-    check_security_budget,
     consume,
     resolve_rate_limits,
     uses_gcra,
@@ -214,7 +214,7 @@ class RequestAdmissionService:
             ban_info = await get_ban_info(client_ip)
             if ban_info.is_banned:
                 return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
-        verdict = await check_security_budget("refresh", client_ip or "unknown")
+        verdict = await probe(SecurityAction.REFRESH, Identity(ip=client_ip))
         if verdict.is_limited:
             # Deliberately NOT auto-ban eligible: 429 + Retry-After only, so a
             # shared NAT behind the budget never earns an AUTO_BAN_DURATION

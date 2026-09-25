@@ -8,7 +8,7 @@ import pytest
 from fastapi import Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.security.rate_policy import RateLimitVerdict
+from src.app.core.security.budgets import Identity, SecurityAction
 from src.app.modules.auth.schemas import LoginMFAResponse, MFACompleteLoginRequest, MFAVerifyRequest
 from src.app.modules.auth.services import mfa
 from src.app.modules.auth.services.mfa import MFAService
@@ -42,7 +42,7 @@ def completion() -> Iterator[SimpleNamespace]:
     users = Mock(member=AsyncMock(return_value=_dumpable(user)))
     issued = IssuedSession(access_token="access", refresh_token="refresh")
     with (
-        patch.object(mfa, "check_security_budget", new_callable=AsyncMock) as budget,
+        patch.object(mfa, "check", new_callable=AsyncMock) as budget,
         patch.object(mfa, "get_redis", return_value=Mock()) as redis,
         patch.object(mfa, "get_client_ip", return_value="192.0.2.1") as ip,
         patch.object(mfa, "get_mfa_pending_token_manager", return_value=store) as manager,
@@ -56,7 +56,7 @@ def completion() -> Iterator[SimpleNamespace]:
         patch.object(mfa.settings.auth, "MFA_ENFORCE_IP_BINDING", True),
         patch.object(mfa.settings.auth, "MFA_IP_BINDING_GRACE_SECONDS", 30),
     ):
-        budget.return_value = SimpleNamespace(is_limited=False, period=60, retry_after=0)
+        budget.side_effect = None  # the seam raises; it does not return a verdict
         order = Mock()
         for name, dependency in [
             ("budget", budget), ("redis", redis), ("peek", store.peek), ("ttl", store.remaining_ttl),
@@ -78,24 +78,38 @@ async def _complete(env: SimpleNamespace) -> IssuedSession:
 
 @pytest.mark.asyncio
 class TestCompleteLogin:
-    @pytest.mark.parametrize("retry_after,expected", [(17, 17), (0, 60)])
-    async def test_budget_denial_precedes_redis(
-        self, completion: SimpleNamespace, retry_after: int, expected: int
+    async def test_charges_pending_then_account_each_exactly_once(
+        self, completion: SimpleNamespace
     ) -> None:
+        """The pairing the seam's table declares, in order, once each.
+
+        ``complete_login`` is the one door that crosses two meters: the
+        pending token before the peek, the per-account backstop after it. The
+        table owns which meters exist; this pins that the door crosses both,
+        so a future edit cannot silently drop the account leg and leave the
+        per-token meter rotating freely.
+        """
         env = completion
-        env.budget.return_value = RateLimitVerdict(
-            is_limited=True,
-            limit=5,
-            period=60,
-            remaining=0,
-            retry_after=retry_after,
-            key="mfa_verify",
-            headers={},
-        )
+        assert await _complete(env) is env.issued
+
+        assert [c.args for c in env.budget.await_args_list] == [
+            (SecurityAction.MFA_VERIFY_PENDING, Identity(token="a" * 32)),
+            (SecurityAction.MFA_VERIFY_ACCOUNT, Identity(user_id=12345)),
+        ]
+        assert env.budget.await_count == 2
+
+    async def test_budget_denial_precedes_redis(self, completion: SimpleNamespace) -> None:
+        """A blown meter stops the door before it touches Redis or the factor."""
+        env = completion
+        env.budget.side_effect = RateLimitExceededError("Too many mfa_verify_pending attempts.", retry_after=17)
+
         with pytest.raises(RateLimitExceededError) as exc:
             await _complete(env)
-        assert exc.value.retry_after == expected
-        env.budget.assert_awaited_once_with("mfa_verify", env.request.mfa_token)
+
+        assert exc.value.retry_after == 17
+        env.budget.assert_awaited_once_with(
+            SecurityAction.MFA_VERIFY_PENDING, Identity(token=env.request.mfa_token)
+        )
         env.redis.assert_not_called()
         env.verify.assert_not_awaited()
         env.issue.assert_not_awaited()
@@ -107,16 +121,19 @@ class TestCompleteLogin:
         account. When it trips, the attempt dies before any factor verify."""
         env = completion
         env.budget.side_effect = [
-            RateLimitVerdict(False, 5, 60, 4, 0, "mfa_verify", {}),
-            RateLimitVerdict(True, 5, 60, 0, 17, "mfa_verify_global", {}),
+            None,
+            RateLimitExceededError("Too many mfa_verify_account attempts.", retry_after=17),
         ]
         env.request = MFACompleteLoginRequest(mfa_token="b" * 32, totp_token="654321")
         with pytest.raises(RateLimitExceededError) as exc:
             await _complete(env)
         assert exc.value.retry_after == 17
-        # Both legs charged: fresh token (rotated) + stable account key.
-        assert env.budget.await_args_list[0].args == ("mfa_verify", "b" * 32)
-        assert env.budget.await_args_list[1].args == ("mfa_verify_global", "user:12345")
+        # Both legs charged, in the order the table declares: the fresh
+        # (rotated) pending token, then the stable per-account key.
+        assert [c.args for c in env.budget.await_args_list] == [
+            (SecurityAction.MFA_VERIFY_PENDING, Identity(token="b" * 32)),
+            (SecurityAction.MFA_VERIFY_ACCOUNT, Identity(user_id=12345)),
+        ]
         env.verify.assert_not_awaited()
         env.store.consume.assert_not_awaited()
         env.issue.assert_not_awaited()
@@ -241,8 +258,14 @@ class TestCompleteLogin:
             "budget", "redis", "peek", "ttl", "budget", "verify", "consume", "lookup", "issue",
         ]
         assert env.budget.await_count == 2
-        assert env.budget.await_args_list[0].args == ("mfa_verify", env.request.mfa_token)
-        assert env.budget.await_args_list[1].args[1] == "user:12345"
+        assert env.budget.await_args_list[0].args == (
+            SecurityAction.MFA_VERIFY_PENDING,
+            Identity(token=env.request.mfa_token),
+        )
+        assert env.budget.await_args_list[1].args == (
+            SecurityAction.MFA_VERIFY_ACCOUNT,
+            Identity(user_id=12345),
+        )
         env.ip.assert_called_once_with(env.http)
         env.verify.assert_awaited_once_with(
             user_id=12345, request=MFAVerifyRequest(**codes), db=env.db, prevent_replay=True,

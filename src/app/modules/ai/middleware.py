@@ -8,7 +8,7 @@ Provides FastAPI dependencies for rate limiting AI endpoints.
 The engine seam: this adapter keeps its sanctioned HTTPException 429 shape
 (Retry-After / X-RateLimit headers, structured detail — no domain-table
 equivalent) but delegates the decision to the unified rate-policy engine's
-``check_security_budget``. The "ai_chat" budget (60/min per user by default)
+the security-budget seam. The "ai_chat" meter (60/min per user by default)
 lives in ``settings.rate_limit.SECURITY_BUDGETS``; keys, algorithm choice
 (GCRA/fixed-window), and fail-open policy are owned by the engine.
 """
@@ -19,9 +19,7 @@ from fastapi import Depends, HTTPException, Response, status
 
 from src.app.api.deps import get_current_user
 from src.app.api.deps.auth import AuthenticatedUser
-from src.app.core.security.rate_policy import check_security_budget
-
-AI_CHAT_BUDGET = "ai_chat"
+from src.app.core.security.budgets import Identity, SecurityAction, probe
 
 
 async def check_rate_limit_dependency(
@@ -45,7 +43,7 @@ async def check_rate_limit_dependency(
     """
     user_id = current_user.id
 
-    verdict = await check_security_budget(AI_CHAT_BUDGET, str(user_id))
+    verdict = await probe(SecurityAction.AI_CHAT, Identity(user_id=user_id))
 
     # Add rate limit headers to response
     response.headers["X-RateLimit-Limit"] = str(verdict.limit)

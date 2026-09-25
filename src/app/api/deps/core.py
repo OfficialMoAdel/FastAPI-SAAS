@@ -7,7 +7,7 @@ tier policy through the same ``resolve_rate_limits`` engine (L1 → Redis
 policy cache → DB → settings) — already covers every path, so the
 Depends-level re-resolution double-limited magic-link and task endpoints on
 each request. Endpoint-specific brute-force budgets (auth login, MFA,
-passkey, AI chat) use the engine's ``check_security_budget``; nothing needs
+passkey, AI chat) go through the security-budget seam; nothing needs
 a general-purpose Depends limiter. Do not reintroduce one; extend
 ``core/security/rate_policy.py`` instead.
 """

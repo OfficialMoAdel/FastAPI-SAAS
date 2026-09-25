@@ -220,11 +220,33 @@ async def test_two_pass_evaluate_charges_nothing_when_a_leg_is_unsatisfiable(mon
     assert _keys(limiter) == [], "pass 1 must validate every leg before pass 2 charges any"
 
 
-async def test_ip_leg_is_optional_and_falls_back_to_the_unknown_bucket():
-    """A request with no resolvable client IP keeps today's literal bucket."""
+@pytest.mark.parametrize("ip", [None, ""])
+async def test_ip_leg_is_optional_and_falls_back_to_the_unknown_bucket(ip):
+    """No resolvable client IP keeps today's literal bucket.
+
+    Both None and the empty string are covered because the doors used to pass
+    ``client_ip or "unknown"``, so both spellings keyed the same bucket.
+    """
     limiter = _limiter()
-    await probe(SecurityAction.REFRESH, Identity(), limiter=limiter)
+    await probe(SecurityAction.REFRESH, Identity(ip=ip), limiter=limiter)
     assert _keys(limiter)[0] == "rate_limit:user:unknown:budget:refresh"
+
+
+@pytest.mark.parametrize("field", ["user_id", "token", "email_hash"])
+async def test_required_leg_fails_loud_on_a_falsy_fact(field):
+    """A required leg rejects falsy rather than landing in the anonymous bucket.
+
+    build_rate_limit_key treats a falsy identifier as anonymous; letting a
+    required leg fall through there would meter one door's attempts in
+    another door's bucket.
+    """
+    action = {
+        "user_id": SecurityAction.MFA_STEPUP_VERIFY,
+        "token": SecurityAction.MFA_VERIFY_PENDING,
+        "email_hash": SecurityAction.MAGIC_LINK_SEND,
+    }[field]
+    with pytest.raises(ValueError, match=f"requires identity fact '{field}'"):
+        await check(action, Identity(**{field: 0}), limiter=_limiter())
 
 
 async def test_unknown_action_fails_loud():

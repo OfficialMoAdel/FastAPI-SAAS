@@ -26,7 +26,7 @@ from structlog import get_logger
 from src.app.core.config import settings
 from src.app.core.redis_provider import get_redis
 from src.app.core.security import get_mfa_pending_token_manager
-from src.app.core.security.rate_policy import check_security_budget
+from src.app.core.security.budgets import Identity, SecurityAction, check
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.audit_logs import AuditGuarantee, audit
 from src.app.modules.auth.crud import crud_mfa_methods
@@ -40,7 +40,6 @@ from src.app.modules.auth.schemas import (
 from src.app.modules.auth.services.tokens import IssuedSession, TokenIssuer
 from src.app.shared.exceptions import (
     ModelNotFoundError,
-    RateLimitExceededError,
     ServiceUnavailableError,
     UnauthorizedError,
     ValidationError,
@@ -123,12 +122,7 @@ class MFAService:
         fastapi_request: Request,
         response: Response,
     ) -> IssuedSession:
-        verdict = await check_security_budget("mfa_verify", request.mfa_token)
-        if verdict.is_limited:
-            raise RateLimitExceededError(
-                f"Too many MFA verification attempts. Please try again in {verdict.period} seconds.",
-                retry_after=verdict.retry_after_seconds(),
-            )
+        await check(SecurityAction.MFA_VERIFY_PENDING, Identity(token=request.mfa_token))
 
         client = get_redis()
         if not client:
@@ -164,26 +158,13 @@ class MFAService:
         if not user_id or not username:
             raise UnauthorizedError("Invalid MFA pending token")
 
-        # P1: the per-token mfa_verify budget above is keyed on the random
-        # pending token, so it never accumulates across fresh challenges.
-        # Charge a second leg keyed on the stable identity (user_id from the
-        # peek, IP fallback) so brute force across challenges still trips.
-        # The global leg (mfa_verify_global, 15/min) sits ABOVE the 5-attempt
-        # mfa_attempts lockout on purpose: the durable per-user lockout (401
-        # "MFA locked") stays the first observable control, and this budget
-        # only backstops distributed spraying above the lockout threshold.
-        global_budget = (
-            "mfa_verify_global"
-            if "mfa_verify_global" in settings.rate_limit.SECURITY_BUDGETS
-            else "mfa_verify"
-        )
-        global_identifier = f"user:{user_id}" if user_id else f"ip:{client_ip}"
-        global_verdict = await check_security_budget(global_budget, global_identifier)
-        if global_verdict.is_limited:
-            raise RateLimitExceededError(
-                f"Too many MFA verification attempts. Please try again in {global_verdict.period} seconds.",
-                retry_after=global_verdict.retry_after_seconds(),
-            )
+        # Charge the per-account backstop: 15/min, deliberately 3x the
+        # 5-attempt mfa_attempts lockout so the durable lockout stays the
+        # first observable control and this meter only backstops distributed
+        # spraying across rotating pending tokens. The budget name comes from
+        # the seam's leg, so there is no longer a settings sniff deciding which
+        # meter to charge.
+        await check(SecurityAction.MFA_VERIFY_ACCOUNT, Identity(user_id=user_id))
 
         verify_result = await self.verify_totp_token(
             user_id=user_id,

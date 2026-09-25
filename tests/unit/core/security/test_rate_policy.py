@@ -6,11 +6,11 @@ import pytest
 from fastapi import Request
 
 from src.app.core.security.auto_ban import BanInfo
+from src.app.core.security.budgets import Identity, SecurityAction, probe
 from src.app.core.security.rate_policy import (
     RateLimitVerdict,
     build_rate_limit_key,
     build_verdict,
-    check_security_budget,
     consume,
     resolve_rate_limits,
 )
@@ -245,7 +245,7 @@ async def test_consume_degrades_to_fixed_window_when_gcra_raises():
 
 @pytest.mark.asyncio
 async def test_security_budget_reports_degradation():
-    """The budget entry point surfaces the same degradation the path does."""
+    """The budget seam surfaces the same degradation the path does."""
     gcra = MagicMock()
     gcra.check_rate_limit = AsyncMock(side_effect=RuntimeError("redis down"))
 
@@ -260,7 +260,7 @@ async def test_security_budget_reports_degradation():
             new=AsyncMock(return_value=(False, 0)),
         ),
     ):
-        verdict = await check_security_budget("auth", "1.2.3.4")
+        verdict = await probe(SecurityAction.AUTH, Identity(ip="1.2.3.4"))
 
     assert verdict.headers["X-RateLimit-Algorithm"] == "fixed-window (degraded)"
 

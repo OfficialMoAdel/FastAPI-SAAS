@@ -257,7 +257,7 @@ async def resolve_anonymous_user_id(request: Request) -> str:  # noqa: C901
         identity, e.g. magic_link_send; the middleware resolves anonymous
         identity inline from ``request.state``/JWT). Kept for tests and
         ad-hoc tooling; do not wire new production callers here — extend
-        ``check_security_budget`` instead.
+        the security-budget seam instead.
     """
     # Check if request has an email in JSON body for per-email rate limiting
     if request.method == "POST":
@@ -306,71 +306,10 @@ def build_rate_limit_key(
     return build_tenant_key(base_key, tenant_id)
 
 
-async def check_security_budget(
-    budget: str,
-    identifier: str,
-    *,
-    tenant_id: Any = None,
-    limiter: Any = None,
-) -> RateLimitVerdict:
-    """Check an identity-keyed security budget (login/MFA/passkey/AI defenses).
-
-    The single seam for endpoint-level brute-force budgets, replacing the
-    per-module limiter helpers that each hand-rolled keys, hardcoded limits,
-    and called the fixed-window engine directly (bypassing the configured
-    algorithm and fail-open policy). Consumers pass an identity (client IP
-    for anonymous surfaces, user id for authenticated ones) and a budget
-    name; limit/period come from ``settings.rate_limit.SECURITY_BUDGETS``.
-
-    Keys are namespaced under the canonical ``build_rate_limit_key`` scheme
-    so every rate-limit consumer in the app shares one key format. No path
-    is involved — a budget is endpoint semantics, not path policy.
-
-    Args:
-        budget: Budget name; must exist in SECURITY_BUDGETS.
-        identifier: Identity to key on (client IP or user id).
-        tenant_id: Optional tenant scoping for authenticated budgets.
-        limiter: Optional limiter override (tests).
-
-    Returns:
-        RateLimitVerdict with is_limited and Retry-After headers.
-
-    Raises:
-        KeyError: If the budget name is not configured (fail-loud, not a
-            silent default — an unknown budget means a caller typo).
-    """
-    limit, period = settings.rate_limit.SECURITY_BUDGETS[budget]
-
-    # Budget keys get their own namespace inside the canonical scheme; a
-    # bare identifier would collide with path-shaped keys from
-    # build_rate_limit_key's "rate_limit:user:{id}:{path}" format.
-    key = build_rate_limit_key(f"budget:{budget}", user_id=identifier, tenant_id=tenant_id)
-
-    # C2: fail-closed budgets block on Redis outage even when the general
-    # RATE_LIMIT_FAIL_OPEN=True. The explicit flag threads through the
-    # limiter (fixed-window + GCRA paths); general path policy stays
-    # operator-controlled.
-    fail_closed = budget in settings.rate_limit.SECURITY_BUDGETS_FAIL_CLOSED
-    is_limited, remaining, retry_after, degraded = await consume(
-        key, limit, period, fail_closed=fail_closed, limiter=limiter
-    )
-
-    return build_verdict(
-        key=key,
-        limit=limit,
-        period=period,
-        is_limited=is_limited,
-        remaining=remaining,
-        retry_after=retry_after,
-        degraded=degraded,
-    )
-
-
 __all__ = [
     "RateLimitVerdict",
     "build_rate_limit_key",
     "build_verdict",
-    "check_security_budget",
     "consume",
     "resolve_anonymous_user_id",
     "resolve_rate_limits",

@@ -15,8 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep
 from src.app.core.db.database import async_get_db
-from src.app.core.security.rate_policy import check_security_budget
-from src.app.core.utils.ip_utils import get_client_ip
+from src.app.core.security.budgets import Identity, SecurityAction, check
 from src.app.modules.auth.schemas import (
     MFABackupCodesResponse,
     MFACompleteLoginRequest,
@@ -36,46 +35,11 @@ from src.app.shared.exceptions import (  # noqa: F401 — re-exported for test p
 
 router = APIRouter(prefix="/mfa", tags=["mfa"])
 
-# MFA budgets live in settings.rate_limit.SECURITY_BUDGETS (mfa_verify /
-# mfa_mutate). The engine (check_security_budget) owns keys, algorithm, and
-# fail-open policy; these aliases only document the budget names.
-MFA_VERIFY_BUDGET = "mfa_verify"
-MFA_MUTATE_BUDGET = "mfa_mutate"
-
-
-async def check_mfa_rate_limit(
-    request: Request,
-    identifier: str | None = None,
-    budget: str = MFA_VERIFY_BUDGET,
-) -> None:
-    """Check the MFA security budget for verification/mutation attempts.
-
-    Limits live in ``settings.rate_limit.SECURITY_BUDGETS`` (default 5/min
-    per budget). The engine owns keys, algorithm, and fail-open policy.
-
-    Args:
-        request: FastAPI request object.
-        identifier: Optional identifier (user_id, IP, etc.) for rate limiting.
-        budget: Budget name — ``mfa_verify`` or ``mfa_mutate``. P1-5 keeps
-            them as distinct budgets so a user burning verify attempts
-            cannot starve — or be starved by — mutation attempts.
-
-    Raises:
-        RateLimitExceededError: If rate limit is exceeded.
-    """
-    # Use provided identifier or fall back to client IP
-    if identifier is None:
-        # SECURITY FIX: Use get_client_ip() consistently instead of raw XFF parsing.
-        # Raw X-Forwarded-For leftmost entry is attacker-controlled.
-        identifier = get_client_ip(request)
-
-    verdict = await check_security_budget(budget, identifier)
-
-    if verdict.is_limited:
-        raise RateLimitExceededError(
-            f"Too many MFA verification attempts. Please try again in {verdict.period} seconds.",
-            retry_after=verdict.retry_after_seconds(),
-        )
+# MFA meters live in settings.rate_limit.SECURITY_BUDGETS. The security-budget
+# seam owns the leg set, keys, algorithm and fail-closed policy; a door only
+# supplies the identity fact. The three verification meters are three separate
+# doors — step-up, pending token, and the per-account backstop — and are never
+# merged, because merging any two would couple two independent limits.
 
 
 async def check_mfa_mutate_rate_limit(
@@ -90,11 +54,7 @@ async def check_mfa_mutate_rate_limit(
     user_id: the caller is authenticated, so IP-keying would let an attacker
     rotate IPs to dodge the limit.
     """
-    await check_mfa_rate_limit(
-        request,
-        identifier=str(user_id),
-        budget=MFA_MUTATE_BUDGET,
-    )
+    await check(SecurityAction.MFA_MUTATE, Identity(user_id=user_id))
 
 
 @router.post("/setup", response_model=MFASetupResponse)
@@ -173,8 +133,9 @@ async def verify_mfa(
         RateLimitExceededError: If too many verification attempts.
         UnauthorizedError: If token is invalid or MFA not enabled.
     """
-    # Check rate limit
-    await check_mfa_rate_limit(fastapi_request, identifier=str(ctx.user_id))
+    # Step-up verification meter: this door is authenticated, so the account
+    # is the identity. Distinct from the complete-login door's two meters.
+    await check(SecurityAction.MFA_STEPUP_VERIFY, Identity(user_id=ctx.user_id))
 
     result = await service.verify_totp_token(
         user_id=ctx.user_id,
