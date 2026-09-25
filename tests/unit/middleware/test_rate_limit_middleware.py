@@ -26,7 +26,7 @@ from src.app.core.db.database import Base
 from src.app.core.schemas import TokenBlacklistCreate
 from src.app.core.security.auto_ban import BanInfo
 from src.app.core.security.rate_policy import RateLimitVerdict
-from src.app.core.security.request_admission import AdmissionOutcome
+from src.app.core.security.request_admission import AdmissionOutcome, RequestAdmissionService
 from src.app.core.utils.rate_limit import reset_rate_limiter
 from src.app.middleware.rate_limit import RateLimitMiddleware
 from src.app.shared.exceptions import ServiceUnavailableError
@@ -495,18 +495,49 @@ class TestBlacklistIntegration:
             assert result is False
 
     @pytest.mark.asyncio
-    async def test_rate_limit_uses_user_id_from_state(self, mock_redis):
-        """Verify rate limit uses user_id from request state."""
-        # This tests that rate limiting properly uses user context
-        # from get_current_user which sets request.state
-        mock_request = MagicMock()
-        mock_request.state = MagicMock()
-        mock_request.state.user_id = 123
-        mock_request.state.tenant_id = "00000000-0000-0000-0000-000000000001"
+    async def test_admission_derives_identity_from_token_payload(self, mock_redis):
+        """Admission reads identity from the verified token payload.
 
-        # Verify state has required fields for rate limiting
-        assert mock_request.state.user_id == 123
-        assert mock_request.state.tenant_id == "00000000-0000-0000-0000-000000000001"
+        Replaces a test that fabricated ``request.state.user_id`` /
+        ``state.tenant_id`` and then asserted a MagicMock returned what it
+        had been assigned — it exercised no production code, and pinned a
+        state contract no writer honours. Admission runs before routing, so
+        the auth dependency cannot have populated those fields. ``jwt_payload``
+        is the one identity carrier on request.state with a real writer.
+        """
+        request = Request(
+            {"type": "http", "method": "GET", "path": "/api/v1/items", "headers": [], "client": ("1.2.3.4", 1234)}
+        )
+        request.state.jwt_payload = {
+            "sub": "42",
+            "tier_name": "premium",
+            "tenant_id": "00000000-0000-0000-0000-000000000001",
+            "tier_id": 7,
+            "jti": "abc-123",
+        }
+
+        ctx = await RequestAdmissionService()._get_rate_limit_config(request)
+
+        assert ctx.user_id == "42"
+        assert ctx.tier_name == "premium"
+        assert ctx.tenant_id == "00000000-0000-0000-0000-000000000001"
+        assert ctx.tier_id_raw == 7
+        assert ctx.jti == "abc-123"
+
+    @pytest.mark.asyncio
+    async def test_admission_identity_is_none_without_token(self, mock_redis):
+        """No token payload → every identity field is None (anonymous)."""
+        request = Request(
+            {"type": "http", "method": "GET", "path": "/api/v1/items", "headers": [], "client": ("1.2.3.4", 1234)}
+        )
+
+        ctx = await RequestAdmissionService()._get_rate_limit_config(request)
+
+        assert ctx.user_id is None
+        assert ctx.tier_name is None
+        assert ctx.tenant_id is None
+        assert ctx.tier_id_raw is None
+        assert ctx.jti is None
 
 
 # =============================================================================

@@ -11,7 +11,6 @@ from uuid import UUID
 
 from fastcrud import FastCRUD
 from sqlalchemy import and_, delete, select
-from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
@@ -174,12 +173,6 @@ class CRUDAssociations:
             scope=ExplicitTenant(tenant_id, reason="rbac:remove_user_role"),
         )
         return _rows_affected(result)
-
-    async def bump_user_token_version(self, db: AsyncSession, user_id: int) -> None:
-        """Increment token_version for user in database."""
-        from src.app.modules.users.models import User
-
-        await db.execute(sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
 
 crud_roles = CRUDRole(Role)
 crud_permissions = CRUDPermission(Permission)

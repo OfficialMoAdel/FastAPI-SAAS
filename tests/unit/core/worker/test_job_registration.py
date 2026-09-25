@@ -5,6 +5,14 @@ but not DEFINED/registered on the ARQ worker — a job name missing in one of
 the two places. ``assert_all_jobs_registered`` compares the static set of
 runtime-enqueued job names against WorkerSettings.functions; wired into
 worker startup as a hard failure so the miss can never ship silently again.
+
+The registry invariant has two directions and they are enforced in two places.
+Enqueued -> registered is the B8 guard above, and it runs at worker startup
+because a miss there is an outage. Registered -> enqueued|cron|manual is
+enforced here instead, in-process, because a miss there is drift rather than
+an outage: a job that is registered but that nothing schedules has not broken
+anything yet, and failing worker startup over it would turn every future
+"registered but not wired yet" into a production incident.
 """
 
 import inspect
@@ -41,97 +49,68 @@ def test_startup_wires_the_assertion():
     assert "assert_all_jobs_registered" in source
 
 
-def test_module_registration_lists_aggregate_into_worker_settings():
-    """A-M3: per-module ARQ_FUNCTIONS/ARQ_CRONJOBS declarations reach the registry.
-
-    The discovery walks ``src.app.modules.*`` package roots and merges any
-    ``ARQ_FUNCTIONS``/``ARQ_CRONJOBS`` lists into WorkerSettings. Today no
-    module declares them (the manual core list is the whole registry), so
-    this asserts the merge contract directly: injecting a declaration into
-    a module's namespace must surface the function and cron job in the
-    aggregated result, and a duplicate core name must NOT be re-registered.
-    """
-    from unittest.mock import patch
-
-    import src.app.core.worker.settings as worker_settings_module
-    from src.app.modules import health  # a module package root
-
-    async def _fake_task(ctx: dict) -> str:  # pragma: no cover - never invoked
-        return "ok"
-
-    fake_cron = object()
-    with (
-        patch.object(health, "ARQ_FUNCTIONS", [_fake_task], create=True),
-        patch.object(health, "ARQ_CRONJOBS", [fake_cron], create=True),
-        patch.object(
-            worker_settings_module,
-            "_MODULE_FUNCTIONS",
-            worker_settings_module._discover_module_registrations(),
-        ),
-    ):
-        # Re-discover with the injected declarations in place.
-        functions, cron_jobs = worker_settings_module._discover_module_registrations()
-        assert any(getattr(f, "__name__", "") == "_fake_task" for f in functions)
-        assert fake_cron in cron_jobs
-
-    # Duplicate suppression: a module re-declaring a core function is skipped.
-    from src.app.modules.notifications.service import send_email_task
-
-    merged = worker_settings_module._merge_module_functions([send_email_task, _fake_task])
-    merged_again = worker_settings_module._merge_module_functions(merged)
-    assert merged == merged_again, "re-merging an already-merged list must be a no-op"
-    names = [getattr(f, "__name__", str(f)) for f in merged]
-    assert names.count("send_email_task") == 1
-
-
-def test_worker_settings_registry_is_complete_after_merge():
-    """The composed registry still covers every runtime-enqueued job name."""
+def test_worker_settings_registry_is_the_only_registry():
+    """The explicit registry still covers every runtime-enqueued job name."""
     from src.app.core.worker.settings import WorkerSettings
 
     names = {getattr(f, "__name__", str(f)) for f in WorkerSettings.functions}
     assert names >= set(ENQUEUED_JOB_NAMES)
 
 
-def test_enqueued_names_cover_the_known_enqueue_sites():
-    """Every literal job name enqueued in src/app is in the contract set.
+# Registered on the worker but triggered by an operator, not enqueued by the
+# web process and not on a schedule. migrate_sessions_task runs the one-shot
+# session_manager.migrate_to_hash() data migration and is reachable only by
+# invoking the registered job directly. Declared rather than deleted: it is the
+# only production path to that migration, and the invariant below cannot tell
+# "intentionally manual" from "forgotten to wire" without someone saying so.
+MANUAL_INVOCATION_JOBS = {"migrate_sessions_task"}
 
-    A new ``enqueue_job("some_new_task", ...)`` without a matching
-    registration is the B8 bug — this test forces the author to add the
-    name to ENQUEUED_JOB_NAMES (and to the worker registry, which
-    test_all_runtime_enqueued_jobs_registered then enforces).
+
+def _registered_names() -> set[str]:
+    from src.app.core.worker.settings import WorkerSettings
+
+    return {getattr(f, "__name__", str(f)) for f in WorkerSettings.functions}
+
+
+def _cron_names() -> set[str]:
+    from src.app.core.worker.settings import WorkerSettings
+
+    return {getattr(c.coroutine, "__name__", str(c.coroutine)) for c in WorkerSettings.cron_jobs}
+
+
+def test_every_registered_job_is_enqueued_croned_or_manual():
+    """The other half of the registry invariant, checked in-process.
+
+    assert_all_jobs_registered covers enqueued -> registered (the B8 class) and
+    runs at worker startup. This covers registered -> enqueued|cron|manual, so
+    a function that is registered but that nothing ever schedules cannot hide.
+
+    Replaces a test that shelled out to a subprocess and regex-scanned the
+    source tree for literal ``enqueue_job("name"`` calls. That scan only saw
+    *literal* call sites, and its only unique case — registered but missing
+    from ENQUEUED_JOB_NAMES — is exactly what this asserts, without the
+    60-second subprocess.
     """
-    import subprocess
-    import sys
-    from pathlib import Path
-
-    repo = Path(__file__).resolve().parents[4]
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            (
-                "import re, pathlib\n"
-                f"root = pathlib.Path(r'{repo}') / 'src' / 'app'\n"
-                "names = set()\n"
-                "pat = re.compile(r'enqueue_job\\(\\s*\\\"([a-z_]+)\\\"')\n"
-                "for p in root.rglob('*.py'):\n"
-                "    if '__pycache__' in str(p):\n"
-                "        continue\n"
-                "    try:\n"
-                "        names |= set(pat.findall(p.read_text(encoding='utf-8')))\n"
-                "    except Exception:\n"
-                "        pass\n"
-                "print('\\n'.join(sorted(names)))\n"
-            ),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
+    unscheduled = _registered_names() - set(ENQUEUED_JOB_NAMES) - _cron_names() - MANUAL_INVOCATION_JOBS
+    assert not unscheduled, (
+        f"Registered worker functions that nothing enqueues, schedules, or "
+        f"declares manual: {sorted(unscheduled)}. Either enqueue the name (and "
+        "add it to core/worker/functions.py::ENQUEUED_JOB_NAMES), add it to "
+        "WorkerSettings.cron_jobs, or list it in MANUAL_INVOCATION_JOBS if an "
+        "operator triggers it deliberately."
     )
-    found = set(result.stdout.split()) - {""}
-    unlisted = found - set(ENQUEUED_JOB_NAMES)
-    assert not unlisted, (
-        f"Job names enqueued in src/app but missing from ENQUEUED_JOB_NAMES: {sorted(unlisted)}. "
-        "Add them to core/worker/functions.py::ENQUEUED_JOB_NAMES and ensure "
-        "WorkerSettings.functions registers them."
+
+
+def test_every_cron_job_is_registered():
+    """A cron entry whose coroutine is not registered can never run."""
+    unregistered = _cron_names() - _registered_names()
+    assert not unregistered, f"Cron jobs missing from WorkerSettings.functions: {sorted(unregistered)}"
+
+
+def test_manual_invocation_jobs_are_still_registered():
+    """The exemption set cannot rot into naming a function that no longer exists."""
+    unknown = MANUAL_INVOCATION_JOBS - _registered_names()
+    assert not unknown, (
+        f"MANUAL_INVOCATION_JOBS names unregistered functions: {sorted(unknown)}. "
+        "Remove them from the set — the job was deleted or renamed."
     )

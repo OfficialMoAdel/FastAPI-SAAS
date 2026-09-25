@@ -262,23 +262,24 @@ class RequestAdmissionService:
         return AdmissionOutcome("limited", client_ip, verdict)
 
     async def _get_rate_limit_config(self, request: Request) -> _RateLimitContext:
-        user_id = getattr(request.state, "user_id", None)
-        tier_name = getattr(request.state, "tier_name", None)
-        tenant_id = getattr(request.state, "tenant_id", None)
-        tier_id_raw = getattr(request.state, "tier_id", None)
+        # Identity comes from the verified token payload, never from
+        # request.state. Admission runs before routing (core/guard/ordering.py
+        # places RateLimit ahead of Tenant), so the endpoint-level auth
+        # dependency cannot have written identity attributes by this point.
+        # Four reads of request.state.user_id / tier_name / tenant_id / tier_id
+        # sat here and always resolved to None — a state contract no production
+        # writer honoured, which is what let a test that fabricated those
+        # fields look load-bearing. jwt_payload is the one identity carrier on
+        # request.state with a real writer (extract_jwt_claims_to_state).
         auth_header = request.headers.get("Authorization", "")
         token = auth_header[7:] if auth_header.lower().startswith("bearer ") else None
         cached_payload = get_cached_jwt_payload(request)
         if cached_payload is None and token:
             cached_payload = await extract_jwt_claims_to_state(request)
-        if not user_id:
-            if cached_payload:
-                user_id = cached_payload.get("sub")
-                tier_name = cached_payload.get("tier_name")
-        if tenant_id is None and cached_payload:
-            tenant_id = cached_payload.get("tenant_id")
-        if tier_id_raw is None and cached_payload:
-            tier_id_raw = cached_payload.get("tier_id")
+        user_id = cached_payload.get("sub") if cached_payload else None
+        tier_name = cached_payload.get("tier_name") if cached_payload else None
+        tenant_id = cached_payload.get("tenant_id") if cached_payload else None
+        tier_id_raw = cached_payload.get("tier_id") if cached_payload else None
         jti = cached_payload.get("jti") if cached_payload else None
         # P1: the exempt checks in evaluate() match on the lowercased path —
         # the bucket key must use the same normalization or /API/V1/X and
