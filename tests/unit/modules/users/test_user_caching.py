@@ -56,8 +56,19 @@ class TestUserAuthInfoCaching:
 
         return UserService(mock_db_session)
 
+    @pytest.fixture
+    def user_directory(self, mock_db_session: AsyncMock) -> Any:
+        """Create UserDirectory with mock database.
+
+        Auth-info reads belong to the directory; the former
+        ``UserService.get_user_auth_info`` was a one-line forward to it.
+        """
+        from src.app.modules.users.directory import UserDirectory
+
+        return UserDirectory(mock_db_session)
+
     @pytest.mark.asyncio
-    async def test_cache_hit_returns_cached_data_username(self, user_service: Any) -> None:
+    async def test_cache_hit_returns_cached_data_username(self, user_directory: Any) -> None:
         """Cache hit by username should return cached data without DB query."""
         mock_tenant = _create_mock_tenant()
         cached_data = {
@@ -69,10 +80,11 @@ class TestUserAuthInfoCaching:
 
         mock_client = AsyncMock()
         with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
-            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
+            with patch("src.app.modules.users.cache_keys.get_current_tenant", return_value=mock_tenant):
                 mock_client.get = AsyncMock(return_value=_FULL_AUTH_JSON)
 
-                result = await user_service.get_user_auth_info(username="testuser")
+                found = await user_directory.auth_info(username="testuser")
+                result = found.model_dump(mode="json") if found else None
 
                 assert result is not None
                 assert result["username"] == cached_data["username"]
@@ -80,7 +92,7 @@ class TestUserAuthInfoCaching:
                 # Cache hit means data returned directly from Redis (verified by mock)
 
     @pytest.mark.asyncio
-    async def test_cache_hit_returns_cached_data_email(self, user_service: Any) -> None:
+    async def test_cache_hit_returns_cached_data_email(self, user_directory: Any) -> None:
         """Cache hit by email should return cached data without DB query."""
         mock_tenant = _create_mock_tenant()
         cached_data = {
@@ -92,10 +104,11 @@ class TestUserAuthInfoCaching:
 
         mock_client = AsyncMock()
         with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
-            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
+            with patch("src.app.modules.users.cache_keys.get_current_tenant", return_value=mock_tenant):
                 mock_client.get = AsyncMock(return_value=_FULL_AUTH_JSON)
 
-                result = await user_service.get_user_auth_info(email="test@example.com")
+                found = await user_directory.auth_info(email="test@example.com")
+                result = found.model_dump(mode="json") if found else None
 
                 assert result is not None
                 assert result["username"] == cached_data["username"]
@@ -103,7 +116,7 @@ class TestUserAuthInfoCaching:
 
     @pytest.mark.asyncio
     async def test_cache_miss_queries_db_and_caches_result(
-        self, user_service: Any, monkeypatch: pytest.MonkeyPatch
+        self, user_directory: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Cache miss should query DB and cache the result."""
         mock_tenant = _create_mock_tenant()
@@ -114,12 +127,13 @@ class TestUserAuthInfoCaching:
             mock_eager,
         )
         with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
-            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
+            with patch("src.app.modules.users.cache_keys.get_current_tenant", return_value=mock_tenant):
                 mock_client.get = AsyncMock(return_value=None)  # Cache miss
                 mock_client.setex = AsyncMock()
 
 
-                result = await user_service.get_user_auth_info(username="testuser")
+                found = await user_directory.auth_info(username="testuser")
+                result = found.model_dump(mode="json") if found else None
 
                 assert result is not None
                 assert result["username"] == "testuser"
@@ -134,7 +148,7 @@ class TestUserAuthInfoCaching:
         from src.app.modules.users.cache import _user_auth_cache_key
 
         mock_tenant = _create_mock_tenant()
-        with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
+        with patch("src.app.modules.users.cache_keys.get_current_tenant", return_value=mock_tenant):
             cache_key = _user_auth_cache_key("testuser")
             # Cache key format is user:auth:{tenant_id}:{identifier}
             assert cache_key == f"user:auth:{mock_tenant.id}:testuser"
@@ -145,15 +159,15 @@ class TestUserAuthInfoCaching:
         from src.app.modules.users.cache import _user_auth_cache_key
 
         mock_tenant = _create_mock_tenant()
-        with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
+        with patch("src.app.modules.users.cache_keys.get_current_tenant", return_value=mock_tenant):
             cache_key = _user_auth_cache_key("test@example.com")
             # Cache key format is user:auth:{tenant_id}:{identifier}
             assert cache_key == f"user:auth:{mock_tenant.id}:test@example.com"
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_no_identifier(self, user_service: Any) -> None:
+    async def test_returns_none_when_no_identifier(self, user_directory: Any) -> None:
         """Should return None when neither username nor email provided."""
-        result = await user_service.get_user_auth_info()
+        result = await user_directory.auth_info()
         assert result is None
 
 
@@ -172,6 +186,17 @@ class TestUserCacheInvalidation:
 
         return UserService(mock_db_session)
 
+    @pytest.fixture
+    def user_directory(self, mock_db_session: AsyncMock) -> Any:
+        """Create UserDirectory with mock database.
+
+        Auth-info reads belong to the directory; the former
+        ``UserService.get_user_auth_info`` was a one-line forward to it.
+        """
+        from src.app.modules.users.directory import UserDirectory
+
+        return UserDirectory(mock_db_session)
+
     @pytest.mark.asyncio
     async def test_update_invalidates_all_cache_keys(self, user_service: Any) -> None:
         """Updating a user should invalidate all cache entries including email."""
@@ -184,7 +209,7 @@ class TestUserCacheInvalidation:
 
         mock_client = AsyncMock()
         with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
-            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
+            with patch("src.app.modules.users.session_invalidation.get_current_tenant", return_value=mock_tenant):
                 class MockPipeline:
                     def __init__(self):
                         self.set_calls = []
@@ -207,10 +232,14 @@ class TestUserCacheInvalidation:
                 await user_service._invalidate_user_cache(
                     user_data, bump_token_version=False, reason=InvalidationReason.PROFILE_EDIT
                 )
-                # Verify profile cache keys were deleted (5 keys total)
+                # 9 keys: the id key, plus each of email/username in both the
+                # tenant-scoped and the :global: form, for both the profile and
+                # the auth-info family. Previously 5 — the :global: forms were
+                # never deleted, so an entry a reader had written without an
+                # active tenant stayed stale until its TTL.
                 mock_client.delete.assert_called_once()
                 call_args = mock_client.delete.call_args[0]
-                assert len(call_args) == 5
+                assert len(call_args) == 9
 
                 # Verify the right keys were invalidated (tenant-scoped)
                 expected_keys = [
@@ -219,6 +248,11 @@ class TestUserCacheInvalidation:
                     f"user:profile:{mock_tenant.id}:username:testuser",
                     f"user:auth:{mock_tenant.id}:testuser",
                     f"user:auth:{mock_tenant.id}:test@example.com",
+                    # The other scope, for a reader that ran without this tenant.
+                    "user:profile:global:email:test@example.com",
+                    "user:profile:global:username:testuser",
+                    "user:auth:global:test@example.com",
+                    "user:auth:global:testuser",
                 ]
 
                 for key in expected_keys:
@@ -245,9 +279,20 @@ class TestUserCachingWithoutRedis:
 
         return UserService(mock_db_session)
 
+    @pytest.fixture
+    def user_directory(self, mock_db_session: AsyncMock) -> Any:
+        """Create UserDirectory with mock database.
+
+        Auth-info reads belong to the directory; the former
+        ``UserService.get_user_auth_info`` was a one-line forward to it.
+        """
+        from src.app.modules.users.directory import UserDirectory
+
+        return UserDirectory(mock_db_session)
+
     @pytest.mark.asyncio
     async def test_get_user_auth_info_works_without_redis(
-        self, user_service: Any, monkeypatch: pytest.MonkeyPatch
+        self, user_directory: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Should fall back to DB when Redis is unavailable."""
         mock_tenant = _create_mock_tenant()
@@ -257,9 +302,10 @@ class TestUserCachingWithoutRedis:
             mock_eager,
         )
         with patch("src.app.modules.users.cache.get_redis", return_value=None):
-            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
+            with patch("src.app.modules.users.cache_keys.get_current_tenant", return_value=mock_tenant):
 
-                result = await user_service.get_user_auth_info(username="testuser")
+                found = await user_directory.auth_info(username="testuser")
+                result = found.model_dump(mode="json") if found else None
 
                 assert result is not None
                 assert result["username"] == "testuser"
@@ -293,7 +339,7 @@ class TestUserCacheBatchInvalidation:
 
         mock_client = AsyncMock()
         with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
-            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
+            with patch("src.app.modules.users.session_invalidation.get_current_tenant", return_value=mock_tenant):
                 class MockPipeline:
                     def __init__(self):
                         self.set_calls = []
@@ -322,7 +368,7 @@ class TestUserCacheBatchInvalidation:
                 # ONE pipeline round-trip: deletes + token sets all inside it
                 mock_client.pipeline.assert_called_once()
                 deleted = mock_pipe.delete_calls
-                assert len(deleted) == 10
+                assert len(deleted) == 18  # 2 users x 9 keys; see the single-user test
                 assert f"user:profile:{tid}:email:a@example.com" in deleted
                 assert f"user:profile:{tid}:username:bob" in deleted
 
@@ -341,7 +387,7 @@ class TestUserCacheBatchInvalidation:
 
         mock_client = AsyncMock()
         with patch("src.app.modules.users.cache.get_redis", return_value=mock_client):
-            with patch("src.app.modules.users.cache.get_current_tenant", return_value=mock_tenant):
+            with patch("src.app.modules.users.cache_keys.get_current_tenant", return_value=mock_tenant):
                 class MockPipeline:
                     def __init__(self):
                         self.set_calls = []
@@ -446,3 +492,94 @@ class TestDowngradeToFreeTierTokenVersion:
         user_service.crud.update.assert_not_awaited()
         mock_db_session.execute.assert_not_awaited()
         mock_db_session.commit.assert_not_awaited()
+
+
+class TestUserInvalidationKeyOwnership:
+    """The key family has one owner, and invalidation never spells a key."""
+
+    def test_key_builders_live_in_the_key_owner(self) -> None:
+        """Readers and invalidators import the grammar from one module.
+
+        users.cache imports users.session_invalidation (for the invalidation
+        policy), so an invalidation that reached back into users.cache for a
+        key builder would close an import cycle. The family therefore lives
+        in its own leaf module, and neither of the other two defines a key.
+        """
+        from src.app.modules.users import cache_keys, session_invalidation
+
+        for name in (
+            "_user_cache_key",
+            "_user_email_cache_key",
+            "_user_username_cache_key",
+            "_user_auth_cache_key",
+            "build_user_invalidation_delete_keys",
+        ):
+            # cache.py re-exports these for its existing importers, so check
+            # where each is *defined*, not merely that it is reachable.
+            assert getattr(cache_keys, name).__module__ == cache_keys.__name__, (
+                f"{name} is not defined in cache_keys"
+            )
+            if hasattr(session_invalidation, name):
+                assert getattr(session_invalidation, name).__module__ == cache_keys.__name__
+
+
+    def test_invalidation_module_defines_no_cache_prefix(self) -> None:
+        """No duplicated prefix constant: one rename, one place to change."""
+        import inspect
+
+        from src.app.modules.users import cache_keys, session_invalidation
+
+        source = inspect.getsource(session_invalidation)
+        assert 'USER_CACHE_PREFIX = ' not in source
+        assert 'AUTH_INFO_CACHE_PREFIX = ' not in source
+        # The delete keys come from the owner, not from f-strings here.
+        assert 'f"{USER_CACHE_PREFIX}' not in source
+        assert cache_keys.USER_CACHE_PREFIX == "user:profile"
+        assert cache_keys.AUTH_INFO_CACHE_PREFIX == "user:auth"
+
+    def test_both_scopes_are_deleted_for_a_known_tenant(self) -> None:
+        """A globally-keyed entry is invalidated, not left to expire.
+
+        This is the gap: a reader with no active tenant writes the :global:
+        form, and the invalidation used to build only the tenant-scoped ones.
+        """
+        from src.app.modules.users.cache_keys import build_user_invalidation_delete_keys
+
+        keys = build_user_invalidation_delete_keys(
+            7, username="Alice", email="A@Example.com", tenant_id="t1"
+        )
+        assert "user:profile:t1:email:a@example.com" in keys
+        assert "user:profile:global:email:a@example.com" in keys
+        assert "user:profile:t1:username:alice" in keys
+        assert "user:profile:global:username:alice" in keys
+        assert "user:auth:t1:a@example.com" in keys
+        assert "user:auth:global:a@example.com" in keys
+        assert "user:auth:t1:alice" in keys
+        assert "user:auth:global:alice" in keys
+
+    def test_username_gets_an_auth_info_key(self) -> None:
+        """auth_info() is keyed on either identifier, so both are invalidated."""
+        from src.app.modules.users.cache_keys import build_user_invalidation_delete_keys
+
+        keys = build_user_invalidation_delete_keys(7, username="alice", tenant_id="t1")
+        assert "user:auth:t1:alice" in keys
+        assert "user:auth:global:alice" in keys
+
+    def test_normalisation_matches_the_readers(self) -> None:
+        """The delete keys are built by the same normalisation as the reads."""
+        from src.app.modules.users.cache_keys import (
+            _user_auth_cache_key,
+            _user_email_cache_key,
+            _user_username_cache_key,
+            build_user_invalidation_delete_keys,
+        )
+
+        keys = build_user_invalidation_delete_keys(
+            7, username=" Alice ", email=" A@Example.COM ", tenant_id="t1"
+        )
+        for reader in (
+            _user_email_cache_key(" A@Example.COM ", "t1"),
+            _user_username_cache_key(" Alice ", "t1"),
+            _user_auth_cache_key(" A@Example.COM ", "t1"),
+        ):
+            assert reader in keys, f"a reader can write {reader!r} but invalidation misses it"

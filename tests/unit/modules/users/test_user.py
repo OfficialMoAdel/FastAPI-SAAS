@@ -6,6 +6,7 @@ import pytest
 
 from src.app.main import app
 from src.app.modules.users import router as users_router
+from src.app.modules.users.directory import UserDirectory
 from src.app.modules.users.service import UserService
 from src.app.shared.exceptions import (
     DuplicateError,
@@ -15,6 +16,22 @@ from src.app.shared.exceptions import (
 
 # Test tenant header for middleware
 TEST_TENANT_HEADER = {"X-Tenant-ID": "1"}
+
+
+def _create_mock_directory(**method_returns):
+    """A mock UserDirectory with the given read results.
+
+    The profile route reads through the directory, not the service: the
+    one-line ``UserService.get_profile`` forward it used had no production
+    caller and duplicated the directory in the interface.
+    """
+    directory = Mock(spec=UserDirectory)
+    for method_name, return_value in method_returns.items():
+        if isinstance(return_value, Exception):
+            setattr(directory, method_name, AsyncMock(side_effect=return_value))
+        else:
+            setattr(directory, method_name, AsyncMock(return_value=return_value))
+    return directory
 
 
 def _create_mock_user_service(**method_returns):
@@ -97,8 +114,9 @@ class TestReadUser:
     def test_read_user_success(self, client, auth_headers, sample_user_read, mock_user_service_override):
         """Test successful user retrieval."""
         expected_result = sample_user_read.model_dump()
-        mock_service = _create_mock_user_service(get_profile=expected_result)
-        app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
+        app.dependency_overrides[users_router.get_user_directory] = lambda: _create_mock_directory(
+            profile=expected_result
+        )
 
         response = client.get("/api/v1/users/test_user", headers=auth_headers)
 
@@ -107,8 +125,9 @@ class TestReadUser:
 
     def test_read_user_not_found(self, client, auth_headers, mock_user_service_override):
         """Test user retrieval when user doesn't exist."""
-        mock_service = _create_mock_user_service(get_profile=ModelNotFoundError("User", "nonexistent_user"))
-        app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
+        app.dependency_overrides[users_router.get_user_directory] = lambda: _create_mock_directory(
+            profile=ModelNotFoundError("User", "nonexistent_user")
+        )
 
         response = client.get("/api/v1/users/nonexistent_user", headers=auth_headers)
 

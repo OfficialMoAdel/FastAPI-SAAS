@@ -14,7 +14,7 @@ Memory Optimization (FEATURE_CONTEXTVAR_OPTIMIZATION):
 
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
 from src.app.shared.exceptions import (  # noqa: F401 — canonical home; re-exported for legacy importers
@@ -22,8 +22,33 @@ from src.app.shared.exceptions import (  # noqa: F401 — canonical home; re-exp
     TenantContextError,
 )
 
-if TYPE_CHECKING:
-    from src.app.modules.tenants.models import Tenant
+
+@runtime_checkable
+class TenantLike(Protocol):
+    """The tenant shape this module reads.
+
+    ``from_model`` copies four fields off whatever it is handed. Stating that
+    shape here, instead of importing the tenants feature model, keeps
+    ``core.tenancy`` free of a feature import (the H-5 contract) and documents
+    the real interface rather than a whole ORM class. Any row with these four
+    attributes satisfies it, including the real ``Tenant``.
+
+    The members are read-only properties on purpose: that is the only form a
+    SQLAlchemy declarative model satisfies structurally, since its columns are
+    ``Mapped[...]`` descriptors rather than plain attributes.
+    """
+
+    @property
+    def id(self) -> UUID: ...
+
+    @property
+    def slug(self) -> str: ...
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def is_active(self) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +69,7 @@ class TenantContext:
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_model(cls, tenant: "Tenant") -> "TenantContext":
+    def from_model(cls, tenant: "TenantLike") -> "TenantContext":
         """Create lightweight context from full Tenant model.
 
         Extracts only essential fields to minimize memory usage.
@@ -104,7 +129,7 @@ def get_current_tenant() -> "TenantContext | None":
     return _current_tenant.get()
 
 
-def set_current_tenant(tenant: "Tenant | TenantContext | None") -> None:
+def set_current_tenant(tenant: "TenantLike | TenantContext | None") -> None:
     """Set the current tenant in the context.
 
     Args:

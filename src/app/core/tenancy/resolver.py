@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select
 
@@ -39,7 +39,7 @@ from src.app.core.tenancy.cache import (
     invalidate_tenant_l1,
     publish_tenant_l1_invalidation,
 )
-from src.app.core.tenancy.context import TenantContext
+from src.app.core.tenancy.context import TenantContext, TenantLike
 from src.app.modules.tenants.models import Tenant
 
 logger = get_logger(__name__)
@@ -246,7 +246,12 @@ async def resolve_tenant_by_slug(
 
                 if tenant is None:
                     return None
-                return TenantContext.from_model(tenant)
+                # A Tenant row satisfies TenantLike — it has all four fields —
+                # but mypy cannot match a declarative model structurally,
+                # because its columns are Mapped[...] descriptors rather than
+                # plain attributes. This edge is next in the H-5 queue; when
+                # the Tenant import here goes, the cast goes with it.
+                return TenantContext.from_model(cast("TenantLike", tenant))
 
 
 __all__ = [

@@ -16,6 +16,7 @@ import pytest
 import sqlalchemy.event
 
 from src.app.core.principal import AuthenticatedUser
+from src.app.modules.users.directory import UserDirectory
 from src.app.modules.users.schemas import (
     UserAuthInfo,
     UserCreate,
@@ -280,30 +281,23 @@ class TestUserServiceCreate:
 
 
 class TestUserServiceGet:
-    """Tests for user retrieval logic."""
+    """Tests for user retrieval logic.
 
-    @pytest.mark.asyncio
-    async def test_get_by_username_success(self, user_service, mock_existing_user):
-        """Test successful user retrieval by username."""
-        expected_dict = {"username": "testuser", "id": 1, "email": "test@example.com"}
-        with (
-            patch("src.app.modules.users.service.get_current_tenant") as mock_tenant,
-            patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get,
-            patch.object(user_service, "_get_cached_user", new_callable=AsyncMock) as mock_cached,
-            patch("fastapi.encoders.jsonable_encoder", return_value=expected_dict),
-        ):
-            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
-            mock_get.return_value = mock_existing_user
-            mock_cached.return_value = None
-
-            result = await user_service.get_by_username("testuser")
-
-            assert result["username"] == "testuser"
-            mock_get.assert_called_once()
+    The one-line read forwards on ``UserService`` are gone: they had no
+    production callers and duplicated ``UserDirectory`` in the interface.
+    Their subject is therefore tested on the directory, which owns the read.
+    """
 
     @pytest.mark.asyncio
     async def test_get_by_username_not_found(self, user_service):
-        """Test user retrieval when not found."""
+        """by_username raises when the user does not exist.
+
+        This raise-on-missing semantic was asserted only by the deleted
+        forward's test, so it moves onto the directory rather than being
+        dropped.
+        """
+        from src.app.modules.users.directory import UserDirectory
+
         with (
             patch("src.app.modules.users.service.get_current_tenant") as mock_tenant,
             patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get,
@@ -312,37 +306,7 @@ class TestUserServiceGet:
             mock_get.return_value = None
 
             with pytest.raises(ModelNotFoundError):
-                await user_service.get_by_username("nonexistent")
-
-    @pytest.mark.asyncio
-    async def test_get_success(self, user_service, mock_existing_user):
-        """Test get user by ID."""
-        with (
-            patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get,
-            patch.object(user_service, "_get_cached_user", new_callable=AsyncMock) as mock_cached,
-        ):
-            mock_get.return_value = mock_existing_user
-            mock_cached.side_effect = [None, {"username": "testuser", "id": 1, "email": "test@example.com"}]
-
-            result = await user_service.get(1)
-
-            assert result["id"] == 1
-
-    @pytest.mark.asyncio
-    async def test_get_by_email_success(self, user_service, mock_existing_user):
-        """Test get user by email."""
-        with (
-            patch("src.app.modules.users.service.get_current_tenant") as mock_tenant,
-            patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get,
-            patch.object(user_service, "_get_cached_user", new_callable=AsyncMock) as mock_cached,
-        ):
-            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
-            mock_get.return_value = mock_existing_user
-            mock_cached.side_effect = [None, {"username": "testuser", "id": 1, "email": "test@example.com"}]
-
-            result = await user_service.get_by_email("test@example.com")
-
-            assert result["email"] == "test@example.com"
+                await UserDirectory(user_service.db).by_username("nonexistent")
 
 
 class TestUserServiceUpdate:
@@ -705,7 +669,12 @@ class TestSetUserStatus:
 
 
 class TestGetActiveUser:
-    """Pin UserService.get_active_user: delegates to UserDirectory.active."""
+    """Pin UserDirectory.active, the active-gated, tenant-scoped read.
+
+    Previously reached through ``UserService.get_active_user``, a one-line
+    forward with no production caller that duplicated the directory's method
+    in the interface.
+    """
 
     _FULL_ACTIVE = {
         "id": 1,
@@ -738,7 +707,8 @@ class TestGetActiveUser:
         ) as mock_seam:
             mock_seam.return_value = dict(self._FULL_ACTIVE)
 
-            result = await user_service.get_active_user(username="testuser")
+            found = await UserDirectory(user_service.db).active(username="testuser")
+            result = found.model_dump(mode="json") if found else None
 
             expected = UserAuthInfo.model_validate(dict(self._FULL_ACTIVE)).model_dump(mode="json")
             assert result == expected
@@ -763,7 +733,8 @@ class TestGetActiveUser:
         ) as mock_seam:
             payload = dict(self._FULL_ACTIVE, id=9)
             mock_seam.return_value = payload
-            result = await user_service.get_active_user(id=9, tenant_id=tenant_id)
+            found = await UserDirectory(user_service.db).active(id=9, tenant_id=tenant_id)
+            result = found.model_dump(mode="json") if found else None
             assert result == UserAuthInfo.model_validate(payload).model_dump(mode="json")
             mock_seam.assert_awaited_once_with(
                 db=user_service.db,
@@ -777,7 +748,8 @@ class TestGetActiveUser:
             mock_seam.reset_mock()
             payload = dict(self._FULL_ACTIVE, id=10, email="a@example.com")
             mock_seam.return_value = payload
-            result = await user_service.get_active_user(email="a@example.com")
+            found = await UserDirectory(user_service.db).active(email="a@example.com")
+            result = found.model_dump(mode="json") if found else None
             assert result == UserAuthInfo.model_validate(payload).model_dump(mode="json")
             mock_seam.assert_awaited_once_with(
                 db=user_service.db,
@@ -797,4 +769,4 @@ class TestGetActiveUser:
         ) as mock_seam:
             mock_seam.return_value = None
 
-            assert await user_service.get_active_user(username="ghost") is None
+            assert await UserDirectory(user_service.db).active(username="ghost") is None

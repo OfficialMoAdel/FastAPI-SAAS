@@ -13,7 +13,6 @@ from __future__ import annotations
 import copy
 from collections.abc import Sequence
 from typing import Any
-from uuid import UUID
 
 from cachetools import TTLCache
 from structlog import get_logger
@@ -23,6 +22,14 @@ from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.redis_provider import get_redis
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.core.utils.cache_guard import cache_guard
+from src.app.modules.users.cache_keys import (  # noqa: F401  (re-exported)
+    AUTH_INFO_CACHE_PREFIX,
+    USER_CACHE_PREFIX,
+    _user_auth_cache_key,
+    _user_cache_key,
+    _user_email_cache_key,
+    _user_username_cache_key,
+)
 from src.app.modules.users.models import User
 from src.app.modules.users.session_invalidation import (
     InvalidationReason,
@@ -38,9 +45,7 @@ USER_CACHE_TTL = 300  # seconds (P-M6: raised from 60 — invalidation is alread
 # wired on every user mutation via UserCacheInvalidator, so the TTL is only a
 # staleness backstop, not the freshness mechanism; 60s was paying a DB read
 # per user profile every minute for no correctness gain)
-USER_CACHE_PREFIX = "user:profile"
 AUTH_INFO_CACHE_TTL = 3600  # 1 hour
-AUTH_INFO_CACHE_PREFIX = "user:auth"
 
 # R1-OPT: process-local auth-info L1 (short TTL by design). The Redis TTL
 # (3600s) is only a staleness BACKSTOP — happy-path invalidation is a
@@ -66,69 +71,6 @@ _auth_info_l1_seam = L1Cache(
     caches=[_auth_info_l1],
     logger_name="user_auth_l1",
 )
-
-def _user_cache_key(user_id: UUID | str) -> str:
-    """Generate cache key for user profile.
-
-    User ID is globally unique (UUID), so no tenant scoping needed.
-    """
-    return f"{USER_CACHE_PREFIX}:{user_id}"
-
-
-def _require_tenant_id(tenant_id: int | str | None = None) -> str | None:
-    """Get current tenant ID if available, without raising when called outside tenant context.
-
-    Tenant context is used for tenant-scoped cache keys to prevent
-    cross-tenant cache collisions. When running in pre-auth or global context,
-    returns None to allow safe fallback.
-    """
-    if tenant_id is not None:
-        return str(tenant_id)
-
-    tenant = get_current_tenant()
-    if tenant is not None:
-        return str(tenant.id)
-    return None
-
-
-def _user_email_cache_key(email: str, tenant_id: int | str | None = None) -> str:
-    """Generate cache key for user by email (tenant-scoped, no collision risk).
-
-    SECURITY FIX: Normalizes email to lowercase to prevent cache misses
-    when the same email is provided with different casing.
-    """
-    t_id = _require_tenant_id(tenant_id)
-    normalized_email = email.lower().strip()
-    if t_id:
-        return f"{USER_CACHE_PREFIX}:{t_id}:email:{normalized_email}"
-    return f"{USER_CACHE_PREFIX}:global:email:{normalized_email}"
-
-
-def _user_username_cache_key(username: str, tenant_id: int | str | None = None) -> str:
-    """Generate cache key for user by username (tenant-scoped, no collision risk).
-
-    SECURITY FIX: Normalizes username to lowercase to prevent cache misses
-    when the same username is provided with different casing.
-    """
-    t_id = _require_tenant_id(tenant_id)
-    normalized_username = username.lower().strip()
-    if t_id:
-        return f"{USER_CACHE_PREFIX}:{t_id}:username:{normalized_username}"
-    return f"{USER_CACHE_PREFIX}:global:username:{normalized_username}"
-
-
-def _user_auth_cache_key(identifier: str, tenant_id: int | str | None = None) -> str:
-    """Generate cache key for user auth info (tenant-scoped, no collision risk).
-
-    SECURITY FIX: Normalizes identifier to lowercase to prevent cache misses
-    when the same email/username is provided with different casing, consistent
-    with _user_email_cache_key and _user_username_cache_key.
-    """
-    t_id = _require_tenant_id(tenant_id)
-    normalized = identifier.lower().strip()
-    if t_id:
-        return f"{AUTH_INFO_CACHE_PREFIX}:{t_id}:{normalized}"
-    return f"{AUTH_INFO_CACHE_PREFIX}:global:{normalized}"
 
 
 class UserCacheInvalidator:
@@ -280,11 +222,8 @@ class UserCacheInvalidator:
                 username = user.username
                 tenant_id = user.tenant_id
 
-            # Fallback to get current tenant from context if tenant_id not provided
-            if tenant_id is None:
-                tenant_context = get_current_tenant()
-                if tenant_context is not None:
-                    tenant_id = tenant_context.tenant_id
+            # Scope resolution lives in build_user_invalidation_keys, which
+            # builds both key families and must not see them disagree.
             keys, token_keys = build_user_invalidation_keys(user_id, username, email, tenant_id)
             poison_key = f"user:invalidation_failed:{user_id}"
             # Synchronous local drop: this process must not serve the entry it
@@ -444,7 +383,6 @@ __all__ = [
     "USER_CACHE_TTL",
     "UserCacheInvalidator",
     "_auth_info_l1",
-    "_require_tenant_id",
     "_user_auth_cache_key",
     "_user_cache_key",
     "_user_email_cache_key",

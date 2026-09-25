@@ -20,6 +20,7 @@ from src.app.core.rbac.permissions import Permission
 from src.app.core.security import oauth2_scheme
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.users import UserService
+from src.app.modules.users.directory import UserDirectory
 from src.app.modules.users.schemas import (
     UserCreate,
     UserDeleteResponse,
@@ -35,6 +36,17 @@ from src.app.modules.users.schemas import (
 from src.app.shared.exceptions import UnauthorizedError
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+def get_user_directory(db: AsyncSession = Depends(async_get_db)) -> UserDirectory:
+    """Dependency injection factory for UserDirectory.
+
+    Q-M4: factories live in router.py — the directory stays Depends-free. The
+    read Interface is injected here so the profile route has the same
+    overridable seam the service had, and a test can substitute a reader
+    without patching module internals.
+    """
+    return UserDirectory(db)
 
 
 def get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserService:
@@ -99,7 +111,7 @@ async def read_users_me(
 async def read_user(
     user_id: str,
     ctx: RequestContextDep,
-    service: UserService = Depends(get_user_service),
+    directory: UserDirectory = Depends(get_user_directory),
 ) -> Any:
     """Get user by ID or username (authenticated users only).
 
@@ -111,7 +123,7 @@ async def read_user(
     # from a nonexistent one (404, not 403). ctx.require_tenant() enforces
     # that this is a tenant-bound path.
     ctx.require_tenant()
-    user = await service.get_profile(user_id, tenant_id=ctx.tenant_id)
+    user = await directory.profile(user_id, tenant_id=ctx.tenant_id)
 
     # SECURITY: IDOR via the single ownership seam (superuser bypass included).
     ctx.require_ownership(get_user_attr(user, "id"))

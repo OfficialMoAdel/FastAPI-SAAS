@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock
 
 from src.app.modules.users import router as users_router
+from src.app.modules.users.directory import UserDirectory
 from src.app.modules.users.service import UserService
 from tests.conftest import MockUser
 from tests.helpers.auth import clear_test_principal, install_test_principal
@@ -88,15 +89,17 @@ class TestUsersMeBodyFiltering:
 class TestGetUserByIdBodyFiltering:
     def test_get_user_by_id_omits_privileged_fields(self, client) -> None:
         """GET /users/{user_id}: body has no is_superuser/tenant_id."""
-        mock_service = Mock(spec=UserService)
-        mock_service.get_profile = AsyncMock(return_value=_full_user_dict())
+        # The route reads through the directory; the one-line
+        # UserService.get_profile forward it used is gone.
+        mock_directory = Mock(spec=UserDirectory)
+        mock_directory.profile = AsyncMock(return_value=_full_user_dict())
 
-        client.app.dependency_overrides[users_router.get_user_service] = lambda: mock_service
+        client.app.dependency_overrides[users_router.get_user_directory] = lambda: mock_directory
 
         try:
             response = client.get("/api/v1/users/1", headers={"X-Tenant-ID": "1"})
         finally:
-            client.app.dependency_overrides.pop(users_router.get_user_service, None)
+            client.app.dependency_overrides.pop(users_router.get_user_directory, None)
 
         assert response.status_code == 200, response.text
         body = response.json()

@@ -213,26 +213,30 @@ class TestFeatureFlagsModuleIntegration:
     """Test orjson integration in feature_flags module."""
 
     def test_feature_flags_uses_json_utils(self) -> None:
-        """Verify feature_flags module uses json_utils."""
+        """Verify the feature-flag module uses json_utils, never stdlib json.
+
+        Only ``service`` is checked: the former ``feature_flags.utils`` — a
+        second, uncalled implementation of the tenant-JSONB read that wrote
+        the same Redis key — was deleted.
+        """
         import inspect
 
-        from src.app.modules.feature_flags import service, utils
+        from src.app.modules.feature_flags import service
 
-        for module_name, module in [("service", service), ("utils", utils)]:
-            source = inspect.getsource(module)
+        source = inspect.getsource(service)
 
-            # Check for json_utils import
-            uses_json_utils = "json_utils" in source or "from src.app.core.json_utils" in source
+        # Check for json_utils import
+        uses_json_utils = "json_utils" in source or "from src.app.core.json_utils" in source
 
-            # Check for stdlib json import (should not be present, or only for typing)
-            has_stdlib = "import json" in source and "json_utils" not in source
+        # Check for stdlib json import (should not be present, or only for typing)
+        has_stdlib = "import json" in source and "json_utils" not in source
 
-            if uses_json_utils:
-                logger.info("Module %s uses json_utils", module_name)
-            elif "json" not in source.lower():
-                logger.info("Module %s doesn't use JSON", module_name)
-            elif has_stdlib:
-                logger.warning("Module %s may use stdlib json", module_name)
+        if uses_json_utils:
+            logger.info("Module service uses json_utils")
+        elif "json" not in source.lower():
+            logger.info("Module service doesn't use JSON")
+        elif has_stdlib:
+            logger.warning("Module service may use stdlib json")
 
         # This is a verification test - we're checking the pattern exists
         assert True

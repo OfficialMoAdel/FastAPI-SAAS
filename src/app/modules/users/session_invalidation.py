@@ -20,12 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.scoped import execute_scoped
 from src.app.core.logger import get_logger
+from src.app.core.tenancy.context import get_current_tenant
 from src.app.core.utils.cache import build_tenant_key
+from src.app.modules.users.cache_keys import build_user_invalidation_delete_keys
 
 logger = get_logger(__name__)
-
-USER_CACHE_PREFIX = "user:profile"
-AUTH_INFO_CACHE_PREFIX = "user:auth"
 
 
 class InvalidationReason(str, Enum):
@@ -66,11 +65,28 @@ def build_user_invalidation_keys(
 ) -> tuple[list[str], list[str]]:
     """Build delete keys and token_version keys for a user.
 
+    The delete keys come from ``cache.build_user_invalidation_delete_keys``,
+    which owns the key family; this module used to re-declare the two
+    prefixes and hand-spell five key forms, so a prefix or normalisation
+    change in the cache module would silently orphan every delete sent from
+    here.
+
+    The token_version keys are a different family, written by
+    ``core.security.jwt_service``, and stay spelled here.
+
     Returns:
         tuple of (delete_keys, token_version_keys)
     """
-    delete_keys: list[str] = [f"{USER_CACHE_PREFIX}:{user_id}"]
+    # The scope is resolved here, once, so both key families agree. Previously
+    # the caller resolved it from the ambient context and this module trusted
+    # the result; with the key family owned elsewhere that split the lookup
+    # across two modules and let the two families disagree.
+    if tenant_id is None:
+        tenant = get_current_tenant()
+        if tenant is not None:
+            tenant_id = tenant.tenant_id
     tid_arg = str(tenant_id) if tenant_id else None
+    delete_keys = build_user_invalidation_delete_keys(user_id, username, email, tenant_id)
 
     token_keys: list[str] = []
     if username:
@@ -79,25 +95,6 @@ def build_user_invalidation_keys(
     if email:
         norm_email = email.lower().strip()
         token_keys.append(build_tenant_key(f"user:{norm_email}:token_version", tid_arg))
-
-    if tenant_id is not None:
-        tenant_id_str = str(tenant_id)
-        if email:
-            norm_email = email.lower().strip()
-            delete_keys.extend(
-                [
-                    f"{USER_CACHE_PREFIX}:{tenant_id_str}:email:{norm_email}",
-                    f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{norm_email}",
-                ]
-            )
-        if username:
-            norm_username = username.lower().strip()
-            delete_keys.extend(
-                [
-                    f"{USER_CACHE_PREFIX}:{tenant_id_str}:username:{norm_username}",
-                    f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{norm_username}",
-                ]
-            )
 
     return delete_keys, token_keys
 
@@ -432,9 +429,7 @@ async def invalidate_user_sessions(
     )
 
 __all__ = [
-    "AUTH_INFO_CACHE_PREFIX",
     "InvalidationReason",
-    "USER_CACHE_PREFIX",
     "build_user_invalidation_keys",
     "invalidate_user_sessions",
     "should_bump_token_version",

@@ -821,61 +821,6 @@ class EventBus:
             attempt_count=attempt_count,
         )
 
-    async def get_dlq_entries(self, limit: int = 100, source: str | None = None) -> list[dict]:
-        """Get dead-letter queue entries from Redis (unified ``arq:dlq`` queue).
-
-        Thin wrapper over the surviving monitor queue so scripts
-        (e.g. scripts/r1_unified_baseline.py) keep working; admin reads the
-        same key via JobMonitoringService.get_dead_letter_queue().
-
-        The unified key mixes two failure domains (ARQ job entries and bus
-        entries tagged ``source="event_bus"``). Pass ``source`` to read one
-        domain only — ``"event_bus"`` for bus failures, ``"arq"`` for ARQ
-        job failures (ARQ entries carry no ``source`` field).
-
-        Args:
-            limit: Maximum number of entries to return
-            source: Optional failure-domain filter (``"event_bus"`` / ``"arq"``)
-
-        Returns
-        -------
-            List of failed event entries
-        """
-        return await DeadLetterQueue(redis_client=self.redis_client).read(limit=limit, source=source)
-
-    async def get_dlq_size(self) -> int:
-        """Get the number of entries in the unified DLQ (``arq:dlq``).
-
-        Returns
-        -------
-            Number of DLQ entries
-        """
-        return await DeadLetterQueue(redis_client=self.redis_client).size()
-
-    async def retry_dlq_entry(self, source: str | None = None) -> dict | None:
-        """Remove and return the oldest unified-DLQ entry for retry (FIFO).
-
-        With ``source`` set, removes the oldest entry of that failure domain
-        instead of whatever happens to be oldest — an ARQ job dict must never
-        be returned as a bus retry (type confusion across the two domains).
-
-        Args:
-            source: Optional failure-domain filter (``"event_bus"`` / ``"arq"``)
-
-        Returns
-        -------
-            DLQ entry or None if queue is empty
-        """
-        return await DeadLetterQueue(redis_client=self.redis_client).retry(source)
-
-    async def clear_dlq(self, source: str | None = None) -> int:
-        """Clear matching entries through the unified DLQ module."""
-        return await DeadLetterQueue(redis_client=self.redis_client).clear(source)
-
-    async def drain_legacy_dlq(self) -> int:
-        """Migrate legacy EventBus entries through the unified DLQ module."""
-        return await DeadLetterQueue(redis_client=self.redis_client).drain_legacy()
-
     def register_all_handlers(self) -> None:
         """Pre-register all event handlers during startup.
 

@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from src.app.core.dead_letter import DeadLetterQueue
 from src.app.core.events import EventBus
 
 
@@ -153,6 +154,16 @@ async def _add_bus_failure(bus: EventBus, mock_settings: Any) -> None:
         )
 
 
+def _dlq(bus: EventBus) -> DeadLetterQueue:
+    """The queue module behind the bus.
+
+    The bus used to expose five one-line forwards over this; it now keeps only
+    ``add_to_dlq``, the write it actually performs, and the queue has one
+    interface rather than two facades over it.
+    """
+    return DeadLetterQueue(redis_client=bus.redis_client)
+
+
 @pytest.mark.asyncio
 async def test_add_to_dlq_writes_unified_key(bus: EventBus, fake_redis: FakeRedis, mock_settings: Any) -> None:
     """Bus failures land on ``arq:dlq`` in monitor-compatible JSON; legacy key untouched."""
@@ -189,10 +200,10 @@ async def test_bus_and_monitor_readers_agree_on_size(
 
     monitor = JobMonitoringService()
     with patch("src.app.core.job_monitoring.get_redis", return_value=fake_redis):
-        assert await bus.get_dlq_size() == 2
+        assert await _dlq(bus).size() == 2
         assert await monitor.get_dlq_size() == 2
 
-        bus_entries = await bus.get_dlq_entries()
+        bus_entries = await _dlq(bus).read()
         assert len(bus_entries) == 2
         # Unique job_ids: the two identical failures must not collide.
         assert bus_entries[0]["job_id"] != bus_entries[1]["job_id"]
@@ -234,11 +245,11 @@ async def test_retry_dlq_entry_works_on_unified_key(
     """FIFO retry pops from the surviving key and shrinks it."""
     await _add_bus_failure(bus, mock_settings)
 
-    entry = await bus.retry_dlq_entry()
+    entry = await _dlq(bus).retry()
     assert entry is not None
     assert entry["event_name"] == "order.created"
-    assert await bus.get_dlq_size() == 0
-    assert await bus.retry_dlq_entry() is None
+    assert await _dlq(bus).size() == 0
+    assert await _dlq(bus).retry() is None
 
 
 def test_strict_ordering_flag_declared_default_false() -> None:
@@ -270,7 +281,7 @@ class TestDlqFilteredLuaPath:
         c = json.dumps({"job_id": "c", "source": "arq"})
         _seed_dlq(fake_redis, [a, b, c])  # a oldest (tail), c newest (head)
 
-        entry = await bus.retry_dlq_entry(source="arq")
+        entry = await _dlq(bus).retry(source="arq")
 
         assert entry is not None and entry["job_id"] == "a"
         assert [json.loads(r)["job_id"] for r in fake_redis.store[EventBus.DLQ_REDIS_KEY]] == ["c", "b"]
@@ -283,11 +294,11 @@ class TestDlqFilteredLuaPath:
         naked = json.dumps({"job_id": "naked"})
         _seed_dlq(fake_redis, [naked])
 
-        found = await bus.retry_dlq_entry(source="arq")
+        found = await _dlq(bus).retry(source="arq")
         assert found is not None and found["job_id"] == "naked"
 
         _seed_dlq(fake_redis, [naked])
-        assert await bus.retry_dlq_entry(source="event_bus") is None
+        assert await _dlq(bus).retry(source="event_bus") is None
         assert len(fake_redis.store[EventBus.DLQ_REDIS_KEY]) == 1
 
     @pytest.mark.asyncio
@@ -298,7 +309,7 @@ class TestDlqFilteredLuaPath:
         garbage = ["not-json", "[1, 2]", "null", "123", "  "]
         _seed_dlq(fake_redis, [*garbage, good])
 
-        entry = await bus.retry_dlq_entry(source="arq")
+        entry = await _dlq(bus).retry(source="arq")
 
         assert entry is not None and entry["job_id"] == "good"
         assert fake_redis.store[EventBus.DLQ_REDIS_KEY] == garbage[::-1]
@@ -309,7 +320,7 @@ class TestDlqFilteredLuaPath:
     ) -> None:
         _seed_dlq(fake_redis, [json.dumps({"job_id": "b", "source": "event_bus"})])
 
-        assert await bus.retry_dlq_entry(source="arq") is None
+        assert await _dlq(bus).retry(source="arq") is None
         assert len(fake_redis.store[EventBus.DLQ_REDIS_KEY]) == 1
 
     @pytest.mark.asyncio
@@ -321,7 +332,7 @@ class TestDlqFilteredLuaPath:
         drop2 = json.dumps({"job_id": "drop2"})  # missing source counts as arq
         _seed_dlq(fake_redis, [drop1, keep, drop2, "not-json"])
 
-        cleared = await bus.clear_dlq(source="arq")
+        cleared = await _dlq(bus).clear(source="arq")
 
         assert cleared == 2
         assert fake_redis.store[EventBus.DLQ_REDIS_KEY] == ["not-json", keep]
@@ -339,7 +350,7 @@ class TestDlqFilteredLuaPath:
         b = json.dumps({"job_id": "b", "source": "event_bus"})
         _seed_dlq(fake_redis, [a, b])
 
-        popped = await bus.retry_dlq_entry(source="arq")
+        popped = await _dlq(bus).retry(source="arq")
         assert popped is not None and popped["job_id"] == "a"
-        assert (await bus.clear_dlq(source="event_bus")) == 1
+        assert (await _dlq(bus).clear(source="event_bus")) == 1
         assert fake_redis.store[EventBus.DLQ_REDIS_KEY] == []

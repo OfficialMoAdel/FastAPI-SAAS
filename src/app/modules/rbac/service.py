@@ -20,9 +20,6 @@ from src.app.core.config import settings
 from src.app.core.db.scoped import execute_scoped
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.monitoring.r1_unified_metrics import record_rbac_cache_hit, record_rbac_cache_miss
-from src.app.core.rbac.dependencies import (
-    invalidate_users_permissions_cache_batch,
-)
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules.rbac.crud import crud_associations, crud_permissions, crud_roles
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
@@ -138,17 +135,19 @@ class RoleService:
                 invalidate_user_sessions,
             )
 
+            # One seam call owns the whole mutation-time transition: SQL bump,
+            # commit, permission-cache flush (batched internally, P-M7), and
+            # user-cache invalidation. The flush used to be a second hand-rolled
+            # call here, which meant this outcome had two spellings depending on
+            # which role mutation reached it.
             await invalidate_user_sessions(
                 self.db,
                 affected_user_ids,
                 reason=InvalidationReason.CREDENTIAL_CHANGE,
                 tenant_id=self.tenant_id,
+                flush_permissions=True,
                 commit=True,
             )
-            # P-M7: batch pipeline (1 Redis RTT) instead of a sequential
-            # per-user invalidation loop (N RTTs) — the batch helper already
-            # existed for exactly this role-mutation shape.
-            await invalidate_users_permissions_cache_batch(affected_user_ids, self.tenant_id)
         else:
             await self.db.commit()
 
@@ -445,9 +444,9 @@ class RoleService:
                 affected_user_ids,
                 reason=InvalidationReason.CREDENTIAL_CHANGE,
                 tenant_id=self.tenant_id,
+                flush_permissions=True,
                 commit=True,
             )
-            await invalidate_users_permissions_cache_batch(affected_user_ids, self.tenant_id)
 
     async def remove_permission_from_role(self, role_id: int, permission_slug: str) -> None:
         """Remove a permission from a role."""
@@ -481,9 +480,9 @@ class RoleService:
                     affected_user_ids,
                     reason=InvalidationReason.CREDENTIAL_CHANGE,
                     tenant_id=self.tenant_id,
+                    flush_permissions=True,
                     commit=True,
                 )
-                await invalidate_users_permissions_cache_batch(affected_user_ids, self.tenant_id)
 
     async def assign_role_to_user(self, user_id: int, role_id: int) -> None:
         """Assign a role to a user within the current tenant.

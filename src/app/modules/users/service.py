@@ -40,7 +40,6 @@ logger = get_logger(__name__)
 
 from src.app.modules.users.cache import (
     UserCacheInvalidator,
-    _user_email_cache_key,
 )
 
 
@@ -77,27 +76,6 @@ class UserService:
             return int(username)
         except ValueError:
             return None
-
-    async def _get_active_user(self, username: str) -> dict[str, Any] | None:
-        """M-8: fetch a non-deleted user by integer ID or username.
-
-        Consolidates the six copy-pasted ``try: int(username)`` lookup blocks.
-        H-4: dead crud-fallback branch removed — the repository layer was
-        always constructed, so the else-branch could never run.
-
-        Deliberately NOT routed through :meth:`get_tenant_user`: this helper
-        serves privileged management flows (update/delete/tier/status,
-        hard-delete) that run under ``USERS_MANAGE`` / superuser gates and
-        may execute without an active tenant context (superusers see all
-        tenants) — the tenant seam is fail-closed without context and would
-        break those paths. Auth-gated reads must use :meth:`get_active_user`
-        and role bookkeeping must use :meth:`get_tenant_user`; do not add new
-        callers here.
-        """
-        parsed_id = self._parse_user_id(username)
-        if parsed_id is not None:
-            return await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
-        return await self.crud.get(db=self.db, username=username, is_deleted=False)
 
     async def list_users(
         self,
@@ -319,140 +297,38 @@ class UserService:
 
         return result
 
-    async def get_user_auth_info(
-        self, *, username: str | None = None, email: str | None = None
-    ) -> dict[str, Any] | None:
-        """Get user with tier info for authentication (cached).
+    async def get_user_for_management(self, identifier: str) -> dict[str, Any] | None:
+        """Privileged, deliberately UNSCOPED read for management flows.
 
-        Parameters
-        ----------
-        username : str | None
-            Username to look up (mutually exclusive with email)
-        email : str | None
-            Email to look up (mutually exclusive with username)
+        Public and named on purpose. This used to be ``_get_active_user``,
+        a private method whose docstring told future readers "do not add new
+        callers here" — a rule only a comment could enforce and an IDOR audit
+        could not enumerate. It is now a named row on the read interface, so
+        the scope it bypasses is visible to anyone reading the interface
+        rather than buried in prose.
 
-        Returns
-        -------
-        dict[str, Any] | None
-            User dict with tier info, or None if not found
+        Scope: these flows (update/delete, tier and status changes,
+        hard-delete) run under ``USERS_MANAGE`` / superuser gates and may
+        execute with no active tenant context, because superusers see all
+        tenants. The tenant seam is fail-closed without context and would
+        break them. Every other caller must use ``UserDirectory.active``,
+        ``.member`` or ``.profile`` instead.
+
+        Deliberately NOT a :class:`UserDirectory` read, unlike every other
+        read on this module. The delete path reads ``token_version`` from the
+        result to seed the post-delete version, and ``UserRead`` is an API
+        projection that omits privilege/session fields by design
+        (``UserReadPublic`` drops them, ``UserRead`` adds back only
+        ``tenant_id`` and ``is_superuser``). Reading through the directory
+        would validate the row into a model without ``token_version`` and
+        silently seed the cache with a guess. So this returns the raw CRUD
+        row, uncached, exactly as before — the only thing that changes here
+        is that the scope is named instead of hidden.
         """
-        from src.app.modules.users.directory import UserDirectory
-
-        info = await UserDirectory(self.db).auth_info(username=username, email=email)
-        return info.model_dump(mode="json") if info else None
-
-    async def get_active_user(
-        self,
-        *,
-        id: int | None = None,
-        username: str | None = None,
-        email: str | None = None,
-        tenant_id: Any = None,
-    ) -> dict[str, Any] | None:
-        """Named-lookup seam: fetch a non-deleted, active user with tier eager-loaded.
-
-        Enforces ``is_deleted=False`` + ``is_active=True`` + tenant scope in a
-        single query, built on ``CRUDUser.get_user_with_tier_eager`` (which
-        itself composes ``criterion``) — not a parallel helper. Returns the
-        tier-eager auth payload dict, or None when no such user exists in scope.
-
-        Auth-gated reads (password/MFA/passkey/magic-link verification, RBAC
-        membership checks) use this; pure audit tenant-extracts use the seam
-        without the active gate.
-
-        Parameters
-        ----------
-        id : int | None
-            User ID to look up (mutually exclusive with username/email).
-        username : str | None
-            Username to look up (case-insensitive, per-tenant unique).
-        email : str | None
-            Email to look up (case-insensitive, per-tenant unique).
-        tenant_id : Any
-            Explicit tenant scope for worker paths without an active tenant
-            context. Ignored when a context tenant is active.
-        """
-        from src.app.modules.users.directory import UserDirectory
-
-        user = await UserDirectory(self.db).active(id=id, username=username, email=email, tenant_id=tenant_id)
-        return user.model_dump(mode="json") if user else None
-
-    async def get_tenant_user(
-        self,
-        *,
-        id: int | None = None,
-        username: str | None = None,
-        email: str | None = None,
-        tenant_id: Any = None,
-    ) -> dict[str, Any] | None:
-        """Membership seam: fetch a non-deleted user with tier eager-loaded.
-
-        Enforces ``is_deleted=False`` + tenant scope but NOT ``is_active`` —
-        role-assignment bookkeeping must work for onboarding flows
-        (create inactive → assign role → activate) and cleanup flows
-        (strip roles from deactivated users). Authentication paths keep
-        using :meth:`get_active_user`.
-        """
-        from src.app.modules.users.directory import UserDirectory
-
-        user = await UserDirectory(self.db).member(id=id, username=username, email=email, tenant_id=tenant_id)
-        return user.model_dump(mode="json") if user else None
-
-    async def get_by_username(self, username: str) -> dict[str, Any]:
-        """Get a user by username with Redis caching.
-
-        Args:
-        ----
-            username: Username to look up
-
-        Returns
-        -------
-            dict[str, Any]
-            User dict
-
-        Raises
-        ------
-        ModelNotFoundError
-            If user not found
-        """
-
-        from src.app.modules.users.directory import UserDirectory
-
-        return (await UserDirectory(self.db).by_username(username)).model_dump(mode="json")
-
-    async def get(self, user_id: Any) -> dict[str, Any] | None:
-        """Get a user by ID with Redis caching.
-
-        Parameters
-        ----------
-        user_id : Any
-            User ID (UUID)
-
-        Returns
-        -------
-        dict[str, Any] | None
-            User dict or None if not found
-        """
-        from src.app.modules.users.directory import UserDirectory
-
-        user = await UserDirectory(self.db).by_id(user_id)
-        return user.model_dump(mode="json") if user else None
-
-    async def get_profile(
-        self,
-        identifier: str,
-        *,
-        tenant_id: Any,
-    ) -> dict[str, Any]:
-        """Load a user by ID or username and enforce tenant isolation.
-
-        Cross-tenant lookups raise ModelNotFoundError so they are
-        indistinguishable from nonexistent users (404, not 403).
-        """
-        from src.app.modules.users.directory import UserDirectory
-
-        user = await UserDirectory(self.db).profile(identifier, tenant_id=tenant_id)
-        return user.model_dump(mode="json")
+        parsed_id = self._parse_user_id(identifier)
+        if parsed_id is not None:
+            return await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
+        return await self.crud.get(db=self.db, username=identifier, is_deleted=False)
 
     async def resolve_current_profile(self, current_user: Any) -> dict[str, Any] | None:
         """Resolve the full profile for the authenticated principal.
@@ -481,49 +357,27 @@ class UserService:
                 except Exception as e:
                     logger.warning("Unserializable user principal in resolve_current_profile", error=str(e))
                     return None
+        from src.app.modules.users.directory import UserDirectory
+
         try:
+            # Built inside the load path only: a principal that already carries
+            # its profile fields returns above, without needing a session.
+            directory = UserDirectory(self.db)
             if user_id is not None:
-                user = await self.get(int(user_id))
+                user = await directory.by_id(int(user_id))
                 if user:
-                    return user
+                    return user.model_dump(mode="json")
             elif username:
                 try:
-                    return await self.get_by_username(username)
+                    return (await directory.by_username(username)).model_dump(mode="json")
                 except ModelNotFoundError:
                     return None
         except (ValueError, TypeError):
             if username:
                 try:
-                    return await self.get_by_username(username)
+                    return (await directory.by_username(username)).model_dump(mode="json")
                 except ModelNotFoundError:
                     return None
-        return None
-
-    async def get_by_email(self, email: str) -> dict[str, Any] | None:
-        """Get a user by email address with Redis caching.
-
-        Parameters
-        ----------
-        email : str
-            Email address to look up
-
-        Returns
-        -------
-        dict[str, Any] | None
-            User dict or None if not found
-        """
-        # Try cache first - return cached data directly to avoid DB query
-        cached = await self._get_cached_user(_user_email_cache_key(email))
-        if cached:
-            logger.debug("Cache hit for user email")
-            return cached
-
-        user = await self.crud.get(db=self.db, email=email, is_deleted=False)
-        if user:
-            await self._cache_user(user)
-            from src.app.modules.users.schemas import UserRead
-
-            return UserRead.model_validate(user).model_dump(mode="json")
         return None
 
     async def update(
@@ -558,7 +412,7 @@ class UserService:
             If new email/username already taken
         """
         # SECURITY FIX: Prevent updating soft-deleted users
-        db_user = await self._get_active_user(username)
+        db_user = await self.get_user_for_management(username)
 
         if db_user is None:
             raise ModelNotFoundError("User", username)
@@ -639,7 +493,7 @@ class UserService:
         ForbiddenError
             If current user doesn't own this account
         """
-        db_user = await self._get_active_user(username)
+        db_user = await self.get_user_for_management(username)
 
         if not db_user:
             raise ModelNotFoundError("User", username)
@@ -719,7 +573,7 @@ class UserService:
             If user not found
         """
         # SECURITY FIX: Single query with soft-delete filter (prevents double query)
-        db_user = await self._get_active_user(username)
+        db_user = await self.get_user_for_management(username)
 
         if not db_user:
             raise ModelNotFoundError("User", username)
@@ -775,7 +629,7 @@ class UserService:
             If user or tier not found
         """
         # Direct service construction per ADR-0001 (service registry deleted)
-        db_user = await self._get_active_user(username)
+        db_user = await self.get_user_for_management(username)
 
         if db_user is None:
             raise ModelNotFoundError("User", username)
@@ -822,7 +676,7 @@ class UserService:
         Callers are responsible for authorization (superuser-gated route);
         the service enforces tenant scoping via the tenant-aware CRUD seam.
         """
-        db_user = await self._get_active_user(username)
+        db_user = await self.get_user_for_management(username)
         if db_user is None:
             raise ModelNotFoundError("User", username)
 

@@ -19,9 +19,10 @@ import asyncio
 import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from src.app.core.principal import AuthenticatedUser
+from src.app.modules.users.directory import UserDirectory
 from src.app.modules.users.schemas import UserRead, UserReadPublic
 from src.app.modules.users.service import UserService
 
@@ -160,12 +161,15 @@ class TestFastPathEquivalence:
         payloads) must keep resolving via the profile load path — the
         fallback contract is unchanged."""
         service = UserService.__new__(UserService)
+        service.db = AsyncMock()  # the load path needs a session
         principal = AuthenticatedUser(id=1, email="n@e.com")  # no profile fields
 
-        async def _get_none(user_id: int) -> None:
+        async def _by_id_none(user_id: Any) -> None:
             return None
 
-        with patch.object(UserService, "get", _get_none):
+        # The load path reads through UserDirectory now; the one-line
+        # UserService.get forward it used to call is gone.
+        with patch.object(UserDirectory, "by_id", _by_id_none):
             result = asyncio.run(service.resolve_current_profile(principal))
 
         assert result is None

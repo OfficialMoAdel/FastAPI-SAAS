@@ -212,8 +212,13 @@ class TestRoleServiceDelete:
         mock_affected_result.scalars.return_value.all.return_value = []  # No users with this role
         mock_db.execute = AsyncMock(return_value=mock_affected_result)
 
-        with patch("src.app.modules.rbac.service.invalidate_users_permissions_cache_batch", new_callable=AsyncMock):
+        with patch(
+            "src.app.modules.users.session_invalidation.invalidate_user_sessions", new_callable=AsyncMock
+        ) as mock_seam:
             await role_service.delete_role(1)
+        # No affected users in this fixture, so the seam is not crossed; when
+        # it is, the permission flush rides along on the same call.
+        mock_seam.assert_not_awaited()
 
         mock_db.delete.assert_called_once_with(mock_role)
         mock_db.commit.assert_called_once()
@@ -394,48 +399,37 @@ class TestRoleServicePermissions:
         mock_affected_result = MagicMock()
         mock_affected_result.scalars.return_value.all.return_value = [10, 11]
 
-        projected_rows = [("row-10",), ("row-11",)]
-        mock_users_result = MagicMock()
-        mock_users_result.all.return_value = projected_rows
-
-        # execute order: permission, existing link, affected user ids,
-        # projected user columns, token_version UPDATE, fresh-version read
+        # execute order: permission, existing link, affected user ids. The
+        # projection select, the token_version UPDATE and the fresh-version
+        # read all live inside the seam, which is mocked here.
         mock_db.execute.side_effect = [
             mock_result_perm,
             mock_result_link,
             mock_affected_result,
-            mock_users_result,
-            MagicMock(),
-            MagicMock(),
         ]
 
-        with (
-            patch(
-                "src.app.modules.users.service.UserService._invalidate_user_cache_batch",
-                new_callable=AsyncMock,
-            ) as mock_batch,
-            patch(
-                "src.app.modules.rbac.service.invalidate_users_permissions_cache_batch",
-                new_callable=AsyncMock,
-            ),
-        ):
+        with patch(
+            "src.app.modules.users.session_invalidation.invalidate_user_sessions",
+            new_callable=AsyncMock,
+        ) as mock_invalidate:
             await role_service.add_permission_to_role(1, "users:read")
-        mock_batch.assert_awaited_once_with(
-            projected_rows,
-            bump_token_version=True,
-            reason=InvalidationReason.CREDENTIAL_CHANGE,
-            explicit_token_versions={},
-        )
 
-        users_stmt = mock_db.execute.call_args_list[3].args[0]
-        assert users_stmt.column_descriptions[0]["name"] == "id"
-        assert {c["name"] for c in users_stmt.column_descriptions} == {
-            "id",
-            "email",
-            "username",
-            "tenant_id",
-            "token_version",
-        }
+        # One seam call carries the SQL bump, the commit, the permission flush
+        # and the user-cache invalidation, so the affected users arrive as a
+        # single batch argument rather than N per-user calls. The previous
+        # assertion reached past the seam into UserService's delegate; the
+        # batching contract is an interface fact now, so it is asserted here.
+        mock_invalidate.assert_awaited_once()
+        assert mock_invalidate.await_args.args[1] == [10, 11]
+        assert mock_invalidate.await_args.kwargs["flush_permissions"] is True
+        assert mock_invalidate.await_args.kwargs["commit"] is True
+
+        # The column projection is the seam's job once the caller hands over
+        # ids, and is covered by
+        # tests/unit/modules/users/test_session_invalidation.py::
+        # test_invalidate_user_sessions_raw_ids_projection. What this caller
+        # test owns is that it does not select full user rows itself.
+        assert [d.get("name") for d in mock_db.execute.call_args_list[2].args[0].column_descriptions] == ["user_id"]
 
 
 class TestRoleServiceUserAssignment:
@@ -591,3 +585,36 @@ class TestRoleServiceUserAssignment:
                 id=999, tenant_id=MockUser.DEFAULT_TENANT_ID
             )
             mock_remove.assert_not_called()
+
+
+MUTATION_SITES = ["delete_role", "add_permission_to_role", "remove_permission_from_role"]
+
+
+def test_every_role_mutation_crosses_the_invalidation_seam_once():
+    """No role mutation may spell the transition twice.
+
+    Three of the five role-mutation paths used to call the seam and then
+    hand-roll the permission flush as a second call. That left one outcome with
+    two spellings: only the two-step spelling could raise out of the flush
+    after the SQL bump had already committed, and a reader could not tell which
+    paths had been migrated.
+
+    Structural check rather than a behavioural one, because the failure mode is
+    structural: a second call site creeping back in.
+    """
+    import inspect
+
+    from src.app.modules.rbac import service as rbac_service
+
+    source = inspect.getsource(rbac_service)
+
+    # No permission-cache helper is imported or called here any more.
+    assert "invalidate_users_permissions_cache_batch" not in source
+    assert "invalidate_user_permissions_cache" not in source
+
+    # Every seam call in this module asks for the permission flush.
+    calls = source.split("await invalidate_user_sessions(")[1:]
+    assert calls, "no seam call sites found — the guard would pass vacuously"
+    for block in calls:
+        head = block[: block.index(")")]
+        assert "flush_permissions=True" in head, f"a seam call omitted the permission flush:\n{head}"

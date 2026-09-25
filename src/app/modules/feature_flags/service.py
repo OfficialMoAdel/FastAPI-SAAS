@@ -1,4 +1,22 @@
-"""Feature flags service with BaseService pattern."""
+"""Feature flags service with BaseService pattern.
+
+The decision module for feature flags. It owns the whole tenant-JSONB read,
+the registry/override precedence, typed and boolean parsing, the per-key
+singleflight, and cache invalidation. A caller supplies a tenant and a flag
+name and gets a decision; it never builds a cache key, chooses a precedence
+step, or decodes a raw value.
+
+Precedence, highest wins: tenant override
+(``FeatureFlagOverride.custom_value``) -> registry default
+(``FeatureFlag.default_value``) -> legacy tenant JSONB
+(``Tenant.feature_flags``) -> the caller's ``default``.
+
+``parse_flag_bool`` moved here from the former ``feature_flags.utils``, which
+also held ``get_feature_flags`` — a second implementation of the tenant-JSONB
+read that had no production caller and wrote the *same* Redis key
+(``build_tenant_key("features", tenant_id)``) as ``get_tenant_flags`` below.
+Two implementations, one cache entry, two ``CACHE_TTL`` constants. Deleted.
+"""
 
 import asyncio
 from collections.abc import Awaitable
@@ -28,12 +46,46 @@ from src.app.modules.feature_flags.schemas import (
     FeatureFlagRead,
     FeatureFlagUpdate,
 )
-from src.app.modules.feature_flags.utils import parse_flag_bool
 from src.app.modules.tenants.models import Tenant
 
 logger = get_logger(__name__)
 
 CACHE_TTL = 300  # 5 minutes
+
+
+def parse_flag_bool(value: Any) -> bool:
+    """Accept only boolean values, integer 1, and case-insensitive true/1 text.
+
+    False/0 and unsupported typed values evaluate to False, never truthiness.
+    Redis bytes use the same contract without decoding arbitrary content.
+    """
+    if isinstance(value, str | bytes):
+        return value.lower() in ("true", "1", b"true", b"1")
+    return value is True or (type(value) is int and value == 1)
+
+
+def _override_effective_value(override: FeatureFlagOverride | None) -> tuple[bool, Any]:
+    """Resolve a tenant override into ``(supplied, value)``.
+
+    Shared by the typed path (``get_flag_value``) and the boolean path
+    (``is_enabled``), which differed only in what they did with the leaf. The
+    ``custom_value`` dict shape — ``value`` preferred over ``enabled`` — is
+    walked here once, so the two paths cannot disagree about which key wins.
+
+    ``(False, None)`` means no override supplied a value and the registry
+    default applies.
+    """
+    if override is None:
+        return False, None
+    custom_value = get_user_attr(override, "custom_value")
+    if custom_value is None:
+        return False, None
+    if isinstance(custom_value, dict):
+        if "value" in custom_value:
+            return True, custom_value["value"]
+        if "enabled" in custom_value:
+            return True, custom_value["enabled"]
+    return True, custom_value
 
 # P2.19 FIX: per-key singleflight locks for the manual feature-flag caches.
 # On a cold key under burst traffic, N concurrent requests would each miss
@@ -386,16 +438,9 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         flag = await self.get_flag_by_key_or_none(feature_name)
         if flag is not None:
             flag_id = int(get_user_attr(flag, "id", 0))
-            override = await self.get_override(flag_id, tenant_id)
-            if override is not None:
-                custom_value = get_user_attr(override, "custom_value")
-                if custom_value is not None:
-                    if isinstance(custom_value, dict):
-                        if "value" in custom_value:
-                            return custom_value["value"]
-                        if "enabled" in custom_value:
-                            return custom_value["enabled"]
-                    return custom_value
+            supplied, value = _override_effective_value(await self.get_override(flag_id, tenant_id))
+            if supplied:
+                return value
             return get_user_attr(flag, "default_value", False)
         tenant_flags = await self.get_tenant_flags(tenant_id)
         return tenant_flags.get(feature_name, default)
@@ -453,21 +498,9 @@ class FeatureFlagService(BaseService[FeatureFlag]):
                 flag_default = parse_flag_bool(get_user_attr(flag, "default_value", False))
 
                 override = await self.get_override(flag_id, tenant_id)
-
-                if override:
-                    custom_value = get_user_attr(override, "custom_value")
-                    if custom_value is not None:
-                        if isinstance(custom_value, dict):
-                            if "value" in custom_value:
-                                enabled = parse_flag_bool(custom_value["value"])
-                            elif "enabled" in custom_value:
-                                enabled = parse_flag_bool(custom_value["enabled"])
-                            else:
-                                enabled = parse_flag_bool(custom_value)
-                        else:
-                            enabled = parse_flag_bool(custom_value)
-                    else:
-                        enabled = flag_default
+                supplied, value = _override_effective_value(override)
+                if supplied:
+                    enabled = parse_flag_bool(value)
                 else:
                     enabled = flag_default
             else:

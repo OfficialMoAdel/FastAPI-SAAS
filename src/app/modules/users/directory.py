@@ -27,8 +27,8 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
-from src.app.modules.users.cache import (
-    UserCacheInvalidator,
+from src.app.modules.users.cache import UserCacheInvalidator
+from src.app.modules.users.cache_keys import (
     _user_auth_cache_key,
     _user_cache_key,
     _user_email_cache_key,
