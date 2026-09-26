@@ -19,7 +19,7 @@ async def validate_s3_concurrency() -> dict[str, Any]:
     """Validate S3 uploads use asyncio.to_thread for non-blocking I/O."""
     import inspect
 
-    from src.app.modules.storage.s3_storage import S3Storage
+    from src.app.clients.storage.s3_storage import S3Storage
 
     source = inspect.getsource(S3Storage)
 

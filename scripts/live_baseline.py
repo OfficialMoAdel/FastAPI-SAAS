@@ -319,7 +319,7 @@ class _SlowFakeProvider:
         self.upload_finished: float | None = None
 
     async def upload(self, file, path, mime_type):
-        from src.app.modules.storage.interfaces import StorageResult
+        from src.app.clients.storage.interfaces import StorageResult
 
         self.upload_started = time.perf_counter()
         await asyncio.sleep(self.delay_s)
@@ -327,7 +327,7 @@ class _SlowFakeProvider:
         return StorageResult(success=True, path=path, size=0)
 
     async def delete(self, path):
-        from src.app.modules.storage.interfaces import StorageResult
+        from src.app.clients.storage.interfaces import StorageResult
 
         return StorageResult(success=True, path=path)
 

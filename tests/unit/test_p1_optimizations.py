@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.app.clients.storage.local_storage import LocalStorage
 from src.app.core.utils import cache
-from src.app.modules.storage.local_storage import LocalStorage
 
 # ==================== Async Storage ====================
 

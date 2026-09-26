@@ -5,12 +5,18 @@ Unified deep module providing file lifecycle management and tenant storage confi
 Note: ``LocalStorage`` / ``S3Storage`` / ``AzureBlobStorage`` provider classes
 are intentionally NOT in ``__all__`` but remain available via lazy import for
 back-compat (see ``__getattr__`` below); prefer the ``StorageProvider`` interface.
+
+The interface itself and the vendor adapters now live on the OUTBOUND side
+(``src.app.clients.storage``) — card 16 moved provider construction and vendor
+behaviour off the feature package. This package imports them; the outbound
+package imports nothing from here.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from src.app.clients.storage.interfaces import StorageProvider, StorageResult
 from src.app.modules.storage.errors import (
     FileEntityNotFoundError,
     FileTypeNotAllowedError,
@@ -20,7 +26,6 @@ from src.app.modules.storage.errors import (
     StorageError,
     StorageNotConfiguredError,
 )
-from src.app.modules.storage.interfaces import StorageProvider, StorageResult
 from src.app.modules.storage.models import File, StorageProviderType, StorageSettings
 
 __all__ = [
@@ -54,15 +59,15 @@ __all__ = [
 def __getattr__(name: str) -> Any:
     """Lazy import routers, services, and schemas to keep __init__ lightweight."""
     if name == "LocalStorage":
-        from src.app.modules.storage.local_storage import LocalStorage
+        from src.app.clients.storage.local_storage import LocalStorage
 
         return LocalStorage
     if name == "S3Storage":
-        from src.app.modules.storage.s3_storage import S3Storage
+        from src.app.clients.storage.s3_storage import S3Storage
 
         return S3Storage
     if name == "AzureBlobStorage":
-        from src.app.modules.storage.azure_storage import AzureBlobStorage
+        from src.app.clients.storage.azure_storage import AzureBlobStorage
 
         return AzureBlobStorage
 

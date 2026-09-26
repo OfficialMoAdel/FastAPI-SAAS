@@ -16,7 +16,7 @@ class TestS3AsyncUpload:
     @pytest.mark.asyncio
     async def test_upload_uses_to_thread(self) -> None:
         """Verify S3 upload wraps blocking call in asyncio.to_thread."""
-        from src.app.modules.storage.s3_storage import S3Storage
+        from src.app.clients.storage.s3_storage import S3Storage
 
         mock_client = MagicMock()
         mock_client.upload_fileobj = MagicMock()
@@ -43,7 +43,7 @@ class TestS3AsyncUpload:
     @pytest.mark.asyncio
     async def test_event_loop_responsive_during_upload(self) -> None:
         """Verify event loop remains responsive during S3 upload."""
-        from src.app.modules.storage.s3_storage import S3Storage
+        from src.app.clients.storage.s3_storage import S3Storage
 
         mock_client = MagicMock()
         mock_client.put_object = MagicMock()
@@ -71,7 +71,7 @@ class TestS3AsyncUpload:
         """Verify S3 storage code uses asyncio.to_thread pattern."""
         import inspect
 
-        from src.app.modules.storage.s3_storage import S3Storage
+        from src.app.clients.storage.s3_storage import S3Storage
 
         source = inspect.getsource(S3Storage)
 

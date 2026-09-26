@@ -4,8 +4,12 @@ This module defines the abstract interface for all storage providers,
 ensuring consistent API across S3, Azure Blob, Google Cloud Storage,
 and local file system implementations.
 
+It is the seam's abstract half and deliberately imports nothing from the
+project, so the outbound package and the storage feature can both name it
+without depending on each other.
+
 Usage:
-    from src.app.modules.storage import StorageProvider, StorageResult
+    from src.app.clients.storage import StorageProvider, StorageResult
 
     class MyStorage(StorageProvider):
         async def upload(self, file, path, mime_type):

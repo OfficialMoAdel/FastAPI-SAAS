@@ -6,8 +6,8 @@ import io
 
 import pytest
 
-from src.app.modules.storage.interfaces import StorageResult
-from src.app.modules.storage.local_storage import LocalStorage
+from src.app.clients.storage.interfaces import StorageResult
+from src.app.clients.storage.local_storage import LocalStorage
 
 
 @pytest.fixture

@@ -14,8 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.app.modules.storage.interfaces import StorageResult
-from src.app.modules.storage.s3_storage import S3Storage
+from src.app.clients.storage.interfaces import StorageResult
+from src.app.clients.storage.s3_storage import S3Storage
 
 logger = logging.getLogger(__name__)
 

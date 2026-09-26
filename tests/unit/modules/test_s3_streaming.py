@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.app.modules.storage.s3_storage import S3Storage
+from src.app.clients.storage.s3_storage import S3Storage
 
 
 class MockUploadFile:
@@ -64,7 +64,7 @@ async def test_streaming_upload_with_feature_flag(s3_storage, mock_s3_client):
     content = b"test file content" * 100
     mock_file = MockUploadFile(content, len(content))
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         result = await s3_storage.upload(
@@ -97,7 +97,7 @@ async def test_streaming_upload_resets_file_position(s3_storage, mock_s3_client)
     mock_file = MockUploadFile(content, len(content))
     mock_file._file.seek(10)
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         await s3_storage.upload(
@@ -115,7 +115,7 @@ async def test_streaming_upload_without_size_attribute(s3_storage, mock_s3_clien
     content = b"test content"
     mock_file = BytesIO(content)
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         result = await s3_storage.upload(
@@ -136,7 +136,7 @@ async def test_upload_always_streams_no_fallback(s3_storage, mock_s3_client):
     content = b"test content" * 100
     mock_file = BytesIO(content)
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         result = await s3_storage.upload(
@@ -158,7 +158,7 @@ async def test_streaming_upload_error_handling(s3_storage, mock_s3_client):
     content = b"test content"
     mock_file = BytesIO(content)
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = Exception("S3 upload failed")
 
         result = await s3_storage.upload(
@@ -178,7 +178,7 @@ async def test_large_file_uses_multipart(s3_storage, mock_s3_client):
     content = b"x" * (10 * 1024 * 1024)
     mock_file = MockUploadFile(content, len(content))
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         await s3_storage.upload(
@@ -198,7 +198,7 @@ async def test_small_file_uses_multipart_config(s3_storage, mock_s3_client):
     content = b"x" * 1000
     mock_file = MockUploadFile(content, len(content))
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         await s3_storage.upload(

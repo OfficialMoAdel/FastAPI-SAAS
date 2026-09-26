@@ -6,7 +6,7 @@ This module provides AWS S3 storage implementation conforming to
 the StorageProvider interface.
 
 Usage:
-    from src.app.modules.storage import S3Storage
+    from src.app.clients.storage.s3_storage import S3Storage
 
     storage = S3Storage(bucket="my-bucket", region="us-east-1")
     result = await storage.upload(file, "uploads/file.txt", "text/plain")
@@ -20,8 +20,8 @@ import posixpath
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, BinaryIO
 
+from src.app.clients.storage.interfaces import StorageProvider, StorageResult
 from src.app.core.logger import get_logger
-from src.app.modules.storage.interfaces import StorageProvider, StorageResult
 
 logger = get_logger(__name__)
 

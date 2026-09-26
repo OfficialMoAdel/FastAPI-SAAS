@@ -133,7 +133,7 @@ async def measure_s3_blocking_detection(report: BaselineReport) -> None:
     logger.info("🔍 Measuring S3 blocking detection...")
 
     try:
-        from src.app.modules.storage.s3_storage import S3Storage
+        from src.app.clients.storage.s3_storage import S3Storage
     except ImportError as e:
         report.add_error(f"S3Storage import failed: {e}")
         return
@@ -218,7 +218,7 @@ async def measure_s3_blocking_detection(report: BaselineReport) -> None:
     try:
         from pathlib import Path
 
-        s3_path = Path("src/app/modules/storage/s3_storage.py")
+        s3_path = Path("src/app/clients/storage/s3_storage.py")
         if s3_path.exists():
             content = s3_path.read_text()
             blocking_methods = []

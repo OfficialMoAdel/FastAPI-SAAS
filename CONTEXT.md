@@ -256,6 +256,38 @@ persistence grilling loop, 2026-09-22.)
   Seam: `StorageService(db, admin=None)` constructor injection in
   `src/app/modules/storage/service.py`.
 
+- **Storage provider construction** — the OUTBOUND half of the storage Seam,
+  and a decided seam of its own: `src/app/clients/storage/` owns the
+  `StorageProvider` interface, the three real vendor adapters (`S3Storage`,
+  `AzureBlobStorage`, `LocalStorage`), the `StorageProviderType` vendor
+  vocabulary, and `StorageProviderRegistry` (the factory map, its
+  `register`/`unregister`/`reset` test-override path, and the credential ->
+  constructor mapping per vendor). That package imports **no feature module**;
+  `src/app/modules/storage/` imports downward into it. This was the inversion
+  card 16 removed: the client package used to import four feature modules
+  (`s3_storage` / `azure_storage` / `local_storage` / `interfaces` plus the
+  `models` enum) while `StorageAdminService` reached back into the registry to
+  build a provider.
+  What it does NOT own: tenant settings, credential decrypt, the provider
+  cache, and the `close()`/dispose choreography — those stay in
+  `StorageAdminService`, which is the only caller of the registry and names a
+  provider by `StorageProviderType` alone. Quota / ownership / tenant policy
+  stays on the feature side; the adapters know none of it.
+  `StorageProviderType` is DEFINED in `clients/storage/provider_type.py` (a
+  leaf, no project imports) and re-exported by `modules/storage/models.py` for
+  the `StorageSettings` column default, so one object serves both sides and
+  `src.app.models` keeps re-exporting it unchanged. The schema enum in
+  `modules/storage/schemas.py` is deliberately a DIFFERENT, Pydantic-facing
+  type and is not merged with it.
+  Why `clients/storage/__init__.py` resolves the registry and the adapters
+  through `__getattr__` instead of importing them: `modules/storage/models.py`
+  imports `StorageProviderType`, so an eager registry import would re-create
+  the cycle `clients.storage -> registry -> s3_storage -> modules.storage ->
+  models -> clients.storage.provider_type` and would put boto3/azure on the
+  model-import path. Same lazy-package pattern as
+  `modules/storage/__init__.py` and `core/resilience/breakers.py`.
+  Seam: `StorageProviderRegistry` in `src/app/clients/storage/registry.py`.
+
 - **Delivery split** — the webhook Seam: `delivery.deliver` /
   `delivery.enqueue` in `src/app/modules/webhooks/delivery.py` own the
   whole delivery lifecycle (lock → sign → send → backoff → DLQ/metrics);

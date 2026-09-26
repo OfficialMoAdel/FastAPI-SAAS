@@ -23,6 +23,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
+from src.app.clients.storage.local_storage import LocalStorage
 from src.app.core.config import settings as app_settings
 from src.app.core.db.scoped import execute_scoped
 from src.app.core.tenancy.scope import ExplicitTenant
@@ -33,7 +34,6 @@ from src.app.modules.storage.errors import (
     QuotaExceededError,
     StorageBackendError,
 )
-from src.app.modules.storage.local_storage import LocalStorage
 from src.app.modules.storage.metrics import storage_metrics
 from src.app.modules.storage.models import File
 from src.app.modules.storage.schemas import (

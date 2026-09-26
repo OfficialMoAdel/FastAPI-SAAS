@@ -80,17 +80,29 @@ def get_storage(provider: str, settings: StorageSettingsRead) -> StorageProvider
 
 ## Touch Points / Key Files
 
-- Interface: `src/app/modules/storage/__init__.py` - Storage, StorageAdmin, StorageProvider
+- Interface: `src/app/clients/storage/interfaces.py` — `StorageProvider`, `StorageResult` (outbound seam)
 - Service: `src/app/modules/storage/service.py` - StorageService, StorageAdminService, StoredObject, Download
-- Models: `src/app/modules/storage/models.py` - File, StorageSettings, StorageProviderType
+- Models: `src/app/modules/storage/models.py` - File, StorageSettings, StorageProviderType (re-exported from the outbound seam)
 - Schemas: `src/app/modules/storage/schemas.py` - FileRead, FileUploadResponse, StorageSettingsRead, etc.
 - Routers: `src/app/modules/storage/files_router.py` (/files), `settings_router.py` (/storage)
-- Providers: `s3_storage.py`, `azure_storage.py`, `local_storage.py`
+- Providers + registry (OUTBOUND, card 16): `src/app/clients/storage/s3_storage.py`,
+  `azure_storage.py`, `local_storage.py`, `registry.py` (`StorageProviderRegistry`),
+  `provider_type.py` (`StorageProviderType`)
+
+## Outbound Seam
+
+The provider interface, the three vendor adapters, and `StorageProviderRegistry`
+live in `src/app/clients/storage/`, not here. `src/app/clients/storage/` imports
+NO feature module; this package imports downward into it. `StorageAdminService`
+asks the registry for a provider by `StorageProviderType` name and never
+imports an adapter. The Transfer/Admin split is unchanged: transfer owns file
+movement, admin owns settings/decrypt/provider cache (`ResolvedStorage` is the
+only object crossing between them).
 ## JIT Index Hints
 
 - Find provider implementations: `rg -n "class.*Storage" src/app/modules/storage/`
 - Find factory method: `rg -n "def get_storage" src/app/modules/storage/`
-- Find S3 operations: `rg -n "s3_client\." src/app/modules/storage/s3_storage.py`
+- Find S3 operations: `rg -n "s3_client\." src/app/clients/storage/s3_storage.py`
 - Find tests: `find tests -name "*storage*"`
 
 ## Common Gotchas

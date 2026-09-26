@@ -6,7 +6,7 @@ This module implements the StorageProvider interface for Azure Blob Storage,
 providing async upload, download, delete, and signed URL generation.
 
 Usage:
-    from src.app.modules.storage.azure_storage import AzureBlobStorage
+    from src.app.clients.storage.azure_storage import AzureBlobStorage
 
     storage = AzureBlobStorage(connection_string="...", container_name="files")
     result = await storage.upload(file, "path/to/file.pdf", "application/pdf")
@@ -21,8 +21,8 @@ from azure.core.exceptions import ResourceNotFoundError
 from azure.storage.blob import BlobSasPermissions, ContentSettings, generate_blob_sas
 from azure.storage.blob.aio import BlobServiceClient, ContainerClient
 
+from src.app.clients.storage.interfaces import StorageProvider, StorageResult
 from src.app.core.logger import get_logger
-from src.app.modules.storage.interfaces import StorageProvider, StorageResult
 
 logger = get_logger(__name__)
 

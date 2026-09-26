@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PIL import Image
 
-from src.app.modules.storage.s3_storage import S3Storage
+from src.app.clients.storage.s3_storage import S3Storage
 
 
 class MockUploadFile:
@@ -118,7 +118,7 @@ async def test_small_file_integrity(s3_storage):
     content = os.urandom(1024)
     mock_file = MockUploadFile(content, len(content))
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         upload_result = await storage_instance.upload(
@@ -141,7 +141,7 @@ async def test_large_file_integrity(s3_storage):
     content = os.urandom(10 * 1024 * 1024)  # 10MB
     mock_file = MockUploadFile(content, len(content))
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         upload_result = await storage_instance.upload(
@@ -170,7 +170,7 @@ async def test_png_image_integrity(s3_storage):
 
     mock_file = MockUploadFile(content, len(content), "test.png")
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         upload_result = await storage_instance.upload(file=mock_file, path="test/image.png", mime_type="image/png")
@@ -191,7 +191,7 @@ async def test_pdf_file_integrity(s3_storage):
     content = b"%PDF-1.4\n" + os.urandom(1024) + b"%%EOF"
     mock_file = MockUploadFile(content, len(content), "test.pdf")
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         upload_result = await storage_instance.upload(
@@ -219,7 +219,7 @@ async def test_zip_archive_integrity(s3_storage):
 
     mock_file = MockUploadFile(content, len(content), "test.zip")
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         upload_result = await storage_instance.upload(
@@ -246,7 +246,7 @@ async def test_content_type_preservation(s3_storage):
     content = b"test content"
     mock_file = MockUploadFile(content, len(content))
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         upload_result = await storage_instance.upload(
@@ -268,7 +268,7 @@ async def test_multipart_boundary_integrity(s3_storage):
     content = os.urandom(10 * 1024 * 1024)  # 10MB, >5MB threshold
     mock_file = MockUploadFile(content, len(content))
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         upload_result = await storage_instance.upload(
@@ -306,7 +306,7 @@ async def test_zero_byte_file_integrity(s3_storage):
     content = b""
     mock_file = MockUploadFile(content, 0)
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         upload_result = await storage_instance.upload(
@@ -328,7 +328,7 @@ async def test_exact_multipart_threshold_integrity(s3_storage):
     content = os.urandom(5 * 1024 * 1024)  # Exactly 5MB
     mock_file = MockUploadFile(content, len(content))
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         upload_result = await storage_instance.upload(
@@ -351,7 +351,7 @@ async def test_just_below_multipart_threshold_integrity(s3_storage):
     content = os.urandom(5 * 1024 * 1024 - 1)  # 5MB - 1 byte
     mock_file = MockUploadFile(content, len(content))
 
-    with patch("src.app.modules.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
+    with patch("src.app.clients.storage.s3_storage.asyncio.to_thread") as mock_to_thread:
         mock_to_thread.side_effect = lambda *args, **kwargs: args[0](*args[1:], **kwargs)
 
         upload_result = await storage_instance.upload(

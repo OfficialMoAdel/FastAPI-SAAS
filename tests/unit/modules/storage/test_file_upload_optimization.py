@@ -5,10 +5,10 @@ import pytest
 from fastapi import UploadFile
 
 from src.app.api.deps.request_context import RequestContext
+from src.app.clients.storage.local_storage import CHUNK_SIZE, LocalStorage
+from src.app.clients.storage.s3_storage import S3Storage
 from src.app.core.tenancy.context import TenantContext
-from src.app.modules.storage.local_storage import CHUNK_SIZE, LocalStorage
 from src.app.modules.storage.routers.files import upload_file
-from src.app.modules.storage.s3_storage import S3Storage
 
 
 @pytest.mark.asyncio

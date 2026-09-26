@@ -5,8 +5,8 @@ from uuid import uuid4
 
 import pytest
 
+from src.app.clients.storage.local_storage import LocalStorage
 from src.app.modules.storage.admin import ResolvedStorage
-from src.app.modules.storage.local_storage import LocalStorage
 from src.app.modules.storage.schemas import FileUpdate
 from src.app.modules.storage.service import (
     FileEntityNotFoundError,

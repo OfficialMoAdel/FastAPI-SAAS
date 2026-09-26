@@ -19,18 +19,25 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
+from src.app.clients.storage.interfaces import StorageProvider
+from src.app.clients.storage.provider_type import StorageProviderType
+from src.app.clients.storage.registry import StorageProviderRegistry
 from src.app.core.db.scoped import execute_scoped
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.security.encryption import get_encryption
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules.storage.errors import InvalidCredentialsError, StorageNotConfiguredError
-from src.app.modules.storage.interfaces import StorageProvider
-from src.app.modules.storage.models import StorageProviderType, StorageSettings
+from src.app.modules.storage.models import StorageSettings
 from src.app.modules.storage.schemas import StorageProviderType as SchemaProviderType
 from src.app.modules.storage.schemas import StorageSettingsCreate, StorageSettingsRead, StorageSettingsUpdate
 from src.app.shared.exceptions import DuplicateError
 
 logger = get_logger(__name__)
+
+# Provider construction belongs to the outbound seam, not to this service.
+# ``StorageProviderRegistry`` is the only thing admin asks of it, and it is
+# imported at module level on purpose: the registry itself reaches only into
+# ``src.app.clients.storage`` (card 16), so there is no cycle to defer.
 
 # B6: provider instance cache. boto3/Azure clients are designed for reuse;
 # constructing one per operation (SELECT settings -> Fernet decrypt ->
@@ -289,9 +296,8 @@ class StorageAdminService:
         provider: StorageProviderType,
         credentials: dict[str, Any],
     ) -> StorageProvider:
-        from src.app.clients.storage.registry import StorageProviderRegistry
-
         return StorageProviderRegistry.create(provider, credentials)
+
     async def resolve(self, tenant_id: UUID) -> ResolvedStorage:
         """Assemble everything transfer needs: provider + policy scalars.
 

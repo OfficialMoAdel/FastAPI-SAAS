@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import uuid as uuid_pkg
 from datetime import UTC, datetime
-from enum import Enum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from src.app.clients.storage.provider_type import StorageProviderType
 from src.app.core.db.database import Base
 
 if TYPE_CHECKING:
@@ -23,12 +23,11 @@ if TYPE_CHECKING:
     from src.app.modules.users.models import User
 
 
-class StorageProviderType(str, Enum):
-    """Supported storage provider types."""
-
-    S3 = "s3"
-    AZURE = "azure"
-    LOCAL = "local"
+# ``StorageProviderType`` is the vendor vocabulary of the OUTBOUND storage
+# seam, so it is defined in ``src/app.clients.storage.provider_type`` and
+# re-exported here for the ``StorageSettings`` column default. It used to be
+# defined below, which forced ``src.app.clients.storage.registry`` to import
+# this feature module just to key its factory map.
 
 
 class StorageSettings(Base):

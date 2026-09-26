@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.modules.storage.azure_storage import AzureBlobStorage
-from src.app.modules.storage.interfaces import StorageResult
+from src.app.clients.storage.azure_storage import AzureBlobStorage
+from src.app.clients.storage.interfaces import StorageResult
 
 CONN = "DefaultEndpointsProtocol=https;AccountName=myaccount;AccountKey=abc123==;EndpointSuffix=core.windows.net"
 
@@ -126,7 +126,7 @@ async def test_exists_false(mocked_storage) -> None:
 
 async def test_get_url_with_sas(mocked_storage) -> None:
     storage, _ = mocked_storage
-    with patch("src.app.modules.storage.azure_storage.generate_blob_sas", return_value="sig=token"):
+    with patch("src.app.clients.storage.azure_storage.generate_blob_sas", return_value="sig=token"):
         url = await storage.get_url("path/blob.txt", expires_in=600)
     assert url.startswith("https://myaccount.blob.core.windows.net/files/path")
     assert url.endswith("?sig=token")
@@ -138,7 +138,7 @@ async def test_get_url_forces_attachment_disposition(mocked_storage) -> None:
 
     storage, _ = mocked_storage
     with patch(
-        "src.app.modules.storage.azure_storage.generate_blob_sas",
+        "src.app.clients.storage.azure_storage.generate_blob_sas",
         MagicMock(return_value="sig=token"),
     ) as mock_sas:
         await storage.get_url("path/blob.txt")

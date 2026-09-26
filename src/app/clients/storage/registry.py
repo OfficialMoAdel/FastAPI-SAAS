@@ -3,6 +3,15 @@
 Decouples provider instantiation from hardcoded conditional branches.
 New providers can register their factory callable dynamically without
 modifying consumer code.
+
+This module is the whole point of the storage seam's outbound half: it builds
+the three real vendor adapters, so it imports the outbound package and
+**nothing from ``src.app.modules``**. Before card 16 it imported four feature
+modules here, which inverted the dependency direction (feature -> client for
+the interface, client -> feature for the implementations). Callers that only
+need a provider name should import ``StorageProviderType`` from
+:mod:`src.app.clients.storage.provider_type` (a leaf) rather than from a
+feature model.
 """
 
 from __future__ import annotations
@@ -10,11 +19,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from src.app.modules.storage.azure_storage import AzureBlobStorage
-from src.app.modules.storage.interfaces import StorageProvider
-from src.app.modules.storage.local_storage import LocalStorage
-from src.app.modules.storage.models import StorageProviderType
-from src.app.modules.storage.s3_storage import S3Storage
+from src.app.clients.storage.azure_storage import AzureBlobStorage
+from src.app.clients.storage.interfaces import StorageProvider
+from src.app.clients.storage.local_storage import LocalStorage
+from src.app.clients.storage.provider_type import StorageProviderType
+from src.app.clients.storage.s3_storage import S3Storage
 
 StorageFactory = Callable[[dict[str, Any]], StorageProvider]
 

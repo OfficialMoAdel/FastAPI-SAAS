@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.modules.storage.azure_storage import AzureBlobStorage
+from src.app.clients.storage.azure_storage import AzureBlobStorage
 
 # Test connection string constant to avoid line length issues
 TEST_CONNECTION_STRING = (
@@ -65,7 +65,7 @@ class TestStorageOperationsUseCache:
         mock_container.get_blob_client.return_value = mock_blob_client
 
         with patch.object(storage, "_get_container_client", return_value=mock_container):
-            with patch("src.app.modules.storage.azure_storage.generate_blob_sas", return_value="sas_token_123"):
+            with patch("src.app.clients.storage.azure_storage.generate_blob_sas", return_value="sas_token_123"):
                 url = await storage.get_url("test.txt")
 
                 # Assert - URL should be generated
@@ -91,7 +91,7 @@ class TestStorageOperationsUseCache:
         mock_container.get_blob_client.return_value = mock_blob_client
 
         with patch.object(storage, "_get_container_client", return_value=mock_container):
-            with patch("src.app.modules.storage.azure_storage.generate_blob_sas", return_value="sas_token"):
+            with patch("src.app.clients.storage.azure_storage.generate_blob_sas", return_value="sas_token"):
                 # Call get_url multiple times
                 await storage.get_url("test1.txt")
                 await storage.get_url("test2.txt")

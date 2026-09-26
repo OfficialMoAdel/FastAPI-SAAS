@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.app.clients.storage.interfaces import StorageResult
 from src.app.modules._base import ValidationError
-from src.app.modules.storage.interfaces import StorageResult
 
 # ============================================================================
 # UNIT TESTS - Image Service
