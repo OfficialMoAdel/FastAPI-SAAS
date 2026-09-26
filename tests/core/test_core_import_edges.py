@@ -120,17 +120,20 @@ def test_every_exemption_still_has_an_edge_behind_it():
 
 
 def test_the_edge_count_is_pinned_to_the_known_debt():
-    """A tripwire on the H-5 backlog, so progress and regressions are visible.
+    """The H-5 backlog is empty: src/app/core names no feature module.
 
-    Lower this as edges are retired. The pairs are the *documented* debt: each
-    is a core module reaching a feature module at runtime.
+    This was thirteen documented edges across eight core files when the work
+    started. It is now zero, and this asserts zero — so a new ``core ->
+    feature`` import fails here rather than waiting for CI to run
+    import-linter, which is not a local dependency.
+
+    Reintroduce nothing. If a core module genuinely needs a feature, register
+    it: a row type (tenancy/models, rbac/models), a fetcher
+    (security/policies), a bound recorder (worker/audit), a batch
+    (worker/registry) — all supplied by an application seam.
     """
     live = _live_edges()
-    known = {
-        ("src.app.core.worker.functions", "src.app.modules.webhooks.delivery"),
-        ("src.app.core.worker.functions", "src.app.modules.audit_logs.service"),
-        ("src.app.core.worker.functions", "src.app.modules.billing.webhook.idempotency"),
-    }
+    known: set[tuple[str, str]] = set()
     assert live == known, (
         "the set of core -> feature edges changed; update this tripwire.\n"
         f"  new:     {sorted(f'{a} -> {b}' for a, b in live - known)}\n"

@@ -48,6 +48,7 @@ from src.app.modules.audit_logs.router import (
     list_audit_logs,
     list_available_actions,
 )
+from src.app.modules.audit_logs.service import AuditFilter
 from src.app.shared.exceptions import ModelNotFoundError, ValidationError
 
 
@@ -153,8 +154,33 @@ async def test_get_export_count(mock_service_cls, mock_ctx):
         end_date=None,
     )
 
+    # The count query goes through the module's public filter value object.
+    tenant_id, audit_filter = mock_service.export_count.await_args.args
+    assert type(audit_filter) is AuditFilter
+    assert audit_filter == AuditFilter(
+        action="user.login", user_id=1, entity_type="user", start_date=None, end_date=None
+    )
+    assert tenant_id == mock_ctx.tenant_id
+
     assert result.count == 50
     assert result.can_export is True
+
+
+def test_router_binds_no_private_name_from_its_own_module() -> None:
+    """The edge must not reach into the module's private surface.
+
+    Anything the router needs from the audit-logs module has to be public, or
+    a worker and the next caller are free to move it.
+    """
+    from src.app.modules.audit_logs import router as audit_router
+    from src.app.modules.audit_logs import service as audit_service
+
+    leaked = sorted(
+        name
+        for name in vars(audit_router)
+        if name.startswith("_") and not name.startswith("__") and name in vars(audit_service)
+    )
+    assert leaked == []
 
 
 @pytest.mark.asyncio

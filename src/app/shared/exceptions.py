@@ -30,13 +30,19 @@ class AppException(Exception):
 
     HTTP presentation
     -----------------
+    The envelope ``code`` and the HTTP status are NOT declared here. They
+    resolve through this exception's own declaration — ``resolve_response_code()``
+    and ``resolve_http_status()`` — so the pre-route guard adapter
+    (``middleware_reject`` in ``src/app/core/errors.py``) and the one generic
+    handler cannot disagree about what a rejection looks like.
+
     A subclass declares how it presents at the API boundary with five
     class-level attributes, so the mapping lives **beside the exception**
     rather than in a table in core. Core registers ONE handler for
-    ``AppException`` that reads these off the instance; a module that needs
-    custom translation (per-instance status, a details payload) keeps a row
-    in the core table, which wins because Starlette resolves handlers by
-    walking ``type(exc).__mro__``.
+    ``AppException`` that reads these off the instance. A family that needs
+    custom translation (a per-instance status, a details payload) overrides
+    ``resolve_http_status()`` / ``resolve_response_code()`` / ``http_details()``
+    on the class — there is no second place to register anything.
 
     ``http_status``
         Status code for the response envelope. Default 500.
@@ -72,7 +78,7 @@ class AppException(Exception):
         self.message = message
         self.detail = message
         # Item 7: optional transport headers (e.g. SSO ``Set-Cookie`` hygiene).
-        # The central table merges these into the envelope response.
+        # The one generic handler merges these into the envelope response.
         self.headers: dict[str, str] | None = None
         super().__init__(self.message)
 

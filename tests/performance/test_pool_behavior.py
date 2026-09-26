@@ -22,20 +22,25 @@ class TestConnectionReleasePattern:
         logger.info("local_session import: verified")
 
     def test_complete_method_has_commit_call(self) -> None:
-        """Verify complete() method commits before LLM call."""
+        """Verify complete() commits before the LLM call (via _prepare_turn)."""
         import inspect
 
         from src.app.modules.ai.service import ChatCompletionService
 
-        source = inspect.getsource(ChatCompletionService.complete)
+        # The commit now lives in the single turn-preparation owner, so the
+        # release invariant is asserted as: _prepare_turn commits, and
+        # complete() enters it before it touches the provider.
+        prepare_source = inspect.getsource(ChatCompletionService._prepare_turn)
+        assert "await self.db.commit()" in prepare_source, "db.commit() should be in _prepare_turn()"
+        assert "self._invoke_chat" not in prepare_source, "_prepare_turn must not call the provider"
 
-        # Verify commit is called before LLM invocation
-        commit_pos = source.find("await self.db.commit()")
+        source = inspect.getsource(ChatCompletionService.complete)
+        prepare_pos = source.find("await self._prepare_turn(")
         ollama_pos = source.find("self._invoke_chat(")
 
-        assert commit_pos != -1, "db.commit() should be in complete()"
+        assert prepare_pos != -1, "_prepare_turn should be called in complete()"
         assert ollama_pos != -1, "_invoke_chat should be in complete()"
-        assert commit_pos < ollama_pos, "commit should happen before LLM invocation"
+        assert prepare_pos < ollama_pos, "connection release must happen before LLM invocation"
 
         logger.info("Connection release pattern: commit before LLM verified in source")
 
@@ -54,19 +59,21 @@ class TestConnectionReleasePattern:
         logger.info("Fresh session pattern: local_session() used for response write")
 
     def test_stream_method_has_commit_call(self) -> None:
-        """Verify complete_stream() method commits before LLM streaming."""
+        """Verify complete_stream() commits before LLM streaming."""
         import inspect
 
         from src.app.modules.ai.service import ChatCompletionService
 
-        source = inspect.getsource(ChatCompletionService.complete_stream)
+        prepare_source = inspect.getsource(ChatCompletionService._prepare_turn)
+        assert "await self.db.commit()" in prepare_source, "db.commit() should be in _prepare_turn()"
 
-        commit_pos = source.find("await self.db.commit()")
+        source = inspect.getsource(ChatCompletionService.complete_stream)
+        prepare_pos = source.find("await self._prepare_turn(")
         stream_pos = source.find("self._invoke_chat_stream(")
 
-        assert commit_pos != -1, "db.commit() should be in complete_stream()"
+        assert prepare_pos != -1, "_prepare_turn should be called in complete_stream()"
         assert stream_pos != -1, "_invoke_chat_stream should be in complete_stream()"
-        assert commit_pos < stream_pos, "commit should happen before streaming"
+        assert prepare_pos < stream_pos, "connection release must happen before streaming"
 
         logger.info("Stream connection release pattern: verified in source")
 

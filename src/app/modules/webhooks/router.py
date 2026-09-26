@@ -24,7 +24,7 @@ from src.app.modules.webhooks.schemas import (
     WebhookTestRequest,
 )
 from src.app.modules.webhooks.service import WebhookService
-from src.app.shared.exceptions import ModelNotFoundError, ValidationError
+from src.app.shared.exceptions import ModelNotFoundError
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -247,7 +247,7 @@ async def retry_webhook_delivery(
     """
     Manually retry a failed webhook delivery.
 
-    Only failed deliveries can be retried.
+    Only failed deliveries can be retryable.
     """
     service = WebhookService(ctx.db)
 
@@ -259,10 +259,8 @@ async def retry_webhook_delivery(
     if not delivery:
         raise ModelNotFoundError("Webhook delivery", delivery_id)
 
-    if delivery.status != WebhookDeliveryStatus.FAILED:
-        raise ValidationError("Only failed deliveries can be retried")
-
-    # Reset status and enqueue for retry
+    # The retryable precondition is service-owned (WebhookService.retry_delivery),
+    # so it applies to every caller, not only to this router.
     await service.retry_delivery(delivery.id)
 
     await ctx.db.refresh(delivery)

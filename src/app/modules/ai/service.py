@@ -5,6 +5,7 @@ Business logic for AI chat sessions, messages, and user settings.
 
 import asyncio
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -354,6 +355,25 @@ class AISettingsService(BaseService[AISettings]):
             return settings
 
 
+@dataclass(frozen=True)
+class PreparedChatTurn:
+    """One chat turn resolved, persisted and ready for the provider.
+
+    This is the state half of the turn lifecycle, shared by complete() and
+    complete_stream(): the generation parameters, the truncated history the
+    provider will see, and the id of the user message already committed by
+    the time either entry point calls out. The DB connection is released
+    before this object exists (C2) — nothing here may hold it.
+    """
+
+    model: str
+    temperature: float
+    max_tokens: int | None
+    system_prompt: str | None
+    history: list[dict[str, str]] = field(default_factory=list)
+    user_message_id: int | None = None
+
+
 class ChatCompletionService:
     """Service for AI chat completions via AIProvider."""
 
@@ -530,24 +550,26 @@ class ChatCompletionService:
             )
             await fresh_db.commit()
 
-    async def complete(
+    async def _prepare_turn(
         self,
         session_id: int,
         user_id: int,
         request: ChatCompletionRequest,
-    ) -> dict[str, Any]:
-        """Generate a chat completion for a session.
+    ) -> PreparedChatTurn:
+        """Resolve, persist and RELEASE the connection for one chat turn.
 
-        C2: Releases DB connection during LLM call to prevent pool exhaustion.
-        Pattern: fetch→commit→LLM→fresh_session→write
-
-        Args:
-            session_id: The chat session ID
-            user_id: The user making the request (for ownership check)
-            request: The completion request with message and optional overrides
+        The single owner of the turn's state rules. complete() and
+        complete_stream() both enter the provider through this method, so they
+        cannot disagree about which session/settings/history they read, which
+        parameters win, what the provider sees, or — critically (C2) — that
+        the user message is committed and the request-scoped connection is
+        released BEFORE any provider call holds it. Inference is the long
+        pole; the pool must be free for the duration.
 
         Returns:
-            Dict with assistant response, model, token_count
+            PreparedChatTurn with the generation parameters, the truncated
+            history, and the id of the persisted user message (None when the
+            create call returned no id).
         """
         # M3: Removed verbose per-request logger.info to reduce logging overhead on hot path
 
@@ -584,8 +606,50 @@ class ChatCompletionService:
         )
         user_msg_id = user_msg.get("id") if isinstance(user_msg, dict) else getattr(user_msg, "id", None)
 
-        # C2: Commit and release DB connection before LLM call
+        # C2: Commit and release DB connection before the provider call
         await self.db.commit()
+
+        return PreparedChatTurn(
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_prompt=system_prompt,
+            history=history,
+            user_message_id=user_msg_id,
+        )
+
+    async def _fallback_candidate(self) -> Any | None:
+        """The provider to retry against after the primary fails, if any.
+
+        One rule for both entry points: no configured fallback, or one that
+        IS the primary, means there is nothing to fall back to.
+        """
+        fallback = await self._get_fallback_provider()
+        if fallback is not None and fallback is not self.provider:
+            return fallback
+        return None
+
+    async def complete(
+        self,
+        session_id: int,
+        user_id: int,
+        request: ChatCompletionRequest,
+    ) -> dict[str, Any]:
+        """Generate a chat completion for a session.
+
+        C2: Releases DB connection during LLM call to prevent pool exhaustion.
+        Pattern: prepare (fetch→persist→commit)→LLM→fresh_session→write
+
+        Args:
+            session_id: The chat session ID
+            user_id: The user making the request (for ownership check)
+            request: The completion request with message and optional overrides
+
+        Returns:
+            Dict with assistant response, model, token_count
+        """
+        turn = await self._prepare_turn(session_id, user_id, request)
+        model = turn.model
 
         # Phase2: Call LLM (connection released, no DB hold during inference)
         from src.app.core.utils.retry import with_fallback, with_retry
@@ -595,7 +659,9 @@ class ChatCompletionService:
         async def _primary_call() -> dict[str, Any]:
             try:
                 return await with_retry(
-                    lambda: self._invoke_chat(self.provider, model, history, temperature, max_tokens, system_prompt),
+                    lambda: self._invoke_chat(
+                        self.provider, model, turn.history, turn.temperature, turn.max_tokens, turn.system_prompt
+                    ),
                     # P2-6: real backoff (was one 50ms retry) + honor
                     # provider-parsed Retry-After via AIProviderError.retry_after.
                     max_attempts=3,
@@ -608,31 +674,33 @@ class ChatCompletionService:
                 raise
 
         async def _fallback_call() -> dict[str, Any]:
-            fb = await self._get_fallback_provider()
-            if fb is not None and fb is not self.provider:
+            fb = await self._fallback_candidate()
+            if fb is not None:
                 logger.warning("Primary AI provider failed after retries, attempting fallback provider")
-                return await self._invoke_chat(fb, model, history, temperature, max_tokens, system_prompt)
+                return await self._invoke_chat(
+                    fb, model, turn.history, turn.temperature, turn.max_tokens, turn.system_prompt
+                )
             if _last_err:
                 raise _last_err[0]
             raise ChatCompletionError("No fallback provider available", "no_fallback", model)
 
         try:
-            logger.debug("Calling AI provider with model=, temperature=", model=model, temperature=temperature)
+            logger.debug("Calling AI provider with model=, temperature=", model=model, temperature=turn.temperature)
             result = await with_fallback(_primary_call, _fallback_call, error_msg="Primary AI completion failed")
             logger.info("Chat completion successful, tokens=", val=result.get("token_count"))
         except (AIProviderError, ChatCompletionError) as e:
             # P2.20 FIX: the user message was already committed above. On LLM
             # failure it would be left as a dangling turn with no assistant reply,
             # so remove it to keep the conversation consistent.
-            if user_msg_id is not None:
+            if turn.user_message_id is not None:
                 try:
                     async with local_session() as fresh_db:
-                        await crud_chat_messages.delete(db=fresh_db, id=user_msg_id)
+                        await crud_chat_messages.delete(db=fresh_db, id=turn.user_message_id)
                         await fresh_db.commit()
                 except Exception as cleanup_err:  # noqa: BLE001
                     logger.warning(
                         "Failed to clean up orphaned chat user message",
-                        id=user_msg_id,
+                        id=turn.user_message_id,
                         error=cleanup_err,
                     )
             err_code = getattr(e, "error_code", "completion_error")
@@ -698,52 +766,17 @@ class ChatCompletionService:
         """Stream a chat completion for a session.
 
         C2: Releases DB connection during LLM streaming to prevent pool exhaustion.
-        P1-13: Pre-LLM reads run sequentially on the request-scoped session.
+        Same turn rules as complete() — both go through _prepare_turn.
 
         Yields dicts with 'content', 'done', and optionally 'token_count'.
         """
+        turn = await self._prepare_turn(session_id, user_id, request)
+        model = turn.model
 
-        # P1-13: Sequential pre-LLM reads on the request-scoped session.
-        # One checkout instead of 3 parallel short-lived sessions. These are
-        # fast indexed lookups; serial latency is negligible next to the LLM call.
-        session = await ChatSessionService(self.db).get_session(session_id, user_id)
-        user_settings = await AISettingsService(self.db).get_or_create_settings(user_id)
-        messages_result = await ChatMessageService(self.db).get_session_messages(session_id, limit=50)
-
-        model = request.model or session.get("model") or user_settings.get("model", "gemma3")
-        temperature = request.temperature if request.temperature is not None else user_settings.get("temperature", 0.7)
-        max_tokens = request.max_tokens if request.max_tokens is not None else user_settings.get("max_tokens", 2048)
-        system_prompt = user_settings.get("system_prompt")
-
-        history = []
-        for m in messages_result.get("data", []):
-            history.append({"role": m["role"], "content": m["content"]})
-
-        sanitized_message = request.message.strip()
-        history.append({"role": "user", "content": sanitized_message})
-
-        history = truncate_context(
-            messages=history,
-            max_tokens=DEFAULT_CONTEXT_WINDOW,
-            system_prompt=system_prompt,
-            reserve_for_response=max_tokens,
-        )
-
-        # Save user message before releasing connection
-        await self._message_service.add_message(
-            session_id=session_id,
-            data=ChatMessageCreate(role="user", content=request.message),
-        )
-
-        # C2: Commit and release DB connection before LLM streaming
-        await self.db.commit()
-
-        # Phase 2: Stream from Ollama (connection released)
+        # Phase 2: Stream from the provider (connection released)
         # Use list accumulation to avoid O(n²) string concatenation
         response_chunks = []
         token_count = None
-
-        from src.app.core.tenancy.context import get_current_tenant
 
         current_tenant = get_current_tenant()
 
@@ -751,7 +784,7 @@ class ChatCompletionService:
             _last_err: list[Exception] = []
             try:
                 async for chunk in self._invoke_chat_stream(
-                    self.provider, model, history, temperature, max_tokens, system_prompt
+                    self.provider, model, turn.history, turn.temperature, turn.max_tokens, turn.system_prompt
                 ):
                     content = chunk.get("content", "")
                     if content:
@@ -762,11 +795,11 @@ class ChatCompletionService:
             except (AIProviderError, ChatCompletionError) as primary_err:
                 _last_err.append(primary_err)
                 logger.warning("Primary provider streaming failed, checking fallback", error=str(primary_err))
-                fb = await self._get_fallback_provider()
-                if fb is not None and fb is not self.provider:
+                fb = await self._fallback_candidate()
+                if fb is not None:
                     try:
                         async for chunk in self._invoke_chat_stream(
-                            fb, model, history, temperature, max_tokens, system_prompt
+                            fb, model, turn.history, turn.temperature, turn.max_tokens, turn.system_prompt
                         ):
                             content = chunk.get("content", "")
                             if content:

@@ -157,6 +157,37 @@ async def test_update_auto_ban_config() -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_ip_filter_config_writes_through_the_runtime_config_seam() -> None:
+    """Both PATCH endpoints mutate + persist through the one writer, mapping
+    request fields to the store's key grammar themselves."""
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
+    update = IPFilterConfigUpdate(whitelist_enabled=False, whitelist_bypass_rate_limit=True)
+
+    with patch(
+        "src.app.core.security.runtime_config.apply_and_store_runtime_config", new_callable=AsyncMock
+    ) as mock_store:
+        await update_ip_filter_config(update, current_user)  # type: ignore[arg-type]
+
+    assert mock_store.await_args.args[0] == {
+        "IP_WHITELIST_ENABLED": False,
+        "IP_WHITELIST_BYPASS_RATE_LIMIT": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_update_auto_ban_config_writes_through_the_runtime_config_seam() -> None:
+    current_user = AuthenticatedUser(id=1, email="admin@e.com")
+    update = AutoBanConfigUpdate(threshold=7, escalation=False)
+
+    with patch(
+        "src.app.core.security.runtime_config.apply_and_store_runtime_config", new_callable=AsyncMock
+    ) as mock_store:
+        await update_auto_ban_config(update, current_user)  # type: ignore[arg-type]
+
+    assert mock_store.await_args.args[0] == {"AUTO_BAN_THRESHOLD": 7, "AUTO_BAN_ESCALATION": False}
+
+
+@pytest.mark.asyncio
 async def test_update_ip_filter_config_audits() -> None:
     """P2-1: mutating the IP filter config must emit an audit trail with the actor."""
     current_user = AuthenticatedUser(id=1, email="admin@e.com")

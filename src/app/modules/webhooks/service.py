@@ -21,7 +21,7 @@ from src.app.core.logger import get_logger
 from src.app.core.principal import AuthenticatedUser
 from src.app.core.security.encryption import decrypt_data, encrypt_data
 from src.app.core.tenancy.scope import ExplicitTenant
-from src.app.modules._base import ModelNotFoundError
+from src.app.modules._base import ModelNotFoundError, ValidationError
 from src.app.modules.webhooks import delivery as delivery_module
 from src.app.modules.webhooks.delivery import (
     RETRY_DELAY_1_HOUR as RETRY_DELAY_1_HOUR,
@@ -557,10 +557,17 @@ class WebhookService:
     # ------------------------------------------------------------------
 
     async def retry_delivery(self, delivery_id: UUID) -> WebhookDelivery:
-        """Retry a failed delivery."""
+        """Retry a failed delivery.
+
+        The retryable precondition lives here, beside the state reset it
+        guards, so a worker, a queue consumer or any other non-router caller
+        gets the same refusal the HTTP edge used to apply on its own.
+        """
         delivery = await self.db.get(WebhookDelivery, delivery_id)
         if not delivery:
             raise ModelNotFoundError("WebhookDelivery", delivery_id)
+        if delivery.status != WebhookDeliveryStatus.FAILED:
+            raise ValidationError("Only failed deliveries can be retryable")
 
         delivery.status = WebhookDeliveryStatus.PENDING
         delivery.attempt_count = 0

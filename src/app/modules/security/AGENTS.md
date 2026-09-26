@@ -51,8 +51,8 @@ curl -X DELETE \
 IP filtering is implemented by the core-side `core/guard/ip_rules.py` module. The
 `IpRules` protocol remains the injected seam for `IPFilterMiddleware` and
 `AttackDetectionMiddleware`; `RedisIpRules` is the production adapter. This
-module's `service.py` contains compatibility re-exports only, while the router
-imports the core-owned administrative instance directly.
+module keeps no facade or re-export; the router imports the
+core-owned administrative instance directly.
 
 ### Module Structure
 

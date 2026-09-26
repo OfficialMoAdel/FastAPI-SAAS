@@ -30,6 +30,13 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import TextClause
 from uuid6 import uuid7
 
+# NOTE: worker task batches and collaborators are registered by src.app.worker.
+# Do NOT import it here. A module-level import in conftest runs before the
+# event loop each integration test builds, and it broke
+# tests/integration/modules/ai with "RuntimeError: Event loop is closed".
+# Tests that invoke a worker task directly wire the seam in their own module,
+# where the import order is theirs to control.
+
 os.environ.setdefault("ENVIRONMENT", "local")
 os.environ.setdefault("SECRET_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef12")
 os.environ.setdefault("ADMIN_PASSWORD", "TestAdmin123!@#456")

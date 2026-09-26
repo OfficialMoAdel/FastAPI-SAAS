@@ -20,7 +20,7 @@ beside itself, in ``src/app/shared/exceptions.py`` or the owning module.
 """
 
 from collections.abc import Callable, Coroutine, Mapping
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, TypedDict, Unpack, overload
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
@@ -34,7 +34,15 @@ from src.app.shared.error_codes import (
     ErrorCode,  # re-exported; canonical home is the leaf
     status_to_error_code,
 )
-from src.app.shared.exceptions import AppException
+from src.app.shared.exceptions import (
+    AppException,
+    ForbiddenError,
+    RateLimitExceededError,
+    ServiceUnavailableError,
+)
+from src.app.shared.exceptions import (
+    ValidationError as DomainValidationError,
+)
 
 logger = get_logger(__name__)
 
@@ -48,9 +56,9 @@ def middleware_error_response(
 ) -> JSONResponse:
     """Build an envelope response for native ASGI middleware (item 7).
 
-    Middleware runs before routing, so it cannot raise domain exceptions
-    into the table — but it must not hand-roll envelopes either. This is
-    the ONE failure interface middleware calls: same shape as
+    Middleware runs before routing, so it cannot raise a domain exception
+    into the app's handler — but it must not hand-roll envelopes either.
+    This is the ONE failure interface middleware calls: same shape as
     :func:`create_error_response`, minus request-id (unavailable pre-route).
     """
     return create_error_response(code=code, message=message, status_code=status_code, headers=headers)
@@ -75,17 +83,88 @@ RejectKind = Literal[
 
 
 class RejectRow(NamedTuple):
-    """One owned middleware rejection row: code + status + message template.
+    """One owned middleware rejection row: WHICH EXCEPTION presents it.
 
-    ``message`` is a ``str.format`` template resolved from ``middleware_reject``
-    ``**params``; ``headers_builder`` derives headers from the same params
-    (primitives only — no guard-layer imports, no layering violations).
+    A row no longer declares ``error.code`` / HTTP status as literals. It
+    names the ``AppException`` family whose *own* declaration already covers
+    this outcome (``error``), and :meth:`resolve` reads the status and the
+    envelope code back off that family through the very same
+    ``resolve_http_status()`` / ``resolve_response_code()`` methods the one
+    generic handler in this module calls. So ``rate_limited`` cannot disagree
+    with ``RateLimitExceededError`` about 429, and ``tenant_access_denied``
+    cannot disagree with ``ForbiddenError`` about 403 — a status change lands
+    in one place, not two.
+
+    Two outcomes have NO exception family to name — 413 ``PAYLOAD_TOO_LARGE``
+    and 400 ``INVALID_INPUT`` — so those rows declare ``status`` and take the
+    envelope code from :func:`status_to_error_code`, the canonical status map.
+    A row that declares neither is a bug and fails loud in :meth:`resolve`.
+
+    ``message`` is a ``str.format`` template resolved from the typed
+    ``middleware_reject`` kwargs; ``headers_builder`` derives headers from the
+    same primitives (primitives only — no guard-layer imports, no layering
+    violations).
     """
 
-    code: str
-    status: int
     message: str
+    error: type[AppException] | None = None
+    status: int | None = None
     headers_builder: Callable[[Mapping[str, Any]], dict[str, str]] | None = None
+
+    def resolve(self) -> tuple[str, int]:
+        """The envelope ``(code, status)`` for this row, from its one source.
+
+        Reads the named exception family through the public resolve hooks
+        rather than reading ``http_status`` / ``response_code`` off the class
+        directly, so a family that derives either value per instance still
+        presents correctly here.
+        """
+        if self.error is not None:
+            exc = self.error("")
+            return exc.resolve_response_code(), exc.resolve_http_status()
+        if self.status is not None:
+            return status_to_error_code(self.status), self.status
+        raise ValueError(f"Reject row {self.message!r} declares neither an error family nor a status")
+
+
+# --- typed rejection params -------------------------------------------------
+# One TypedDict per row that takes params, so a caller cannot pass a param the
+# row does not template (``str.format`` would have raised KeyError at runtime,
+# and a typo'd kwarg was silently accepted).
+
+
+class _BannedIpParams(TypedDict, total=False):
+    ban_reason: str | None
+    ban_expires_at: float | None
+
+
+class _AutoBannedParams(TypedDict):
+    violation_count: int
+
+
+class _TenantHeaderMissingParams(TypedDict):
+    header: str
+
+
+class _MaxSizeParams(TypedDict):
+    max_size: int
+
+
+class _MessageParams(TypedDict):
+    message: str
+
+
+_ParamlessKind = Literal[
+    "admission_unavailable",
+    "internal_error",
+    "rate_limited",
+    "tenant_access_denied",
+    "tenant_inactive",
+    "attack_blocked",
+    "attack_banned",
+    "bad_bot",
+    "blacklisted_ip",
+]
 
 
 def _banned_ip_headers(params: Mapping[str, Any]) -> dict[str, str]:
@@ -105,37 +184,80 @@ def _max_size_headers(params: Mapping[str, Any]) -> dict[str, str]:
     return {"x-max-body-size": str(params["max_size"])}
 
 
-# Owned rejection rows (card 6): every guard rejection resolves from here so
-# code/message/status/headers cannot drift between call sites. Strings are
-# verbatim what the guards previously hand-built.
-REJECT_CATALOG: dict[str, RejectRow] = {
+# Owned rejection rows (card 6; card 13 expresses them through the exception
+# families). Every guard rejection resolves from here so code/message/status/
+# headers cannot drift between call sites. Strings are verbatim what the guards
+# previously hand-built; the (code, status) pair is no longer written here at
+# all — it comes from the named family, or from `status_to_error_code` for the
+# two outcomes no family covers.
+REJECT_CATALOG: dict[RejectKind, RejectRow] = {
     "banned_ip": RejectRow(
-        ErrorCode.FORBIDDEN, 403, "Forbidden: IP address banned due to abuse", _banned_ip_headers
+        "Forbidden: IP address banned due to abuse",
+        error=ForbiddenError,
+        headers_builder=_banned_ip_headers,
     ),
     "admission_unavailable": RejectRow(
-        ErrorCode.SERVICE_UNAVAILABLE, 503, "Request admission temporarily unavailable"
+        "Request admission temporarily unavailable", error=ServiceUnavailableError
     ),
-    "internal_error": RejectRow(ErrorCode.INTERNAL_ERROR, 500, "Internal server error"),
+    "internal_error": RejectRow("Internal server error", error=AppException),
     "auto_banned": RejectRow(
-        ErrorCode.FORBIDDEN, 403, "Forbidden: IP banned after {violation_count} rate limit violations"
+        "Forbidden: IP banned after {violation_count} rate limit violations", error=ForbiddenError
     ),
-    "rate_limited": RejectRow(ErrorCode.RATE_LIMITED, 429, "Rate limit exceeded"),
-    "tenant_header_missing": RejectRow(
-        ErrorCode.VALIDATION_ERROR, 400, "Missing required header: {header}"
-    ),
-    "tenant_access_denied": RejectRow(ErrorCode.FORBIDDEN, 403, "Access denied"),
-    "tenant_inactive": RejectRow(ErrorCode.FORBIDDEN, 403, "Tenant inactive. Contact support."),
+    "rate_limited": RejectRow("Rate limit exceeded", error=RateLimitExceededError),
+    "tenant_header_missing": RejectRow("Missing required header: {header}", error=DomainValidationError),
+    "tenant_access_denied": RejectRow("Access denied", error=ForbiddenError),
+    "tenant_inactive": RejectRow("Tenant inactive. Contact support.", error=ForbiddenError),
+    # 413 PAYLOAD_TOO_LARGE: no exception family covers a body-limit refusal.
     "payload_too_large": RejectRow(
-        ErrorCode.PAYLOAD_TOO_LARGE, 413, "Request body too large", _max_size_headers
+        "Request body too large", status=413, headers_builder=_max_size_headers
     ),
-    "invalid_input": RejectRow(ErrorCode.INVALID_INPUT, 400, "{message}"),
-    "attack_blocked": RejectRow(
-        ErrorCode.VALIDATION_ERROR, 400, "Bad Request - Attack pattern detected"
-    ),
-    "attack_banned": RejectRow(ErrorCode.FORBIDDEN, 403, "Forbidden - Attack detected and IP banned"),
-    "bad_bot": RejectRow(ErrorCode.FORBIDDEN, 403, "Forbidden - Bad bot detected"),
-    "blacklisted_ip": RejectRow(ErrorCode.FORBIDDEN, 403, "Forbidden - IP is blacklisted"),
+    # 400 INVALID_INPUT: distinct from ValidationError's 400 VALIDATION_ERROR,
+    # and no family covers it — hence the explicit status.
+    "invalid_input": RejectRow("{message}", status=400),
+    "attack_blocked": RejectRow("Bad Request - Attack pattern detected", error=DomainValidationError),
+    "attack_banned": RejectRow("Forbidden - Attack detected and IP banned", error=ForbiddenError),
+    "bad_bot": RejectRow("Forbidden - Bad bot detected", error=ForbiddenError),
+    "blacklisted_ip": RejectRow("Forbidden - IP is blacklisted", error=ForbiddenError),
 }
+
+
+@overload
+def middleware_reject(
+    kind: _ParamlessKind, *, headers: Mapping[str, str] | None = None
+) -> JSONResponse: ...
+
+
+@overload
+def middleware_reject(
+    kind: Literal["banned_ip"], *, headers: Mapping[str, str] | None = None, **params: Unpack[_BannedIpParams]
+) -> JSONResponse: ...
+
+
+@overload
+def middleware_reject(
+    kind: Literal["auto_banned"], *, headers: Mapping[str, str] | None = None, **params: Unpack[_AutoBannedParams]
+) -> JSONResponse: ...
+
+
+@overload
+def middleware_reject(
+    kind: Literal["tenant_header_missing"],
+    *,
+    headers: Mapping[str, str] | None = None,
+    **params: Unpack[_TenantHeaderMissingParams],
+) -> JSONResponse: ...
+
+
+@overload
+def middleware_reject(
+    kind: Literal["payload_too_large"], *, headers: Mapping[str, str] | None = None, **params: Unpack[_MaxSizeParams]
+) -> JSONResponse: ...
+
+
+@overload
+def middleware_reject(
+    kind: Literal["invalid_input"], *, headers: Mapping[str, str] | None = None, **params: Unpack[_MessageParams]
+) -> JSONResponse: ...
 
 
 def middleware_reject(
@@ -146,20 +268,26 @@ def middleware_reject(
 ) -> JSONResponse:
     """Resolve a rejection row from the catalog and build its envelope.
 
-    Guards call this with a kind + primitives instead of hand-building
+    The pre-route adapter: native ASGI middleware runs before routing, so it
+    cannot *raise* a domain exception into the app's handler — but it must not
+    hand-roll envelopes either. So it resolves the row and reads the family's
+    own declared status/code (see :class:`RejectRow`) instead of restating them.
+
+    Guards call this with a kind + typed primitives instead of hand-building
     code/message/status/headers at each call site. Unknown kinds fail loud
     (``ValueError``) — a typo must never become a shapeless 500.
-    ``headers`` merges over table-built headers (for verdict passthrough).
+    ``headers`` merges over the row's own headers (for verdict passthrough).
     """
     try:
         row = REJECT_CATALOG[kind]
     except KeyError:
         raise ValueError(f"Unknown middleware reject kind: {kind!r}") from None
+    code, status = row.resolve()
     message = row.message.format(**params)
     built = dict(row.headers_builder(params)) if row.headers_builder is not None else {}
     if headers is not None:
         built.update(headers)
-    return middleware_error_response(code=row.code, message=message, status_code=row.status, headers=built or None)
+    return middleware_error_response(code=code, message=message, status_code=status, headers=built or None)
 
 
 def _json_safe(value: Any) -> Any:
@@ -361,10 +489,10 @@ def _make_app_exception_handler() -> Callable[[Request, Any], Coroutine[Any, Any
 def _register_app_exception_fallback(app: FastAPI) -> None:
     """Register the one generic handler for the ``AppException`` tree.
 
-    Registered *after* the table rows; order does not decide the winner
-    (Starlette walks the MRO and takes the most specific registered class),
-    but keeping it last documents the intent: table rows are the overrides,
-    this is the default.
+    Registered *after* the framework handlers; order does not decide the
+    winner (Starlette walks the MRO and takes the most specific registered
+    class), but keeping it last documents the intent: the framework handlers
+    are the overrides, this is the default for the whole domain tree.
     """
     app.exception_handler(AppException)(_make_app_exception_handler())  # type: ignore
 

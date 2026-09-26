@@ -59,10 +59,24 @@ async def send_notification(..., background_tasks: BackgroundTasks):
 src/app/modules/notifications/
 ├── __init__.py           # Exports NotificationService and email providers
 ├── router.py             # /notifications endpoints
-├── service.py            # NotificationService and outbox event handling
+├── service.py            # NotificationService, the acceptance sequence, and outbox event handling
+├── template_cache.py     # email_template:<name> cache key family (read/write/invalidate)
 ├── email_provider.py     # EmailProvider, SMTPProvider, InMemoryEmailProvider seam
 ├── models.py             # Notification, EmailTemplateOverride
 └── schemas.py            # Pydantic schemas
+
+## Seams
+
+- **Acceptance sequence** — `NotificationService._accept_notification()` is the one
+  ordered path into the email pipeline: preference gate (auth-critical templates
+  bypass quiet hours) -> rate-limit refusal (FAILED audit row, then
+  `RateLimitExceededError`) -> render, persist PENDING, enqueue. Both doors run it:
+  the direct door `send_email()` (returns `Notification | None`) and the event door
+  `handle_notification_request_event()` (returns nothing, logs). The doors differ
+  only in session/RLS setup and return shape, never in the steps.
+- **Template cache** — `template_cache.py` owns the
+  `build_tenant_key("email_template:<name>", tenant_id)` key family and its 1-hour
+  TTL; read/write/invalidate go through it rather than rebuilding the key by hand.
 
 ## Touch Points
 

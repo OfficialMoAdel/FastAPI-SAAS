@@ -139,8 +139,7 @@ class TestCircuitBreakerRegistry:
         registry = get_registry()
 
         # Check registry content
-        circuits = registry.list_all()
-        circuit_names = [c.name for c in circuits]
+        circuit_names = set(registry.get_all())
 
         # The "database" circuit is registered via db_circuit_breaker.py
         assert "database" in circuit_names

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
 from src.app.core.security.tokens import get_sso_state_manager
-from src.app.core.tenancy.context import get_current_tenant, set_current_tenant
+from src.app.core.tenancy.context import TenantLike, get_current_tenant, set_current_tenant
 from src.app.modules.auth.crud import crud_user_sso_connections
 from src.app.modules.auth.providers.apple import AppleProvider
 from src.app.modules.auth.providers.base import BaseOAuthProvider
@@ -22,7 +22,6 @@ from src.app.modules.auth.schemas import (
     UserSSOConnectionUpdate,
 )
 from src.app.modules.auth.services.tokens import TokenIssuer
-from src.app.modules.tenants.models import Tenant
 from src.app.modules.users import UserDirectory, UserService
 from src.app.modules.users.schemas import UserCreate
 from src.app.shared.exceptions import (
@@ -200,11 +199,11 @@ class SSOService:
                         result = await db.execute(query)
                         tenant_model = result.scalar_one_or_none()
                         if tenant_model:
-                            set_current_tenant(tenant_model)
+                            set_current_tenant(cast(TenantLike, tenant_model))
                         else:
                             raise ValidationError("Tenant context not found")
                     else:
-                        set_current_tenant(cast(Tenant, tenant_result))
+                        set_current_tenant(cast(TenantLike, tenant_result))
                 else:
                     raise ValidationError("Tenant context not found")
 
@@ -377,7 +376,7 @@ class SSOService:
                             if not tenant_orm:
                                 raise ValidationError("Failed to create personal tenant")
 
-                            set_current_tenant(tenant_orm)
+                            set_current_tenant(cast(TenantLike, tenant_orm))
 
                         found_user_data = await self._create_sso_user(db, user_info)
                         user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]

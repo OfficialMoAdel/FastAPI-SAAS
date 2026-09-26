@@ -57,7 +57,14 @@ def _csv_cell(value: str | None) -> str:
     return f"'{value}" if unsafe else value
 
 
-class _AuditFilter(NamedTuple):
+class AuditFilter(NamedTuple):
+    """Audit-log filter value object.
+
+    Public because ``AuditLogService.export_count`` takes one: the export-count
+    endpoint composes the same filter the export path uses instead of reaching
+    into a private shape of this module.
+    """
+
     action: str | None
     user_id: int | None
     entity_type: str | None
@@ -65,7 +72,7 @@ class _AuditFilter(NamedTuple):
     end_date: datetime | None
 
 
-def _compose_filters(stmt, f: _AuditFilter):
+def _compose_filters(stmt, f: AuditFilter):
     """A13: single source of truth for audit-log list/export filters."""
     if f.action is not None:
         stmt = stmt.where(AuditLog.action == f.action)
@@ -124,7 +131,7 @@ class AuditLogService:
             scope=ExplicitTenant(tenant_id=tenant_id, reason="audit:get_log"),
         )
         return result.scalar_one_or_none()
-    async def export_count(self, tenant_id, f: _AuditFilter) -> int:
+    async def export_count(self, tenant_id, f: AuditFilter) -> int:
         """A13: count of rows matching the export filter."""
         stmt = _compose_filters(select(func.count()).select_from(AuditLog), f)
         result = await execute_scoped(
@@ -173,7 +180,7 @@ class AuditLogService:
                     f"Export tenant mismatch: criteria {criteria.tenant_id} != context {ctx_id}",
                 )
             effective_tenant = ctx_id
-        filters = _AuditFilter(
+        filters = AuditFilter(
             action=criteria.action,
             user_id=criteria.user_id,
             entity_type=criteria.entity_type,

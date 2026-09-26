@@ -15,12 +15,15 @@ from structlog import get_logger
 
 from src.app.clients.notifications import EmailMessage, SMTPProvider, get_email_provider  # noqa: F401
 from src.app.core.db.scoped import execute_scoped
-from src.app.core.json_utils import json_dumps, json_loads
-from src.app.core.redis_provider import get_redis
 from src.app.core.security.rate_policy import consume
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.core.utils.retry import with_retry
 from src.app.modules.notifications.models import EmailTemplateOverride, Notification, NotificationStatus
+from src.app.modules.notifications.template_cache import (
+    get_cached_template,
+    invalidate_template_cache,
+    store_cached_template,
+)
 from src.app.modules.tiers.entitlement import DEFAULT_ENTITLEMENT as _DEFAULT_QUOTA
 
 logger = get_logger(__name__)
@@ -105,17 +108,9 @@ class NotificationService:
             Tuple of (subject, html_content)
         """
         # Try cache first to avoid N+1 queries
-        from src.app.core.utils.cache import build_tenant_key
-
-        cache_key = build_tenant_key(f"email_template:{template_name}", tenant_id)
-        redis_client = get_redis()
-        if redis_client:
-            try:
-                cached = await redis_client.get(cache_key)
-                if cached:
-                    return tuple(json_loads(cached))
-            except Exception as e:
-                logger.debug("Cache get failed", error=e)
+        cached_content = await get_cached_template(tenant_id, template_name)
+        if cached_content is not None:
+            return cached_content
 
         # Check for tenant override
         override = None
@@ -169,12 +164,7 @@ class NotificationService:
                 )
                 raise ValueError(f"Template '{template_name}' not found")
 
-        # Update cache (1 hour TTL)
-        if redis_client:
-            try:
-                await redis_client.set(cache_key, json_dumps(data, as_str=True), ex=3600)
-            except Exception as e:
-                logger.debug("Cache set failed", error=e)
+        await store_cached_template(tenant_id, template_name, data)
 
         return data
 
@@ -334,7 +324,7 @@ class NotificationService:
 
         return notification
 
-    async def send_email(
+    async def _accept_notification(
         self,
         tenant_id: UUID | None,
         to_email: str,
@@ -342,13 +332,14 @@ class NotificationService:
         context: dict[str, Any],
         user_id: int | None = None,
     ) -> Notification | None:
-        """Send an email notification.
+        """The one acceptance sequence every door into the email pipeline runs.
 
-        This method queues the email for async delivery via ARQ.
-
-        Rate-limit semantics follow the event door (P2-7): when limited, a
-        FAILED outbox row is written first so there is an audit trace, and
-        only then is RateLimitExceededError raised.
+        The direct door (``send_email``) and the event door
+        (``handle_notification_request_event``) differ only in how they obtain
+        a session/context and what they do with the outcome; the ordered steps
+        below — preference gate, rate-limit refusal with its FAILED audit row,
+        create-and-enqueue — are defined exactly once so quiet hours, the limit
+        policy and the queue-failure marking cannot drift between them.
 
         Args:
             tenant_id: Tenant ID
@@ -358,8 +349,11 @@ class NotificationService:
             user_id: Optional user ID
 
         Returns:
-        -------
-            Notification record, or None if skipped by user preferences
+            The persisted Notification, or None when user preferences
+            suppressed the send.
+
+        Raises:
+            RateLimitExceededError: after the FAILED outbox row is committed.
         """
         # Check user preferences if user_id is provided (auth-critical bypasses quiet hours)
         if user_id and template_name not in AUTH_CRITICAL_TEMPLATES:
@@ -376,8 +370,12 @@ class NotificationService:
         if limit_reason is not None:
             from src.app.shared.exceptions import RateLimitExceededError
 
-            # Create FAILED outbox record so there is an audit trace
-            # (same semantics as the event door).
+            logger.warning(
+                "notification_rate_limit_exceeded",
+                tenant_id=str(tenant_id),
+                reason=limit_reason,
+            )
+            # Create FAILED outbox record so there is an audit trace.
             notification = Notification(
                 tenant_id=tenant_id,
                 user_id=user_id,
@@ -392,6 +390,36 @@ class NotificationService:
             raise RateLimitExceededError(f"Rate limit exceeded: {limit_reason}")
 
         return await self._create_and_enqueue(tenant_id, to_email, template_name, context, user_id)
+
+    async def send_email(
+        self,
+        tenant_id: UUID | None,
+        to_email: str,
+        template_name: str,
+        context: dict[str, Any],
+        user_id: int | None = None,
+    ) -> Notification | None:
+        """Send an email notification.
+
+        Direct door into the pipeline. Delegates the whole acceptance sequence
+        to :meth:`_accept_notification`, which the event door also runs.
+
+        Rate-limit semantics (P2-7): when limited, a FAILED outbox row is
+        written first so there is an audit trace, and only then is
+        RateLimitExceededError raised.
+
+        Args:
+            tenant_id: Tenant ID
+            to_email: Recipient email address
+            template_name: Name of the email template
+            context: Template variables
+            user_id: Optional user ID
+
+        Returns:
+        -------
+            Notification record, or None if skipped by user preferences
+        """
+        return await self._accept_notification(tenant_id, to_email, template_name, context, user_id)
 
     async def mark_sent(self, notification_id: UUID) -> None:
         """Mark notification as sent.
@@ -638,12 +666,7 @@ class NotificationService:
             await self.db.commit()
             await self.db.refresh(existing)
 
-            # Invalidate cache
-            redis_client = get_redis()
-            if redis_client:
-                from src.app.core.utils.cache import build_tenant_key
-
-                await redis_client.delete(build_tenant_key(f"email_template:{template_name}", tenant_id))
+            await invalidate_template_cache(tenant_id, template_name)
 
             return existing
 
@@ -658,12 +681,7 @@ class NotificationService:
         await self.db.commit()
         await self.db.refresh(override)
 
-        # Invalidate cache
-        redis_client = get_redis()
-        if redis_client:
-            from src.app.core.utils.cache import build_tenant_key
-
-            await redis_client.delete(build_tenant_key(f"email_template:{template_name}", tenant_id))
+        await invalidate_template_cache(tenant_id, template_name)
 
         return override
 
@@ -686,12 +704,7 @@ class NotificationService:
         await self.db.delete(override)
         await self.db.commit()
 
-        # Invalidate cache
-        redis_client = get_redis()
-        if redis_client:
-            from src.app.core.utils.cache import build_tenant_key
-
-            await redis_client.delete(build_tenant_key(f"email_template:{template_name}", tenant_id))
+        await invalidate_template_cache(tenant_id, template_name)
 
         return True
 
@@ -810,8 +823,9 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
     """Handle request to generate and send an email notification via outbox.
 
     Thin event door (P2-7): parses the payload, opens the RLS-scoped session,
-    and delegates to the same NotificationService helpers the service door
-    uses (prefs check, shared rate-limit policy, shared create-and-enqueue).
+    and delegates the whole acceptance sequence to
+    ``NotificationService._accept_notification`` — the same one the direct
+    ``send_email`` door runs — discarding its return value.
 
     Args:
         data: Event payload with request details:
@@ -858,43 +872,11 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
             async with ctx:
                 service = NotificationService(db)
 
-                # Check user preferences if user_id is provided (auth-critical bypasses quiet hours)
-                if user_id and template_name not in AUTH_CRITICAL_TEMPLATES:
-                    should_send = await service.should_send_notification(user_id, template_name)
-                    if not should_send:
-                        logger.info(
-                            "notification_skipped_by_user_preferences",
-                            user_id=user_id,
-                            template_name=template_name,
-                        )
-                        return
-
-                # Shared rate-limit policy (P2-7): FAILED outbox row + raise,
-                # identical to the service door.
-                limit_reason = await service._rate_limited(tenant_id, to_email)
-                if limit_reason is not None:
-                    from src.app.shared.exceptions import RateLimitExceededError
-
-                    logger.warning(
-                        "notification_rate_limit_exceeded",
-                        tenant_id=str(tenant_id),
-                        reason=limit_reason,
-                    )
-                    # Create FAILED outbox record so there is an audit trace
-                    notification = Notification(
-                        tenant_id=tenant_id,
-                        user_id=user_id,
-                        template_name=template_name,
-                        to_email=to_email,
-                        subject=f"Rate limited: {template_name}",
-                        status=NotificationStatus.FAILED,
-                    )
-                    notification.error_message = f"Rate limit exceeded: {limit_reason}"
-                    db.add(notification)
-                    await db.commit()
-                    raise RateLimitExceededError(f"Rate limit exceeded: {limit_reason}")
-
-                await service._create_and_enqueue(tenant_id, to_email, template_name, context, user_id)
+                # The one acceptance sequence, shared with the direct door
+                # (send_email). Its return value is deliberately discarded
+                # here: this door's contract is "accepted or not", and the
+                # sequence already logs the skip and the rate-limit refusal.
+                await service._accept_notification(tenant_id, to_email, template_name, context, user_id)
 
     except Exception as e:
         logger.error("failed_to_process_notification_request", error=str(e), exc_info=True)

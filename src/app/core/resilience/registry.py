@@ -192,15 +192,6 @@ class CircuitBreakerRegistry:
         spec = self._breakers.get(name)
         return spec.breaker if spec else None
 
-    def list_all(self) -> list[CircuitBreaker]:
-        """Get all registered circuit breakers.
-
-        Returns
-        -------
-            List of all circuit breaker instances
-        """
-        return [spec.breaker for spec in self._breakers.values()]
-
     def get_all(self) -> dict[str, CircuitBreakerSpec]:
         """Get all registered circuit breaker specs.
 
@@ -231,19 +222,6 @@ class CircuitBreakerRegistry:
             Dictionary of circuit breakers with the specified tag
         """
         return {name: spec for name, spec in self._breakers.items() if spec.tags and tag in spec.tags}
-
-    def get_by_state(self, state: CircuitState) -> list[CircuitBreaker]:
-        """Get all circuit breakers in a specific state.
-
-        Parameters
-        ----------
-            state: The circuit state to filter by
-
-        Returns
-        -------
-            List of circuit breakers in the specified state
-        """
-        return [spec.breaker for spec in self._breakers.values() if spec.breaker.state == state]
 
     def get_by_service_type(self, service_type: ServiceType) -> list[CircuitBreaker]:
         """Get all circuit breakers for a specific service type.

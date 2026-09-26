@@ -3,8 +3,8 @@
 Tests cover:
 - Registry initialization and singleton pattern
 - Registration operations (register, create, duplicate handling)
-- Retrieval operations (get, list_all, get_all)
-- Filtering operations (by state, service type, tags)
+- Retrieval operations (get, get_all)
+- Filtering operations (by service type, tags)
 - Statistics operations (get_stats, get_all_stats, health_summary)
 - Reset operations (reset, reset_all)
 - Concurrent access and thread safety
@@ -240,23 +240,6 @@ def test_get_nonexistent_circuit(registry):
     assert result is None
 
 
-def test_list_all_empty(registry):
-    """Empty list when no circuits registered."""
-    result = registry.list_all()
-    assert result == []
-
-
-def test_list_all_multiple(registry_with_circuits):
-    """Returns all registered circuits."""
-    registry, circuits = registry_with_circuits
-    result = registry.list_all()
-
-    assert len(result) == 3
-    assert circuits["db_circuit"] in result
-    assert circuits["webhook_circuit"] in result
-    assert circuits["email_circuit"] in result
-
-
 def test_get_all(registry_with_circuits):
     """Returns all specs as dictionary."""
     registry, _ = registry_with_circuits
@@ -272,33 +255,6 @@ def test_get_all(registry_with_circuits):
 # ============================================================================
 # Filtering Operations Tests
 # ============================================================================
-
-
-def test_get_by_state_closed(registry_with_circuits):
-    """Filter returns only CLOSED circuits."""
-    registry, circuits = registry_with_circuits
-    result = registry.get_by_state(CircuitState.CLOSED)
-
-    assert len(result) == 1
-    assert circuits["db_circuit"] in result
-
-
-def test_get_by_state_open(registry_with_circuits):
-    """Filter returns only OPEN circuits."""
-    registry, circuits = registry_with_circuits
-    result = registry.get_by_state(CircuitState.OPEN)
-
-    assert len(result) == 1
-    assert circuits["webhook_circuit"] in result
-
-
-def test_get_by_state_half_open(registry_with_circuits):
-    """Filter returns only HALF_OPEN circuits."""
-    registry, circuits = registry_with_circuits
-    result = registry.get_by_state(CircuitState.HALF_OPEN)
-
-    assert len(result) == 1
-    assert circuits["email_circuit"] in result
 
 
 def test_get_by_service_type_database(registry_with_circuits):

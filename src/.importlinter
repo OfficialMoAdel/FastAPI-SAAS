@@ -55,12 +55,14 @@ ignore_imports =
     #   - the worker's feature background tasks arrive as one registered
     #     batch from src/app/worker.py, which supplies both the function
     #     list and the cron schedules
+    #   - the three feature helpers core worker tasks call arrive as one
+    #     registered FeatureCollaborators record from the same module
+    #
+    # That was the last live edge: src/app/core names no feature module.
     # Both are registered by src.app.models (the single model-registration
     # point) and checked at boot by the tenant_model_gate and
     # permission_graph_gate startup phases. The warmer, the slug resolver and
     # the permission join no longer import a feature module.
-    src.app.core.worker.functions -> src.app.modules.audit_logs.service
-    src.app.core.worker.functions -> src.app.modules.billing.webhook.idempotency
     # --- Added 2026-09-23 (FastAPI_saas-21ak). -----------------------------
     # These remaining edges were ALREADY unignored; they were invisible only
     # because the five stale entries above aborted the contract first. Each is
@@ -74,7 +76,6 @@ ignore_imports =
     # its entry is gone too — core.errors imports NO feature module at all.
     # Candidate 05 moved application phase assembly to src.app.composition;
     # core.setup now owns only reusable lifecycle infrastructure.
-    src.app.core.worker.functions -> src.app.modules.webhooks.delivery
     # Composition-root indirection (plan §6: app/events.py IS the pattern):
     # the bus handler-registry and the model-registration file aggregate
     # every module by design. These two edges are the registration seams,

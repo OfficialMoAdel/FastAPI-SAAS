@@ -93,7 +93,51 @@ def ensure_feature_tasks_registered() -> None:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class FeatureCollaborators:
+    """The feature-owned helpers that core worker tasks call.
+
+    Distinct from :class:`FeatureTask`, which is *what the worker runs*.
+    These are the three unrelated feature operations three unrelated tasks
+    happen to need, so they travel as one record rather than three separate
+    hooks — for the same reason the task batch is one: a partially-wired
+    worker should not be a representable state.
+    """
+
+    deliver: Any
+    flush_audit_log_buffer: Any
+    audit_log_max_flush_per_run: int
+    release_webhook_event_lock: Any
+
+
+_feature_collaborators: FeatureCollaborators | None = None
+
+
+def register_feature_collaborators(collaborators: FeatureCollaborators) -> None:
+    """Register the feature helpers core worker tasks call."""
+    global _feature_collaborators
+    _feature_collaborators = collaborators
+
+
+def require_feature_collaborators() -> FeatureCollaborators:
+    """The registered collaborators, or a loud failure when unwired."""
+    if _feature_collaborators is None:
+        raise RuntimeError(
+            "worker feature collaborators are not registered. Import "
+            "src.app.worker before running worker tasks."
+        )
+    return _feature_collaborators
+
+
+def ensure_feature_collaborators_registered() -> None:
+    """Boot gate: raise when unwired. Call once at worker startup."""
+    if _feature_collaborators is None:
+        logger.error("feature_collaborators_unwired")
+    require_feature_collaborators()
+
+
 __all__ = [
+    "FeatureCollaborators",
     "FeatureTask",
     "ensure_feature_tasks_registered",
     "register_feature_tasks",

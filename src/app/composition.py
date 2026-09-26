@@ -529,66 +529,16 @@ def import_l1_owner_modules() -> None:
     from src.app.modules.users import cache as _users_cache  # noqa: F401
 
 
-def apply_security_runtime_config(config: dict[str, Any]) -> list[str]:
-    """Validate + inject runtime security overrides into process-global settings.
-
-    P3-#15: this is the ONE sanctioned site that mutates
-    ``settings.security`` after boot — the old inline ``setattr`` loop in
-    main.py's ``_load_security_runtime_config``. Making it an explicit,
-    named, testable function (instead of an anonymous loop inside a
-    lifespan phase) is the "explicit runtime-config injection": every key
-    is validated with ``TypeAdapter`` against the model field before it is
-    applied, unknown/invalid keys are logged and skipped, and the applied
-    key list is returned for observability.
-
-    Args:
-        config: Raw key/value overrides from the Redis runtime-config store.
-
-    Returns:
-        The keys that were successfully applied.
-    """
-    from pydantic import TypeAdapter, ValidationError
-
-    security_keys = (
-        "IP_WHITELIST_ENABLED",
-        "IP_BLACKLIST_ENABLED",
-        "IP_WHITELIST_BYPASS_RATE_LIMIT",
-        "AUTO_BAN_ENABLED",
-        "AUTO_BAN_THRESHOLD",
-        "AUTO_BAN_DURATION",
-        "AUTO_BAN_ESCALATION",
-    )
-    applied: list[str] = []
-    model_fields = type(settings.security).model_fields
-    for key in security_keys:
-        if key not in config:
-            continue
-        field = model_fields.get(key)
-        if field is None or field.annotation is None:
-            logger.error("Skipping unknown security runtime config key", key=key)
-            continue
-        raw = config[key]
-        try:
-            coerced = raw.strip() if isinstance(raw, str) else raw
-            validated = TypeAdapter(field.annotation).validate_python(coerced)
-            setattr(settings.security, key, validated)
-            applied.append(key)
-        except (ValidationError, ValueError, TypeError) as e:
-            logger.error("Skipping invalid security runtime config value", key=key, error=str(e))
-            continue
-    return applied
-
-
 async def _load_security_runtime_config() -> None:
-    """Load dynamic security configuration overrides from Redis store via table loop."""
-    from src.app.core.utils.config_store import get_runtime_config
+    """Apply the stored security overrides to ``settings.security``.
 
-    config = await get_runtime_config()
-    if not config:
-        return
+    The phase callback is a delegation: the store, its key grammar, the
+    apply loop, and the fail-open-on-outage decision all live in
+    ``core.security.runtime_config`` — the one module that owns them.
+    """
+    from src.app.core.security.runtime_config import load_runtime_config
 
-    apply_security_runtime_config(config)
-    logger.info("Security runtime config loaded from Redis")
+    await load_runtime_config()
 
 
 async def _warm_startup_caches() -> None:

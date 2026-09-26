@@ -12,13 +12,23 @@ dotted path and offers no opportunity to call in before it is evaluated.
 
 from __future__ import annotations
 
-from src.app.core.worker.registry import FeatureTask, register_feature_tasks
+from src.app.core.worker.registry import (
+    FeatureCollaborators,
+    FeatureTask,
+    register_feature_collaborators,
+    register_feature_tasks,
+)
+from src.app.modules.audit_logs.service import (
+    AUDIT_LOG_MAX_FLUSH_PER_RUN,
+    flush_audit_log_buffer,
+)
 from src.app.modules.auth.tasks import send_magic_link_email_task
+from src.app.modules.billing.webhook.idempotency import _release_webhook_event_lock
 from src.app.modules.notifications.service import (
     recover_stuck_notifications,
     send_email_task,
 )
-from src.app.modules.webhooks.delivery import recover_stuck_deliveries
+from src.app.modules.webhooks.delivery import deliver, recover_stuck_deliveries
 
 # The feature background tasks this worker runs. Adding one means adding it
 # here; the batch is registered as a unit because the decision is one — "which
@@ -33,4 +43,18 @@ register_feature_tasks(
         FeatureTask(recover_stuck_notifications, _EVERY_FIVE_MINUTES),
         FeatureTask(recover_stuck_deliveries, _EVERY_FIVE_MINUTES),
     ]
+)
+
+
+# The feature-owned helpers that core worker tasks call. Registered here for
+# the same reason as the task batch: core.worker.functions may not name them
+# (H-5), and the worker has no opportunity to call in before its module is
+# imported by the ARQ CLI.
+register_feature_collaborators(
+    FeatureCollaborators(
+        deliver=deliver,
+        flush_audit_log_buffer=flush_audit_log_buffer,
+        audit_log_max_flush_per_run=AUDIT_LOG_MAX_FLUSH_PER_RUN,
+        release_webhook_event_lock=_release_webhook_event_lock,
+    )
 )

@@ -254,7 +254,13 @@ async def test_deliver_webhook_task_execution():
 
     with patch("src.app.core.worker.functions.job_bypass_context") as mock_bypass_ctx:
         with patch("src.app.core.worker.functions.job_tenant_context") as mock_tenant_ctx:
-            with patch("src.app.core.worker.functions.deliver", new_callable=AsyncMock) as mock_deliver:
+            # `deliver` is no longer a module global: the task reaches it via
+            # the registered feature collaborators (core/worker/registry.py).
+            with patch(
+                "src.app.core.worker.functions.require_feature_collaborators"
+            ) as mock_collabs:
+                mock_deliver = AsyncMock()
+                mock_collabs.return_value.deliver = mock_deliver
                 # Setup bypass context manager
                 mock_bypass_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_bypass_db)
                 mock_bypass_ctx.return_value.__aexit__ = AsyncMock(return_value=None)

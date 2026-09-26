@@ -119,31 +119,6 @@ async def set_threadpool_tokens(number_of_tokens: int = 100) -> None:
     limiter.total_tokens = number_of_tokens
 
 
-async def _start_redis_cache_pool(enabled: bool) -> None:
-    if enabled:
-        await create_redis_cache_pool()
-
-
-async def _stop_redis_cache_pool(enabled: bool) -> None:
-    if enabled:
-        await close_redis_cache_pool()
-
-
-async def _start_redis_queue_pool(enabled: bool) -> None:
-    if enabled:
-        await create_redis_queue_pool()
-
-
-async def _stop_redis_queue_pool(enabled: bool) -> None:
-    if enabled:
-        await close_redis_queue_pool()
-
-
-async def _start_create_tables(enabled: bool) -> None:
-    if enabled:
-        await create_tables()
-
-
 __all__ = [
     "StartupPhase",
     "close_redis_cache_pool",

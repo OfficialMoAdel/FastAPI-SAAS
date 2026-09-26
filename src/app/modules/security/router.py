@@ -336,20 +336,17 @@ async def update_ip_filter_config(
     For persistent configuration, modify environment variables.
     """
 
-    from src.app.core.utils.config_store import update_runtime_config
+    from src.app.core.security.runtime_config import apply_and_store_runtime_config
 
     updates: dict[str, Any] = {}
     if config_update.whitelist_enabled is not None:
-        settings.security.IP_WHITELIST_ENABLED = config_update.whitelist_enabled
         updates["IP_WHITELIST_ENABLED"] = config_update.whitelist_enabled
     if config_update.blacklist_enabled is not None:
-        settings.security.IP_BLACKLIST_ENABLED = config_update.blacklist_enabled
         updates["IP_BLACKLIST_ENABLED"] = config_update.blacklist_enabled
     if config_update.whitelist_bypass_rate_limit is not None:
-        settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT = config_update.whitelist_bypass_rate_limit
         updates["IP_WHITELIST_BYPASS_RATE_LIMIT"] = config_update.whitelist_bypass_rate_limit
 
-    await update_runtime_config(updates)
+    await apply_and_store_runtime_config(updates)
 
     # P2-1: security-config mutations are audited (superuser actor).
     await audit(
@@ -420,23 +417,19 @@ async def update_auto_ban_config(
     - `AUTO_BAN_ESCALATION` - Enable duration escalation
     """
 
-    from src.app.core.utils.config_store import update_runtime_config
+    from src.app.core.security.runtime_config import apply_and_store_runtime_config
 
     updates: dict[str, Any] = {}
     if config_update.enabled is not None:
-        settings.security.AUTO_BAN_ENABLED = config_update.enabled
         updates["AUTO_BAN_ENABLED"] = config_update.enabled
     if config_update.threshold is not None:
-        settings.security.AUTO_BAN_THRESHOLD = config_update.threshold
         updates["AUTO_BAN_THRESHOLD"] = config_update.threshold
     if config_update.duration is not None:
-        settings.security.AUTO_BAN_DURATION = config_update.duration
         updates["AUTO_BAN_DURATION"] = config_update.duration
     if config_update.escalation is not None:
-        settings.security.AUTO_BAN_ESCALATION = config_update.escalation
         updates["AUTO_BAN_ESCALATION"] = config_update.escalation
 
-    await update_runtime_config(updates)
+    await apply_and_store_runtime_config(updates)
 
     # P2-1: security-config mutations are audited (superuser actor).
     await audit(

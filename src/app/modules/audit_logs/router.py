@@ -18,7 +18,7 @@ from src.app.modules.audit_logs.schemas import (
     AuditLogResponse,
     ExportCountResponse,
 )
-from src.app.modules.audit_logs.service import EXPORT_MAX_RECORDS, AuditLogService, _AuditFilter
+from src.app.modules.audit_logs.service import EXPORT_MAX_RECORDS, AuditFilter, AuditLogService
 from src.app.shared.exceptions import ModelNotFoundError
 
 router = APIRouter(prefix="/audit-logs", tags=["audit-logs"])
@@ -112,7 +112,7 @@ async def get_export_count(
     """
     # A13: filter composition + counting moved to service layer
     service = AuditLogService(ctx.db)
-    f = _AuditFilter(action=action, user_id=user_id, entity_type=entity_type, start_date=start_date, end_date=end_date)
+    f = AuditFilter(action=action, user_id=user_id, entity_type=entity_type, start_date=start_date, end_date=end_date)
     count = await service.export_count(ctx.tenant_id, f)
 
     return ExportCountResponse(

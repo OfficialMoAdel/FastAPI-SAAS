@@ -211,8 +211,9 @@ persistence grilling loop, 2026-09-22.)
 - **IP rules** — the request-guard policy for IP allow/deny reads and writes.
   `IpRules` is the injected Seam used by IP filtering and attack detection;
   `RedisIpRules` is the production Adapter backed by the core-owned
-  `IPFilterService`. The security module's `service.py` is a compatibility
-  facade, not the implementation. Seam: `src/app/core/guard/ip_rules.py`.
+  `IPFilterService`. Seam: `src/app/core/guard/ip_rules.py`. The security
+  module keeps no facade or re-export: its `service.py` was deleted
+  (2026-09-26) and the router imports the core-owned instance directly.
 
 - **L1 invalidation seam** — the process-local cache Seam: `L1Cache(name,
   channel, codec, caches=[...])` in `src/app/core/cache/l1.py` owns the whole

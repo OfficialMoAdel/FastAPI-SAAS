@@ -4,8 +4,9 @@ import inspect
 
 import src.app.composition as composition
 import src.app.main as main_module
-from src.app.composition import apply_security_runtime_config, lifespan_with_admin
+from src.app.composition import lifespan_with_admin
 from src.app.core.config import settings
+from src.app.core.security.runtime_config import apply_runtime_config
 
 
 class TestLifespanHome:
@@ -38,14 +39,12 @@ class TestLifespanHome:
         assert "lifespan_factory" in inspect.getsource(lifespan_with_admin)
 
 
-class TestApplySecurityRuntimeConfig:
+class TestApplyRuntimeConfig:
     def test_applies_and_coerces_known_keys(self) -> None:
         original_threshold = settings.security.AUTO_BAN_THRESHOLD
         original_enabled = settings.security.AUTO_BAN_ENABLED
         try:
-            applied = apply_security_runtime_config(
-                {"AUTO_BAN_THRESHOLD": "99", "AUTO_BAN_ENABLED": False}
-            )
+            applied = apply_runtime_config({"AUTO_BAN_THRESHOLD": "99", "AUTO_BAN_ENABLED": False})
             assert applied == ["AUTO_BAN_ENABLED", "AUTO_BAN_THRESHOLD"]
             assert settings.security.AUTO_BAN_THRESHOLD == 99
             assert settings.security.AUTO_BAN_ENABLED is False
@@ -54,7 +53,5 @@ class TestApplySecurityRuntimeConfig:
             settings.security.AUTO_BAN_ENABLED = original_enabled
 
     def test_skips_unknown_and_invalid_keys(self) -> None:
-        applied = apply_security_runtime_config(
-            {"NOT_A_REAL_KEY": "x", "AUTO_BAN_THRESHOLD": {"nested": "dict"}}
-        )
+        applied = apply_runtime_config({"NOT_A_REAL_KEY": "x", "AUTO_BAN_THRESHOLD": {"nested": "dict"}})
         assert applied == []

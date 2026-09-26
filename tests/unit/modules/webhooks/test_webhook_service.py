@@ -11,8 +11,9 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.modules._base import ModelNotFoundError
+from src.app.modules._base import ModelNotFoundError, ValidationError
 from src.app.modules.webhooks.delivery import deliver
+from src.app.modules.webhooks.models import WebhookDeliveryStatus
 from src.app.modules.webhooks.service import WEBHOOK_RETRY_DELAYS, WebhookService
 
 
@@ -561,8 +562,7 @@ class TestWebhookServiceDelivery:
     @pytest.mark.asyncio
     async def test_retry_delivery(self, webhook_service, mock_db, mock_webhook_delivery):
         """Test manual retry of a delivery."""
-        from src.app.modules.webhooks.models import WebhookDeliveryStatus
-
+        mock_webhook_delivery.status = WebhookDeliveryStatus.FAILED
         mock_db.get.return_value = mock_webhook_delivery
 
         with patch("src.app.modules.webhooks.delivery.enqueue", new_callable=AsyncMock) as mock_enqueue:
@@ -571,6 +571,32 @@ class TestWebhookServiceDelivery:
         assert result.status == WebhookDeliveryStatus.PENDING
         assert result.attempt_count == 0
         mock_enqueue.assert_called_once_with(mock_webhook_delivery.id)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "status",
+        [WebhookDeliveryStatus.PENDING, WebhookDeliveryStatus.DELIVERED],
+    )
+    async def test_retry_delivery_rejects_non_failed(
+        self, webhook_service, mock_db, mock_webhook_delivery, status
+    ):
+        """The retry precondition lives beside the reset, not in the router.
+
+        Calling the service directly (a worker, a queue consumer, the next
+        caller) must get the same refusal the HTTP edge applies.
+        """
+        mock_webhook_delivery.status = status
+        mock_webhook_delivery.attempt_count = 3
+        mock_db.get.return_value = mock_webhook_delivery
+
+        with patch("src.app.modules.webhooks.delivery.enqueue", new_callable=AsyncMock) as mock_enqueue:
+            with pytest.raises(ValidationError, match="Only failed deliveries can be retryable"):
+                await webhook_service.retry_delivery(mock_webhook_delivery.id)
+
+        mock_enqueue.assert_not_called()
+        assert mock_webhook_delivery.status is status
+        assert mock_webhook_delivery.attempt_count == 3
+        mock_db.commit.assert_not_called()
 
     """Tests for webhook service initialization."""
 

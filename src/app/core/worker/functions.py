@@ -10,8 +10,8 @@ from sqlalchemy import text
 # Centralized logging configured via src/app/core/logger.py (structlog)
 from src.app.core.logger import get_logger
 from src.app.core.utils.job_wrapper import monitor_job
+from src.app.core.worker.registry import require_feature_collaborators
 from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
-from src.app.modules.webhooks.delivery import deliver
 
 logger = get_logger(__name__)
 
@@ -62,7 +62,7 @@ async def deliver_webhook_task(ctx: Worker, delivery_id: UUID | str, tenant_id: 
     # Now process with proper tenant context
     async with job_tenant_context(tenant_id) as db:
         try:
-            await deliver(db, delivery_id)
+            await require_feature_collaborators().deliver(db, delivery_id)
             return f"Webhook {delivery_id} delivered."
         except Exception as e:
             logger.error(f"Failed to deliver webhook {delivery_id}: {e}")
@@ -92,10 +92,9 @@ async def flush_audit_logs_task(ctx: dict) -> str:
 
     System task - requires RLS bypass.
     """
-    from src.app.modules.audit_logs.service import (
-        AUDIT_LOG_MAX_FLUSH_PER_RUN,
-        flush_audit_log_buffer,
-    )
+    collaborators = require_feature_collaborators()
+    max_flush_per_run = collaborators.audit_log_max_flush_per_run
+    flush_audit_log_buffer = collaborators.flush_audit_log_buffer
 
     logger.info("Starting audit log flush task")
     total = 0
@@ -103,8 +102,8 @@ async def flush_audit_logs_task(ctx: dict) -> str:
     async with job_bypass_context("Flushing audit logs to database") as db:
         try:
             # Drain buffer with limit per run to prevent long-running tasks
-            while total < AUDIT_LOG_MAX_FLUSH_PER_RUN:
-                remaining = AUDIT_LOG_MAX_FLUSH_PER_RUN - total
+            while total < max_flush_per_run:
+                remaining = max_flush_per_run - total
                 # Pass the session to ensure RLS bypass works correctly
                 count = await flush_audit_log_buffer(max_flush_per_run=remaining, db=db)
                 if count == 0:
@@ -147,9 +146,9 @@ async def cleanup_leaked_webhook_lock(ctx: Worker, event_id: str) -> str:
 
     Retries the same dual release; raises so arq/monitoring record the failure.
     """
-    from src.app.modules.billing.webhook.idempotency import _release_webhook_event_lock
+    release_lock = require_feature_collaborators().release_webhook_event_lock
 
-    await _release_webhook_event_lock(event_id)
+    await release_lock(event_id)
     logger.info("Leaked webhook lock cleaned up", event_id=event_id)
     return f"Released lock for {event_id}"
 
@@ -171,9 +170,13 @@ async def startup(ctx: Worker) -> None:
     # The feature task batch must be populated before the worker starts: an
     # empty batch would start a worker that silently never sends magic links or
     # email, and never recovers stuck jobs.
-    from src.app.core.worker.registry import ensure_feature_tasks_registered
+    from src.app.core.worker.registry import (
+        ensure_feature_collaborators_registered,
+        ensure_feature_tasks_registered,
+    )
 
     ensure_feature_tasks_registered()
+    ensure_feature_collaborators_registered()
 
     from src.app.core.config import settings
     from src.app.core.redis_provider import create_arq_pool, create_cache_client

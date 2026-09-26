@@ -270,18 +270,35 @@ async def test_retry_webhook_delivery(mock_service_cls, mock_db, mock_tenant, mo
 
 
 @pytest.mark.asyncio
-async def test_retry_webhook_delivery_not_failed(mock_db, mock_tenant, mock_user):
+@patch("src.app.modules.webhooks.router.WebhookService")
+async def test_retry_webhook_delivery_status_guard_is_service_owned(
+    mock_service_cls, mock_db, mock_tenant, mock_user
+):
+    """The router no longer holds the retry precondition.
+
+    It calls retry_delivery for any status it finds and lets the service refuse,
+    so a caller that is not the router gets the same guard.
+    """
+    delivery_id = uuid4()
     mock_delivery = MagicMock()
+    mock_delivery.id = delivery_id
     mock_delivery.status = WebhookDeliveryStatus.DELIVERED
 
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = mock_delivery
     mock_db.execute.return_value = mock_result
 
-    with pytest.raises(ValidationError, match="Only failed deliveries can be retried"):
+    mock_service = MagicMock()
+    mock_service.get_delivery_by_id = AsyncMock(return_value=mock_delivery)
+    mock_service.retry_delivery = AsyncMock(side_effect=ValidationError("Only failed deliveries can be retryable"))
+    mock_service_cls.return_value = mock_service
+
+    with pytest.raises(ValidationError, match="Only failed deliveries can be retryable"):
         await retry_webhook_delivery(
-            delivery_id=uuid4(), ctx=_make_ctx(mock_db, mock_tenant, mock_user)
+            delivery_id=delivery_id, ctx=_make_ctx(mock_db, mock_tenant, mock_user)
         )
+
+    mock_service.retry_delivery.assert_called_once_with(delivery_id)
 
 
 @pytest.mark.asyncio

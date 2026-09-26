@@ -7,6 +7,7 @@ Tests cover:
 - Buffer management
 """
 
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -163,6 +164,20 @@ class TestFlushAuditLogBuffer:
         assert result == 0
 
 
+@contextmanager
+def _registered_collaborators():
+    """Wire the worker collaborator seam, as the worker process does.
+
+    ``flush_audit_logs_task`` reaches the flush helper through the registered
+    collaborators (core/worker/registry.py) rather than a lazy feature import,
+    so a direct call in a test must register them. Done per-module, not in
+    conftest: a module-level import there runs before the event loop each
+    integration test builds.
+    """
+    import src.app.worker  # noqa: F401 — the import is the registration
+    yield
+
+
 class TestFlushAuditLogsTaskFunction:
     """Tests for flush_audit_logs_task worker function."""
 
@@ -174,9 +189,15 @@ class TestFlushAuditLogsTaskFunction:
         mock_ctx.__aexit__.return_value = None
 
         with (
-            patch("src.app.modules.audit_logs.service.flush_audit_log_buffer", new_callable=AsyncMock) as mock_flush,
+            _registered_collaborators(),
+            patch(
+                "src.app.core.worker.functions.require_feature_collaborators"
+            ) as mock_collabs,
             patch("src.app.core.worker.functions.job_bypass_context", return_value=mock_ctx),
         ):
+            mock_flush = AsyncMock()
+            mock_collabs.return_value.flush_audit_log_buffer = mock_flush
+            mock_collabs.return_value.audit_log_max_flush_per_run = 5
             mock_flush.return_value = 5
 
             from src.app.core.worker.functions import flush_audit_logs_task
@@ -193,9 +214,15 @@ class TestFlushAuditLogsTaskFunction:
         mock_ctx.__aexit__.return_value = None
 
         with (
-            patch("src.app.modules.audit_logs.service.flush_audit_log_buffer", new_callable=AsyncMock) as mock_flush,
+            _registered_collaborators(),
+            patch(
+                "src.app.core.worker.functions.require_feature_collaborators"
+            ) as mock_collabs,
             patch("src.app.core.worker.functions.job_bypass_context", return_value=mock_ctx),
         ):
+            mock_flush = AsyncMock()
+            mock_collabs.return_value.flush_audit_log_buffer = mock_flush
+            mock_collabs.return_value.audit_log_max_flush_per_run = 5
             mock_flush.return_value = 0
 
             from src.app.core.worker.functions import flush_audit_logs_task

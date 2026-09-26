@@ -1,7 +1,7 @@
 """R5 micro-benchmarks: evidence for the round-5 hot/cold-path micros.
 
 Covers this session's optimizations so regressions are trackable:
-- 1b IP negative-cache hit (modules/security/service.py) — warm hit must
+- 1b IP negative-cache hit (core/guard/ip_rules.py) — warm hit must
   skip the Redis pipeline entirely
 - R5-A tenant exempt-prefix tuple (middleware/tenant.py) — single
   C-speed startswith(tuple) instead of a Python f-string loop
