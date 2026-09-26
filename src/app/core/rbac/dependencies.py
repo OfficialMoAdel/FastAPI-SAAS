@@ -25,6 +25,7 @@ from src.app.core.cache.l1 import L1Cache, PairKeyCodec
 from src.app.core.db.scoped import execute_scoped
 from src.app.core.logger import get_logger
 from src.app.core.rbac.bitmask import PermissionBitmask
+from src.app.core.rbac.models import require_permission_graph
 from src.app.core.rbac.permissions import Permission as PermissionEnum
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
@@ -82,20 +83,20 @@ async def get_user_permissions(
     Fetch all permission slugs for a user within a specific tenant.
     Queries UserRole -> Role -> RolePermission -> Permission.
     """
-    from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
-
+    # Row types from the application seam; see core/rbac/models.py.
+    graph = require_permission_graph()
     stmt = (
-        select(Permission.slug)
-        .join(RolePermission, RolePermission.permission_id == Permission.id)
-        .join(Role, Role.id == RolePermission.role_id)
-        .join(UserRole, UserRole.role_id == Role.id)
-        .where(UserRole.user_id == user_id)
+        select(graph.permission.slug)
+        .join(graph.role_permission, graph.role_permission.permission_id == graph.permission.id)
+        .join(graph.role, graph.role.id == graph.role_permission.role_id)
+        .join(graph.user_role, graph.user_role.role_id == graph.role.id)
+        .where(graph.user_role.user_id == user_id)
         .limit(1000)  # Safety bound
     )
     result = await execute_scoped(
         stmt,
         db=db,
-        model=UserRole,
+        model=graph.user_role,
         scope=ExplicitTenant(tenant_id, reason='legacy-criterion:UserRole'),
     )
     return set(result.scalars().all())

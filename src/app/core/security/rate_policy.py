@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.middleware_state import get_client_ip_state
+from src.app.core.security.policies import require_rate_policy_fetcher
 from src.app.core.security.rate_limit_cache import get_tier_policy_limits
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.rate_limit import rate_limiter as default_rate_limiter
@@ -201,14 +202,12 @@ async def resolve_rate_limits(
     # resolved (limit, period) and the write-back payload are identical.
     if (limit is None or period is None) and db is not None and tier_id is not None:
         try:
-            from fastcrud import FastCRUD
-
-            from src.app.modules.rate_limits.models import RateLimit
-
-            crud: Any = FastCRUD(RateLimit)
+            # Rows come from the application seam; see core/security/policies.py.
+            # Which row applies to a path stays core's decision — only the
+            # fetch is supplied from outside.
+            fetch_tier_policies = require_rate_policy_fetcher()
             tier_id_val = int(tier_id)
-            all_rows = await crud.get_multi(db=db, tier_id=tier_id_val, return_total_count=False)
-            raw_policies = all_rows.get("data") or [] if isinstance(all_rows, dict) else []
+            raw_policies = await fetch_tier_policies(db, tier_id_val)
             matched = False
             for rec in raw_policies:
                 rec_path = rec.get("path") if isinstance(rec, dict) else getattr(rec, "path", None)

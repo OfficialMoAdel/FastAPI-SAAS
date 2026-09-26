@@ -54,22 +54,27 @@ class CRUDRole(TenantAwareCRUD[Role, RoleCreate, RoleUpdate, RoleUpdate, Any, Ro
         result = await execute_scoped(stmt, db=db, model=Role, scope=scope)
         return result.scalar_one_or_none()
 
-    async def delete_relations(self, db: AsyncSession, role_id: int, tenant_id: UUID | None = None) -> None:
-        """Delete RolePermission and UserRole relations associated with a role."""
-        if tenant_id is not None:
-            # RolePermission has no tenant_id: scope via parent Role IN subquery.
-            role_ids_stmt = select(Role.id).where(Role.id == role_id, criterion(Role, tenant_id))
-            async with db_circuit_guard():
-                await db.execute(delete(RolePermission).where(RolePermission.role_id.in_(role_ids_stmt)))
-            await execute_scoped(
-                delete(UserRole).where(UserRole.role_id == role_id),
-                db=db,
-                model=UserRole,
-                scope=ExplicitTenant(tenant_id, reason="rbac:delete_relations"),
-            )
-        else:
-            await db.execute(delete(RolePermission).where(RolePermission.role_id == role_id))
-            await db.execute(delete(UserRole).where(UserRole.role_id == role_id))
+    async def delete_relations(self, db: AsyncSession, role_id: int, tenant_id: UUID) -> None:
+        """Delete RolePermission and UserRole relations for a role, tenant-scoped.
+
+        ``tenant_id`` is required, not optional. It used to default to ``None``,
+        which selected a branch issuing two raw DELETEs with no tenant
+        predicate, no ``execute_scoped`` and no circuit guard. That branch was
+        unreachable only because the sole caller always passed a tenant — a
+        fact a comment cannot enforce and a reviewer has to notice. Making the
+        parameter required makes it structural: the compiler names any future
+        caller instead.
+        """
+        # RolePermission has no tenant_id: scope via parent Role IN subquery.
+        role_ids_stmt = select(Role.id).where(Role.id == role_id, criterion(Role, tenant_id))
+        async with db_circuit_guard():
+            await db.execute(delete(RolePermission).where(RolePermission.role_id.in_(role_ids_stmt)))
+        await execute_scoped(
+            delete(UserRole).where(UserRole.role_id == role_id),
+            db=db,
+            model=UserRole,
+            scope=ExplicitTenant(tenant_id, reason="rbac:delete_relations"),
+        )
 
     async def get_user_roles(self, db: AsyncSession, tenant_id: UUID, user_id: int) -> Sequence[Role]:
         """Get all roles assigned to a user within a tenant."""

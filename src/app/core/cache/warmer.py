@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.db.database import local_session
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.cache import TENANT_CACHE_TTL as _TENANT_CACHE_TTL
+from src.app.core.tenancy.models import require_tenant_model
 from src.app.core.tenancy.resolver import slug_cache_key, tenant_cache_data_from_model
-from src.app.modules.tenants.models import Tenant
 
 logger = get_logger(__name__)
 
@@ -237,7 +237,9 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
 
     import orjson
 
-    stmt = select(Tenant).where(Tenant.is_active.is_(True))
+    # Row type from the application seam; see core.tenancy.models.
+    tenant_model = require_tenant_model()
+    stmt = select(tenant_model).where(tenant_model.is_active.is_(True))
     result = await session.execute(stmt)
     tenants = list(result.scalars().all())
     # M4: cap unbounded warmer load

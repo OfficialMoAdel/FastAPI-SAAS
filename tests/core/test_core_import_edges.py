@@ -127,18 +127,9 @@ def test_the_edge_count_is_pinned_to_the_known_debt():
     """
     live = _live_edges()
     known = {
-        ("src.app.core.cache.l1", "src.app.modules.users.cache"),
-        ("src.app.core.cache.warmer", "src.app.modules.tenants.models"),
-        ("src.app.core.rbac.dependencies", "src.app.modules.rbac.models"),
-        ("src.app.core.security.rate_policy", "src.app.modules.rate_limits.models"),
-        ("src.app.core.tenancy.resolver", "src.app.modules.tenants.models"),
         ("src.app.core.worker.functions", "src.app.modules.webhooks.delivery"),
         ("src.app.core.worker.functions", "src.app.modules.audit_logs.service"),
         ("src.app.core.worker.functions", "src.app.modules.billing.webhook.idempotency"),
-        ("src.app.core.worker.rls_context", "src.app.modules.audit_logs"),
-        ("src.app.core.worker.settings", "src.app.modules.auth.tasks"),
-        ("src.app.core.worker.settings", "src.app.modules.notifications.service"),
-        ("src.app.core.worker.settings", "src.app.modules.webhooks.delivery"),
     }
     assert live == known, (
         "the set of core -> feature edges changed; update this tripwire.\n"

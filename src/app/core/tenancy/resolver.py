@@ -40,7 +40,7 @@ from src.app.core.tenancy.cache import (
     publish_tenant_l1_invalidation,
 )
 from src.app.core.tenancy.context import TenantContext, TenantLike
-from src.app.modules.tenants.models import Tenant
+from src.app.core.tenancy.models import require_tenant_model
 
 logger = get_logger(__name__)
 
@@ -75,7 +75,7 @@ def negative_cache_key(slug: str) -> str:
     return f"tenant:negative:{normalize_slug(slug)}"
 
 
-def tenant_cache_data_from_model(tenant: Tenant) -> dict[str, Any]:
+def tenant_cache_data_from_model(tenant: TenantLike) -> dict[str, Any]:
     """Build the minimal cache payload for a tenant row.
 
     Field set matches the startup warmer exactly (id/slug/name/is_active)
@@ -193,7 +193,9 @@ async def resolve_tenant_by_slug(
                     clear_rls_context,
                 )
 
-                stmt = select(Tenant).where(Tenant.slug == slug)
+                # Row type from the application seam; see core.tenancy.models.
+                tenant_model = require_tenant_model()
+                stmt = select(tenant_model).where(tenant_model.slug == slug)
                 try:
                     async with bypass_rls(session, reason="Tenant resolution via resolver"):
                         result = await session.execute(stmt)

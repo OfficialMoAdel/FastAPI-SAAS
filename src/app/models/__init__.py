@@ -86,3 +86,28 @@ __all__ = [
     "WebhookEndpoint",
     "WebhookEvent",
 ]
+
+
+# --- H-5: register the row types that core infrastructure needs ---------------
+# core.tenancy resolves and warms tenants, so it needs the row type. It cannot
+# import this module (core must not import features), so it is registered here,
+# the single model-registration point that both the web app and the ARQ worker
+# already import. core/tenancy/models.py owns the seam and fails loud at boot
+# if this never runs.
+from src.app.core.rbac.models import (
+    PermissionGraph as _PermissionGraph,
+)
+from src.app.core.rbac.models import (
+    register_permission_graph as _register_permission_graph,
+)
+from src.app.core.tenancy.models import register_tenant_model as _register_tenant_model
+
+_register_tenant_model(Tenant)
+_register_permission_graph(
+    _PermissionGraph(
+        user_role=UserRole,
+        role=Role,
+        role_permission=RolePermission,
+        permission=Permission,
+    )
+)

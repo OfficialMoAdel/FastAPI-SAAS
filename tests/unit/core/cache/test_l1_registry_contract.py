@@ -5,7 +5,8 @@ import time, and the app lifespan starts/stops them all through
 ``import_l1_owner_modules`` + ``start_all_l1_listeners``.
 
 The failure mode this guards: a new L1 cache adds its channel but nobody
-adds its owner module to ``import_l1_owner_modules``. Registration never
+adds its owner module to the composition-root ``import_l1_owner_modules``.
+Registration never
 runs, the listener never starts, and invalidation publishes into the void —
 every OTHER process serves stale suspension/revocation/policy state until
 TTL expiry. Silent, and invisible in a unit test that only exercises one
@@ -19,9 +20,9 @@ from __future__ import annotations
 
 import pytest
 
+from src.app.composition import import_l1_owner_modules
 from src.app.core.cache import l1
 from src.app.core.cache.l1 import (
-    import_l1_owner_modules,
     registered_l1_channels,
     start_all_l1_listeners,
 )

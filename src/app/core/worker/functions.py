@@ -168,6 +168,13 @@ async def startup(ctx: Worker) -> None:
             "Add them to WorkerSettings.functions (core/worker/settings.py)."
         )
 
+    # The feature task batch must be populated before the worker starts: an
+    # empty batch would start a worker that silently never sends magic links or
+    # email, and never recovers stuck jobs.
+    from src.app.core.worker.registry import ensure_feature_tasks_registered
+
+    ensure_feature_tasks_registered()
+
     from src.app.core.config import settings
     from src.app.core.redis_provider import create_arq_pool, create_cache_client
 

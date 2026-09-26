@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import local_session
 from src.app.core.logger import get_logger
+from src.app.core.worker.audit import require_bypass_recorder
 
 logger = get_logger(__name__)
 
@@ -72,16 +73,11 @@ async def _record_bypass_audit(reason: str) -> None:
     as the loud ``audit_bypass_unaudited`` error event (alert on it, count
     it) instead of propagating.
     """
-    from src.app.modules.audit_logs import AuditGuarantee, audit
+    # The recorder is supplied by the audit module; see core/worker/audit.py.
+    record_bypass = require_bypass_recorder()
 
     try:
-        await audit(
-            action="system.rls_bypass",
-            entity_type="system",
-            entity_id="rls_context",
-            details={"reason": reason},
-            guarantee=AuditGuarantee.BEST_EFFORT,
-        )
+        await record_bypass(reason)
     except Exception as exc:  # noqa: BLE001 — intentional: jobs never block on audit
         logger.error(
             "audit_bypass_unaudited",

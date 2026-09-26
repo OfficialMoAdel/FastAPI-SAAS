@@ -618,3 +618,53 @@ def test_every_role_mutation_crosses_the_invalidation_seam_once():
     for block in calls:
         head = block[: block.index(")")]
         assert "flush_permissions=True" in head, f"a seam call omitted the permission flush:\n{head}"
+
+
+class TestRoleRelationDeleteIsTenantScoped:
+    """delete_relations has exactly one write door, and it is scoped.
+
+    It used to take ``tenant_id: UUID | None = None`` and branch to a pair of
+    raw DELETEs with no tenant predicate, no execute_scoped and no circuit
+    guard. That branch was unreachable only because the sole caller always
+    passed a tenant — a guarantee a comment cannot enforce. These pin the two
+    ways it could come back.
+    """
+
+    def test_tenant_id_is_required(self) -> None:
+        import inspect
+        from uuid import UUID
+
+        from src.app.modules.rbac.crud import CRUDRole
+
+        param = inspect.signature(CRUDRole.delete_relations).parameters["tenant_id"]
+        assert param.default is inspect.Parameter.empty, "tenant_id must be required"
+        assert param.annotation in (UUID, "UUID"), f"tenant_id must be a UUID, got {param.annotation}"
+
+    def test_no_unscoped_branch_remains(self) -> None:
+        """The unscoped statements cannot come back behind a required param."""
+        import inspect
+
+        from src.app.modules.rbac.crud import CRUDRole
+
+        source = inspect.getsource(CRUDRole.delete_relations)
+        assert "if tenant_id is not None" not in source
+        assert "else:" not in source, "an unscoped branch was reintroduced"
+        # Every delete goes through the scoped path.
+        assert source.count("db.execute(delete(RolePermission)") == 1
+        assert "execute_scoped(" in source
+        assert "db.execute(delete(UserRole)" not in source, "a raw UserRole delete reappeared"
+
+    def test_every_caller_supplies_a_tenant(self) -> None:
+        """The compiler enforces this, but a runtime call with None would not."""
+        import inspect
+
+        from src.app.modules.rbac import service as rbac_service
+
+        callers = [
+            line
+            for line in inspect.getsource(rbac_service).splitlines()
+            if "delete_relations(" in line
+        ]
+        assert callers, "expected at least one call site"
+        for line in callers:
+            assert "tenant_id=" in line, f"call site does not pass a tenant: {line.strip()}"

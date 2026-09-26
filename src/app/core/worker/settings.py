@@ -24,6 +24,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from typing import Any
+
 from arq.connections import RedisSettings
 from arq.cron import cron
 
@@ -40,10 +42,27 @@ from src.app.core.worker.functions import (
     shutdown,
     startup,
 )
+from src.app.core.worker.registry import registered_feature_tasks
 from src.app.models import *  # noqa: F401,F403 -- single model-registration point (A-M6)
-from src.app.modules.auth.tasks import send_magic_link_email_task
-from src.app.modules.notifications.service import recover_stuck_notifications, send_email_task
-from src.app.modules.webhooks.delivery import recover_stuck_deliveries
+
+# The worker composition root, imported for the side effect of registering the
+# feature background tasks this worker runs. Core may not name them (H-5), and
+# the ARQ CLI loads WorkerSettings by dotted path, so the supply has to happen
+# on import rather than on a call the composition root makes first. This is the
+# same core -> app shape as the src.app.models import above.
+from src.app.worker import *  # noqa: F401,F403 -- worker composition root (A-M3)
+
+# The core-owned half of the worker registry. Feature-owned tasks arrive as a
+# registered batch instead; see src/app/worker.py and core/worker/registry.py.
+CORE_TASKS: tuple[Any, ...] = (
+    sample_background_task,
+    deliver_webhook_task,
+    migrate_sessions_task,
+    flush_audit_logs_task,
+    process_event_handler,  # FIXED: Was missing - handles async event bus events
+    cleanup_leaked_webhook_lock,  # B8: was enqueued but never defined/registered
+    cleanup_expired_tokens_task,
+)
 
 REDIS_QUEUE_HOST = settings.redis_queue.REDIS_QUEUE_HOST
 REDIS_QUEUE_PORT = settings.redis_queue.REDIS_QUEUE_PORT
@@ -63,21 +82,15 @@ class WorkerSettings:
     - High load: 4-5 workers, max_jobs=10 each
     """
 
-    # The one explicit registry. Adding a task means adding it here;
+    # The one explicit registry: the core tasks below, plus the feature batch
+    # registered by src.app.worker. Adding a core task means adding it here;
+    # adding a feature task means adding it there. Either way
     # assert_all_jobs_registered (core/worker/functions.py) fails worker
-    # startup if an enqueued name is missing from this list.
+    # startup if an enqueued name is missing from the combined list.
+    _feature = registered_feature_tasks()
     functions = [
-        sample_background_task,
-        deliver_webhook_task,
-        migrate_sessions_task,
-        flush_audit_logs_task,
-        process_event_handler,  # FIXED: Was missing - handles async event bus events
-        send_email_task,  # FIXED: Was missing - handles email notifications
-        send_magic_link_email_task,
-        cleanup_leaked_webhook_lock,  # B8: was enqueued but never defined/registered
-        cleanup_expired_tokens_task,
-        recover_stuck_deliveries,
-        recover_stuck_notifications,
+        *CORE_TASKS,
+        *(task.fn for task in _feature),
     ]
     # NOTE: arq 0.26.x has no multi-queue support — a worker polls exactly one
     # zset (queue_name). EventPriority.LOW events are enqueued to
@@ -105,12 +118,11 @@ class WorkerSettings:
     cron_jobs = [
         # Flush audit logs every 30 seconds for low-latency batching (60s timeout for high-volume flushes)
         cron(flush_audit_logs_task, second={0, 30}, run_at_startup=True, timeout=60),
-        # Recover stuck webhook deliveries every 5 minutes
-        cron(recover_stuck_deliveries, minute=set(range(0, 60, 5))),
-        # Sweep stuck PENDING notifications to terminal FAILED every 5 minutes (P2-6)
-        cron(recover_stuck_notifications, minute=set(range(0, 60, 5))),
         # Cleanup expired tokens from blacklist ZSET every hour
         cron(cleanup_expired_tokens_task, minute=0, timeout=30),
+        # The feature batch carries its own schedules, so no feature task is
+        # named here a second time.
+        *(cron(task.fn, **task.schedule) for task in _feature if task.schedule),
     ]
 
     # Concurrency and timeout settings (configurable via environment)

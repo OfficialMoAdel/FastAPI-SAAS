@@ -319,7 +319,7 @@ def start_all_l1_listeners() -> int:
     """Start every registered L1 listener. Returns the count started.
 
     Callers must first import every L1-owning module (see
-    :func:`import_l1_owner_modules`) so registration has happened.
+    :func:`import_l1_core_owner_modules`) so registration has happened.
     """
     started = 0
     for name, channel in _CHANNELS.items():
@@ -345,27 +345,30 @@ async def stop_all_l1_listeners() -> int:
     return stopped
 
 
-def import_l1_owner_modules() -> None:
-    """Import every L1-owning module so its seam constructs and self-registers.
+def import_l1_core_owner_modules() -> None:
+    """Import the *core* L1-owning modules so their seams self-register.
 
-    Single enumeration point: adding an L1 means (1) declaring its seam in the
-    owner module and (2) adding one import here. Forgetting (2) is caught by the
-    contract test asserting the expected channel set.
+    Core owns the L1 mechanism and the four owners that live beside it. The
+    fifth owner is a feature module (users.cache), and naming it from here
+    would be a ``core -> feature`` edge, so the full enumeration is composed
+    at the application seam: ``composition.import_l1_owner_modules`` calls
+    this and adds the feature owner. Splitting it that way keeps one
+    enumeration, still explicit, still in a place that may name features.
+
+    Single enumeration point: adding an L1 means (1) declaring its seam in
+    the owner module and (2) adding one import to the composition-root
+    function. Forgetting (2) is caught by the contract test asserting the
+    expected channel set.
 
     This list is the price of a deterministic boot. Python has no reliable
     auto-discovery for "every module that declares an L1", and a scanning
-    approach would reintroduce exactly the silent publish-into-the-void failure
-    the registry exists to prevent — so it stays explicit.
-
-    Layering note: core caching infrastructure intentionally enumerates the owner
-    modules (four core, one feature module) — this is the composition point the
-    lifespan delegates to, NOT a service-layer dependency.
+    approach would reintroduce exactly the silent publish-into-the-void
+    failure the registry exists to prevent — so it stays explicit.
     """
     from src.app.core.rbac import dependencies as _rbac_deps  # noqa: F401
     from src.app.core.security import auto_ban as _auto_ban  # noqa: F401
     from src.app.core.security import rate_limit_cache as _rate_limit_cache  # noqa: F401
     from src.app.core.tenancy import cache as _tenancy_cache  # noqa: F401
-    from src.app.modules.users import cache as _users_cache  # noqa: F401
 
 
 __all__ = [
@@ -378,7 +381,7 @@ __all__ = [
     "PairKeyCodec",
     "PrefixedKeyCodec",
     "RawKeyCodec",
-    "import_l1_owner_modules",
+    "import_l1_core_owner_modules",
     "register_l1_channel",
     "registered_l1_channels",
     "start_all_l1_listeners",

@@ -79,6 +79,43 @@ async def _start_jwt_lookup_gate() -> None:
         raise
 
 
+async def _start_tenant_model_gate() -> None:
+    # H-5: core.tenancy resolves and warms tenants from a row type the
+    # application registers (src.app.models). An unwired process would fail
+    # on the first slug lookup, which is far harder to diagnose than a boot
+    # failure — so check it here, beside the other DIP gates.
+    from src.app.core.tenancy.models import ensure_tenant_model_registered
+
+    ensure_tenant_model_registered()
+
+
+async def _start_bypass_recorder_gate() -> None:
+    # The RLS-bypass recorder is supplied by the audit module. Unwired, the
+    # worker would still bypass RLS — _record_bypass_audit swallows failures
+    # by design — so without this gate a bypass could be silently unaudited.
+    from src.app.core.worker.audit import ensure_bypass_recorder_registered
+
+    ensure_bypass_recorder_registered()
+
+
+async def _start_rate_policy_gate() -> None:
+    # H-5: the tier path-policy rows are fetched by a callable the application
+    # registers. Unwired, the failure would surface on the first cache miss at
+    # request time — check it at boot with the other DIP gates.
+    from src.app.core.security.policies import ensure_rate_policy_fetcher_registered
+
+    ensure_rate_policy_fetcher_registered()
+
+
+async def _start_permission_graph_gate() -> None:
+    # H-5: core.rbac joins four row types the application registers. An
+    # unwired process would fail on the first permission lookup, so check it
+    # at boot with the other DIP gates.
+    from src.app.core.rbac.models import ensure_permission_graph_registered
+
+    ensure_permission_graph_registered()
+
+
 async def _start_security_budget_gate() -> None:
     # Every leg's budget name now comes from the security-budget seam's table,
     # so an operator who removes an entry (e.g. mfa_verify_global) would
@@ -251,6 +288,10 @@ def lifespan_factory(
             StartupPhase("jwt_gate", _start_jwt_lookup_gate, None),
             StartupPhase("principal_gate", _start_principal_provider_gate, None),
             StartupPhase("security_budget_gate", _start_security_budget_gate, None),
+            StartupPhase("tenant_model_gate", _start_tenant_model_gate, None),
+            StartupPhase("permission_graph_gate", _start_permission_graph_gate, None),
+            StartupPhase("rate_policy_gate", _start_rate_policy_gate, None),
+            StartupPhase("bypass_recorder_gate", _start_bypass_recorder_gate, None),
             # "warm_caches" + "_start_cache_warmer": pinned by name in
             # tests/performance/test_optimizations_r4/test_cache_warming.py
             # (source-string assertions) — keep both spellings on this row.
@@ -461,10 +502,31 @@ async def _init_rate_limiting_and_security(redis_client: Any) -> None:
     # I11: the central registry owns L1 listener lifecycle. Importing the
     # owner modules triggers their self-registration; one start call replaces
     # the five hand-wired listeners that used to live here.
-    from src.app.core.cache.l1 import import_l1_owner_modules, start_all_l1_listeners
+    from src.app.core.cache.l1 import start_all_l1_listeners
 
     import_l1_owner_modules()
     start_all_l1_listeners()
+
+
+def import_l1_owner_modules() -> None:
+    """The one enumeration of L1 owner modules (I11).
+
+    Core owns four of the five owners and exposes
+    ``import_l1_core_owner_modules``; the fifth lives in the users feature
+    module, which core may not name (H-5). Composing the full list here —
+    the application seam — keeps the enumeration single and explicit, which is
+    what makes a deterministic boot possible: Python has no reliable
+    auto-discovery for "every module that declares an L1", and a scan would
+    reintroduce the silent publish-into-the-void failure the registry exists to
+    prevent.
+
+    Adding an L1 means declaring its seam in the owner module and adding one
+    import here. The contract test asserts the resulting channel set.
+    """
+    from src.app.core.cache.l1 import import_l1_core_owner_modules
+
+    import_l1_core_owner_modules()
+    from src.app.modules.users import cache as _users_cache  # noqa: F401
 
 
 def apply_security_runtime_config(config: dict[str, Any]) -> list[str]:
@@ -611,6 +673,10 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
                 "rate_limiting_security", partial(_init_rate_limiting_and_security, redis_client), None
             ),
             StartupPhase("runtime_config", _load_security_runtime_config, None),
+            # The worker warms the tenant cache too, so it needs the same gate
+            # as the web app — the registration itself comes free from
+            # `from src.app.models import *` in core/worker/settings.py.
+            StartupPhase("tenant_model_gate", _start_tenant_model_gate, None),
             StartupPhase("warm_caches", _warm_startup_caches, None),
             StartupPhase("admin", _init_admin, None),
         ]
