@@ -6,6 +6,11 @@ from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.cache.client import cache_client
+from src.app.core.cache.invalidation_exhaustion import (
+    ExhaustionMarker,
+    InvalidationPolicy,
+    invalidate_with_exhaustion,
+)
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
 from src.app.modules._base.service import BaseService
@@ -21,6 +26,15 @@ from src.app.modules.tiers.service import TierService
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 logger = get_logger(__name__)
+
+#: The rate-limit key family's DECLARED exhaustion policy. Same stale-window
+#: concern as tiers, same log-only choice: the error record is the signal and
+#: no poison-key marker is written for this family.
+_RATE_LIMIT_INVALIDATION_POLICY = InvalidationPolicy(
+    family="Rate limit",
+    on_exhaustion=ExhaustionMarker.LOG_ONLY,
+    exhausted_message="Rate limit cache invalidation failed after retry — stale rules may persist until TTL",
+)
 
 
 class RateLimitService(BaseService[RateLimit]):
@@ -64,23 +78,21 @@ class RateLimitService(BaseService[RateLimit]):
           until TTL after any create/update/delete).
 
         B10 posture preserved: retry once, then error-log so the stale window
-        is operator-visible — never fail-open on a swallowed DELETE.
+        is operator-visible — never fail-open on a swallowed DELETE. The retry
+        / visibility policy lives in ``core.cache.invalidation_exhaustion``;
+        this family DECLARES log-only exhaustion (no poison-key marker) on
+        the policy row above.
         """
         keys = [f"rate_limits:tier:{tier_id}"]
-        for attempt in (1, 2):
-            try:
-                await cache_client.delete(*keys)
-                break
-            except Exception as e:
-                if attempt == 1:
-                    logger.warning("Rate limit cache invalidation failed (retrying)", tier_id=tier_id, error=str(e))
-                else:
-                    logger.error(
-                        "Rate limit cache invalidation failed after retry — stale rules may persist until TTL",
-                        tier_id=tier_id,
-                        keys=keys,
-                        error=str(e),
-                    )
+
+        async def _invalidate_redis() -> None:
+            await cache_client.delete(*keys)
+
+        await invalidate_with_exhaustion(
+            _invalidate_redis,
+            policy=_RATE_LIMIT_INVALIDATION_POLICY,
+            log_context={"tier_id": tier_id, "keys": keys},
+        )
 
         from src.app.core.security.rate_limit_cache import invalidate_tier_policy
 

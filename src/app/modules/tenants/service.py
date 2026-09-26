@@ -8,6 +8,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.cache.client import cache_client
+from src.app.core.cache.invalidation_exhaustion import (
+    ExhaustionMarker,
+    InvalidationPolicy,
+    invalidate_with_exhaustion,
+)
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.cache import TENANT_CACHE_TTL, get_tenant_cache_key
@@ -20,6 +25,16 @@ from src.app.modules.tenants.schemas import TenantCreate, TenantResponse, Tenant
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 logger = get_logger(__name__)
+
+#: The tenant key family's DECLARED exhaustion policy. A stale ``is_active``
+#: keeps serving a suspended tenant, so exhaustion leaves a poison-key marker
+#: for the (parked, dashboard-side) reader. Flipping the family to log-only is
+#: a one-line change here.
+_TENANT_INVALIDATION_POLICY = InvalidationPolicy(
+    family="Tenant",
+    on_exhaustion=ExhaustionMarker.POISON_KEY,
+    exhausted_message="Tenant cache invalidation failed after retry — stale is_active may persist until TTL",
+)
 
 
 def _tenant_to_dict(tenant: Tenant) -> dict[str, Any]:
@@ -106,7 +121,10 @@ class TenantService(BaseService[Tenant]):
         Failures are therefore logged at warning (recoverable after retry)
         / error (exhausted retries) and retried exactly once before giving
         up, leaving a poison-key marker so a later reader/ops sweep can
-        detect the tenant whose cache could not be invalidated.
+        detect the tenant whose cache could not be invalidated. That retry /
+        visibility / marker policy is NOT written here: it is the shared
+        exhaustion policy in ``core.cache.invalidation_exhaustion``, and the
+        marker decision is declared on this family's policy row below.
 
         Deletes go through the CacheClient seam; when Redis is down the
         adapter reports no client and invalidation is skipped (the TTL
@@ -116,35 +134,23 @@ class TenantService(BaseService[Tenant]):
             return
 
         poison_key = f"tenant:invalidation_failed:{tenant_id}"
-        for attempt in (1, 2):
-            try:
-                await cache_client.delete(get_tenant_cache_key(tenant_id))
-                if slug:
-                    await cache_client.delete(_get_slug_cache_key(slug))
-                break
-            except Exception as e:
-                if attempt == 1:
-                    logger.warning(
-                        "Tenant cache invalidation failed (retrying)",
-                        tenant_id=str(tenant_id),
-                        slug=slug,
-                        attempt=attempt,
-                        error=str(e),
-                    )
-                else:
-                    # Exhausted: leave a poison marker + delete the stale keys'
-                    # success path is broken; the TTL bounds the stale window.
-                    logger.error(
-                        "Tenant cache invalidation failed after retry — stale is_active may persist until TTL",
-                        tenant_id=str(tenant_id),
-                        slug=slug,
-                        poison_key=poison_key,
-                        error=str(e),
-                    )
-                    try:
-                        await cache_client.set(poison_key, slug or "", ttl=TENANT_CACHE_TTL)
-                    except Exception:
-                        pass  # Redis itself is down; the error log above is the record.
+
+        async def _invalidate_redis() -> None:
+            await cache_client.delete(get_tenant_cache_key(tenant_id))
+            if slug:
+                await cache_client.delete(_get_slug_cache_key(slug))
+
+        async def _write_poison_marker() -> None:
+            # TENANT_CACHE_TTL bounds the marker exactly as it bounds the
+            # stale entry (ADR-0004: this card changed failure policy only).
+            await cache_client.set(poison_key, slug or "", ttl=TENANT_CACHE_TTL)
+
+        await invalidate_with_exhaustion(
+            _invalidate_redis,
+            policy=_TENANT_INVALIDATION_POLICY,
+            log_context={"tenant_id": str(tenant_id), "slug": slug, "poison_key": poison_key},
+            write_marker=_write_poison_marker,
+        )
 
         try:
             from src.app.core.tenancy.cache import invalidate_tenant_l1, publish_tenant_l1_invalidation

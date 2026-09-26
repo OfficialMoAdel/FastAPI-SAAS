@@ -75,19 +75,49 @@ class TestSanitizerBench:
 
     _CLEAN = "GET /api/v1/users/me completed status=200 elapsed_ms=12"
     _SENSITIVE = "login failed api_key=SECRET123 for user bob@example.com"
+    _PREFILTER_CLEAN = b"abcdefghijklmnopqrstuvwxyz 0123456789"
+
+    #: sanitize_clean : prefilter_clean, measured on the SAME box in the SAME run.
+    #: Idle 7.74/0.95 = 8.1. The old alternation gate cost ~28µs against a ~1µs
+    #: reference, i.e. a ratio near 28. 16 sits between them.
+    RATIO_TRIPWIRE = 16.0
+    #: Absolute backstop only, to catch a blowup that also slows the reference.
+    ABSOLUTE_CEILING_US = 200.0
 
     def test_sanitize_clean_passthrough(self) -> None:
         from src.app.core.observability.log_sanitizer import LogSanitizer
+        from src.app.middleware.attack_detection import _attack_prefilter_hit
 
         assert LogSanitizer.sanitize_message(self._CLEAN) == self._CLEAN
         best_us = best_of_benchmark("sanitize_clean", lambda: LogSanitizer.sanitize_message(self._CLEAN))
+
         # Tripwire, not the plan's 5µs Linux number: this box measures ~7µs
         # for .lower() + ~30-literal scan + one regex search. Catches
         # regressions back toward the old 28µs alternation gate.
         # Coverage tracing adds ~3-5x overhead — timing is meaningless under it,
         # so only gate when not traced (same precedent as test_post_optimization.py).
-        if sys.gettrace() is None:
-            assert best_us < 15.0, f"sanitize-clean {best_us:.2f}µs regressed"
+        if sys.gettrace() is not None:
+            return
+
+        # An absolute threshold cannot survive a loaded machine: this same code
+        # measures 7.7µs idle and 22.2µs while the box is busy, so a 15µs
+        # tripwire failed on a 5592-test run for reasons that had nothing to do
+        # with the sanitizer. Gate on the RATIO to a comparable scan measured in
+        # the same run instead, so machine slowness cancels out. The ratio is
+        # well behaved under load — it FALLS (8.1 idle -> 4.0 loaded) — so the
+        # gate is strictly more permissive when the box is busy, never less.
+        # The reference has its own absolute tripwire below, so it cannot drift
+        # upward unnoticed and mask a sanitizer regression.
+        reference_us = best_of_benchmark("prefilter_reference", lambda: _attack_prefilter_hit(self._PREFILTER_CLEAN))
+        assert reference_us > 0, "reference measured zero; benchmark is not usable"
+        assert best_us < self.ABSOLUTE_CEILING_US, (
+            f"sanitize-clean {best_us:.2f}µs exceeds the {self.ABSOLUTE_CEILING_US}µs backstop"
+        )
+        assert best_us / reference_us < self.RATIO_TRIPWIRE, (
+            f"sanitize-clean regressed: {best_us:.2f}µs is "
+            f"{best_us / reference_us:.1f}x the {reference_us:.2f}µs same-run reference "
+            f"(tripwire {self.RATIO_TRIPWIRE}x; the old alternation gate was ~28x)"
+        )
 
     def test_sanitize_sensitive_redacts(self) -> None:
         from src.app.core.observability.log_sanitizer import LogSanitizer

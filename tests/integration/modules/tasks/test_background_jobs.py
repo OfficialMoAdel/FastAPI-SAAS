@@ -17,9 +17,22 @@ async def test_flush_audit_logs_task_uses_rls_bypass():
     with patch("src.app.core.worker.functions.job_bypass_context", return_value=mock_cm):
         # We mock flush_audit_log_buffer in the SERVICE module because it's imported locally
         # Use side_effect to return 10 once, then 0 to stop the loop
-        with patch(
-            "src.app.modules.audit_logs.service.flush_audit_log_buffer", new=AsyncMock(side_effect=[10, 0])
-        ) as mock_flush:  # noqa: E501
+        # The flush helper is reached through the registered worker
+        # collaborators (core/worker/registry.py), not a lazy service import,
+        # so the seam must be wired and the mock placed where the task looks.
+        import src.app.worker  # noqa: F401 - the import is the registration
+
+        with (
+            patch(
+                "src.app.core.worker.functions.require_feature_collaborators"
+            ) as mock_collabs,
+            patch(
+                "src.app.core.worker.functions.job_bypass_context", return_value=mock_cm
+            ),
+        ):
+            mock_flush = AsyncMock(side_effect=[10, 0])
+            mock_collabs.return_value.flush_audit_log_buffer = mock_flush
+            mock_collabs.return_value.audit_log_max_flush_per_run = 100
             result = await flush_audit_logs_task({})
 
             assert "Flushed 10 audit logs" in result
@@ -54,7 +67,12 @@ async def test_deliver_webhook_task_uses_rls_context():
         patch("src.app.core.worker.functions.job_bypass_context", return_value=mock_bypass_cm),
         patch("src.app.core.worker.functions.job_tenant_context", return_value=mock_cm) as mock_tenant_ctx_factory,
     ):
-        with patch("src.app.core.worker.functions.deliver", new_callable=AsyncMock) as mock_deliver:
+        # `deliver` is reached through the registered collaborators.
+        with patch(
+            "src.app.core.worker.functions.require_feature_collaborators"
+        ) as mock_collabs:
+            mock_deliver = AsyncMock()
+            mock_collabs.return_value.deliver = mock_deliver
             await deliver_webhook_task(MagicMock(), "d290f1ee-6c54-4b01-90e6-d701748f0851")
 
             # Verify job_tenant_context called with correct tenant_id

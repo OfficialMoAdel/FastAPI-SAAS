@@ -14,6 +14,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.cache.client import cache_client
+from src.app.core.cache.invalidation_exhaustion import (
+    ExhaustionMarker,
+    InvalidationPolicy,
+    invalidate_with_exhaustion,
+)
 from src.app.core.logger import get_logger
 from src.app.core.schemas import MessageResponse
 from src.app.modules.tiers.models import Tier
@@ -21,6 +26,15 @@ from src.app.modules.tiers.schemas import TierCreate, TierCreateInternal, TierRe
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 logger = get_logger(__name__)
+
+#: The tier key family's DECLARED exhaustion policy. The stale-tier-policy
+#: window is reported through the error log only — no poison-key marker is
+#: written for this family, and that is a declaration, not an omission.
+_TIER_INVALIDATION_POLICY = InvalidationPolicy(
+    family="Tier",
+    on_exhaustion=ExhaustionMarker.LOG_ONLY,
+    exhausted_message="Tier cache invalidation failed after retry — stale tier policy may persist until TTL",
+)
 
 
 class TierService:
@@ -202,31 +216,23 @@ class TierService:
         serving the old, authority-contradicting tier policy until TTL expiry
         (e.g. a lowered limit stays generous for up to 1h). Mirror the tenants
         Q-M8 posture instead: retry once, then error-log with identifiers so
-        the stale-policy window is visible to operators.
+        the stale-policy window is visible to operators. That retry /
+        visibility policy lives in ``core.cache.invalidation_exhaustion``;
+        this family DECLARES log-only exhaustion (no poison-key marker) on
+        the policy row above.
 
         The delete goes through the CacheClient seam (None-safe: noop when
         Redis is down, so no client guard is needed here).
         """
-        for attempt in (1, 2):
-            try:
-                await cache_client.delete(*keys)
-                return
-            except Exception as e:
-                if attempt == 1:
-                    logger.warning(
-                        "Tier cache invalidation failed (retrying)",
-                        tier=tier_name,
-                        keys=keys,
-                        error=str(e),
-                    )
-                else:
-                    logger.error(
-                        "Tier cache invalidation failed after retry — stale tier policy may persist until TTL",
-                        tier=tier_name,
-                        keys=keys,
-                        error=str(e),
-                    )
 
+        async def _invalidate_redis() -> None:
+            await cache_client.delete(*keys)
+
+        await invalidate_with_exhaustion(
+            _invalidate_redis,
+            policy=_TIER_INVALIDATION_POLICY,
+            log_context={"tier": tier_name, "keys": keys},
+        )
 
     async def on_deleted(self, tier_id: int) -> None:
         """Invalidate every tier-keyed cache after a tier deletion (I6 seam).

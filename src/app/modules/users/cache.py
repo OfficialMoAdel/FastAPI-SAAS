@@ -17,6 +17,11 @@ from typing import Any
 from cachetools import TTLCache
 from structlog import get_logger
 
+from src.app.core.cache.invalidation_exhaustion import (
+    ExhaustionMarker,
+    InvalidationPolicy,
+    invalidate_with_exhaustion,
+)
 from src.app.core.cache.l1 import L1Cache, RawKeyCodec
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.redis_provider import get_redis
@@ -46,6 +51,16 @@ USER_CACHE_TTL = 300  # seconds (P-M6: raised from 60 — invalidation is alread
 # staleness backstop, not the freshness mechanism; 60s was paying a DB read
 # per user profile every minute for no correctness gain)
 AUTH_INFO_CACHE_TTL = 3600  # 1 hour
+
+#: The user key family's DECLARED exhaustion policy. A stale auth-info entry
+#: keeps authorizing a revoked user, so exhaustion leaves a poison-key marker
+#: for the (parked, dashboard-side) reader. Flipping the family to log-only
+#: is a one-line change here.
+_USER_INVALIDATION_POLICY = InvalidationPolicy(
+    family="User",
+    on_exhaustion=ExhaustionMarker.POISON_KEY,
+    exhausted_message="User cache invalidation failed after retry — stale auth info may persist until TTL",
+)
 
 # R1-OPT: process-local auth-info L1 (short TTL by design). The Redis TTL
 # (3600s) is only a staleness BACKSTOP — happy-path invalidation is a
@@ -182,7 +197,10 @@ class UserCacheInvalidator:
         user for up to AUTH_INFO_CACHE_TTL. Failures are retried exactly
         once, then logged at error with a poison-key marker so a later
         reader/ops sweep can detect the user whose cache could not be
-        invalidated.
+        invalidated. That retry / visibility / marker policy is NOT written
+        here: it is the shared exhaustion policy in
+        ``core.cache.invalidation_exhaustion``, and this family's marker
+        decision is declared on the policy row below.
 
         1B: when ``bump_token_version`` is True the caller MUST supply
         ``explicit_token_version`` (the fresh post-bump value owned by the
@@ -232,48 +250,39 @@ class UserCacheInvalidator:
                 if key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:"):
                     # Drop locally, then fan out — the seam owns that ordering.
                     await _auth_info_l1_seam.invalidate(key)
-            for attempt in (1, 2):
-                try:
-                    if keys:
-                        await client.delete(*keys)
-                    if token_keys:
-                        if explicit_token_version is not None:
-                            new_version = explicit_token_version
-                        else:
-                            # bump_token_version=True without an explicit version
-                            # raises above; reaching here means no bump, so the
-                            # current version is written through unchanged.
-                            if isinstance(user, dict):
-                                new_version = user.get("token_version", 0)
-                            else:
-                                new_version = getattr(user, "token_version", 0)
 
-                        async with client.pipeline(transaction=False) as pipe:
-                            for key in token_keys:
-                                pipe.set(key, str(new_version), ex=300)
-                            await pipe.execute()
-                    break
-                except Exception as e:
-                    if attempt == 1:
-                        logger.warning(
-                            "User cache invalidation failed (retrying)",
-                            user_id=str(user_id),
-                            attempt=attempt,
-                            error=str(e),
-                        )
+            async def _invalidate_redis() -> None:
+                if keys:
+                    await client.delete(*keys)
+                if token_keys:
+                    if explicit_token_version is not None:
+                        new_version = explicit_token_version
                     else:
-                        # Exhausted: leave a poison marker; the auth-info TTL
-                        # bounds the stale window.
-                        logger.error(
-                            "User cache invalidation failed after retry — stale auth info may persist until TTL",
-                            user_id=str(user_id),
-                            poison_key=poison_key,
-                            error=str(e),
-                        )
-                        try:
-                            await client.set(poison_key, str(reason), ex=AUTH_INFO_CACHE_TTL)
-                        except Exception:
-                            pass  # Redis itself is down; the error log above is the record.
+                        # bump_token_version=True without an explicit version
+                        # raises above; reaching here means no bump, so the
+                        # current version is written through unchanged.
+                        if isinstance(user, dict):
+                            new_version = user.get("token_version", 0)
+                        else:
+                            new_version = getattr(user, "token_version", 0)
+
+                    async with client.pipeline(transaction=False) as pipe:
+                        for key in token_keys:
+                            pipe.set(key, str(new_version), ex=300)
+                        await pipe.execute()
+
+            async def _write_poison_marker() -> None:
+                # AUTH_INFO_CACHE_TTL bounds the marker exactly as it bounds
+                # the stale auth-info entry (ADR-0004: this card changed
+                # failure policy only, not the TTL).
+                await client.set(poison_key, str(reason), ex=AUTH_INFO_CACHE_TTL)
+
+            await invalidate_with_exhaustion(
+                _invalidate_redis,
+                policy=_USER_INVALIDATION_POLICY,
+                log_context={"user_id": str(user_id), "poison_key": poison_key},
+                write_marker=_write_poison_marker,
+            )
         except Exception as e:
             user_id_log = user["id"] if isinstance(user, dict) else user.id
             logger.warning("Failed to invalidate cache for user", user_id_log=user_id_log, error=e)

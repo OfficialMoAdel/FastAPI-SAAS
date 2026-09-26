@@ -152,6 +152,39 @@ persistence grilling loop, 2026-09-22.)
   (`subscription_service.retrieve_subscription_for_tenant`) owns resolve →
   build → retrieve as ONE call so the resolved key never crosses a module
   boundary as a naked string; the Adapter never leaves `clients/`.
+- **Stripe webhook handler invariants** — the billing handlers
+  (`subscriptions` ×2, `invoices` ×2, `refunds`, `checkout`) deliberately do
+  NOT share one choreography. There is no common sequence to extract, and
+  "unifying" them would be a behaviour change. Verified by a step-by-handler
+  diff on 2026-09-26, which killed the review's claim that four handlers
+  repeated a lock → transition → tier → record → commit chain: **no handler
+  performs the full sequence**, and every difference is deliberate. These are
+  invariants, not debt — a future pass must not "fix" them:
+  - **`refunds` has no phase-2 re-lock, no transition check, and no
+    subscription write, because it never mutates the subscription row.** It
+    writes only `BillingRecord` (P0-2: refund rows carry no
+    `stripe_invoice_id`; the succeeded/failed row owns that unique slot).
+    Never add a lock there — it would hold a row lock for a write that cannot
+    happen.
+  - **`checkout` has no phase-1 lock because it is a create path.** The
+    subscription row may not exist, so there is nothing to lock; it upserts via
+    `exists()` + `IntegrityError`. It discovers the tenant from session
+    metadata and then *validates* plan-tenant and user-tenant ownership
+    precisely because it must not trust that metadata (B6 residual, B2-06).
+    Never add a phase-1 lock.
+  - **`invoices.payment_succeeded` uses `status == "past_due"`, not
+    `is_valid_transition`, deliberately** (P1-6): its phase-2 re-lock IS the
+    resurrection guard, so a transition check would be redundant. Never unify
+    it with `payment_failed`, which does need the transition check.
+  - **The second `db.commit()` in each invoice handler is a deliberate
+    durability boundary**, commented at both sites: the `BillingRecord` insert
+    is persisted even when the subscription update is declined
+    (`# persist the succeeded BillingRecord insert only`). Never merge those
+    transactions.
+  - The two-phase lock itself IS shared and lives in `webhook/locks.py`
+    (`P2-#12`); what stays repeated at four sites is the nil-check around it,
+    and its one variant (commit-then-bail in `payment_succeeded`) is exactly
+    what a shared helper would have had to parameterise.
 - **Reject catalog** — the owned table of middleware rejection rows
   (`REJECT_CATALOG` in `src/app/core/errors.py`): every guard rejection
   (rate_limit, tenant, body_limit, attack_detection, ip_filter) resolves
@@ -340,3 +373,38 @@ persistence grilling loop, 2026-09-22.)
   step raises (`teardown_on_startup_failure=True`, legacy try/finally
   semantics); `lifespan_with_admin` runs its tail only on the clean path.
   Seam: `compose_phases` in `src/app/core/setup.py`.
+
+- **Cache-invalidation exhaustion policy** — the ONE failure policy for a
+  mutation-side cache invalidation: attempt once, retry exactly once, warn on
+  the first failure, error on exhaustion, and leave a poison-key marker when
+  the key family DECLARES one. `invalidate_with_exhaustion(invalidate,
+  policy=…, log_context=…, write_marker=…)` is the single owner of the retry
+  skeleton; the four families (tenant, tier, rate-limit, user) each hold an
+  `InvalidationPolicy` row and call it, so the skeleton exists once instead of
+  four times.
+  The marker decision is a **declared value** on the family row
+  (`ExhaustionMarker.POISON_KEY | LOG_ONLY`), not an implicit property of which
+  body the code lives in. Declared today: tenant and user write a marker
+  (`tenant:invalidation_failed:{id}` bounded by `TENANT_CACHE_TTL`=300s,
+  `user:invalidation_failed:{id}` bounded by `AUTH_INFO_CACHE_TTL`=3600s);
+  tier and rate-limit are log-only. That divergence used to be invisible — it
+  was simply which exception handler each module happened to have — so flipping
+  a family is now a one-line declaration change, deliberately, instead of a
+  behavioural discovery.
+  The marker is an INTENTIONAL operational signal, not debris: it is the
+  durable handle on "this entity's cache could not be invalidated". A
+  declared marker with no writer is a misdeclaration and raises, so a family
+  cannot silently degrade to log-only.
+  What it does NOT own: TTLs, `maxsize`, or the eventual-consistency bound
+  (ADR-0004 keeps those by decision) — the marker TTL is the family's own
+  stale-window TTL, chosen by the family, and this card changed failure policy
+  only. It also does not own *which* keys a family invalidates; that stays with
+  the call site.
+  Seam: `invalidate_with_exhaustion` in
+  `src/app/core/cache/invalidation_exhaustion.py`.
+  The **reader** that surfaces these markers (dashboard panel, ops sweep,
+  alerting) is a deliberate gap, not an oversight: the marker was kept
+  precisely so a future reader has something to read. Tracked as
+  `FastAPI_saas-8p90`, tied to the dashboard project. Until it lands the
+  markers are written and bounded but not read, so a human learns of an
+  exhaustion from the error log, not from the key.
