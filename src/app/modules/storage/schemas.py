@@ -55,14 +55,55 @@ class LocalCredentials(BaseModel):
     @field_validator("base_path")
     @classmethod
     def _validate_base_path(cls, value: str) -> str:
-        # P2-5: tenant admins must not escape the uploads root via relative
-        # paths or parent traversal; the deployment default is absolute.
+        # Run-3 finding storage.local_provider_unconstrained_base_path.
+        #
+        # Previously this only rejected relative paths and '..' segments, so a
+        # tenant admin holding storage_settings:manage could set base_path to
+        # ANY absolute directory the app process could write, and that value
+        # became the provider's trust anchor. LocalStorage._get_full_path then
+        # enforced containment only *relative to the attacker-chosen base*.
+        #
+        # The invariant is now: the base must resolve inside the platform-owned
+        # STORAGE_LOCAL_ROOT. Everything is resolved (symlinks and '..' included)
+        # before comparison, so a symlink out of the root cannot be used to
+        # escape it.
         path = Path(value)
         if not path.is_absolute():
             raise ValueError("base_path must be an absolute path")
         if ".." in path.parts:
             raise ValueError("base_path must not contain parent '..' segments")
-        return value
+
+        root = _storage_root()
+        try:
+            # strict=False so a not-yet-created tenant directory still validates;
+            # resolve() collapses '..' and follows symlinks in the existing prefix.
+            resolved = path.resolve()
+        except OSError as e:  # pragma: no cover - platform dependent
+            raise ValueError("base_path could not be resolved") from e
+
+        if resolved == root or root in resolved.parents:
+            return value
+
+        raise ValueError(
+            f"base_path must be inside the platform storage root ({root}); "
+            "tenant-supplied paths cannot choose the storage location"
+        )
+
+
+def _storage_root() -> Path:
+    """Resolve the platform-owned storage root.
+
+    Falls back to a conservative default when configuration is unavailable so
+    that a settings import problem fails CLOSED (a path outside the root is
+    rejected) rather than silently disabling containment.
+    """
+    try:
+        from src.app.core.config import settings
+
+        configured = settings.storage.STORAGE_LOCAL_ROOT
+    except Exception:  # noqa: BLE001 - containment must not fail open
+        configured = "./storage/uploads"
+    return Path(configured).expanduser().resolve()
 
 
 class StorageSettingsBase(BaseModel):

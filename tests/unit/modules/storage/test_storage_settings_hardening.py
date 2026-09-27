@@ -22,20 +22,50 @@ def _absolute_dir() -> str:
 
 
 class TestLocalCredentialsBasePath:
-    """P2-5: base_path cannot escape the uploads root."""
+    """Run-3: base_path must be absolute AND inside the platform storage root.
 
-    def test_accepts_absolute_path(self) -> None:
-        creds = LocalCredentials(base_path=_absolute_dir())
-        assert creds.base_path == _absolute_dir()
+    The P2-5 check only rejected relative paths and '..' segments, so a tenant
+    admin could point the LOCAL provider at any absolute directory. Containment
+    is now checked against a platform-owned root.
+    """
+
+    def _root(self) -> str:
+        from src.app.modules.storage.schemas import _storage_root
+
+        return str(_storage_root())
+
+    def test_accepts_path_inside_root(self) -> None:
+        inside = os.path.join(self._root(), "tenant-a")
+        creds = LocalCredentials(base_path=inside)
+        assert creds.base_path == inside
+
+    def test_accepts_root_itself(self) -> None:
+        creds = LocalCredentials(base_path=self._root())
+        assert creds.base_path == self._root()
 
     def test_rejects_relative_path(self) -> None:
         with pytest.raises(ValidationError):
             LocalCredentials(base_path=os.path.join("uploads", "tenant"))
 
     def test_rejects_parent_traversal(self) -> None:
-        evil = os.path.join(_absolute_dir(), "..", "etc")
+        evil = os.path.join(self._root(), "..", "etc")
         with pytest.raises(ValidationError):
             LocalCredentials(base_path=evil)
+
+    def test_rejects_absolute_path_outside_root(self) -> None:
+        """The core regression: an arbitrary absolute path is no longer accepted."""
+        with pytest.raises(ValidationError):
+            LocalCredentials(base_path=tempfile.gettempdir())
+
+    def test_rejects_sibling_prefix_directory(self) -> None:
+        """A sibling whose name merely starts with the root is NOT inside it."""
+        root = self._root()
+        sibling = root + "_evil"
+        try:
+            with pytest.raises(ValidationError):
+                LocalCredentials(base_path=sibling)
+        finally:
+            pass
 
 
 class TestValidateCredentialsRouting:

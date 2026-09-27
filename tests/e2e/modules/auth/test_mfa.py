@@ -98,6 +98,8 @@ class TestMFASetupFlow:
         setup_response = await async_client.post(
             "/api/v1/mfa/setup",
             headers={**headers, **ip_headers()},
+            # Run-3: /mfa/setup requires step-up re-authentication.
+            json={"password": test_password},
         )
         if setup_response.status_code != 200:
             print("ERROR RESPONSE:", setup_response.json())
@@ -125,7 +127,12 @@ class TestMFASetupFlow:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers={**headers, **ip_headers()},
-            json={"setup_token": setup_token, "totp_token": valid_token},
+            json={
+                "setup_token": setup_token,
+                "totp_token": valid_token,
+                # Run-3: /mfa/enable requires step-up re-authentication.
+                "password": test_password,
+            },
         )
         if enable_response.status_code != 200:
             print(f"Enable failed: {enable_response.status_code}")
@@ -216,7 +223,12 @@ class TestMFALoginWithTOTP:
         headers = {"Authorization": f"Bearer {access_token}"}
 
         # Setup MFA
-        setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
+        setup_response = await async_client.post(
+            "/api/v1/mfa/setup",
+            headers=headers,
+            # Run-3: /mfa/setup requires step-up re-authentication.
+            json={"password": test_password},
+        )
         setup_data = setup_response.json()
         setup_token = setup_data["setup_token"]
 
@@ -232,7 +244,12 @@ class TestMFALoginWithTOTP:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers={**headers, **ip_headers()},
-            json={"setup_token": setup_token, "totp_token": totp.now()},
+            json={
+                "setup_token": setup_token,
+                "totp_token": totp.now(),
+                # Run-3: /mfa/enable requires step-up re-authentication.
+                "password": test_password,
+            },
         )
         assert enable_response.status_code == 200
 
@@ -327,7 +344,12 @@ class TestMFALoginWithBackupCode:
         headers = {"Authorization": f"Bearer {access_token}"}
 
         # Setup MFA
-        setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
+        setup_response = await async_client.post(
+            "/api/v1/mfa/setup",
+            headers=headers,
+            # Run-3: /mfa/setup requires step-up re-authentication.
+            json={"password": test_password},
+        )
         setup_data = setup_response.json()
         setup_token = setup_data["setup_token"]
 
@@ -343,7 +365,12 @@ class TestMFALoginWithBackupCode:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers={**headers, **ip_headers()},
-            json={"setup_token": setup_token, "totp_token": totp.now()},
+            json={
+                "setup_token": setup_token,
+                "totp_token": totp.now(),
+                # Run-3: /mfa/enable requires step-up re-authentication.
+                "password": test_password,
+            },
         )
         assert enable_response.status_code == 200
 
@@ -457,7 +484,12 @@ class TestMFALockoutFlow:
         headers = {"Authorization": f"Bearer {access_token}"}
 
         # Setup MFA
-        setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
+        setup_response = await async_client.post(
+            "/api/v1/mfa/setup",
+            headers=headers,
+            # Run-3: /mfa/setup requires step-up re-authentication.
+            json={"password": test_password},
+        )
         setup_data = setup_response.json()
         setup_token = setup_data["setup_token"]
 
@@ -473,7 +505,12 @@ class TestMFALockoutFlow:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers={**headers, **ip_headers()},
-            json={"setup_token": setup_token, "totp_token": totp.now()},
+            json={
+                "setup_token": setup_token,
+                "totp_token": totp.now(),
+                # Run-3: /mfa/enable requires step-up re-authentication.
+                "password": test_password,
+            },
         )
         assert enable_response.status_code == 200
 
@@ -584,7 +621,12 @@ class TestMFADisableFlow:
         headers = {"Authorization": f"Bearer {access_token}"}
 
         # Setup MFA
-        setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
+        setup_response = await async_client.post(
+            "/api/v1/mfa/setup",
+            headers=headers,
+            # Run-3: /mfa/setup requires step-up re-authentication.
+            json={"password": test_password},
+        )
         setup_data = setup_response.json()
         setup_token = setup_data["setup_token"]
 
@@ -600,7 +642,12 @@ class TestMFADisableFlow:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers={**headers, **ip_headers()},
-            json={"setup_token": setup_token, "totp_token": totp.now()},
+            json={
+                "setup_token": setup_token,
+                "totp_token": totp.now(),
+                # Run-3: /mfa/enable requires step-up re-authentication.
+                "password": test_password,
+            },
         )
         assert enable_response.status_code == 200
 
@@ -678,7 +725,12 @@ class TestMFARegenerateBackupCodes:
         headers = {"Authorization": f"Bearer {access_token}"}
 
         # Setup MFA
-        setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
+        setup_response = await async_client.post(
+            "/api/v1/mfa/setup",
+            headers=headers,
+            # Run-3: /mfa/setup requires step-up re-authentication.
+            json={"password": test_password},
+        )
         setup_data = setup_response.json()
         setup_token = setup_data["setup_token"]
 
@@ -694,7 +746,12 @@ class TestMFARegenerateBackupCodes:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers={**headers, **ip_headers()},
-            json={"setup_token": setup_token, "totp_token": totp.now()},
+            json={
+                "setup_token": setup_token,
+                "totp_token": totp.now(),
+                # Run-3: /mfa/enable requires step-up re-authentication.
+                "password": test_password,
+            },
         )
         assert enable_response.status_code == 200
 

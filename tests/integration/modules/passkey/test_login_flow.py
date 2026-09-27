@@ -3,7 +3,7 @@
 Task: T078 [US8] Write integration test for passkey login
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -29,7 +29,16 @@ def test_passkey_login_flow(
     # =========================================================================
     # Step 1: Register a passkey first (prerequisite for login)
     # =========================================================================
-    with patch.object(passkey_service, "_verify_with_webauthn") as mock_reg_verify:
+    # Run-3: enrollment now requires step-up re-authentication. This test
+    # exercises the LOGIN flow; registration is only a prerequisite, so the
+    # step-up gate is bypassed here exactly as the WebAuthn ceremony is.
+    with (
+        patch.object(passkey_service, "_verify_with_webauthn") as mock_reg_verify,
+        patch(
+            "src.app.modules.auth.routers.passkey.verify_step_up_password",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
         mock_reg_verify.return_value = MagicMock(
             credential_id=b"login-test-cred-id",
             credential_public_key=b"login-test-pub-key",
@@ -51,7 +60,7 @@ def test_passkey_login_flow(
             response = client.post(
                 "/api/v1/auth/passkey/register",
                 headers=regular_user_token_headers,
-                json={"device_type": "Login Test Device"},
+                json={"device_type": "Login Test Device", "password": "StepUpPassword123!"},
             )
             assert response.status_code == 200, f"Start registration failed: {response.text}"
 
@@ -68,7 +77,11 @@ def test_passkey_login_flow(
 
             response = client.post(
                 "/api/v1/auth/passkey/register/verify",
-                json={"credential": credential_data, "registration_id": registration_id},
+                json={
+                    "credential": credential_data,
+                    "registration_id": registration_id,
+                    "password": "StepUpPassword123!",
+                },
                 headers=regular_user_token_headers,
             )
             assert response.status_code == 200, f"Complete registration failed: {response.text}"

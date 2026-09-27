@@ -1,6 +1,7 @@
 """Unit tests for the /prices router (API compatibility layer)."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
@@ -8,13 +9,72 @@ from fastapi.testclient import TestClient
 
 from src.app.modules.billing.routers.prices import router as prices_router
 
+_TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
+
+
+def _authed_app(router_module_router, prefix: str = "/api/v1"):
+    """Bare app with the RequestContextDep seams satisfied.
+
+    Run-3 N-2 made the catalog reads authenticated, so a bare
+    ``FastAPI()`` no longer serves them. HTTPBearer rejects an anonymous
+    request before the auth context is consulted, so both seams are supplied
+    here rather than weakening the route.
+    """
+    from src.app.api.deps.auth import oauth2_scheme
+    from src.app.api.deps.request_context import RequestContext, get_request_context
+    from src.app.core.tenancy.context import TenantContext
+    from tests.helpers.auth import coerce_tenant, coerce_user
+
+    app = FastAPI()
+    app.include_router(router_module_router, prefix=prefix)
+    app.dependency_overrides[oauth2_scheme] = lambda: "test-token"
+    tenant = TenantContext(
+        tenant_id=_TENANT_ID, tenant_slug="test-tenant", tenant_name="Test", is_active=True
+    )
+    app.dependency_overrides[get_request_context] = lambda: RequestContext(
+        user=coerce_user({"id": 1, "is_superuser": True, "tenant_id": _TENANT_ID}),
+        tenant=coerce_tenant(tenant),
+        db=MagicMock(),
+    )
+    return app
+
+
 
 @pytest.fixture
 def app():
-    """Create a FastAPI app instance with the prices router."""
+    """Create a FastAPI app instance with the prices router.
+
+    Run-3 N-2: pricing rows are confidential tenant data, so the read routes
+    take ``ctx: RequestContextDep``. The authenticated context is injected via a
+    dependency override; the production path is covered by
+    ``tests/unit/test_run3_needs_validation_fixes.py``.
+    """
+    from src.app.api.deps.auth import oauth2_scheme
+    from src.app.api.deps.request_context import get_request_context
+    from src.app.core.tenancy.context import TenantContext
+    from tests.helpers.auth import coerce_tenant, coerce_user
+
     app = FastAPI()
     app.include_router(prices_router, prefix="/api/v1")
+
+    # HTTPBearer rejects an anonymous request before get_auth_context is
+    # consulted, so both seams are supplied: a dummy bearer token and a real
+    # RequestContext carrying an authenticated principal + tenant.
+    app.dependency_overrides[oauth2_scheme] = lambda: "test-token"
+    tenant = TenantContext(
+        tenant_id=_TENANT_ID, tenant_slug="test-tenant", tenant_name="Test", is_active=True
+    )
+    app.dependency_overrides[get_request_context] = lambda: _request_context(
+        coerce_user({"id": 1, "is_superuser": True, "tenant_id": _TENANT_ID}),
+        coerce_tenant(tenant),
+    )
     return app
+
+
+def _request_context(user, tenant):
+    from src.app.api.deps.request_context import RequestContext
+
+    return RequestContext(user=user, tenant=tenant, db=MagicMock())
 
 
 @pytest.fixture
@@ -58,19 +118,13 @@ def test_list_endpoint_supports_filters():
         mock_instance.list_prices = AsyncMock(return_value={"data": [], "total_count": 0})
 
         # Mock the database and tenant dependencies
-        with patch("src.app.modules.billing.routers.prices.async_get_db"):
-            from fastapi import FastAPI
+        with patch("src/app.modules.billing/routers.prices.async_get_db".replace("/", ".")):
             from fastapi.testclient import TestClient
 
-            from src.app.api.deps import tenant_dependency
-
-            app = FastAPI()
-            app.include_router(prices_router, prefix="/api/v1")
-
-            # Use dependency overrides instead of patch
-            app.dependency_overrides[tenant_dependency] = lambda: MagicMock(id="test-tenant-id")
-
-            client = TestClient(app)
+            # Run-3 N-2: the route now takes RequestContextDep, so the
+            # authenticated context is supplied via dependency overrides rather
+            # than the old bare tenant_dependency.
+            client = TestClient(_authed_app(prices_router))
 
             # Make request with filters
             client.get("/api/v1/prices?product_id=1&is_active=true")
@@ -82,10 +136,9 @@ def test_list_endpoint_supports_filters():
             assert call_kwargs.get("is_active") is True
             assert call_kwargs.get("page") == 1
             assert call_kwargs.get("limit") == 20
-            assert call_kwargs.get("tenant_id") == "test-tenant-id"
-
-            # Clean up overrides
-            app.dependency_overrides = {}
+            # Run-3 N-2: the tenant now comes from the authenticated principal,
+            # not from a free-standing tenant_dependency the caller could spoof.
+            assert call_kwargs.get("tenant_id") == str(_TENANT_ID)
 
 
 def test_delegates_to_billing_pricing_service():

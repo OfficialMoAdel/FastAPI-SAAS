@@ -20,8 +20,10 @@ from src.app.modules.auth.schemas import (
     PasskeyRegistrationOptionsResponse,
     PasskeyRegistrationRequest,
     PasskeyRegistrationVerifyRequest,
+    StepUpRequest,
 )
 from src.app.modules.auth.services.passkey import passkey_service
+from src.app.modules.auth.services.step_up import verify_step_up_password
 
 router = APIRouter(prefix="/auth/passkey", tags=["passkey"])
 
@@ -56,6 +58,9 @@ async def register_begin(
     redis: Redis = Depends(async_get_redis),
 ):
     """Start passkey registration process (generate challenge)."""
+    # Run-3: step-up re-authentication. A valid session alone must not be able
+    # to mint a durable credential.
+    await verify_step_up_password(db=ctx.db, user_id=ctx.user_id, password=request.password)
     options, registration_id = await passkey_service.generate_registration_challenge(
         db=ctx.db,
         user=ctx.user,
@@ -72,6 +77,9 @@ async def register_complete(
     redis: Redis = Depends(async_get_redis),
 ):
     """Complete passkey registration (verify attestation)."""
+    # Re-verified here too: the challenge was minted under a step-up check, but
+    # completion is a separate request and must not inherit that trust.
+    await verify_step_up_password(db=ctx.db, user_id=ctx.user_id, password=request.password)
     credential = await passkey_service.verify_registration(
         db=ctx.db,
         user=ctx.user,
@@ -100,8 +108,18 @@ async def list_credentials(
 async def delete_credential(
     credential_id: int,
     ctx: RequestContextDep,
+    step_up: StepUpRequest,
 ):
-    """Delete a passkey credential."""
+    """Delete a passkey credential.
+
+    Run-3: credential *removal* is also a factor mutation, so it requires the
+    same step-up re-authentication as enrollment. The step-up password travels in
+    the body for every step-up-protected route, never a header, so it is not
+    reconstructable from an intermediary access log.
+    """
+    await verify_step_up_password(
+        db=ctx.db, user_id=ctx.user_id, password=step_up.password
+    )
     await passkey_service.delete_credential(db=ctx.db, user_id=ctx.user_id, credential_id=credential_id)
 
 

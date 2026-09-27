@@ -305,8 +305,28 @@ def build_rate_limit_key(
     return build_tenant_key(base_key, tenant_id)
 
 
+# Run-3 N-1 (middleware.rate_limit.anonymous_key_path_scoped): constant
+# discriminator for the aggregate anonymous bucket. Because it is a fixed token
+# rather than the request path, rotating path segments cannot mint a fresh
+# aggregate bucket - which was the original bypass.
+AGGREGATE_PATH_TOKEN = "__ip_aggregate__"
+
+
+def build_anonymous_aggregate_key(anonymous_ip: str | None) -> str:
+    """Per-IP aggregate bucket for anonymous traffic.
+
+    Keyed by client IP with a CONSTANT path component, so it is immune to path
+    rotation. Per-path buckets roll up into this ceiling, so an anonymous caller
+    cannot buy unlimited requests by rotating a string path segment.
+    """
+    ip_str = anonymous_ip if anonymous_ip and anonymous_ip != "unknown" else "unknown"
+    return f"rate_limit:anonymous:ip:{ip_str}:{AGGREGATE_PATH_TOKEN}"
+
+
 __all__ = [
+    "AGGREGATE_PATH_TOKEN",
     "RateLimitVerdict",
+    "build_anonymous_aggregate_key",
     "build_rate_limit_key",
     "build_verdict",
     "consume",

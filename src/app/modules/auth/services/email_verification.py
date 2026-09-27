@@ -115,8 +115,12 @@ class EmailVerificationService:
         verification_token = result.scalar_one_or_none()
 
         if verification_token is not None and verification_token.token == legacy_digest:
+            # Run-3: this used to commit inside the FOR UPDATE region, releasing
+            # the row lock before the single-use marker (the row delete below) was
+            # committed, allowing a double verification under concurrency. The
+            # re-hash now flushes into the same transaction.
             verification_token.token = current_digest
-            await db.commit()
+            await db.flush()
 
         if not verification_token:
             raise UnauthorizedError("Invalid verification token.")

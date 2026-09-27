@@ -263,6 +263,7 @@ def _build_cache_key(
     resource_id: Any,
     kwargs: dict[str, Any],
     user_scoped: bool,
+    handler_name: str | None = None,
 ) -> str:
     """Build the tenant + (optional) user scoped cache key for ``@cache``.
 
@@ -278,6 +279,19 @@ def _build_cache_key(
         # F23: fall back to the RequestContext principal — handlers taking
         # `ctx` have no `current_user` kwarg.
         user_id = _resolve_user_id(kwargs)
+        if user_id is None:
+            # Run-3 finding cache.posts_superuser_hard_delete_invalidates_wrong_key:
+            # silently degrading to a tenant-shared key made a user_scoped
+            # invalidation target a key no reader can produce, so a superuser
+            # hard-delete left the post readable from cache for the full TTL.
+            # A handler that cannot name a principal cannot participate in
+            # user-scoped caching; fail loudly so a future signature change
+            # cannot reintroduce a silent no-op invalidation.
+            raise ValueError(
+                "user_scoped=True requires a `current_user` or `ctx` handler "
+                "kwarg so the cache key can bind the authorized user; "
+                f"{handler_name or 'the decorated handler'} supplies neither"
+            )
 
     formatted_key_prefix = _format_prefix(key_prefix, kwargs)
     # P-M1 key version: entries written before the fail-closed write path
@@ -467,7 +481,13 @@ def cache(  # noqa: C901
             else:
                 resource_id = _infer_resource_id(kwargs=kwargs, resource_id_type=resource_id_type)
 
-            cache_key = _build_cache_key(key_prefix, resource_id, kwargs, user_scoped)
+            cache_key = _build_cache_key(
+                key_prefix,
+                resource_id,
+                kwargs,
+                user_scoped,
+                getattr(func, "__qualname__", None),
+            )
 
             if request.method == "GET":
                 if to_invalidate_extra is not None or pattern_to_invalidate_extra is not None:
@@ -606,7 +626,15 @@ def cache(  # noqa: C901
                 if to_invalidate_extra is not None:
                     formatted_extra = _format_extra_data(to_invalidate_extra, kwargs)
                     for prefix, id in formatted_extra.items():
-                        keys_to_delete.append(_build_cache_key(prefix, id, kwargs, user_scoped))
+                        keys_to_delete.append(
+                            _build_cache_key(
+                                prefix,
+                                id,
+                                kwargs,
+                                user_scoped,
+                                getattr(func, "__qualname__", None),
+                            )
+                        )
 
                 if keys_to_delete:
                     # P2-4: fail OPEN — the mutation above already succeeded;

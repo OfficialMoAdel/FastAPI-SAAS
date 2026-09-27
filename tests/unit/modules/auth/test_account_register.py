@@ -173,9 +173,14 @@ class TestRegistrationGate:
         from src.app.core.config import settings
 
         original = settings.auth.AUTH_OPEN_REGISTRATION
+        original_token = settings.auth.FIRST_USER_REGISTRATION_TOKEN
         settings.auth.AUTH_OPEN_REGISTRATION = False
+        # Run-3: the empty-tenant bootstrap now requires a token; default it on
+        # so the pre-existing "rejected for existing tenant" case is unaffected.
+        settings.auth.FIRST_USER_REGISTRATION_TOKEN = "bootstrap-secret"
         yield
         settings.auth.AUTH_OPEN_REGISTRATION = original
+        settings.auth.FIRST_USER_REGISTRATION_TOKEN = original_token
 
     @pytest.fixture
     def gate_open(self):
@@ -219,14 +224,51 @@ class TestRegistrationGate:
         assert "Registration is closed" in response.json()["detail"]
         mock_create.assert_not_awaited()
 
-    def test_register_allowed_for_first_user_bootstrap(self, client, app, gate_closed, monkeypatch):
-        """Gate closed but tenant has NO users -> bootstrap allowed (201)."""
+    def test_register_rejected_for_first_user_bootstrap_without_token(
+        self, client, app, gate_closed, monkeypatch
+    ):
+        """Run-3 regression: an empty tenant must NOT be claimable by slug alone.
+
+        ``tenancy.zero_user_tenant_claim_by_slug``: "the tenant has no users" is a
+        standing, guessable condition, so an anonymous caller who guessed the
+        slug could permanently squat a fresh tenant.
+        """
         mock_service = AsyncMock()
 
-        response, mock_create = self._post_register(client, app, mock_service, monkeypatch, tenant_user_rows=None)
+        response, mock_create = self._post_register(
+            client, app, mock_service, monkeypatch, tenant_user_rows=None
+        )
 
-        assert response.status_code == 201
+        assert response.status_code == 403
+        assert "Registration is closed" in response.json()["detail"]
+        mock_create.assert_not_awaited()
+
+    def test_register_allowed_for_first_user_bootstrap_with_token(
+        self, client, app, gate_closed, monkeypatch
+    ):
+        """Gate closed + empty tenant + correct token -> bootstrap allowed (201)."""
+        mock_service = AsyncMock()
+
+        self.user_data = {**self.user_data, "registration_token": "bootstrap-secret"}
+
+        response, mock_create = self._post_register(
+            client, app, mock_service, monkeypatch, tenant_user_rows=None
+        )
+
+        assert response.status_code == 201, response.json()
         mock_create.assert_awaited_once()
+
+    def test_register_rejects_wrong_bootstrap_token(self, client, app, gate_closed, monkeypatch):
+        """A guessed token must not claim the tenant either."""
+        mock_service = AsyncMock()
+        self.user_data = {**self.user_data, "registration_token": "guessed"}
+
+        response, mock_create = self._post_register(
+            client, app, mock_service, monkeypatch, tenant_user_rows=None
+        )
+
+        assert response.status_code == 403
+        mock_create.assert_not_awaited()
 
     def test_register_allowed_when_gate_open(self, client, app, gate_open, monkeypatch):
         """AUTH_OPEN_REGISTRATION=True restores open signup (no gate check)."""

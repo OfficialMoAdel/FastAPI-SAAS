@@ -1,6 +1,7 @@
 """Unit tests for the /products router (API compatibility layer)."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
@@ -8,12 +9,56 @@ from fastapi.testclient import TestClient
 
 from src.app.modules.billing.routers.products import router as products_router
 
+_TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
+
+
+def _authed_app(router_module_router, prefix: str = "/api/v1"):
+    """Bare app with the RequestContextDep seams satisfied.
+
+    Run-3 N-2 made the catalog reads authenticated, so a bare
+    ``FastAPI()`` no longer serves them. HTTPBearer rejects an anonymous
+    request before the auth context is consulted, so both seams are supplied
+    here rather than weakening the route.
+    """
+    from src.app.api.deps.auth import oauth2_scheme
+    from src.app.api.deps.request_context import RequestContext, get_request_context
+    from src.app.core.tenancy.context import TenantContext
+    from tests.helpers.auth import coerce_tenant, coerce_user
+
+    app = FastAPI()
+    app.include_router(router_module_router, prefix=prefix)
+    app.dependency_overrides[oauth2_scheme] = lambda: "test-token"
+    tenant = TenantContext(
+        tenant_id=_TENANT_ID, tenant_slug="test-tenant", tenant_name="Test", is_active=True
+    )
+    app.dependency_overrides[get_request_context] = lambda: RequestContext(
+        user=coerce_user({"id": 1, "is_superuser": True, "tenant_id": _TENANT_ID}),
+        tenant=coerce_tenant(tenant),
+        db=MagicMock(),
+    )
+    return app
+
+
 
 @pytest.fixture
 def app():
-    """Create a FastAPI app instance with the products router."""
+    """Create a FastAPI app instance with the products router.
+
+    Run-3 N-2: the catalog read routes are confidential tenant data, so they
+    take ``ctx: RequestContextDep``. These tests build a bare app, so the
+    authenticated context is supplied through a dependency override - the real
+    production path is exercised in
+    ``tests/unit/test_run3_needs_validation_fixes.py``.
+    """
+    from tests.helpers.auth import build_test_auth_context
+
     app = FastAPI()
     app.include_router(products_router, prefix="/api/v1")
+
+    from src.app.api.deps import get_auth_context
+
+    ctx = build_test_auth_context({"id": 1, "is_superuser": True, "tenant_id": _TENANT_ID})
+    app.dependency_overrides[get_auth_context] = lambda: ctx
     return app
 
 
@@ -91,12 +136,9 @@ def test_list_endpoint_pagination():
 
         # Mock the database dependency
         with patch("src.app.modules.billing.routers.products.async_get_db"):
-            from fastapi import FastAPI
             from fastapi.testclient import TestClient
 
-            app = FastAPI()
-            app.include_router(products_router, prefix="/api/v1")
-            client = TestClient(app)
+            client = TestClient(_authed_app(products_router))
 
             # Make request with pagination
             client.get("/api/v1/products?page=1&per_page=20")

@@ -342,7 +342,13 @@ class SSOService:
                             is_self_registration_allowed,
                         )
 
-                        if not await is_self_registration_allowed(db):
+                        # Run-3: the empty-tenant first-user bootstrap now also
+                        # requires the operator-issued token. An SSO callback
+                        # cannot present one, so SSO may no longer bootstrap an
+                        # empty tenant — a tenant owner must create the first
+                        # account through /account/register with the token, or
+                        # set AUTH_OPEN_REGISTRATION. Fail closed.
+                        if not await is_self_registration_allowed(db, registration_token=None):
                             logger.warning(
                                 "registration_gate_rejected",
                                 path="/account/sso/callback",

@@ -26,6 +26,23 @@ class DefaultRateLimitSettings(BaseSettings):
     }
     DEFAULT_AUTHENTICATED_LIMIT: tuple[int, int] = (50, 3600)
     DEFAULT_ANONYMOUS_LIMIT: tuple[int, int] = (10, 3600)
+    # Run-3 N-1 (middleware.rate_limit.anonymous_key_path_scoped).
+    #
+    # Per-path buckets alone do not bound an anonymous caller: sanitize_path
+    # collapses only numeric/UUID segments, so rotating a STRING path segment
+    # minted a fresh bucket per request and defeated the per-path limit without
+    # ever tripping auto-ban (the ban only fires when a bucket is exhausted).
+    #
+    # This aggregate ceiling is keyed by client IP with a CONSTANT path
+    # component, so path rotation cannot create a new aggregate bucket. It sits
+    # ABOVE the per-path limits: a caller may spend several buckets, but only
+    # this many requests per window in total. Set to (0, 0) to disable.
+    #
+    # It also bounds Redis key growth without a separate knob: an anonymous
+    # caller can create at most ANONYMOUS_IP_AGGREGATE_LIMIT distinct per-path
+    # keys per window, and each key expires with its period. Before this ceiling
+    # that number was unbounded, because nothing capped total request rate.
+    ANONYMOUS_IP_AGGREGATE_LIMIT: tuple[int, int] = (300, 3600)
     # If True, allow requests when Redis is unavailable (fail-open)
     # If False, block requests when Redis is unavailable (fail-closed, more secure)
     RATE_LIMIT_FAIL_OPEN: bool = False

@@ -8,11 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.core.db.database import async_get_db
+from src.app.core.logger import get_logger
 from src.app.core.schemas import MessageResponse
+from src.app.core.tenancy.context import get_current_tenant
 from src.app.core.utils.cache import cache
+from src.app.core.utils.cache.tenant_index import invalidate_tenant_cache
 from src.app.modules.posts import PostService
 from src.app.modules.posts.schemas import PostCreate, PostRead, PostUpdate
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
+
+logger = get_logger(__name__)
 
 # R1-08: posts previously mounted a top-level path param (/{username}/posts)
 # directly under /v1, the only router to do so. That made {username} match any
@@ -134,11 +139,39 @@ async def erase_post(
     "user_post_cache:{username}",
     resource_id_name="id",
     pattern_to_invalidate_extra=["user_posts:{username}:*"],
-    user_scoped=True,
+    # Run-3 finding cache.posts_superuser_hard_delete_invalidates_wrong_key.
+    # Deliberately NOT user_scoped: this route deletes ANOTHER user's post, so
+    # there is no caller identity whose user-scoped key could ever match the
+    # owner's read entry. The old user_scoped=True + no-principal handler made
+    # the invalidation a silent no-op and the post stayed readable for the full
+    # TTL. Erasure is now driven explicitly by the tenant index below, which is
+    # identity-agnostic by construction.
+    user_scoped=False,
 )
 async def erase_db_post(
     request: Request, username: str, id: int, service: PostService = Depends(get_post_service)
 ) -> Response:
     """Permanently delete a post from database (superuser only)."""
     await service.hard_delete(id)
+
+    # Identity-agnostic erasure: drop every cached copy of this post for the
+    # tenant, whichever user it was cached under. The tenant index holds all
+    # `tenant:`-prefixed keys, so this is O(|tenant entries|) and needs no
+    # knowledge of the owner's id.
+    #
+    # invalidate_tenant_cache() already no-ops when the cache client is absent,
+    # so no client check is needed here.
+    tenant = get_current_tenant()
+    if tenant is not None:
+        try:
+            await invalidate_tenant_cache(
+                str(tenant.tenant_id), prefix=f"v2:user_post_cache:{username}:{id}"
+            )
+        except Exception as exc:  # noqa: BLE001 - erasure must not 500 the takedown
+            logger.warning(
+                "superuser_post_erase_cache_invalidation_failed",
+                username=username,
+                post_id=id,
+                error=str(exc),
+            )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

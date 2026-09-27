@@ -66,6 +66,40 @@ class AuthSettings(BaseSettings):
         default=False,
         description="Allow self-service registration into existing tenants (default False: first-user bootstrap only)",
     )
+    # Run-3 finding tenancy.zero_user_tenant_claim_by_slug: the empty-tenant
+    # bootstrap was gated on "the tenant has no users", a STANDING property. Any
+    # caller who could guess a freshly created or user-emptied tenant's slug
+    # could permanently squat it, because the legitimate owner could then no
+    # longer register.
+    #
+    # The fix replaces that test with proof of intent: the operator issues a
+    # per-deployment secret and hands it to the tenant owner out of band. Empty
+    # => the bootstrap is DISABLED (fail closed); there is no "no token means
+    # allow" path, because that would be the original defect.
+    FIRST_USER_REGISTRATION_TOKEN: str = Field(
+        default="",
+        description=(
+            "Secret required to bootstrap the first user of an empty tenant. "
+            "Empty disables first-user self-registration entirely (fail closed). "
+            "Set per deployment and distribute out of band."
+        ),
+    )
+    # Run-3 N-3: revoke enrolled passkeys when the password changes or is reset.
+    #
+    # A stolen access token can enroll an attacker-controlled passkey; nothing
+    # previously removed it, so the attacker kept a durable credential after the
+    # victim rotated their password. Revoking on a credential change closes that
+    # persistence path. Costs the legitimate user one re-enrollment.
+    #
+    # Default True (secure). Set False only if passkey re-enrollment friction is
+    # judged worse than the persistence risk for your deployment.
+    REVOKE_PASSKEYS_ON_PASSWORD_CHANGE: bool = Field(
+        default=True,
+        description=(
+            "Delete all enrolled WebAuthn passkeys when a password is changed or "
+            "reset, so a credential enrolled with a stolen session cannot outlive it."
+        ),
+    )
     AUTH_MAX_SESSIONS: int = Field(default=5, ge=1, le=50, description="Max concurrent sessions per user")
     AUTH_SESSION_TTL_SECONDS: int = Field(
         default=86400 * 7, ge=3600, le=86400 * 30, description="Session TTL in seconds"

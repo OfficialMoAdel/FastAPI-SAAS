@@ -31,29 +31,34 @@ def upgrade() -> None:
     )
     op.create_index("ix_permissions_slug", "permissions", ["slug"], unique=True)
 
-    # Seed default permissions
-    op.execute(
-        """
-        INSERT INTO permissions (slug, description) VALUES
-        ('users:read', 'View user profiles'),
-        ('users:manage', 'Create, update, delete users'),
-        ('roles:read', 'View roles'),
-        ('roles:manage', 'Create, update, delete roles'),
-        ('roles:assign', 'Assign roles to users'),
-        ('posts:read', 'View posts'),
-        ('posts:manage', 'Create, update, delete posts'),
-        ('files:read', 'View files'),
-        ('files:manage', 'Upload, update, delete files'),
-        ('billing:read', 'View billing information'),
-        ('billing:manage', 'Manage billing and subscriptions'),
-        ('settings:read', 'View settings'),
-        ('settings:manage', 'Manage settings'),
-        ('audit:read', 'View audit logs'),
-        ('webhooks:read', 'View webhooks'),
-        ('webhooks:manage', 'Create, update, delete webhooks'),
-        ('api_keys:read', 'View API keys'),
-        ('api_keys:manage', 'Create, revoke API keys')
-        """
+    # Seed the permission catalog.
+    #
+    # Run-3 finding rbac.seeded_permission_catalog_drifted_from_enum: this block
+    # used to seed a hardcoded list of 18 slugs that had drifted from
+    # src/app/core/rbac/permissions.py (then 24 values, now 25). Fifteen enum
+    # permissions were therefore UNGRANTABLE, because add_permission_to_role
+    # resolves a slug against this table and raises ModelNotFoundError when it
+    # is absent. Adding a permission to the enum alone silently produced an
+    # inert authorization gate.
+    #
+    # The enum is the single source of truth, so the catalog is derived from it
+    # at migration time rather than re-typed here. A hand-maintained copy of a
+    # growing enum is exactly what caused the drift.
+    #
+    # Because roles/role_permissions are created EMPTY below and no role is
+    # seeded, this rebuild is what makes every declared permission grantable
+    # from a clean database. Operators grant them per role afterwards.
+    from src.app.core.rbac.permissions import Permission as _PermissionEnum
+
+    op.get_bind().execute(
+        sa.text(
+            "INSERT INTO permissions (slug, description) "
+            "VALUES (:slug, :description) ON CONFLICT (slug) DO NOTHING"
+        ),
+        [
+            {"slug": p.value, "description": p.name.replace("_", " ").title()}
+            for p in _PermissionEnum
+        ],
     )
 
     # ===== ROLES =====

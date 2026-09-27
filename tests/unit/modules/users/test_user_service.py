@@ -345,7 +345,13 @@ class TestUserServiceUpdate:
 
     @pytest.mark.asyncio
     async def test_update_other_user_forbidden(self, user_service, mock_existing_user):
-        """Test that updating another user's account is forbidden."""
+        """Non-owners are denied — as the SAME soft-404 a missing user gets.
+
+        Run-3 ``users.read_user.same_tenant_existence_oracle``: a distinct 403
+        told the caller that "otheruser" exists in their tenant. Ownership is
+        still enforced; only the status code is now uniform, so the endpoint
+        cannot be used to enumerate co-tenants.
+        """
         # Set up different user to update
         other_user = MagicMock()
         other_user.username = "otheruser"
@@ -356,7 +362,7 @@ class TestUserServiceUpdate:
         with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = other_user
 
-            with pytest.raises(ForbiddenException):
+            with pytest.raises(ModelNotFoundError):
                 await user_service.update("otheruser", MagicMock(), current_user)
 
     @pytest.mark.asyncio
@@ -418,7 +424,7 @@ class TestUserServiceDelete:
 
     @pytest.mark.asyncio
     async def test_delete_other_user_forbidden(self, user_service, mock_existing_user):
-        """Test that deleting another user's account is forbidden."""
+        """Non-owners are denied as a soft-404 (see the update case above)."""
         # Set up different user to delete
         other_user = MagicMock()
         other_user.username = "otheruser"
@@ -433,7 +439,9 @@ class TestUserServiceDelete:
         ):
             mock_get.return_value = other_user
 
-            with pytest.raises(ForbiddenException):
+            # Run-3: soft-404, identical to a nonexistent user, so DELETE cannot
+            # be used to confirm that an identifier is a co-tenant.
+            with pytest.raises(ModelNotFoundError):
                 await user_service.delete("otheruser", current_user, token)
 
     @pytest.mark.asyncio

@@ -122,11 +122,17 @@ async def register(
     Joining an existing tenant requires an admin-created account — the old
     behavior let anyone register into any tenant by guessing its
     ``X-Tenant-ID`` slug.
+
+    Run-3 ``tenancy.zero_user_tenant_claim_by_slug``: the first-user bootstrap
+    additionally requires the operator-issued ``registration_token``, because
+    "the tenant has no users" is a standing, guessable condition.
     """
     from src.app.modules.auth.services.email_verification import make_email_verifier
     from src.app.modules.auth.services.registration_gate import is_self_registration_allowed
 
-    if not await is_self_registration_allowed(db):
+    if not await is_self_registration_allowed(
+        db, registration_token=user.registration_token
+    ):
         tenant = get_current_tenant()
         logger.warning(
             "registration_gate_rejected",

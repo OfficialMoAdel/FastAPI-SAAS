@@ -33,7 +33,7 @@ from src.app.modules.users.schemas import (
     UserUpdate,
     UserUpdateResponse,
 )
-from src.app.shared.exceptions import UnauthorizedError
+from src.app.shared.exceptions import ModelNotFoundError, UnauthorizedError
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -118,6 +118,12 @@ async def read_user(
     Supports both integer user IDs and username strings for backward compatibility.
     Tenant isolation is enforced in the service (cross-tenant reads 404);
     ownership via the single ownership seam (superuser bypass included).
+
+    Run-3 finding users.read_user.same_tenant_existence_oracle: a non-owner was
+    denied with 403 while a nonexistent or cross-tenant target produced 404, so
+    the status code disclosed whether an identifier was a member of the caller's
+    own tenant. Both denials now produce the same 404, so the endpoint cannot be
+    used to enumerate co-tenants.
     """
     # SECURITY: tenant isolation — a cross-tenant user is indistinguishable
     # from a nonexistent one (404, not 403). ctx.require_tenant() enforces
@@ -125,8 +131,11 @@ async def read_user(
     ctx.require_tenant()
     user = await directory.profile(user_id, tenant_id=ctx.tenant_id)
 
-    # SECURITY: IDOR via the single ownership seam (superuser bypass included).
-    ctx.require_ownership(get_user_attr(user, "id"))
+    # SECURITY: IDOR + existence-oracle. Ownership is still the single seam
+    # (superuser bypass included), but a failed check is reported exactly like a
+    # nonexistent user rather than with a distinct 403.
+    if not ctx.is_superuser and not ctx.owns(get_user_attr(user, "id")):
+        raise ModelNotFoundError("User", user_id)
 
     return user
 

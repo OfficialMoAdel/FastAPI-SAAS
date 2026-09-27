@@ -122,7 +122,11 @@ class PasskeyService:
                 # (Touch ID, Face ID, Windows Hello). Removing the constraint allows users
                 # to register any authenticator — platform or cross-platform.
                 authenticator_attachment=None,
-                user_verification=UserVerificationRequirement.PREFERRED,
+                # Run-3: enrollment now sits behind step-up re-authentication,
+                # so the ceremony can also demand user verification. PREFERRED
+                # let a stolen session enrol a credential without ever proving
+                # local presence (UV) or possession (a PIN/biometric).
+                user_verification=UserVerificationRequirement.REQUIRED,
                 resident_key=ResidentKeyRequirement.PREFERRED,
             ),
             exclude_credentials=existing_creds,

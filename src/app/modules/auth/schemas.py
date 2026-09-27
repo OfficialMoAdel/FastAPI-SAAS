@@ -263,13 +263,31 @@ class SSOSettingsList(BaseList[SSOSettingsRead]):
 # ============================================================================
 
 
+class StepUpRequest(BaseModel):
+    """Step-up credential for factor mutations that take no other body.
+
+    Run-3: kept in the body (never a header) so the password is not captured by
+    intermediaries that log request headers.
+    """
+
+    password: str = Field(..., min_length=1, max_length=256)
+
+
 class PasskeyRegistrationRequest(BaseModel):
     device_type: str = Field(..., min_length=1, max_length=100)
+    # Run-3 finding auth.mfa.passkey_enrollment_without_reauthentication:
+    # enrolling a durable credential requires re-proving possession of a
+    # credential a bearer-token thief does not have. Matches the convention
+    # disable_mfa / regenerate_backup_codes already use (password in body).
+    password: str = Field(..., min_length=1, max_length=256)
 
 
 class PasskeyRegistrationVerifyRequest(BaseModel):
     credential: dict[str, Any]
     registration_id: str
+    # Re-verified at commit time as well as at challenge time, so an
+    # intercepted challenge cannot be completed later without the password.
+    password: str = Field(..., min_length=1, max_length=256)
 
 
 class PasskeyRegistrationOptionsResponse(BaseModel):
@@ -394,6 +412,9 @@ class MFASetupResponse(BaseModel):
 class MFAEnableRequest(BaseModel):
     setup_token: str
     totp_token: str = Field(..., min_length=6, max_length=6)
+    # Run-3: enabling a second factor must require re-authentication, not just
+    # a valid session.
+    password: str = Field(..., min_length=1, max_length=256)
 
     @field_validator("totp_token")
     @classmethod

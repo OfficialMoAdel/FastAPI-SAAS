@@ -81,7 +81,7 @@ class TestMFASetupTokenBinding:
         mock_redis.get.return_value = stored_val
 
         # User 200 attempts to enable MFA with user 100's setup token
-        req = MFAEnableRequest(setup_token=setup_token, totp_token="123456")
+        req = MFAEnableRequest(setup_token=setup_token, totp_token="123456", password="correct-horse")
 
         with (
             patch("src.app.modules.auth.services.mfa.get_redis", return_value=mock_redis),

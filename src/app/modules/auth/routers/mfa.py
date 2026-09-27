@@ -26,8 +26,10 @@ from src.app.modules.auth.schemas import (
     MFAStatusResponse,
     MFAVerifyRequest,
     MFAVerifyResponse,
+    StepUpRequest,
 )
 from src.app.modules.auth.services.mfa import MFAService, get_mfa_service
+from src.app.modules.auth.services.step_up import verify_step_up_password
 from src.app.shared.exceptions import (  # noqa: F401 — re-exported for test patch targets
     RateLimitExceededError,
     UnauthorizedError,
@@ -62,6 +64,7 @@ async def setup_mfa(
     ctx: RequestContextDep,
     service: Annotated[MFAService, Depends(get_mfa_service)],
     fastapi_request: Request,
+    step_up: StepUpRequest,
 ) -> MFASetupResponse:
     """Generate TOTP secret for MFA setup.
 
@@ -75,6 +78,9 @@ async def setup_mfa(
     # P1 FIX (code-review): setup/enable had no rate limit while verify did —
     # the enable TOTP check was brute-forceable. Throttle both seams.
     await check_mfa_mutate_rate_limit(fastapi_request, ctx.user_id)
+    # Run-3: enrolling a second factor requires step-up re-authentication, not
+    # merely a valid session. Matches disable_mfa's existing bar.
+    await verify_step_up_password(db=ctx.db, user_id=ctx.user_id, password=step_up.password)
     result = await service.generate_totp_secret(
         user_id=ctx.user_id,
         db=ctx.db,
@@ -104,6 +110,9 @@ async def enable_mfa(
         ValidationError: If MFA already enabled or token is invalid.
     """
     await check_mfa_mutate_rate_limit(fastapi_request, ctx.user_id)
+    # Run-3: re-verify at enable time. /mfa/setup now requires step-up, but a
+    # setup_token obtained earlier must not be redeemable without the password.
+    await verify_step_up_password(db=ctx.db, user_id=ctx.user_id, password=request.password)
     return await service.enable_mfa(
         user_id=ctx.user_id,
         request=request,

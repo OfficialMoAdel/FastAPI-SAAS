@@ -47,6 +47,8 @@ class TestSystemRoleSeeding:
             "webhooks:manage",
             # Phase 9: Tenant Management
             "tenant:update",
+            # Run-3: dashboard metrics gate (users.dashboard.metrics_missing_authorization)
+            "dashboard:read",
         }
 
         actual_permissions = {p.value for p in Permission}
@@ -59,7 +61,8 @@ class TestSystemRoleSeeding:
 
     def test_permission_enum_has_correct_count(self) -> None:
         """Verify the expected number of permissions."""
-        assert len(Permission) == 24, f"Expected 24 permissions, got {len(Permission)}"
+        # 25 after adding dashboard:read (run-3 users.dashboard.metrics_missing_authorization).
+        assert len(Permission) == 25, f"Expected 25 permissions, got {len(Permission)}"
 
     def test_permission_slugs_follow_naming_convention(self) -> None:
         """Verify all permission slugs follow resource:action pattern."""
@@ -75,6 +78,7 @@ class TestSystemRoleSeeding:
             "audit_logs",
             "webhooks",
             "tenant",
+            "dashboard",
         }
         valid_actions = {
             "read",
@@ -105,7 +109,7 @@ class TestSystemRoleSeeding:
         """
         # Admin gets ALL permissions per migration logic (line 125-126)
         admin_permissions = set(Permission)
-        assert len(admin_permissions) == 24
+        assert len(admin_permissions) == 25
 
     def test_member_role_should_have_read_permissions(self) -> None:
         """
@@ -125,6 +129,9 @@ class TestSystemRoleSeeding:
             Permission.AUDIT_LOGS_VIEW_ONLY,
             Permission.WEBHOOKS_READ,
             Permission.NOTIFICATIONS_READ,
+            # Run-3: dashboard:read matches the "read in value" selection rule, so
+            # the Member expectation follows the same logic the migration uses.
+            Permission.DASHBOARD_READ,
         }
         # Filter strictly for permissions that contain "read" in the value
         # This matches the migration logic: if "read" in perm.value

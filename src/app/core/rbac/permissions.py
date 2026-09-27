@@ -51,3 +51,7 @@ class Permission(str, Enum):
     # Audit Logs (Phase 7)
     AUDIT_LOGS_VIEW_ONLY = "audit_logs:read"
     AUDIT_LOGS_DOWNLOAD = "audit_logs:export"
+
+    # Dashboard / Analytics (run-3 finding users.dashboard.metrics_missing_authorization)
+    # Tenant-wide revenue, MRR, ARPU, subscription and login aggregates.
+    DASHBOARD_READ = "dashboard:read"

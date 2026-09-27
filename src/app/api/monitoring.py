@@ -23,7 +23,10 @@ from src.app.core.health import (
     check_redis_queue_health,
     resolve_readiness_status,
 )
+from src.app.core.logger import get_logger
 from src.app.core.monitoring.r1_unified_metrics import get_r1_metrics
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -56,7 +59,13 @@ async def check_database() -> dict[str, str | float | bool]:
         "max_overflow": settings.postgres.DB_MAX_OVERFLOW,
     }
     if result.error:
-        payload["error"] = result.error
+        # Run-3 finding api.monitoring.health_endpoint_error_text_disclosure:
+        # this endpoint is unauthenticated, so raw driver text (asyncpg messages
+        # carry host/port/database/user) must not reach the client. The detail
+        # stays server-side; probe diagnostics are exposed on the already
+        # superuser-gated /metrics route.
+        logger.warning("health_probe_failed", probe="database", error=result.error)
+        payload["error"] = "unhealthy"
     return payload
 
 
@@ -158,7 +167,9 @@ async def health_check() -> HealthCheckResponse:
     for key, result in zip(keys, results, strict=False):
         # M4: Use Exception instead of BaseException to avoid catching KeyboardInterrupt/SystemExit
         if isinstance(result, Exception):
-            checks[key] = {"status": "unhealthy", "error": str(result)}
+            # Run-3: do not echo exception text on an unauthenticated route.
+            logger.warning("health_probe_failed", probe=key, error=str(result))
+            checks[key] = {"status": "unhealthy", "error": "unhealthy"}
         else:
             # Type narrowing: result is guaranteed to be dict after isinstance check
             checks[key] = result  # type: ignore[assignment]

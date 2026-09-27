@@ -194,6 +194,21 @@ class UserCreate(UserBase, BaseCreate):
             description="Must contain at least one lowercase, uppercase, digit, and special character",
         ),
     ]
+    # Run-3 finding tenancy.zero_user_tenant_claim_by_slug: proof of intent for
+    # the empty-tenant first-user bootstrap. Optional here (a superuser creating
+    # a user through POST /users must not have to supply it) and REQUIRED by the
+    # self-service gate when the target tenant has no users.
+    registration_token: Annotated[
+        str | None,
+        Field(
+            default=None,
+            max_length=256,
+            description=(
+                "First-user bootstrap token. Required only for self-service "
+                "registration into an empty tenant."
+            ),
+        ),
+    ] = None
 
     @field_validator("username")
     @classmethod

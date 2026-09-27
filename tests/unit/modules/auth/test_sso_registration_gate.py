@@ -66,9 +66,12 @@ def gate_closed():
     from src.app.core.config import settings
 
     original = settings.auth.AUTH_OPEN_REGISTRATION
+    original_token = settings.auth.FIRST_USER_REGISTRATION_TOKEN
     settings.auth.AUTH_OPEN_REGISTRATION = False
+    settings.auth.FIRST_USER_REGISTRATION_TOKEN = "bootstrap-secret"
     yield
     settings.auth.AUTH_OPEN_REGISTRATION = original
+    settings.auth.FIRST_USER_REGISTRATION_TOKEN = original_token
 
 
 @pytest.fixture
@@ -92,11 +95,15 @@ def _mock_tenant():
 class TestRegistrationGateHelper:
     """The shared helper answers the S-M2 question identically for both flows."""
 
-    async def _allowed(self, mock_db, gate_open_flag, tenant, tenant_user_row):
+    async def _allowed(
+        self, mock_db, gate_open_flag, tenant, tenant_user_row, token=None, configured_token="bootstrap-secret"
+    ):
         from src.app.core.config import settings
 
         original = settings.auth.AUTH_OPEN_REGISTRATION
+        original_token = settings.auth.FIRST_USER_REGISTRATION_TOKEN
         settings.auth.AUTH_OPEN_REGISTRATION = gate_open_flag
+        settings.auth.FIRST_USER_REGISTRATION_TOKEN = configured_token
         try:
             from src.app.modules.auth.services import registration_gate
 
@@ -104,9 +111,12 @@ class TestRegistrationGateHelper:
             mock_result.scalar.return_value = tenant_user_row
             mock_db.execute = AsyncMock(return_value=mock_result)
             with patch.object(registration_gate, "get_current_tenant", return_value=tenant):
-                return await registration_gate.is_self_registration_allowed(mock_db)
+                return await registration_gate.is_self_registration_allowed(
+                    mock_db, registration_token=token
+                )
         finally:
             settings.auth.AUTH_OPEN_REGISTRATION = original
+            settings.auth.FIRST_USER_REGISTRATION_TOKEN = original_token
 
     async def test_open_registration_allows_everything(self, mock_db):
         assert await self._allowed(mock_db, True, _mock_tenant(), tenant_user_row=1) is True
@@ -114,8 +124,43 @@ class TestRegistrationGateHelper:
     async def test_closed_gate_rejects_populated_tenant(self, mock_db):
         assert await self._allowed(mock_db, False, _mock_tenant(), tenant_user_row=1) is False
 
-    async def test_closed_gate_allows_first_user_bootstrap(self, mock_db):
-        assert await self._allowed(mock_db, False, _mock_tenant(), tenant_user_row=None) is True
+    async def test_closed_gate_allows_first_user_bootstrap_with_token(self, mock_db):
+        """Run-3: the empty-tenant bootstrap now requires proof of intent."""
+        assert (
+            await self._allowed(
+                mock_db, False, _mock_tenant(), tenant_user_row=None, token="bootstrap-secret"
+            )
+            is True
+        )
+
+    async def test_closed_gate_rejects_first_user_bootstrap_without_token(self, mock_db):
+        """The run-3 regression: guessing a slug must no longer claim a tenant."""
+        assert (
+            await self._allowed(mock_db, False, _mock_tenant(), tenant_user_row=None, token=None)
+            is False
+        )
+
+    async def test_closed_gate_rejects_wrong_token(self, mock_db):
+        assert (
+            await self._allowed(
+                mock_db, False, _mock_tenant(), tenant_user_row=None, token="guessed"
+            )
+            is False
+        )
+
+    async def test_bootstrap_fails_closed_when_no_token_configured(self, mock_db):
+        """An unset token disables the bootstrap rather than permitting it."""
+        assert (
+            await self._allowed(
+                mock_db,
+                False,
+                _mock_tenant(),
+                tenant_user_row=None,
+                token="anything",
+                configured_token="",
+            )
+            is False
+        )
 
     async def test_closed_gate_falls_through_without_tenant(self, mock_db):
         # NO_TENANT parity with /register: the service path owns the failure.
@@ -269,7 +314,9 @@ async def test_sso_callback_allowed_for_first_user_bootstrap(
     mock_request,
     gate_closed,
 ):
-    """Gate closed but tenant has NO users -> bootstrap allowed."""
+    """Run-3: an SSO callback cannot present a bootstrap token, so it may NOT
+    claim an empty tenant. The tenant owner must create the first account via
+    /account/register with the token, or set AUTH_OPEN_REGISTRATION."""
     _drive_new_user_callback_patches(
         mock_get_manager, mock_get_provider, mock_crud_sso, mock_user_service_cls, mock_user_dir_cls
     )
@@ -295,11 +342,11 @@ async def test_sso_callback_allowed_for_first_user_bootstrap(
         patch("src.app.modules.auth.services.sso.get_current_tenant", return_value=_mock_tenant()),
         patch.object(SSOService, "_create_sso_user", new=AsyncMock(return_value=created)) as mock_create_user,
         patch.object(SSOService, "_link_account", new=AsyncMock()),
+        pytest.raises(ForbiddenError),
     ):
-        response = await service.process_callback(mock_db, mock_request, SSOProvider.GOOGLE, "code", "state")
+        await service.process_callback(mock_db, mock_request, SSOProvider.GOOGLE, "code", "state")
 
-    mock_create_user.assert_awaited_once()
-    assert response.access_token == "jwt_access"
+    mock_create_user.assert_not_awaited()
 
 
 @pytest.mark.asyncio

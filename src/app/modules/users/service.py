@@ -34,7 +34,7 @@ from src.app.modules.users.crud import CRUDUser, crud_users
 from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
 from src.app.modules.users.session_invalidation import InvalidationReason, should_bump_token_version
-from src.app.shared.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
+from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 logger = get_logger(__name__)
 
@@ -422,9 +422,13 @@ class UserService:
         # cross-tenant username stays invisible instead of leaking existence).
         require_tenant_match(get_user_attr(db_user, "tenant_id"), resource="User", key=username)
 
-        # Ownership check (superusers bypass)
+        # Ownership check (superusers bypass).
+        # Run-3 finding users.read_user.same_tenant_existence_oracle: this path
+        # had the same resolve-then-403/404 split as GET /users/{user_id}. A
+        # non-owner now gets the identical soft-404 a nonexistent user gets, so
+        # the update endpoints cannot be used to confirm co-tenant existence.
         if db_username != current_user.username and not current_user.is_superuser:
-            raise ForbiddenError("You do not have permission to modify this user's email.")
+            raise ModelNotFoundError("User", username)
         # Check for duplicate email if changing (exclude soft-deleted users)
         reason = InvalidationReason.PROFILE_EDIT
         if values.email is not None and values.email != db_email:
@@ -503,7 +507,9 @@ class UserService:
         require_tenant_match(get_user_attr(db_user, "tenant_id"), resource="User", key=username)
 
         if username != current_user.username and not current_user.is_superuser:
-            raise ForbiddenError("You do not have permission to delete this user.")
+            # Run-3: uniform soft-404 (see update_user) so DELETE cannot be
+            # used to confirm that an identifier is a member of this tenant.
+            raise ModelNotFoundError("User", username)
 
         # BUG FIX: Previously used two separate auto-committing calls:
         #   1. crud.update(token_version + 1)  <- auto-commit

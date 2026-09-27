@@ -479,18 +479,20 @@ class PricingService:
         )
 
     async def get_pricing(self, pricing_id: int) -> dict[str, Any]:
-        pricing = await crud_pricing.get(db=self.db, id=pricing_id)
+        # Run-3 N-2: the row was previously loaded by id with NO tenant filter and
+        # only the PARENT PRODUCT was tenant-checked, so a caller who could name
+        # the header tenant could read the pricing row. Scope the pricing read
+        # itself to the resolved tenant, so the confidentiality of the row does
+        # not depend on its parent.
+        tid = self._resolve_tenant("Pricing", pricing_id)
+        pricing = await crud_pricing.get(db=self.db, id=pricing_id, tenant_id=tid)
         if pricing is None:
             raise ModelNotFoundError("Pricing", pricing_id)
 
-        # SECURITY FIX: Verify pricing's parent product belongs to current tenant.
-        if pricing is not None:
-            tid = self._resolve_tenant("Pricing", pricing_id)
-            # FastCRUD might return dict or object
-            prod_id = pricing.get("product_id") if isinstance(pricing, dict) else pricing.product_id
-            product = await crud_products.get(db=self.db, id=prod_id, tenant_id=tid)
-            if product is None:
-                raise ModelNotFoundError("Pricing", pricing_id)
+        prod_id = pricing.get("product_id") if isinstance(pricing, dict) else pricing.product_id
+        product = await crud_products.get(db=self.db, id=prod_id, tenant_id=tid)
+        if product is None:
+            raise ModelNotFoundError("Pricing", pricing_id)
         return pricing
 
     async def get_product_pricing(

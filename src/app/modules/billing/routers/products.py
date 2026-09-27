@@ -9,6 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.api.deps import RequestContextDep
 from src.app.core.db.database import async_get_db
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
@@ -42,13 +43,23 @@ async def create_product(
 
 @router.get("", response_model=ProductList)
 async def list_products(
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
     is_active: bool | None = None,
 ) -> dict:
-    """List products."""
-    service = get_product_service(db)
+    """List products.
+
+    Run-3 N-2 (``billing.catalog_reads_scope_from_unauthenticated_header``):
+    product rows are CONFIDENTIAL tenant billing data, not a public catalog.
+    This route previously took only a DB session, so its tenant scope came
+    solely from the caller-supplied ``X-Tenant-ID`` header and any anonymous
+    caller who guessed a slug could read that tenant's catalog.
+    ``RequestContextDep`` requires authentication AND resolves the tenant from
+    the authenticated principal (with ``_enforce_user_tenant_match`` rejecting a
+    header that disagrees with the caller's own tenant).
+    """
+    service = get_product_service(ctx.db)
     result = await service.get_products(page=page, limit=per_page, is_active=is_active)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
@@ -65,10 +76,14 @@ async def list_products(
 @router.get("/{product_id:int}", response_model=ProductRead)
 async def get_product(
     product_id: int,
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
 ) -> dict:
-    """Get a product by integer ID."""
-    service = get_product_service(db)
+    """Get a product by integer ID.
+
+    Run-3 N-2: confidential tenant data; requires an authenticated principal
+    whose tenant matches the resolved context.
+    """
+    service = get_product_service(ctx.db)
     return await service.get_product(product_id)
 
 

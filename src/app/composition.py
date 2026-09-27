@@ -116,6 +116,50 @@ async def _start_permission_graph_gate() -> None:
     ensure_permission_graph_registered()
 
 
+async def _start_permission_catalog_reconcile() -> None:
+    """Make the permissions table match the Permission enum (run-3 finding #6).
+
+    Migration 03_access_control seeded a fixed slug list that drifted from the
+    enum, leaving 15 declared permissions ungrantable — add_permission_to_role
+    resolves against the table and raises ModelNotFoundError when a slug is
+    absent, so a permission added to the enum alone yields an INERT gate.
+
+    The migration is the primary fix; this phase makes the invariant self-healing
+    so drift cannot silently return when someone adds an enum value and forgets
+    the migration.
+
+    Deliberately logs rather than raises on failure. Every other boot gate here
+    fails loud because an unwired seam causes mass 401s; a catalog row that is
+    missing only degrades *new permission grants* for one slug. Tearing down a
+    serving process for that would be disproportionate, so the error is loud in
+    the log and the migration remains the authoritative repair path.
+    phase the successor mapping is applied when any role actually holds
+    ``files:manage`` (a legacy database, or one carrying operator-created rows).
+    """
+    from src.app.core.db.database import local_session
+    from src.app.modules.rbac.catalog import (
+        migrate_successor_grants,
+        reconcile_permission_catalog,
+    )
+
+    try:
+        async with local_session() as db:
+            report = await reconcile_permission_catalog(db)
+            if not report.stale:
+                # A database built from the corrected 03_access_control has no
+                # stale slugs, so there is nothing to carry forward.
+                await migrate_successor_grants(db)
+    except Exception as e:  # noqa: BLE001 - catalog sync must not block startup
+        logger.error("permission_catalog_reconcile_failed", error=str(e))
+        return
+    if report.stale:
+        logger.info(
+            "permission_catalog_stale_slugs_retained",
+            slugs=list(report.stale),
+            reason="kept for backward compatibility; not grantable via the enum",
+        )
+
+
 async def _start_security_budget_gate() -> None:
     # Every leg's budget name now comes from the security-budget seam's table,
     # so an operator who removes an entry (e.g. mfa_verify_global) would
@@ -290,6 +334,9 @@ def lifespan_factory(
             StartupPhase("security_budget_gate", _start_security_budget_gate, None),
             StartupPhase("tenant_model_gate", _start_tenant_model_gate, None),
             StartupPhase("permission_graph_gate", _start_permission_graph_gate, None),
+            StartupPhase(
+                "permission_catalog_reconcile", _start_permission_catalog_reconcile, None
+            ),
             StartupPhase("rate_policy_gate", _start_rate_policy_gate, None),
             StartupPhase("bypass_recorder_gate", _start_bypass_recorder_gate, None),
             # "warm_caches" + "_start_cache_warmer": pinned by name in

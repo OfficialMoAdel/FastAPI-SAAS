@@ -128,6 +128,9 @@ class TestEnableMFA:
                 request = MFAEnableRequest(
                     setup_token="some-setup-token",
                     totp_token="000000",
+                    # Run-3: step-up field is enforced at the ROUTER layer; the
+                    # service call under test is reached only after it passes.
+                    password="correct-horse",
                 )
                 # P1: enable now enforces the service-level lockout; mock it
                 # here (lockout itself is covered by dedicated tests).
@@ -163,6 +166,7 @@ class TestEnableMFA:
                     request = MFAEnableRequest(
                         setup_token="some-setup-token",
                         totp_token="123456",
+                        password="correct-horse",
                     )
                     # P1: enable now enforces the service-level lockout; mock
                     # it here (lockout itself is covered by dedicated tests).

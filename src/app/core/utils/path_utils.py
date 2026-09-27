@@ -21,6 +21,13 @@ def sanitize_path(path: str, max_len: int = 64) -> str:
     deterministic digest so distinct overlong paths stay distinguishable while
     cardinality stays bounded.
 
+    Run-3 N-1 CORRECTION: that comment overstated the guarantee. A deterministic
+    digest of attacker-controlled input is still 1:1 with that input, so path
+    rotation still produced unbounded DISTINCT keys (the cap bounded key
+    LENGTH, not key CARDINALITY). Bounding cardinality is now the aggregate
+    per-IP ceiling in rate_policy/request_admission; this function is only
+    responsible for keeping each individual key short and readable.
+
     R5-MICRO: memoized via lru_cache — the 1024-entry maxsize bounds memory
     even under attacker-minted unique paths (LRU eviction, not the digest
     cap, is what prevents unbounded growth).

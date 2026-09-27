@@ -23,6 +23,7 @@ from src.app.core.security.budgets import Identity, SecurityAction, probe
 from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
 from src.app.core.security.rate_policy import (
     RateLimitVerdict,
+    build_anonymous_aggregate_key,
     build_rate_limit_key,
     build_verdict,
     consume,
@@ -182,6 +183,29 @@ class RequestAdmissionService:
         if is_limited:
             logger.warning("Rate limit exceeded | key=%s | limit=%s | period=%s", key, limit, period)
 
+        # Run-3 N-1 (middleware.rate_limit.anonymous_key_path_scoped):
+        # per-path buckets alone do not bound an anonymous caller, because
+        # sanitize_path collapses only numeric/UUID segments - rotating a string
+        # segment minted a fresh bucket per request, and auto-ban never fired
+        # because no single bucket was ever exhausted.
+        #
+        # An IP-keyed aggregate ceiling, applied only to ANONYMOUS traffic and
+        # only when the per-path bucket did not already reject, bounds the total.
+        # Its key uses a constant path token, so this check cannot itself be
+        # rotated around. Authenticated callers are unaffected: they are already
+        # keyed by user id and covered by their tier budget.
+        if not is_limited and not ctx.user_id:
+            aggregate = await self._check_anonymous_aggregate(client_ip)
+            if aggregate is not None and aggregate[0]:
+                # Only the REJECTION is taken from the aggregate ceiling. The
+                # per-path `remaining` header keeps reporting the per-route
+                # budget, which is what a well-behaved client paces against;
+                # overwriting it with the aggregate value changed the documented
+                # header contract for every anonymous caller.
+                is_limited = True
+                remaining = 0
+                retry_after = aggregate[2]
+
         verdict = build_verdict(
             key=key,
             limit=limit,
@@ -194,6 +218,41 @@ class RequestAdmissionService:
         if is_limited:
             return await self._handle_violation(client_ip, verdict)
         return AdmissionOutcome("admit", client_ip, verdict)
+
+    async def _check_anonymous_aggregate(
+        self, client_ip: str
+    ) -> tuple[bool, int, int] | None:
+        """Consume the per-IP aggregate ceiling for anonymous traffic.
+
+        Returns ``None`` when the ceiling is disabled, otherwise the
+        ``(is_limited, remaining, retry_after)`` triple for the aggregate bucket.
+
+        Fails in the same direction as the rest of the limiter: the per-path
+        ``consume`` call already decided fail-open/fail-closed for this request,
+        so a degraded aggregate read is not allowed to flip a request that the
+        per-path layer admitted. This ceiling can only ever ADD rejections.
+        """
+        aggregate_limit, aggregate_period = settings.rate_limit.ANONYMOUS_IP_AGGREGATE_LIMIT
+        if not aggregate_limit or aggregate_limit <= 0:
+            return None
+
+        key = build_anonymous_aggregate_key(client_ip)
+        try:
+            is_limited, remaining, retry_after, _degraded = await consume(
+                key, aggregate_limit, aggregate_period
+            )
+        except Exception as exc:  # noqa: BLE001 - ceiling must not break admission
+            logger.warning("anonymous_aggregate_check_failed", error=str(exc), key=key)
+            return None
+
+        if is_limited:
+            logger.warning(
+                "Anonymous aggregate rate limit exceeded | key=%s | limit=%s | period=%s",
+                key,
+                aggregate_limit,
+                aggregate_period,
+            )
+        return is_limited, remaining, retry_after
 
     async def _passthrough_unless_banned(self, client_ip: str) -> AdmissionOutcome:
         if settings.security.AUTO_BAN_ENABLED:

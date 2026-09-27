@@ -62,7 +62,9 @@ class TestP1HighPriorityRegressions:
             mock_redis.get.return_value = b"JBSWY3DPEHPK3PXP"
             mock_get_redis.return_value = mock_redis
 
-            req = MFAEnableRequest(setup_token="setup_123", totp_token="123456")
+            # Run-3: step-up password is required on the model; the router
+            # verifies it before the service is ever reached.
+            req = MFAEnableRequest(setup_token="setup_123", totp_token="123456", password="correct-horse")
             with pytest.raises(ValidationError) as exc_info:
                 await service.enable_mfa(user_id=1, request=req, db=mock_db)
 

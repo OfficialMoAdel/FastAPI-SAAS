@@ -94,19 +94,26 @@ async def test_file_upload_integration(
     client_auth,
     tenant,
     tmp_path,
+    monkeypatch,
 ):
     """
     E2E test for file upload using LocalStorage.
     Uses client_auth fixture which provides authenticated client.
     """
     # 1. Configure Local Storage for the tenant
+    # Run-3: base_path must resolve inside the platform storage root, so point
+    # the root at tmp_path for this test rather than weakening the check.
+    from src.app.core.config import settings
     from tests.conftest import get_testing_session_local
+
+    monkeypatch.setattr(settings.storage, "STORAGE_LOCAL_ROOT", str(tmp_path), raising=False)
+    monkeypatch_root = str(tmp_path)
 
     async with get_testing_session_local()() as db_session:
         settings_service = StorageSettingsService(db_session)
 
         # Create local credentials pointing to tmp_path
-        local_creds = LocalCredentials(base_path=str(tmp_path), base_url="/files")
+        local_creds = LocalCredentials(base_path=monkeypatch_root, base_url="/files")
 
         settings_data = StorageSettingsCreate(
             provider=StorageProviderType.LOCAL,

@@ -66,10 +66,21 @@ class PasswordLifecycleService:
         new_hashed = await get_password_hash(new_password)
         await user_service.crud.update(db=db, id=user_id, object={"hashed_password": new_hashed}, commit=False)
 
+        # Run-3 N-3: a passkey can be enrolled with only a session token, so a
+        # credential-change must not leave it behind. Issued BEFORE the
+        # session-invalidation seam commits, so the DELETE shares the transaction
+        # with the password update: after that commit the password change is
+        # durable, and a revocation flushed afterwards would be a separate
+        # transaction that could fail on its own.
+        from src.app.modules.auth.services.step_up import revoke_user_passkeys
+
+        revoked = await revoke_user_passkeys(db, user_id)
+
         # 1B: the seam owns the SQL bump + commit + cache in one place, so the
-        # password change and the session invalidation commit atomically and
-        # the SQL bump happens exactly once. Cache is written post-commit
-        # inside the seam to prevent re-caching the old DB value.
+        # password change, the passkey revocation and the session invalidation
+        # commit atomically and the SQL bump happens exactly once. Cache is
+        # written post-commit inside the seam to prevent re-caching the old DB
+        # value.
         tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
         await user_service.invalidate_sessions(
             user,
@@ -79,6 +90,7 @@ class PasswordLifecycleService:
         )
 
         await self.delete_user_token_cache(user)
+
         # SECURITY FIX: Add audit log for password change (H-13)
         await audit(
             action="auth.password_changed",
@@ -86,7 +98,7 @@ class PasswordLifecycleService:
             entity_id=user_id,
             tenant_id=user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None),
             user_id=user_id,
-            details={"message": "User password was changed"},
+            details={"message": "User password was changed", "passkeys_revoked": revoked},
             guarantee=AuditGuarantee.BEST_EFFORT,
         )
 
@@ -264,8 +276,17 @@ class PasswordLifecycleService:
         reset_token = result.scalar_one_or_none()
 
         if reset_token is not None and reset_token.token == legacy_digest:
+            # Run-3 finding auth.token_digest_bridge.legacy_rehash_releases_single_use_lock:
+            # this used to commit HERE, inside the SELECT ... FOR UPDATE region and
+            # while the token was still unused. That released the row lock before
+            # the single-use marker was written (below, in a later transaction), so
+            # a second concurrent request re-acquired the lock, re-read used=False
+            # and succeeded - defeating the documented single-use guarantee.
+            #
+            # The re-hash is now flushed in the SAME transaction that marks the
+            # token used, so the lock is held until the invariant is recorded.
             reset_token.token = current_digest
-            await db.commit()
+            await db.flush()
 
         if not reset_token:
             raise UnauthorizedError("Invalid password reset token.")
@@ -324,6 +345,15 @@ class PasswordLifecycleService:
         # CREDENTIAL_CHANGE; the bump forces re-auth of every active session
         # and prevents the lost-password attacker from reusing a captured JWT.
         tenant_id = user.get("tenant_id")
+
+        # Run-3 N-3: a password RESET is the strongest signal that the current
+        # credential set is compromised, so enrolled passkeys are revoked here
+        # too. Flushed before the session-invalidation seam, so the delete and
+        # the password update share one transaction.
+        from src.app.modules.auth.services.step_up import revoke_user_passkeys
+
+        revoked = await revoke_user_passkeys(db, reset_token.user_id)
+
         await user_service.invalidate_sessions(
             user,
             InvalidationReason.CREDENTIAL_CHANGE,
@@ -332,6 +362,11 @@ class PasswordLifecycleService:
         )
         await self.delete_user_token_cache(user)
 
-        logger.info("Password reset successful", user_id=reset_token.user_id, token_id=reset_token.id)
+        logger.info(
+            "Password reset successful",
+            user_id=reset_token.user_id,
+            token_id=reset_token.id,
+            passkeys_revoked=revoked,
+        )
 
         return {"message": "Password reset successfully. Please log in with your new password."}

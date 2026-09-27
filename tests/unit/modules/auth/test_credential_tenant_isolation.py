@@ -81,7 +81,7 @@ class TestEnableMfaTenantStamp:
             directory_cls.return_value.member = AsyncMock(return_value=member)
             result = await svc.enable_mfa(
                 user_id=1,
-                request=MFAEnableRequest(setup_token="tok", totp_token="123456"),
+                request=MFAEnableRequest(setup_token="tok", totp_token="123456", password="correct-horse"),
                 db=db,
             )
         return result
