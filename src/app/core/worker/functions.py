@@ -178,6 +178,14 @@ async def startup(ctx: Worker) -> None:
     ensure_feature_tasks_registered()
     ensure_feature_collaborators_registered()
 
+    # The RLS bypass recorder must be wired in the worker too, not just the
+    # web process. The worker is the ONLY process that runs
+    # job_bypass_context, and audit.py's gate exists precisely so a missing
+    # recorder is a boot failure rather than a silently unaudited bypass.
+    from src.app.core.worker.audit import ensure_bypass_recorder_registered
+
+    ensure_bypass_recorder_registered()
+
     from src.app.core.config import settings
     from src.app.core.redis_provider import create_arq_pool, create_cache_client
 

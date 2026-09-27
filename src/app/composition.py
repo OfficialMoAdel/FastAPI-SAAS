@@ -339,9 +339,9 @@ def lifespan_factory(
             ),
             StartupPhase("rate_policy_gate", _start_rate_policy_gate, None),
             StartupPhase("bypass_recorder_gate", _start_bypass_recorder_gate, None),
-            # "warm_caches" + "_start_cache_warmer": pinned by name in
-            # tests/performance/test_optimizations_r4/test_cache_warming.py
-            # (source-string assertions) — keep both spellings on this row.
+            # The phase NAME is part of the observable startup contract and is
+            # asserted behaviourally (the phase sequence handed to
+            # compose_phases), not by grepping this file.
             StartupPhase("warm_caches", partial(_start_cache_warmer, initialization_complete), None),
         ]
         # Teardown pairing: the pool closes ride their phases (reverse

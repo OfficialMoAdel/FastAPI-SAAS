@@ -131,9 +131,15 @@ def get_client_ip(request: Request) -> str:
             for ip in reversed(ips):
                 if not is_trusted_proxy(ip):
                     return ip
-            # If all IPs in X-Forwarded-For are trusted proxies, the true client is the first one.
-            if ips:
-                return ips[0]
+            # Every hop in the chain is a trusted proxy, so the chain carries
+            # no untrusted hop to identify the client. Returning ips[0] here
+            # would hand back the LEFTMOST entry, which is the one an
+            # attacker controls whenever the edge appends rather than
+            # overwrites — and this value becomes the ban key
+            # (ip_rules.ban_ip) and the rate-limit identity. Fail closed to
+            # the peer address instead: the only value here we actually
+            # observed at the socket.
+            return client_ip
 
         # Fallback to X-Real-IP ONLY when the direct peer is a trusted proxy
         # AND the value parses as a real IP literal. X-Real-IP is a single

@@ -26,7 +26,6 @@ from src.app.modules.users.schemas import (
 from src.app.modules.users.service import UserService
 from src.app.modules.users.session_invalidation import InvalidationReason
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
-from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 
 
 @pytest.fixture(autouse=True)
@@ -369,7 +368,17 @@ class TestUserServiceUpdate:
     async def test_superuser_can_update_any_user(
         self, user_service, mock_user_update, mock_superuser, mock_existing_user
     ):
-        """Test superuser can update any user's profile."""
+        """A superuser bypasses the ownership check and the update lands.
+
+        ``UserService.update`` exempts superusers at the ownership check
+        (``db_username != current_user.username and not
+        current_user.is_superuser``), so a superuser updating a different
+        account must succeed. This test used to wrap the call in
+        ``try/except ForbiddenException: pass`` with no assertions, so it
+        could not fail either way — and its comment claimed the service
+        *did not* check ``is_superuser``, which is the inverse of the real
+        behaviour.
+        """
         mock_existing_user.id = 999  # Different user
         mock_existing_user.username = "otheruser"
 
@@ -384,18 +393,45 @@ class TestUserServiceUpdate:
                     updated_user.name = mock_user_update.name
                     mock_update.return_value = updated_user
 
-                    # Note: Service logic currently enforces username match without checking is_superuser.
-                    # This test documents that behavior (it expects failure) OR expects success if logic is updated.
-                    # We will wrap in try/except to allow the test to pass either way, focusing on fixing the TypeError
-                    try:
-                        await user_service.update(
-                            username="otheruser",
-                            values=mock_user_update,
-                            current_user=mock_superuser,
-                        )
-                    except ForbiddenException:
-                        # Expected with current implementation
-                        pass
+                    result = await user_service.update(
+                        username="otheruser",
+                        values=mock_user_update,
+                        current_user=mock_superuser,
+                    )
+
+                    assert result["message"] == "User updated"
+                    mock_update.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_non_superuser_update_of_another_user_is_a_soft_404(
+        self, user_service, mock_existing_user
+    ):
+        """Deleting the superuser bypass must break the sibling above.
+
+        Without this, the superuser test alone would still pass if the
+        ownership check were removed entirely — the exemption would be
+        indistinguishable from "no check at all". Run-3
+        ``users.read_user.same_tenant_existence_oracle``: a non-owner gets
+        the SAME soft-404 a nonexistent user gets, not a 403 that leaks
+        co-tenant existence.
+        """
+        mock_existing_user.username = "otheruser"
+        non_superuser = AuthenticatedUser(
+            id=1, username="testuser", email="test@example.com", is_superuser=False
+        )
+
+        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_existing_user
+
+            with patch.object(user_service.crud, "update", new_callable=AsyncMock) as mock_update:
+                with pytest.raises(ModelNotFoundError):
+                    await user_service.update(
+                        username="otheruser",
+                        values=UserUpdate(name="Updated Name"),
+                        current_user=non_superuser,
+                    )
+
+                mock_update.assert_not_awaited()
 
 
 class TestUserServiceDelete:

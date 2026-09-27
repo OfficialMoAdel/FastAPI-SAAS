@@ -65,12 +65,18 @@ class IPFilterMiddleware:
     Execution order:
     1. Check if path is exempt (health checks, etc.)
     2. Extract client IP with trusted proxy support
-    3. If whitelist enabled: check if IP is whitelisted
-       - If yes: allow request (optionally skip rate limiting)
-       - If no: block with 403
-    4. If blacklist enabled: check if IP is blacklisted
-       - If yes: block with 403 and log
-       - If no: allow request
+    3. If blacklist or whitelist enabled: read both in one Redis pipeline
+       - If blacklisted: block with 403 and log
+       - Else if whitelisted: allow the request and mark it trusted
+         (set_whitelisted), optionally skipping rate limiting
+    4. Otherwise apply the bad-bot User-Agent filter
+
+    The list lookup deliberately precedes the bad-bot filter: a whitelisted
+    IP is an operator's explicit decision, so it must survive a scanner
+    User-Agent AND carry the ``ip_whitelisted`` trust signal that
+    ``attack_detection`` and ``request_admission`` read. With the order
+    reversed, a whitelisted IP sending ``User-Agent: sqlmap/1.0`` was
+    rejected before ever being marked trusted.
     """
 
     def __init__(self, app: "ASGIApp", ip_rules: IpRules | None = None) -> None:
@@ -124,34 +130,6 @@ class IPFilterMiddleware:
         # P3 FIX: Store computed IP for downstream middleware reuse
         set_client_ip(request.state, client_ip)
 
-        # BAD BOT FILTERING: Check User-Agent for known malicious scanners
-        if settings.security.BAD_BOT_FILTER_ENABLED:
-            bad_bot_regex = _get_bad_bot_regex()
-            if bad_bot_regex:
-                user_agent = request.headers.get("user-agent", "")
-                match = bad_bot_regex.search(user_agent)
-                if match:
-                    bad_bot = match.group(0)
-                    event = create_security_event(
-                        event_type=SecurityEventType.ATTACK_DETECTED,
-                        client_ip=client_ip,
-                        request_path=path,
-                        reason=f"Blocked bad bot: {bad_bot}",
-                        extra={"user_agent": user_agent},
-                    )
-                    log_security_event(event)
-
-                    logger.warning(
-                        "bad_bot_blocked",
-                        bad_bot=bad_bot,
-                        client_ip=client_ip,
-                        user_agent=user_agent,
-                    )
-                    from src.app.core.errors import middleware_reject
-
-                    response = middleware_reject("bad_bot")
-                    return await response(scope, receive, send)
-
         # Check blacklist and whitelist in a single Redis pipeline
         if settings.security.IP_BLACKLIST_ENABLED or settings.security.IP_WHITELIST_ENABLED:
             # A Redis outage must reject, not crash. get_redis_client raises
@@ -198,6 +176,34 @@ class IPFilterMiddleware:
 
                 logger.debug("IP allowed via whitelist for", client_ip=client_ip, path=path)
                 return await self.app(scope, receive, send)
+
+        # BAD BOT FILTERING: Check User-Agent for known malicious scanners
+        if settings.security.BAD_BOT_FILTER_ENABLED:
+            bad_bot_regex = _get_bad_bot_regex()
+            if bad_bot_regex:
+                user_agent = request.headers.get("user-agent", "")
+                match = bad_bot_regex.search(user_agent)
+                if match:
+                    bad_bot = match.group(0)
+                    event = create_security_event(
+                        event_type=SecurityEventType.ATTACK_DETECTED,
+                        client_ip=client_ip,
+                        request_path=path,
+                        reason=f"Blocked bad bot: {bad_bot}",
+                        extra={"user_agent": user_agent},
+                    )
+                    log_security_event(event)
+
+                    logger.warning(
+                        "bad_bot_blocked",
+                        bad_bot=bad_bot,
+                        client_ip=client_ip,
+                        user_agent=user_agent,
+                    )
+                    from src.app.core.errors import middleware_reject
+
+                    response = middleware_reject("bad_bot")
+                    return await response(scope, receive, send)
 
         # IP is allowed through
         set_whitelisted(request.state, False)

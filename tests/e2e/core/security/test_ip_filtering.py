@@ -201,12 +201,26 @@ class TestCombinedFilteringE2E:
                 await ip_filter_service.remove_from_whitelist("10.0.0.100")
 
     async def test_whitelisted_ip_with_bad_bot_allowed(self, async_client: AsyncClient, override_settings):
-        """Test that whitelist allows even with bad bot user agent."""
+        """Test that whitelist allows even with bad bot user agent.
+
+        BAD_BOT_FILTER_ENABLED is set here explicitly: conftest.py:66
+        defaults it to false globally, so this test used to assert the
+        whitelist branch without ever exercising the bad-bot branch it
+        claims to test.
+        """
         # Setup: Whitelist IP
-        with override_settings(IP_WHITELIST_ENABLED=True):
+        with override_settings(IP_WHITELIST_ENABLED=True, BAD_BOT_FILTER_ENABLED=True):
             await ip_filter_service.add_to_whitelist(ip_address="10.0.0.200", reason="Whitelist with bot test")
 
             try:
+                # Sanity: the bad-bot filter really is live for this case.
+                bot_response = await async_client.get(
+                    "/openapi.json", headers={"X-Forwarded-For": "10.0.0.201", "User-Agent": "sqlmap/1.0"}
+                )
+                assert bot_response.status_code == 403, (
+                    "BAD_BOT_FILTER_ENABLED did not take effect; this test would pass vacuously"
+                )
+
                 # Execute: Request with bad bot UA from whitelisted IP
                 response = await async_client.get(
                     "/openapi.json", headers={"X-Forwarded-For": "10.0.0.200", "User-Agent": "sqlmap/1.0"}

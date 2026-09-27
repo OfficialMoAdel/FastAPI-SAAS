@@ -10,6 +10,30 @@ import pytest
 from src.app.core.json_utils import json_dumps
 
 
+def _bypass_rls_stub():
+    """A no-op stand-in for the resolver's RLS bypass context manager."""
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def _stub(session, *args, **kwargs):
+        yield session
+
+    return _stub
+
+
+def _run_resolve(resolver, slug, session_factory, redis):
+    """Drive resolve_tenant_by_slug synchronously for a sync test body."""
+    import asyncio
+
+    return asyncio.run(
+        resolver.resolve_tenant_by_slug(
+            slug,
+            session_factory=session_factory,
+            redis_client=redis,
+        )
+    )
+
+
 class TestTenantSerialization:
     """Tests for tenant middleware serialization efficiency."""
 
@@ -45,42 +69,68 @@ class TestTenantSerialization:
         # But bytes_result avoids the decode step
         assert isinstance(bytes_result, bytes)
 
-    def test_tenant_middleware_uses_bytes(self) -> None:
-        """Verify tenant resolution caching uses bytes (no as_str=True).
+    def test_tenant_resolver_writes_bytes_to_l2(self) -> None:
+        """The L2 tenant cache must store bytes, not a decoded string.
 
-        A2: the L1/L2/DB read-through lives in the canonical resolver
-        (``src.app.core.tenancy.resolver``); the middleware is a thin
-        adapter, so the bytes invariant is asserted on the seam that owns
-        serialization.
+        Replaces a source-text scan (``inspect.getsource``) whose two
+        ``source.count(...)`` expressions were discarded, whose
+        ``assert "json_dumps(cache_data)" in source or "json_dumps(" in
+        source`` was tautological (the second disjunct subsumes the first),
+        and whose guard loop hunted ``"serialized = json_dumps("`` — a
+        string that occurs zero times in the module, so the loop body never
+        ran. The as_str invariant it claimed to pin was entirely unverified.
+
+        This drives the real resolver and asserts the payload handed to
+        Redis, which is the property that actually matters.
         """
-        import inspect
+        import contextlib
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from src.app.core.tenancy import resolver as tenant
 
-        source = inspect.getsource(tenant)
+        slug = "acme-corp"
+        tenant.invalidate_tenant_l1(slug)
 
-        # Count occurrences of json_dumps
-        source.count("json_dumps(")
+        row = MagicMock()
+        row.id = "11111111-1111-1111-1111-111111111111"
+        row.slug = slug
+        row.name = "ACME"
+        row.is_active = True
 
-        # Count occurrences of as_str=True
-        source.count("as_str=True")
+        session = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none = MagicMock(return_value=row)
+        session.execute = AsyncMock(return_value=result)
+        session.connection = AsyncMock()
 
-        # After fix, there should be no as_str=True in tenant caching
-        # (there might be as_str=True in other contexts, but not for tenant cache)
-        # Check the specific cache_data assignment
-        # The code was refactored to: serialized = json_dumps(cache_data)
-        assert "json_dumps(cache_data)" in source or "json_dumps(" in source
+        @contextlib.asynccontextmanager
+        async def _session():
+            yield session
 
-        # The fix removes as_str=True from cache_data assignment
-        # Find the serialized line and verify no as_str
-        lines = source.split("\n")
-        for i, line in enumerate(lines):
-            if "serialized = json_dumps(" in line:
-                # Check if as_str=True is NOT in the next few lines of this call
-                cache_block = "\n".join(lines[i : i + 10])
-                if 'id": tenant.id' in cache_block:
-                    # This is the tenant cache block
-                    assert "as_str=True" not in cache_block
+        redis = AsyncMock()
+        redis.setex = AsyncMock()
+        redis.delete = AsyncMock()
+
+        with (
+            patch("src.app.core.db.rls.bypass_rls", _bypass_rls_stub()),
+            patch("src.app.core.db.rls.clear_rls_context", AsyncMock()),
+        ):
+            ctx = _run_resolve(tenant, slug, _session, redis)
+
+        assert ctx is not None, "resolver returned None for a valid slug"
+        assert ctx.tenant_slug == slug
+
+        # The invariant: the L2 write carries bytes, so the read path
+        # (json_loads at resolver.py:180) never needs a decode step.
+        setex_calls = redis.setex.call_args_list
+        assert setex_calls, "resolver never wrote the L2 tenant cache"
+        payload = setex_calls[0].args[2]
+        assert isinstance(payload, bytes), (
+            f"tenant L2 cache stored {type(payload).__name__}, expected bytes "
+            f"(as_str=True would reintroduce the decode step): {payload!r}"
+        )
+
+        tenant.invalidate_tenant_l1(slug)
 
     @pytest.mark.asyncio
     async def test_redis_accepts_bytes(self) -> None:

@@ -21,15 +21,39 @@ class TestMFAMeterSelection:
 
     @pytest.mark.asyncio
     async def test_step_up_door_charges_the_stepup_meter_on_the_account(self, mock_redis):
-        from fastapi import Request
+        """POST /verify must charge MFA_STEPUP_VERIFY, keyed on the account.
 
-        from src.app.core.security.budgets import SecurityAction
-        from src.app.modules.auth.routers.mfa import check_mfa_mutate_rate_limit  # import guard
+        This test used to assert only that two static enum strings differed
+        and that a just-constructed Mock was not None — it could not fail.
+        The three-MFA-meter separation is a security property (merging any
+        two meters would couple two independent limits), so the step-up
+        door needs the same wiring assertion its mutate sibling already has.
 
-        request = Mock(spec=Request)
-        assert request is not None
-        assert check_mfa_mutate_rate_limit is not None
-        assert SecurityAction.MFA_STEPUP_VERIFY.value != SecurityAction.MFA_VERIFY_ACCOUNT.value
+        /verify calls check() directly rather than through
+        check_mfa_mutate_rate_limit, so the route itself is driven here.
+        """
+        from src.app.core.security.budgets import Identity, SecurityAction
+        from src.app.modules.auth.routers import mfa as mfa_router
+        from src.app.modules.auth.schemas import MFAVerifyRequest
+
+        ctx = Mock()
+        ctx.user_id = 42
+        ctx.db = AsyncMock()
+
+        service = Mock()
+        service.verify_totp_token = AsyncMock(return_value={"valid": True})
+
+        with patch("src.app.modules.auth.routers.mfa.check", new_callable=AsyncMock) as mock_budget:
+            await mfa_router.verify_mfa(
+                request=MFAVerifyRequest(totp_token="123456"),
+                ctx=ctx,
+                service=service,
+                fastapi_request=Mock(),
+            )
+
+            mock_budget.assert_awaited_once_with(
+                SecurityAction.MFA_STEPUP_VERIFY, Identity(user_id=42)
+            )
 
     @pytest.mark.asyncio
     async def test_mutate_door_charges_the_mutation_meter_on_the_account(self, mock_redis):

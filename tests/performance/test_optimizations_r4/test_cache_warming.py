@@ -11,7 +11,9 @@ into the cache during application startup to avoid cold-start latency.
 
 from __future__ import annotations
 
+import contextlib
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -21,6 +23,13 @@ from src.app.core.cache.warmer import (
     warm_caches,
     warm_tenant_cache,
 )
+
+
+class _FakeApp:
+    """Minimal stand-in for the FastAPI app the lifespan is handed."""
+
+    def __init__(self) -> None:
+        self.state = type("State", (), {})()
 
 
 class TestP12CacheWarmingPrerequisites:
@@ -174,28 +183,40 @@ class TestP12CacheWarmingIntegration:
 
 
 class TestP12CacheWarmingInLifespan:
-    """Tests verifying cache warming is called in application lifespan."""
+    """Tests verifying cache warming is wired into the application lifespan."""
 
-    def test_cache_warming_called_in_lifespan_factory(self) -> None:
-        """Verify warm_caches is imported and called in lifespan_factory."""
-        import inspect
+    @pytest.mark.asyncio
+    async def test_warm_caches_is_a_registered_startup_phase(self) -> None:
+        """Entering the lifespan must register a phase named ``warm_caches``.
+
+        Replaces a source-text scan (``inspect.getsource(lifespan_factory)``
+        + ``assert "warm_caches" in source``). The scan only worked because
+        ``composition.py`` carried a comment telling engineers not to rename
+        the symbol, because a test greps for it — a test-quality defect
+        promoted into a production constraint. This asserts the real
+        wiring: the StartupPhase sequence actually handed to
+        ``compose_phases`` when the lifespan is entered.
+        """
 
         from src.app.composition import lifespan_factory
+        from src.app.core.config import settings
 
-        # Get the source code of lifespan_factory
-        source = inspect.getsource(lifespan_factory)
+        captured: list = []
 
-        # Verify cache warming is imported and called
-        assert "warmer" in source, "warmer not imported in lifespan_factory"
-        assert "warm_caches" in source, "warm_caches not called in lifespan_factory"
+        @contextlib.asynccontextmanager
+        async def _capture(phases, tail=(), teardown_on_startup_failure=False):
+            captured.append(list(phases))
+            yield
 
-    def test_lifespan_with_admin_uses_lifespan_factory(self) -> None:
-        """Verify lifespan_with_admin uses lifespan_factory (which warms caches)."""
-        import inspect
+        # compose_phases is imported into composition's namespace at module
+        # level, so patch it there (not on src.app.core.runtime).
+        with patch("src.app.composition.compose_phases", _capture):
+            lifespan = lifespan_factory(settings, create_tables_on_start=False)
+            async with lifespan(_FakeApp()):
+                pass
 
-        from src.app.main import lifespan_with_admin
-
-        source = inspect.getsource(lifespan_with_admin)
-
-        # Verify it uses the default lifespan from factory
-        assert "lifespan_factory" in source, "lifespan_with_admin should use lifespan_factory"
+        assert captured, "compose_phases was never called"
+        names = [phase.name for phase in captured[0]]
+        assert "warm_caches" in names, (
+            f"warm_caches is not a registered startup phase; got {names}"
+        )

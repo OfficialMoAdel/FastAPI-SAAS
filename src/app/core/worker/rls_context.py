@@ -74,9 +74,13 @@ async def _record_bypass_audit(reason: str) -> None:
     it) instead of propagating.
     """
     # The recorder is supplied by the audit module; see core/worker/audit.py.
-    record_bypass = require_bypass_recorder()
-
+    # It must be RESOLVED inside the try: require_bypass_recorder() raises
+    # RuntimeError when the seam is unwired, and that raise would otherwise
+    # escape _record_bypass_audit, propagate out of job_bypass_context, and
+    # abort the job — inverting this function's whole contract ("jobs never
+    # block on audit") in exactly the case the gate exists to cover.
     try:
+        record_bypass = require_bypass_recorder()
         await record_bypass(reason)
     except Exception as exc:  # noqa: BLE001 — intentional: jobs never block on audit
         logger.error(
