@@ -62,6 +62,24 @@ _USER_INVALIDATION_POLICY = InvalidationPolicy(
     exhausted_message="User cache invalidation failed after retry — stale auth info may persist until TTL",
 )
 
+
+def _user_cache_poison_key(user_ids: Sequence[Any]) -> str:
+    """Marker key for a batch whose invalidation exhausted its retries.
+
+    Mirrors the single-user marker (``user:invalidation_failed:<id>``) with a
+    batch-scoped suffix, so a later reader can find the affected entities
+    without the two paths colliding.
+    """
+    if len(user_ids) == 1:
+        return f"user:invalidation_failed:{user_ids[0]}"
+    digest = str(abs(hash(tuple(sorted(str(u) for u in user_ids)))))
+    return f"user:invalidation_failed:batch:{len(user_ids)}:{digest}"
+
+
+async def _write_batch_poison_marker(client: Any, marker_key: str) -> None:
+    """Write the batch poison marker, bounded by the same TTL as the single path."""
+    await client.set(marker_key, "batch", ex=AUTH_INFO_CACHE_TTL)
+
 # R1-OPT: process-local auth-info L1 (short TTL by design). The Redis TTL
 # (3600s) is only a staleness BACKSTOP — happy-path invalidation is a
 # synchronous Redis DELETE, so effective staleness is ~0. A 300s L1 keyed off
@@ -316,6 +334,7 @@ class UserCacheInvalidator:
         tenant_context = get_current_tenant()
         delete_keys: list[str] = []
         token_sets: list[tuple[str, int, bool]] = []
+        batch_ids: list[Any] = []
 
         for user in users:
             try:
@@ -337,6 +356,9 @@ class UserCacheInvalidator:
                     username = getattr(user, "username", user[2] if len(user) > 2 else None)
                     tenant_id = getattr(user, "tenant_id", user[3] if len(user) > 3 else None)
                     current_version = getattr(user, "token_version", user[4] if len(user) > 4 else 0)
+
+                if tenant_id is not None:
+                    batch_ids.append(user_id)
 
                 if tenant_id is None and tenant_context is not None:
                     tenant_id = tenant_context.tenant_id
@@ -373,7 +395,8 @@ class UserCacheInvalidator:
                 await _auth_info_l1_seam.invalidate(key)
         if not delete_keys and not token_sets:
             return
-        try:
+
+        async def _batch_invalidate_redis() -> None:
             async with client.pipeline(transaction=False) as pipe:
                 if delete_keys:
                     pipe.delete(*delete_keys)
@@ -381,8 +404,26 @@ class UserCacheInvalidator:
                     new_version = version if is_explicit else (version + 1 if bump_token_version else version)
                     pipe.set(key, str(new_version), ex=300)
                 await pipe.execute()
-        except Exception as e:
-            logger.warning("Failed to batch-invalidate user caches", count=len(users), error=e)
+
+        # The batch path is a security-relevant mutation (RBAC role
+        # assign/remove routes here), so it runs under the SAME declared
+        # policy as the single-user path: one retry, an error that names what
+        # stays stale, and the family's poison marker. A bare try/except left
+        # batch invalidation strictly LESS safe than single invalidation of
+        # the same data, and reintroduced in the module that owns the family
+        # the divergence core/cache/invalidation_exhaustion.py exists to
+        # eliminate.
+        marker_key = _user_cache_poison_key(batch_ids)
+        await invalidate_with_exhaustion(
+            _batch_invalidate_redis,
+            policy=_USER_INVALIDATION_POLICY,
+            log_context={
+                "count": len(users),
+                "user_ids": [str(u) for u in batch_ids[:20]],
+                "poison_key": marker_key,
+            },
+            write_marker=lambda: _write_batch_poison_marker(client, marker_key),
+        )
 
 
 __all__ = [

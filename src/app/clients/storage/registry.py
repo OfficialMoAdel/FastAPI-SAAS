@@ -58,11 +58,24 @@ class StorageProviderRegistry:
 
     @classmethod
     def create(cls, provider_type: StorageProviderType, credentials: dict[str, Any]) -> StorageProvider:
-        """Create a configured StorageProvider using registered factory."""
+        """Create a configured StorageProvider using registered factory.
+
+        The factory is ``Callable[..., StorageProvider]`` — an unchecked
+        annotation, so nothing else would stop a misbehaving factory from
+        returning something the file layer cannot use. The failure would
+        otherwise surface on first upload as a 500. Checking here costs one
+        isinstance per cache-miss and keeps the error at the seam.
+        """
         factory = cls._factories.get(provider_type)
         if factory is None:
             raise ValueError(f"Unknown provider: {provider_type}")
-        return factory(credentials)
+        provider = factory(credentials)
+        if not isinstance(provider, StorageProvider):
+            raise TypeError(
+                f"factory for {provider_type} returned {type(provider).__name__}, "
+                f"which is not a StorageProvider"
+            )
+        return provider
 
 
 def _s3_factory(credentials: dict[str, Any]) -> StorageProvider:

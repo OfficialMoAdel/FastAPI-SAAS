@@ -47,6 +47,31 @@ through it.
 Only the interface above the engine changed. ``consume``, ``build_verdict``,
 ``build_rate_limit_key``, ``RateLimitVerdict``, ``SECURITY_BUDGETS`` and
 ``SECURITY_BUDGETS_FAIL_CLOSED`` are used exactly as they were.
+
+**Tenant scope: DELIBERATELY GLOBAL AT EVERY CALL SITE.** ``check`` and
+``probe`` accept ``tenant_id`` and forward it to ``build_rate_limit_key``,
+but no production caller supplies it, so every budget key is
+installation-wide. That is a decision, not an oversight, for three reasons:
+
+1. **The two edge doors cannot supply a tenant.** ``GUARD_ORDER``
+   (``core/guard/ordering.py``) executes ``RateLimit`` BEFORE ``Tenant``, so
+   ``core/security/request_admission.py`` (``probe(REFRESH, ...)``) and
+   ``modules/auth/rate_limit.py`` (``check(AUTH, ...)``) run before any
+   tenant context exists. They are structurally unable to pass it.
+2. **Scoping the IP-keyed login budgets would be a security regression.**
+   ``AUTH``, ``PASSKEY_LOGIN`` and ``REFRESH`` cap brute force per source
+   address. Tenant-scoping them would let an attacker mint a fresh budget by
+   varying the tenant header — turning one global cap into a per-tenant one.
+3. **Enabling scoping needs a coordinated Redis key migration.**
+   ``build_tenant_key`` (``core/utils/cache/keys.py``) prefixes the key when
+   ``tenant_id`` is not None, so scoping changes every live key; and
+   ``core/security/rate_policy.py`` already records that this was
+   deliberately left off pending that migration.
+
+Enabling tenant scope is therefore a separate, coordinated change: migrate
+the Redis keys, then thread ``ctx.tenant_id`` through the in-application
+doors only. ``test_security_budget_contract.py`` pins the current global keys
+so that change is a deliberate, visible act rather than an accident.
 """
 
 from __future__ import annotations
@@ -206,6 +231,14 @@ class BudgetDef:
     action: SecurityAction
     legs: tuple[Leg, ...]
     durable_lockout: DurableLockout | None = None
+    #: Whether this budget MUST be declared in SECURITY_BUDGETS_FAIL_CLOSED,
+    #: so a Redis outage keeps refusing instead of admitting. True for every
+    #: identity-keyed brute-force control. False is a deliberate, visible
+    #: opt-out for a quota: failing it CLOSED would take the feature down on
+    #: any Redis blip, which is an availability decision, not a security one.
+    #: validate_budget_definitions() enforces that the table and the config
+    #: agree in BOTH directions, so neither side can drift silently.
+    fail_closed: bool = True
 
 
 # Both MFA verification doors reach the same durable lockout through
@@ -244,6 +277,11 @@ BUDGETS: Mapping[SecurityAction, BudgetDef] = {
     SecurityAction.AI_CHAT: BudgetDef(
         action=SecurityAction.AI_CHAT,
         legs=(Leg(KeyKind.USER, "ai_chat"),),
+        # Not a brute-force control: it meters per-user AI usage, not an
+        # attack. Failing it closed would make the AI feature unavailable on
+        # any Redis blip, so the posture follows RATE_LIMIT_FAIL_OPEN like
+        # ordinary path policy.
+        fail_closed=False,
     ),
     # --- MFA verification: three doors, three meters, deliberately separate ---
     #
@@ -271,7 +309,7 @@ BUDGETS: Mapping[SecurityAction, BudgetDef] = {
 
 
 def validate_budget_definitions() -> None:
-    """Assert every leg names a configured budget. Called at worker and web boot.
+    """Assert every leg names a CONFIGURED and FAIL-CLOSED budget. Boot gate.
 
     Leg budget names come from this table, so an operator who removes
     ``mfa_verify_global`` from ``SECURITY_BUDGETS`` would otherwise hit a
@@ -292,6 +330,31 @@ def validate_budget_definitions() -> None:
             "security budget definitions reference unconfigured budgets: "
             + "; ".join(missing)
             + f". Configured: {sorted(configured)}"
+        )
+
+    # A budget that is configured but absent from SECURITY_BUDGETS_FAIL_CLOSED
+    # still boots clean and then silently fails OPEN on a Redis outage —
+    # consumed at :371 as `fail_closed=leg.budget in ..._FAIL_CLOSED`.
+    #
+    # Each BudgetDef declares its required posture (fail_closed=True by
+    # default), so adding a budget without declaring a posture is now a boot
+    # failure rather than a silent downgrade of a brute-force control. The
+    # check runs both ways, so the table and the config cannot disagree.
+    fail_closed_cfg = settings.rate_limit.SECURITY_BUDGETS_FAIL_CLOSED
+    wrong_posture = sorted(
+        f"{action} leg {leg.kind} -> {leg.budget} "
+        f"(declares fail_closed={definition.fail_closed}, "
+        f"{'absent from' if definition.fail_closed else 'present in'} "
+        "SECURITY_BUDGETS_FAIL_CLOSED)"
+        for action, definition in BUDGETS.items()
+        for leg in definition.legs
+        if (leg.budget in fail_closed_cfg) is not definition.fail_closed
+    )
+    if wrong_posture:
+        raise RuntimeError(
+            "security budget fail-closed posture disagrees with configuration: "
+            + "; ".join(wrong_posture)
+            + f". Declared: {sorted(fail_closed_cfg)}"
         )
 
 
@@ -408,6 +471,12 @@ async def check(
         RateLimitExceededError: a leg is over its limit (429, Retry-After).
         ValueError: a required identity fact was not supplied.
         KeyError: unknown action.
+
+    Note:
+        ``tenant_id`` is accepted and forwarded but is NOT supplied by any
+        production caller — every budget key is deliberately global. See the
+        module docstring ("Tenant scope: DELIBERATELY GLOBAL AT EVERY CALL
+        SITE") for the three reasons and the migration that would change it.
     """
     from src.app.shared.exceptions import RateLimitExceededError
 
@@ -439,6 +508,12 @@ async def probe(
 
     Returns the first limited leg's Verdict, or the first leg's when nothing is
     limited — the latter carries ``limit``/``remaining`` for response headers.
+
+    Note:
+        ``tenant_id`` is accepted and forwarded but is NOT supplied by any
+        production caller — every budget key is deliberately global. See the
+        module docstring ("Tenant scope: DELIBERATELY GLOBAL AT EVERY CALL
+        SITE") for the three reasons and the migration that would change it.
     """
     _, _, verdict = await _evaluate(action, identity, tenant_id=tenant_id, limiter=limiter)
     return verdict

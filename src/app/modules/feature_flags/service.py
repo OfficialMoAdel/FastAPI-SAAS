@@ -424,27 +424,40 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             except Exception as e:
                 logger.warning("Feature flag value cache get failed", cache_key=cache_key, error=str(e))
 
-            value = await self._resolve_flag_value(tenant_id, feature_name, default)
+            value, cacheable = await self._resolve_flag_value(tenant_id, feature_name, default)
 
-            try:
-                await cache_client.set(cache_key, json_dumps(value, as_str=True), ttl=CACHE_TTL)
-            except Exception as e:
-                logger.warning("Feature flag value cache write failed", cache_key=cache_key, error=str(e))
+            if cacheable:
+                try:
+                    await cache_client.set(cache_key, json_dumps(value, as_str=True), ttl=CACHE_TTL)
+                except Exception as e:
+                    logger.warning("Feature flag value cache write failed", cache_key=cache_key, error=str(e))
             return value
 
         return await _with_flag_lock(cache_key, _load())
 
-    async def _resolve_flag_value(self, tenant_id: UUID, feature_name: str, default: Any = None) -> Any:
-        """Uncached B7 precedence resolution shared by ``get_flag_value``."""
+    async def _resolve_flag_value(
+        self, tenant_id: UUID, feature_name: str, default: Any = None
+    ) -> tuple[Any, bool]:
+        """Uncached B7 precedence resolution shared by ``get_flag_value``.
+
+        Returns ``(value, cacheable)``. ``cacheable`` is False when the value
+        fell through to the CALLER's ``default`` — that is one caller's
+        fallback, not the flag's state, and the cache key
+        (``feature_value:{name}``) does not include ``default``. Caching it
+        would serve the first caller's default to everyone else for
+        CACHE_TTL.
+        """
         flag = await self.get_flag_by_key_or_none(feature_name)
         if flag is not None:
             flag_id = int(get_user_attr(flag, "id", 0))
             supplied, value = _override_effective_value(await self.get_override(flag_id, tenant_id))
             if supplied:
-                return value
-            return get_user_attr(flag, "default_value", False)
+                return value, True
+            return get_user_attr(flag, "default_value", False), True
         tenant_flags = await self.get_tenant_flags(tenant_id)
-        return tenant_flags.get(feature_name, default)
+        if feature_name in tenant_flags:
+            return tenant_flags[feature_name], True
+        return default, False
 
     async def is_enabled(self, tenant_id: UUID, feature_name: str, default: bool = False) -> bool:
         """Check if a feature is enabled for a tenant.
@@ -494,7 +507,15 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             enabled = default
 
             flag = await self.get_flag_by_key_or_none(feature_name)
+            # Only a value sourced from the registry, an override, or the
+            # tenant JSONB is a DECISION and safe to cache. A value that
+            # fell through to the caller's `default` is that one caller's
+            # fallback, not the flag's state — caching it under a key that
+            # omits `default` would serve the first caller's default to
+            # every other caller for CACHE_TTL.
+            cacheable = False
             if flag:
+                cacheable = True
                 flag_id = int(get_user_attr(flag, "id", 0))
                 flag_default = parse_flag_bool(get_user_attr(flag, "default_value", False))
 
@@ -508,10 +529,12 @@ class FeatureFlagService(BaseService[FeatureFlag]):
                 tenant = await self.db.get(Tenant, tenant_id)
                 if tenant and tenant.feature_flags:
                     enabled = parse_flag_bool(tenant.feature_flags.get(feature_name, default))
+                    cacheable = True
 
-            try:
-                await cache_client.set(cache_key, str(enabled).lower(), ttl=CACHE_TTL)
-            except Exception as e:
+            if cacheable:
+                try:
+                    await cache_client.set(cache_key, str(enabled).lower(), ttl=CACHE_TTL)
+                except Exception as e:
                     # Q-M3: cache write failure means every check pays the full
                     # DB+override resolution until recovery — warn.
                     logger.warning("Feature flag enabled-state cache write failed", cache_key=cache_key, error=str(e))

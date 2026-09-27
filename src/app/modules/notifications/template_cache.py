@@ -62,8 +62,19 @@ async def store_cached_template(
 
 
 async def invalidate_template_cache(tenant_id: UUID | None, template_name: str) -> None:
-    """Drop the cached content for one template (override written or deleted)."""
+    """Drop the cached content for one template (override written or deleted).
+
+    Fail-soft, like every other function in this module. A Redis error here
+    previously propagated out of an ALREADY-COMMITTED override write, 500ing
+    a successful mutation AND leaving the stale template in place for the
+    full TEMPLATE_CACHE_TTL — the worst of both outcomes. The override is
+    the source of truth; the cache is a read-through, so a failed drop must
+    never fail the write.
+    """
     redis_client = get_redis()
     if not redis_client:
         return
-    await redis_client.delete(template_cache_key(tenant_id, template_name))
+    try:
+        await redis_client.delete(template_cache_key(tenant_id, template_name))
+    except Exception as e:
+        logger.debug("Cache delete failed", error=e)

@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.modules.audit_logs.schemas import AuditExportCriteria
 from src.app.modules.audit_logs.service import (
@@ -32,7 +33,11 @@ class TestF14LoudValidation:
     async def test_missing_tenant_id_raises_value_error_not_key_error(self) -> None:
         """F14: a malformed payload fails as a loud ValueError, never KeyError."""
         with patch("src.app.core.db.database.local_session") as session_factory:
-            session_factory.return_value.__aenter__.return_value = MagicMock()
+            # AsyncSession-spec'd: the fallback opens its session inside
+            # bypass_rls(...), which awaits session.connection().
+            session = MagicMock(spec=AsyncSession)
+            session.connection = AsyncMock()
+            session_factory.return_value.__aenter__.return_value = session
             with pytest.raises(ValueError, match="tenant_id"):
                 await _direct_insert_log({"action": "user.created"})
 

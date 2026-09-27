@@ -152,8 +152,15 @@ async def consume(
                 return result.is_limited, result.remaining, retry_after, False
             except Exception as exc:
                 # A silent swap to a different algorithm is worse than the
-                # outage it hides: log at error level and mark the verdict so
-                # the degradation is visible in the response.
+                # outage it hides: log at error level, mark the verdict so the
+                # degradation is visible in the response, and COUNT it. The
+                # fixed-window path below already calls record_fail_open on
+                # its own failure (core/utils/rate_limit.py:75,79); without a
+                # counter here, operators saw nothing while every auth/MFA
+                # budget silently changed engine.
+                from src.app.core.monitoring.r1_unified_metrics import record_fail_open
+
+                record_fail_open("rate_limit:gcra_degraded")
                 logger.error(
                     "GCRA rate limit check failed; degrading to fixed window | key=%s | error=%s",
                     key,

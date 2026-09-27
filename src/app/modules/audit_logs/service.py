@@ -508,39 +508,58 @@ async def buffer_audit_log(log_data: dict[str, Any]) -> None:
 
 
 async def _direct_insert_log(log_data: dict[str, Any]) -> None:
-    """Commit a validated audit payload in an owned session; propagate failures."""
+    """Commit a validated audit payload in an owned session; propagate failures.
+
+    The session is opened inside ``bypass_rls(...)``: this is a system-level
+    write on behalf of a background flush, not a tenant-scoped request, and
+    ``audit_logs`` is RLS-enabled and FORCEd with
+    ``WITH CHECK (tenant_id = auth.current_tenant_id())``
+    (migration 08_enable_rls_policies). With no tenant bound,
+    ``auth.current_tenant_id()`` is NULL and the insert is rejected — so the
+    fallback would drop the record it exists to preserve.
+
+    This mirrors the sibling ``flush_audit_log_buffer`` (whose docstring
+    already required the caller's bypass session) and the recovery sweeps in
+    ``modules/notifications/service.py:911``.
+
+    Failures propagate: ``audit()`` applies the recorder's BEST_EFFORT
+    delivery guarantee, so a raise here is what makes the loss loud instead
+    of silent.
+    """
     from src.app.core.db.database import local_session
+    from src.app.core.db.rls import bypass_rls
 
     # Use the session context directly: get_db_context logs exception tracebacks
     # that can include SQL parameters. Audit failures are logged safely at audit().
     async with local_session() as db:
-        # F14: explicit required-field validation — a malformed payload must
-        # fail as a loud ValueError here, not as a KeyError mid-construct.
-        tenant_id_val = log_data.get("tenant_id")
-        if tenant_id_val is None:
-            raise ValueError("audit payload missing required 'tenant_id'")
-        try:
-            user_id = int(log_data["user_id"]) if log_data.get("user_id") is not None else None
-        except (ValueError, TypeError):
-            user_id = None
-        log_entry = AuditLog(
-            tenant_id=UUID(str(tenant_id_val)),
-            user_id=user_id,
-            action=log_data["action"],
-            entity_type=log_data["entity_type"],
-            entity_id=log_data["entity_id"],
-            details=log_data["details"],
-            ip_address=log_data["ip_address"],
-            user_agent=log_data["user_agent"],
-        )
-        # F14 (cont.): created_at is stamped by trail.audit(), but a direct caller
-        # must not KeyError — fall back to now instead of crashing REQUIRED.
-        created_at_raw = log_data.get("created_at")
-        log_entry.created_at = (
-            datetime.fromisoformat(created_at_raw) if created_at_raw else datetime.now(UTC)
-        )
-        db.add(log_entry)
-        await db.commit()
+        async with bypass_rls(db, reason="Audit log direct-insert fallback"):
+            # F14: explicit required-field validation — a malformed payload must
+            # fail as a loud ValueError here, not as a KeyError mid-construct.
+            tenant_id_val = log_data.get("tenant_id")
+            if tenant_id_val is None:
+                raise ValueError("audit payload missing required 'tenant_id'")
+            try:
+                user_id = int(log_data["user_id"]) if log_data.get("user_id") is not None else None
+            except (ValueError, TypeError):
+                user_id = None
+            log_entry = AuditLog(
+                tenant_id=UUID(str(tenant_id_val)),
+                user_id=user_id,
+                action=log_data["action"],
+                entity_type=log_data["entity_type"],
+                entity_id=log_data["entity_id"],
+                details=log_data["details"],
+                ip_address=log_data["ip_address"],
+                user_agent=log_data["user_agent"],
+            )
+            # F14 (cont.): created_at is stamped by trail.audit(), but a direct caller
+            # must not KeyError — fall back to now instead of crashing REQUIRED.
+            created_at_raw = log_data.get("created_at")
+            log_entry.created_at = (
+                datetime.fromisoformat(created_at_raw) if created_at_raw else datetime.now(UTC)
+            )
+            db.add(log_entry)
+            await db.commit()
 
 
 async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: AsyncSession | None = None) -> int:

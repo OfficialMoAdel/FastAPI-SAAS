@@ -135,7 +135,14 @@ class TestAuditLogBatching:
         assert row.ip_address == "203.0.113.10"
         assert row.user_agent == "TestAgent/1.0"
         db.commit.assert_awaited_once_with()
-        assert db.mock_calls == [call.add(row), call.commit()]
+        # The fallback session must run inside bypass_rls: audit_logs is
+        # RLS-enabled and FORCEd with WITH CHECK (tenant_id =
+        # auth.current_tenant_id()), so an unbound session would have this
+        # insert rejected and the record silently lost.
+        db.info.__setitem__.assert_any_call("rls_bypass", True)
+        add_index = db.mock_calls.index(call.add(row))
+        commit_index = db.mock_calls.index(call.commit())
+        assert add_index < commit_index, "commit must follow the insert"
         if redis_available:
             pipe.execute.assert_awaited_once()
         else:

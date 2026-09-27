@@ -12,8 +12,9 @@ event bus. This module owns all of it:
 - :func:`bind_tenant` / :func:`unbind_tenant` — set + warning-tolerant
   clear primitives for call sites whose control flow cannot use a
   ``with`` block (event worker handler span).
-- :func:`bound_tenant` — set + clear-in-finally for request/job spans
-  (middleware, AI background tasks).
+- :func:`bound_tenant` — bind + RESTORE-previous for request/job spans
+  (middleware, AI background tasks). Restores rather than clears so nested
+  use cannot destroy an outer binding.
 - :func:`preserved_tenant` — snapshot + restore-in-finally for spans
   that temporarily override a caller's context (SSO, ARQ jobs).
 - :func:`fabricate_job_tenant` — minimal worker context from a raw
@@ -122,16 +123,33 @@ def unbind_tenant() -> None:
 
 @contextmanager
 def bound_tenant(tenant: TenantContext | None) -> Iterator[TenantContext | None]:
-    """Bind a tenant for a span, clearing it on exit (leak-proof).
+    """Bind a tenant for a span, RESTORING the previous context on exit.
 
-    The request/job shape: middleware request handling, background
-    tasks that must not leak their context into the next unit of work.
+    The request/job shape: middleware request handling, background tasks
+    that must not leak their context into the next unit of work.
+
+    Restores rather than clears. ``unbind_tenant`` ends in
+    ``clear_tenant_context``, which is ``ContextVar.set(None)`` — it
+    discards the token that ``ContextVar.reset`` needs, so a NESTED use
+    destroyed the outer binding on inner exit. That only stayed invisible
+    on the request path because each request is a fresh task with no outer
+    context to lose; the AI background task
+    (modules/ai/service.py:841), which re-binds inside a retry loop and
+    inherits its context from the request, is not.
+
+    On the request path the previous value is None, so restoring it is
+    identical to clearing — this is a strict improvement, not a change of
+    posture.
     """
-    bind_tenant(tenant)
+    previous = get_current_tenant()
     try:
+        bind_tenant(tenant)
         yield tenant
     finally:
-        unbind_tenant()
+        try:
+            set_current_tenant(previous)
+        except Exception as e:  # noqa: BLE001 - cleanup is best-effort
+            logger.warning("Failed to restore tenant context: %s", e)
 
 
 @contextmanager

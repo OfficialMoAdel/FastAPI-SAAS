@@ -80,7 +80,9 @@ async def test_f1_invalidate_cache_covers_value_key() -> None:
 async def test_f27_flag_value_cached_symmetrically() -> None:
     store: dict[str, str] = {}
     svc = _svc()
-    resolver = AsyncMock(return_value={"max_users": 10})
+    # _resolve_flag_value now returns (value, cacheable); this case is a
+    # real registry/JSONB-sourced decision, so it is cacheable.
+    resolver = AsyncMock(return_value=({"max_users": 10}, True))
     with (
         patch.object(svc, "_resolve_flag_value", resolver),
         patch.object(cache_client, "get", AsyncMock(side_effect=lambda k: store.get(k))),
