@@ -297,15 +297,16 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         the current tenant_id into the WHERE clause so a caller can only mutate
         their own tenant's override (IDOR-safe).
         """
-        # TenantAwareCRUD.update is typed as returning None, but FastCRUD's
-        # update actually returns the updated row at runtime. Cast to the real type.
-        result = cast(
-            "FeatureFlagOverride | None",
-            await self.override_crud.update(db=self.db, id=override_id, object=data.model_dump(exclude_unset=True)),
-        )
+        # TenantAwareCRUD.update returns None unconditionally
+        # (core/db/tenant_crud.py:300) — it discards the FastCRUD return, and
+        # FastCRUD needs return_columns to yield the row anyway. Re-read to
+        # source the entity, exactly as update_flag does above; without this
+        # the write lands but the cache invalidation below is unreachable.
+        await self.override_crud.update(db=self.db, id=override_id, object=data.model_dump(exclude_unset=True))
+        result = await self.override_crud.get(db=self.db, id=override_id)
         if result is None:
             return None
-        override = result
+        override: FeatureFlagOverride = result  # type: ignore[assignment]
 
         # Invalidate cache
         ff_id = override.get("feature_flag_id") if isinstance(override, dict) else override.feature_flag_id

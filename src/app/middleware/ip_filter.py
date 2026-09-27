@@ -8,6 +8,7 @@ from fastapi import Request
 from starlette.types import ASGIApp
 
 from src.app.core.config import settings
+from src.app.core.exceptions.cache_exceptions import MissingClientError
 from src.app.core.guard.ip_rules import IpRules
 from src.app.core.logger import get_logger
 from src.app.core.middleware_state import set_client_ip, set_whitelisted
@@ -153,7 +154,19 @@ class IPFilterMiddleware:
 
         # Check blacklist and whitelist in a single Redis pipeline
         if settings.security.IP_BLACKLIST_ENABLED or settings.security.IP_WHITELIST_ENABLED:
-            is_blacklisted, is_whitelisted = await self._filter_service.check_ip_status(client_ip)
+            # A Redis outage must reject, not crash. get_redis_client raises
+            # MissingClientError (it never yields None), which would otherwise
+            # escape this middleware and become a 500 via AppException.http_status.
+            # 503 + fail-closed is the same posture rate_limit.py takes for an
+            # unavailable admission backend.
+            try:
+                is_blacklisted, is_whitelisted = await self._filter_service.check_ip_status(client_ip)
+            except MissingClientError:
+                logger.exception("IP list backend unavailable", client_ip=client_ip)
+                from src.app.core.errors import middleware_reject
+
+                response = middleware_reject("admission_unavailable")
+                return await response(scope, receive, send)
 
             if settings.security.IP_BLACKLIST_ENABLED and is_blacklisted:
                 event = create_security_event(

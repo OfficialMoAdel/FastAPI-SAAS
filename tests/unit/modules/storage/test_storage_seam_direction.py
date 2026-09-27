@@ -98,7 +98,13 @@ class TestOutboundPackageHasNoFeatureImports:
     def test_s3_factory_maps_credentials_onto_the_adapter(self) -> None:
         """``_s3_factory`` keeps its credential mapping; only its home moved."""
         sentinel = MagicMock()
-        with patch.object(registry_module, "S3Storage", return_value=sentinel) as s3_cls:
+        # boto3 is an optional, undeclared dependency, and the factory guards
+        # for it before constructing. Stub it so this test pins the credential
+        # mapping; the guard itself is pinned in
+        # tests/unit/clients/storage/test_s3_factory_contract.py.
+        with patch.dict("sys.modules", {"boto3": MagicMock()}), patch.object(
+            registry_module, "S3Storage", return_value=sentinel
+        ) as s3_cls:
             assert registry_module._s3_factory({"bucket_name": "b", "region": "eu-west-1"}) is sentinel
 
         assert s3_cls.call_args.kwargs == {

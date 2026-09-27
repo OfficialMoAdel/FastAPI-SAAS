@@ -24,6 +24,8 @@ import json
 import pytest
 
 from src.app.core.errors import (
+    BAN_REASON_AUTO_BAN,
+    BAN_REASON_MANUAL_BAN,
     REJECT_CATALOG,
     RejectRow,
     middleware_reject,
@@ -135,6 +137,21 @@ class TestPresentationIsNotRestated:
 
         assert RejectRow("teapot", error=_Derived).resolve() == (ErrorCode.INTERNAL_ERROR, 418)
 
+    def test_catalog_is_immutable_at_runtime(self) -> None:
+        """The security table must not be rewritable from anywhere.
+
+        REJECT_CATALOG resolves every guard rejection, so a stray assignment
+        would silently repoint a status/code/header family process-wide.
+        The two sibling tables already carry this protection —
+        principal.DENIAL_TABLE is a MappingProxyType and rbac.PermissionGraph
+        is a frozen dataclass — this makes the catalog the third.
+        """
+        with pytest.raises(TypeError):
+            REJECT_CATALOG["injected"] = None  # type: ignore[index]
+
+        with pytest.raises(TypeError):
+            del REJECT_CATALOG["banned_ip"]  # type: ignore[attr-defined]
+
 
 class TestMiddlewareRejectAdapter:
     """``middleware_reject`` stays: pre-route middleware cannot raise."""
@@ -160,9 +177,41 @@ class TestMiddlewareRejectAdapter:
         response = middleware_reject("banned_ip", ban_reason="abuse", ban_expires_at=None)
         assert response.status_code == 403
         assert response.headers["X-Banned"] == "true"
-        assert response.headers["X-Ban-Reason"] == "abuse"
+        # The free-text admin reason must NOT be echoed; only the class is.
+        assert response.headers["X-Ban-Reason"] == "manual_ban"
         # No expiry supplied -> no Retry-After, as before.
         assert "retry-after" not in {k.lower() for k in response.headers}
+
+    @pytest.mark.parametrize(
+        ("stored_reason", "expected"),
+        [
+            # auto_ban.py: "Auto-ban: <n> rate limit violations exceeded threshold of <t>"
+            ("Auto-ban: 5 rate limit violations exceeded threshold of 4", "auto_ban"),
+            # attack_detection.py: "Auto-banned for <type> attack"
+            ("Auto-banned for sqli attack", "auto_ban"),
+            # security/router.py manual ban: admin text
+            ("ACME Corp breach, contact sec@acme.example", "manual_ban"),
+            # security/router.py manual ban: the no-reason default
+            ("Manual ban by admin 1", "manual_ban"),
+            (None, "manual_ban"),
+            ("", "manual_ban"),
+        ],
+    )
+    def test_ban_reason_header_is_a_class_not_the_text(self, stored_reason: str | None, expected: str) -> None:
+        """A 500-char admin string must never reach the banned client."""
+        response = middleware_reject("banned_ip", ban_reason=stored_reason, ban_expires_at=None)
+        value = response.headers["X-Ban-Reason"]
+        assert value == expected
+        assert value in {BAN_REASON_AUTO_BAN, BAN_REASON_MANUAL_BAN}
+        if stored_reason:
+            assert stored_reason not in value
+
+    def test_long_admin_reason_is_not_reflected(self) -> None:
+        secret = "INTERNAL-TICKET-4471 " + ("x" * 480)
+        response = middleware_reject("banned_ip", ban_reason=secret, ban_expires_at=None)
+        header = response.headers["X-Ban-Reason"]
+        assert "INTERNAL-TICKET-4471" not in header
+        assert len(header) <= 16
 
     def test_banned_ip_computes_retry_after_from_an_expiry(self) -> None:
         import time

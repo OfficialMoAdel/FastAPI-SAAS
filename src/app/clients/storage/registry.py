@@ -66,9 +66,31 @@ class StorageProviderRegistry:
 
 
 def _s3_factory(credentials: dict[str, Any]) -> StorageProvider:
+    # Required config, like _azure_factory / _local_factory below. A NULL
+    # credentials row decodes to {} (modules/storage/admin.py), and silently
+    # defaulting would point a live provider at a bucket nobody configured.
+    # Checked BEFORE the dependency guard so a misconfigured tenant sees the
+    # config error, not the environment one.
+    try:
+        bucket = credentials["bucket_name"]
+        region = credentials["region"]
+    except KeyError as e:
+        raise ValueError(f"S3 storage credentials missing required key: {e}") from e
+
+    # Fail fast on the optional dependency. boto3 is imported function-locally
+    # inside S3Storage (so this module imports without it) and is deliberately
+    # not a declared dependency; without this guard a tenant that selects S3
+    # discovers the gap on first upload as a bare ModuleNotFoundError 500.
+    try:
+        import boto3  # noqa: F401
+    except ModuleNotFoundError as e:
+        raise ValueError(
+            "S3 storage requires the optional 'boto3' dependency (install with: uv pip install boto3)"
+        ) from e
+
     return S3Storage(
-        bucket=credentials.get("bucket_name", credentials.get("bucket", "default-bucket")),
-        region=credentials.get("region", "us-east-1"),
+        bucket=bucket,
+        region=region,
         aws_access_key_id=credentials.get("access_key_id"),
         aws_secret_access_key=credentials.get("secret_access_key"),
     )

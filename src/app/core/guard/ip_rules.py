@@ -34,12 +34,19 @@ class IpRules(Protocol):
 
 @asynccontextmanager
 async def get_redis_client() -> AsyncIterator[Any]:
-    """Yield the configured Redis client without owning its lifecycle."""
-    client = None
+    """Yield the configured Redis client without owning its lifecycle.
+
+    Raises :class:`MissingClientError` when the shared client is not
+    initialized — it is never substituted with ``None``. Callers that want a
+    soft answer (``return False``) must catch it explicitly; the guard
+    middleware translates it to a 503 (see ``middleware/ip_filter.py``).
+
+    The ``if client:`` guards that remain at some call sites below are
+    therefore always-true, and are left in place rather than churned here.
+    """
     async for redis_client in cache.async_get_redis():
-        client = redis_client
+        yield redis_client
         break
-    yield client
 
 
 _IP_STATUS_NEGATIVE_TTL = 5

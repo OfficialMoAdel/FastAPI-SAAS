@@ -20,7 +20,8 @@ beside itself, in ``src/app/shared/exceptions.py`` or the owning module.
 """
 
 from collections.abc import Callable, Coroutine, Mapping
-from typing import Any, Literal, NamedTuple, TypedDict, Unpack, overload
+from types import MappingProxyType
+from typing import Any, Final, Literal, NamedTuple, TypedDict, Unpack, overload
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
@@ -167,11 +168,45 @@ _ParamlessKind = Literal[
 ]
 
 
+# Wire constants for X-Ban-Reason. The stored ban reason is free text an
+# admin typed (up to 500 chars, modules/security/schemas.py) and must never
+# be echoed to the banned client; the human-readable copy belongs on the
+# SecurityEvent, which is where rate_limit.py already puts it.
+BAN_REASON_AUTO_BAN = "auto_ban"
+BAN_REASON_MANUAL_BAN = "manual_ban"
+
+# Both auto-ban producers mint a reason with this prefix:
+#   core/security/auto_ban.py    "Auto-ban: <n> rate limit violations ..."
+#   middleware/attack_detection  "Auto-banned for <type> attack"
+_AUTO_BAN_REASON_PREFIX = "Auto-ban"
+
+
+def _classify_ban_reason(reason: object) -> str:
+    """Reduce a stored ban reason to one of two wire constants.
+
+    Classification is by PRODUCER, not by content. Note this cannot be
+    "reason is present" — every producer supplies one: auto-ban defaults to
+    ``reason="Auto-ban: rate limit violations exceeded"`` and manual ban
+    defaults to ``"Manual ban by admin <id>"``. Only the producer prefix
+    separates them.
+
+    Unattributable reasons fall back to ``manual_ban``: an auto-ban always
+    arrives prefixed, so the fallback is the direction that cannot
+    mislabel an automated ban.
+    """
+    if isinstance(reason, str) and reason.startswith(_AUTO_BAN_REASON_PREFIX):
+        return BAN_REASON_AUTO_BAN
+    return BAN_REASON_MANUAL_BAN
+
+
 def _banned_ip_headers(params: Mapping[str, Any]) -> dict[str, str]:
     """X-Banned / X-Ban-Reason + conditional Retry-After from ban primitives."""
     import time
 
-    headers = {"X-Banned": "true", "X-Ban-Reason": str(params.get("ban_reason") or "Auto-ban")}
+    headers = {
+        "X-Banned": "true",
+        "X-Ban-Reason": _classify_ban_reason(params.get("ban_reason")),
+    }
     expires_at = params.get("ban_expires_at")
     if expires_at:
         retry_after = int(float(expires_at) - time.time()) + 1
@@ -190,35 +225,42 @@ def _max_size_headers(params: Mapping[str, Any]) -> dict[str, str]:
 # previously hand-built; the (code, status) pair is no longer written here at
 # all — it comes from the named family, or from `status_to_error_code` for the
 # two outcomes no family covers.
-REJECT_CATALOG: dict[RejectKind, RejectRow] = {
-    "banned_ip": RejectRow(
-        "Forbidden: IP address banned due to abuse",
-        error=ForbiddenError,
-        headers_builder=_banned_ip_headers,
-    ),
-    "admission_unavailable": RejectRow(
-        "Request admission temporarily unavailable", error=ServiceUnavailableError
-    ),
-    "internal_error": RejectRow("Internal server error", error=AppException),
-    "auto_banned": RejectRow(
-        "Forbidden: IP banned after {violation_count} rate limit violations", error=ForbiddenError
-    ),
-    "rate_limited": RejectRow("Rate limit exceeded", error=RateLimitExceededError),
-    "tenant_header_missing": RejectRow("Missing required header: {header}", error=DomainValidationError),
-    "tenant_access_denied": RejectRow("Access denied", error=ForbiddenError),
-    "tenant_inactive": RejectRow("Tenant inactive. Contact support.", error=ForbiddenError),
-    # 413 PAYLOAD_TOO_LARGE: no exception family covers a body-limit refusal.
-    "payload_too_large": RejectRow(
-        "Request body too large", status=413, headers_builder=_max_size_headers
-    ),
-    # 400 INVALID_INPUT: distinct from ValidationError's 400 VALIDATION_ERROR,
-    # and no family covers it — hence the explicit status.
-    "invalid_input": RejectRow("{message}", status=400),
-    "attack_blocked": RejectRow("Bad Request - Attack pattern detected", error=DomainValidationError),
-    "attack_banned": RejectRow("Forbidden - Attack detected and IP banned", error=ForbiddenError),
-    "bad_bot": RejectRow("Forbidden - Bad bot detected", error=ForbiddenError),
-    "blacklisted_ip": RejectRow("Forbidden - IP is blacklisted", error=ForbiddenError),
-}
+#
+# Read-only: this table resolves every guard rejection, so a stray assignment
+# would silently repoint a status/code/header family process-wide. Frozen the
+# same way as its two siblings — principal.DENIAL_TABLE (MappingProxyType) and
+# rbac.PermissionGraph (frozen dataclass).
+REJECT_CATALOG: Final[Mapping[RejectKind, RejectRow]] = MappingProxyType(
+    {
+        "banned_ip": RejectRow(
+            "Forbidden: IP address banned due to abuse",
+            error=ForbiddenError,
+            headers_builder=_banned_ip_headers,
+        ),
+        "admission_unavailable": RejectRow(
+            "Request admission temporarily unavailable", error=ServiceUnavailableError
+        ),
+        "internal_error": RejectRow("Internal server error", error=AppException),
+        "auto_banned": RejectRow(
+            "Forbidden: IP banned after {violation_count} rate limit violations", error=ForbiddenError
+        ),
+        "rate_limited": RejectRow("Rate limit exceeded", error=RateLimitExceededError),
+        "tenant_header_missing": RejectRow("Missing required header: {header}", error=DomainValidationError),
+        "tenant_access_denied": RejectRow("Access denied", error=ForbiddenError),
+        "tenant_inactive": RejectRow("Tenant inactive. Contact support.", error=ForbiddenError),
+        # 413 PAYLOAD_TOO_LARGE: no exception family covers a body-limit refusal.
+        "payload_too_large": RejectRow(
+            "Request body too large", status=413, headers_builder=_max_size_headers
+        ),
+        # 400 INVALID_INPUT: distinct from ValidationError's 400 VALIDATION_ERROR,
+        # and no family covers it — hence the explicit status.
+        "invalid_input": RejectRow("{message}", status=400),
+        "attack_blocked": RejectRow("Bad Request - Attack pattern detected", error=DomainValidationError),
+        "attack_banned": RejectRow("Forbidden - Attack detected and IP banned", error=ForbiddenError),
+        "bad_bot": RejectRow("Forbidden - Bad bot detected", error=ForbiddenError),
+        "blacklisted_ip": RejectRow("Forbidden - IP is blacklisted", error=ForbiddenError),
+    }
+)
 
 
 @overload
