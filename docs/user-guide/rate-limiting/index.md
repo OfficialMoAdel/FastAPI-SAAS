@@ -18,25 +18,30 @@ every request (tier-aware; no per-endpoint wiring needed). Endpoint-level
 brute-force budgets go through the engine's security-budget verb:
 
 ```python
-from src.app.core.security.rate_policy import check_security_budget
+from src.app.core.security.budgets import Identity, SecurityAction, check
 
 @router.post("/send")
 async def send(body: SendRequest):
-    # "auth"-style budget keyed on an identity (IP, user id, email hash);
+    # The seam owns the key scheme, the leg set, the fail-closed policy and
+    # the refusal; the door supplies only WHICH action and WHICH identity.
     # (limit, period) come from settings.rate_limit.SECURITY_BUDGETS
-    verdict = await check_security_budget("magic_link_send", email_identity)
-    if verdict.is_limited:
-        raise RateLimitException("Too many requests. Try again later.")
+    await check(SecurityAction.MAGIC_LINK_SEND, Identity(email_hash=email_hash))
+    # check() raises RateLimitExceededError (429 + Retry-After) on the first
+    # limited leg. For a transport that must attach X-RateLimit-* headers,
+    # use probe() instead and read the returned Verdict.
 ```
 
 ## Architecture
 
 ### One Engine
 
-Endpoint brute-force budgets resolve through `core/security/rate_policy.py`
-via `check_security_budget(budget, identifier)` — identity-keyed budgets for
-sensitive endpoints (login, MFA, passkey, magic link, AI chat). One key
-scheme, one algorithm selector (GCRA or fixed-window), one fail-open policy.
+Endpoint brute-force budgets resolve through the security budget seam,
+`core/security/budgets.py` — identity-keyed budgets for sensitive endpoints
+(login, MFA, passkey, magic link, AI chat). A door calls `check(action,
+identity)` and the seam owns the key scheme, the leg set, one algorithm
+selector (GCRA or fixed-window), and the fail-closed policy; `probe()` is the
+same metering for transports that need the numbers back. One key scheme, one
+algorithm selector, one fail-open policy.
 (`evaluate_rate_policy` is a deprecated general-purpose evaluator with no
 production callers — tests only; it lacks the middleware's ban/blacklist
 merge.) Tier path policy for general traffic lives in the same module
@@ -120,7 +125,8 @@ Exempt paths (health probes, docs, webhook receivers) live in
 Do not add a general-purpose Depends limiter — it double-limits what the
 middleware already covers (this was removed; see `api/deps/core.py` note).
 For endpoint-specific brute-force budgets, extend
-`settings.rate_limit.SECURITY_BUDGETS` and call `check_security_budget`.
+`settings.rate_limit.SECURITY_BUDGETS` and declare a `SecurityAction` in
+`core/security/budgets.py::BUDGETS`, then call `check()`.
 
 ### Security Budgets
 
@@ -215,14 +221,14 @@ policy via the rate-limits API rather than endpoint dependencies.
 ### Endpoint-Specific Budgets
 
 ```python
-from src.app.core.security.rate_policy import check_security_budget
+from src.app.core.security.budgets import Identity, SecurityAction, check
 
 @router.post("/login")
 async def login(body: LoginRequest):
-    # Sensitive endpoint: identity-keyed brute-force budget
-    verdict = await check_security_budget("auth", client_ip)
-    if verdict.is_limited:
-        raise RateLimitException("Too many attempts. Try again later.")
+    # Sensitive endpoint: identity-keyed brute-force budget. The seam owns
+    # the key scheme, legs, fail-closed policy and the refusal; the door
+    # supplies only the action and the identity fact.
+    await check(SecurityAction.AUTH, Identity(ip=client_ip))
     ...
 
 # Adding a new budget: declare it in SECURITY_BUDGETS, then call with an
@@ -233,7 +239,7 @@ async def login(body: LoginRequest):
 
 `modules/ai/middleware.py` keeps its Depends adapter because its 429
 carries Retry-After and X-RateLimit headers with a structured detail body;
-the decision itself comes from `check_security_budget("ai_chat", user_id)`.
+the decision itself comes from `probe(SecurityAction.AI_CHAT, Identity(user_id=...))`.
 
 
 ### Custom Error Handling
@@ -405,12 +411,12 @@ tiers = {
 ### Abuse Prevention
 
 ```python
-# Sensitive endpoints use identity-keyed budgets:
-from src.app.core.security.rate_policy import check_security_budget
+# Sensitive endpoints use identity-keyed budgets, through the seam:
+from src.app.core.security.budgets import Identity, SecurityAction, check, probe
 
-verdict = await check_security_budget("auth", client_ip)          # login spam
-verdict = await check_security_budget("magic_link_send", email_hash)  # mail-bomb
-verdict = await check_security_budget("ai_chat", str(user_id))    # API cost abuse
+await check(SecurityAction.AUTH, Identity(ip=client_ip))            # login spam
+await check(SecurityAction.MAGIC_LINK_SEND, Identity(email_hash=email_hash))  # mail-bomb
+verdict = await probe(SecurityAction.AI_CHAT, Identity(user_id=str(user_id)))  # API cost abuse
 ```
 
 This comprehensive rate limiting system provides robust protection against API abuse while supporting flexible business models through user tiers and granular endpoint controls. 

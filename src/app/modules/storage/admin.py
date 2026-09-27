@@ -313,3 +313,35 @@ class StorageAdminService:
             max_file_count=settings.max_file_count,
             storage_quota_bytes=settings.storage_quota_bytes,
         )
+
+
+async def close_cached_providers() -> int:
+    """Close and drop every provider held in ``_PROVIDER_CACHE``.
+
+    Lifespan teardown. The cache holds up to 512 providers for 600s, and
+    S3/Azure providers own an HTTP client; without this the process exits
+    with those clients still open, and a redeploy inside the TTL strands
+    their sockets. LocalStorage answers the same ``close()`` as a no-op, so
+    no ``hasattr`` probe is needed.
+
+    Returns the number of providers closed. Failures are logged per
+    provider and never abort the drain — one bad provider must not strand
+    the rest.
+    """
+    cached = list(_PROVIDER_CACHE.items())
+    _PROVIDER_CACHE.clear()
+    closed = 0
+    for (tenant_id, _updated_at), provider in cached:
+        try:
+            await provider.close()
+            closed += 1
+        except Exception as e:  # noqa: BLE001 - teardown must not mask shutdown
+            get_logger(__name__).warning(
+                "Failed to close cached storage provider | tenant=%s | error=%s", tenant_id, e
+            )
+    if closed:
+        get_logger(__name__).info("Closed cached storage providers", count=closed)
+    return closed
+
+
+__all__ = ["ResolvedStorage", "StorageAdminService", "close_cached_providers"]

@@ -271,6 +271,16 @@ async def _start_event_bus_and_queue(redis_client: Any) -> None:
     _init_event_bus_and_queue(redis_client)
 
 
+async def _close_storage_providers() -> None:
+    """Drain the provider cache; teardown must not mask shutdown."""
+    try:
+        from src.app.modules.storage.admin import close_cached_providers
+
+        await close_cached_providers()
+    except Exception as e:  # noqa: BLE001 — teardown is best-effort
+        get_logger(__name__).warning("Failed to close cached storage providers: %s", e)
+
+
 async def _teardown_logging() -> None:
     from src.app.core.logger import shutdown_logging
 
@@ -306,8 +316,11 @@ def lifespan_factory(
         initialization_complete = Event()
         app.state.initialization_complete = initialization_complete
 
-        await runtime_setup.set_threadpool_tokens()
-
+        # NOTE: the threadpool is sized by the "threadpool" StartupPhase
+        # below, not here. It used to run both ways — once as a bare await
+        # and once as a phase — which is idempotent today and a trap the
+        # moment the body is not.
+        #
         # S1 FIX: initialize flags BEFORE the try block. If a fallible create
         # call below raises, the finally block references these names; assigning
         # them inside the try let an early failure raise NameError and mask the
@@ -350,6 +363,9 @@ def lifespan_factory(
         # Everything else keeps its verbatim finally-block position in tail.
         factory_tail: list[Callable[[], Awaitable[None]]] = [
             partial(_remove_init_event, app),
+            # Close cached storage providers (S3/Azure hold HTTP clients)
+            # before the shared pool teardown below.
+            _close_storage_providers,
             _dispose_engine,
             # Close the shared Redis connection pool AFTER clients are closed
             runtime_setup.close_redis_pool,
@@ -670,10 +686,11 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
                 "rate_limiting_security", partial(_init_rate_limiting_and_security, redis_client), None
             ),
             StartupPhase("runtime_config", _load_security_runtime_config, None),
-            # The worker warms the tenant cache too, so it needs the same gate
-            # as the web app — the registration itself comes free from
-            # `from src.app.models import *` in core/worker/settings.py.
-            StartupPhase("tenant_model_gate", _start_tenant_model_gate, None),
+            # No tenant_model_gate here: lifespan_with_admin composes
+            # lifespan_factory's lifespan (see above), whose `phases` list
+            # already runs tenant_model_gate before these admin phases start.
+            # The old copy here carried a comment justifying it by what "the
+            # worker" needs — a worker concern sitting in the web phase list.
             StartupPhase("warm_caches", _warm_startup_caches, None),
             StartupPhase("admin", _init_admin, None),
         ]

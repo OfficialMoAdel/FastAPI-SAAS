@@ -125,7 +125,7 @@ src/app/modules/ai/
 - **Completion service**: `modules/ai/service.py::ChatCompletionService`
 - **Settings service**: `modules/ai/service.py::AISettingsService`
 - **Ollama client**: `modules/ai/ollama_client.py::OllamaClient`
-- **Rate limiting**: `core/security/rate_policy.py::check_security_budget` (`ai_chat` budget) — this module's middleware.py is only the HTTP adapter
+- **Rate limiting**: `core/security/budgets.py::probe` (`ai_chat` budget) — this module's middleware.py is only the HTTP adapter
 
 ## JIT Index Hints
 

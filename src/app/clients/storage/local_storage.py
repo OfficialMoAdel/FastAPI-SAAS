@@ -261,6 +261,13 @@ class LocalStorage(StorageProvider):
             return None
         except Exception:
             return None
+    async def close(self) -> None:
+        """No-op: LocalStorage holds no client or pool to release.
+
+        Present so every StorageProvider answers the interface, which lets
+        shutdown drain providers without a ``hasattr`` probe.
+        """
+        return None
 
 
 __all__ = ["LocalStorage"]

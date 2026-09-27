@@ -22,7 +22,8 @@ src/app/core/security/
 ├── login_helpers.py           # refresh-cookie helpers (set/get/clear, cookie names)
 ├── pending_token_store.py     # PendingTokenStore (MFA/SSO/magic-link pending tokens)
 ├── auto_ban.py                # IP auto-ban: violations, ban/unban, L1 invalidation
-├── rate_policy.py             # resolve_rate_limits, check_security_budget, rate keys, RateLimitVerdict
+├── rate_policy.py             # resolve_rate_limits, build_rate_limit_key, RateLimitVerdict
+├── budgets.py                 # the security budget seam: check/probe, BUDGETS, validate_budget_definitions
 ├── request_admission.py       # RequestAdmissionService: full admission decision (skips, identity, ban, limits)
 ├── rate_limit_cache.py        # tier rate-policy cache warm/invalidate
 ├── encryption.py              # CredentialEncryption (Fernet/MultiFernet key rotation)

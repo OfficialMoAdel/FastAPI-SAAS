@@ -527,7 +527,8 @@ class Settings(BaseSettings):
 ### Disabling Rate Limiting
 
 1. Remove the `RateLimitMiddleware` registration in `src/app/main.py`
-2. Remove `check_security_budget` calls from auth/AI routers
+2. Remove the `check()` / `probe()` calls from auth/AI routers
+   (`core/security/budgets.py`) and delete the `BUDGETS` table
 3. Remove rate limiting models and schemas
 4. Update database migrations to remove rate limit tables
 

@@ -75,8 +75,9 @@ directly; `AuthService` carries no pass-throughs.
   to `MFACompleteLoginResponse` (access token only; refresh stays in the
   cookie set by `TokenIssuer`).
 - Per-endpoint rate-limit tests patch
-  `services.mfa.check_security_budget` (not the router's
-  `check_mfa_rate_limit`, which still guards the other MFA endpoints); the
+  the security budget seam `core/security/budgets.py::check` (not the
+  router's `check_mfa_mutate_rate_limit`, which guards the MFA
+  state-mutation endpoints); the
   orchestration contract lives in
   `tests/unit/modules/auth/test_mfa_login_completion.py`.
 

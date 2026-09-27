@@ -27,14 +27,14 @@ src/app/modules/feature_flags/
 ├── service.py            # FeatureFlagService business logic (the single flag API)
 ├── schemas.py            # Pydantic schemas
 ├── models.py             # SQLAlchemy models (FeatureFlag, FeatureFlagOverride)
-├── crud.py               # FastCRUD operations
-└── utils.py              # get_feature_flags() thin tenant-JSONB read only
+└── crud.py               # FastCRUD operations
 ```
 
 B7: the legacy JSONB shims (`is_feature_enabled` / `update_feature_flag` /
-`bulk_update_feature_flags`) were REMOVED. `FeatureFlagService` is the
-single flag module; `utils.py` retains only the `get_feature_flags`
-tenant-JSONB read (with cache).
+`bulk_update_feature_flags`) were REMOVED, and the module's `utils.py` was
+deleted with them — it had no production callers and its Redis cache key
+collided with the service's. `FeatureFlagService` is the single flag
+module; `get_tenant_flags` is the tenant-JSONB read (with cache).
 
 ### B7 Precedence Contract (highest wins)
 
@@ -103,7 +103,7 @@ a plain value or `{"value": ...}` / `{"enabled": ...}`.
 
 ### Core Service
 - Service: `src/app/modules/feature_flags/service.py` - `FeatureFlagService` (single flag API: is_enabled, get_flag_value, get_tenant_flags, update/delete/bulk_update_tenant_flag(s), overrides, warm_feature_flags)
-- Utils: `src/app/modules/feature_flags/utils.py` - `get_feature_flags()` thin tenant-JSONB read only (legacy shims removed)
+  (`utils.py` was deleted — no production callers, and its cache key collided with the service's)
 
 ### Router
 - Router: `src/app/modules/feature_flags/router.py` - API endpoints at `/api/v1/feature-flags`

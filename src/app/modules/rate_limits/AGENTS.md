@@ -37,15 +37,18 @@ MAX_REQUESTS = 1000  # Don't do this
 ### DO: Apply rate limit middleware
 
 ```python
-from src.app.core.security.rate_policy import check_security_budget
+from src.app.core.security.budgets import Identity, SecurityAction, check
 from src.app.shared.exceptions import RateLimitExceededError
 
 # General path limits are enforced by the ASGI RateLimitMiddleware — this
 # module only manages tier path policies via the rate-limits API.
-# Endpoint brute-force budgets use the engine verb:
-verdict = await check_security_budget("auth", client_ip)
-if verdict.is_limited:
-    raise RateLimitExceededError("Rate limit exceeded", retry_after=verdict.retry_after)
+# Endpoint brute-force budgets cross the security budget seam, which owns
+# the identity keying, the leg set, the fail-closed policy and the refusal
+# (check() raises on the first limited leg; probe() returns a Verdict):
+await check(SecurityAction.AUTH, Identity(ip=client_ip))
+# check() raises RateLimitExceededError itself. For a transport that must
+# attach X-RateLimit-* headers, use probe() and read the Verdict:
+#   verdict = await probe(SecurityAction.AUTH, Identity(ip=client_ip))
 # (FastAPI Depends adapters that must attach Retry-After headers are the
 # sanctioned exception: see ai/middleware.py.)
 ```

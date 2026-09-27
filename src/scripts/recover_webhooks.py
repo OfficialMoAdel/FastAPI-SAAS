@@ -11,20 +11,27 @@ from arq.connections import RedisSettings
 
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
-from src.app.modules.webhooks.recovery import recover_stuck_deliveries
+from src.app.modules.webhooks.delivery import recover_stuck_deliveries
 
 logger = get_logger("recover_webhooks")
 
 async def main() -> None:
     """Run the recovery job manually."""
-    if not settings.REDIS_QUEUE_HOST:
+    # settings.<component>.<name>, not the legacy flat accessor: the flat
+    # form still resolves through Settings.__getattr__ but is a deprecated
+    # delegation that warns on first use (config/__init__.py:282).
+    redis_queue = settings.redis_queue
+
+    if not redis_queue.REDIS_QUEUE_HOST:
         logger.error("REDIS_QUEUE_HOST is not configured")
         return
 
     redis_settings = RedisSettings(
-        host=settings.REDIS_QUEUE_HOST,
-        port=settings.REDIS_QUEUE_PORT,
-        password=settings.REDIS_QUEUE_PASSWORD.get_secret_value() if settings.REDIS_QUEUE_PASSWORD else None,
+        host=redis_queue.REDIS_QUEUE_HOST,
+        port=redis_queue.REDIS_QUEUE_PORT,
+        password=redis_queue.REDIS_QUEUE_PASSWORD.get_secret_value()
+        if redis_queue.REDIS_QUEUE_PASSWORD
+        else None,
     )
 
     try:

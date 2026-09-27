@@ -107,6 +107,18 @@ class StorageProvider(ABC):
         """
         pass
 
+    async def close(self) -> None:
+        """Release any transport resources this provider holds.
+
+        NOT abstract: LocalStorage has no client to close, and a
+        default no-op lets callers invoke it unconditionally instead of
+        probing with ``hasattr`` for a capability the interface never
+        declared. Providers that hold a client (S3, Azure) override it.
+
+        Safe to call more than once.
+        """
+        return None
+
     @abstractmethod
     async def get_url(self, path: str, expires_in: int = 3600) -> str:
         """Get a URL for the stored object.

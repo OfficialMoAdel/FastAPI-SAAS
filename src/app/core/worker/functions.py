@@ -186,6 +186,21 @@ async def startup(ctx: Worker) -> None:
 
     ensure_bypass_recorder_registered()
 
+    # The web process gates on these two (composition.py); the worker did
+    # not, and relied on `from src.app.models import *` in
+    # core/worker/settings.py registering them as an import side effect.
+    # That is a silent fallback for required config: delete that one import
+    # and every worker job raises TenantContextError at REQUEST time with
+    # no boot signal. Gating here makes the dependency explicit and turns a
+    # missing registration into a startup failure. The star import is kept
+    # (it is also what feeds src.app.worker), but it is no longer load-
+    # bearing for correctness.
+    from src.app.core.rbac.models import ensure_permission_graph_registered
+    from src.app.core.tenancy.models import ensure_tenant_model_registered
+
+    ensure_tenant_model_registered()
+    ensure_permission_graph_registered()
+
     from src.app.core.config import settings
     from src.app.core.redis_provider import create_arq_pool, create_cache_client
 
