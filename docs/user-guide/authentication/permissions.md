@@ -87,11 +87,11 @@ async def delete_post(
     # 1. Get the post
     post = await crud_posts.get(db=db, id=post_id)
     if not post:
-        raise NotFoundException("Post not found")
+        raise ModelNotFoundError("Post not found")
     
     # 2. Check ownership
     if post["created_by_user_id"] != current_user["id"]:
-        raise ForbiddenException("You can only delete your own posts")
+        raise ForbiddenError("You can only delete your own posts")
     
     # 3. Delete the post
     await crud_posts.delete(db=db, id=post_id)
@@ -158,7 +158,7 @@ async def check_rate_limit(
     
     # 3. Check if limit exceeded
     if recent_posts >= limit:
-        raise RateLimitException(f"Daily {resource} limit exceeded ({limit})")
+        raise RateLimitExceededError(f"Daily {resource} limit exceeded ({limit})")
 ```
 
 **Tier-Based Authorization Benefits:**
@@ -217,7 +217,7 @@ async def update_post(
 ) -> PostRead:
     # Use permission helper
     if not await can_edit_post(current_user, post_id, db):
-        raise ForbiddenException("Cannot edit this post")
+        raise ForbiddenError("Cannot edit this post")
     
     updated_post = await crud_posts.update(
         db=db, 
@@ -392,16 +392,16 @@ async def update_user_tier(
     # 1. Validate tier exists
     tier = await crud_tiers.get(db=db, id=tier_update.tier_id)
     if not tier:
-        raise NotFoundException("Tier not found")
+        raise ModelNotFoundError("Tier not found")
     
     # 2. Validate user exists
     user = await crud_users.get(db=db, id=user_id)
     if not user:
-        raise NotFoundException("User not found")
+        raise ModelNotFoundError("User not found")
     
     # 3. Prevent self-demotion (optional business rule)
     if user_id == current_user["id"] and tier["name"] == "free":
-        raise ForbiddenException("Cannot demote yourself to free tier")
+        raise ForbiddenError("Cannot demote yourself to free tier")
     
     # 4. Update user tier
     await crud_users.update(
@@ -451,7 +451,7 @@ async def delete_user_account(user_id: int, current_user: dict, db: AsyncSession
             result="denied",
             details={"reason": "insufficient_permissions"}
         )
-        raise ForbiddenException("Cannot delete other users' accounts")
+        raise ForbiddenError("Cannot delete other users' accounts")
     
     await log_authorization_event(
         user_id=current_user["id"],
@@ -485,11 +485,11 @@ async def get_organization_users(
     )
     
     if not membership:
-        raise ForbiddenException("Not a member of this organization")
+        raise ForbiddenError("Not a member of this organization")
     
     # Check if user has admin role in organization
     if membership.role not in ["admin", "owner"]:
-        raise ForbiddenException("Insufficient organization permissions")
+        raise ForbiddenError("Insufficient organization permissions")
     
     # Get organization users
     users = await crud_users.get_multi(
@@ -529,7 +529,7 @@ async def require_business_hours(
 ) -> dict:
     """Require access during business hours for non-admin users."""
     if not await check_business_hours_access(current_user):
-        raise ForbiddenException("Access only allowed during business hours")
+        raise ForbiddenError("Access only allowed during business hours")
     return current_user
 
 @router.post("/business-operation", dependencies=[Depends(require_business_hours)])

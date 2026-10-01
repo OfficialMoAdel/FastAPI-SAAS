@@ -68,13 +68,13 @@ async def create_user(user_data: UserCreate):  # ← Validates input
 ### 🛡️ **Error Handling**
 Use built-in exceptions for consistent error responses:
 ```python
-from app.core.exceptions.http_exceptions import NotFoundException
+from src.app.shared.exceptions import ModelNotFoundError
 
 @router.get("/{user_id}")
 async def get_user(user_id: int):
     user = await crud_users.get(id=user_id)
     if not user:
-        raise NotFoundException("User not found")  # Returns proper 404
+        raise ModelNotFoundError("User not found")  # Returns proper 404
     return user
 ```
 

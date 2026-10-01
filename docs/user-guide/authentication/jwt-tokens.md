@@ -133,7 +133,7 @@ if token_data:
     # Token is valid, proceed with request processing
 else:
     # Token is invalid, expired, or blacklisted
-    raise UnauthorizedException("Invalid or expired token")
+    raise UnauthorizedError("Invalid or expired token")
 ```
 
 ### Verifying Refresh Tokens
@@ -149,7 +149,7 @@ if token_data:
     return {"access_token": new_access_token, "token_type": "bearer"}
 else:
     # Refresh token invalid - user must log in again
-    raise UnauthorizedException("Invalid refresh token")
+    raise UnauthorizedError("Invalid refresh token")
 ```
 
 ### Token Verification Process
@@ -545,7 +545,7 @@ class Settings(BaseSettings):
 ### Token Security
 
 - **Use strong secrets**: Generate cryptographically secure SECRET_KEY
-- **Rotate secrets**: Regularly change SECRET_KEY in production
+- **Rotate secrets**: Regularly change SECRET_KEY in production — and follow the procedure, because a rotated key is invisible until the process restarts. See [`docs/SECRET_KEY_ROTATION_RUNBOOK.md`](../../SECRET_KEY_ROTATION_RUNBOOK.md)
 - **Environment separation**: Different secrets for dev/staging/production
 - **Secure transmission**: Always use HTTPS in production
 

@@ -77,7 +77,7 @@ async def update_post(post_id: int, current_user: dict = Depends(get_current_use
     
     # Check ownership or admin privileges
     if post["created_by_user_id"] != current_user["id"] and not current_user["is_superuser"]:
-        raise ForbiddenException("Cannot update other users' posts")
+        raise ForbiddenError("Cannot update other users' posts")
     
     return await crud_posts.update(db=db, id=post_id, object=updates)
 ```
@@ -149,7 +149,7 @@ async def get_my_data(current_user: dict = Depends(get_current_user)):
 # Check user permissions
 def check_tier_access(user: dict, required_tier: str):
     if not user.get("tier") or user["tier"]["name"] != required_tier:
-        raise ForbiddenException(f"Requires {required_tier} tier")
+        raise ForbiddenError(f"Requires {required_tier} tier")
 
 # Custom authentication dependency
 async def get_premium_user(current_user: dict = Depends(get_current_user)):

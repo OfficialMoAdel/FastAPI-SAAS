@@ -22,7 +22,7 @@ sync when touching a TTL. L1 = in-process TTLCache; L2 = Redis.
 | Feature flags (global) | L2 | `CACHE_TTL` | `modules/feature_flags/service.py` + warmer | Key `feature_flag:{key}` |
 | Feature flags (tenant) | L2 | `CACHE_TTL` | `modules/feature_flags/service.py` | Keys via `build_tenant_key("features"/"feature:{name}")` |
 | Webhook endpoint cache | L2 | (service-defined) | `modules/webhooks/service.py` | INTERNAL only — serialized rows carry secrets for the signing worker |
-| Query profiler | n/a | request-scoped | `core/db/profiler.py` | Dev-only, default OFF (P2) |
+| Query profiler | n/a | request-scoped | `middleware/query_profiler.py` | Dev-only, default OFF (P2); single implementation |
 
 Rules of thumb:
 

@@ -131,7 +131,7 @@ username_taken = await crud_users.exists(db=db, username="john_doe")
 # From src/app/api/v1/users.py - checking before creating
 email_row = await crud_users.exists(db=db, email=user.email)
 if email_row:
-    raise DuplicateValueException("Email is already registered")
+    raise DuplicateError("Email is already registered")
 ```
 
 ### Count Records
@@ -224,7 +224,7 @@ Update with validation:
 if values.username != db_user.username:
     existing_username = await crud_users.exists(db=db, username=values.username)
     if existing_username:
-        raise DuplicateValueException("Username not available")
+        raise DuplicateError("Username not available")
 
 await crud_users.update(db=db, object=values, username=username)
 ```
@@ -420,15 +420,15 @@ async def get_paginated_users(
 Proper error handling with CRUD operations:
 
 ```python
-from app.core.exceptions.http_exceptions import NotFoundException, DuplicateValueException
+from src.app.shared.exceptions import ModelNotFoundError, DuplicateError
 
 async def safe_user_creation(db: AsyncSession, user_data: UserCreate):
     # Check for duplicates
     if await crud_users.exists(db=db, email=user_data.email):
-        raise DuplicateValueException("Email already registered")
+        raise DuplicateError("Email already registered")
     
     if await crud_users.exists(db=db, username=user_data.username):
-        raise DuplicateValueException("Username not available")
+        raise DuplicateError("Username not available")
     
     # Create user
     try:
@@ -477,12 +477,12 @@ Use `exists()` instead of `get()` when you only need to check existence:
 ```python
 # Good - faster, doesn't load data
 if await crud_users.exists(db=db, email=email):
-    raise DuplicateValueException("Email taken")
+    raise DuplicateError("Email taken")
 
 # Avoid - slower, loads unnecessary data
 user = await crud_users.get(db=db, email=email)
 if user:
-    raise DuplicateValueException("Email taken")
+    raise DuplicateError("Email taken")
 ```
 
 ## Next Steps

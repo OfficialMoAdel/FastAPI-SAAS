@@ -245,10 +245,10 @@ the decision itself comes from `probe(SecurityAction.AI_CHAT, Identity(user_id=.
 ### Custom Error Handling
 
 ```python
-from app.core.exceptions.http_exceptions import RateLimitException
+from src.app.shared.exceptions import RateLimitExceededError
 
-@app.exception_handler(RateLimitException)
-async def rate_limit_handler(request: Request, exc: RateLimitException):
+@app.exception_handler(RateLimitExceededError)
+async def rate_limit_handler(request: Request, exc: RateLimitExceededError):
     """Custom rate limit error response."""
     return JSONResponse(
         status_code=429,

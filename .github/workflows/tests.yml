@@ -1,15 +1,13 @@
 name: Backend CI
 
+# Every push and PR runs the full check set. These triggers used to carry
+# `paths-ignore: ['**/*.md', 'docs/**']`, which meant a change to a doc
+# pointer or a CI gate alone never started this workflow — the checks were
+# present in the file and unrunnable in practice. Dropping the filter is
+# what makes the gates below mandatory rather than advisory.
 on:
   push:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
 
 jobs:
   lint:
@@ -33,6 +31,52 @@ jobs:
 
       - name: Run Ruff
         run: uv run ruff check src
+
+      # s92p.7: the cross-module seam rule in ARCHITECTURE.md. Without a
+      # step, the rule is prose; this is what makes it bind on a new
+      # cross-module service import.
+      - name: Run cross-module seam gate
+        run: uv run python scripts/check_cross_module_seams.py
+
+      # io15.8: a mutating endpoint with no response_model sends an
+      # undocumented body, and a too-narrow one silently strips fields. The
+      # gate reports the endpoints that genuinely cannot be annotated, with
+      # the reason, so the exceptions stay reviewable.
+      - name: Run mutation response model gate
+        run: uv run python scripts/check_mutation_response_models.py
+
+      # sj09.6: a forked Alembic history fails at DEPLOY time
+      # ("Multiple head revisions are present") and the app never boots.
+      # Single-head and graph linearity are static properties of the
+      # revision files, so they belong in the database-free lint job rather
+      # than in the tests job.
+      - name: Run migration graph gate
+        run: uv run python scripts/check_migration_graph.py
+
+      # sj09.6: the same class of rot in executable form. A script that
+      # imports a module that no longer exists still passes every static
+      # gate here; only importing it proves the operator-facing entry
+      # points resolve.
+      - name: Run operator script import gate
+        run: uv run python scripts/check_script_imports.py
+
+      # nrgi.7: a list service that changes its WHERE or ORDER BY keeps
+      # working and silently loses the index that was the only reason the
+      # query was cheap — a correct answer from a sequential scan is still a
+      # correct answer, so no test catches it. The checker is pure AST: it
+      # reads models.py and the declared predicates, so it needs no database
+      # in the lint job.
+      - name: Run index predicate coverage gate
+        run: uv run python scripts/check_index_predicate_coverage.py
+
+      # v8kz: Alembic compares indexes by NAME, and this repo declares no
+      # naming_convention, so an index the ORM and the migration define
+      # differently produces NO autogenerate diff. A migrated database and a
+      # create_all database then hold different schemas. The gate compares
+      # columns IN ORDER, the partial predicate and uniqueness — not just the
+      # name, which is the whole point. Pure AST, no database.
+      - name: Run index definition consistency gate
+        run: uv run python scripts/check_index_definition_consistency.py
 
   type-check:
     runs-on: ubuntu-latest

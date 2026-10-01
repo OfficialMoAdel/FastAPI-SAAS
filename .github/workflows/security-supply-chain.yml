@@ -43,11 +43,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install uv + import-linter
+      - name: Install uv + dev dependencies
+        # s92p.1: import-linter is declared in the dev dependency group, so
+        # the ad-hoc 'uv pip install' is gone. CI now lints against the same
+        # lockfile a developer gets locally, which is the point of declaring it.
         run: |
           pipx install uv
           cd src && uv sync --dev
-          uv pip install import-linter
       - name: Enforce layer contract (core must not import modules/api/middleware)
         # H-5: the committed .importlinter carries the contract with the 26
         # pre-existing violations explicitly ignore_imports-ed. CI now FAILS
@@ -56,6 +58,28 @@ jobs:
         # (app/events.py pattern) lands.
         working-directory: src
         run: uv run python -c "from importlinter.cli import lint_imports; raise SystemExit(lint_imports(no_logo=True))"
+      - name: Report the source-text test count (b1xu.4)
+        # A test that greps a source file and asserts a string matches passes
+        # whether or not the code works, so the count is worth seeing on every
+        # PR. The enforcing ratchet lived in tests/core/test_source_text_ratchet.py
+        # and has been removed; this step reports the number so a regression is
+        # visible in the log rather than left for the next audit to discover.
+        run: uv run python scripts/count_source_text_tests.py
+      - name: Reject Pydantic v1 shims in production code (io15.7)
+        # pydantic>=2.6.1 makes parse_obj()/.dict() deprecated compatibility
+        # shims, and the two spell the cache write path was mixing had
+        # different unset-field semantics. No ruff rule covers this, so it is
+        # a scan. The banned set is deliberately narrow: .copy() and .json()
+        # are also dict/set/list and httpx/requests methods, and banning them
+        # would fail on correct code.
+        run: uv run python scripts/check_pydantic_v1_shims.py
+      - name: Every boot gate has a boot-failure test (sj09.3)
+        # A gate nobody has watched fail is a gate that might not be a gate.
+        # This project has shipped two already: an import-linter that sat
+        # inert, and a worker that ran on an import side effect instead of a
+        # called gate. Prints the coverage count every run so the number is
+        # visible per-PR rather than discovered by the next audit.
+        run: uv run python scripts/check_boot_gate_coverage.py
 
   tracked-env-guard:
     name: Guard against tracked .env files (C-1)

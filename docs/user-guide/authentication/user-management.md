@@ -189,22 +189,22 @@ async def patch_user(
     # 1. Get user from database
     db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
     if db_user is None:
-        raise NotFoundException("User not found")
+        raise ModelNotFoundError("User not found")
     
     # 2. Check ownership (users can only update their own profile)
     if db_user["username"] != current_user["username"]:
-        raise ForbiddenException("Cannot update other users")
+        raise ForbiddenError("Cannot update other users")
     
     # 3. Validate unique constraints
     if values.username and values.username != db_user["username"]:
         existing_username = await crud_users.exists(db=db, username=values.username)
         if existing_username:
-            raise DuplicateValueException("Username not available")
+            raise DuplicateError("Username not available")
     
     if values.email and values.email != db_user["email"]:
         existing_email = await crud_users.exists(db=db, email=values.email)
         if existing_email:
-            raise DuplicateValueException("Email is already registered")
+            raise DuplicateError("Email is already registered")
     
     # 4. Update user
     await crud_users.update(db=db, object=values, username=username)
@@ -237,11 +237,11 @@ async def erase_user(
     # 1. Get user from database
     db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
     if not db_user:
-        raise NotFoundException("User not found")
+        raise ModelNotFoundError("User not found")
     
     # 2. Check ownership
     if username != current_user["username"]:
-        raise ForbiddenException()
+        raise ForbiddenError()
     
     # 3. Soft delete user
     await crud_users.delete(db=db, username=username)
@@ -273,7 +273,7 @@ async def erase_db_user(
     # 1. Check if user exists
     db_user = await crud_users.exists(db=db, username=username)
     if not db_user:
-        raise NotFoundException("User not found")
+        raise ModelNotFoundError("User not found")
     
     # 2. Hard delete from database
     await crud_users.db_delete(db=db, username=username)
@@ -331,7 +331,7 @@ async def read_user(
         schema_to_select=UserRead
     )
     if db_user is None:
-        raise NotFoundException("User not found")
+        raise ModelNotFoundError("User not found")
     
     return db_user
 ```
@@ -347,7 +347,7 @@ async def read_user_tier(
     # 1. Get user
     db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
     if db_user is None:
-        raise NotFoundException("User not found")
+        raise ModelNotFoundError("User not found")
     
     # 2. Return None if no tier assigned
     if db_user["tier_id"] is None:
@@ -356,7 +356,7 @@ async def read_user_tier(
     # 3. Get tier information
     db_tier = await crud_tiers.get(db=db, id=db_user["tier_id"], schema_to_select=TierRead)
     if not db_tier:
-        raise NotFoundException("Tier not found")
+        raise ModelNotFoundError("Tier not found")
     
     # 4. Combine user and tier data
     user_dict = dict(db_user)  # Convert to dict if needed
@@ -382,12 +382,12 @@ async def patch_user_tier(
     # 1. Verify user exists
     db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
     if db_user is None:
-        raise NotFoundException("User not found")
+        raise ModelNotFoundError("User not found")
     
     # 2. Verify tier exists
     tier_exists = await crud_tiers.exists(db=db, id=values.tier_id)
     if not tier_exists:
-        raise NotFoundException("Tier not found")
+        raise ModelNotFoundError("Tier not found")
     
     # 3. Update user tier
     await crud_users.update(db=db, object=values, username=username)
@@ -409,7 +409,7 @@ async def read_user_rate_limits(
     # 1. Get user
     db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
     if db_user is None:
-        raise NotFoundException("User not found")
+        raise ModelNotFoundError("User not found")
     
     user_dict = dict(db_user)  # Convert to dict if needed
     
@@ -421,7 +421,7 @@ async def read_user_rate_limits(
     # 3. Get tier and rate limits
     db_tier = await crud_tiers.get(db=db, id=db_user["tier_id"], schema_to_select=TierRead)
     if db_tier is None:
-        raise NotFoundException("Tier not found")
+        raise ModelNotFoundError("Tier not found")
     
     db_rate_limits = await crud_rate_limits.get_multi(db=db, tier_id=db_tier["id"])
     user_dict["tier_rate_limits"] = db_rate_limits["data"]
@@ -824,10 +824,10 @@ await logout_user(access_token=access_token, refresh_token=refresh_token, db=db)
 def check_user_permission(user: dict, required_tier: str = None):
     """Check if user has required permissions."""
     if not user.get("is_active", True):
-        raise UnauthorizedException("User account is disabled")
+        raise UnauthorizedError("User account is disabled")
     
     if required_tier and user.get("tier", {}).get("name") != required_tier:
-        raise ForbiddenException(f"Requires {required_tier} tier")
+        raise ForbiddenError(f"Requires {required_tier} tier")
 
 # Usage in endpoint
 @router.get("/premium-feature")

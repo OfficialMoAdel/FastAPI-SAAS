@@ -7,13 +7,13 @@ Learn how to handle errors properly in your API endpoints using the boilerplate'
 The boilerplate provides ready-to-use exceptions that return proper HTTP status codes:
 
 ```python
-from app.core.exceptions.http_exceptions import NotFoundException
+from src.app.shared.exceptions import ModelNotFoundError
 
 @router.get("/{user_id}")
 async def get_user(user_id: int, db: AsyncSession):
     user = await crud_users.get(db=db, id=user_id)
     if not user:
-        raise NotFoundException("User not found")  # Returns 404
+        raise ModelNotFoundError("User not found")  # Returns 404
     return user
 ```
 
@@ -23,15 +23,15 @@ That's it! The exception automatically becomes a proper JSON error response.
 
 The boilerplate includes common HTTP exceptions you'll need:
 
-### NotFoundException (404)
+### ModelNotFoundError (404)
 ```python
-from app.core.exceptions.http_exceptions import NotFoundException
+from src.app.shared.exceptions import ModelNotFoundError
 
 @router.get("/{user_id}")
 async def get_user(user_id: int):
     user = await crud_users.get(db=db, id=user_id)
     if not user:
-        raise NotFoundException("User not found")
+        raise ModelNotFoundError("User not found")
     return user
 
 # Returns:
@@ -39,14 +39,14 @@ async def get_user(user_id: int):
 # {"detail": "User not found"}
 ```
 
-### DuplicateValueException (409)
+### DuplicateError (409)
 ```python
-from app.core.exceptions.http_exceptions import DuplicateValueException
+from src.app.shared.exceptions import DuplicateError
 
 @router.post("/")
 async def create_user(user_data: UserCreate):
     if await crud_users.exists(db=db, email=user_data.email):
-        raise DuplicateValueException("Email already exists")
+        raise DuplicateError("Email already exists")
     
     return await crud_users.create(db=db, object=user_data)
 
@@ -55,9 +55,9 @@ async def create_user(user_data: UserCreate):
 # {"detail": "Email already exists"}
 ```
 
-### ForbiddenException (403)
+### ForbiddenError (403)
 ```python
-from app.core.exceptions.http_exceptions import ForbiddenException
+from src.app.shared.exceptions import ForbiddenError
 
 @router.delete("/{user_id}")
 async def delete_user(
@@ -65,7 +65,7 @@ async def delete_user(
     current_user: Annotated[dict, Depends(get_current_user)]
         ):
     if current_user["id"] != user_id and not current_user["is_superuser"]:
-        raise ForbiddenException("You can only delete your own account")
+        raise ForbiddenError("You can only delete your own account")
     
     await crud_users.delete(db=db, id=user_id)
     return {"message": "User deleted"}
@@ -75,16 +75,16 @@ async def delete_user(
 # {"detail": "You can only delete your own account"}
 ```
 
-### UnauthorizedException (401)
+### UnauthorizedError (401)
 ```python
-from app.core.exceptions.http_exceptions import UnauthorizedException
+from src.app.shared.exceptions import UnauthorizedError
 
 # This is typically used in the auth system, but you can use it too:
 @router.get("/admin-only")
 async def admin_endpoint():
     # Some validation logic
     if not user_is_admin:
-        raise UnauthorizedException("Admin access required")
+        raise UnauthorizedError("Admin access required")
     
     return {"data": "secret admin data"}
 
@@ -101,11 +101,11 @@ async def admin_endpoint():
 async def create_user(user_data: UserCreate, db: AsyncSession):
     # Check email
     if await crud_users.exists(db=db, email=user_data.email):
-        raise DuplicateValueException("Email already exists")
+        raise DuplicateError("Email already exists")
     
     # Check username  
     if await crud_users.exists(db=db, username=user_data.username):
-        raise DuplicateValueException("Username already taken")
+        raise DuplicateError("Username already taken")
     
     # Create user
     return await crud_users.create(db=db, object=user_data)
@@ -124,13 +124,13 @@ async def update_user(
         ):
     # Check if user exists
     if not await crud_users.exists(db=db, id=user_id):
-        raise NotFoundException("User not found")
+        raise ModelNotFoundError("User not found")
     
     # Check for email conflicts (if email is being updated)
     if user_data.email:
         existing = await crud_users.get(db=db, email=user_data.email)
         if existing and existing.id != user_id:
-            raise DuplicateValueException("Email already taken")
+            raise DuplicateError("Email already taken")
     
     # Update user
     return await crud_users.update(db=db, object=user_data, id=user_id)
@@ -146,11 +146,11 @@ async def get_post(
         ):
     post = await crud_posts.get(db=db, id=post_id)
     if not post:
-        raise NotFoundException("Post not found")
+        raise ModelNotFoundError("Post not found")
     
     # Check if user owns the post or is admin
     if post.author_id != current_user["id"] and not current_user["is_superuser"]:
-        raise ForbiddenException("You can only view your own posts")
+        raise ForbiddenError("You can only view your own posts")
     
     return post
 ```
@@ -224,29 +224,30 @@ async def risky_endpoint():
 
 ## Creating Custom Exceptions
 
-If you need custom exceptions, follow the boilerplate's pattern:
+Custom errors are **domain exceptions**: subclass `AppException` and declare
+the HTTP presentation on the class. `core/errors.py` registers a single
+handler for the whole `AppException` tree, so a new subclass needs no handler
+wiring of its own.
 
 ```python
-# In app/core/exceptions/http_exceptions.py (add to existing file)
-from fastapi import HTTPException
+# In src/app/shared/exceptions.py (alongside the existing tree)
+from src.app.shared.exceptions import AppException
 
-class PaymentRequiredException(HTTPException):
+class PaymentRequiredError(AppException):
     """402 Payment Required"""
-    def __init__(self, detail: str = "Payment required"):
-        super().__init__(status_code=402, detail=detail)
+    http_status = 402
+    public_message = "Payment required"
 
-class TooManyRequestsException(HTTPException):
-    """429 Too Many Requests"""
-    def __init__(self, detail: str = "Too many requests"):
-        super().__init__(status_code=429, detail=detail)
+    def __init__(self, message: str = "Payment required", *, reason: str = "payment_required"):
+        super().__init__(message, reason=reason)
 
 # Use them in your endpoints
-from app.core.exceptions.http_exceptions import PaymentRequiredException
+from src.app.shared.exceptions import PaymentRequiredError
 
 @router.get("/premium-feature")
 async def premium_feature(current_user: dict):
     if current_user["tier"] == "free":
-        raise PaymentRequiredException("Upgrade to access this feature")
+        raise PaymentRequiredError("Upgrade to access this feature")
     
     return {"data": "premium content"}
 ```

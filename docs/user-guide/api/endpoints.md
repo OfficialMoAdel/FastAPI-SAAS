@@ -213,23 +213,23 @@ async def get_users(
 The boilerplate includes custom exceptions you can use:
 
 ```python
-from app.core.exceptions.http_exceptions import (
-    NotFoundException, 
-    DuplicateValueException,
-    ForbiddenException
+from src.app.shared.exceptions import (
+    ModelNotFoundError, 
+    DuplicateError,
+    ForbiddenError
 )
 
 @router.get("/{user_id}")
 async def get_user(user_id: int, db: AsyncSession):
     user = await crud_users.get(db=db, id=user_id)
     if not user:
-        raise NotFoundException("User not found")  # Returns 404
+        raise ModelNotFoundError("User not found")  # Returns 404
     return user
 
 @router.post("/")
 async def create_user(user_data: UserCreate, db: AsyncSession):
     if await crud_users.exists(db=db, email=user_data.email):
-        raise DuplicateValueException("Email already exists")  # Returns 409
+        raise DuplicateError("Email already exists")  # Returns 409
     
     return await crud_users.create(db=db, object=user_data)
 ```
@@ -316,7 +316,7 @@ Your new endpoints will be available at:
 4. **Use proper HTTP status codes**: `status_code=201` for creation
 5. **Add authentication when needed**: `Depends(get_current_user)`
 6. **Use response models**: `response_model=UserRead`
-7. **Handle errors with custom exceptions**: `NotFoundException`, `DuplicateValueException`
+7. **Handle errors with custom exceptions**: `ModelNotFoundError`, `DuplicateError`
 
 ## What's Next
 

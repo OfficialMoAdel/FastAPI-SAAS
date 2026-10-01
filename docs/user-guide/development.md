@@ -141,7 +141,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_current_superuser, get_current_user
 from ...core.db.database import async_get_db
-from ...core.exceptions.http_exceptions import DuplicateValueException, NotFoundException
+from ...shared.exceptions import DuplicateError, ModelNotFoundError
 from ...crud.crud_categories import crud_categories
 from ...schemas.category import CategoryCreate, CategoryRead, CategoryUpdate
 
@@ -157,7 +157,7 @@ async def write_category(
 ):
     category_row = await crud_categories.exists(db=db, name=category.name)
     if category_row:
-        raise DuplicateValueException("Category name already exists")
+        raise DuplicateError("Category name already exists")
 
     return await crud_categories.create(db=db, object=category)
 
@@ -193,7 +193,7 @@ async def read_category(
         is_deleted=False
     )
     if not db_category:
-        raise NotFoundException("Category not found")
+        raise ModelNotFoundError("Category not found")
 
     return db_category
 
@@ -208,12 +208,12 @@ async def patch_category(
 ):
     db_category = await crud_categories.get(db=db, id=category_id, is_deleted=False)
     if not db_category:
-        raise NotFoundException("Category not found")
+        raise ModelNotFoundError("Category not found")
 
     if values.name:
         category_row = await crud_categories.exists(db=db, name=values.name)
         if category_row and category_row["id"] != category_id:
-            raise DuplicateValueException("Category name already exists")
+            raise DuplicateError("Category name already exists")
 
     return await crud_categories.update(db=db, object=values, id=category_id)
 
@@ -227,7 +227,7 @@ async def erase_category(
 ):
     db_category = await crud_categories.get(db=db, id=category_id, is_deleted=False)
     if not db_category:
-        raise NotFoundException("Category not found")
+        raise ModelNotFoundError("Category not found")
 
     await crud_categories.delete(db=db, db_row=db_category, garbage_collection=False)
     return {"message": "Category deleted"}
