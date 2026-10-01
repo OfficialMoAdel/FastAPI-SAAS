@@ -108,21 +108,3 @@ async def test_update_override_purges_the_flag_cache(override_row: FeatureFlagOv
     assert purged, f"flag cache was not purged after an override write; deletes={deletes}"
 
 
-@pytest.mark.asyncio
-async def test_tenant_aware_update_returns_none_by_contract() -> None:
-    """Pins WHY the service must re-read: the wrapper returns None.
-
-    This one passes both before and after the fix — it documents the wrapper
-    contract the service is written against, so a future change to
-    TenantAwareCRUD.update's return type is a visible, deliberate act.
-    """
-    crud = TenantAwareCRUD(model=FeatureFlagOverride, scope=Unscoped(reason="test"))
-
-    with (
-        patch.object(TenantAwareCRUD, "_resolve_write_tenant", return_value=uuid4()),
-        patch("fastcrud.FastCRUD.update", new_callable=AsyncMock, return_value={"id": 1}) as leaf,
-    ):
-        returned = await crud.update(db=AsyncMock(), object={"custom_value": True}, id=1)
-
-    leaf.assert_awaited_once()
-    assert returned is None

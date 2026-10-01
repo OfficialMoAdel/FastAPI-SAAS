@@ -175,7 +175,7 @@ class R1UnifiedE2EValidator:
 
             # Test idempotency check
             settings_mock = MagicMock()
-            settings_mock.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
+            settings_mock.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
 
             with patch("src.app.core.config.settings", settings_mock):
                 # The idempotency check should use Lua script
@@ -295,7 +295,7 @@ class R1UnifiedE2EValidator:
             has_xfetch_func = hasattr(cache_module, "get_with_stampede_protection")
 
             settings_mock = MagicMock()
-            settings_mock.XFETCH_USE_LUA_SCRIPT = True
+            settings_mock.r1_unified.XFETCH_USE_LUA_SCRIPT = True
             settings_mock.XFETCH_EARLY_EXPIRY_FRACTION = 0.5
 
             with patch("src.app.core.config.settings", settings_mock):

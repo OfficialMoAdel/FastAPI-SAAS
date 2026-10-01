@@ -520,6 +520,26 @@ class TestHelperFunctions:
 class TestStructlogIntegration:
     """Test integration with structlog."""
 
+    @pytest.fixture(autouse=True)
+    def _restore_global_structlog_config(self):
+        """Restore the global structlog config after each test here.
+
+        These tests call ``structlog.configure(...)`` with a PrintLoggerFactory
+        and never restore it. The mutated global config then leaks into every
+        later test in the session: ``structlog.testing.capture_logs()`` silently
+        becomes a no-op, so an order-dependent test passes in isolation and
+        fails in a full run. That already cost a debugging detour once
+        (tests/unit/core/security/test_pii_and_fail_open_knobs.py), so the leak
+        is fixed here rather than worked around in each future test.
+        """
+        import copy
+
+        before = copy.deepcopy(structlog.get_config())
+        try:
+            yield
+        finally:
+            structlog.configure(**before)
+
     def test_full_pipeline_with_json_renderer(self) -> None:
         """Test sanitizer works in full structlog pipeline with JSON renderer."""
         # Configure structlog with sanitizer

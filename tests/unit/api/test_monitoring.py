@@ -266,9 +266,25 @@ async def test_metrics_export() -> None:
 
 @pytest.mark.asyncio
 async def test_metrics_export_exception() -> None:
-    with patch("src.app.api.monitoring.get_r1_metrics", side_effect=Exception("error")):
-        with pytest.raises(Exception):
-            await metrics_export()
+    """An export failure returns the operator envelope, it does not raise.
+
+    The route used to raise ``HTTPException(detail=f"...: {e}")``, which the
+    framework handler renders verbatim into the client body — raw exception
+    text on a route whose own comment claimed it "never leaks internals".
+    It now returns the envelope explicitly, so the text is present by
+    decision (superuser-gated) rather than by accident.
+    """
+    with patch("src.app.api.monitoring.get_r1_metrics", side_effect=Exception("export blew up")):
+        res = await metrics_export()
+
+    assert isinstance(res, JSONResponse)
+    assert res.status_code == 500
+    assert json.loads(bytes(res.body)) == {
+        "status": "error",
+        "error_type": "Exception",
+        "error_detail": "export blew up",
+        "request_id": None,
+    }
 
 
 @pytest.mark.asyncio
@@ -282,6 +298,15 @@ async def test_metrics_json() -> None:
 
 @pytest.mark.asyncio
 async def test_metrics_json_exception() -> None:
-    with patch("src.app.api.monitoring.get_r1_metrics", side_effect=Exception("error")):
-        with pytest.raises(Exception):
-            await metrics_json()
+    """/metrics/json mirrors the same envelope on failure."""
+    with patch("src.app.api.monitoring.get_r1_metrics", side_effect=Exception("json blew up")):
+        res = await metrics_json()
+
+    assert isinstance(res, JSONResponse)
+    assert res.status_code == 500
+    assert json.loads(bytes(res.body)) == {
+        "status": "error",
+        "error_type": "Exception",
+        "error_detail": "json blew up",
+        "request_id": None,
+    }

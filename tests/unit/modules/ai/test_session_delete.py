@@ -247,7 +247,7 @@ class TestCascadeDelete:
                     await service.delete_session(session_id, mock_user["id"])
 
                     # Session deletion is called, cascade handles messages
-                    mock_delete.assert_called_once_with(db=mock_db_session, id=session_id)
+                    mock_delete.assert_called_once_with(db=mock_db_session, id=session_id, user_id=mock_user["id"])
 
 
 class TestSessionDeletionEdgeCases:

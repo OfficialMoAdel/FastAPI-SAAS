@@ -116,10 +116,10 @@ async def test_override_crud_operations(service, mock_db):
     original_crud = service.override_crud
 
     mock_crud = MagicMock()
-    # get_override x2, update_override x2 (which re-reads via get() because
-    # TenantAwareCRUD.update returns None), then delete_override x1 — all three
-    # source their entity from get(). See test_update_override_contract.py for
-    # the real-CRUD version of this contract.
+    # get_override x2, update_override x2 (which re-reads via get(), because
+    # update() only returns the row when return_columns is requested), then
+    # delete_override x1 — all three source their entity from get(). See
+    # test_update_override_contract.py for the real-CRUD version.
     mock_crud.get = AsyncMock(side_effect=[mock_override, None, mock_override, None, mock_override])
     mock_crud.create = AsyncMock(return_value=mock_override)
     # The write never yields a row; the follow-up get() is the source.

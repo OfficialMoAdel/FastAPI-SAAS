@@ -7,15 +7,20 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
+from tests.conftest import MockUser
+
+_TENANT_HEADERS = {"X-Tenant-ID": str(MockUser.DEFAULT_TENANT_ID)}
+
 
 class TestProductListEndpoint:
     """Integration tests for GET /billing/products endpoint."""
 
-    def test_list_products_requires_auth(self, client_auth) -> None:
-        """GET /billing/products should require authentication."""
-        response = client_auth.get("/api/v1/billing/products")
-        # Endpoint may not exist yet - testing structure
-        assert response.status_code in [200, 400, 401, 403, 404, 422]
+    def test_list_products_requires_auth(self, unauthenticated_client) -> None:
+        """GET /billing/products must reject anonymous callers with 401/403."""
+        response = unauthenticated_client.get("/api/v1/billing/products", headers=_TENANT_HEADERS)
+        assert response.status_code in (401, 403), (
+            f"anonymous catalog read must be denied, got {response.status_code}: {response.text[:200]}"
+        )
 
     def test_list_products_success(self, client_auth) -> None:
         """GET /billing/products should return list of products."""
@@ -127,10 +132,12 @@ class TestProductCreateEndpoint:
 class TestProductDetailEndpoint:
     """Integration tests for GET /billing/products/{product_id} endpoint."""
 
-    def test_get_product_requires_auth(self, client_auth) -> None:
-        """GET /billing/products/{id} should require authentication."""
-        response = client_auth.get("/api/v1/billing/products/1")
-        assert response.status_code in [200, 400, 401, 403, 404, 422]
+    def test_get_product_requires_auth(self, unauthenticated_client) -> None:
+        """GET /billing/products/{id} must reject anonymous callers with 401/403."""
+        response = unauthenticated_client.get("/api/v1/billing/products/1", headers=_TENANT_HEADERS)
+        assert response.status_code in (401, 403), (
+            f"anonymous catalog read must be denied, got {response.status_code}: {response.text[:200]}"
+        )
 
     def test_get_product_success(self, client_auth) -> None:
         """GET /billing/products/{id} should return product details."""

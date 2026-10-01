@@ -47,7 +47,7 @@ async def test_batch_enqueue():
     bus.register_handler("test.event", handler2)
 
     # Enable batch enqueue
-    settings.EVENT_BUS_USE_BATCH_ENQUEUE = True
+    settings.r1_unified.EVENT_BUS_USE_BATCH_ENQUEUE = True
 
     # Execute
     await bus.publish("test.event", {"id": 1}, priority=EventPriority.NORMAL)

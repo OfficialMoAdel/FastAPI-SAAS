@@ -11,6 +11,9 @@ This test file covers:
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+# SEC-08: stand-in for the resolved account (a dumpable-shaped object).
+RESOLVED = {"id": 1, "tenant_id": 1}
+
 import pytest
 from fastapi import Response
 from jwt import ExpiredSignatureError
@@ -191,7 +194,15 @@ class TestLogin:
             mock_settings.AUTH_LOCKOUT_DURATION_SECONDS = 900
             mock_settings.ENVIRONMENT = "development"
 
-            with patch.object(auth_service, "authenticate_user", new_callable=AsyncMock) as mock_auth:
+            with (
+                # SEC-08: login resolves the account before the lockout check
+                # to key the counter on the user id; that lookup is a real
+                # tenant-scoped query, so it is mocked at the seam.
+                patch.object(
+                    auth_service, "_resolve_user_auth_info", new_callable=AsyncMock, return_value=RESOLVED
+                ),
+                patch.object(auth_service, "authenticate_user", new_callable=AsyncMock) as mock_auth,
+            ):
                 mock_auth.return_value = None  # Invalid credentials - tests the coercion path
 
                 with patch.object(auth_service, "_publish_login_audit", new_callable=AsyncMock):
@@ -222,7 +233,11 @@ class TestLogin:
             "tenant_id": "test-tenant",
         }
 
-        with patch.object(auth_service, "authenticate_user", new_callable=AsyncMock) as mock_auth:
+        with (
+            # SEC-08: pre-auth account resolve (real tenant-scoped query).
+            patch.object(auth_service, "_resolve_user_auth_info", new_callable=AsyncMock, return_value=RESOLVED),
+            patch.object(auth_service, "authenticate_user", new_callable=AsyncMock) as mock_auth,
+        ):
             mock_auth.return_value = mock_user
 
             with patch.object(auth_service, "_publish_login_audit", new_callable=AsyncMock):
@@ -254,7 +269,11 @@ class TestLogin:
             "token_version": 0,
         }
 
-        with patch.object(auth_service, "authenticate_user", new_callable=AsyncMock) as mock_auth:
+        with (
+            # SEC-08: pre-auth account resolve (real tenant-scoped query).
+            patch.object(auth_service, "_resolve_user_auth_info", new_callable=AsyncMock, return_value=RESOLVED),
+            patch.object(auth_service, "authenticate_user", new_callable=AsyncMock) as mock_auth,
+        ):
             mock_auth.return_value = mock_user
 
             with patch.object(auth_service, "_publish_login_audit", new_callable=AsyncMock):

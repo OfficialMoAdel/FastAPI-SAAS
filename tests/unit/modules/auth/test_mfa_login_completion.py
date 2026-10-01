@@ -317,6 +317,12 @@ async def test_login_doors_bind_mfa_to_client_ip(door: str) -> None:
             lockout = AsyncMock()
             lockout.is_locked.return_value = False
             service = AuthService(lockout_policy=lockout)
+            # SEC-08: login resolves the account before the lockout check to
+            # key the counter on the user id; that lookup is a real
+            # tenant-scoped query, so it is mocked at the seam.
+            stack.enter_context(
+                patch.object(service, "_resolve_user_auth_info", return_value={"id": 1, "tenant_id": 1})
+            )
             stack.enter_context(patch.object(service, "authenticate_user", return_value=user))
             await service.login("alice", "password", request=http, db=db, redis=redis)
         elif door == "passkey":

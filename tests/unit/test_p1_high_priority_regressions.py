@@ -26,9 +26,11 @@ class TestP1HighPriorityRegressions:
         mock_redis = AsyncMock()
         mock_redis.get.return_value = None
 
-        is_locked = await lockout.is_locked(mock_redis, "victim@example.com")
+        # SEC-08: with a resolved user id the counter is keyed on the account,
+        # not the attacker-supplied identifier.
+        is_locked = await lockout.is_locked(mock_redis, "victim@example.com", user_id=42)
         assert is_locked is False
-        mock_redis.get.assert_called_once_with("login_attempts:victim@example.com")
+        mock_redis.get.assert_called_once_with("login_attempts:user:42")
         assert mock_redis.eval.call_count == 0
 
     def test_p1_2_mfa_methods_has_unique_constraint(self):

@@ -37,7 +37,7 @@ class TestXFetchLuaOptimization:
         from src.app.core.utils import cache
 
         with patch("src.app.core.utils.cache.settings") as mock_settings:
-            mock_settings.XFETCH_USE_LUA_SCRIPT = True
+            mock_settings.r1_unified.XFETCH_USE_LUA_SCRIPT = True
 
             with patch("src.app.core.utils.cache.get_lua_manager", return_value=mock_lua_manager):
                 with patch.object(cache, "client", mock_redis):
@@ -63,7 +63,7 @@ class TestXFetchLuaOptimization:
         from src.app.core.utils import cache
 
         with patch("src.app.core.utils.cache.settings") as mock_settings:
-            mock_settings.XFETCH_USE_LUA_SCRIPT = True
+            mock_settings.r1_unified.XFETCH_USE_LUA_SCRIPT = True
 
             with patch("src.app.core.utils.cache.get_lua_manager", return_value=mock_lua_manager):
                 with patch.object(cache, "client", mock_redis):
@@ -90,7 +90,7 @@ class TestXFetchLuaOptimization:
         from src.app.core.utils import cache
 
         with patch("src.app.core.utils.cache.settings") as mock_settings:
-            mock_settings.XFETCH_USE_LUA_SCRIPT = True
+            mock_settings.r1_unified.XFETCH_USE_LUA_SCRIPT = True
 
             # Return None (cache miss)
             mock_lua_manager.execute.return_value = [None, -2]
@@ -120,7 +120,7 @@ class TestXFetchLuaOptimization:
         from src.app.core.utils import cache
 
         with patch("src.app.core.utils.cache.settings") as mock_settings:
-            mock_settings.XFETCH_USE_LUA_SCRIPT = True
+            mock_settings.r1_unified.XFETCH_USE_LUA_SCRIPT = True
 
             # Lua script fails
             mock_lua_manager.execute.side_effect = Exception("Redis error")
@@ -150,7 +150,7 @@ class TestXFetchLuaOptimization:
         from src.app.core.utils import cache
 
         with patch("src.app.core.utils.cache.settings") as mock_settings:
-            mock_settings.XFETCH_USE_LUA_SCRIPT = False
+            mock_settings.r1_unified.XFETCH_USE_LUA_SCRIPT = False
 
             with patch("src.app.core.utils.cache.get_lua_manager", return_value=mock_lua_manager):
                 with patch.object(cache, "client", mock_redis):
@@ -177,7 +177,7 @@ class TestXFetchLuaOptimization:
         from src.app.core.utils import cache
 
         with patch("src.app.core.utils.cache.settings") as mock_settings:
-            mock_settings.XFETCH_USE_LUA_SCRIPT = True
+            mock_settings.r1_unified.XFETCH_USE_LUA_SCRIPT = True
 
             # Return bytes (as Redis typically does)
             mock_lua_manager.execute.return_value = [b'{"data": "value"}', 1800]
@@ -279,7 +279,7 @@ class TestXFetchProbabilisticRefresh:
         from src.app.core.utils import cache
 
         with patch("src.app.core.utils.cache.settings") as mock_settings:
-            mock_settings.XFETCH_USE_LUA_SCRIPT = False
+            mock_settings.r1_unified.XFETCH_USE_LUA_SCRIPT = False
 
             with patch.object(cache, "client", mock_redis):
                 # TTL = 60 seconds remaining out of 3600 (near expiration)
@@ -307,7 +307,7 @@ class TestXFetchProbabilisticRefresh:
         from src.app.core.utils import cache
 
         with patch("src.app.core.utils.cache.settings") as mock_settings:
-            mock_settings.XFETCH_USE_LUA_SCRIPT = False
+            mock_settings.r1_unified.XFETCH_USE_LUA_SCRIPT = False
 
             with patch.object(cache, "client", mock_redis):
                 # TTL = 3500 seconds remaining out of 3600 (very fresh)

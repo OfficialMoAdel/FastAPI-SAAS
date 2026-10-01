@@ -1,9 +1,12 @@
 """Unit tests for the /invoices router (API compatibility layer)."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.app.core.errors import setup_exception_handlers
 from src.app.modules.billing.routers.invoices import router as invoices_router
 
 
@@ -12,6 +15,9 @@ def app():
     """Create a FastAPI app instance with the invoices router."""
     app = FastAPI()
     app.include_router(invoices_router, prefix="/api/v1")
+    # The auth gate raises UnauthorizedError; without the app's handlers that
+    # surfaces as a 500 and "refused" could not be told apart from "broke".
+    setup_exception_handlers(app)
     return app
 
 
@@ -56,11 +62,39 @@ def test_list_supports_pagination():
     assert len(list_routes) == 1
 
 
-def test_list_supports_status_filter():
-    """Test that list endpoint supports status filtering."""
-    # The endpoint should accept status parameter for filtering
-    # This is verified by the router definition
-    pass
+async def test_list_supports_status_filter():
+    """The list endpoint actually forwards a status filter to the service.
+
+    Asserting only that a ``status`` parameter exists would restate the
+    signature. The behaviour worth pinning is that the caller's filter
+    reaches the service untouched -- a route that dropped it would still
+    return 200 with every record and no test would notice.
+    """
+    from unittest.mock import AsyncMock
+
+    from src.app.api.deps.auth import AuthenticatedUser
+    from src.app.modules.billing.routers.invoices import list_invoices
+
+    service = MagicMock()
+    service.get_user_records = AsyncMock(return_value={"data": [], "total_count": 0})
+
+    with patch(
+        "src.app.modules.billing.routers.invoices.get_billing_record_service",
+        return_value=service,
+    ):
+        result = await list_invoices(
+            current_user=AuthenticatedUser(id=1, email="u@e.com"),
+            db=MagicMock(),
+            page=1,
+            per_page=20,
+            status="succeeded",
+        )
+
+    # ``list_invoices`` passes page/limit as kwargs; ``status`` is a plain
+    # keyword too, so read it off the recorded call rather than off a
+    # positional guess.
+    assert service.get_user_records.await_args.kwargs["status"] == "succeeded"
+    assert result["items"] == []
 
 
 def test_route_count():
@@ -94,11 +128,33 @@ def test_uses_integer_invoice_ids():
     assert len(get_routes) == 1
 
 
-def test_requires_authentication():
-    """Test that all endpoints require authentication."""
-    # All endpoints use get_current_user dependency
-    # This ensures authentication is required
-    pass
+def test_every_endpoint_refuses_an_unauthenticated_caller(client):
+    """No invoice route serves an anonymous caller.
+
+    The security property is "an unauthenticated caller cannot read billing
+    records", and it has to be pinned on the WIRE. Asserting that
+    ``get_current_user`` appears in the dependant graph would only restate
+    the decorator: the guard could stay wired up while the route stopped
+    depending on it. So hit the routes and require a 401, and require the
+    service to be untouched -- a refusal that still queried billing records
+    would leak existence through timing and through the response body.
+
+    Renamed from ``test_requires_authentication``, which asserted nothing.
+    """
+    service = MagicMock()
+    with patch(
+        "src.app.modules.billing.routers.invoices.get_billing_record_service",
+        return_value=service,
+    ):
+        for path in ("/api/v1/invoices", "/api/v1/invoices/1"):
+            response = client.get(path)
+
+            assert response.status_code == 401, f"{path} served an anonymous caller: {response.status_code}"
+
+            # Refused at the gate, before any billing query: an unauthorised
+            # read that still hit the table leaks existence through timing.
+            service.get_user_records.assert_not_called()
+            service.get_record.assert_not_called()
 
 
 def test_path_mapping():

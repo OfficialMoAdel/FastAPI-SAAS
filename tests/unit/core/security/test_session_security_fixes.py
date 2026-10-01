@@ -14,6 +14,7 @@ import base64
 import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 
@@ -260,6 +261,23 @@ class TestRefreshInvalidatesBySid:
 # ---------------------------------------------------------------------------
 
 
+def _bound_tenant():
+    """A real, active tenant — the state production actually reaches.
+
+    P1-6: the tenant middleware binds a resolved tenant or the NO_TENANT
+    sentinel; it never leaves the context unset for a request that reaches a
+    guard. Tests binding None modelled an unreachable state.
+    """
+    from src.app.core.tenancy.context import TenantContext
+
+    return TenantContext(
+        tenant_id=UUID(int=5),
+        tenant_slug="acme",
+        tenant_name="Acme",
+        is_active=True,
+    )
+
+
 class TestTriStateBlacklist:
     @pytest.fixture
     def request_factory(self):
@@ -323,7 +341,7 @@ class TestTriStateBlacklist:
             "is_active": True,
             "is_deleted": False,
             "token_version": 0,
-            "tenant_id": 5,
+            "tenant_id": UUID(int=5),
         }
         with (
             patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
@@ -331,7 +349,10 @@ class TestTriStateBlacklist:
                 "src.app.api.deps.auth._is_token_blacklisted_with_fallback",
                 new=AsyncMock(return_value=True),
             ) as mock_fb,
-            patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+            patch(
+                "src.app.api.deps.auth.get_current_tenant",
+                return_value=_bound_tenant(),
+            ),
             patch("src.app.api.deps.auth.UserDirectory") as mock_us,
         ):
             svc = mock_us.return_value

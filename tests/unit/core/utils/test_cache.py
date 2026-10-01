@@ -309,7 +309,7 @@ async def test_get_with_stampede_hit(client: MagicMock) -> None:
         patch.object(cache_mod, "settings") as settings,
         patch("src.app.core.utils.cache.random.random", return_value=1.0),
     ):
-        settings.XFETCH_USE_LUA_SCRIPT = False
+        settings.r1_unified.XFETCH_USE_LUA_SCRIPT = False
         result = await get_with_stampede_protection("k", AsyncMock(), ttl=3600)
     assert result == {"a": 1}
 
@@ -320,7 +320,7 @@ async def test_get_with_stampede_miss_refresh(client: MagicMock) -> None:
     client.set = AsyncMock(return_value=True)
     fetch = AsyncMock(return_value={"b": 2})
     with patch.object(cache_mod, "settings") as settings:
-        settings.XFETCH_USE_LUA_SCRIPT = False
+        settings.r1_unified.XFETCH_USE_LUA_SCRIPT = False
         result = await get_with_stampede_protection("k", fetch, ttl=3600)
     assert result == {"b": 2}
 
@@ -335,7 +335,7 @@ async def test_get_with_stampede_lua_path(client: MagicMock) -> None:
         patch("src.app.core.utils.cache.get_lua_manager", return_value=lua),
         patch("src.app.core.utils.cache.random.random", return_value=1.0),
     ):
-        settings.XFETCH_USE_LUA_SCRIPT = True
+        settings.r1_unified.XFETCH_USE_LUA_SCRIPT = True
         result = await get_with_stampede_protection("k", AsyncMock(), ttl=3600)
     assert result == {"a": 1}
 
@@ -350,7 +350,7 @@ async def test_get_with_stampede_lua_fallback(client: MagicMock) -> None:
         patch("src.app.core.utils.cache.get_lua_manager", return_value=lua),
         patch("src.app.core.utils.cache.random.random", return_value=1.0),
     ):
-        settings.XFETCH_USE_LUA_SCRIPT = True
+        settings.r1_unified.XFETCH_USE_LUA_SCRIPT = True
         result = await get_with_stampede_protection("k", AsyncMock(), ttl=3600)
     assert result == {"a": 1}
 
@@ -365,7 +365,7 @@ async def test_get_with_stampede_lock_timeout(client: MagicMock) -> None:
         patch.object(cache_mod, "settings") as settings,
         patch("src.app.core.utils.cache.asyncio.sleep", new=AsyncMock()),
     ):
-        settings.XFETCH_USE_LUA_SCRIPT = False
+        settings.r1_unified.XFETCH_USE_LUA_SCRIPT = False
         result = await get_with_stampede_protection("k", fetch, ttl=3600)
     assert result == {"c": 3}
 
@@ -979,7 +979,7 @@ async def test_get_with_stampede_background_refresh(client: MagicMock) -> None:
         patch.object(cache_mod, "settings") as settings,
         patch("src.app.core.utils.cache.random.random", return_value=0.0),
     ):
-        settings.XFETCH_USE_LUA_SCRIPT = False
+        settings.r1_unified.XFETCH_USE_LUA_SCRIPT = False
         result = await get_with_stampede_protection("k", fetch, ttl=3600)
     assert result == {"a": 1}
     # allow the background task to run/cleanup
@@ -994,7 +994,7 @@ async def test_get_with_stampede_background_refresh_locked(client: MagicMock) ->
         patch.object(cache_mod, "settings") as settings,
         patch("src.app.core.utils.cache.random.random", return_value=0.0),
     ):
-        settings.XFETCH_USE_LUA_SCRIPT = False
+        settings.r1_unified.XFETCH_USE_LUA_SCRIPT = False
         result = await get_with_stampede_protection("k", AsyncMock(), ttl=3600)
     assert result == {"a": 1}
 
@@ -1008,7 +1008,7 @@ async def test_get_with_stampede_miss_polling_hit(client: MagicMock) -> None:
         patch.object(cache_mod, "settings") as settings,
         patch("src.app.core.utils.cache.asyncio.sleep", new=AsyncMock()),
     ):
-        settings.XFETCH_USE_LUA_SCRIPT = False
+        settings.r1_unified.XFETCH_USE_LUA_SCRIPT = False
         result = await get_with_stampede_protection("k", AsyncMock(), ttl=3600)
     assert result == {"c": 3}
 

@@ -46,46 +46,42 @@ def _keys(limiter):
 
 
 @pytest.mark.parametrize(
-    ("action", "identity", "tenant_id", "expected"),
+    ("action", "identity", "expected"),
     [
-        (SecurityAction.AUTH, Identity(ip="1.2.3.4"), None, "rate_limit:user:1.2.3.4:budget:auth"),
+        (SecurityAction.AUTH, Identity(ip="1.2.3.4"), "rate_limit:user:1.2.3.4:budget:auth"),
         (
             SecurityAction.PASSKEY_LOGIN,
             Identity(ip="1.2.3.4"),
-            None,
             "rate_limit:user:1.2.3.4:budget:passkey_login",
         ),
         (
             SecurityAction.MAGIC_LINK_SEND,
             Identity(email_hash="abc123"),
-            None,
             "rate_limit:user:email:abc123:budget:magic_link_send",
         ),
-        (SecurityAction.MFA_MUTATE, Identity(user_id="42"), None, "rate_limit:user:42:budget:mfa_mutate"),
-        (SecurityAction.AI_CHAT, Identity(user_id="42"), None, "rate_limit:user:42:budget:ai_chat"),
-        (SecurityAction.REFRESH, Identity(ip="1.2.3.4"), None, "rate_limit:user:1.2.3.4:budget:refresh"),
+        (SecurityAction.MFA_MUTATE, Identity(user_id="42"), "rate_limit:user:42:budget:mfa_mutate"),
+        (SecurityAction.AI_CHAT, Identity(user_id="42"), "rate_limit:user:42:budget:ai_chat"),
+        (SecurityAction.REFRESH, Identity(ip="1.2.3.4"), "rate_limit:user:1.2.3.4:budget:refresh"),
         # MFA door 1 — POST /mfa/verify, step-up, account known up front.
-        (SecurityAction.MFA_STEPUP_VERIFY, Identity(user_id="42"), None, "rate_limit:user:42:budget:mfa_verify"),
+        (SecurityAction.MFA_STEPUP_VERIFY, Identity(user_id="42"), "rate_limit:user:42:budget:mfa_verify"),
         # MFA door 2 — POST /mfa/complete-login, charged before the peek.
         (
             SecurityAction.MFA_VERIFY_PENDING,
             Identity(token="tok-abc"),
-            None,
             "rate_limit:user:tok-abc:budget:mfa_verify",
         ),
         # MFA door 2, after the peek resolves the account. 15/60, own namespace.
         (
             SecurityAction.MFA_VERIFY_ACCOUNT,
             Identity(user_id="42"),
-            None,
             "rate_limit:user:user:42:budget:mfa_verify_global",
         ),
     ],
 )
-async def test_golden_key_bytes(action, identity, tenant_id, expected):
+async def test_golden_key_bytes(action, identity, expected):
     """Every leg's Redis key is pinned byte-for-byte against today's output."""
     limiter = _limiter()
-    await probe(action, identity, tenant_id=tenant_id, limiter=limiter)
+    await probe(action, identity, limiter=limiter)
     assert _keys(limiter)[0] == expected
 
 
@@ -103,10 +99,26 @@ async def test_the_three_mfa_doors_stay_on_three_separate_meters():
     assert len(keys) == 3, f"MFA meters collapsed onto shared keys: {keys}"
 
 
-async def test_golden_key_is_tenant_scoped():
-    limiter = _limiter()
-    await probe(SecurityAction.MFA_MUTATE, Identity(user_id="42"), tenant_id="t1", limiter=limiter)
-    assert _keys(limiter)[0] == "tenant:t1:rate_limit:user:42:budget:mfa_mutate"
+async def test_no_budget_key_is_tenant_scoped():
+    """P1-9: every budget key is installation-wide BY DESIGN.
+
+    The seam used to accept a ``tenant_id`` that no production caller
+    supplied, so the previous version of this test passed and proved tenant
+    scoping "worked" with zero production effect. The parameter is gone, and
+    the IP-keyed brute-force budgets (AUTH, PASSKEY_LOGIN, REFRESH) MUST stay
+    global: tenant-scoping them would let an attacker mint a fresh budget by
+    varying the tenant header. See budgets.py, "Tenant scope: DELIBERATELY
+    GLOBAL".
+    """
+    for action, identity in (
+        (SecurityAction.AUTH, Identity(ip="1.2.3.4")),
+        (SecurityAction.PASSKEY_LOGIN, Identity(ip="1.2.3.4")),
+        (SecurityAction.MFA_MUTATE, Identity(user_id="42")),
+    ):
+        limiter = _limiter()
+        await probe(action, identity, limiter=limiter)
+        key = _keys(limiter)[0]
+        assert not key.startswith("tenant:"), f"{action} leaked a tenant prefix: {key}"
 
 
 async def test_user_id_int_and_str_produce_identical_bytes():
@@ -267,7 +279,7 @@ async def test_identity_carries_no_field_that_can_hold_a_key():
 async def test_entry_points_expose_no_free_form_identifier_parameter():
     """check/probe take facts, never a caller-built key or identifier string."""
     for fn in (check, probe):
-        assert set(inspect.signature(fn).parameters) == {"action", "identity", "tenant_id", "limiter"}
+        assert set(inspect.signature(fn).parameters) == {"action", "identity", "limiter"}
 
 
 # ------------------------------------------------------------------- refusal

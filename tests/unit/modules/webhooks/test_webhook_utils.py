@@ -19,17 +19,13 @@ class TestVerifyWebhookSignature:
 
     def test_verify_valid_signature(self) -> None:
         """Test verifying a valid webhook signature."""
+        from src.app.modules.webhooks.signer import sign_payload
+
         secret = "test_secret_123"
         payload_dict = {"user_id": "123", "event": "created"}
         payload_bytes = json.dumps(payload_dict, sort_keys=True).encode("utf-8")
-
-        # Generate expected signature
-        import hashlib
-        import hmac
-
-        expected_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-        signature = f"sha256={expected_sig}"
         timestamp = int(time.time())
+        signature = sign_payload(payload_dict, secret, timestamp)
 
         result = verify_webhook_signature(payload_bytes, signature, timestamp, secret)
 
@@ -106,21 +102,18 @@ class TestVerifyWebhookSignature:
 
     def test_verify_custom_tolerance(self) -> None:
         """Test custom tolerance value."""
+        from src.app.modules.webhooks.signer import sign_payload
+
         secret = "test_secret"
-        payload = b'{"user_id": "123"}'
-
-        # Generate valid signature
-        import hashlib
-        import hmac
-
-        expected_sig = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-        signature = f"sha256={expected_sig}"
+        payload_dict = {"user_id": "123"}
+        payload_bytes = json.dumps(payload_dict, sort_keys=True).encode("utf-8")
 
         # Use timestamp 6 minutes ago
         old_timestamp = int(time.time()) - 360
+        signature = sign_payload(payload_dict, secret, old_timestamp)
 
         # With custom tolerance of 10 minutes, should pass
-        result = verify_webhook_signature(payload, signature, old_timestamp, secret, tolerance=600)
+        result = verify_webhook_signature(payload_bytes, signature, old_timestamp, secret, tolerance=600)
 
         assert result is True
 
@@ -140,35 +133,32 @@ class TestVerifyWebhookSignature:
         assert verify_webhook_signature(payload_bytes, signature, old_timestamp, secret, tolerance=600) is True
 
     def test_verify_signature_without_prefix(self) -> None:
-        """Test verifying signature without 'sha256=' prefix."""
+        """A v1 digest without a t= segment is rejected.
+
+        The timestamp-bound scheme requires both parts of the header; a
+        bare v1 digest leaves the timestamp unauthenticated.
+        """
+        from src.app.modules.webhooks.signer import sign_canonical_bytes
+
         secret = "test_secret"
         payload_dict = {"user_id": "123"}
         payload_bytes = json.dumps(payload_dict, sort_keys=True).encode("utf-8")
-
-        # Generate signature without prefix
-        import hashlib
-        import hmac
-
-        signature = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
         timestamp = int(time.time())
+        signature = sign_canonical_bytes(payload_bytes, secret, timestamp).split("v1=", 1)[1]
 
         result = verify_webhook_signature(payload_bytes, signature, timestamp, secret)
 
-        assert result is True
+        assert result is False
 
     def test_verify_signature_with_prefix(self) -> None:
-        """Test verifying signature with 'sha256=' prefix."""
+        """Test verifying signature with the t=,v1= scheme."""
+        from src.app.modules.webhooks.signer import sign_canonical_bytes
+
         secret = "test_secret"
         payload_dict = {"user_id": "123"}
         payload_bytes = json.dumps(payload_dict, sort_keys=True).encode("utf-8")
-
-        # Generate signature with prefix
-        import hashlib
-        import hmac
-
-        sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-        signature = f"sha256={sig}"
         timestamp = int(time.time())
+        signature = sign_canonical_bytes(payload_bytes, secret, timestamp)
 
         result = verify_webhook_signature(payload_bytes, signature, timestamp, secret)
 
@@ -176,19 +166,15 @@ class TestVerifyWebhookSignature:
 
     def test_verify_payload_key_order_independence(self) -> None:
         """Test that payload key order doesn't affect verification."""
+        from src.app.modules.webhooks.signer import sign_canonical_bytes
+
         secret = "test_secret"
         timestamp = int(time.time())
 
         # Same data, different key order
         payload1 = b'{"a": 1, "b": 2}'
         payload2 = b'{"b": 2, "a": 1}'
-
-        # Generate signature from first payload
-        import hashlib
-        import hmac
-
-        expected_sig = hmac.new(secret.encode("utf-8"), payload1, hashlib.sha256).hexdigest()
-        signature = f"sha256={expected_sig}"
+        signature = sign_canonical_bytes(payload1, secret, timestamp)
 
         # Verify against second payload (should work because of JSON re-serialization)
         result = verify_webhook_signature(payload2, signature, timestamp, secret)
@@ -197,16 +183,12 @@ class TestVerifyWebhookSignature:
 
     def test_verify_non_json_payload(self) -> None:
         """Test verifying non-JSON payload uses raw bytes."""
+        from src.app.modules.webhooks.signer import sign_canonical_bytes
+
         secret = "test_secret"
         payload = b"raw bytes payload"
         timestamp = int(time.time())
-
-        # Generate signature from raw bytes
-        import hashlib
-        import hmac
-
-        expected_sig = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-        signature = f"sha256={expected_sig}"
+        signature = sign_canonical_bytes(payload, secret, timestamp)
 
         result = verify_webhook_signature(payload, signature, timestamp, secret)
 
@@ -214,16 +196,12 @@ class TestVerifyWebhookSignature:
 
     def test_verify_empty_payload(self) -> None:
         """Test verifying empty payload."""
+        from src.app.modules.webhooks.signer import sign_canonical_bytes
+
         secret = "test_secret"
         payload = b""
         timestamp = int(time.time())
-
-        # Generate signature from empty payload
-        import hashlib
-        import hmac
-
-        expected_sig = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-        signature = f"sha256={expected_sig}"
+        signature = sign_canonical_bytes(payload, secret, timestamp)
 
         result = verify_webhook_signature(payload, signature, timestamp, secret)
 
@@ -231,17 +209,13 @@ class TestVerifyWebhookSignature:
 
     def test_verify_unicode_payload(self) -> None:
         """Test verifying payload with unicode characters."""
+        from src.app.modules.webhooks.signer import sign_canonical_bytes
+
         secret = "test_secret"
         payload_dict = {"message": "Hello 世界 🌍"}
         payload_bytes = json.dumps(payload_dict, sort_keys=True).encode("utf-8")
-
-        # Generate signature
-        import hashlib
-        import hmac
-
-        expected_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-        signature = f"sha256={expected_sig}"
         timestamp = int(time.time())
+        signature = sign_canonical_bytes(payload_bytes, secret, timestamp)
 
         result = verify_webhook_signature(payload_bytes, signature, timestamp, secret)
 
@@ -266,8 +240,8 @@ class TestVerifyWebhookSignature:
 
         assert result is False
 
-    def test_legacy_signature_accepted_with_deprecation_warning(self) -> None:
-        """S-M1: legacy sha256= digests are accepted during the sunset window but log a warning."""
+    def test_legacy_signature_rejected_with_migration_warning(self) -> None:
+        """S-M1: a retired sha256= digest is refused and flagged for operators."""
         import hashlib
         import hmac
 
@@ -278,37 +252,13 @@ class TestVerifyWebhookSignature:
         expected_sig = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
         signature = f"sha256={expected_sig}"
         timestamp = int(time.time())
-
-        with patch("src.app.modules.webhooks.utils.logger") as mock_logger:
-            result = webhooks_utils.verify_webhook_signature(payload, signature, timestamp, secret)
-
-        assert result is True
-        assert any(
-            "legacy_webhook_signature_accepted_deprecated" in str(call) for call in mock_logger.warning.call_args_list
-        )
-
-    def test_legacy_signature_rejected_after_sunset(self, monkeypatch) -> None:
-        """S-M1: legacy sha256= digests are rejected once the sunset date has passed."""
-        import hashlib
-        import hmac
-
-        from src.app.modules.webhooks import utils as webhooks_utils
-
-        secret = "test_secret"
-        payload = b'{"user_id": "123"}'
-        expected_sig = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-        signature = f"sha256={expected_sig}"
-        timestamp = int(time.time())
-
-        # Simulate a verification attempt after the sunset date.
-        monkeypatch.setattr(webhooks_utils, "_legacy_signature_sunset_reached", lambda: True)
 
         with patch("src.app.modules.webhooks.utils.logger") as mock_logger:
             result = webhooks_utils.verify_webhook_signature(payload, signature, timestamp, secret)
 
         assert result is False
         assert any(
-            "legacy_webhook_signature_rejected_after_sunset" in str(call) for call in mock_logger.warning.call_args_list
+            "legacy_webhook_signature_rejected" in str(call) for call in mock_logger.warning.call_args_list
         )
 
 
@@ -352,6 +302,8 @@ class TestWebhookSignatureIntegration:
 
     def test_end_to_end_sign_and_verify(self) -> None:
         """Test complete flow: generate secret, sign payload, verify signature."""
+        from src.app.modules.webhooks.signer import sign_canonical_bytes
+
         # Generate a signing secret
         secret = generate_signing_secret()
 
@@ -363,14 +315,8 @@ class TestWebhookSignatureIntegration:
             "timestamp": int(time.time()),
         }
         payload_bytes = json.dumps(payload_dict, sort_keys=True).encode("utf-8")
-
-        # Generate signature (simulating what the service does)
-        import hashlib
-        import hmac
-
-        expected_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-        signature = f"sha256={expected_sig}"
         timestamp = int(time.time())
+        signature = sign_canonical_bytes(payload_bytes, secret, timestamp)
 
         # Verify (simulating what a consumer does)
         result = verify_webhook_signature(payload_bytes, signature, timestamp, secret)
@@ -379,18 +325,14 @@ class TestWebhookSignatureIntegration:
 
     def test_tampered_payload_fails_verification(self) -> None:
         """Test that tampered payload fails verification."""
+        from src.app.modules.webhooks.signer import sign_canonical_bytes
+
         secret = generate_signing_secret()
 
         # Original payload
         original_payload = b'{"user_id": "123", "amount": 100}'
-
-        # Generate signature for original
-        import hashlib
-        import hmac
-
-        expected_sig = hmac.new(secret.encode("utf-8"), original_payload, hashlib.sha256).hexdigest()
-        signature = f"sha256={expected_sig}"
         timestamp = int(time.time())
+        signature = sign_canonical_bytes(original_payload, secret, timestamp)
 
         # Tampered payload
         tampered_payload = b'{"user_id": "123", "amount": 999}'
@@ -402,27 +344,42 @@ class TestWebhookSignatureIntegration:
 
     def test_replay_attack_protection(self) -> None:
         """Test comprehensive replay attack protection."""
+        from src.app.modules.webhooks.signer import sign_canonical_bytes
+
         secret = generate_signing_secret()
         payload = b'{"user_id": "123"}'
 
-        # Generate signature
-        import hashlib
-        import hmac
-
-        expected_sig = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-        signature = f"sha256={expected_sig}"
-
-        # Test various timestamp scenarios
+        # Each timestamp scenario needs its own signature: the timestamp is
+        # inside the HMAC, so it cannot be swapped after signing.
         current_time = int(time.time())
 
         # Valid: current time
-        assert verify_webhook_signature(payload, signature, current_time, secret) is True
+        sig_now = sign_canonical_bytes(payload, secret, current_time)
+        assert verify_webhook_signature(payload, sig_now, current_time, secret) is True
 
         # Valid: 4 minutes ago (within 5 min tolerance)
-        assert verify_webhook_signature(payload, signature, current_time - 240, secret) is True
+        sig_4m = sign_canonical_bytes(payload, secret, current_time - 240)
+        assert verify_webhook_signature(payload, sig_4m, current_time - 240, secret) is True
 
         # Invalid: 6 minutes ago (outside tolerance)
-        assert verify_webhook_signature(payload, signature, current_time - 360, secret) is False
+        sig_6m = sign_canonical_bytes(payload, secret, current_time - 360)
+        assert verify_webhook_signature(payload, sig_6m, current_time - 360, secret) is False
 
         # Invalid: 6 minutes in the future
-        assert verify_webhook_signature(payload, signature, current_time + 360, secret) is False
+        sig_future = sign_canonical_bytes(payload, secret, current_time + 360)
+        assert verify_webhook_signature(payload, sig_future, current_time + 360, secret) is False
+
+    def test_captured_delivery_cannot_be_replayed_with_refreshed_header(self) -> None:
+        """A captured modern delivery dies with its signed timestamp.
+
+        This is the attack the retired payload-only scheme allowed: refresh
+        the unsigned header stamp and replay. The signed t= still decides.
+        """
+        from src.app.modules.webhooks.signer import sign_canonical_bytes
+
+        secret = generate_signing_secret()
+        payload = b'{"user_id": "123"}'
+        captured_at = int(time.time()) - 400
+        signature = sign_canonical_bytes(payload, secret, captured_at)
+
+        assert verify_webhook_signature(payload, signature, int(time.time()), secret) is False

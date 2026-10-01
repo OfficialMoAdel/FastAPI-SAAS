@@ -146,10 +146,20 @@ def mock_settings():
     r1_mock.SESSION_MAX_EVICTION_BATCH_SIZE = 50
     r1_mock.IDEMPOTENCY_TTL_SECONDS = 300
     r1_mock.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
-    r1_mock.EVENT_HANDLER_TIMEOUT_SECONDS = 30
+
+    # EVENT_HANDLER_TIMEOUT_SECONDS lives on the `events` component, not
+    # `r1_unified` (H-7: verified against the live delegation map). The proxy
+    # modelled only `r1_unified`, so reading `settings.events.X` returned a
+    # bare MagicMock, the handler timeout was never a number, and every
+    # handler "timed out" instead of running. Both components are modelled so
+    # the double matches the real read path.
+    events_mock = MockComponent()
+    events_mock.EVENT_HANDLER_TIMEOUT_SECONDS = 30
+
     class MockSettingsProxy:
-        def __init__(self, r1):
+        def __init__(self, r1, events=None):
             self.r1_unified = r1
+            self.events = events if events is not None else MockComponent()
 
         def __getattr__(self, name):
             if hasattr(self.r1_unified, name):
@@ -157,10 +167,10 @@ def mock_settings():
             return getattr(self.r1_unified, name)
 
         def __setattr__(self, name, value):
-            if name == "r1_unified":
+            if name in ("r1_unified", "events"):
                 object.__setattr__(self, name, value)
             else:
                 setattr(self.r1_unified, name, value)
 
-    settings = MockSettingsProxy(r1_mock)
+    settings = MockSettingsProxy(r1_mock, events_mock)
     return settings

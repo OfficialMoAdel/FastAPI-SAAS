@@ -59,6 +59,30 @@ def _make_db() -> MagicMock:
     return MagicMock()
 
 
+def _bound_tenant(tenant_id: Any = 5) -> MagicMock:
+    """A real, active tenant — the state production actually reaches.
+
+    P1-6: the tenant middleware binds either a resolved tenant or the
+    NO_TENANT sentinel; it never leaves the context unset for a request that
+    reaches a guard (a non-exempt path with no header is rejected with 400).
+    Tests that used ``return_value=None`` modelled an unreachable state and
+    encoded the pre-fix behaviour where the binding check was skipped.
+
+    Defaults to tenant 5, matching the fixtures in this module.
+    """
+    from src.app.core.tenancy.context import TenantContext
+
+    # A real TenantContext: AuthContext is a pydantic model and validates the
+    # tenant field, so a MagicMock is rejected at construction.
+    return TenantContext(
+        tenant_id=UUID(int=tenant_id),
+        tenant_slug="acme",
+        tenant_name="Acme",
+        is_active=True,
+    )
+
+
+
 def _dumpable(user: dict | None) -> MagicMock | None:
     """Wrap a raw user dict the way UserDirectory seam methods return it.
 
@@ -203,10 +227,10 @@ async def test_get_auth_context_cached_success() -> None:
         "sub": "user@example.com",
         "token_version": 2,
     }
-    user = {"id": 1, "email": "user@example.com", "is_active": True, "token_version": 2, "tenant_id": 5}
+    user = {"id": 1, "email": "user@example.com", "is_active": True, "token_version": 2, "tenant_id": UUID(int=5)}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
-        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch(
             "src.app.api.deps.auth._is_token_blacklisted_with_fallback",
             new=AsyncMock(return_value=False),
@@ -222,11 +246,11 @@ async def test_get_auth_context_cached_success() -> None:
 async def test_get_auth_context_verify_token_success() -> None:
     request = _make_request()
     token_data = TokenData(username_or_email="bob", token_version=0)
-    user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": 1}
+    user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": UUID(int=5)}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
@@ -301,7 +325,7 @@ async def test_get_auth_context_version_mismatch() -> None:
 async def test_get_auth_context_tenant_mismatch() -> None:
     request = _make_request()
     token_data = TokenData(username_or_email="bob", token_version=0)
-    user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": 1}
+    user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": UUID(int=5)}
     tenant = TenantContext(tenant_id=UUID(int=9), tenant_slug="other", tenant_name="Other", is_active=True)
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
@@ -382,7 +406,7 @@ async def test_get_user_by_api_key_invalid() -> None:
 
 async def test_get_user_by_api_key_tenant_mismatch() -> None:
     request = _make_request()
-    key_info = {"user_id": 1, "tenant_id": 5, "scopes": []}
+    key_info = {"user_id": 1, "tenant_id": UUID(int=5), "scopes": []}
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
         patch("src.app.api.deps.auth.get_current_tenant", return_value=MagicMock(tenant_id=9)),
@@ -395,10 +419,10 @@ async def test_get_user_by_api_key_tenant_mismatch() -> None:
 
 async def test_get_user_by_api_key_user_not_found() -> None:
     request = _make_request()
-    key_info = {"user_id": 1, "tenant_id": 5, "scopes": []}
+    key_info = {"user_id": 1, "tenant_id": UUID(int=5), "scopes": []}
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
-        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         svc = mock_svc_cls.return_value
@@ -411,11 +435,11 @@ async def test_get_user_by_api_key_user_not_found() -> None:
 
 async def test_get_user_by_api_key_dict_user() -> None:
     request = _make_request()
-    key_info = {"user_id": 1, "tenant_id": 5, "scopes": ["read"], "key_id": "k1"}
+    key_info = {"user_id": 1, "tenant_id": UUID(int=5), "scopes": ["read"], "key_id": "k1"}
     user_data = {"id": 1, "username": "a", "email": "a@b.com", "is_active": True}
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
-        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         svc = mock_svc_cls.return_value
@@ -429,7 +453,7 @@ async def test_get_user_by_api_key_dict_user() -> None:
 
 async def test_get_user_by_api_key_obj_user() -> None:
     request = _make_request()
-    key_info = {"user_id": 1, "tenant_id": 5, "scopes": [], "key_id": "k1"}
+    key_info = {"user_id": 1, "tenant_id": UUID(int=5), "scopes": [], "key_id": "k1"}
     user_obj = MagicMock()
     user_obj.id = 1
     user_obj.username = "a"
@@ -442,14 +466,14 @@ async def test_get_user_by_api_key_obj_user() -> None:
         "id": 1,
         "username": "a",
         "email": "a@b.com",
-        "tenant_id": 5,
+        "tenant_id": UUID(int=5),
         "is_active": True,
         "is_superuser": False,
         "token_version": 0,
     }
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
-        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         svc = mock_svc_cls.return_value
@@ -463,11 +487,11 @@ async def test_get_user_by_api_key_obj_user() -> None:
 
 async def test_get_user_by_api_key_inactive() -> None:
     request = _make_request()
-    key_info = {"user_id": 1, "tenant_id": 5, "scopes": [], "key_id": "k1"}
+    key_info = {"user_id": 1, "tenant_id": UUID(int=5), "scopes": [], "key_id": "k1"}
     user_data = {"id": 1, "username": "a", "email": "a@b.com", "is_active": False}
     with (
         patch("src.app.modules.api_keys.service.APIKeyService") as mock_svc_cls,
-        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         svc = mock_svc_cls.return_value
@@ -523,10 +547,10 @@ async def test_get_auth_context_cached_email_user() -> None:
         "sub": "user@example.com",
         "token_version": 2,
     }
-    user = {"id": 1, "email": "user@example.com", "is_active": True, "token_version": 2, "tenant_id": 5}
+    user = {"id": 1, "email": "user@example.com", "is_active": True, "token_version": 2, "tenant_id": UUID(int=5)}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
-        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
@@ -658,10 +682,10 @@ async def test_verify_optional_cached_email_success() -> None:
         "sub": "user@example.com",
         "token_version": 2,
     }
-    user = {"id": 1, "email": "user@example.com", "is_active": True, "token_version": 2, "tenant_id": 5}
+    user = {"id": 1, "email": "user@example.com", "is_active": True, "token_version": 2, "tenant_id": UUID(int=5)}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
-        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
@@ -749,10 +773,11 @@ async def test_verify_optional_verify_token_exception() -> None:
 async def test_verify_optional_success() -> None:
     request = _make_request()
     token_data = TokenData(username_or_email="bob", token_version=0)
-    user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": 1}
+    user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": UUID(int=5)}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
@@ -782,7 +807,7 @@ async def test_verify_optional_tenant_mismatch() -> None:
     """C3: tenant mismatch on a presented credential is fail-loud (403)."""
     request = _make_request()
     token_data = TokenData(username_or_email="bob", token_version=0)
-    user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": 1}
+    user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": UUID(int=5)}
     tenant = MagicMock()
     tenant.id = 9
     with (
@@ -858,11 +883,11 @@ async def test_get_optional_api_key_valid() -> None:
 async def test_get_optional_bearer_success() -> None:
     request = _make_request(headers={"Authorization": "Bearer tok"})
     token_data = TokenData(username_or_email="bob", token_version=0)
-    user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0}
+    user = {"id": 2, "email": "bob@x.com", "is_active": True, "token_version": 0, "tenant_id": UUID(int=5)}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
@@ -943,12 +968,19 @@ async def test_get_current_superuser_ok() -> None:
 async def test_resolve_principal_required_success() -> None:
     request = _make_request()
     token_data = TokenData(username_or_email="alice", token_version=1)
-    user = {"id": 10, "email": "alice@example.com", "username": "alice", "is_active": True, "token_version": 1}
+    user = {
+        "id": 10,
+        "email": "alice@example.com",
+        "username": "alice",
+        "is_active": True,
+        "token_version": 1,
+        "tenant_id": UUID(int=5),
+    }
 
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         mock_ud.return_value.auth_info = AsyncMock(return_value=_dumpable(user))
@@ -973,12 +1005,19 @@ async def test_resolve_principal_optional_unauthenticated_returns_none() -> None
 async def test_resolve_principal_optional_success() -> None:
     request = _make_request()
     token_data = TokenData(username_or_email="alice", token_version=0)
-    user = {"id": 10, "email": "alice@example.com", "username": "alice", "is_active": True, "token_version": 0}
+    user = {
+        "id": 10,
+        "email": "alice@example.com",
+        "username": "alice",
+        "is_active": True,
+        "token_version": 0,
+        "tenant_id": UUID(int=5),
+    }
 
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         mock_ud.return_value.auth_info = AsyncMock(return_value=_dumpable(user))

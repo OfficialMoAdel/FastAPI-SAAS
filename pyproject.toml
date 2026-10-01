@@ -38,6 +38,16 @@ dependencies = [
     "webauthn>=2.0.0",
     # Storage & Observability (Phase 4/7)
     "azure-storage-blob>=12.0.0",
+    # boto3 — AWS S3 backend (dxub.9 DECIDED: DECLARE).
+    # S3 is a REACHABLE backend: "s3" is a member of the public
+    # StorageProviderType enum that POST /storage accepts, and it is the
+    # shipped OpenAPI example. Declaring azure-storage-blob above while
+    # leaving its exact counterpart undeclared made the selectable backend
+    # unrunnable on every clean install — a comment could not fix that, only
+    # hide it. Keeping azure and s3 symmetric is what makes both honest.
+    # Imported function-locally in clients/storage, so install cost is paid
+    # only by deployments that never construct an S3 provider.
+    "boto3>=1.35.0",
     "aiofiles>=23.0.0",
     "opentelemetry-api>=1.20.0",
     # Billing & AI (Phase 3/5)
@@ -127,13 +137,27 @@ ignore = [
     "F403", # star imports
 ]
 "src/migrations/*" = ["E501"]
-# P1-17: BLE001 is enforced on the boot path only
+# P1-17: BLE001 is enforced on the boot path
 # (src/app/main.py, src/app/core/setup.py, src/app/api/monitoring.py,
-# src/app/core/job_monitoring.py). Everything below is deferred to the
-# repo-wide blind-except campaign — do NOT add new broad excepts here
+# src/app/core/job_monitoring.py). Everything else below is deferred to the
+# repo-wide blind-except campaign — do NOT add new broad excepts there
 # without a justification; extend enforcement instead.
-"src/app/{modules,clients,middleware,admin,transport,models,schemas,shared,templates}/**" = ["BLE001"]
-"src/app/api/{deps,v1}/**" = ["BLE001"]
+#
+# muse 22 (FastAPI_saas-io15.4) narrowed three more subtrees from a blanket
+# glob to an explicit per-file list, so that `api/deps/auth.py`,
+# `middleware/tenant.py` and `clients/notifications/smtp.py` are now
+# ENFORCED rather than silently exempt. A glob like `middleware/**` cannot
+# exempt its siblings and enforce one file: ruff UNIONs a broad
+# per-file-ignore with a narrower one, so the exemption always wins. The
+# list form is what makes the gate actually bite on the triaged files.
+"src/app/{modules,admin,transport,models,schemas,shared,templates}/**" = ["BLE001"]
+# Deferred siblings of the triaged files (still unannotated broad excepts,
+# not yet triaged — each must carry a reasoned noqa or be narrowed later).
+"src/app/middleware/{attack_detection,rate_limit}.py" = ["BLE001"]
+"src/app/clients/storage/{azure_storage,local_storage,s3_storage}.py" = ["BLE001"]
+# TID is merged in here because the api/v1 BLE001 entry must name the same
+# glob (a second entry for one pattern is a duplicate-key TOML error).
+"src/app/api/v1/**" = ["BLE001", "TID"]
 "src/app/api/{__init__,openapi}.py" = ["BLE001"]
 "src/app/{__init__,events}.py" = ["BLE001"]
 "src/app/core/{cache,config,db,events,exceptions,monitoring,observability,rbac,resilience,security,tenancy,utils,worker}/**" = ["BLE001"]
@@ -147,6 +171,49 @@ ignore = [
 # (tests/** above: white-box tests pin internals + mock targets by design.)
 "src/app/api/v1/__init__.py" = ["TID"]
 "src/app/modules/*/__init__.py" = ["TID"]
+# P1-20 (widened, 2026-09-30) — the exemptions that make the widened ban
+# expressible. ruff cannot see WHO imports, so each entry below is a seam
+# where a service/router is legitimately reached, and each is a class of
+# site rather than a single file. Removing one turns the gate red.
+# - modules/*/router.py + modules/*/routers/**: a module's own router
+#   calling its own service. That is the module's internal layering.
+# - modules/*/checkout_service.py etc. are NOT exempt: a service reaching
+#   ANOTHER module's service is exactly the coupling this gate exists for.
+"src/app/modules/*/router.py" = ["TID251"]
+# auth is the one module whose service layer is a PACKAGE: `auth/service.py`
+# and `auth/services/*` are siblings inside the same module, so the
+# intra-module rule above (which matches only `router.py`/`routers/`) does
+# not cover them. These are auth-internal edges, not cross-module coupling.
+"src/app/modules/auth/service.py" = ["TID251"]
+"src/app/modules/auth/services/**" = ["TID251"]
+"src/app/modules/*/routers/**" = ["TID251"]
+# Intra-module service/router edges that the wildcard above does not cover
+# (the patterns only match files named `router.py`/`routers/`):
+# - rbac/permissions_router.py is rbac's own second router, so it reaches
+#   rbac.router and rbac.service; it is intra-module layering like router.py.
+# - billing/checkout_service.py and audit_logs/trail.py are siblings of
+#   their own module's service.py, not a cross-module consumer.
+"src/app/modules/rbac/permissions_router.py" = ["TID251"]
+"src/app/modules/billing/checkout_service.py" = ["TID251"]
+"src/app/modules/audit_logs/trail.py" = ["TID251"]
+# DELIBERATE cross-module exemptions — a module reaching ANOTHER module's
+# service. These are the two residual breaches this gate reports today.
+# Both are documented import-cycle guards, not drift: `tiers/__init__.py`
+# states that `tiers.service` transitively imports `rate_limits`, so
+# `users.service` and `rate_limits.service` import it directly and eagerly
+# to keep the cycle out of the tiers-first import order. Rewriting them to
+# the facade would reintroduce the ImportError that __getattr__ was added
+# to prevent. They stay as named, visible debt — a NEW cross-module
+# service import is still red.
+"src/app/modules/users/service.py" = ["TID251"]
+"src/app/modules/rate_limits/service.py" = ["TID251"]
+# events.py registers handlers with the services that own them; worker.py
+# is the worker's own composition root. Both are registries, not consumers.
+"src/app/events.py" = ["TID251"]
+"src/app/worker.py" = ["TID251"]
+# api/deps/auth.py: the principal seam resolves an API key through
+# api_keys.service by design (its docstring states the seam is deliberate).
+"src/app/api/deps/auth.py" = ["TID251"]
 # P2-13: env_validator.py is the sanctioned raw-environment reader (its
 # contract is pre-Pydantic validation; tests pin os.environ patching).
 # scripts/** are ops harnesses that read their own harness env directly.
@@ -162,14 +229,96 @@ max-complexity = 24
 # exceptions are env_validator.py (pre-Pydantic raw-env validator) and
 # scripts/** (ops harnesses); see per-file-ignores above.
 "os.getenv".msg = "Use Pydantic settings (src.app.core.config) instead of raw os.getenv"
-"src.app.modules.auth.service".msg = "Import from 'src.app.modules.auth' instead of internal files"
-"src.app.modules.auth.router".msg = "Import from 'src.app.modules.auth' instead of internal files"
-"src.app.modules.users.service".msg = "Import from 'src.app.modules.users' instead of internal files"
-"src.app.modules.users.router".msg = "Import from 'src.app.modules.users' instead of internal files"
-"src.app.modules.tenants.service".msg = "Import from 'src.app.modules.tenants' instead of internal files"
-"src.app.modules.posts.service".msg = "Import from 'src.app.modules.posts' instead of internal files"
-
-
+# P1-20 WIDENED + RE-FRAMED (2026-09-30). This list previously named 6 of
+# the 160 internal cells and `ruff check --select TID251` was CLEAN — it
+# caught nothing. The rule as written ("never import another module's
+# internals", ARCHITECTURE.md:39) defends the BEHAVIOUR LAYER: a module's
+# service and router are what the facade exists to hide. models/schemas/crud
+# are not that seam; banning them would have demanded 429 rewrites of LEGAL
+# intra-module imports (measured), not 40 targeted ones.
+#
+# The reframe is also the only expressible one: ruff banned-api is
+# PREFIX-ONLY, has NO WILDCARDS, and has NO NOTION OF THE IMPORTER. Banning
+# `src.app.modules.X` would ban the facade `src.app.modules.X` itself and
+# would flag a module's own `router.py -> service.py` edge, which is that
+# module's internal layering and is legal. The per-file-ignores that make
+# this green are therefore structural, not cosmetic.
+#
+# Cells: every `{module}.service` and `{module}.router` (and their
+# subpackages) enumerated from the tree - 40 cells across all 21 modules
+# that have a service or router. `_base` is excluded: it is documented
+# shared scaffolding, not a feature module.
+# ai
+"src.app.modules.ai.router".msg = 'Deep module import: use the package root `src.app.modules.ai` (its lazy __getattr__ facade) instead'
+"src.app.modules.ai.service".msg = 'Deep module import: use the package root `src.app.modules.ai` (its lazy __getattr__ facade) instead'
+# api_keys
+"src.app.modules.api_keys.router".msg = 'Deep module import: use the package root `src.app.modules.api_keys` (its lazy __getattr__ facade) instead'
+"src.app.modules.api_keys.service".msg = 'Deep module import: use the package root `src.app.modules.api_keys` (its lazy __getattr__ facade) instead'
+# app_configuration
+"src.app.modules.app_configuration.router".msg = 'Deep module import: use the package root `src.app.modules.app_configuration` (its lazy __getattr__ facade) instead'
+"src.app.modules.app_configuration.service".msg = 'Deep module import: use the package root `src.app.modules.app_configuration` (its lazy __getattr__ facade) instead'
+# audit_logs
+"src.app.modules.audit_logs.router".msg = 'Deep module import: use the package root `src.app.modules.audit_logs` (its lazy __getattr__ facade) instead'
+"src.app.modules.audit_logs.service".msg = 'Deep module import: use the package root `src.app.modules.audit_logs` (its lazy __getattr__ facade) instead'
+# auth
+"src.app.modules.auth.router".msg = 'Deep module import: use the package root `src.app.modules.auth` (its lazy __getattr__ facade) instead'
+"src.app.modules.auth.service".msg = 'Deep module import: use the package root `src.app.modules.auth` (its lazy __getattr__ facade) instead'
+# billing
+"src.app.modules.billing.router".msg = 'Deep module import: use the package root `src.app.modules.billing` (its lazy __getattr__ facade) instead'
+"src.app.modules.billing.service".msg = 'Deep module import: use the package root `src.app.modules.billing` (its lazy __getattr__ facade) instead'
+# dashboard
+"src.app.modules.dashboard.router".msg = 'Deep module import: use the package root `src.app.modules.dashboard` (its lazy __getattr__ facade) instead'
+"src.app.modules.dashboard.service".msg = 'Deep module import: use the package root `src.app.modules.dashboard` (its lazy __getattr__ facade) instead'
+# feature_flags
+"src.app.modules.feature_flags.router".msg = 'Deep module import: use the package root `src.app.modules.feature_flags` (its lazy __getattr__ facade) instead'
+"src.app.modules.feature_flags.service".msg = 'Deep module import: use the package root `src.app.modules.feature_flags` (its lazy __getattr__ facade) instead'
+# health
+"src.app.modules.health.router".msg = 'Deep module import: use the package root `src.app.modules.health` (its lazy __getattr__ facade) instead'
+# notifications
+"src.app.modules.notifications.router".msg = 'Deep module import: use the package root `src.app.modules.notifications` (its lazy __getattr__ facade) instead'
+"src.app.modules.notifications.service".msg = 'Deep module import: use the package root `src.app.modules.notifications` (its lazy __getattr__ facade) instead'
+# posts
+"src.app.modules.posts.router".msg = 'Deep module import: use the package root `src.app.modules.posts` (its lazy __getattr__ facade) instead'
+"src.app.modules.posts.service".msg = 'Deep module import: use the package root `src.app.modules.posts` (its lazy __getattr__ facade) instead'
+# rate_limits
+"src.app.modules.rate_limits.router".msg = 'Deep module import: use the package root `src.app.modules.rate_limits` (its lazy __getattr__ facade) instead'
+"src.app.modules.rate_limits.service".msg = 'Deep module import: use the package root `src.app.modules.rate_limits` (its lazy __getattr__ facade) instead'
+# rbac
+"src.app.modules.rbac.router".msg = 'Deep module import: use the package root `src.app.modules.rbac` (its lazy __getattr__ facade) instead'
+"src.app.modules.rbac.service".msg = 'Deep module import: use the package root `src.app.modules.rbac` (its lazy __getattr__ facade) instead'
+# security
+"src.app.modules.security.router".msg = 'Deep module import: use the package root `src.app.modules.security` (its lazy __getattr__ facade) instead'
+# storage
+"src.app.modules.storage.router".msg = 'Deep module import: use the package root `src.app.modules.storage` (its lazy __getattr__ facade) instead'
+"src.app.modules.storage.service".msg = 'Deep module import: use the package root `src.app.modules.storage` (its lazy __getattr__ facade) instead'
+# storage.routers: ruff matches banned-api on DOT SEGMENTS, so `storage.router`
+# does NOT cover the `storage.routers` package. Banning the package cell
+# covers every module beneath it.
+"src.app.modules.storage.routers".msg = 'Deep module import: use the package root `src.app.modules.storage` (its lazy __getattr__ facade) instead'
+# auth: `auth.services` is the multi-file service layer and `auth.routers`
+# the multi-file router layer; same segment rule applies.
+"src.app.modules.auth.routers".msg = 'Deep module import: use the package root `src.app.modules.auth` (its lazy __getattr__ facade) instead'
+"src.app.modules.auth.services".msg = 'Deep module import: use the package root `src.app.modules.auth` (its lazy __getattr__ facade) instead'
+# billing.routers is billing's split router layer.
+"src.app.modules.billing.routers".msg = 'Deep module import: use the package root `src.app.modules.billing` (its lazy __getattr__ facade) instead'
+# tasks
+"src.app.modules.tasks.router".msg = 'Deep module import: use the package root `src.app.modules.tasks` (its lazy __getattr__ facade) instead'
+"src.app.modules.tasks.service".msg = 'Deep module import: use the package root `src.app.modules.tasks` (its lazy __getattr__ facade) instead'
+# tenants
+"src.app.modules.tenants.router".msg = 'Deep module import: use the package root `src.app.modules.tenants` (its lazy __getattr__ facade) instead'
+"src.app.modules.tenants.service".msg = 'Deep module import: use the package root `src.app.modules.tenants` (its lazy __getattr__ facade) instead'
+# tiers
+"src.app.modules.tiers.router".msg = 'Deep module import: use the package root `src.app.modules.tiers` (its lazy __getattr__ facade) instead'
+"src.app.modules.tiers.service".msg = 'Deep module import: use the package root `src.app.modules.tiers` (its lazy __getattr__ facade) instead'
+# user_preferences
+"src.app.modules.user_preferences.router".msg = 'Deep module import: use the package root `src.app.modules.user_preferences` (its lazy __getattr__ facade) instead'
+"src.app.modules.user_preferences.service".msg = 'Deep module import: use the package root `src.app.modules.user_preferences` (its lazy __getattr__ facade) instead'
+# users
+"src.app.modules.users.router".msg = 'Deep module import: use the package root `src.app.modules.users` (its lazy __getattr__ facade) instead'
+"src.app.modules.users.service".msg = 'Deep module import: use the package root `src.app.modules.users` (its lazy __getattr__ facade) instead'
+# webhooks
+"src.app.modules.webhooks.router".msg = 'Deep module import: use the package root `src.app.modules.webhooks` (its lazy __getattr__ facade) instead'
+"src.app.modules.webhooks.service".msg = 'Deep module import: use the package root `src.app.modules.webhooks` (its lazy __getattr__ facade) instead'
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 
@@ -209,6 +358,12 @@ markers = [
 dev = [
     "aiosqlite>=0.21.0",
     "faker>=37.3.0",
+    # s92p.1: the layering gate is cited as an enforced invariant in
+    # AGENTS.md/ARCHITECTURE.md, so it must be runnable BEFORE a push. It was
+    # absent here and installed ad-hoc in CI, so a developer could only
+    # discover a broken contract after pushing - the failure mode that let
+    # the H-5 contract sit red unnoticed.
+    "import-linter>=2.1",
     "mkdocs-material>=9.7.1",
     "mkdocstrings[python]>=1.0.0",
     "pre-commit>=4.3.0",

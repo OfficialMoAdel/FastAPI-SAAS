@@ -658,10 +658,11 @@ class TestSetUserStatus:
                     result = await user_service.set_user_status("testuser", is_active=False)
 
                     assert "deactivated" in result["message"]
-                    # is_active flip persisted
+                    # is_active flip persisted, and is_email_verified set to
+                    # True so the verification guard fires for admin-disabled accounts.
                     mock_update.assert_awaited_once()
                     update_kwargs = mock_update.call_args[1]
-                    assert update_kwargs["object"] == {"is_active": False}
+                    assert update_kwargs["object"] == {"is_active": False, "is_email_verified": True}
                     # 1B: SQL bump + commit + cache are owned by the seam.
                     mock_seam.assert_awaited_once()
                     seam_args, seam_kwargs = mock_seam.call_args

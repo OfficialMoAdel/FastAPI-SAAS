@@ -108,7 +108,7 @@ class TestB7ParallelReads:
         # Assert - all 3 reads should have been called
         mock_session_inst.get_session.assert_called_once_with(1, 1)
         mock_settings_inst.get_or_create_settings.assert_called_once_with(1)
-        mock_msg_inst.get_session_messages.assert_called_once_with(1, limit=50)
+        mock_msg_inst.get_session_messages.assert_called_once_with(1, 1, limit=50)
 
         # P1-13: all 3 read services must share the request-scoped session
         MockSessionService.assert_called_once_with(mock_db)

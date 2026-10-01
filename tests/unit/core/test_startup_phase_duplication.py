@@ -112,6 +112,40 @@ class TestNoDuplicatePhases:
             dupes = {n for n in names if names.count(n) > 1}
             assert not dupes, f"{fn_name} declares {sorted(dupes)} more than once"
 
+    def test_no_phase_name_is_duplicated_across_both_lists(self) -> None:
+        """muse 18: the union of both lists must have no repeated name.
+
+        The per-list test above could not see this defect: two phases named
+        ``warm_caches`` lived in DIFFERENT lists, one per list, so each list
+        was internally unique. Because the phase name is the observable
+        startup contract, two phases sharing one is an observability
+        defect — per-phase timing and any name-keyed operator signal become
+        ambiguous about which work they describe.
+        """
+        web = _phase_names("lifespan_factory")
+        admin = _phase_names("lifespan_with_admin")
+        combined = web + admin
+        dupes = sorted({n for n in combined if combined.count(n) > 1})
+        assert not dupes, (
+            f"phase name(s) {dupes} are declared in both the web and admin "
+            f"lifespan (web={web}, admin={admin})"
+        )
+
+    def test_the_two_cache_warm_phases_have_distinct_names(self) -> None:
+        """The two cache warms do genuinely different work, so they differ in name.
+
+        The web phase is a fire-and-forget application cache warm under a
+        Redis lock; the admin phase is the blocking, 15s-bounded token
+        blacklist warm. Same name, different work, different latency shape.
+        """
+        web = _phase_names("lifespan_factory")
+        admin = _phase_names("lifespan_with_admin")
+
+        assert "warm_caches" in web, "the application cache warm lost its phase"
+        assert "warm_token_blacklist" in admin, (
+            f"the token-blacklist warm phase is missing or misnamed: {admin}"
+        )
+
     def test_threadpool_is_still_the_first_phase(self) -> None:
         """Removing the bare call must not change when it runs."""
         assert _phase_names("lifespan_factory")[0] == "threadpool"

@@ -116,7 +116,12 @@ class TestAuthServiceLockout:
             ) as mock_get_user,
         ):
             mock_auth.return_value = None  # Authentication fails
-            mock_get_user.return_value = {"id": 1, "tenant_id": mock_tenant.id}
+            # The directory seam returns a validated model; _resolve_user_auth_info
+            # calls .model_dump() on it (SEC-08 now exercises this helper
+            # before authentication too).
+            _found = MagicMock()
+            _found.model_dump.return_value = {"id": 1, "tenant_id": mock_tenant.id}
+            mock_get_user.return_value = _found
 
             with pytest.raises(UnauthorizedError) as exc_info:
                 await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)
@@ -137,6 +142,14 @@ class TestAuthServiceLockout:
 
         with (
             patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
+            # SEC-08: login now resolves the account before the lockout check
+            # to key the counter on the user id. That resolve is a real
+            # tenant-scoped query, so it is mocked here like auth_info.
+            patch(
+                "src.app.modules.auth.service.AuthService._resolve_user_auth_info",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
             mock_auth.return_value = None  # Authentication fails
 
@@ -155,7 +168,15 @@ class TestAuthServiceLockout:
 
         mock_redis.eval = AsyncMock(return_value=1)
 
-        with patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth:
+        with (
+            patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
+            # SEC-08: pre-auth account resolve (see above) is a real query here.
+            patch(
+                "src.app.modules.auth.service.AuthService._resolve_user_auth_info",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
             mock_auth.return_value = None
 
             with pytest.raises(UnauthorizedError):
@@ -178,6 +199,12 @@ class TestAuthServiceLockout:
 
         with (
             patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
+            # SEC-08: pre-auth account resolve (a real tenant-scoped query).
+            patch(
+                "src.app.modules.auth.service.AuthService._resolve_user_auth_info",
+                new_callable=AsyncMock,
+                return_value=mock_user,
+            ),
             patch("src.app.modules.auth.services.tokens.create_access_token", new_callable=AsyncMock) as mock_access,
             patch("src.app.modules.auth.services.tokens.create_refresh_token", new_callable=AsyncMock) as mock_refresh,
             patch("src.app.modules.auth.services.mfa.get_mfa_service", return_value=mock_mfa_service),
@@ -197,7 +224,9 @@ class TestAuthServiceLockout:
             assert result["access_token"] == "access_token"
             assert "refresh_token" not in result
             # Verify counter was cleared
-            mock_redis.delete.assert_called_once_with("login_attempts:testuser")
+            # SEC-08: the cleared key is the resolved account's, not the
+            # attacker-supplied identifier.
+            mock_redis.delete.assert_called_once_with("login_attempts:user:1")
 
     @pytest.mark.asyncio
     async def test_lockout_at_exactly_5_attempts(self, auth_service, mock_db, mock_redis, mock_response, mock_request):
@@ -207,7 +236,15 @@ class TestAuthServiceLockout:
         # Lua script returns 5 (5th attempt just recorded, not yet locked)
         mock_redis.eval = AsyncMock(return_value=5)
 
-        with patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth:
+        with (
+            patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
+            # SEC-08: pre-auth account resolve (see above) is a real query here.
+            patch(
+                "src.app.modules.auth.service.AuthService._resolve_user_auth_info",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
             mock_auth.return_value = None  # Auth fails
 
             # This is the 5th attempt - should fail but not be locked yet
@@ -239,7 +276,12 @@ class TestAuthServiceLockout:
             ) as mock_get_user,
         ):
             mock_auth.return_value = None
-            mock_get_user.return_value = {"id": 1, "tenant_id": mock_tenant.id}
+            # The directory seam returns a validated model; _resolve_user_auth_info
+            # calls .model_dump() on it (SEC-08 now exercises this helper
+            # before authentication too).
+            _found = MagicMock()
+            _found.model_dump.return_value = {"id": 1, "tenant_id": mock_tenant.id}
+            mock_get_user.return_value = _found
 
             with pytest.raises(UnauthorizedError) as exc_info:
                 await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)
@@ -264,7 +306,12 @@ class TestAuthServiceLockout:
             ) as mock_get_user,
         ):
             mock_auth.return_value = None
-            mock_get_user.return_value = {"id": 1, "tenant_id": mock_tenant.id}
+            # The directory seam returns a validated model; _resolve_user_auth_info
+            # calls .model_dump() on it (SEC-08 now exercises this helper
+            # before authentication too).
+            _found = MagicMock()
+            _found.model_dump.return_value = {"id": 1, "tenant_id": mock_tenant.id}
+            mock_get_user.return_value = _found
 
             with pytest.raises(UnauthorizedError) as exc_info:
                 await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)

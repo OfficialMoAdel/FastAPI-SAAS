@@ -143,15 +143,19 @@ class TestIPExtraction:
         # The rightmost non-trusted IP is 203.0.113.42
         assert ip == "203.0.113.42"
 
-    def test_get_client_ip_x_real_ip(self, middleware, mock_request):
-        """Test extracting IP from X-Real-IP header."""
-        # Forces fallback to X-Real-IP by not setting X-Forwarded-For
+    def test_get_client_ip_x_real_ip_ignored(self, middleware, mock_request):
+        """P1-3: X-Real-IP no longer resolves identity — the peer is used.
+
+        The old fallback let a forwarded client-supplied X-Real-IP reach the
+        ban key, rate-limit identity, audit trail and blacklist decision
+        whenever the direct peer was a trusted proxy.
+        """
         mock_request.client.host = "192.168.1.100"  # Trusted proxy
         mock_request.headers = Headers({"x-real-ip": "203.0.113.55"})
 
         ip = get_client_ip(mock_request)
 
-        assert ip == "203.0.113.55"
+        assert ip == "192.168.1.100", "X-Real-IP must not override the observed peer address"
 
     def test_get_client_ip_x_forwarded_for_priority(self, middleware, mock_request):
         """Test that X-Forwarded-For takes priority over X-Real-IP."""

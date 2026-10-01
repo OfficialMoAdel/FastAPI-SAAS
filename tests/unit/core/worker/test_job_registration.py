@@ -41,12 +41,26 @@ def test_assertion_passes_when_all_registered():
 
 
 def test_startup_wires_the_assertion():
-    """worker.startup must call the guard — the B8 class must fail startup."""
+    """worker.startup must CALL the guard — the B8 class must fail startup.
+
+    Was a source grep ("<name>" in inspect.getsource(startup)), which still
+    passes when the call is deleted and only a comment keeps the name. The
+    falsifiability proof lives in test_startup_wiring_ast.py.
+    """
+    import ast
+    import textwrap
 
     from src.app.core.worker import functions as worker_functions
 
-    source = inspect.getsource(worker_functions.startup)
-    assert "assert_all_jobs_registered" in source
+    tree = ast.parse(textwrap.dedent(inspect.getsource(worker_functions.startup)))
+    called = {
+        n.func.id if isinstance(n.func, ast.Name) else n.func.attr
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name | ast.Attribute)
+    }
+    assert "assert_all_jobs_registered" in called, (
+        "worker.startup does not CALL assert_all_jobs_registered()"
+    )
 
 
 def test_worker_settings_registry_is_the_only_registry():

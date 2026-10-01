@@ -19,8 +19,8 @@ from src.app.core.db.profiler import (
     get_query_stats,
     is_profiler_enabled,
     reset_query_tracker,
-    setup_query_profiler,
     start_request_tracking,
+    track_global_query,
 )
 
 
@@ -207,39 +207,45 @@ class TestProfilerEnablement:
         assert is_profiler_enabled("PROD") is False
 
 
-class TestProfilerSetup:
-    """Tests for profiler setup with SQLAlchemy engine."""
+class TestCrossRequestTracking:
+    """The entry point the single engine listener actually calls.
 
-    def test_setup_profiler_attaches_events(self, mock_async_engine):
-        """Test that profiler attaches to engine events."""
-        # This test verifies the setup function runs without error
-        # In a real scenario, we'd verify events are attached
+    `setup_query_profiler` used to live here and registered a SECOND
+    before/after cursor-execute pair on the same engine as
+    `QueryProfilerMiddleware`, behind the same `QUERY_PROFILER_ENABLED` flag.
+    That double instrumentation is finding `muse 12`. The engine listener now
+    lives in one place and calls `track_global_query`, so this module keeps
+    the cross-request view without owning any listener.
+    """
 
-        class MockAsyncEngine:
-            def __init__(self, sync_engine):
-                self.sync_engine = sync_engine
+    def test_track_global_query_records_and_counts(self):
+        reset_query_tracker()
+        try:
+            for _ in range(3):
+                track_global_query("SELECT * FROM users WHERE id = 7")
 
-        mock_engine = MockAsyncEngine(mock_async_engine)
+            stats = get_query_stats()
+            assert len(stats) == 1, f"expected one normalised pattern, got {list(stats)}"
+            assert next(iter(stats.values()))["count"] == 3
+        finally:
+            reset_query_tracker()
 
-        # Should not raise
-        setup_query_profiler(
-            mock_engine,
-            slow_query_threshold_ms=50,
-            n_plus_1_threshold=5,
-            detailed_logs=True,
-        )
+    def test_track_global_query_normalises_literals(self):
+        """Different literal values are ONE pattern, not N.
 
-    def test_setup_profiler_default_params(self, mock_async_engine):
-        """Test profiler setup with default parameters."""
+        This is the whole point of tracking across requests: the recurring
+        shape is the signal, and the bind values are noise.
+        """
+        reset_query_tracker()
+        try:
+            track_global_query("SELECT * FROM users WHERE id = 1")
+            track_global_query("SELECT * FROM users WHERE id = 2")
 
-        class MockAsyncEngine:
-            def __init__(self, sync_engine):
-                self.sync_engine = sync_engine
-
-        mock_engine = MockAsyncEngine(mock_async_engine)
-
-        # Should work with defaults
-        setup_query_profiler(mock_engine)
+            stats = get_query_stats()
+            assert len(stats) == 1, f"literals were not normalised: {list(stats)}"
+            assert next(iter(stats.values()))["count"] == 2
+        finally:
+            reset_query_tracker()
 
 
 class TestIntegration:

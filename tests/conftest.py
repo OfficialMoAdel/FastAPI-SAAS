@@ -312,6 +312,14 @@ def reset_singletons():
     - RateLimiter (Redis Lua script cache)
     - TokenBlacklistCache (script SHA, locks)
     - EventBus (handlers, registration state)
+
+    The jwt_service DIP seams (``_token_version_lookup`` /
+    ``_user_tenant_lookup``) are deliberately NOT reset here. They are wired
+    once at import of ``src.app.modules.users`` and every test that needs a
+    lookup reads them; nulling them per-test makes the lookup-aware tests
+    fail for every test, which is a worse failure than the occasional leak it
+    was meant to prevent. Tests that register their own lookup reset it
+    themselves via ``reset_jwt_security_lookups()``.
     """
     # Import reset functions - these are added for test isolation
     from src.app.core.events import reset_event_bus

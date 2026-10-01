@@ -73,15 +73,23 @@ def test_contract_declares_the_expected_packages() -> None:
         assert package in forbidden
 
 
-def test_feature_implementation_contract_is_explicit_and_narrow() -> None:
+def test_feature_implementation_contract_covers_every_module() -> None:
+    """s92p.3: the scope was two named services, which left real debt outside.
+
+    src.app.modules.ai.middleware imported the api layer and was NOT caught:
+    a forbidden contract with an explicit source list only checks edges FROM
+    those modules, so it was out of scope rather than compliant. The scope is
+    now the whole feature package, and the router exemptions are recorded in
+    the contract with a stated reason.
+    """
     contract = _feature_contract()
     assert contract["type"] == "forbidden"
-    assert contract["source_modules"].split() == [
-        "src.app.modules.posts.service",
-        "src.app.modules.billing.subscription_service",
-    ]
+    assert contract["source_modules"].split() == ["src.app.modules"]
     assert contract["forbidden_modules"].split() == ["src.app.api"]
-    assert "ignore_imports" not in contract
+    assert contract.get("unmatched_ignore_imports_alerting", "").strip() == "warn"
+    assert "ignore_imports" in contract, (
+        "router exemptions must be recorded in the contract, not tolerated by accident"
+    )
 
 
 def test_unmatched_ignores_do_not_abort_the_contract() -> None:

@@ -1,7 +1,6 @@
 import time
 
 import pytest
-from fastapi import HTTPException
 
 from src.app.core.resilience.db_circuit_breaker import (
     db_circuit,
@@ -49,13 +48,24 @@ async def test_db_circuit_guard_business_error_ignored(reset_circuit):
 
 @pytest.mark.asyncio
 async def test_db_circuit_guard_open_blocks_request(reset_circuit):
-    """Test db_circuit_guard raises 503 when circuit is OPEN."""
+    """P1-10: an OPEN circuit raises the DOMAIN exception, not HTTPException.
+
+    An HTTP response object below the transport escapes into the ARQ worker,
+    where create_error_response never runs and the failure becomes a silent
+    DLQ entry instead of a visible error. The wire status is unchanged: the
+    central handler maps ServiceUnavailableError to 503.
+    """
+    from fastapi import HTTPException as FastAPIHTTPException
+
+    from src.app.shared.exceptions import ServiceUnavailableError
+
     db_circuit._open()
     db_circuit._last_failure_time = time.time()
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(ServiceUnavailableError) as exc_info:
         async with db_circuit_guard():
             pass
 
-    assert exc_info.value.status_code == 503
-    assert "temporarily degraded" in exc_info.value.detail
+    assert not isinstance(exc_info.value, FastAPIHTTPException)
+    assert exc_info.value.http_status == 503
+    assert "temporarily degraded" in str(exc_info.value.detail)

@@ -173,7 +173,14 @@ class TestAPIKeyRotation:
 
             mock_result.scalar_one_or_none.return_value = mock_key
 
-            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+            # The rotation path runs two scoped SELECTs: the key lookup, then
+            # the rotated-name pre-check. The pre-check must report the name as
+            # free or the rotation is rejected as a duplicate.
+            name_lookup = MagicMock()
+            name_lookup.scalar_one_or_none.return_value = None
+            api_key_service.db.execute = AsyncMock(
+                side_effect=[mock_result, name_lookup]
+            )
 
             mock_get.return_value = mock_key
             mock_update.return_value = None
@@ -225,7 +232,14 @@ class TestAPIKeyRotation:
 
             mock_result.scalar_one_or_none.return_value = mock_key
 
-            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+            # The rotation path runs two scoped SELECTs: the key lookup, then
+            # the rotated-name pre-check. The pre-check must report the name as
+            # free or the rotation is rejected as a duplicate.
+            name_lookup = MagicMock()
+            name_lookup.scalar_one_or_none.return_value = None
+            api_key_service.db.execute = AsyncMock(
+                side_effect=[mock_result, name_lookup]
+            )
 
             mock_get.return_value = mock_key
             mock_update.return_value = None
@@ -282,7 +296,14 @@ class TestAPIKeyRotation:
 
             mock_result.scalar_one_or_none.return_value = mock_key
 
-            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+            # The rotation path runs two scoped SELECTs: the key lookup, then
+            # the rotated-name pre-check. The pre-check must report the name as
+            # free or the rotation is rejected as a duplicate.
+            name_lookup = MagicMock()
+            name_lookup.scalar_one_or_none.return_value = None
+            api_key_service.db.execute = AsyncMock(
+                side_effect=[mock_result, name_lookup]
+            )
 
             mock_get.return_value = mock_key
             mock_update.return_value = None
@@ -325,7 +346,14 @@ class TestAPIKeyRotation:
 
             mock_result.scalar_one_or_none.return_value = mock_key
 
-            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+            # The rotation path runs two scoped SELECTs: the key lookup, then
+            # the rotated-name pre-check. The pre-check must report the name as
+            # free or the rotation is rejected as a duplicate.
+            name_lookup = MagicMock()
+            name_lookup.scalar_one_or_none.return_value = None
+            api_key_service.db.execute = AsyncMock(
+                side_effect=[mock_result, name_lookup]
+            )
 
             mock_get.return_value = mock_key
             mock_update.return_value = None
@@ -483,7 +511,14 @@ class TestAPIKeyRotationGracePeriod:
 
             mock_result.scalar_one_or_none.return_value = mock_key
 
-            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+            # The rotation path runs two scoped SELECTs: the key lookup, then
+            # the rotated-name pre-check. The pre-check must report the name as
+            # free or the rotation is rejected as a duplicate.
+            name_lookup = MagicMock()
+            name_lookup.scalar_one_or_none.return_value = None
+            api_key_service.db.execute = AsyncMock(
+                side_effect=[mock_result, name_lookup]
+            )
 
             mock_get.return_value = mock_key
             mock_gen.return_value = ("test", "prefix", "hashed")
@@ -535,7 +570,14 @@ class TestAPIKeyRotationGracePeriod:
 
             mock_result.scalar_one_or_none.return_value = mock_key
 
-            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+            # The rotation path runs two scoped SELECTs: the key lookup, then
+            # the rotated-name pre-check. The pre-check must report the name as
+            # free or the rotation is rejected as a duplicate.
+            name_lookup = MagicMock()
+            name_lookup.scalar_one_or_none.return_value = None
+            api_key_service.db.execute = AsyncMock(
+                side_effect=[mock_result, name_lookup]
+            )
 
             mock_get.return_value = mock_key
             mock_gen.return_value = ("test_key", "prefix", "hashed")

@@ -165,7 +165,7 @@ class TestFeatureFlagsE2E:
         from src.app.core.config import settings
 
         flags_true = {
-            "EVENT_BUS_USE_LUA_IDEMPOTENCY": settings.EVENT_BUS_USE_LUA_IDEMPOTENCY,
+            "EVENT_BUS_USE_LUA_IDEMPOTENCY": settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY,
             "RBAC_USE_REDIS_CACHE": settings.RBAC_USE_REDIS_CACHE,
             "DLQ_USE_BOUNDED_SIZE": settings.DLQ_USE_BOUNDED_SIZE,
             "PASSKEY_USE_COLUMN_SELECT": settings.PASSKEY_USE_COLUMN_SELECT,
@@ -178,7 +178,7 @@ class TestFeatureFlagsE2E:
             assert value is True, f"{flag_name} should be True by default"
 
         # Verify XFETCH_USE_LUA_SCRIPT is False (disabled due to Phase 4 P1 config change)
-        assert settings.XFETCH_USE_LUA_SCRIPT is False, "XFETCH_USE_LUA_SCRIPT should be False"
+        assert settings.r1_unified.XFETCH_USE_LUA_SCRIPT is False, "XFETCH_USE_LUA_SCRIPT should be False"
 
         logger.info("✅ PASSED: Feature flags verified")
 

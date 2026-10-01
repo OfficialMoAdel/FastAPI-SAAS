@@ -27,13 +27,13 @@ class TestWebhookSigningUtils:
 
     def test_verify_valid_signature(self) -> None:
         """Test verifying a valid webhook signature with known secret."""
+        from src.app.modules.webhooks.signer import sign_payload
+
         secret = "test_secret_123"
         payload_dict = {"user_id": "123", "event": "created"}
         payload_bytes = json.dumps(payload_dict, sort_keys=True).encode("utf-8")
-
-        expected_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-        signature = f"sha256={expected_sig}"
         timestamp = int(time.time())
+        signature = sign_payload(payload_dict, secret, timestamp)
 
         result = verify_webhook_signature(payload_bytes, signature, timestamp, secret)
 
@@ -82,23 +82,27 @@ class TestWebhookSigningUtils:
 
         assert result is False
 
-    def test_signature_format_sha256_prefix(self) -> None:
-        """Verify 'sha256=' prefix is handled correctly."""
+    def test_signature_format_t_v1(self) -> None:
+        """Verify the `t=<unix>,v1=<hmac>` header format."""
+        from src.app.modules.webhooks.signer import sign_canonical_bytes
+
         secret = "test_secret"
         payload_dict = {"user_id": "123"}
         payload_bytes = json.dumps(payload_dict, sort_keys=True).encode("utf-8")
-
-        expected_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-
         timestamp = int(time.time())
+        signature = sign_canonical_bytes(payload_bytes, secret, timestamp)
 
-        with_prefix = f"sha256={expected_sig}"
-        result_with = verify_webhook_signature(payload_bytes, with_prefix, timestamp, secret)
-        assert result_with is True
+        result = verify_webhook_signature(payload_bytes, signature, timestamp, secret)
+        assert result is True
 
-        without_prefix = expected_sig
-        result_without = verify_webhook_signature(payload_bytes, without_prefix, timestamp, secret)
-        assert result_without is True
+        # The signed t= is what binds the digest: tampering with it inside
+        # the header breaks verification.
+        tampered_t = signature.replace(f"t={timestamp},", f"t={timestamp + 1},")
+        assert verify_webhook_signature(payload_bytes, tampered_t, timestamp, secret) is False
+
+        # The retired bare-hex form is no longer a valid header.
+        bare = signature.split("v1=", 1)[1]
+        assert verify_webhook_signature(payload_bytes, bare, timestamp, secret) is False
 
 
 class TestWebhookServiceSigning:

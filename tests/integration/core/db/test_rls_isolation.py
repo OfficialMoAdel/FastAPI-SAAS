@@ -23,11 +23,27 @@ from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.models import User
 
 # Mark all tests in this module as requiring PostgreSQL (RLS not available in SQLite)
+#
+# The previous marker said "Set RLS_TESTS_ENABLED=1 to run", but nothing in
+# the repository reads that variable, so setting it changed nothing and the
+# reason actively misled the next person. The real blocker is the HARNESS:
+# tests/conftest.py hardwires the suite to SQLite, so even against the
+# PostgreSQL service already declared in .github/workflows/tests.yml these
+# tests would run on SQLite, where RLS has no equivalent. Un-skipping them
+# needs a dialect switch in conftest first.
+#
+# What IS verified without a database — that the policy list agrees with the
+# ORM models — lives in tests/unit/core/db/test_rls_policy_coherence.py, and
+# that test asserts this reason stays honest.
 pytestmark = [
     pytest.mark.asyncio,
     pytest.mark.skipif(
-        True,  # Skip by default - requires RLS setup
-        reason="RLS tests require PostgreSQL with RLS policies configured. Set RLS_TESTS_ENABLED=1 to run.",
+        True,  # Requires a PostgreSQL test harness, which conftest does not provide
+        reason=(
+            "Requires a PostgreSQL test harness: conftest.py hardwires SQLite, and RLS "
+            "has no SQLite equivalent. Needs a conftest dialect switch first "
+            "(FastAPI_saas-nrgi.1); there is no environment flag that enables it."
+        ),
     ),
 ]
 

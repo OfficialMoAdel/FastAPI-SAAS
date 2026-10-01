@@ -36,7 +36,7 @@ class TestEventBusIdempotency:
         from src.app.core.events import EventBus
 
         with patch("src.app.core.events.settings") as mock_settings:
-            mock_settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
+            mock_settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
             mock_settings.EVENT_BUS_CONCURRENCY = 10
 
             with patch("src.app.core.events.get_lua_manager", return_value=mock_lua_manager):
@@ -57,7 +57,7 @@ class TestEventBusIdempotency:
         from src.app.core.events import EventBus
 
         with patch("src.app.core.events.settings") as mock_settings:
-            mock_settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
+            mock_settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
             mock_settings.EVENT_BUS_CONCURRENCY = 10
 
             with patch("src.app.core.events.get_lua_manager", return_value=mock_lua_manager):
@@ -77,7 +77,7 @@ class TestEventBusIdempotency:
         from src.app.core.events import EventBus
 
         with patch("src.app.core.events.settings") as mock_settings:
-            mock_settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
+            mock_settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
             mock_settings.EVENT_BUS_CONCURRENCY = 10
 
             with patch("src.app.core.events.get_lua_manager", return_value=mock_lua_manager):
@@ -103,7 +103,7 @@ class TestEventBusIdempotency:
         from src.app.core.events import EventBus
 
         with patch("src.app.core.events.settings") as mock_settings:
-            mock_settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = False
+            mock_settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = False
             mock_settings.EVENT_BUS_CONCURRENCY = 10
 
             with patch("src.app.core.events.get_lua_manager", return_value=mock_lua_manager):
@@ -140,7 +140,7 @@ class TestEventBusIdempotency:
         from src.app.core.events import EventBus
 
         with patch("src.app.core.events.settings") as mock_settings:
-            mock_settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
+            mock_settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
             mock_settings.EVENT_BUS_CONCURRENCY = 10
 
             call_count = 0

@@ -7,9 +7,12 @@ row (which ``StorageAdminService._decrypt_credentials`` turns into ``{}``)
 produced a live provider aimed at a bucket nobody configured.
 
 It also has to fail at *construction*, not at first upload, when the
-optional ``boto3`` dependency is absent — that import is function-local
-precisely so the module imports without it.
+``boto3`` dependency is absent — that import is function-local precisely so
+the module imports without it. boto3 is declared (dxub.9, DECIDED: DECLARE),
+so the guard's live branch is the "partial build" one; both are forced below.
 """
+
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -18,6 +21,8 @@ from src.app.clients.storage.registry import (
     StorageProviderRegistry,
     _s3_factory,
 )
+from src.app.clients.storage.s3_storage import S3Storage
+from tests.missing_package import without_boto3
 
 
 class TestS3FactoryFailsLoud:
@@ -49,27 +54,34 @@ class TestS3FactoryFailsLoud:
 
 
 class TestS3FactoryBoto3Guard:
-    def test_absent_boto3_raises_valueerror_not_modulenotfound(self) -> None:
-        """A missing optional dep must be an actionable ValueError.
+    """Both branches of the guard, neither skipped.
 
-        boto3 is intentionally NOT a declared dependency (see the round-1
-        plan): it is imported function-locally so the module imports without
-        it. Without this guard the operator discovers the gap on first
-        upload as a bare ModuleNotFoundError 500.
+    boto3 is a DECLARED dependency as of dxub.9 (DECIDED: DECLARE), so these
+    tests used to be dead in exactly the environment they were written for:
+    each one skipped whenever boto3 was importable. The declared-dependency
+    and clean-install assertions now live in
+    tests/contract/test_boto3_declared.py; what remains here is the guard
+    itself, forced onto both branches.
+    """
+
+    def test_absent_boto3_raises_valueerror_not_modulenotfound(self) -> None:
+        """A missing dependency must be an actionable ValueError.
+
+        Without this guard the operator discovers the gap on first upload as
+        a bare ModuleNotFoundError 500.
         """
-        try:
-            import boto3  # noqa: F401
-        except ModuleNotFoundError:
+        with without_boto3():
             with pytest.raises(ValueError, match="boto3"):
                 _s3_factory({"bucket_name": "b", "region": "eu-west-1"})
-        else:  # pragma: no cover - only when the optional dep is installed
-            pytest.skip("boto3 is installed; the guard is inert")
 
     def test_registry_create_surfaces_the_same_error(self) -> None:
-        try:
-            import boto3  # noqa: F401
-        except ModuleNotFoundError:
+        with without_boto3():
             with pytest.raises(ValueError, match="boto3"):
                 StorageProviderRegistry.create(StorageProviderType.S3, {"bucket_name": "b", "region": "eu-west-1"})
-        else:  # pragma: no cover
-            pytest.skip("boto3 is installed; the guard is inert")
+
+    def test_present_boto3_builds_the_provider(self) -> None:
+        """Counter-test: the guard does not fire when the dependency is there."""
+        with patch("boto3.client", MagicMock(return_value=MagicMock())):
+            provider = _s3_factory({"bucket_name": "b", "region": "eu-west-1"})
+
+        assert isinstance(provider, S3Storage)

@@ -232,19 +232,19 @@ pytest tests/benchmarks/ -v
 
 ```bash
 # Capture baseline (if not already done)
-python scripts/capture_baseline.py
+python scripts/capture_baseline.py --round 4
 
 # Run load tests
-locust -f tests/load_testing/locustfile.py \
+locust -f tests/performance/locustfile.py \
     --host=http://localhost:8000 \
     --users=100 \
     --spawn-rate=10 \
     --run-time=5m
 
 # Compare results
-python scripts/compare_metrics.py \
-    --baseline tests/performance/baselines/baseline.csv \
-    --optimized tests/performance/results/optimized.csv
+python scripts/compare_benchmarks.py \
+    --baseline tests/performance/baselines/baseline_r4.json \
+    --current tests/performance/baselines/baseline_r4_verified.json
 ```
 
 ---
@@ -320,18 +320,18 @@ grep -A 20 "job_tenant_context" src/app/core/worker/rls_context.py
 
 ### Load Test Results
 
-Run: `python scripts/capture_optimized_metrics.py`
+Capture a baseline and diff it against the verified run:
 
-Expected output:
-```json
-{
-  "summary": {
-    "total_metrics": 25,
-    "optimization_status": "applied",
-    "overall_improvement": "30-50%"
-  }
-}
+```bash
+python scripts/capture_baseline.py --round 4 \
+    --output tests/performance/baselines/baseline_r4.json
+python scripts/compare_benchmarks.py \
+    --baseline tests/performance/baselines/baseline_r4.json \
+    --current tests/performance/baselines/baseline_r4_verified.json
 ```
+
+`compare_benchmarks.py` prints a per-benchmark table and writes a markdown
+report (`--output` to choose the path).
 
 ---
 
@@ -362,10 +362,10 @@ class Settings(BaseSettings):
 
 ### B. Related Documentation
 
-- [Performance Baseline R4](tests/performance/baselines/README.md)
-- [Load Testing Guide](tests/load_testing/README.md)
-- [API Design Principles](../docs/api-design.md)
-- [Database Optimization](../docs/db-optimization.md)
+- [Performance Baseline R4](baselines/README.md)
+- [Performance Testing Guide](README.md)
+- [Request Context](../../docs/api/request-context.md)
+- [Database Migrations](../../docs/user-guide/database/migrations.md)
 
 ### C. Changelog
 
@@ -391,9 +391,9 @@ print(f'REMOVE_WASTED_CONNECTION: {s.FEATURE_REMOVE_WASTED_CONNECTION}')
 pytest tests/performance/test_rollback_verification.py -v
 
 # Generate comparison report
-python scripts/compare_metrics.py \
-    --baseline tests/performance/baselines/baseline.csv \
-    --optimized tests/performance/results/optimized.csv
+python scripts/compare_benchmarks.py \
+    --baseline tests/performance/baselines/baseline_r4.json \
+    --current tests/performance/baselines/baseline_r4_verified.json
 
 # Quick rollback (if needed)
 export FEATURE_REMOVE_WASTED_CONNECTION=false

@@ -1,88 +1,3 @@
-# 🧠 Project Memory & Task Tracking (Beads)
-
-This project uses **Beads (`bd`)** for persistent task tracking. Do NOT use temporary markdown lists or plans in your context window.
-
-## 🛠️ Your Workflow Rules:
-
-1.  **Start of Session:**
-
-    - ALWAYS run `bd ready` first to see what tasks are unblocked and ready for you.
-    - Run `bd list --status in_progress` to resume unfinished work.
-
-2.  **During Work:**
-
-    - If you find a bug: `bd create "Bug description" -t bug`
-    - If you discover a new sub-task: `bd create "Task name" -p <priority>` and link it using `bd dep add`.
-    - Update progress: `bd update <id> --status in_progress`.
-
-3.  **End of Session (CRITICAL):**
-    - Never leave without syncing.
-    - Close finished tasks: `bd close <id> --reason "Implemented X"`.
-    - Ensure all new findings are recorded in `bd`.
-
-## ⚡ Quick Commands Reference:
-
-- `bd ready` -> What should I do now?
-- `bd create "Title" -d "Details"` -> Add new task.
-- `bd list` -> See all tasks.
-- `bd show <id>` -> See details of a task.
-
-## 🔗 Advanced Dependencies:
-
-bd dep add bd-123 --blocks bd-456      # Blocking
-bd create "Task" --parent bd-789       # Epic child
-bd create "Bug" --discovered-from bd-5  # Found during work
-
-## 🧩 ID Hierarchy Pattern (Epic → Task → Sub-task)
-
- Pattern:
- - <EPIC_ID>        (Epic)      مثال: bd-a3f8
- - <EPIC_ID>.1      (Task)      مثال: bd-a3f8.1
- - <EPIC_ID>.1.1    (Sub-task)  مثال: bd-a3f8.1.1
- 
-## 🔍 Discovery Commands:
-
-bd blocked                    # Show blocked tasks
-bd dep tree <id>             # Dependency graph
-bd ready --json              # Machine-readable
-bd list --assignee @me       # My work
-
-## 📦 Epics Pattern:
-
-bd create "Feature X" -t epic
-bd create "Sub-task" --parent bd-<epic-id>
-
-## 👥 Multi-Agent:
-
-bd update bd-123 --status in_progress --assignee @me  # Claim work
-bd list --status in_progress                          # Check others
-
-## ⚡ Session Management:
-
-**Rule:** One issue per session → prevents context window panic
-1. `bd ready` → pick ONE
-2. `bd update <id> --status in_progress` 
-3. Implement only that
-4. `bd close <id>`
-5. Exit (fresh context)
-
-## 🤖 Automation:
-
-bd ready --json | jq -r '.[0].id'  # Get first ready task 
-
-## 📊 Priority & Status:
-
-**Priority:** 0=Critical, 1=High, 2=Medium, 3=Low
-**Status:** open → in_progress → closed (or blocked)
-
-bd create "Task" -p 0  # Critical priority
-bd update bd-123 --status blocked --reason "Waiting for API"
-
-## 🔄 Sync (CRITICAL):
-
-bd sync  # Manual sync before: git pull/push, switching machines, multi-agent
-
-
 # FastAPI SaaS Boilerplate - Agent Guidance
 
 ## Project Snapshot
@@ -109,6 +24,22 @@ uv run pytest
 
 # Database migrations
 uv run alembic upgrade head
+
+
+# Enforce the per-module file contract (router.py + service.py + models/schemas).
+# NOTE: currently RED — the `security` module has no service.py. A non-zero exit
+# is a pre-existing condition, not a regression you introduced.
+uv run python scripts/check_module_structure.py
+
+# Reject production comments that exist only to keep a test's grep green.
+# See "Comments vs. test greps" below for the convention it enforces.
+uv run python scripts/check_comment_grease.py
+
+# Fail on a mutating endpoint (POST/PUT/PATCH/DELETE) with no response_model.
+# Endpoints that genuinely cannot carry one — 204 No Content, a returned
+# Response/StreamingResponse, or a genuinely dynamic body — are allow-listed
+# with the reason in the script, and a stale entry is itself a failure.
+uv run python scripts/check_mutation_response_models.py
 ```
 
 ## Module Generator CLI
@@ -157,18 +88,47 @@ uv run python -m src.scripts.create_module products --force
 - Infrastructure: `src/app/core/` → [see src/app/core/AGENTS.md](src/app/core/AGENTS.md)
   - Security: `src/app/core/security/` → [see src/app/core/security/AGENTS.md](src/app/core/security/AGENTS.md)
   - Database: `src/app/core/db/` → [see src/app/core/db/AGENTS.md](src/app/core/db/AGENTS.md)
+  - Config: `src/app/core/config/` — a **package** (`app.py`, `auth.py`, `cache.py`, `security.py`, …); there is no `core/config.py`
+  - Events: `src/app/core/events/` — a **package** (`bus.py` holds `EventBus`); there is no `core/events.py`
 - API layer (versioning, deps): `src/app/api/` → [see src/app/api/AGENTS.md](src/app/api/AGENTS.md)
+  - v1 group aggregators: `src/app/api/v1/core.py` (non-billing/admin routers), `src/app/api/v1/billing.py`, `src/app/api/v1/admin_group.py` — **not** a flat include list in `v1/__init__.py`
 - Outbound client adapters (billing/notifications/storage): `src/app/clients/`
+- Composition root: `src/app/composition.py` — `create_application()` and `lifespan_with_admin`
 - Shared domain exceptions: `src/app/shared/exceptions.py` (all domain errors derive from `AppException`; translated to HTTP in `src/app/core/errors.py`)
 - Admin panel (CRUDAdmin mount): `src/app/admin/` → [see src/app/admin/AGENTS.md](src/app/admin/AGENTS.md)
 - Middleware stack: `src/app/middleware/` → [see src/app/middleware/AGENTS.md](src/app/middleware/AGENTS.md)
-- Test suite: `tests/` → [see tests/AGENTS.md](tests/AGENTS.md)
+- Test suite: `tests/` → [see tests/AGENTS.md](tests/AGENTS.md) (suites live under `unit/`, `integration/`, `contract/`; the `tests/` root holds `conftest.py`, `factories/`, `fixtures/`)
 - Database migrations: `src/migrations/` → [see src/migrations/AGENTS.md](src/migrations/AGENTS.md)
-- Ops/perf scripts: `scripts/` (deploy, health-check, benchmarks); setup scripts: `src/scripts/` (superuser, tier, module generator)
+- Ops/perf scripts: `scripts/` (deploy, health-check, benchmarks, doc/module checks); setup scripts: `src/scripts/` (superuser, tier, module generator)
+
+### Doc Pointer Integrity
+
+Every rooted `src/…`, `tests/…`, `scripts/…`, `docs/…` and `.github/…`
+path in any `AGENTS.md` or `ARCHITECTURE.md` is a claim that the path
+exists, and is enforced in CI:
+
+```bash
+uv run python scripts/check_doc_paths.py
+```
+
+Fix a failing pointer rather than deleting it, or add a reasoned
+`ALLOWLIST` entry in the script if the debt is real and out of scope. A
+documented path that does not exist is worse than an undocumented one: the
+reader trusts it and then spends time proving it wrong.
+
+The gate is **mandatory**: `.github/workflows/tests.yml` has no
+`paths`/`paths-ignore` filter, so it runs on every push and every pull
+request, and its non-zero exit fails the build. A documentation-only PR
+starts the workflow too — which it used not to, when the triggers
+excluded `**/*.md`, meaning the gate could not fire on the rot it exists
+to catch. `tests/unit/scripts/test_doc_gate_wiring.py` parses that
+trigger block and fails if a paths filter is reintroduced, so removing or
+weakening the gate is itself a caught change.
+
 
 ### Module Documentation
 
-All 21 feature modules are documented (20 have dedicated AGENTS.md files; `dashboard` pending — see table):
+All 21 feature modules have a dedicated `AGENTS.md` (see table):
 
 | Module | Location | Purpose |
 |--------|----------|---------|
@@ -178,7 +138,7 @@ All 21 feature modules are documented (20 have dedicated AGENTS.md files; `dashb
 | Audit Logs | `src/app/modules/audit_logs/AGENTS.md` | Immutable logging |
 | Auth | `src/app/modules/auth/AGENTS.md` | Authentication & Identity (passwords, SSO, passkeys, magic link, MFA) |
 | Billing | `src/app/modules/billing/AGENTS.md` | Stripe billing |
-| Dashboard | *(AGENTS.md pending)* | Dashboard metrics |
+| Dashboard | `src/app/modules/dashboard/AGENTS.md` | Dashboard metrics |
 | Feature Flags | `src/app/modules/feature_flags/AGENTS.md` | Toggle management |
 | Health | `src/app/modules/health/AGENTS.md` | Health checks |
 | Notifications | `src/app/modules/notifications/AGENTS.md` | Email delivery |
@@ -212,8 +172,9 @@ All 21 feature modules are documented (20 have dedicated AGENTS.md files; `dashb
 
 ## Architecture Snapshot
 
-- **Modular monolith.** `src/app/main.py` is a thin composition root: it calls `create_application()` from `src/app/core/setup.py`, wires `lifespan_with_admin`, adds the middleware stack (LIFO order documented inline in main.py), and registers exception handlers. Do NOT add setup logic to main.py — extend `core/setup.py` or the lifespan phases.
-- **Outbound integrations** (Stripe, SMTP, storage) live behind adapters in `src/app/clients/`; services never import vendor SDKs directly.
+- **Modular monolith.** `src/app/main.py` is a thin composition root: it imports `create_application` and `lifespan_with_admin` from **`src/app/composition.py`** (`create_application` is defined at `composition.py:383`), adds the middleware stack (LIFO order documented inline in main.py), and registers exception handlers. `src/app/core/setup.py` is the lifecycle *building blocks* seam (`create_redis_cache_pool`, `resolve_create_tables_on_start`, `set_threadpool_tokens`, …) — it does **not** define the app factory. Do NOT add setup logic to main.py — extend `composition.py` or the `core/setup.py` helpers it schedules.
+- **Outbound integrations** (Stripe, SMTP, storage) live behind adapters in `src/app/clients/`; services never import vendor SDKs directly. **The inbound side is the same boundary**: the verified Stripe webhook event type is `StripeEvent`, imported from `src.app.clients.billing` (aliased once in `clients/billing/stripe.py`); only `clients/billing/stripe.py` and `billing/webhook/client.py` may `import stripe`. Enforced by `tests/core/test_stripe_adapter_boundary.py`.
+- **The AI providers are deliberately NOT in `src/app/clients/`.** See [ADR-0007](docs/adr/0007-inbound-stripe-boundary-and-ai-provider-placement.md): they are the one outbound integration that talks plain `httpx` instead of a vendor SDK, and their protocol/DTO layer (`ai/providers.py`) is domain vocabulary the service layer constructs and consumes, so moving it would invert the dependency. `openai`/`anthropic` remain declared dependencies but are imported nowhere — the providers speak raw HTTP.
 - **Errors:** domain exceptions derive from `AppException` (`src/app/shared/exceptions.py`) and are translated to HTTP centrally in `src/app/core/errors.py`. Services stay HTTP-free.
 - Full architecture guide: [ARCHITECTURE.md](ARCHITECTURE.md)
 
@@ -224,6 +185,12 @@ All 21 feature modules are documented (20 have dedicated AGENTS.md files; `dashb
 - [ ] All tests pass: `uv run pytest`
 - [ ] Database migrations created if needed
 - [ ] Documentation updated for new endpoints
+- [ ] Every touched module's `AGENTS.md` updated in this same change, or a
+      note in the PR saying why it is still accurate — see "Documentation
+      Ownership" above. This includes renaming/moving/deleting a file,
+      changing a test path, and changing a public class or function name.
+- [ ] `uv run python scripts/check_doc_paths.py` exits 0 (it runs in CI and
+      blocks the merge)
 - [ ] Error handling implemented with proper HTTP status codes
 - [ ] Pydantic schemas validate all input/output
 
@@ -328,69 +295,350 @@ All 21 feature modules are documented (20 have dedicated AGENTS.md files; `dashb
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 
-## Available Skills
 
-<skills_system priority="1">
-<!-- SKILLS_TABLE_START -->
-<usage>
-When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge.
 
-How to use skills:
-- Invoke: Bash("openskills read <skill-name>")
-- The skill content will load with detailed instructions on how to complete the task
-- Base directory provided in output for resolving bundled resources (references/, scripts/, assets/)
 
-Usage notes:
-- Only use skills listed in <available_skills> below
-- Do not invoke a skill that is already loaded in your context
-- Each skill invocation is stateless
-</usage>
+<!-- bv-agent-instructions-v6 -->
 
-<available_skills>
+---
 
-<skill>
-<name>agent-architecture-analysis</name>
-<description>Perform 12-Factor Agents compliance analysis on any codebase. Use when evaluating agent architecture, reviewing LLM-powered systems, or auditing agentic applications against the 12-Factor methodology.</description>
-<location>project</location>
-</skill>
+## Beads Workflow Integration
 
-<skill>
-<name>fastapi-code-review</name>
-<description>Reviews FastAPI code for routing patterns, dependency injection, validation, and async handlers. Use when reviewing FastAPI apps, checking APIRouter setup, Depends() usage, or response models.</description>
-<location>project</location>
-</skill>
+This project uses a Beads tracker—either the Go `bd` CLI or the Rust `br` CLI—for persistent issue tracking, plus [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) (`bv`) for graph-aware triage. Issues are stored in `.beads/`. `bv` auto-discovers supported JSONL exports, including `.beads/issues.jsonl` and legacy `.beads/beads.jsonl`.
 
-<skill>
-<name>postgres-code-review</name>
-<description>Reviews PostgreSQL code for indexing strategies, JSONB operations, connection pooling, and transaction safety. Use when reviewing SQL queries, database schemas, JSONB usage, or connection management.</description>
-<location>project</location>
-</skill>
+**⚠️ CRITICAL RULES:**
+- Choose the tracker CLI from this repository's instructions and configuration
+- Use `bd` commands in a Go Beads workspace and `br` commands in a beads_rust workspace
+- **Do NOT run both trackers against the same workspace**
+- Do NOT infer the tracker solely from the JSONL filename
+- **Do NOT use temporary markdown lists or plans in your context window** - Always use Beads for persistent tracking
 
-<skill>
-<name>python-code-review</name>
-<description>Reviews Python code for type safety, async patterns, error handling, and common mistakes. Use when reviewing .py files, checking type hints, async/await usage, or exception handling.</description>
-<location>project</location>
-</skill>
+---
 
-<skill>
-<name>sqlalchemy-code-review</name>
-<description>Reviews SQLAlchemy code for session management, relationships, N+1 queries, and migration patterns. Use when reviewing SQLAlchemy 2.0 code, checking session lifecycle, relationship() usage, or Alembic migrations.</description>
-<location>project</location>
-</skill>
+## 🚀 Quick Start Workflow
 
-<skill>
-<name>api-design-principles</name>
-<description>Master REST and GraphQL API design principles to build intuitive, scalable, and maintainable APIs that delight developers. Use when designing new APIs, reviewing API specifications, or establishing API design standards.</description>
-<location>global</location>
-</skill>
+### 1️⃣ Start of Session (ALWAYS do this first):
 
-<skill>
-<name>find-skills</name>
-<description>Helps users discover and install agent skills when they ask questions like "how do I do X", "find a skill for X", "is there a skill that can...", or express interest in extending capabilities. This skill should be used when the user is looking for functionality that might exist as an installable skill.</description>
-<location>global</location>
-</skill>
+```bash
+# Check ready tasks (use your configured tracker)
+bd ready --json              # For Go Beads workspace
+# OR
+br ready --json              # For Rust beads_rust workspace
 
-</available_skills>
-<!-- SKILLS_TABLE_END -->
+# Resume unfinished work
+bd list --status in_progress --json
+# OR
+br list --status in_progress --json
 
-</skills_system>
+# Graph-aware priority analysis
+bv --robot-triage            # THE MEGA-COMMAND: start here
+```
+
+### 2️⃣ During Work:
+
+```bash
+# Claim task before starting (CRITICAL)
+bd update <id> --claim --json
+# OR
+br update <id> --claim --json
+
+# Create new tasks/bugs when discovered
+bd create "Bug description" -t bug -d "Details" --json
+# OR
+br create --title="Bug description" --type=bug --priority=2 --json
+
+# Add dependencies
+bd dep add <child-id> <parent-id>
+# OR
+br dep add <child-id> <parent-id>
+```
+
+### 3️⃣ End of Session (CRITICAL - Never skip):
+
+```bash
+# Close finished tasks
+bd close <id> --json
+# OR
+br close <id> --reason="Implemented X" --json
+
+# Sync for bv (CRITICAL)
+bd export -o .beads/issues.jsonl
+# OR
+br sync --flush-only
+
+# Exit with fresh context
+```
+
+---
+
+## ⚡ Session Management (CRITICAL for AI Agents)
+
+**Rule:** One issue per session → prevents context window panic
+
+```bash
+1. bd ready / br ready → pick ONE task
+2. bd update <id> --claim / br update <id> --claim
+3. Implement only that task
+4. bd close <id> / br close <id>
+5. Exit (fresh context)
+```
+
+**Why?** Prevents context window exhaustion and ensures focused, trackable work.
+
+---
+
+## 🎯 Using bv for Triage (Graph-Aware Analysis)
+
+bv is a graph-aware triage engine with precomputed metrics (PageRank, betweenness, critical path, cycles, HITS, eigenvector, k-core).
+
+**Scope boundary:** bv handles *what to work on* (triage, priority, planning). The selected tracker CLI (`bd` or `br`) handles creating, claiming, modifying, and closing beads.
+
+**CRITICAL: Use ONLY --robot-* flags. Bare bv launches an interactive TUI that blocks your session.**
+
+### Essential bv Commands:
+
+| Command | Returns |
+|---------|---------|
+| `bv --robot-triage` | **THE MEGA-COMMAND: start here** - quick_ref, recommendations, quick_wins, blockers_to_clear, project_health, commands |
+| `bv --robot-next` | Minimal: just the single top pick + claim command |
+| `bv --robot-plan` | Parallel execution tracks with unblocks lists |
+| `bv --robot-priority` | Priority misalignment detection with confidence |
+| `bv --robot-insights` | Full metrics: PageRank, betweenness, HITS, eigenvector, critical path, cycles, k-core |
+| `bv --robot-alerts` | Stale issues, blocking cascades, priority mismatches |
+| `bv --robot-suggest` | Hygiene: duplicates, missing deps, label suggestions, cycle breaks |
+| `bv --robot-diff --diff-since <ref>` | Changes since ref: new/closed/modified issues |
+| `bv --robot-graph [--graph-format=json\|dot\|mermaid]` | Dependency graph export |
+
+### Scoping & Filtering:
+
+```bash
+bv --robot-plan --label backend              # Scope to label's subgraph
+bv --robot-insights --as-of HEAD~30          # Historical point-in-time
+bv --recipe actionable --robot-plan          # Pre-filter: ready to work (no blockers)
+bv --recipe high-impact --robot-triage       # Pre-filter: top PageRank scores
+```
+
+### TOON Output Format:
+
+```bash
+# Compact tabular encoding - use --stats to compare sizes
+bv --robot-graph --format toon
+bv --robot-triage --format toon --stats
+```
+
+**Note:** TOON is 7% smaller than JSON for `--robot-graph` but 9-15% LARGER for nested payloads.
+
+**Important:** Recommendations can include blocked or assigned work; `triage.quick_ref.top_picks` reflects snapshot readiness. A suggested action records its original local ID, working directory, and tracker route. Use that route rather than a namespaced display ID. Inspect current tracker state before execution: analysis does not reserve work or guarantee that a later claim succeeds.
+
+Every robot command emits one JSON object; with `--graph-format=dot` or `mermaid` the diagram text is the `graph` field (`bv --robot-graph --graph-format=dot | jq -r .graph`), not the whole output.
+
+---
+
+## 🛠️ Complete Command Reference
+
+### Go Beads (`bd`) Commands:
+
+```bash
+# Discovery
+bd ready --json                    # Show unblocked issues ready to work
+bd list --json                     # See all tasks
+bd list --assignee @me --json      # My work
+bd list --status in_progress --json
+bd show <id> --json                # Full issue details
+bd blocked                         # Show blocked tasks
+bd dep tree <id>                   # Dependency graph visualization
+
+# Create
+bd create "Title" -t <type> -p <priority> -d "Details" --json
+bd create "Task" --parent bd-<epic-id>
+bd create "Bug" --discovered-from bd-5
+
+# Update
+bd update <id> --claim --json      # Atomically claim work
+bd update <id> --status <status> --json
+bd update <id> --assignee @me --json
+
+# Dependencies
+bd dep add <issue> <depends-on>
+bd dep add bd-123 --blocks bd-456  # Explicit blocking relationship
+
+# Close
+bd close <id> --json
+bd close <id1> <id2> --json
+
+# Sync (CRITICAL before git operations)
+bd sync                            # Manual sync
+bd export -o .beads/issues.jsonl   # Refresh compatibility export for bv
+```
+
+### Rust beads_rust (`br`) Commands:
+
+```bash
+# Discovery
+br ready --json                    # Show issues ready to work (no blockers)
+br list --status open --json       # All open issues
+br list --status in_progress --json
+br show <id> --json                # Full issue details with dependencies
+
+# Create
+br create --title="..." --type=task --priority=2 --json
+
+# Update
+br update <id> --claim --json      # Claim for current actor and start work
+
+# Dependencies
+br dep add <issue> <depends-on>
+
+# Close
+br close <id> --reason="Completed" --json
+br close <id1> <id2> --reason="Completed" --json
+
+# Sync (CRITICAL before git operations)
+br sync --flush-only               # Export DB to JSONL after mutations
+```
+
+---
+
+## 🔗 Advanced Dependencies & Patterns
+
+### Basic Dependencies:
+
+```bash
+bd dep add <issue> <depends-on>    # Go Beads
+br dep add <issue> <depends-on>    # Rust beads_rust
+```
+
+### Advanced Patterns:
+
+```bash
+# Blocking relationships
+bd dep add bd-123 --blocks bd-456
+
+# Epic child tasks
+bd create "Task" --parent bd-789
+
+# Bugs discovered during work
+bd create "Bug" --discovered-from bd-5
+```
+
+### 🧩 ID Hierarchy Pattern (Epic → Task → Sub-task):
+
+- `<EPIC_ID>` (Epic) - Example: `bd-a3f8`
+- `<EPIC_ID>.1` (Task) - Example: `bd-a3f8.1`
+- `<EPIC_ID>.1.1` (Sub-task) - Example: `bd-a3f8.1.1`
+
+### Epics Pattern:
+
+```bash
+bd create "Feature X" -t epic
+bd create "Sub-task" --parent bd-<epic-id>
+```
+
+---
+
+## 📊 Status, Priority & Types
+
+### Status Flow:
+
+```
+open → in_progress → closed
+           ↓
+        blocked
+```
+
+### Priority Levels:
+
+- **P0 / 0** = Critical
+- **P1 / 1** = High
+- **P2 / 2** = Medium
+- **P3 / 3** = Low
+- **P4 / 4** = Backlog
+
+```bash
+bd create "Task" -p 0              # Critical priority
+br create --title="Task" --priority=0
+bd update bd-123 --status blocked --reason "Waiting for API"
+```
+
+### Issue Types:
+
+`task`, `bug`, `feature`, `epic`, `chore`, `docs`, `question`
+
+---
+
+## 🤖 Multi-Agent & Automation
+
+### Multi-Agent Commands:
+
+```bash
+# Claim work for specific agent
+bd update bd-123 --status in_progress --assignee @me
+
+# Check others' work
+bd list --status in_progress
+br list --status in_progress --json
+```
+
+### Automation:
+
+```bash
+# Get first ready task ID
+bd ready --json | jq -r '.[0].id'
+br ready --json | jq -r '.[0].id'
+```
+
+---
+
+## 🔄 Sync & Git Policy (CRITICAL)
+
+### Sync Commands:
+
+**For Go Beads (`bd`):**
+```bash
+bd sync                            # Manual sync
+bd export -o .beads/issues.jsonl   # Refresh for bv
+```
+
+**For Rust beads_rust (`br`):**
+```bash
+br sync --flush-only               # Export DB to JSONL
+```
+
+**⚠️ CRITICAL: Never leave without syncing!**
+
+**Manual sync required before:**
+- `git pull` / `git push`
+- Switching machines
+- Multi-agent coordination
+- Starting a new session
+
+### Git Policy:
+
+Tracker commands do not grant permission to commit or push application code. Follow this repository's own git and tracker instructions before staging, committing, syncing, or pushing. If the repository says "commit only when asked," that rule overrides any generic workflow advice.
+
+---
+
+## 📋 Workflow Pattern Summary
+
+1. **Triage**: Run `bv --robot-triage` to find the highest-impact actionable work
+2. **Verify**: Check the selected tracker's `show`/`ready` output before claiming
+3. **Claim**: Use `br update <id> --claim --json` or `bd update <id> --claim --json`
+4. **Work**: Implement the task (ONE issue per session)
+5. **Complete**: Use the selected tracker's `close` command
+6. **Sync**: Run `br sync --flush-only` or `bd export` so the JSONL export is current
+7. **Exit**: Fresh context for next session
+
+---
+
+## 🔑 Key Concepts
+
+- **Dependencies**: Issues can block other issues. `br ready --json` and `bd ready --json` show unblocked work.
+- **Priority**: Use numbers 0-4 (P0-P4), not words
+- **Types**: task, bug, feature, epic, chore, docs, question
+- **Blocking**: Use `br dep add <issue> <depends-on>` or `bd dep add <issue> <depends-on>` to add dependencies
+- **Session Management**: One issue per session prevents context window panic
+- **Sync**: Always sync before git operations or switching contexts
+
+---
+
+<!-- end-bv-agent-instructions -->

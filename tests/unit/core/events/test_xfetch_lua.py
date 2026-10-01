@@ -154,7 +154,7 @@ async def test_bytes_to_string_conversion(mock_redis_client, mock_settings):
 async def test_feature_flag_controls_optimization(mock_redis_client, mock_settings):
     """Test that feature flag controls Lua vs fallback path."""
     # Disable Lua optimization
-    mock_settings.XFETCH_USE_LUA_SCRIPT = False
+    mock_settings.r1_unified.XFETCH_USE_LUA_SCRIPT = False
 
     # Mock fallback GET+TTL
     mock_redis_client.get = AsyncMock(return_value=b'{"data":"cached_value"}')

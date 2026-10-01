@@ -8,6 +8,7 @@ import pytest
 from httpx import AsyncClient
 
 from src.app.core.guard.ip_rules import ip_filter_service
+from src.app.core.utils.ip_utils import is_trusted_proxy
 
 # Skip all tests if Redis is not available
 pytestmark = pytest.mark.asyncio
@@ -296,16 +297,32 @@ class TestProxyHeadersE2E:
             finally:
                 await ip_filter_service.remove_from_blacklist("192.168.1.1")
 
-    async def test_x_real_ip_fallback(self, async_client: AsyncClient, override_settings):
-        """Test that X-Real-IP is used when X-Forwarded-For is absent."""
+    async def test_x_real_ip_fallback_removed(self, async_client: AsyncClient, override_settings):
+        """P1-3: X-Real-IP alone must NOT resolve identity — peer is used.
+
+        The old fallback resolved the client from X-Real-IP whenever the peer
+        was a trusted proxy, so a forwarded client-supplied value could walk
+        out of a blacklist. The identity now comes from X-Forwarded-For (or
+        the observed peer), so blacklisting 10.0.0.60 and presenting it only
+        in X-Real-IP no longer matches.
+        """
         with override_settings(IP_BLACKLIST_ENABLED=True):
             await ip_filter_service.add_to_blacklist(ip_address="10.0.0.60", reason="X-Real-IP test")
 
             try:
-                # Execute: Request with only X-Real-IP
+                # Execute: Request with only X-Real-IP — the spoofable header.
                 response = await async_client.get("/openapi.json", headers={"X-Real-IP": "10.0.0.60"})
 
-                # Verify: X-Real-IP is checked
-                assert response.status_code == 403
+                # Verify: the header is ignored, so the blacklist does not match.
+                assert response.status_code != 403, "X-Real-IP was accepted as client identity"
+
+                # COUNTER-TEST: the same IP through the correct XFF path is still
+                # checked — this proves we removed the fallback, not the check.
+                peer = "192.168.1.100"
+                if is_trusted_proxy(peer):
+                    xff_response = await async_client.get(
+                        "/openapi.json", headers={"X-Forwarded-For": "10.0.0.60"}
+                    )
+                    assert xff_response.status_code == 403, "XFF identity path regressed"
             finally:
                 await ip_filter_service.remove_from_blacklist("10.0.0.60")

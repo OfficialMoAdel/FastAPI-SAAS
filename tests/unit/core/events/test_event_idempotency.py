@@ -268,9 +268,12 @@ async def test_redis_failure_uses_fallback():
             nonlocal processed
             processed = True
 
+        # Set on the components the code actually reads. A flat attribute on a
+        # bare MagicMock is ignored: `mock.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY`
+        # auto-creates a truthy child, so a "False" set flatly has no effect.
         mock_settings = MagicMock()
-        mock_settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
-        mock_settings.EVENT_HANDLER_TIMEOUT_SECONDS = 30
+        mock_settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
+        mock_settings.events.EVENT_HANDLER_TIMEOUT_SECONDS = 30
 
         with patch("src.app.core.events.settings", mock_settings):
             event_bus.subscribe("test.event")(handler)
@@ -303,8 +306,8 @@ async def test_feature_flag_disables_lua_optimization(mock_redis_client):
     event_bus.subscribe("test.event")(handler)
 
     mock_settings = MagicMock()
-    mock_settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = False
-    mock_settings.EVENT_HANDLER_TIMEOUT_SECONDS = 30
+    mock_settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = False
+    mock_settings.events.EVENT_HANDLER_TIMEOUT_SECONDS = 30
 
     with patch("src.app.core.events.get_lua_manager") as mock_lua_mgr:
         mock_manager = MagicMock()

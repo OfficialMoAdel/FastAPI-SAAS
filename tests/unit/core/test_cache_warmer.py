@@ -122,8 +122,9 @@ class TestWarmAllExecution:
 
         # Log calls: call_args_list is a list of calls. Each call is (args, kwargs).
         # args[0] is the log message template.
-        assert any("[START]" in call[0][0] for call in mock_logger.info.call_args_list)
-        assert any("[COMPLETE]" in call[0][0] for call in mock_logger.info.call_args_list)
+        events = [call.args[0] for call in mock_logger.info.call_args_list if call.args]
+        assert any("cache_warming_started" == e for e in events), events
+        assert any(e == "complete_cache_warming_finished_total_duration_s" for e in events), events
 
     async def test_warm_all_returns_empty_result_when_no_warmers(self):
         """Test that warm_all returns empty result when no warmers registered."""
@@ -240,7 +241,11 @@ class TestWarmingObservability:
         with patch("src.app.core.cache.warmer.logger") as mock_logger:
             await test_warmer.warm_all(mock_session)
 
-        assert any("[SUCCESS]" in call[0][0] and call[0][2] == 15 for call in mock_logger.info.call_args_list)
+        successes = [
+            c for c in mock_logger.info.call_args_list
+            if c.args and c.args[0] == "warmer_success"
+        ]
+        assert any(c.kwargs.get("items") == 15 for c in successes), successes
 
     async def test_warm_all_logs_error_count(self):
         """Test that warm_all logs error count when errors occur."""
@@ -254,7 +259,11 @@ class TestWarmingObservability:
         with patch("src.app.core.cache.warmer.logger") as mock_logger:
             await test_warmer.warm_all(mock_session)
 
-        assert any("[COMPLETE]" in call[0][0] and call[0][3] == 1 for call in mock_logger.info.call_args_list)
+        completes = [
+            c for c in mock_logger.info.call_args_list
+            if c.args and c.args[0] == "complete_cache_warming_finished_total_duration_s"
+        ]
+        assert any(c.kwargs.get("errors") == 1 for c in completes), completes
 
     async def test_warm_all_logs_start_time(self):
         """Test that warm_all logs start time."""
@@ -268,7 +277,10 @@ class TestWarmingObservability:
         with patch("src.app.core.cache.warmer.logger") as mock_logger:
             await test_warmer.warm_all(mock_session)
 
-        assert any("[START]" in call[0][0] for call in mock_logger.info.call_args_list)
+        assert any(
+            c.args and c.args[0] == "cache_warming_started"
+            for c in mock_logger.info.call_args_list
+        )
 
     async def test_warm_all_logs_end_time(self):
         """Test that warm_all logs end time."""
@@ -282,7 +294,10 @@ class TestWarmingObservability:
         with patch("src.app.core.cache.warmer.logger") as mock_logger:
             await test_warmer.warm_all(mock_session)
 
-        assert any("[COMPLETE]" in call[0][0] for call in mock_logger.info.call_args_list)
+        assert any(
+            c.args and c.args[0] == "complete_cache_warming_finished_total_duration_s"
+            for c in mock_logger.info.call_args_list
+        )
 
 
 def test_p24_no_tier_warmer_registered() -> None:

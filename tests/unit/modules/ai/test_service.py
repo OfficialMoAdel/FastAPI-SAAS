@@ -152,7 +152,7 @@ class TestChatSessionService:
             service = ChatSessionService(mock_db)
             result = await service.delete_session(session_id=1, user_id=1)
 
-            mock_crud.db_delete.assert_called_once_with(db=mock_db, id=1)
+            mock_crud.db_delete.assert_called_once_with(db=mock_db, id=1, user_id=1)
             assert "message" in result
 
 
@@ -209,18 +209,29 @@ class TestChatMessageService:
                 assert schema_obj.token_count == 50
 
     @pytest.mark.asyncio
-    async def test_get_session_messages_filters_by_session_id(self, mock_db):
-        """Test that get_session_messages filters by session_id."""
+    async def test_get_session_messages_scopes_query_to_session_and_owner(self, mock_db):
+        """The owner predicate rides in the WHERE, not in a post-hoc compare."""
         from src.app.modules.ai.service import ChatMessageService
 
-        with patch("src.app.modules.ai.service.crud_chat_messages") as mock_crud:
-            mock_crud.get_multi = AsyncMock(return_value={"data": [], "total_count": 0})
+        with patch("src.app.modules.ai.service.ChatSessionService") as mock_session_svc, patch(
+            "src.app.modules.ai.service.execute_scoped", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_session_svc.return_value.get_session = AsyncMock(return_value={"id": 1, "user_id": 7})
+            mock_exec.return_value = MagicMock(mappings=lambda: MagicMock(all=lambda: []))
 
             service = ChatMessageService(mock_db)
-            await service.get_session_messages(session_id=1, page=1, limit=50)
+            result = await service.get_session_messages(session_id=1, user_id=7, page=1, limit=50)
 
-            call_args = mock_crud.get_multi.call_args
-            assert call_args.kwargs["session_id"] == 1
+        # An unreadable session is a 404 from the scoped read, not an empty page.
+        mock_session_svc.return_value.get_session.assert_awaited_once_with(1, 7)
+        assert result == {"data": [], "total_count": 0}
+
+        sql = str(
+            mock_exec.call_args.args[0].compile(compile_kwargs={"literal_binds": True}),
+        )
+        assert "ai_chat_messages.session_id = 1" in sql
+        assert "ai_chat_sessions.id = ai_chat_messages.session_id" in sql
+        assert "ai_chat_sessions.user_id = 7" in sql
 
 
 class TestAISettingsService:
@@ -367,11 +378,38 @@ class TestChatCompletionService:
         provider.generate_text = AsyncMock(return_value=response)
         return provider
 
+    @pytest.fixture
+    def mock_message_reads(self):
+        """Stub the owner-scoped history read.
+
+        get_session_messages is a real SQLAlchemy query now (SEC-07: the owner
+        predicate is in the WHERE), so these turn-level tests patch the service
+        seam rather than the CRUD method underneath it. Its query shape is
+        pinned in TestChatMessageService.
+        """
+        rows = MagicMock()
+        rows.mappings.return_value.all.return_value = []
+        patcher = patch(
+            "src.app.modules.ai.service.execute_scoped",
+            new_callable=AsyncMock,
+            return_value=rows,
+        )
+        with patcher as mock_exec:
+            yield mock_exec
+
     @pytest.mark.asyncio
-    async def test_complete_calls_ollama_with_history(self, mock_db, mock_ollama_client, mock_tenant_context):
+    async def test_complete_calls_ollama_with_history(
+        self, mock_db, mock_ollama_client, mock_tenant_context, mock_message_reads
+    ):
         """Test that complete passes message history to Ollama."""
         from src.app.modules.ai.schemas import ChatCompletionRequest
         from src.app.modules.ai.service import ChatCompletionService
+
+        history = MagicMock()
+        history.mappings.return_value.all.return_value = [
+            {"role": "user", "content": "Hi", "__page_total": 1}
+        ]
+        mock_message_reads.return_value = history
 
         with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
@@ -380,12 +418,6 @@ class TestChatCompletionService:
                         # Setup mocks
                         mock_sessions.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
                         mock_sessions.update = AsyncMock()
-                        mock_messages.get_multi = AsyncMock(
-                            return_value={
-                                "data": [{"role": "user", "content": "Hi"}],
-                                "total_count": 1,
-                            }
-                        )
                         mock_messages.create = AsyncMock(return_value={"id": 1})
                         mock_settings.get = AsyncMock(
                             return_value={
@@ -417,7 +449,9 @@ class TestChatCompletionService:
                         assert result["model"] == "gemma3"
 
     @pytest.mark.asyncio
-    async def test_complete_saves_user_and_assistant_messages(self, mock_db, mock_ollama_client, mock_tenant_context):
+    async def test_complete_saves_user_and_assistant_messages(
+        self, mock_db, mock_ollama_client, mock_tenant_context, mock_message_reads
+    ):
         """Test that complete saves both user and assistant messages."""
         from src.app.modules.ai.schemas import ChatCompletionRequest
         from src.app.modules.ai.service import ChatCompletionService
@@ -473,7 +507,9 @@ class TestChatCompletionService:
                             assert second_obj.role == "assistant"
 
     @pytest.mark.asyncio
-    async def test_complete_uses_request_overrides(self, mock_db, mock_ollama_client, mock_tenant_context):
+    async def test_complete_uses_request_overrides(
+        self, mock_db, mock_ollama_client, mock_tenant_context, mock_message_reads
+    ):
         """Test that request parameters override defaults."""
         from src.app.modules.ai.schemas import ChatCompletionRequest
         from src.app.modules.ai.service import ChatCompletionService
@@ -519,7 +555,7 @@ class TestChatCompletionService:
                         assert call_args.kwargs["max_tokens"] == 1000
 
     @pytest.mark.asyncio
-    async def test_complete_raises_on_provider_error(self, mock_db, mock_tenant_context):
+    async def test_complete_raises_on_provider_error(self, mock_db, mock_tenant_context, mock_message_reads):
         """Test that provider errors are wrapped in ChatCompletionError."""
         from src.app.modules.ai.providers import AIProviderError
         from src.app.modules.ai.schemas import ChatCompletionRequest

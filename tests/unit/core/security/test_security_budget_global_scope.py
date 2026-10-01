@@ -1,9 +1,8 @@
 """Security budgets are deliberately GLOBAL — this pins that decision.
 
-``check``/``probe`` accept ``tenant_id`` and forward it, but no production
-caller supplies it, so every budget key is installation-wide. That is a
-documented decision (see the ``budgets`` module docstring), not an
-oversight:
+``check``/``probe`` take no tenant argument at all, so every budget key is
+installation-wide and no code path could scope one. That is a documented
+decision (see the ``budgets`` module docstring), not an oversight:
 
   1. the two edge doors run BEFORE TenantMiddleware and cannot supply one;
   2. scoping the IP-keyed login budgets would let an attacker mint a fresh
@@ -18,13 +17,17 @@ no parameter, so this file makes the posture explicit and enforced:
   - every door's Redis key is pinned in its CURRENT (global) form;
   - enabling tenant scope is made a loud, deliberate act.
 
-If someone threads ``tenant_id`` through a door, the key assertions fail
-and force the migration conversation rather than a silent half-change.
+P1-9 removed the ``tenant_id`` parameter that every door accepted and none
+supplied. Reintroducing it is now a signature change the tests below reject
+outright, so the migration conversation cannot be skipped by threading one
+argument through one door.
 """
 
 import ast
 import re
 from pathlib import Path
+
+import pytest
 
 #: The src/ package root, derived from the imported package so the depth of
 #: this test file cannot silently change the meaning of every path below.
@@ -38,7 +41,7 @@ SRC = Path(_app_pkg.__file__).resolve().parents[1]
 #: new door cannot be added without deciding its scope.
 EXPECTED_DOORS: dict[str, str] = {
     "app/core/security/request_admission.py": "probe",
-    "app/modules/ai/middleware.py": "probe",
+    "app/api/deps/ai_rate_limit.py": "probe",
     "app/modules/auth/rate_limit.py": "check",
     "app/modules/auth/routers/magic_link.py": "check",
     "app/modules/auth/routers/mfa.py": "check",
@@ -137,19 +140,24 @@ class TestKeysAreGlobal:
         definition = BUDGETS[action]
         leg = definition.legs[0]
 
-        scoped = _leg_key(leg, rendered, tenant_id=None)
-        assert not scoped.startswith("tenant:"), f"unexpected tenant prefix: {scoped}"
-        assert "budget:" + leg.budget in scoped
+        key = _leg_key(leg, rendered)
+        assert not key.startswith("tenant:"), f"unexpected tenant prefix: {key}"
+        assert "budget:" + leg.budget in key
 
-    def test_tenant_id_would_prefix_the_key(self) -> None:
-        """Documents what scoping WOULD do, so the migration is concrete."""
-        leg = BUDGETS[SecurityAction.AUTH].legs[0]
-        global_key = _leg_key(leg, "user:42", tenant_id=None)
-        scoped_key = _leg_key(leg, "user:42", tenant_id=999)
+    def test_leg_key_accepts_no_tenant_argument(self) -> None:
+        """P1-9: the parameter is REMOVED, so scoping is not one argument away.
 
-        assert scoped_key.startswith("tenant:999:")
-        assert scoped_key.endswith(global_key.removeprefix("rate_limit:user:"))
-        assert scoped_key != global_key, "scoping must actually change the key"
+        Before this change ``_leg_key`` took ``tenant_id`` and every door
+        omitted it. That is how a green contract test came to assert tenant
+        scoping "works" while no production call site used it. With the
+        parameter gone, enabling tenant scope is a signature change that
+        cannot happen by accident.
+        """
+        import inspect
+
+        assert "tenant_id" not in inspect.signature(_leg_key).parameters
+        with pytest.raises(TypeError):
+            _leg_key(BUDGETS[SecurityAction.AUTH].legs[0], "user:42", tenant_id=999)
 
     def test_build_rate_limit_key_is_identity_for_this_path(self) -> None:
         """Budgets key on the user branch, never the anonymous one."""

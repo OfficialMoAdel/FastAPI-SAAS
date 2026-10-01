@@ -58,16 +58,25 @@ async def test_budget_key_is_namespaced_per_budget_and_identity():
     assert keys[0] == "rate_limit:user:42:budget:mfa_verify"
 
 
-async def test_budget_key_is_tenant_scoped_when_tenant_id_passed():
-    """Tenant context prefixes the canonical key — the same tenant-scoping
-    the ASGI middleware path relies on (ported from the deleted
-    is_rate_limited tenant-key coverage)."""
+async def test_budget_key_is_never_tenant_scoped():
+    """P1-9: budget keys are installation-wide by design.
+
+    The seam used to accept a ``tenant_id`` that no production caller
+    supplied, and this test proved tenant scoping worked — against a
+    capability nothing exercised. The parameter is removed, and the global
+    key is now the only reachable form.
+
+    The IP-keyed brute-force budgets MUST stay global: scoping them would
+    let an attacker mint a fresh budget by varying the tenant header. See
+    budgets.py, "Tenant scope: DELIBERATELY GLOBAL".
+    """
     limiter = _make_limiter()
 
-    await probe(SecurityAction.MFA_STEPUP_VERIFY, Identity(user_id="42"), tenant_id="t1", limiter=limiter)
+    await probe(SecurityAction.MFA_STEPUP_VERIFY, Identity(user_id="42"), limiter=limiter)
 
     key = limiter.check_rate_limit_algorithm.call_args.args[0]
-    assert key == "tenant:t1:rate_limit:user:42:budget:mfa_verify"
+    assert key == "rate_limit:user:42:budget:mfa_verify"
+    assert not key.startswith("tenant:")
 
 
 async def test_budget_limited_verdict_carries_retry_after():

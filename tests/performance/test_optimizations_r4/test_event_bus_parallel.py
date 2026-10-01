@@ -104,7 +104,7 @@ class TestP14EventBusParallelEnqueue:
             mock_circuit.is_closed = True
             mock_circuit.allow_single_flight = AsyncMock(return_value=True)
             mock_circuit.record_success = AsyncMock()
-            mock_settings.EVENT_BUS_USE_BATCH_ENQUEUE = False
+            mock_settings.r1_unified.EVENT_BUS_USE_BATCH_ENQUEUE = False
 
             await bus._publish_async(
                 "test.event",
@@ -144,10 +144,10 @@ class TestP14EventBusParallelEnqueue:
         # Mock circuit breaker
         with patch("src.app.core.events.arq_circuit") as mock_circuit:
             with patch("src.app.core.events.settings") as mock_settings:
-                mock_settings.EVENT_BUS_USE_BATCH_ENQUEUE = False
+                mock_settings.r1_unified.EVENT_BUS_USE_BATCH_ENQUEUE = False
                 # Sync fallback runs under asyncio.wait_for: a MagicMock
                 # timeout breaks its internal `timeout <= 0` comparison.
-                mock_settings.EVENT_HANDLER_TIMEOUT_SECONDS = 5
+                mock_settings.events.EVENT_HANDLER_TIMEOUT_SECONDS = 5
                 mock_circuit.is_closed = True
                 mock_circuit.allow_single_flight = AsyncMock(return_value=True)
                 mock_circuit.record_success = AsyncMock()
@@ -191,7 +191,7 @@ class TestP14EventBusParallelEnqueue:
             # K9: gate is the async allow_single_flight() probe
             mock_circuit.allow_single_flight = AsyncMock(return_value=True)
             mock_circuit.record_success = AsyncMock()
-            mock_settings.EVENT_BUS_USE_BATCH_ENQUEUE = False
+            mock_settings.r1_unified.EVENT_BUS_USE_BATCH_ENQUEUE = False
 
             start = time.perf_counter()
             await bus._publish_async(
@@ -230,7 +230,7 @@ class TestP14EventBusIsomorphism:
             mock_circuit.is_closed = False  # Circuit OPEN
             # K9: gate is the async allow_single_flight() probe
             mock_circuit.allow_single_flight = AsyncMock(return_value=False)
-            mock_settings.EVENT_BUS_USE_BATCH_ENQUEUE = False
+            mock_settings.r1_unified.EVENT_BUS_USE_BATCH_ENQUEUE = False
 
             await bus._publish_async(
                 "test.event",

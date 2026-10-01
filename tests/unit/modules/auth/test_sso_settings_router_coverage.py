@@ -74,7 +74,13 @@ async def test_list_sso_settings(ctx):
         "src.app.modules.auth.routers.sso_settings.fetch_page_with_total",
         AsyncMock(return_value={"data": [{"provider": "google"}], "total_count": 1}),
     ):
-        result = await sso_router.list_sso_settings(request=MagicMock(), ctx=ctx, page=1, per_page=10)
+        # P1-11: the handler takes the standard PaginationParams dependency
+        # rather than bare page/per_page ints.
+        from src.app.core.pagination import PaginationParams
+
+        result = await sso_router.list_sso_settings(
+            request=MagicMock(), ctx=ctx, pagination=PaginationParams(page=1, per_page=10)
+        )
     assert result["items"] == [{"provider": "google"}]
     assert result["total"] == 1
 
@@ -123,7 +129,10 @@ async def test_delete_sso_settings_success(ctx):
     ):
         svc.delete_settings = AsyncMock()
         result = await sso_router.delete_sso_settings(request=MagicMock(), provider="google", ctx=ctx)
-    assert "deleted" in result["message"]
+    # The handler declares `response_model=MessageResponse`, so it now returns
+    # the schema instance rather than a bare dict. FastAPI serialises it
+    # identically over HTTP; only a direct in-process call sees the difference.
+    assert "deleted" in result.message
 
 
 async def test_delete_sso_settings_not_found(ctx):
