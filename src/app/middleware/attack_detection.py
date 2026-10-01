@@ -14,6 +14,7 @@ Whitelist bypass: IPs in whitelist skip attack detection entirely.
 """
 
 import asyncio
+import logging
 import posixpath
 import re
 import unicodedata
@@ -181,6 +182,7 @@ def _attack_prefilter_hit(content: bytes) -> bool:
             return True
     return False
 
+
 # Unicode characters commonly used to bypass regex-based detection.
 # Zero-width joiners/non-joiners, directional overrides, BOM, etc.
 _ZERO_WIDTH_RE = re.compile(
@@ -218,6 +220,15 @@ _HEADERS_TO_CHECK: tuple[str, ...] = (
 # P1-6: byte form of the scanned header set, so the native ASGI __call__
 # can filter scope["headers"] in a single pass without per-name str lookups.
 _HEADERS_TO_CHECK_BYTES: frozenset[bytes] = frozenset(h.encode("latin-1") for h in _HEADERS_TO_CHECK)
+
+
+# nrgi.3: the only HTTP methods whose body is scanned. Hoisted from the
+# inline tuple literal so the gate is a single named fact rather than a
+# condition buried mid-function, and so the tests that pin it import the
+# same object the middleware branches on. GET/HEAD/DELETE/OPTIONS are
+# excluded: their attack surface is the path, query string and headers,
+# all of which are scanned for EVERY method above the gate.
+_BODY_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH"})
 
 
 class AttackDetectionMiddleware:
@@ -425,8 +436,24 @@ class AttackDetectionMiddleware:
                     detected_attacks,
                 )
 
-        # Check request body if it's a POST/PUT/PATCH with content
-        if method in ("POST", "PUT", "PATCH"):
+        # nrgi.3: the body scan is method-gated, and this is the only skip in
+        # the scan that was silent. The guard is load-bearing, not stylistic:
+        # a bare logger.debug() through this structlog stack costs ~44.6us,
+        # 6.7x the ENTIRE bodyless-GET scan it would announce (6.7us), so
+        # unguarded this would make the hot path slower than the work it
+        # reports on. Guarded, the check costs ~1.9us.
+        #
+        # Path, query string and headers are scanned ABOVE, for every method:
+        # a GET carrying SQLi in its query string is still detected, so this
+        # skip removes no attack coverage. See docs/adr/0008.
+        if method not in _BODY_METHODS:
+            if logger.is_enabled_for(logging.DEBUG):
+                logger.debug(
+                    "attack_detection_skipped_body_scan_for_method",
+                    method=method,
+                    path=path,
+                )
+        else:
             # Removed early return for multipart/form-data to actually apply the BUG FIX.
 
             # BUG FIX: Scan all content types to prevent bypass via multipart/form-data or other types
@@ -440,8 +467,10 @@ class AttackDetectionMiddleware:
                     if int(content_length) > MAX_SCAN_SIZE:
                         skip_body = True
                         logger.debug(
-                            "Skipping attack scan of oversized body | content-length=%s",
-                            content_length.decode("latin-1", errors="replace"),
+                            "attack_scan_skipped_oversized_body",
+                            source="content_length",
+                            size=MAX_SCAN_SIZE,
+                            content_length=content_length.decode("latin-1", errors="replace"),
                         )
                 except ValueError:
                     pass  # Malformed Content-Length; proceed with body read
@@ -455,8 +484,9 @@ class AttackDetectionMiddleware:
                         # only the prefix was buffered, the rest is streaming
                         # downstream live. Same skip verdict as below.
                         logger.warning(
-                            "Skipping attack scan of oversized body | size>%d (chunked, capped drain)",
-                            MAX_SCAN_SIZE,
+                            "attack_scan_skipped_oversized_body",
+                            source="chunked_drain",
+                            max_scan=MAX_SCAN_SIZE,
                         )
                     elif body_to_scan:
                         body_size = len(body_to_scan)
@@ -469,9 +499,10 @@ class AttackDetectionMiddleware:
                         # still enforces the hard MAX_BODY_SIZE cap.
                         if body_size > MAX_SCAN_SIZE:
                             logger.warning(
-                                "Skipping attack scan of oversized body | size=%d > max_scan=%d",
-                                body_size,
-                                MAX_SCAN_SIZE,
+                                "attack_scan_skipped_oversized_body",
+                                source="buffered",
+                                size=body_size,
+                                max_scan=MAX_SCAN_SIZE,
                             )
                         else:
                             # Sanitize then scan — NFKC + zero-width stripping.
@@ -483,14 +514,12 @@ class AttackDetectionMiddleware:
                             if len(sanitized_body) > self._BODY_OFFLOAD_THRESHOLD:
                                 await asyncio.get_running_loop().run_in_executor(
                                     None,
-                                    lambda: self._check_for_patterns(
-                                        sanitized_body, "request_body", detected_attacks
-                                    ),
+                                    lambda: self._check_for_patterns(sanitized_body, "request_body", detected_attacks),
                                 )
                             else:
                                 self._check_for_patterns(sanitized_body, "request_body", detected_attacks)
                 except Exception as e:
-                    logger.error("Error reading request body in AttackDetectionMiddleware", error=e)
+                    logger.error("attack_detection_body_read_failed", error=str(e))
                     # Fail closed on body read error
                     detected_attacks.append(
                         {
@@ -533,7 +562,9 @@ class AttackDetectionMiddleware:
                         "pattern_name": pattern_name,
                         "location": location,
                         "matched_content": (
-                            LogSanitizer.sanitize_message(content[:100].decode("utf-8", errors="replace")) if self._log_full_request else "[redacted]"  # noqa: E501
+                            LogSanitizer.sanitize_message(content[:100].decode("utf-8", errors="replace"))
+                            if self._log_full_request
+                            else "[redacted]"  # noqa: E501
                         ),
                     }
                 )
@@ -568,13 +599,13 @@ class AttackDetectionMiddleware:
             log_security_event(event)
 
             logger.warning(
-                "Attack detected | type=%s | pattern=%s | location=%s | ip=%s | path=%s | mode=%s",
-                attack["attack_type"],
-                attack["pattern_name"],
-                attack["location"],
-                client_ip,
-                path,
-                self._mode,
+                "attack_detected",
+                type=attack["attack_type"],
+                pattern=attack["pattern_name"],
+                location=attack["location"],
+                ip=client_ip,
+                path=path,
+                mode=self._mode,
             )
 
         # Mode: log - allow request to continue
@@ -590,6 +621,7 @@ class AttackDetectionMiddleware:
         # Mode: ban - add to blacklist and return 403 Forbidden
         if self._mode == "ban":
             from datetime import UTC, datetime, timedelta
+
             try:
                 # Ban via the injected IpRules seam — never touch the
                 # security feature module directly (layering).
@@ -599,10 +631,16 @@ class AttackDetectionMiddleware:
                     expires_at=datetime.now(UTC) + timedelta(days=1),
                 )
                 logger.warning(
-                    "IP auto-banned | ip=%s | attack=%s | mode=ban", client_ip, detected_attacks[0]["attack_type"]
+                    "ip_auto_banned",
+                    ip=client_ip,
+                    attack=detected_attacks[0]["attack_type"],
+                    mode=self._mode,
                 )
             except Exception as e:
-                logger.error("Failed to add IP to blacklist during ban: %s", str(e))
+                logger.error(
+                    "ip_auto_ban_failed",
+                    error=str(e),
+                )
                 # Fall back to block behavior but still return 403
 
             from src.app.core.errors import middleware_reject
@@ -632,8 +670,11 @@ class AttackDetectionMiddleware:
             # refusing known-malicious payloads, and every worker logs the
             # misconfig loudly at startup.
             logger.error(
-                "Invalid ATTACK_DETECTION_MODE '%s' — failing CLOSED to 'block'. Fix: one of log|block|ban.",
-                self._mode,
+                "invalid_attack_detection_mode",
+                mode=self._mode,
+                allowed=["log", "block", "ban"],
+                fell_back_to="block",
+                fix="set ATTACK_DETECTION_MODE to one of log|block|ban",
             )
             self._mode = "block"
 
@@ -652,7 +693,10 @@ class AttackDetectionMiddleware:
         # Request.state was backed by, so cross-middleware semantics hold.
         scope_state = scope.get("state", {})
         if scope_state.get("ip_whitelisted", False):
-            logger.debug("Attack detection skipped for whitelisted IP | path=%s", path)
+            logger.debug(
+                "attack_detection_skipped_whitelisted_ip",
+                path=path,
+            )
             await self.app(scope, receive, send)
             return
 

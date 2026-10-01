@@ -90,15 +90,23 @@ def _s3_factory(credentials: dict[str, Any]) -> StorageProvider:
     except KeyError as e:
         raise ValueError(f"S3 storage credentials missing required key: {e}") from e
 
-    # Fail fast on the optional dependency. boto3 is imported function-locally
-    # inside S3Storage (so this module imports without it) and is deliberately
-    # not a declared dependency; without this guard a tenant that selects S3
-    # discovers the gap on first upload as a bare ModuleNotFoundError 500.
+    # boto3 is a DECLARED runtime dependency (dxub.9, DECIDED: DECLARE) —
+    # pyproject.toml lists it beside azure-storage-blob, and uv.lock pins it.
+    # S3 is a reachable backend: "s3" is a member of the public
+    # StorageProviderType enum that POST /storage accepts, so leaving it
+    # undeclared made a selectable backend unrunnable on every clean install.
+    #
+    # This guard is the belt to that suspenders and stays: the import is
+    # function-local (S3Storage imports boto3 at construction), so a
+    # deployment that strips the wheel — a slim image, an air-gapped mirror
+    # built from a partial subset — must still get an actionable error naming
+    # the package, not a bare ModuleNotFoundError 500 on first upload.
     try:
         import boto3  # noqa: F401
     except ModuleNotFoundError as e:
         raise ValueError(
-            "S3 storage requires the optional 'boto3' dependency (install with: uv pip install boto3)"
+            "S3 storage requires the 'boto3' dependency (declared in pyproject.toml; "
+            "install with: uv pip install boto3)"
         ) from e
 
     return S3Storage(

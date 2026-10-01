@@ -1,6 +1,8 @@
 """``@cache`` endpoint decorator — caching + invalidation for FastAPI handlers."""
 
 import functools
+import secrets
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -17,6 +19,35 @@ from src.app.core.utils import cache as _state
 # ever response-model-filtered bytes). Pre-v2 entries may hold unfiltered
 # payloads and are never read again; they expire naturally via TTL.
 _CACHE_KEY_VERSION = "v2"
+
+# How long a refresh claim is honoured before Redis expires it. This is only
+# a backstop for a worker that dies mid-refresh; no waiter reasons about it.
+_REFRESH_CLAIM_TTL = 5
+# The wait budget a NON-owner gives the owner before giving up and computing
+# its own answer. Deliberately FAR smaller than the claim TTL: a waiter that
+# waits out the claim has waited for an outcome that can no longer arrive
+# (the owner either published long ago or already lost the claim), so the
+# whole herd would recompute at t == claim-TTL — the stampede, merely
+# delayed. Staying well under the TTL keeps slow-but-alive owners
+# deduplicated, and makes the give-up path fan out in PARALLEL instead of
+# firing in lockstep the moment the budget runs out.
+_REFRESH_WAIT_TIMEOUT = 1.0
+_REFRESH_WAIT_BASE_DELAY = 0.05
+_REFRESH_WAIT_MAX_DELAY = 1.0
+_REFRESH_WAIT_JITTER = 0.25
+
+
+def _record_read(start_time: float, *, is_hit: bool) -> None:
+    """Record one cache read into the shared XFetch hit/miss series.
+
+    The decorator is the main producer of endpoint-cache traffic, so without
+    this the ``xfetch_hit_rate`` on /api/metrics describes only the (nearly
+    unused) ``get_with_stampede_protection`` reader and the endpoint cache
+    looks either infinitely effective or entirely idle. Recorded once per
+    read, on the OUTCOME: a request deduped onto another caller's value did
+    not hit a warm key on its first read, but it did not recompute either.
+    """
+    _state.record_xfetch_latency(time.perf_counter() - start_time, is_hit=is_hit)
 
 
 # Argument names that must never be mistaken for a resource id when
@@ -196,8 +227,7 @@ def _format_extra_data(to_invalidate_extra: dict[str, str], kwargs: dict[str, An
         id_name = names[0]
         if id_name not in kwargs:
             raise ValueError(
-                f"to_invalidate_extra id {id_name!r} (from {id_template!r}) "
-                "is not an argument of the decorated handler"
+                f"to_invalidate_extra id {id_name!r} (from {id_template!r}) is not an argument of the decorated handler"
             )
         formatted_extra[formatted_prefix] = kwargs[id_name]
 
@@ -309,6 +339,67 @@ def _build_cache_key(
     return _state.build_tenant_key(base_key, tenant_id)
 
 
+def _refresh_lock_key(cache_key: str) -> str:
+    """The per-key claim key that serialises concurrent refreshes."""
+    return f"{cache_key}:refresh_lock"
+
+
+async def _claim_refresh_lock(client: Any, lock_key: str, token: str) -> bool:
+    """Take the refresh claim for a key whose value is already cached."""
+    acquired = await client.set(lock_key, token, nx=True, ex=_REFRESH_CLAIM_TTL)
+    return bool(acquired)
+
+
+async def _await_refreshed_value(client: Any, cache_key: str) -> bytes | str | None:
+    """Poll for the value that the refresh owner is publishing.
+
+    Backoff mirrors ``stampede.get_with_lock`` (exponential, capped, jittered)
+    so waiters spread out instead of re-reading in lockstep, and the whole
+    wait stays inside the claim TTL. ``None`` means the owner never published
+    — it failed, or its claim expired — and the caller computes its own value,
+    which is slower but still correct.
+    """
+    elapsed = 0.0
+    delay = _REFRESH_WAIT_BASE_DELAY
+    while elapsed < _REFRESH_WAIT_TIMEOUT:
+        delay = min(delay * 2, _REFRESH_WAIT_MAX_DELAY)
+        actual = delay * (1 + _state.random.uniform(-_REFRESH_WAIT_JITTER, _REFRESH_WAIT_JITTER))
+        await _state.asyncio.sleep(actual)
+        elapsed += actual
+        cached: bytes | str | None = await client.get(cache_key)
+        if cached:
+            return cached
+    return None
+
+
+async def _release_refresh_lock(client: Any, request: Request) -> None:
+    """Release this request's refresh claim, but only if we still hold it.
+
+    An unconditional ``DEL`` would drop a claim a slower worker took after
+    ours expired, letting two handlers compute the same key at once. The
+    compare-and-delete script is the ownership check; the claim TTL backstops
+    a release that cannot run at all.
+    """
+    lock_key: str | None = getattr(request.state, "cache_refresh_lock_key", None)
+    if not lock_key:
+        return
+    # Always a str: the claim is only ever written by this module, and a
+    # missing token (a claim taken by an older caller) must not raise here.
+    token = getattr(request.state, "cache_refresh_lock_token", "") or ""
+    try:
+        await _state.get_lua_manager().execute(
+            client,
+            "lock_release_if_owned",
+            keys=[lock_key],
+            args=[token],
+        )
+    except Exception:  # pragma: no cover - best effort; the claim TTL backstops it
+        try:
+            await client.delete(lock_key)
+        except Exception:
+            pass
+
+
 async def _try_get_cached(
     client: Any,
     cache_key: str,
@@ -317,9 +408,19 @@ async def _try_get_cached(
 ) -> bytes | str | None:
     """P3-2: read-through cache path extracted from cache().inner.
 
-    Tries the Lua script first (1 RT), falls back to two GET+TTL calls
-    on failure, then evaluates the probabilistic refresh-ahead. Returns
-    the bytes to send in a Response, or None to indicate a cache miss.
+    The read and the refresh claim happen in ONE Lua roundtrip, which is what
+    makes this single-flight: a read followed by a separate claim lets N
+    concurrent misses all observe an empty cache and all run the handler, and
+    that stampede is exactly what this path exists to prevent. The claim is
+    released by ``cache().inner`` once the owner has published.
+
+    On script failure the read degrades to two GET+TTL calls and the caller
+    serves a freshly computed value; a dead cache must never fail a request.
+    A degraded MISS additionally returns None immediately rather than taking
+    the waiter path: the claim is created by the same script that failed, so no
+    owner exists to publish and waiting would only add the full wait budget of
+    latency to a miss that is going to recompute anyway. A degraded HIT is still
+    served from cache, and the probabilistic refresh-ahead still applies.
 
     P-M1: cached payloads are returned as stored — no Pydantic re-validation
     on the hit path. Every entry was already filtered through the route's
@@ -329,34 +430,72 @@ async def _try_get_cached(
     failures on the write path fall back to serializing the raw result, so
     the cached bytes are always response-model-shaped.
     """
+    lock_key = _refresh_lock_key(cache_key)
+    token = secrets.token_hex(16)
+    start_time = time.perf_counter()
+    #: True when the atomic read+claim script failed and we fell back to plain
+    #: GET+TTL. It matters that the CLAIM lives inside that script: with the
+    #: script down nobody can own this key, so a miss has no owner to wait for.
+    degraded = False
     try:
-        lua_mgr = _state.get_lua_manager()
-        result = await lua_mgr.execute(
+        result = await _state.get_lua_manager().execute(
             client,
-            "xfetch_get_with_ttl",
-            keys=[cache_key],
-            args=[],
+            "xfetch_get_or_claim",
+            keys=[cache_key, lock_key],
+            args=[str(_REFRESH_CLAIM_TTL), token],
         )
         cached_data: bytes | str | None = result[0]
         remaining_ttl = int(result[1]) if result[1] is not None else -2
-    except Exception:
+        claimed = bool(result[2]) if len(result) > 2 else False
+    except Exception as e:
+        # Degraded read: the claim is taken INSIDE the script that just
+        # failed, so no caller can be an owner and no owner will ever
+        # publish. The caller simply computes the value and the normal write
+        # path caches it.
+        _state.stampede_logger.warning(
+            "Cache read script failed; serving fresh without caching",
+            error=str(e),
+            cache_key=cache_key,
+        )
         cached_data = await client.get(cache_key)
         remaining_ttl = await client.ttl(cache_key) if cached_data else -2
-
+        claimed = False
+        degraded = True
     if not cached_data:
-        return None
+        if claimed:
+            # We own this refresh: run the handler, publish, then release
+            # the claim in cache().inner.
+            _record_read(start_time, is_hit=False)
+            request.state.cache_refresh_lock_key = lock_key
+            request.state.cache_refresh_lock_token = token
+            return None
+        if degraded:
+            # No owner exists and none ever will (the script that creates
+            # owners is the one that failed), so polling here would burn the
+            # whole wait budget on a value that cannot arrive — turning one
+            # Redis-side fault into a latency stall on EVERY concurrent miss.
+            # Compute now; the normal write path caches it (fail open).
+            _record_read(start_time, is_hit=False)
+            return None
+        # Another request is already computing this key — wait for its value
+        # rather than duplicating the work. Being served the owner's value is
+        # a hit: this request never recomputed anything.
+        refreshed = await _await_refreshed_value(client, cache_key)
+        _record_read(start_time, is_hit=bool(refreshed))
+        return refreshed
 
     if remaining_ttl > 0:
         delta = expiration - remaining_ttl
         if delta > 0:
             probability = min((delta / expiration) ** 2, 1.0)
             if _state.random.random() < probability:
-                lock_key = f"{cache_key}:refresh_lock"
-                lock_acquired = await client.set(lock_key, "1", nx=True, ex=5)
-                if lock_acquired:
+                if await _claim_refresh_lock(client, lock_key, token):
+                    _record_read(start_time, is_hit=False)
                     request.state.cache_refresh_lock_key = lock_key
+                    request.state.cache_refresh_lock_token = token
                     return None  # cache miss — let the handler refresh
 
+    _record_read(start_time, is_hit=True)
     return cached_data
 
 
@@ -513,110 +652,108 @@ def cache(  # noqa: C901
             try:
                 result = await func(request, *args, **kwargs)
             except Exception:
-                refresh_lock_key = getattr(request.state, "cache_refresh_lock_key", None)
-                if refresh_lock_key and client is not None:
-                    try:
-                        await client.delete(refresh_lock_key)
-                    except Exception:
-                        pass
+                # Release our refresh claim so waiters stop blocking on a
+                # handler that will never publish.
+                await _release_refresh_lock(client, request)
                 raise
             if request.method == "GET":
-                # Filter against route response_model at write time if present
-                to_serialize = result
-                route = request.scope.get("route") if hasattr(request, "scope") and request.scope else None
-                response_model = getattr(route, "response_model", None) if route else None
-                if response_model is not None:
-                    try:
-                        if hasattr(response_model, "model_validate"):
-                            # P2 single pass: memoized adapter validates +
-                            # dumps with the same model/mode/alias as the
-                            # per-item calls it replaces, so cached bytes
-                            # are identical; ValidationError still fails
-                            # closed below.
-                            adapter = _write_adapter(response_model, is_list=isinstance(result, list))
-                            to_serialize = adapter.dump_python(
-                                adapter.validate_python(result), mode="json", by_alias=True
+                # F35: ONE try/finally owns the refresh-claim release for the
+                # entire GET write path — including the fail-closed early
+                # return below, which previously skipped the only release
+                # site and left <key>:refresh_lock set for the full 5s TTL.
+                # That leak is not cosmetic: the claim is what every other
+                # caller blocks on, so a single leaking owner turns one bad
+                # payload into a 5s stall for the whole herd, followed by a
+                # simultaneous recompute that leaks again. Scoping the finally
+                # to the whole block also means a future early return added
+                # here cannot reintroduce the leak.
+                try:
+                    # Filter against route response_model at write time if present
+                    to_serialize = result
+                    route = request.scope.get("route") if hasattr(request, "scope") and request.scope else None
+                    response_model = getattr(route, "response_model", None) if route else None
+                    if response_model is not None:
+                        try:
+                            if hasattr(response_model, "model_validate"):
+                                # P2 single pass: memoized adapter validates +
+                                # dumps with the same model/mode/alias as the
+                                # per-item calls it replaces, so cached bytes
+                                # are identical; ValidationError still fails
+                                # closed below.
+                                adapter = _write_adapter(response_model, is_list=isinstance(result, list))
+                                to_serialize = adapter.dump_python(
+                                    adapter.validate_python(result), mode="json", by_alias=True
+                                )
+                        except Exception as e:
+                            # P-M1 fail-closed: NEVER cache a payload that failed
+                            # response-model filtering. Serve it fresh-only for
+                            # this request; the next request re-runs the handler.
+                            # (The old fallback serialized the raw result into
+                            # the cache — combined with a no-revalidation hit
+                            # path, unfiltered data would be served to everyone.)
+                            _state.stampede_logger.warning(
+                                "Cache write validation failed; serving fresh without caching",
+                                error=str(e),
+                                cache_key=cache_key,
                             )
-                        elif hasattr(response_model, "parse_obj"):
-                            if isinstance(result, list):
-                                to_serialize = [response_model.parse_obj(item).dict(by_alias=True) for item in result]
-                            else:
-                                to_serialize = response_model.parse_obj(result).dict(by_alias=True)
+                            return Response(content=_state.json_dumps(result), media_type="application/json")
+
+                    # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder
+                    serialized_data = _state.json_dumps(to_serialize)
+                    # P2-4: fail OPEN on cache-write failure (e.g. Redis down):
+                    # serve the fresh payload without caching instead of 500ing.
+                    try:
+                        async with client.pipeline(transaction=False) as pipe:
+                            pipe.setex(cache_key, expiration, serialized_data)
+
+                            # Pattern-based invalidation registration (F2): index
+                            # under the tenant/user-scoped pattern — identical to
+                            # the lookup in the invalidation branch below — or the
+                            # O(1) lookup never fires under tenant context.
+                            if invalidation_patterns:
+                                _reg_tenant = _state.get_current_tenant()
+                                _reg_tenant_id = str(_reg_tenant.tenant_id) if _reg_tenant is not None else None
+                                _reg_user_id = _resolve_user_id(kwargs) if user_scoped else None
+                                formatted_patterns = [_format_prefix(p, kwargs) for p in invalidation_patterns]
+                                for pattern in formatted_patterns:
+                                    scoped = _scoped_invalidation_pattern(pattern, _reg_tenant_id, _reg_user_id)
+                                    idx_key = _state._pattern_index_key(scoped)
+                                    pipe.sadd(idx_key, cache_key)
+                                    # P1-9: index outlives the data key (tenant-index
+                                    # convention at the tenant branches below).
+                                    pipe.expire(idx_key, expiration * 2)
+
+                            # ISSUE 2 FIX: Register tenant-scoped keys for invalidate_tenant_cache()
+                            if cache_key.startswith("tenant:"):
+                                parts = cache_key.split(":", 3)
+                                if len(parts) >= 2:
+                                    tenant_id = parts[1]
+                                    pipe.sadd(_state._tenant_index_key(tenant_id), cache_key)
+                                    pipe.expire(_state._tenant_index_key(tenant_id), expiration * 2)
+
+                                    # Also add to prefix-sharded index.
+                                    # NOTE: shard by the business prefix (key_prefix), NOT parts[2] —
+                                    # for user_scoped keys parts[2] is "user", which would make
+                                    # invalidate_tenant_cache(tenant_id, prefix="...") find nothing.
+                                    sharded_idx_key = _state._tenant_prefix_index_key(
+                                        tenant_id, _format_prefix(key_prefix, kwargs)
+                                    )
+                                    pipe.sadd(sharded_idx_key, cache_key)
+                                    pipe.expire(sharded_idx_key, expiration * 2)
+
+                            await pipe.execute()
                     except Exception as e:
-                        # P-M1 fail-closed: NEVER cache a payload that failed
-                        # response-model filtering. Serve it fresh-only for
-                        # this request; the next request re-runs the handler.
-                        # (The old fallback serialized the raw result into
-                        # the cache — combined with a no-revalidation hit
-                        # path, unfiltered data would be served to everyone.)
                         _state.stampede_logger.warning(
-                            "Cache write validation failed; serving fresh without caching",
+                            "Cache write failed; serving fresh without caching",
                             error=str(e),
                             cache_key=cache_key,
                         )
-                        return Response(content=_state.json_dumps(result), media_type="application/json")
 
-                # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder
-                serialized_data = _state.json_dumps(to_serialize)
-                # P2-4: fail OPEN on cache-write failure (e.g. Redis down):
-                # serve the fresh payload without caching instead of 500ing.
-                try:
-                    async with client.pipeline(transaction=False) as pipe:
-                        pipe.setex(cache_key, expiration, serialized_data)
-
-                        # Pattern-based invalidation registration (F2): index
-                        # under the tenant/user-scoped pattern — identical to
-                        # the lookup in the invalidation branch below — or the
-                        # O(1) lookup never fires under tenant context.
-                        if invalidation_patterns:
-                            _reg_tenant = _state.get_current_tenant()
-                            _reg_tenant_id = str(_reg_tenant.tenant_id) if _reg_tenant is not None else None
-                            _reg_user_id = _resolve_user_id(kwargs) if user_scoped else None
-                            formatted_patterns = [_format_prefix(p, kwargs) for p in invalidation_patterns]
-                            for pattern in formatted_patterns:
-                                scoped = _scoped_invalidation_pattern(pattern, _reg_tenant_id, _reg_user_id)
-                                idx_key = _state._pattern_index_key(scoped)
-                                pipe.sadd(idx_key, cache_key)
-                                # P1-9: index outlives the data key (tenant-index
-                                # convention at the tenant branches below).
-                                pipe.expire(idx_key, expiration * 2)
-
-                        # ISSUE 2 FIX: Register tenant-scoped keys for invalidate_tenant_cache()
-                        if cache_key.startswith("tenant:"):
-                            parts = cache_key.split(":", 3)
-                            if len(parts) >= 2:
-                                tenant_id = parts[1]
-                                pipe.sadd(_state._tenant_index_key(tenant_id), cache_key)
-                                pipe.expire(_state._tenant_index_key(tenant_id), expiration * 2)
-
-                                # Also add to prefix-sharded index.
-                                # NOTE: shard by the business prefix (key_prefix), NOT parts[2] —
-                                # for user_scoped keys parts[2] is "user", which would make
-                                # invalidate_tenant_cache(tenant_id, prefix="...") find nothing.
-                                sharded_idx_key = _state._tenant_prefix_index_key(
-                                    tenant_id, _format_prefix(key_prefix, kwargs)
-                                )
-                                pipe.sadd(sharded_idx_key, cache_key)
-                                pipe.expire(sharded_idx_key, expiration * 2)
-
-                        await pipe.execute()
-                except Exception as e:
-                    _state.stampede_logger.warning(
-                        "Cache write failed; serving fresh without caching",
-                        error=str(e),
-                        cache_key=cache_key,
-                    )
+                    return Response(content=serialized_data, media_type="application/json")
                 finally:
-                    # F35: one path owns the refresh-lock release, so a
-                    # failing pipeline no longer leaks it to the 5s expiry.
-                    refresh_lock_key = getattr(request.state, "cache_refresh_lock_key", None)
-                    if refresh_lock_key:
-                        try:
-                            await client.delete(refresh_lock_key)
-                        except Exception:
-                            pass
-
-                return Response(content=serialized_data, media_type="application/json")
+                    # Compare-and-delete: we never release a claim a slower
+                    # worker now owns.
+                    await _release_refresh_lock(client, request)
 
             else:
                 # F3: extra keys go through the same key builder (tenant +
@@ -661,9 +798,7 @@ def cache(  # noqa: C901
                     for pattern in pattern_to_invalidate_extra:
                         formatted_pattern = _format_prefix(pattern, kwargs)
                         # F2: same scoping function as the registration side.
-                        scoped_pattern = _scoped_invalidation_pattern(
-                            formatted_pattern, _tenant_id, _user_id
-                        )
+                        scoped_pattern = _scoped_invalidation_pattern(formatted_pattern, _tenant_id, _user_id)
 
                         # P1-12: O(1) pattern-index only. The old SCAN fallback
                         # was O(N) over the whole keyspace on every write

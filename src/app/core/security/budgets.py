@@ -48,10 +48,10 @@ Only the interface above the engine changed. ``consume``, ``build_verdict``,
 ``build_rate_limit_key``, ``RateLimitVerdict``, ``SECURITY_BUDGETS`` and
 ``SECURITY_BUDGETS_FAIL_CLOSED`` are used exactly as they were.
 
-**Tenant scope: DELIBERATELY GLOBAL AT EVERY CALL SITE.** ``check`` and
-``probe`` accept ``tenant_id`` and forward it to ``build_rate_limit_key``,
-but no production caller supplies it, so every budget key is
-installation-wide. That is a decision, not an oversight, for three reasons:
+**Tenant scope: DELIBERATELY GLOBAL — AND NOW STRUCTURALLY SO.** ``check``
+and ``probe`` no longer accept a ``tenant_id`` at all, so every budget key is
+installation-wide and there is no code path that could scope one. That is a
+decision, not an oversight, for three reasons:
 
 1. **The two edge doors cannot supply a tenant.** ``GUARD_ORDER``
    (``core/guard/ordering.py``) executes ``RateLimit`` BEFORE ``Tenant``, so
@@ -63,15 +63,25 @@ installation-wide. That is a decision, not an oversight, for three reasons:
    address. Tenant-scoping them would let an attacker mint a fresh budget by
    varying the tenant header — turning one global cap into a per-tenant one.
 3. **Enabling scoping needs a coordinated Redis key migration.**
-   ``build_tenant_key`` (``core/utils/cache/keys.py``) prefixes the key when
-   ``tenant_id`` is not None, so scoping changes every live key; and
+   ``build_tenant_key`` (``core/utils/cache/keys.py``) prefixes the key when a
+   tenant is supplied, so scoping changes every live key; and
    ``core/security/rate_policy.py`` already records that this was
    deliberately left off pending that migration.
 
-Enabling tenant scope is therefore a separate, coordinated change: migrate
-the Redis keys, then thread ``ctx.tenant_id`` through the in-application
-doors only. ``test_security_budget_contract.py`` pins the current global keys
-so that change is a deliberate, visible act rather than an accident.
+**P1-9 decision: Option B — the parameter was REMOVED, not threaded.** The
+parameter was accepted by every door and supplied by none, which made
+``test_security_budget_contract.py::test_golden_key_is_tenant_scoped`` a green
+test proving a capability with zero production effect — the most misleading
+kind of test. Option A (threading ``ctx.tenant_id`` through the user-identity
+doors) was rejected: reason 2 shows per-tenant budgets are a security
+regression, and doing it for *some* budgets would leave the property
+inconsistent and invisible. The contract test now pins the global key as the
+only reachable form.
+
+Enabling tenant scope remains a separate, coordinated change: migrate the
+Redis keys (resetting every in-flight counter), then reintroduce the
+parameter deliberately. ``test_security_budget_contract.py`` pins the global
+keys so that change is a visible act rather than an accident.
 """
 
 from __future__ import annotations
@@ -389,22 +399,28 @@ def _render_leg(leg: Leg, identity: Identity, action: SecurityAction) -> str:
     return leg.kind.render(fact)
 
 
-def _leg_key(leg: Leg, rendered: str, tenant_id: Any) -> str:
+def _leg_key(leg: Leg, rendered: str) -> str:
     """Build one leg's Redis key.
 
     The namespace half comes from ``leg.budget`` — never from the action and
     never from caller input. ``rendered`` is non-empty by construction, so
     this always takes the identifier branch of ``build_rate_limit_key`` and
     can never silently land in the anonymous bucket.
+
+    P1-9: ``tenant_id`` is gone. Every budget key is installation-wide, and
+    that is a decision, not an oversight — see the module docstring
+    ("Tenant scope: DELIBERATELY GLOBAL AT EVERY CALL SITE") for the three
+    reasons. Keeping an accepted-but-never-supplied parameter produced a
+    contract test that proved tenant scoping "works" with zero production
+    effect; removing it makes the global scope the only reachable behaviour.
     """
-    return build_rate_limit_key(f"budget:{leg.budget}", user_id=rendered, tenant_id=tenant_id)
+    return build_rate_limit_key(f"budget:{leg.budget}", user_id=rendered)
 
 
 async def _evaluate(
     action: SecurityAction,
     identity: Identity,
     *,
-    tenant_id: Any,
     limiter: Any,
 ) -> tuple[BudgetDef, Leg | None, RateLimitVerdict]:
     """Meter every leg of ``action``; return the first limited leg's verdict.
@@ -421,7 +437,7 @@ async def _evaluate(
 
     # Pass 1 — validate the whole leg set is satisfiable.
     rendered = [_render_leg(leg, identity, action) for leg in definition.legs]
-    keys = [_leg_key(leg, text, tenant_id) for leg, text in zip(definition.legs, rendered, strict=True)]
+    keys = [_leg_key(leg, text) for leg, text in zip(definition.legs, rendered, strict=True)]
 
     # Pass 2 — charge.
     first_verdict: RateLimitVerdict | None = None
@@ -459,7 +475,6 @@ async def check(
     action: SecurityAction,
     identity: Identity,
     *,
-    tenant_id: Any = None,
     limiter: Any = None,
 ) -> None:
     """Meter ``action`` against ``identity``; raise on the first limited leg.
@@ -473,16 +488,14 @@ async def check(
         KeyError: unknown action.
 
     Note:
-        ``tenant_id`` is accepted and forwarded but is NOT supplied by any
-        production caller — every budget key is deliberately global. See the
-        module docstring ("Tenant scope: DELIBERATELY GLOBAL AT EVERY CALL
-        SITE") for the three reasons and the migration that would change it.
+        P1-9: there is no ``tenant_id`` parameter. Every budget key is
+        installation-wide by design; the three reasons, and the Redis key
+        migration that would change it, are in the module docstring under
+        "Tenant scope: DELIBERATELY GLOBAL AT EVERY CALL SITE".
     """
     from src.app.shared.exceptions import RateLimitExceededError
 
-    definition, limited_leg, verdict = await _evaluate(
-        action, identity, tenant_id=tenant_id, limiter=limiter
-    )
+    definition, limited_leg, verdict = await _evaluate(action, identity, limiter=limiter)
     if limited_leg is None:
         return
     raise RateLimitExceededError(
@@ -495,7 +508,6 @@ async def probe(
     action: SecurityAction,
     identity: Identity,
     *,
-    tenant_id: Any = None,
     limiter: Any = None,
 ) -> RateLimitVerdict:
     """Meter ``action`` exactly as :func:`check` does, returning the Verdict.
@@ -510,10 +522,10 @@ async def probe(
     limited — the latter carries ``limit``/``remaining`` for response headers.
 
     Note:
-        ``tenant_id`` is accepted and forwarded but is NOT supplied by any
-        production caller — every budget key is deliberately global. See the
-        module docstring ("Tenant scope: DELIBERATELY GLOBAL AT EVERY CALL
-        SITE") for the three reasons and the migration that would change it.
+        P1-9: there is no ``tenant_id`` parameter. Every budget key is
+        installation-wide by design; the three reasons, and the Redis key
+        migration that would change it, are in the module docstring under
+        "Tenant scope: DELIBERATELY GLOBAL AT EVERY CALL SITE".
     """
-    _, _, verdict = await _evaluate(action, identity, tenant_id=tenant_id, limiter=limiter)
+    _, _, verdict = await _evaluate(action, identity, limiter=limiter)
     return verdict

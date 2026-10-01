@@ -152,7 +152,7 @@ async def resolve_tenant_by_slug(
                 return tenant_context_from_cache_data(slug, cached_data)
             return None
     except Exception as e:  # noqa: BLE001 - L1 must never break resolution
-        logger.warning("Tenant L1 cache read error: %s", e)
+        logger.warning("tenant_l1_cache_read_failed", error=str(e))
 
     # L2/L3 under the per-slug stampede lock.
     async with _get_tenant_lock(slug) as lock:
@@ -182,7 +182,7 @@ async def resolve_tenant_by_slug(
                         _L1_TENANT_PARSED.pop(slug, None)
                         return tenant_context_from_cache_data(slug, data)
                 except Exception as e:  # noqa: BLE001 - L2 miss falls to DB
-                    logger.warning("Tenant L2 cache read error: %s", e)
+                    logger.warning("tenant_l2_cache_read_failed", error=str(e))
 
             # L3: database fallback (RLS bypass: resolution precedes context).
             factory = session_factory if session_factory is not None else local_session
@@ -215,7 +215,7 @@ async def resolve_tenant_by_slug(
                     conn = await session.connection()
                     await clear_rls_context(conn)
                 except Exception as e:  # noqa: BLE001 - cleanup best-effort
-                    logger.warning("Failed to clear RLS context in tenant resolver: %s", e)
+                    logger.warning("tenant_rls_context_clear_failed", error=str(e))
 
                 cache_data: dict[str, Any] | None = None
                 if tenant:
@@ -225,7 +225,7 @@ async def resolve_tenant_by_slug(
                     _L1_TENANT_CACHE[slug] = cache_data
                     _L1_TENANT_PARSED.pop(slug, None)
                 except Exception as e:  # noqa: BLE001 - cache write best-effort
-                    logger.warning("Tenant L1 cache write error: %s", e)
+                    logger.warning("tenant_l1_cache_write_failed", error=str(e))
 
                 if client:
                     try:
@@ -244,7 +244,7 @@ async def resolve_tenant_by_slug(
                                 "1",
                             )
                     except Exception as e:  # noqa: BLE001 - cache write best-effort
-                        logger.warning("Tenant L2 cache write error: %s", e)
+                        logger.warning("tenant_l2_cache_write_failed", error=str(e))
 
                 if tenant is None:
                     return None

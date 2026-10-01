@@ -19,15 +19,18 @@ tenant-less surfaces that must keep working.
 import ast
 import inspect
 import re
-from unittest.mock import patch
+from typing import Annotated
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
+from src.app.api.deps.auth import AuthenticatedUser
 from src.app.core.rbac.superuser_tenant import (
     enforce_superuser_tenant_rule,
     request_tenant_id,
 )
+from tests.helpers.auth import build_test_auth_context
 
 TENANT_A = uuid4()
 TENANT_B = uuid4()
@@ -100,6 +103,99 @@ class TestTheRuleItself:
         enforce_superuser_tenant_rule(
             user_tenant_id=str(TENANT_A), request_tenant=TENANT_A, user_id=1, gate="test"
         )
+
+
+class TestUnparseablePrincipalTenantIsRefused:
+    """Defect 1: "absent" and "unparseable" are different states, not one.
+
+    ``request_tenant_id`` maps both to ``None`` — the right primitive for a
+    REQUEST tenant, where "no tenant to bind" and "not a UUID" mean the same
+    thing. For the PRINCIPAL they do not: a principal that names a tenant we
+    cannot resolve is not tenant-less, it is unidentifiable, and the rule
+    existed to be fail-CLOSED. The code it replaced skipped the check only
+    when the tenant was genuinely ABSENT:
+
+        if current_user_tenant_id is not None and str(...) != str(...):
+            raise ForbiddenException(...)
+
+    Routing an unparseable principal into that early return is the fail-open:
+    a principal carrying ``tenant_id="acme"`` would act as ANY tenant. The
+    fallback therefore keeps the pre-refactor STRING comparison, so an equal
+    non-UUID tenant (``1 == 1``) still passes — the old line allowed it, and
+    ``AuthenticatedUser.tenant_id`` is typed ``UUID | str | int | None``, so a
+    slug or a legacy int is representable.
+    """
+
+    @pytest.mark.parametrize("unparseable", ["acme-corp", 7, "not-a-uuid", object()])
+    def test_present_but_unparseable_cannot_act_as_another_tenant(self, unparseable) -> None:
+        """THE closed fail-open: a slug/int principal is not unbound."""
+        from src.app.shared.exceptions import ForbiddenError
+
+        with pytest.raises(ForbiddenError):
+            enforce_superuser_tenant_rule(
+                user_tenant_id=unparseable, request_tenant=TENANT_A, user_id=1, gate="test"
+            )
+
+    @pytest.mark.parametrize("matching", [("acme-corp", "acme-corp"), (7, 7)])
+    def test_matching_non_uuid_tenant_still_passes(self, matching) -> None:
+        """Anti-over-fix: the pre-refactor line allowed equal non-UUID ids.
+
+        ``str(1) != str(1)`` was False, so a superuser whose tenant is a legacy
+        int kept working. Normalizing first and refusing would have turned a
+        previously-allowed case into a denial.
+        """
+        user_tenant, request_tenant = matching
+        enforce_superuser_tenant_rule(
+            user_tenant_id=user_tenant, request_tenant=request_tenant, user_id=1, gate="test"
+        )
+
+    def test_matching_non_uuid_tenant_passes_through_a_tenant_context(self) -> None:
+        """``get_current_superuser`` hands over a TenantContext, not a UUID.
+
+        Its ``str()`` is a dataclass repr that equals nothing, so the fallback
+        unwraps the id it carries — otherwise the two gates would disagree
+        (and this one would deny) on a non-UUID tenant.
+        """
+        enforce_superuser_tenant_rule(
+            user_tenant_id=7, request_tenant=_ctx(7), user_id=1, gate="test"
+        )
+
+    def test_unparseable_principal_cannot_act_as_a_different_non_uuid_tenant(self) -> None:
+        """Neither side a UUID: the string comparison still has to bite."""
+        from src.app.shared.exceptions import ForbiddenError
+
+        with pytest.raises(ForbiddenError):
+            enforce_superuser_tenant_rule(
+                user_tenant_id="acme-corp", request_tenant="other-corp", user_id=1, gate="test"
+            )
+
+    def test_refusal_message_is_the_mismatch_message(self) -> None:
+        """The client learns it is not bound to this tenant, and nothing else.
+
+        Same message as a plain mismatch so an unparseable tenant is not an
+        oracle for how the failure was detected.
+        """
+        from src.app.shared.exceptions import ForbiddenError
+
+        with pytest.raises(ForbiddenError, match="does not belong to the current tenant"):
+            enforce_superuser_tenant_rule(
+                user_tenant_id="acme-corp", request_tenant=TENANT_A, user_id=1, gate="test"
+            )
+
+    def test_absent_is_still_unconstrained(self) -> None:
+        """The fix must not turn 'genuinely absent' into a denial."""
+        enforce_superuser_tenant_rule(
+            user_tenant_id=None, request_tenant=TENANT_A, user_id=1, gate="test"
+        )
+
+    def test_normalizer_itself_is_unchanged(self) -> None:
+        """The primitive keeps its contract; only the CALL SITE branches.
+
+        ``request_tenant_id`` is relied on elsewhere to answer "no tenant" for
+        an unparseable value, so it must still do exactly that.
+        """
+        assert request_tenant_id("acme-corp") is None
+        assert request_tenant_id(7) is None
 
 
 class TestRequestTenantNormalization:
@@ -181,6 +277,141 @@ class TestGatesShareTheHelper:
         )
 
 
+class TestGatesAgreeOnTheAuthContextTenant:
+    """Defect 2: both gates must read the tenant from the SAME principal.
+
+    ``requires_permission`` read the tenant off the resolved ``AuthContext``;
+    ``get_current_superuser`` read ``get_current_tenant()`` — the ContextVar.
+    That is the second, divergent resolution path the shared rule was created
+    to delete, and the two gates disagree whenever the sources differ.
+
+    The divergence is reachable through the SANCTIONED test seam,
+    ``app.dependency_overrides[get_auth_context]`` (tests/helpers/auth.py): a
+    test can inject ``tenant=A`` while the ContextVar is unset or bound to
+    ``NO_TENANT``. Before the fix ``get_current_superuser`` short-circuited on
+    ``if not request_tenant`` and admitted the caller, while
+    ``requires_permission`` compared against A and refused — the same router,
+    two rules, on adjacent mutations.
+    """
+
+    @staticmethod
+    def _app(ctx, user):
+        """A mini-app whose two gates both run production code.
+
+        ``get_auth_context`` is overridden (the sanctioned seam) and
+        ``get_current_user`` too, so nothing needs a real token; everything
+        below the overrides — the gate bodies and the shared rule — is real.
+        """
+        from fastapi import Depends, FastAPI
+
+        from src.app.api.deps.auth import get_current_superuser, get_current_user
+        from src.app.core.db.database import async_get_db
+        from src.app.core.errors import setup_exception_handlers
+        from src.app.core.principal import get_auth_context
+        from src.app.core.rbac import Permission, requires_permission
+
+        app = FastAPI()
+        setup_exception_handlers(app)
+
+        @app.get("/superuser-gate")
+        async def _superuser_gate(
+            user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],
+        ) -> dict:
+            return {"user_id": user.id}
+
+        @app.get("/permission-gate", dependencies=[Depends(requires_permission(Permission.ROLES_MANAGE))])
+        async def _permission_gate() -> dict:
+            return {"ok": True}
+
+        app.dependency_overrides[get_auth_context] = lambda: ctx
+        app.dependency_overrides[get_current_user] = lambda: ctx.user
+        app.dependency_overrides[async_get_db] = lambda: MagicMock()
+        return app
+
+    @staticmethod
+    def _status(app, path, context_tenant):
+        """GET ``path`` with the ContextVar bound to ``context_tenant``."""
+        from fastapi.testclient import TestClient
+
+        from src.app.core.tenancy.lifecycle import bound_tenant
+
+        with bound_tenant(context_tenant):
+            return TestClient(app).get(path).status_code
+
+    @pytest.mark.parametrize("url", ["/superuser-gate", "/permission-gate"])
+    def test_unset_contextvar_does_not_widen_the_superuser_gate(self, url) -> None:
+        """THE defect: the principal's tenant is A, only the ContextVar is empty.
+
+        Pre-fix this returned 200 on the superuser gate and 403 on the
+        permission gate — the drift the shared rule exists to prevent.
+        """
+        ctx = build_test_auth_context(_user(TENANT_A), _ctx(TENANT_B))
+        app = self._app(ctx, ctx.user)
+
+        assert self._status(app, url, None) == 403, (
+            "a gate admitted a principal acting as another tenant while its "
+            "sibling refused"
+        )
+
+    @pytest.mark.parametrize("url", ["/superuser-gate", "/permission-gate"])
+    def test_no_tenant_sentinel_does_not_widen_the_superuser_gate(self, url) -> None:
+        """``NO_TENANT`` is falsy, so it short-circuited the old call site too."""
+        from src.app.core.tenancy.context import NO_TENANT
+
+        ctx = build_test_auth_context(_user(TENANT_A), _ctx(TENANT_B))
+        app = self._app(ctx, ctx.user)
+
+        assert self._status(app, url, NO_TENANT) == 403
+
+    @pytest.mark.parametrize("url", ["/superuser-gate", "/permission-gate"])
+    def test_both_gates_allow_the_principals_own_tenant(self, url) -> None:
+        """The regression lock: a superuser in their own tenant still works.
+
+        The ContextVar deliberately names a DIFFERENT tenant — the gate must
+        read the principal, not the ContextVar, or this would 403.
+        """
+        ctx = build_test_auth_context(_user(TENANT_A), _ctx(TENANT_A))
+        app = self._app(ctx, ctx.user)
+
+        assert self._status(app, url, _ctx(TENANT_B)) == 200
+
+    def test_tenantless_principal_still_passes_the_superuser_gate(self) -> None:
+        """No principal tenant, no request tenant: nothing to compare.
+
+        Only the superuser gate, and the asymmetry is DELIBERATE: on a
+        tenant-less surface the superuser gate degrades to the superuser
+        check (it guards the cross-tenant operator routes), whereas
+        ``requires_permission`` fails closed with TENANT_CONTEXT_MISSING
+        because a permission check with no tenant has nothing to key on.
+        Both behaviours are pinned elsewhere; this records that the fix did
+        not change either.
+        """
+        ctx = build_test_auth_context(_user(None), None)
+        app = self._app(ctx, ctx.user)
+
+        assert self._status(app, "/superuser-gate", None) == 200
+        assert self._status(app, "/permission-gate", None) == 403  # fail-closed
+
+    def test_get_current_superuser_does_not_read_the_contextvar(self) -> None:
+        """Static guard: the second resolution path must not come back."""
+        from src.app.api.deps import auth
+
+        source = inspect.getsource(auth.get_current_superuser)
+        body = source.split('"""', 2)[-1]  # drop the docstring; it names both.
+        assert "get_current_tenant(" not in body, (
+            "get_current_superuser re-resolved the request tenant from the "
+            "ContextVar instead of reading the AuthContext"
+        )
+
+    def test_get_current_superuser_takes_the_auth_context(self) -> None:
+        """The tenant source is declared, not inferred."""
+        from src.app.api.deps import auth
+
+        source = inspect.getsource(auth.get_current_superuser)
+        assert "Depends(get_auth_context)" in source
+        assert "auth_context.tenant" in source
+
+
 class TestSuperuserGateBehaviour:
     """The gate's own checks are unchanged, plus the new assertion."""
 
@@ -204,17 +435,25 @@ class TestSuperuserGateBehaviour:
         from src.app.api.deps.auth import get_current_superuser
 
         with patch("src.app.api.deps.auth.get_current_tenant", return_value=_ctx(TENANT_A)):
-            result = await get_current_superuser(_user(TENANT_A))
+            result = await get_current_superuser(
+                _user(TENANT_A), build_test_auth_context(_user(TENANT_A), _ctx(TENANT_A))
+            )
         assert result.is_superuser is True
 
     @pytest.mark.asyncio
     async def test_active_superuser_cross_tenant_denied(self) -> None:
-        """The gap this bead closes: this used to pass."""
+        """The gap this bead closes: this used to pass.
+
+        The ContextVar is patched to the principal's OWN tenant: the gate must
+        refuse anyway, because it reads the AuthContext, not the ContextVar.
+        """
         from src.app.api.deps.auth import get_current_superuser
 
-        with patch("src.app.api.deps.auth.get_current_tenant", return_value=_ctx(TENANT_B)):
+        with patch("src.app.api.deps.auth.get_current_tenant", return_value=_ctx(TENANT_A)):
             with pytest.raises(Exception, match="(?i)does not belong"):
-                await get_current_superuser(_user(TENANT_A))
+                await get_current_superuser(
+                    _user(TENANT_A), build_test_auth_context(_user(TENANT_A), _ctx(TENANT_B))
+                )
 
     @pytest.mark.asyncio
     async def test_tenantless_superuser_still_passes(self) -> None:
@@ -222,5 +461,7 @@ class TestSuperuserGateBehaviour:
         from src.app.api.deps.auth import get_current_superuser
 
         with patch("src.app.api.deps.auth.get_current_tenant", return_value=None):
-            result = await get_current_superuser(_user(TENANT_A))
+            result = await get_current_superuser(
+                _user(TENANT_A), build_test_auth_context(_user(TENANT_A), None)
+            )
         assert result.is_superuser is True

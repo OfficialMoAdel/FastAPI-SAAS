@@ -72,7 +72,7 @@ class StorageProvider(ABC):
         pass
 
     @abstractmethod
-    def download(self, path: str) -> AsyncGenerator[bytes, None]:
+    def download(self, path: str) -> AsyncGenerator[bytes]:
         """Download a file from storage.
 
         Args:

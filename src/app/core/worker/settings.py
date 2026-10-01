@@ -117,6 +117,20 @@ class WorkerSettings:
     # Cron jobs for periodic tasks (with job-specific timeouts where needed)
     cron_jobs = [
         # Flush audit logs every 30 seconds for low-latency batching (60s timeout for high-volume flushes)
+        #
+        # The 30s interval is deliberately SHORTER than the 60s timeout: a slow
+        # flush can outlive one tick, so two flushes can run at once. That is
+        # safe, and the reason is recorded here rather than left implicit —
+        # the drain in audit_logs/service.py is LRANGE + LTRIM inside one
+        # `client.pipeline()`, which defaults to transaction=True (MULTI/EXEC).
+        # The read and the trim are therefore indivisible and concurrent
+        # flushes partition the buffer rather than double-reading it. Verified
+        # by tests/unit/modules/audit_logs/test_flush_concurrency.py, which
+        # fails (4 drained / 2 distinct) if the drain is ever switched to
+        # transaction=False.
+        #
+        # A failed DB insert re-pushes the batch to the head of the list, so an
+        # overlapping or failed flush loses no audit records.
         cron(flush_audit_logs_task, second={0, 30}, run_at_startup=True, timeout=60),
         # Cleanup expired tokens from blacklist ZSET every hour
         cron(cleanup_expired_tokens_task, minute=0, timeout=30),
@@ -127,6 +141,18 @@ class WorkerSettings:
 
     # Concurrency and timeout settings (configurable via environment)
     # max_jobs: DB_POOL_SIZE is workers × 10, leave 50% for web requests
+    #
+    # Measured baseline for the "size ARQ against the pool" question
+    # (nrgi.2, 2026-09-30). At defaults: ARQ_WORKERS=1 × ARQ_MAX_JOBS=10 = 10
+    # worker connections, plus DB_WORKERS=1 × (DB_POOL_SIZE=20 +
+    # DB_MAX_OVERFLOW=10) = 30 for the web tier, for an aggregate of 40
+    # against POSTGRES_MAX_CONNECTIONS=100 — 40% used, 60 free. Pool
+    # exhaustion is NOT reachable at the shipped defaults, so no number here
+    # was changed. The invariant is already enforced rather than left to
+    # this comment: config/database.py raises when pool+overflow exceeds
+    # max_connections, and warns on the cross-process aggregate (workers +
+    # ARQ) once it passes 90%. Retune only if that warning fires.
+    #
     # job_timeout: 5 minutes default, override per-job as needed
     # keep_result: 1 hour retention prevents memory leak
     # max_tries: Retry failed jobs 3 times (exponential backoff: 10s, 60s, 360s)

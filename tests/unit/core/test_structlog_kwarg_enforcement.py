@@ -27,6 +27,43 @@ SRC = REPO / "src/app"
 
 PERCENT = re.compile(r"%[sdf]|%\.\d+[sdf]")
 
+LOG_LEVELS = frozenset({"debug", "info", "warning", "error", "exception", "critical"})
+
+
+def _is_log_receiver(value: ast.expr) -> bool:
+    """True when ``value`` is something a structlog level method hangs off.
+
+    Three receiver shapes reach a real call site: a module-level ``logger`` /
+    ``_logger`` name, a ``<something>.logger`` attribute (the modules facade
+    pattern, e.g. ``_pkg.logger.info(...)``), and a call whose result IS the
+    logger (``get_logger(__name__).warning(...)``). Matching only the first
+    two left the third untested, which is how a percent-formatted call
+    survived the original conversion pass.
+    """
+    if isinstance(value, ast.Name):
+        return value.id in ("logger", "_logger")
+    if isinstance(value, ast.Attribute):
+        return value.attr == "logger"
+    if isinstance(value, ast.Call):
+        # A call whose result is the logger — `get_logger(__name__)`, which
+        # returns a structlog FilteringBoundLogger.
+        #
+        # EXCLUDE `logging.getLogger(...)`: that is the STDLIB logger, and
+        # stdlib DOES do %-substitution, so a percent-formatted event string
+        # with positional values there is correct, not a defect. The config
+        # package relies on this deliberately — it constructs before
+        # logger.setup_logging() runs, so it logs through stdlib and
+        # percent-formats to match (see the comment on AuthSettings'
+        # warn_on_fail_open_knobs validator). Matching it here would force a
+        # conversion that breaks the reason the stdlib logger is used.
+        if isinstance(value.func, ast.Attribute) and value.func.attr == "getLogger":
+            return False
+        if isinstance(value.func, ast.Name) and value.func.id == "getLogger":
+            return False
+        return True
+    return False
+
+
 #: The security-critical events P1-12 was about. Each must exist as a named
 #: event with fields, so an incident can query by ip / tenant / user.
 SECURITY_EVENTS = [
@@ -52,16 +89,9 @@ def _logger_calls(tree: ast.AST):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        if not isinstance(func, ast.Attribute) or func.attr not in {
-            "debug",
-            "info",
-            "warning",
-            "error",
-            "exception",
-            "critical",
-        }:
+        if not isinstance(func, ast.Attribute) or func.attr not in LOG_LEVELS:
             continue
-        if not isinstance(func.value, ast.Name) or func.value.id not in ("logger", "_logger"):
+        if not _is_log_receiver(func.value):
             continue
         literal = None
         if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
@@ -92,9 +122,8 @@ class TestNoPercentFormattedEvents:
             if isinstance(node, ast.Call)
             for func in [node.func]
             if isinstance(func, ast.Attribute)
-            and func.attr in {"debug", "info", "warning", "error", "exception", "critical"}
-            and isinstance(func.value, ast.Name)
-            and func.value.id in ("logger", "_logger")
+            and func.attr in LOG_LEVELS
+            and _is_log_receiver(func.value)
             and node.args
             and isinstance(node.args[0], ast.Constant)
             and isinstance(node.args[0].value, str)
@@ -112,16 +141,9 @@ class TestNoPercentFormattedEvents:
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
-            if not isinstance(func, ast.Attribute) or func.attr not in {
-                "debug",
-                "info",
-                "warning",
-                "error",
-                "exception",
-                "critical",
-            }:
+            if not isinstance(func, ast.Attribute) or func.attr not in LOG_LEVELS:
                 continue
-            if not isinstance(func.value, ast.Name) or func.value.id not in ("logger", "_logger"):
+            if not _is_log_receiver(func.value):
                 continue
             # One positional arg is the event name itself; anything beyond that
             # is a value that structlog will not turn into a field.

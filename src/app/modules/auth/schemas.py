@@ -12,15 +12,17 @@ Consolidated DTOs for:
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from src.app.core.schemas import Token, TokenBlacklistBase, TokenBlacklistCreate, TokenBlacklistRead, TokenData
 from src.app.modules._base import BaseCreate, BaseList, BaseRead, BaseUpdate
+from src.app.shared.exceptions import ValidationError as DomainValidationError
 
 # ============================================================================
 # Token & Session Schemas
@@ -48,6 +50,7 @@ class LoginTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
+
 class LoginMFAResponse(BaseModel):
     """Login MFA required response schema."""
 
@@ -65,9 +68,14 @@ class RefreshTokenResponse(BaseModel):
 
 
 class LogoutResponse(BaseModel):
-    """Logout response schema."""
+    """Logout response schema.
+
+    ``session_revoked`` distinguishes a full logout (server-side session
+    entry invalidated) from a partial one (tokens blacklisted only). P1-2.
+    """
 
     message: str = "Logged out successfully"
+    session_revoked: bool = False
 
 
 class SessionInfo(BaseModel):
@@ -262,6 +270,77 @@ class SSOSettingsList(BaseList[SSOSettingsRead]):
 # Passkey (WebAuthn) Schemas
 # ============================================================================
 
+# A WebAuthn credential is a small, fixed-shape object: {id, rawId, response,
+# type, authenticatorAttachment?, clientExtensionResults?}, where `response` is
+# a flat map of base64url strings. 32 entries / depth 6 leave an order of
+# magnitude of headroom over that shape while still bounding what a client can
+# make the parser walk. The body-limit middleware (settings.app.MAX_BODY_SIZE,
+# 10 MiB by default) bounds the BYTES; these two bounds bound the SHAPE — one
+# body under the byte cap can still carry a 200k-key dict or a 10k-deep nest,
+# and both reach the WebAuthn parser, the log sanitizer and the DB write.
+PASSKEY_CREDENTIAL_MAX_ENTRIES = 32
+PASSKEY_CREDENTIAL_MAX_DEPTH = 6
+
+
+def _max_nesting_depth(value: object) -> int:
+    """Depth of the deepest container chain inside ``value`` (the value itself is depth 1).
+
+    Iterative, not recursive: this runs on attacker-controlled input, and a
+    recursive walk would raise RecursionError on exactly the payload it exists
+    to reject.
+    """
+    deepest = 0
+    stack: list[tuple[object, int]] = [(value, 1)]
+    while stack:
+        node, depth = stack.pop()
+        # dict.values() and list/tuple are both Iterable; annotating the union
+        # is what lets mypy see one container type across the branches.
+        children: Iterable[Any]
+        if isinstance(node, dict):
+            children = node.values()
+        elif isinstance(node, list | tuple):
+            children = node
+        else:
+            continue  # a scalar never deepens the chain
+        if depth > deepest:
+            deepest = depth
+        stack.extend((item, depth + 1) for item in children)
+    return deepest
+
+
+def _bound_passkey_credential_depth(credential: dict[str, Any]) -> dict[str, Any]:
+    """Reject a credential nested deeper than PASSKEY_CREDENTIAL_MAX_DEPTH.
+
+    Raises the domain ``ValidationError`` (400), NOT a bare ``ValueError``.
+    Pydantic only converts ``ValueError`` into a ``ValidationError``, and
+    FastAPI's default handler then json-encodes ``errors()`` — which echoes the
+    offending ``input``. For a payload deep enough to be rejected here, that
+    echo is a 1000+-frame recursive encode, so the request comes back 500
+    instead of 4xx (measured: the echo raises RecursionError at nesting ~998).
+    The domain error skips pydantic's error machinery entirely and lands on
+    this repo's handler, which returns a fixed envelope and never touches the
+    payload — a clean 400 at every depth.
+    """
+    depth = _max_nesting_depth(credential)
+    if depth > PASSKEY_CREDENTIAL_MAX_DEPTH:
+        raise DomainValidationError(
+            f"credential must be at most {PASSKEY_CREDENTIAL_MAX_DEPTH} levels deep, got {depth}"
+        )
+    return credential
+
+
+# Shared by the two client-controlled credential fields. The entry cap is a
+# core dict constraint (``max_length`` -> ``maxProperties`` in OpenAPI), applied
+# before the walk below, so a huge flat dict is rejected without being
+# traversed. A wide dict is safe to report as a 422: pydantic attaches it as
+# ``input`` but does not recurse while doing so, and the byte cap already caps
+# its size.
+BoundedPasskeyCredential = Annotated[
+    dict[str, Any],
+    Field(max_length=PASSKEY_CREDENTIAL_MAX_ENTRIES),
+    AfterValidator(_bound_passkey_credential_depth),
+]
+
 
 class StepUpRequest(BaseModel):
     """Step-up credential for factor mutations that take no other body.
@@ -283,7 +362,8 @@ class PasskeyRegistrationRequest(BaseModel):
 
 
 class PasskeyRegistrationVerifyRequest(BaseModel):
-    credential: dict[str, Any]
+    # Bounded (entries + depth): see BoundedPasskeyCredential above.
+    credential: BoundedPasskeyCredential
     registration_id: str
     # Re-verified at commit time as well as at challenge time, so an
     # intercepted challenge cannot be completed later without the password.
@@ -315,7 +395,8 @@ class PasskeyDeleteResponse(BaseModel):
 
 
 class PasskeyLoginVerifyRequest(BaseModel):
-    credential: dict[str, Any]
+    # Bounded (entries + depth): see BoundedPasskeyCredential above.
+    credential: BoundedPasskeyCredential
     challenge_id: str
 
 
@@ -591,6 +672,9 @@ __all__ = [
     "SSOSettingsReadWithSecrets",
     "SSOSettingsList",
     # Passkey
+    "BoundedPasskeyCredential",
+    "PASSKEY_CREDENTIAL_MAX_ENTRIES",
+    "PASSKEY_CREDENTIAL_MAX_DEPTH",
     "PasskeyRegistrationRequest",
     "PasskeyRegistrationVerifyRequest",
     "PasskeyRegistrationOptionsResponse",

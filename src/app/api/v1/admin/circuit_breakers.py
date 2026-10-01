@@ -9,6 +9,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, status
 
 from src.app.core.resilience.registry import get_registry
+from src.app.schemas.responses import (
+    CircuitBreakerResetAllResponse,
+    CircuitBreakerResetResponse,
+)
 
 router = APIRouter(
     prefix="/circuit-breakers",
@@ -74,8 +78,8 @@ async def get_circuit_breaker(name: str) -> dict[str, Any]:
     }
 
 
-@router.post("/{name}/reset", response_model=dict[str, Any])
-async def reset_circuit_breaker(name: str) -> dict[str, Any]:
+@router.post("/{name}/reset", response_model=CircuitBreakerResetResponse)
+async def reset_circuit_breaker(name: str) -> CircuitBreakerResetResponse:
     """Reset a specific circuit breaker to closed state.
 
     Parameters
@@ -99,11 +103,11 @@ async def reset_circuit_breaker(name: str) -> dict[str, Any]:
             detail=f"Circuit breaker '{name}' not found",
         )
 
-    return {"status": "reset", "name": name}
+    return CircuitBreakerResetResponse(status="reset", name=name)
 
 
-@router.post("/reset-all", response_model=dict[str, Any])
-async def reset_all_circuit_breakers() -> dict[str, Any]:
+@router.post("/reset-all", response_model=CircuitBreakerResetAllResponse)
+async def reset_all_circuit_breakers() -> CircuitBreakerResetAllResponse:
     """Reset all circuit breakers to closed state.
 
     Useful for incident response and recovery operations.
@@ -116,4 +120,4 @@ async def reset_all_circuit_breakers() -> dict[str, Any]:
     registry = get_registry()
     count = await registry.reset_all()
 
-    return {"status": "reset", "count": count}
+    return CircuitBreakerResetAllResponse(status="reset", count=count)

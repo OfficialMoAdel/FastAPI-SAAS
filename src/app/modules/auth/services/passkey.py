@@ -448,14 +448,14 @@ class PasskeyService:
             async with semaphore:
                 try:
                     decrypted_id = await asyncio.to_thread(encryption.decrypt_credential, cred_id)
-                    logger.debug("Successfully decrypted credential for %s", user_identifier)
+                    logger.debug("passkey_credential_decrypted", user_identifier=user_identifier)
                     return PublicKeyCredentialDescriptor(
                         type=PublicKeyCredentialType.PUBLIC_KEY,
                         id=decrypted_id,
                         transports=transports,
                     )
                 except Exception as e:
-                    logger.debug("Failed to decrypt credential for %s: %s", user_identifier, str(e))
+                    logger.debug("passkey_credential_decrypt_failed", user_identifier=user_identifier, error=str(e))
                     return None
 
         # Decrypt all credentials in parallel
@@ -467,11 +467,11 @@ class PasskeyService:
         # Log metrics
         elapsed_seconds = time.perf_counter() - start_time
         logger.info(
-            "Decrypted %d/%d credentials in %.2fms (parallel) for %s",
-            len(valid_results),
-            len(credentials_data),
-            elapsed_seconds * 1000,
-            user_identifier,
+            "passkey_credentials_decrypted",
+            decrypted=len(valid_results),
+            total=len(credentials_data),
+            elapsed_ms=round(elapsed_seconds * 1000, 2),
+            user_identifier=user_identifier,
         )
         record_passkey_query(elapsed_seconds)
 

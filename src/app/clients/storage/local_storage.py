@@ -138,7 +138,7 @@ class LocalStorage(StorageProvider):
             logger.error("Failed to upload file :", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
-    async def download(self, path: str) -> AsyncGenerator[bytes, None]:
+    async def download(self, path: str) -> AsyncGenerator[bytes]:
         """Download a file from local storage.
 
         Args:

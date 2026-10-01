@@ -157,12 +157,26 @@ async def create_subscription_plan(
 
 @router.get("/plans", response_model=SubscriptionPlanList)
 async def list_subscription_plans(
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     pagination: Annotated[PaginationParams, Depends(get_pagination_params)],
     is_active: bool | None = Query(None, description="Filter by active status"),
 ) -> Any:
-    """List subscription plans (public for pricing page)."""
-    service = get_subscription_plan_service(db)
+    """List subscription plans.
+
+    Public global plan catalog — no tenant scoping BY DESIGN. The rows are the
+    Free / Pro / Enterprise tier definitions shown to every visitor, not a
+    tenant's own billing data, so `SubscriptionPlanService.get_plans` applies
+    no tenant filter and that is correct. See the sibling `/products` routes,
+    which ARE tenant-scoped because a product belongs to the tenant.
+
+    Authentication is still required (Run-3 N-2,
+    `billing.catalog_reads_scope_from_unauthenticated_header`): an
+    authenticated principal is required so the request carries a tenant-bound
+    identity and a caller-supplied `X-Tenant-ID` header cannot select the
+    context. "Authenticated" is NOT the same as "tenant-scoped" here, and the
+    two must not be conflated when this route is next read.
+    """
+    service = get_subscription_plan_service(ctx.db)
     result = await service.get_plans(page=pagination.page, limit=pagination.limit, is_active=is_active)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
@@ -172,10 +186,10 @@ async def list_subscription_plans(
 @router.get("/plans/{plan_id}", response_model=SubscriptionPlanRead)
 async def get_subscription_plan(
     plan_id: int,
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
 ) -> Any:
-    """Get a subscription plan by ID."""
-    service = get_subscription_plan_service(db)
+    """Get a subscription plan by ID (authenticated; global catalog)."""
+    service = get_subscription_plan_service(ctx.db)
     return await service.get_plan(plan_id)
 
 
@@ -231,12 +245,12 @@ async def create_product(
 
 @router.get("/products", response_model=ProductList)
 async def list_products(
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
     pagination: Annotated[PaginationParams, Depends(get_pagination_params)],
     is_active: bool | None = Query(None, description="Filter by active status"),
 ) -> Any:
-    """List products."""
-    service = get_product_service(db)
+    """List products (authenticated, tenant-scoped)."""
+    service = get_product_service(ctx.db)
     result = await service.get_products(page=pagination.page, limit=pagination.limit, is_active=is_active)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
@@ -246,10 +260,10 @@ async def list_products(
 @router.get("/products/{product_id}", response_model=ProductRead)
 async def get_product(
     product_id: int,
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    ctx: RequestContextDep,
 ) -> Any:
-    """Get a product by ID."""
-    service = get_product_service(db)
+    """Get a product by ID (authenticated, tenant-scoped)."""
+    service = get_product_service(ctx.db)
     return await service.get_product(product_id)
 
 

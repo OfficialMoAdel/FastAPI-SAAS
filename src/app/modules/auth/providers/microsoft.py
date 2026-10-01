@@ -1,6 +1,19 @@
+import asyncio
+import time
 from typing import Any
 
+import jwt
+
+from src.app.core.logger import get_logger
 from src.app.modules.auth.providers.base import BaseOAuthProvider
+
+logger = get_logger(__name__)
+
+# P1-4: see apple.py. One cached client per module; ``lifespan`` bounds the
+# key cache so a rotated key is still picked up.
+_JWKS_URL = "https://login.microsoftonline.com/common/discovery/v2.0/keys"
+_JWKS_CACHE_SECONDS = 300
+_jwks_client = jwt.PyJWKClient(_JWKS_URL, cache_keys=True, lifespan=_JWKS_CACHE_SECONDS)
 
 
 class MicrosoftProvider(BaseOAuthProvider):
@@ -97,10 +110,15 @@ class MicrosoftProvider(BaseOAuthProvider):
         verification error raises, and the caller treats the token as
         unverified (email_verified=False).
         """
-        import jwt
-
-        jwks_client = jwt.PyJWKClient("https://login.microsoftonline.com/common/discovery/v2.0/keys")
-        signing_key = jwks_client.get_signing_key_from_jwt(id_token)
+        # P1-4: get_signing_key_from_jwt performs a SYNCHRONOUS urllib HTTPS
+        # GET. Called directly from async def it blocks the event loop, so it
+        # is offloaded to a worker thread. See apple.py for the full rationale.
+        started = time.monotonic()
+        signing_key = await asyncio.to_thread(_jwks_client.get_signing_key_from_jwt, id_token)
+        logger.info(
+            "microsoft_jwks_signing_key_resolved",
+            duration_ms=round((time.monotonic() - started) * 1000, 2),
+        )
 
         claims: dict[str, Any] = jwt.decode(
             id_token,

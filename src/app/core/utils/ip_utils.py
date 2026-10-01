@@ -10,6 +10,7 @@ from functools import lru_cache
 from fastapi import Request
 
 from src.app.core.config import settings
+from src.app.core.logger import get_logger
 
 # Parse trusted proxy networks once at module load.
 # NOTE (restart requirement): these are snapshots of settings at import time,
@@ -18,6 +19,8 @@ from src.app.core.config import settings
 # A reload-aware accessor was deliberately not added: the hot path relies on
 # the module-level snapshot + lru_cache, and live re-reads would silently
 # widen the spoofing surface mid-process.
+logger = get_logger(__name__)
+
 TRUSTED_PROXY_IPS: set[str] = set(settings.security.TRUSTED_PROXY_IPS or [])
 try:
     TRUSTED_PROXY_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = tuple(
@@ -141,25 +144,32 @@ def get_client_ip(request: Request) -> str:
             # observed at the socket.
             return client_ip
 
-        # Fallback to X-Real-IP ONLY when the direct peer is a trusted proxy
-        # AND the value parses as a real IP literal. X-Real-IP is a single
-        # header any client can send — it is trustworthy only if the edge
-        # proxy is configured to OVERWRITE it (never append/forward). If your
-        # edge forwards client-supplied X-Real-IP, spoofed values reach this
-        # fallback whenever the peer is trusted, so harden the edge and treat
-        # this as defense-in-depth, not identity. Unparseable values (lists,
-        # garbage, "unknown") are stripped and ignored.
+        # X-Real-IP is deliberately NOT consulted (P1-3).
+        #
+        # The XFF path above is the only header-derived identity: it walks
+        # right-to-left, skips trusted hops, and fails closed to the peer.
+        # X-Real-IP is a single header any client can send, trustworthy only
+        # if the edge OVERWRITES it — and when an edge forwards instead, a
+        # spoofed value would reach every identity sink built on this
+        # function: the login and refresh budget keys, the auto-ban key, the
+        # audit-trail IP, and the ip_filter blacklist decision itself. That
+        # last one makes it a ban-evasion and lockout-evasion primitive, so
+        # the previous fallback (already guarded against trusted-proxy
+        # values) is gone entirely rather than hardened again.
+        #
+        # Deployments whose edge sends only X-Real-IP must send
+        # X-Forwarded-For instead; the warning below makes that visible the
+        # moment it starts happening. Reintroducing this path would need a
+        # default-OFF operator setting — the same treatment the project
+        # gives other overridable identity knobs — not an implicit fallback.
         real_ip = request.headers.get("X-Real-IP")
         if real_ip:
-            candidate = real_ip.strip().split(",")[0].strip()
-            try:
-                ipaddress.ip_address(candidate)
-            except ValueError:
-                pass
-            else:
-                if candidate and not is_trusted_proxy(candidate):
-                    return candidate
-                # A trusted-proxy-valued X-Real-IP carries no client identity;
-                # fall through to the peer address instead of echoing it.
+            logger.warning(
+                "client_ip_x_real_ip_ignored",
+                peer=client_ip,
+                x_real_ip=real_ip[:64],
+                resolved_from="peer",
+                remediation="configure the edge to send X-Forwarded-For",
+            )
 
     return client_ip

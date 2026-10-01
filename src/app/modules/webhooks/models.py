@@ -131,11 +131,27 @@ class WebhookEndpoint(Base, UUIDMixin):
             "event_type",
             "is_active",
         ),
-        # Query active endpoints
+        # Active endpoints for one tenant.
+        #
+        # This index was previously declared as a SINGLE-COLUMN PARTIAL on
+        # is_active (WHERE is_active = true) while the migration created it as
+        # the composite (tenant_id, is_active) -- one name, two definitions.
+        # Alembic compares by NAME and this repo declares no naming_convention,
+        # so autogenerate reported no drift and the divergence was invisible.
+        #
+        # Every query that filters is_active is tenant-scoped: the paginated
+        # list (service.py:200, :224) goes through ExplicitTenant, and the
+        # delivery hot path (service.py:389-397) does the same. A single-column
+        # index cannot serve those, because tenant_id is the leading RLS
+        # predicate. The composite matches the emitted predicate, so it is the
+        # correct definition and the partial form is dropped rather than
+        # renamed: it served no query in this codebase, and keeping it would
+        # have meant a second index whose only effect is write cost on a table
+        # that holds every tenant's webhook configuration.
         Index(
             "idx_webhook_endpoint_active",
+            "tenant_id",
             "is_active",
-            postgresql_where="is_active = true",
         ),
     )
 

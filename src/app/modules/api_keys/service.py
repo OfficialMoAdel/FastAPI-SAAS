@@ -33,7 +33,7 @@ API_KEY_CACHE_PREFIX = "api_key"
 API_KEY_CACHE_TTL = 300  # 5 minutes
 
 
-class APIKeyService(BaseService[APIKey]):
+class APIKeyService(BaseService[APIKey, APIKeyRead]):
     """Service class for API key-related business logic."""
 
     KEY_PREFIX_LENGTH = 8
@@ -299,19 +299,68 @@ class APIKeyService(BaseService[APIKey]):
         Returns True when the cached tenant is active, False when it is
         suspended/deleted, and None when no cache entry exists (or probing
         fails) so the caller falls back to the authoritative DB check.
+
+        K-R1-03 PERF (not correctness — a miss is always safe, only slow):
+        the request path writes ONE tenant L2 key, ``tenant:slug:{slug}``
+        (the startup warmer and the middleware resolver's L3 fill both go
+        through ``tenancy.resolver.slug_cache_key``), while the
+        id-keyed ``tenant:{id}`` entry is written only by
+        ``TenantService._cache_tenant``. Probing the id key alone therefore
+        missed on every request for a tenant the tenants service had never
+        touched, paying a full DB validation (measured 0/20000 hits). So the
+        probe now reads the writer's key first, from the current tenant
+        context, and falls back to the id key.
+
+        The slug entry is only trusted when its ``id`` matches the tenant
+        the API key is bound to — a slug rename can leave an entry under the
+        old slug. On any mismatch the probe returns None, i.e. the
+        fail-safe DB path.
         """
         if not tenant_id:
             return None
         try:
             from src.app.core.tenancy.cache import get_tenant_cache_key
+            from src.app.core.tenancy.context import NO_TENANT, get_current_tenant
+            from src.app.core.tenancy.resolver import slug_cache_key
 
-            raw = await cache_client.get(get_tenant_cache_key(tenant_id))
-            if raw is None:
-                return None
-            data = json_loads(raw)
-            if not isinstance(data, dict) or "is_active" not in data:
-                return None
-            return bool(data["is_active"])
+            ctx = get_current_tenant()
+            # Probe the writer's key first. The context's slug belongs to
+            # the request already; the id check below binds it to the key.
+            keys: list[str] = []
+            if ctx is not None and ctx is not NO_TENANT and ctx.tenant_slug:
+                keys.append(slug_cache_key(ctx.tenant_slug))
+            id_key = get_tenant_cache_key(tenant_id)
+            if id_key not in keys:
+                keys.append(id_key)
+
+            for probe_key in keys:
+                raw = await cache_client.get(probe_key)
+                if raw is None:
+                    continue
+                data = json_loads(raw)
+                if not isinstance(data, dict) or "is_active" not in data:
+                    continue
+                cached_id = data.get("id")
+                if cached_id is not None and str(cached_id) != str(tenant_id):
+                    # Stale entry from a slug rename — not this tenant.
+                    logger.debug(
+                        "tenant_liveness_probe_key_mismatch",
+                        cache_key=probe_key,
+                        cached_tenant_id=str(cached_id),
+                    )
+                    continue
+                is_active = bool(data["is_active"])
+                logger.info(
+                    f"API key tenant liveness probe {'HIT' if is_active else 'MISS(inactive)'} | "
+                    f"tenant_id={tenant_id} | key={probe_key}"
+                )
+                return is_active
+
+            logger.info(
+                f"API key tenant liveness probe MISS | tenant_id={tenant_id} | "
+                f"keys={','.join(keys)}"
+            )
+            return None
         except Exception as e:  # noqa: BLE001 - probe must never break validation
             logger.debug("tenant_liveness_probe_failed", error=str(e))
             return None
@@ -590,6 +639,24 @@ class APIKeyService(BaseService[APIKey]):
         # Prevent unbounded name growth on repeated rotations (K-R1-02)
         base_name = re.sub(r" \(Rotated.*\)$", "", api_key_name)
         new_name = f"{base_name[:80]} (Rotated)"
+
+        # K-R1-02: the rotated name is derived deterministically from the
+        # base name, so rotating a key that was itself produced by a
+        # rotation derives the SAME name and collides with the row already
+        # in the table — ``uq_api_key_name_tenant``. Pre-check mirrors
+        # ``create_api_key``'s pre-check so the caller gets the same 409
+        # instead of a 500.
+        name_taken = await execute_scoped(
+            select(APIKey).where(APIKey.name == new_name),
+            db=self.db, model=APIKey,
+            scope=ExplicitTenant(tenant_id, reason='legacy-criterion:APIKey'),
+        )
+        if name_taken.scalar_one_or_none() is not None:
+            logger.warning(
+                f"API key rotation name collision | user={user_id} | tenant={tenant_id} | "
+                f"old_key_id={api_key_id} | new_name={new_name}"
+            )
+            raise DuplicateError("name", new_name)
         new_key_record = APIKey(
             name=new_name,
             key_prefix=prefix,
@@ -611,7 +678,19 @@ class APIKeyService(BaseService[APIKey]):
             commit=False,
         )
 
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            # Same domain duplicate as the pre-check above, reached via the
+            # concurrent-insert race (the SELECT passed on both sides) —
+            # identical contract with or without the race, exactly as in
+            # ``create_api_key``.
+            await self.db.rollback()
+            logger.warning(
+                f"API key rotation integrity error (name race) | user={user_id} | "
+                f"tenant={tenant_id} | old_key_id={api_key_id} | new_name={new_name}"
+            )
+            raise DuplicateError("name", new_name) from None
         await self.db.refresh(new_key_record)
 
         old_key_hashed = api_key.hashed_key

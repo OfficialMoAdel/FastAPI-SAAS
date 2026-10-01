@@ -8,10 +8,10 @@ User management with tenant isolation, profile management, and authentication in
 
 ```bash
 # Run user tests
-uv run pytest tests/integration/test_user_api.py -v
+uv run pytest tests/integration/modules/users/test_user_caching.py -v
 
 # Create first superuser
-uv run python scripts/create_first_superuser.py
+uv run python src/scripts/create_first_superuser.py
 ```
 
 ## Patterns & Conventions
@@ -98,7 +98,7 @@ rg -n "user_roles" src/app/modules/users/
 ## Pre-PR Checks
 
 ```bash
-uv run pytest tests/integration/test_user_api.py -v && \
+uv run pytest tests/integration/modules/users/test_user_caching.py -v && \
 uv run ruff check src/app/modules/users/ && \
 uv run mypy src/app/modules/users/
 ```

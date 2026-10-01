@@ -445,13 +445,13 @@ async def isolate_redis_keys(test_redis_prefix):
 
 
 @pytest.fixture
-def db(setup_db) -> Generator[Session, Any, None]:
+def db(setup_db) -> Generator[Session, Any]:
     session = local_session()
     yield session
     session.close()
 
 
-async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+async def override_get_db() -> AsyncGenerator[AsyncSession]:
     """Override database dependency to use test async session.
 
     Note: This is a plain async generator, NOT an async context manager.
@@ -462,7 +462,7 @@ async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-def client(get_test_app) -> Generator[TestClient, Any, None]:
+def client(get_test_app) -> Generator[TestClient, Any]:
     """Sync TestClient fixture with standard mocking for general API tests."""
     app = get_test_app
 
@@ -530,7 +530,7 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
 
 
 @pytest.fixture
-def unauthenticated_client(get_test_app) -> Generator[TestClient, Any, None]:
+def unauthenticated_client(get_test_app) -> Generator[TestClient, Any]:
     """Unauthenticated client fixture for testing auth-required endpoints."""
     app = get_test_app
 
@@ -571,7 +571,7 @@ def unauthenticated_client(get_test_app) -> Generator[TestClient, Any, None]:
 
 
 @pytest.fixture
-def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
+def client_auth(get_test_app) -> Generator[TestClient, Any]:
     """Client fixture for authentication tests - patches tenant and uses SQLite DB."""
     app = get_test_app
 
@@ -863,14 +863,14 @@ async def unauthenticated_mock_context(get_test_app):
 
 
 @pytest.fixture
-async def db_session() -> AsyncGenerator[AsyncSession, None]:
+async def db_session() -> AsyncGenerator[AsyncSession]:
     """Async database session fixture."""
     async with get_testing_session_local()() as session:
         yield session
 
 
 @pytest.fixture
-async def async_client(get_test_app) -> AsyncGenerator[AsyncClient, None]:
+async def async_client(get_test_app) -> AsyncGenerator[AsyncClient]:
     """Async client fixture for all tests."""
     app = get_test_app
 
@@ -889,7 +889,7 @@ async def async_client(get_test_app) -> AsyncGenerator[AsyncClient, None]:
 
 
 @pytest.fixture
-async def unauthenticated_async_client(get_test_app, unauthenticated_mock_context) -> AsyncGenerator[AsyncClient, None]:
+async def unauthenticated_async_client(get_test_app, unauthenticated_mock_context) -> AsyncGenerator[AsyncClient]:
     """Async client WITHOUT authentication for testing auth-required endpoints.
 
     Use this fixture when testing that endpoints correctly reject unauthenticated requests.
@@ -2092,7 +2092,7 @@ async def real_postgres_engine():
 
 
 @pytest_asyncio.fixture
-async def real_postgres(real_postgres_engine) -> AsyncGenerator[AsyncSession, None]:
+async def real_postgres(real_postgres_engine) -> AsyncGenerator[AsyncSession]:
     """Real PostgreSQL session for integration/e2e tests.
 
     Uses function scope (default) to ensure each test gets a fresh session,
@@ -2116,7 +2116,7 @@ async def real_postgres(real_postgres_engine) -> AsyncGenerator[AsyncSession, No
 # Real Redis Fixtures (for integration/e2e tests)
 # -----------------------------------------------------------------------------
 @pytest_asyncio.fixture
-async def real_redis() -> AsyncGenerator[Any, None]:
+async def real_redis() -> AsyncGenerator[Any]:
     """Real Redis connection for integration/e2e tests.
 
     Uses function scope (default) to create fresh connections per test,
@@ -2328,7 +2328,7 @@ async def admin_user(real_postgres, test_tenant):
 
 
 @pytest.fixture
-async def e2e_client() -> AsyncGenerator[AsyncClient, None]:
+async def e2e_client() -> AsyncGenerator[AsyncClient]:
     """E2E client fixture with real database and Redis connections.
 
     This fixture is used by E2E tests that need actual infrastructure.

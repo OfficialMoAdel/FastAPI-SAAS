@@ -68,7 +68,7 @@ async def process_event_handler(
 
             # Apply timeout protection for async worker execution
             try:
-                timeout_val = _pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS
+                timeout_val = _pkg.settings.events.EVENT_HANDLER_TIMEOUT_SECONDS
                 await asyncio.wait_for(
                     handler(data),
                     timeout=timeout_val,

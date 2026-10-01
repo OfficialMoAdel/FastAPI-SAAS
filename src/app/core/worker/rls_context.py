@@ -22,7 +22,7 @@ logger = get_logger(__name__)
 async def job_tenant_context(
     tenant_id: int | str | UUID,
     user_id: int | str | None = None,
-) -> AsyncGenerator[AsyncSession, None]:
+) -> AsyncGenerator[AsyncSession]:
     """Set RLS context for background job execution.
 
     Args:
@@ -49,7 +49,7 @@ async def job_tenant_context(
             # Use rls_context so tenant variables survive transactions and commits.
             user_id_str = str(user_id) if user_id else None
             async with rls_context(session, str(tenant_id), user_id_str):
-                logger.debug("Job RLS context set via rls_context | tenant_id=%s, user_id=%s", tenant_id, user_id_str)
+                logger.debug("job_rls_context_set", tenant_id=tenant_id, user_id=user_id_str)
                 yield session
 
 
@@ -91,7 +91,7 @@ async def _record_bypass_audit(reason: str) -> None:
 
 
 @asynccontextmanager
-async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
+async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession]:
     """Bypass RLS for system jobs with audit logging.
 
     CRITICAL: All RLS bypasses are logged for security audit.
@@ -123,8 +123,9 @@ async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
         # Use bypass_rls so the bypass flag survives transactions and commits.
         async with bypass_rls(session, reason):
             logger.warning(
-                "Job RLS bypass enabled via bypass_rls | reason=%s | security_event=rls_bypass",
-                reason,
+                "job_rls_bypass_enabled",
+                reason=reason,
+                security_event="rls_bypass",
             )
             yield session
 

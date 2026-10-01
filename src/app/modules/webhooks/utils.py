@@ -4,17 +4,10 @@ This module provides utility functions for webhook signature verification,
 intended for use by webhook consumers to validate incoming webhook payloads.
 """
 
-import hmac
-from datetime import UTC, date, datetime
-
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.security.url_validator import SSRFProtectionError, validate_webhook_url
-from src.app.modules.webhooks.signer import (
-    canonical_bytes_from_raw,
-    hmac_sha256_hex,
-    is_timestamp_fresh,
-)
+from src.app.modules.webhooks.signer import canonical_bytes_from_raw, is_timestamp_fresh
 from src.app.modules.webhooks.signer import (
     verify_signature_raw as signer_verify_signature_raw,
 )
@@ -22,18 +15,28 @@ from src.app.shared.exceptions import ValidationError
 
 logger = get_logger(__name__)
 
-# S-M1: legacy `sha256=<hex over payload>` signatures sign ONLY the payload —
-# the freshness timestamp header is not covered by the digest, so a captured
-# header/body pair replays indefinitely by refreshing the unsigned timestamp.
-# Acceptance is DEPRECATED: verified within the sunset window below (with a
-# warning per verified request), rejected outright afterwards. New consumers
-# must use the producer scheme `t=<unix>,v1=<hmac over b"<t>.<payload>">`
-_LEGACY_SIGNATURE_SUNSET_DATE = date(2027, 1, 1)
+
+_LEGACY_SHA256_PREFIX = "sha256="
+_HEX_DIGEST_LENGTH = 64
+_HEX_DIGITS = frozenset("0123456789abcdef")
 
 
-def _legacy_signature_sunset_reached() -> bool:
-    """True once the legacy-signature acceptance window has closed (S-M1)."""
-    return datetime.now(UTC).date() >= _LEGACY_SIGNATURE_SUNSET_DATE
+def _is_legacy_signature_header(signature: str) -> bool:
+    """True when a header uses the retired payload-only digest scheme.
+
+    Covers both shapes the old verifier tolerated: the ``sha256=<hex>``
+    prefixed form, and a bare unprefixed hex digest. The bare shape must be
+    exactly one SHA-256 digest long so that arbitrary malformed segments
+    (which the old verifier also swept into the same bucket) are not
+    misreported as unmigrated legacy traffic.
+    """
+    for part in signature.split(","):
+        part = part.strip()
+        if part.startswith(_LEGACY_SHA256_PREFIX):
+            return True
+        if len(part) == _HEX_DIGEST_LENGTH and all(c in _HEX_DIGITS for c in part):
+            return True
+    return False
 
 
 async def validate_url_ssrf(url: str) -> None:
@@ -58,23 +61,28 @@ def verify_webhook_signature(
     secret: str,
     tolerance: int = 300,
 ) -> bool:
-    """Verify webhook signature for consumers.
+    """Verify a webhook signature for consumers.
 
-    This function is provided as a utility for webhook consumers
-    to verify the authenticity of incoming webhooks.
+    Accepts ONLY the timestamp-bound scheme the delivery path produces:
+    ``t=<unix>,v1=<hmac-sha256(secret, b"<t>.<canonical payload>")>``.
+
+    The legacy payload-only ``sha256=<hex>`` form is REJECTED. Its digest
+    covers only the payload, so the unsigned ``X-Webhook-Timestamp`` header
+    was the sole replay guard: a captured body plus its signature replayed
+    indefinitely by refreshing that header. No in-repo consumer ever sent
+    the legacy form (delivery.py has always signed ``t=,v1=``), so it was
+    retired outright rather than kept alive behind a sunset date.
 
     Args:
         payload: Raw request body bytes
-        signature: X-Webhook-Signature header value (preferred: t={unix},v1={hmac}; deprecated legacy: sha256={hex})
+        signature: X-Webhook-Signature header value (``t={unix},v1={hmac}``)
         timestamp: X-Webhook-Timestamp header value (Unix timestamp)
         secret: Shared signing secret (from endpoint configuration)
         tolerance: Max age in seconds (default 5 min for replay protection)
 
     Returns:
-        True if signature is valid and timestamp is fresh
-
-    Raises:
-        ValueError: If signature format is invalid
+        True only if the header carries a valid timestamp-bound signature
+        and both the supplied timestamp and the signed ``t=`` are fresh.
 
     Example:
         valid = verify_webhook_signature(
@@ -84,65 +92,33 @@ def verify_webhook_signature(
             secret=your_signing_secret,
         )
     """
-    # W2/S-4: prefer the signed-timestamp scheme `t=<unix>,v1=<hmac>` where
-    # the HMAC covers b"<t>.<payload>" — this binds the timestamp into the
-    # signature so it cannot be stripped/replayed separately. The legacy
-    # bare `sha256=<hex over payload>` format is only accepted during the
-    # S-M1 sunset window (see _LEGACY_SIGNATURE_SUNSET_DATE); its replay
-    # protection relies solely on the header timestamp freshness check below.
     # Freshness + canonicalization are signer-owned primitives: the signed
     # scheme delegates entirely to signer.verify_signature_raw (the adapter
     # pattern) — dict, list-valued, and non-JSON raw bodies all verify through
     # that single implementation, including rotation headers with multiple
-    # v1= segments. This module carries zero local HMAC for the signed scheme.
+    # v1= segments. This module carries zero local HMAC.
+    #
+    # The freshness pre-check rejects a stale UNSIGNED header stamp before we
+    # spend an HMAC. It is not the replay guard: the signer independently
+    # enforces freshness against the `t=` it actually authenticates, which
+    # is the value that cannot be swapped.
     if not is_timestamp_fresh(timestamp, tolerance):
         return False
 
-    payload_bytes = canonical_bytes_from_raw(payload)
-
-    # Scheme 1 (preferred): timestamp-bound signature — the HMAC covers the
-    # timestamp, so a captured pair cannot be replayed with a refreshed stamp.
-    # The signer enforces the signed-timestamp freshness against `tolerance`.
-    if signer_verify_signature_raw(payload_bytes, secret, signature, max_age_seconds=tolerance):
-        return True
-
-    # Collect (format, digest) candidates from the comma-separated header
-    # for the legacy fallback below.
-    candidates: list[tuple[str, str]] = []
-    for part in signature.split(","):
-        part = part.strip()
-        if part.startswith("sha256="):
-            candidates.append(("legacy", part[7:]))
-        elif part and "=" not in part:
-            # Bare hex digest (no prefix) — accepted by the previous verifier.
-            candidates.append(("bare", part))
-
-    # Scheme 2 (legacy fallback, DEPRECATED — S-M1): payload-only signature.
-    # The digest covers only the payload, so its replay protection relies on
-    # the header-timestamp freshness check at the top. Acceptance is gated on
-    # a sunset date and logs a warning per verified request so operators can
-    # find remaining legacy consumers before the hard cutover. Producers
-    # already send the timestamp-bound `t=,v1=` scheme (delivery.py), so any
-    # legacy acceptance here is a consumer-side compatibility window only.
-    legacy_candidates = [d for fmt, d in candidates if fmt in ("legacy", "bare")]
-    if legacy_candidates:
-        if _legacy_signature_sunset_reached():
+    if not signer_verify_signature_raw(
+        canonical_bytes_from_raw(payload), secret, signature, max_age_seconds=tolerance
+    ):
+        # Surface rejected legacy traffic so an operator can spot a consumer
+        # that never migrated off the retired payload-only scheme.
+        if _is_legacy_signature_header(signature):
             logger.warning(
-                "legacy_webhook_signature_rejected_after_sunset",
-                sunset_date=_LEGACY_SIGNATURE_SUNSET_DATE.isoformat(),
+                "legacy_webhook_signature_rejected",
+                hint="Upgrade the consumer to the t=<unix>,v1=<hmac> scheme",
             )
-            return False
-        expected_legacy = hmac_sha256_hex(secret, payload_bytes)
-        for digest in legacy_candidates:
-            if hmac.compare_digest(digest, expected_legacy):
-                logger.warning(
-                    "legacy_webhook_signature_accepted_deprecated",
-                    sunset_date=_LEGACY_SIGNATURE_SUNSET_DATE.isoformat(),
-                    hint="Upgrade the consumer to the t=<unix>,v1=<hmac> scheme",
-                )
-                return True
+        return False
 
-    return False
+    logger.debug("webhook_signature_verified", scheme="t=,v1=")
+    return True
 
 
 def generate_signing_secret() -> str:

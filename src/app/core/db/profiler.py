@@ -2,6 +2,40 @@
 
 DEVELOPMENT MODE ONLY - Do not enable in production.
 
+This module owns the CROSS-REQUEST view of query activity. It used to also
+attach its own SQLAlchemy ``before/after_cursor_execute`` listeners, which
+made it a second full profiler: both this module and
+``middleware/query_profiler.py`` were gated on the same
+``QUERY_PROFILER_ENABLED`` flag and both registered a listener pair on the
+same engine, so every query was timed twice, every slow query logged twice,
+and every N+1 finding reported twice. That is finding ``muse 12``.
+
+The single listener pair now lives in ``QueryProfilerMiddleware``
+(``_attach_global_listeners``), which is also where the per-request
+``ContextVar`` stats and the ``X-Query-Count``/``X-Query-Time`` headers live.
+That listener feeds BOTH consumers: its own per-request ``QueryStats`` and
+the global tracker here, via :func:`track_global_query`.
+
+Why keep the global tracker at all, when per-request tracking already exists?
+They answer different questions. Per-request tracking sees an N+1 inside one
+request. The global tracker sees a query pattern that no single request
+repeats but that recurs across every request THIS PROCESS serves — the
+connection-pool leak and the per-request ARQ fan-out that per-request counts
+are structurally blind to. That is why this module is not dead code, and why
+deleting it would have been a real capability loss.
+
+SCOPE LIMIT, stated plainly so the next reader does not over-trust it: the
+only attachment point is `QueryProfilerMiddleware._get_engine`
+(`middleware/query_profiler.py`), which runs on the HTTP path. The ARQ worker
+builds its own engine through `core/db/database.py::_create_engine`, which no
+longer wires profiling at all. So after the merge this tracker is web-request
+only; it does NOT observe background-task queries.
+
+Memory is bounded two ways: :func:`reset_query_tracker` clears it on
+demand, and :func:`_evict_stale_tracker_entries` purges entries older than
+an hour every ~1000 queries, so a process that never calls the reset does
+not grow without limit.
+
 Provides:
 - Slow query detection and logging
 - N+1 query pattern detection (per-request and global)
@@ -14,9 +48,6 @@ from collections import defaultdict
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
-
-from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.app.core.logger import get_logger
 
@@ -39,85 +70,29 @@ _query_tracker_lock = nullcontext()
 _request_queries: ContextVar[dict[str, int] | None] = ContextVar("request_queries", default=None)
 
 
-def setup_query_profiler(
-    engine: AsyncEngine,
-    slow_query_threshold_ms: int = 100,
-    n_plus_1_threshold: int = 3,
-    detailed_logs: bool = False,
-) -> None:
-    """Attach query profiler to SQLAlchemy engine.
+# The engine listener pair that used to live here (setup_query_profiler) was
+# the SECOND full profiler: it registered the same before/after cursor-execute
+# events on the same engine as QueryProfilerMiddleware, behind the same
+# QUERY_PROFILER_ENABLED flag, so every query was instrumented twice. The
+# single pair now lives in middleware/query_profiler.py, which calls
+# track_global_query() below. Do not re-add a second attachment here;
+# tests/unit/core/db/test_profiler.py asserts the engine carries exactly one
+# listener per cursor-execute event.
 
-    DEVELOPMENT MODE ONLY - Do not enable in production.
 
-    Logs queries slower than threshold with:
-    - Duration in milliseconds
-    - Truncated SQL (500 chars max)
-    - Stack trace hint (optional)
-    - N+1 query pattern detection
+def track_global_query(statement: str, n_plus_1_threshold: int = 3) -> None:
+    """Record one statement in the CROSS-REQUEST tracker.
+
+    Called by the single SQLAlchemy listener in
+    ``middleware/query_profiler.py`` so that the engine is instrumented
+    exactly once while still feeding both the per-request and the global
+    view.
 
     Args:
-        engine: SQLAlchemy async engine
-        slow_query_threshold_ms: Threshold for 'slow' query (default: 100ms)
-        n_plus_1_threshold: Warn if same query executed more than N times (default: 3)
-        detailed_logs: Log detailed query analysis including repeated query samples
+        statement: Raw SQL statement.
+        n_plus_1_threshold: Warn when the same pattern reaches this count.
     """
-    # Access the sync engine for event listening
-    sync_engine = engine.sync_engine
-
-    @event.listens_for(sync_engine, "before_cursor_execute")
-    def before_execute(
-        conn: Any,
-        cursor: Any,
-        statement: str,
-        parameters: tuple[Any, ...],
-        context: Any,
-        executemany: bool,
-    ) -> None:
-        """Record query start time."""
-        conn.info["query_start_time"] = time.perf_counter()
-        conn.info["query_statement"] = statement
-
-    @event.listens_for(sync_engine, "after_cursor_execute")
-    def after_execute(
-        conn: Any,
-        cursor: Any,
-        statement: str,
-        parameters: tuple[Any, ...],
-        context: Any,
-        executemany: bool,
-    ) -> None:
-        """Log slow queries and detect N+1 patterns."""
-        start_time = conn.info.get("query_start_time")
-        if start_time is None:
-            return
-
-        # Calculate elapsed time in milliseconds
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-
-        # Create normalized query signature for N+1 detection
-        # Remove specific values but keep structure
-        normalized_statement = _normalize_query(statement)
-
-        # Track query for N+1 detection (global tracker)
-        _track_query(normalized_statement, n_plus_1_threshold, detailed_logs)
-
-        # Track query for per-request N+1 detection
-        _track_request_query(normalized_statement, n_plus_1_threshold)
-
-        # Log slow queries
-        if elapsed_ms > slow_query_threshold_ms:
-            # Truncate parameters to prevent huge log entries
-            params_str = str(parameters)
-            if len(params_str) > 500:
-                params_str = params_str[:500] + "..."
-
-            logger.warning(
-                "SLOW QUERY: %.2fms (threshold: %dms)\n  SQL: %s\n  Params: %s",
-                elapsed_ms,
-                slow_query_threshold_ms,
-                statement[:500] + ("..." if len(statement) > 500 else ""),
-                params_str,
-            )
+    _track_query(_normalize_query(statement), n_plus_1_threshold, detailed_logs=False)
 
 
 def _normalize_query(statement: str) -> str:
@@ -173,16 +148,16 @@ def _track_query(
             # Check if we've hit the N+1 threshold
             if tracker["count"] == n_plus_1_threshold:
                 logger.warning(
-                    "N+1 QUERY DETECTED: Same query pattern executed %d times.\n  Pattern: %s\n  First seen: %s",
-                    tracker["count"],
-                    normalized_statement[:200] + ("..." if len(normalized_statement) > 200 else ""),
-                    tracker["first_seen_at"],
+                    "query_tracker_n_plus_1_detected",
+                    count=tracker["count"],
+                    pattern=normalized_statement[:200] + ("..." if len(normalized_statement) > 200 else ""),
+                    first_seen=tracker["first_seen_at"],
                 )
             elif tracker["count"] > n_plus_1_threshold and detailed_logs:
                 logger.info(
-                    "N+1 CONTINUED: Same query pattern executed %d times total.\n  Pattern: %s",
-                    tracker["count"],
-                    normalized_statement[:200] + ("..." if len(normalized_statement) > 200 else ""),
+                    "query_tracker_n_plus_1_continued",
+                    count=tracker["count"],
+                    pattern=normalized_statement[:200] + ("..." if len(normalized_statement) > 200 else ""),
                 )
         else:
             # First time seeing this query pattern
@@ -221,7 +196,7 @@ def _evict_stale_tracker_entries() -> None:
     for k in stale_keys:
         del _query_tracker[k]
     if stale_keys:
-        logger.debug("Query tracker evicted %d stale entries", len(stale_keys))
+        logger.debug("query_tracker_evicted_stale_entries", evicted=len(stale_keys))
 
 
 def get_query_stats() -> dict[str, dict[str, Any]]:
@@ -289,22 +264,22 @@ def end_request_tracking(
         if count >= threshold:
             n_plus_1_patterns[query_pattern] = count
             logger.warning(
-                "N+1 QUERY DETECTED (per-request): %d executions of same pattern\n  Path: %s\n  Pattern: %s",
-                count,
-                request_path,
-                query_pattern[:200] + ("..." if len(query_pattern) > 200 else ""),
+                "request_n_plus_1_detected",
+                count=count,
+                path=request_path,
+                pattern=query_pattern[:200] + ("..." if len(query_pattern) > 200 else ""),
             )
         elif detailed_logs and count > 1:
             logger.info(
-                "REPEATED QUERY (per-request): %d executions\n  Path: %s\n  Pattern: %s",
-                count,
-                request_path,
-                query_pattern[:200] + ("..." if len(query_pattern) > 200 else ""),
+                "request_query_repeated",
+                count=count,
+                path=request_path,
+                pattern=query_pattern[:200] + ("..." if len(query_pattern) > 200 else ""),
             )
 
     # Clear the request tracking
     _request_queries.set(None)
-    logger.debug("Request query tracking ended, found %d N+1 patterns", len(n_plus_1_patterns))
+    logger.debug("request_query_tracking_ended", found=len(n_plus_1_patterns))
 
     return n_plus_1_patterns
 
@@ -330,9 +305,9 @@ def _track_request_query(
     # Optional: Log immediately when threshold is hit for real-time detection
     if queries[normalized_statement] == n_plus_1_threshold:
         logger.warning(
-            "N+1 THRESHOLD REACHED: Query pattern executed %d times in current request\n  Pattern: %s",
-            n_plus_1_threshold,
-            normalized_statement[:200] + ("..." if len(normalized_statement) > 200 else ""),
+            "request_n_plus_1_threshold_reached",
+            count=n_plus_1_threshold,
+            pattern=normalized_statement[:200] + ("..." if len(normalized_statement) > 200 else ""),
         )
 
 
@@ -352,7 +327,7 @@ def get_request_query_stats() -> dict[str, int] | None:
 
 # Export all public functions
 __all__ = [
-    "setup_query_profiler",
+    "track_global_query",
     "reset_query_tracker",
     "get_query_stats",
     "is_profiler_enabled",

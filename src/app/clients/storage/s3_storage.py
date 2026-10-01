@@ -12,22 +12,24 @@ Usage:
     result = await storage.upload(file, "uploads/file.txt", "text/plain")
 
 Note:
-    Requires boto3 package: pip install boto3
+    boto3 is a DECLARED runtime dependency (dxub.9, DECIDED: DECLARE) and is
+    imported lazily here, at client construction, so importing this module
+    costs nothing until an S3 provider is actually built.
 """
 
 import asyncio
 import posixpath
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, Any, BinaryIO
+from typing import Any, BinaryIO
 
 from src.app.clients.storage.interfaces import StorageProvider, StorageResult
 from src.app.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Lazy import for boto3 - only needed at runtime, not for testing with mocks
-if TYPE_CHECKING:
-    pass
+# boto3 is imported inside ``__init__`` below, not here: the import is lazy so
+# that merely importing this module does not build a client (or pay for the
+# SDK) until a provider is actually constructed.
 
 
 class S3Storage(StorageProvider):
@@ -169,7 +171,7 @@ class S3Storage(StorageProvider):
                 error=str(e),
             )
 
-    async def download(self, path: str) -> AsyncGenerator[bytes, None]:
+    async def download(self, path: str) -> AsyncGenerator[bytes]:
         """Download a file from S3.
 
         Args:

@@ -66,7 +66,9 @@ class AIProviderFactory:
 
         Args:
             provider_name: Name of the provider ('openai', 'anthropic', 'ollama').
-                          Defaults to settings.AI_PROVIDER or DEFAULT_PROVIDER.
+                          There is no AI_PROVIDER setting: the factory falls
+                          back to DEFAULT_PROVIDER, so the provider is chosen
+                          by passing provider_name.
             api_key: Optional API key override. If None, uses settings.
             base_url: Optional base URL override. If None, uses settings.
 
@@ -81,7 +83,15 @@ class AIProviderFactory:
             Different credentials will create separate cached instances.
         """
         if provider_name is None:
-            provider_name = getattr(settings, "AI_PROVIDER", DEFAULT_PROVIDER)
+            # No `AI_PROVIDER` setting exists in any config component, so this
+            # is unconditionally DEFAULT_PROVIDER ("ollama"). It used to be
+            # spelled `getattr(settings, "AI_PROVIDER", DEFAULT_PROVIDER)`,
+            # which read as though an operator could set the provider and
+            # could not: the key is absent from the ORM, so the getattr always
+            # took the default and an `AI_PROVIDER=openai` in the environment
+            # was silently ignored. Spelled as a constant rather than a
+            # getattr so the absence is visible at the call site.
+            provider_name = DEFAULT_PROVIDER
 
         if provider_name not in SUPPORTED_PROVIDERS:
             raise AIServerError(

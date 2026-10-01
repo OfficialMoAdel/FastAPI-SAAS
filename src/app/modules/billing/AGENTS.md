@@ -8,33 +8,45 @@ Stripe-integrated billing service handling subscriptions, checkout sessions, pay
 
 ```bash
 # Run billing unit tests
-uv run pytest tests/unit/billing/ -v
+uv run pytest tests/unit/modules/billing/ -v
 
 # Run billing integration tests
-uv run pytest tests/integration/billing/ -v
+uv run pytest tests/integration/modules/billing/ -v
 
 # Test checkout session creation
 curl -X POST http://localhost:8000/api/v1/billing/checkout \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"price_id": "price_xxx", "success_url": "http://localhost:3000/success", "cancel_url": "http://localhost:3000/cancel"}'
+  -d '{"plan_id": 1, "billing_interval": "monthly", "success_url": "http://localhost:3000/success", "cancel_url": "http://localhost:3000/cancel"}'
 ```
 
 ## Patterns & Conventions
 
-### DO: Use BillingService for billing operations
+### DO: Create checkout sessions through `CheckoutService`
+
+There is no `BillingService` — checkout lives in `CheckoutService`
+(`checkout_service.py`), and `service.py` holds `StripeSettingsService`,
+`ProductService` and `PricingService`.
 
 ```python
-from src.app.modules.billing.service import BillingService
+from src.app.modules.billing.checkout_service import get_checkout_service
+from src.app.modules.billing.schemas import CheckoutCreate
 
-billing_service = BillingService(db)
-checkout = await billing_service.create_checkout_session(
-    user_id=user_id,
-    price_id="price_xxx",
-    success_url="http://localhost:3000/success",
-    cancel_url="http://localhost:3000/cancel",
+service = get_checkout_service(db)
+session = await service.create_session(
+    user_id=ctx.user_id,
+    user_email=ctx.user.email,
+    data=CheckoutCreate(
+        plan_id=plan_id,
+        billing_interval="monthly",
+        success_url="http://localhost:3000/success",
+        cancel_url="http://localhost:3000/cancel",
+    ),
 )
 ```
+
+`CheckoutCreate` takes a `plan_id` plus a `billing_interval` of
+`"monthly"`/`"yearly"` — there is no free-form `price_id`.
 
 ### DON'T: Call Stripe directly from routers
 
@@ -48,22 +60,38 @@ async def checkout(...):
 ### DO: Handle webhooks with proper signature verification
 
 ```python
-from src.app.modules.billing.webhook import handle_stripe_webhook
+from src.app.modules.billing.webhook import (
+    ingest_webhook, verify_webhook_signature,
+)
 
 @router.post("/webhook")
-async def webhook(request: Request, db: AsyncSession = Depends(async_get_db)):
+async def webhook(request: Request):
     payload = await request.body()
-    sig_header = request.headers.get("stripe-signature")
-    return await handle_stripe_webhook(payload, sig_header, db)
+    sig_header = request.headers.get("Stripe-Signature")
+    # verify_fn runs in an executor and raises WebhookVerificationError on a bad signature
+    return await ingest_webhook(payload, sig_header, verify_fn=verify_webhook_signature)
 ```
 
-### DO: Use subscription lifecycle service
+`ingest_webhook` verifies against the **global** platform secret first, then
+derives the tenant from the verified payload — never from a query param.
+
+### DO: Cancel subscriptions through `UserSubscriptionService`
+
+`lifecycle.py` has **no** `SubscriptionLifecycleService`; it is a module of
+state-machine functions (`map_stripe_status`, `is_valid_transition`,
+`can_cancel`, …). The mutating API is on `UserSubscriptionService`, and the
+ownership check lives there so every caller gets it:
 
 ```python
-from src.app.modules.billing.lifecycle import SubscriptionLifecycleService
+from src.app.modules.billing.subscription_service import (
+    get_user_subscription_service,
+)
 
-lifecycle = SubscriptionLifecycleService(db)
-await lifecycle.cancel_subscription(subscription_id, cancel_at_period_end=True)
+service = get_user_subscription_service(db)
+# Raises Forbidden if the caller does not own the subscription
+result = await service.cancel_subscription_for_user(
+    subscription_id, user_id=ctx.user_id, is_superuser=ctx.is_superuser
+)
 ```
 
 ### DO: Handle billing exceptions properly
@@ -75,9 +103,10 @@ from src.app.modules.billing.exceptions import (
 )
 from src.app.shared.exceptions import ModelNotFoundError
 
-# Domain errors propagate — the central EXCEPTION_HANDLERS table in
-# core/errors.py maps them (402 / 400 / 404). Never convert to HTTPException.
-await billing_service.cancel_subscription(sub_id)
+# Domain errors propagate — there is NO central mapping table: every
+# AppException subclass declares its own http_status/response_code, and
+# core/errors.py registers ONE generic handler for the whole tree.
+result = await service.cancel_subscription_for_user(sub_id, user_id=user_id)
 ```
 
 ## Module Structure & Service Charters
@@ -91,16 +120,16 @@ src/app/modules/billing/
 │   ├── invoices.py           # /invoices endpoints
 │   ├── prices.py             # /prices endpoints
 │   └── products.py           # /products endpoints
-├── routes/                   # Backward-compatibility router re-export shims
-├── service.py                # BillingService facade (customer portal, catalog sync)
+├── service.py                # StripeSettingsService, ProductService, PricingService
 ├── subscription_service.py   # UserSubscriptionService, SubscriptionPlanService, BillingRecordService
-├── checkout_service.py       # CheckoutService (checkout session creation & URL validation)
-├── lifecycle.py              # SubscriptionLifecycleService (state machine & cancellation)
+├── checkout_service.py       # CheckoutService (checkout session + portal URL validation)
+├── lifecycle.py              # State-machine functions (map_stripe_status, is_valid_transition, can_cancel)
 ├── webhook/                  # Stripe webhook ingest and processing subpackage
 │   ├── client.py             # Wire-level signature validation
 │   ├── idempotency.py        # Distributed Redis lock & terminal DB processed marker
 │   ├── ingest.py             # Webhook ingest entrypoint (H1 verified-then-tenant ordering)
 │   ├── dispatch.py           # Event router and registry
+│   ├── locks.py              # Subscription lookup + per-subscription row lock
 │   └── handlers/             # Modular event processors (checkout, subscriptions, invoices, refunds)
 ├── crud.py                   # TenantAwareCRUD repositories
 ├── models.py                 # SQLAlchemy models (UserSubscription, Product, Pricing, BillingRecord)
@@ -110,25 +139,26 @@ src/app/modules/billing/
 
 ### Service File Charters
 
-1. **`service.py` (The Customer Facade):**
-   * `BillingService` facade for customer portal sessions, customer management, and product catalog synchronization.
+1. **`service.py` (Settings & Catalog):**
+   * Owns `StripeSettingsService`, `ProductService` and `PricingService` — Stripe settings, customer/product management and pricing tiers. There is no `BillingService` facade.
 
 2. **`subscription_service.py` (Internal Persistence Services):**
    * Owns `UserSubscriptionService`, `SubscriptionPlanService`, and `BillingRecordService` for database-backed subscription queries, plan listings, and payment history.
 
 3. **`checkout_service.py` (Checkout Orchestration):**
-   * Owns `CheckoutService` responsible for checkout session creation, success/cancel URL validation, and tenant pricing resolution.
+   * Owns `CheckoutService` responsible for checkout session creation, customer-portal sessions with open-redirect-checked return URLs, and tenant pricing resolution.
 
 4. **`lifecycle.py` (State Machine Engine):**
-   * Owns `SubscriptionLifecycleService`, subscription status mapping (`map_stripe_status`), and valid transition rules (`is_valid_transition`) preventing out-of-order resurrection of churned accounts.
+   * Module-level functions only — `map_stripe_status`, `is_valid_transition`, `validate_transition`, `can_cancel`, `is_access_granted` — enforcing valid transitions to prevent out-of-order resurrection of churned accounts. Cancellation itself is `UserSubscriptionService.cancel_subscription_for_user`.
 
 ## Touch Points
 
-- **Billing service**: `modules/billing/service.py::BillingService`
+- **Settings / catalog services**: `modules/billing/service.py::StripeSettingsService` / `ProductService` / `PricingService`
 - **Billing gateway**: `clients/billing/stripe.py::PaymentGateway` / `StripeGateway`
 - **Webhook ingest**: `modules/billing/webhook/ingest.py::ingest_webhook`
+- **Checkout + portal**: `modules/billing/checkout_service.py::CheckoutService`
 - **Subscription service**: `modules/billing/subscription_service.py::UserSubscriptionService`
-- **Lifecycle service**: `modules/billing/lifecycle.py::SubscriptionLifecycleService`
+- **Lifecycle state machine**: `modules/billing/lifecycle.py::map_stripe_status`
 - **Product CRUD**: `modules/billing/crud.py::crud_products`
 - **Pricing CRUD**: `modules/billing/crud.py::crud_pricing`
 - **Subscription CRUD**: `modules/billing/crud.py::crud_user_subscriptions`
@@ -168,7 +198,7 @@ STRIPE_WEBHOOK_SECRET=whsec_xxx
 ## Pre-PR Checks
 
 ```bash
-uv run pytest tests/unit/billing/ -v && \
+uv run pytest tests/unit/modules/billing/ -v && \
 uv run ruff check src/app/modules/billing/ && \
 uv run mypy src/app/modules/billing/
 ```

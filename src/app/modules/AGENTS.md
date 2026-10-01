@@ -69,17 +69,25 @@ async def create_user(user: UserCreate, db: AsyncSession):
 ```
 
 ### Cross-Module Communication
-✅ DO: Use the Event Bus for cross-module actions
+✅ DO: call the other module directly when you need the result; publish an
+event only for cross-cutting fan-out that has no caller to return to.
 ```python
-# src/app/modules/users/service.py
+# src/app/modules/users/service.py — request-scoped: auth needs the user back
+from src.app.modules.users import UserDirectory
+
+user = await get_user_directory(db).by_id(user_id)
+
+# cross-cutting fan-out, no return value: webhooks + notifications both care
 from src.app.core.events import event_bus
 
-async def create_user(self, user: UserCreate) -> UserRead:
-    # ... create user ...
-
-    # Emit event for other modules to listen for
-    await event_bus.publish("user_registered", {"user_id": user.id})
+await event_bus.publish("user.created", {"user_id": str(user.id)})
 ```
+❌ DON'T: turn a lookup into an event to "decouple" it. An event has no
+return path, so a request-scoped read published to the bus can never answer
+its caller. This replaced a "prefer the Event Bus" rule that named no
+mechanism and steered nothing; the decision and its evidence are in
+[ARCHITECTURE.md](../../ARCHITECTURE.md), and it is enforced by
+`scripts/check_cross_module_seams.py`.
 
 ✅ DO: Import cross-module services via the module package root (P1-20)
 Ruff `TID` (flake8-tidy-imports `banned-api`) forbids deep `*.service` /
@@ -182,11 +190,13 @@ registers each row via the `_make_table_handler` factory, mapping every domain
 exception to a JSONResponse with its status code. Services stay HTTP-free;
 routers don't catch anything.
 
-`core/exceptions/http_exceptions.py` is a SEPARATE tree (FastCRUD-derived
-HTTPException subclasses like `DuplicateValueException`, plus the HTTP-shaped
-`TenantContextError`) used by modules that raise HTTP-shaped errors directly
-(e.g. sso, billing routers). When adding a new module: prefer the shared
-`AppException` errors + let the table translate.
+There is no second exception tree. The old FastCRUD-derived HTTPException
+subclasses under `core/exceptions/` were deleted once their last importer
+migrated; the `TenantContextError` that lived there is now the domain
+`shared/exceptions.TenantContextError`, which declares its own 403. When
+adding a new module: raise a `shared.exceptions` domain error and let the table
+translate. If you find yourself wanting an HTTP-shaped exception, that is a
+signal to add a domain error with an `http_status`, not to reopen the tree.
 
 ❌ DON'T: re-create a `_base/exceptions` module, claim shared errors are
 HTTPException-based (they are not), or hand-roll `HTTPException(409, ...)`

@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         run: pip install uv
@@ -44,6 +44,16 @@ jobs:
       # the reason, so the exceptions stay reviewable.
       - name: Run mutation response model gate
         run: uv run python scripts/check_mutation_response_models.py
+
+      # Every rooted `src/…`, `tests/…`, `scripts/…`, `docs/…` and `.github/…`
+      # path in a document is a claim that the path exists, and the root
+      # AGENTS.md states the gate is mandatory for that reason. Unconditional:
+      # a `paths:` filter here would stop a documentation-only PR from
+      # triggering this workflow, and the gate could no longer fire on the rot
+      # it exists to catch. `tests/unit/scripts/test_doc_gate_wiring.py` fails
+      # if a filter is ever reintroduced, or if this step is deleted.
+      - name: Run doc path integrity gate
+        run: uv run python scripts/check_doc_paths.py
 
       # sj09.6: a forked Alembic history fails at DEPLOY time
       # ("Multiple head revisions are present") and the app never boots.
@@ -86,7 +96,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         run: pip install uv
@@ -132,7 +142,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         run: pip install uv

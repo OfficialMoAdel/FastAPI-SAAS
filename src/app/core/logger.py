@@ -165,7 +165,7 @@ def shutdown_logging() -> None:
         _log_listener = None
 
 
-def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
+def get_logger(name: str | None = None) -> structlog.typing.FilteringBoundLogger:
     """Get a structured logger instance.
 
     Args:
@@ -173,13 +173,22 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
 
     Returns
     -------
-        Configured structlog logger
+        Configured structlog logger.
+
+        Typed as ``FilteringBoundLogger``, which is what this module's
+        ``structlog.configure()`` actually produces: it sets no
+        ``wrapper_class``, so structlog's default filtering bound logger is
+        used, and that is the one exposing ``is_enabled_for``. The previous
+        annotation claimed ``stdlib.BoundLogger``, which has no such method —
+        a cast that asserted something untrue, so a level-guard written to
+        avoid a real cost looked like a type error and tempted a "fix" that
+        deleted the guard. Callers get the level-check API the runtime has.
 
     Usage:
         logger = get_logger(__name__)
         logger.info("User logged in", user_id=123, ip="1.2.3.4")
     """
-    return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name))
+    return cast(structlog.typing.FilteringBoundLogger, structlog.get_logger(name))
 
 
 # Initialize logging on module import

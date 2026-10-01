@@ -17,7 +17,7 @@ from src.app.shared.exceptions import RateLimitExceededError as RateLimitExcepti
 
 
 @pytest.fixture
-def client_with_rate_limit(get_test_app) -> Generator[TestClient, None, None]:
+def client_with_rate_limit(get_test_app) -> Generator[TestClient]:
     """Client fixture with rate limiting enabled for MFA tests.
 
     Uses the ctx seam: overrides ``get_request_context`` with a real

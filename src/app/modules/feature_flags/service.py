@@ -19,7 +19,7 @@ Two implementations, one cache entry, two ``CACHE_TTL`` constants. Deleted.
 """
 
 import asyncio
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Sequence
 from typing import Any, TypeVar, cast
 
 T = TypeVar("T")
@@ -35,6 +35,7 @@ from src.app.core.cache.warmer import warmer
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis  # warmer pipeline only (see warm_feature_flags)
+from src.app.core.utils.cache import build_tenant_key
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules._base import BaseService, ModelNotFoundError
 from src.app.modules.feature_flags.crud import crud_feature_flag_overrides, crud_feature_flags
@@ -86,6 +87,7 @@ def _override_effective_value(override: FeatureFlagOverride | None) -> tuple[boo
         if "enabled" in custom_value:
             return True, custom_value["enabled"]
     return True, custom_value
+
 
 # P2.19 FIX: per-key singleflight locks for the manual feature-flag caches.
 # On a cold key under burst traffic, N concurrent requests would each miss
@@ -297,11 +299,12 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         the current tenant_id into the WHERE clause so a caller can only mutate
         their own tenant's override (IDOR-safe).
         """
-        # TenantAwareCRUD.update returns None unconditionally
-        # (core/db/tenant_crud.py:300) — it discards the FastCRUD return, and
-        # FastCRUD needs return_columns to yield the row anyway. Re-read to
-        # source the entity, exactly as update_flag does above; without this
-        # the write lands but the cache invalidation below is unreachable.
+        # Re-read to source the entity, exactly as update_flag does above.
+        # Without it the write lands but the cache invalidation below is
+        # unreachable. update() returns the row only when asked for
+        # return_columns (P1-4 changed it to forward FastCRUD's return rather
+        # than discard it), so a re-read is the portable way to source the
+        # entity regardless of schema.
         await self.override_crud.update(db=self.db, id=override_id, object=data.model_dump(exclude_unset=True))
         result = await self.override_crud.get(db=self.db, id=override_id)
         if result is None:
@@ -348,8 +351,6 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         Returns:
             Dictionary of feature flags
         """
-        from src.app.core.utils.cache import build_tenant_key
-
         cache_key = build_tenant_key("features", tenant_id)
 
         # Fast path: serve from cache if present (via cache_client adapter).
@@ -405,8 +406,6 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         accessors can disagree only within one TTL window after an
         unpurged write — never indefinitely.
         """
-        from src.app.core.utils.cache import build_tenant_key
-
         cache_key = build_tenant_key(f"feature_value:{feature_name}", tenant_id)
 
         try:
@@ -435,9 +434,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
         return await _with_flag_lock(cache_key, _load())
 
-    async def _resolve_flag_value(
-        self, tenant_id: UUID, feature_name: str, default: Any = None
-    ) -> tuple[Any, bool]:
+    async def _resolve_flag_value(self, tenant_id: UUID, feature_name: str, default: Any = None) -> tuple[Any, bool]:
         """Uncached B7 precedence resolution shared by ``get_flag_value``.
 
         Returns ``(value, cacheable)``. ``cacheable`` is False when the value
@@ -476,9 +473,6 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         Freshness: cached per tenant for ``CACHE_TTL`` (300s); see
         :meth:`get_flag_value` for the shared contract.
         """
-
-        from src.app.core.utils.cache import build_tenant_key
-
         cache_key = build_tenant_key(f"feature:{feature_name}", tenant_id)
 
         # Fast path: serve from cache if present (via cache_client adapter).
@@ -527,8 +521,20 @@ class FeatureFlagService(BaseService[FeatureFlag]):
                     enabled = flag_default
             else:
                 tenant = await self.db.get(Tenant, tenant_id)
-                if tenant and tenant.feature_flags:
-                    enabled = parse_flag_bool(tenant.feature_flags.get(feature_name, default))
+                # The JSONB tier is consulted ONLY for a flag the map
+                # actually contains. A non-empty map that lacks THIS flag
+                # says nothing about it, so `.get(feature_name, default)`
+                # would return the CALLER's default and marking it
+                # cacheable would write that fallback to
+                # tenant:{tid}:feature:{name} — a key that does not
+                # include `default` — serving the first caller's default
+                # to every other caller for CACHE_TTL. It would also mint
+                # one fresh 300s key per arbitrary flag name requested,
+                # because `GET /features/{flag_name}` takes the name as an
+                # unconstrained path param.
+                # Mirrors `_resolve_flag_value`: absent -> not cacheable.
+                if tenant and tenant.feature_flags and feature_name in tenant.feature_flags:
+                    enabled = parse_flag_bool(tenant.feature_flags[feature_name])
                     cacheable = True
 
             if cacheable:
@@ -557,7 +563,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         Raises:
             ModelNotFoundError: If tenant doesn't exist
         """
-        tenant = await self.db.get(Tenant, tenant_id)
+        tenant = await self._get_tenant_for_update(tenant_id)
         if not tenant:
             raise ModelNotFoundError("Tenant", tenant_id)
 
@@ -566,13 +572,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         tenant.feature_flags[feature_name] = value
         flag_modified(tenant, "feature_flags")
 
-        await self.db.commit()
-        await self.db.refresh(tenant)
-
-        # Invalidate cache
-        await self._invalidate_cache(tenant_id, feature_name)
-
-        return tenant
+        return await self._commit_and_invalidate(tenant, tenant_id, [feature_name])
 
     async def delete_tenant_flag(self, tenant_id: UUID, flag_name: str) -> Tenant:
         """
@@ -588,7 +588,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         Raises:
             ModelNotFoundError: If tenant or flag doesn't exist
         """
-        tenant = await self.db.get(Tenant, tenant_id)
+        tenant = await self._get_tenant_for_update(tenant_id)
         if not tenant:
             raise ModelNotFoundError("Tenant", tenant_id)
 
@@ -597,13 +597,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         del tenant.feature_flags[flag_name]
         flag_modified(tenant, "feature_flags")
 
-        await self.db.commit()
-        await self.db.refresh(tenant)
-
-        # Invalidate cache
-        await self._invalidate_cache(tenant_id, flag_name)
-
-        return tenant
+        return await self._commit_and_invalidate(tenant, tenant_id, [flag_name])
 
     async def bulk_update_tenant_flags(self, tenant_id: UUID, flags: dict[str, Any]) -> Tenant:
         """
@@ -619,7 +613,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         Raises:
             ModelNotFoundError: If tenant doesn't exist
         """
-        tenant = await self.db.get(Tenant, tenant_id)
+        tenant = await self._get_tenant_for_update(tenant_id)
         if not tenant:
             raise ModelNotFoundError("Tenant", tenant_id)
 
@@ -628,44 +622,73 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         tenant.feature_flags.update(flags)
         flag_modified(tenant, "feature_flags")
 
-        await self.db.commit()
-        await self.db.refresh(tenant)
-
-        # Invalidate cache for all updated flags.
-        # P2: ONE bulk round-trip for the tenant flags map plus every
-        # per-feature key, instead of two deletes per flag in a loop.
-        try:
-            from src.app.core.utils.cache import build_tenant_key
-
-            keys = [build_tenant_key("features", tenant_id)]
-            keys.extend(build_tenant_key(f"feature:{name}", tenant_id) for name in flags)
-            await cache_client.delete(*keys)
-        except Exception as e:
-            logger.warning(
-                "Tenant feature flag bulk invalidation failed",
-                tenant_id=str(tenant_id),
-                count=len(flags),
-                error=str(e),
-            )
-
-        return tenant
+        return await self._commit_and_invalidate(tenant, tenant_id, list(flags))
 
     # =========================================================================
     # Private Helpers
     # =========================================================================
 
-    async def _invalidate_cache(self, tenant_id: UUID, feature_name: str | None = None) -> None:
-        """Invalidate cache for tenant feature flags."""
-        try:
-            from src.app.core.utils.cache import build_tenant_key
+    async def _get_tenant_for_update(self, tenant_id: UUID) -> Tenant | None:
+        """Read the Tenant row under a ``SELECT ... FOR UPDATE`` row lock.
 
+        The three tenant-JSONB mutators are a read-modify-write on the
+        WHOLE ``feature_flags`` column. With an unlocked read, two
+        concurrent ``update_tenant_flag`` calls both load the same dict and
+        the second commit silently discards the first flag; ``delete_tenant_flag``
+        has the same window as check-then-act.
+
+        Locking on the primary key is deliberate: ``AsyncSession.get`` skips
+        the SELECT entirely when the row is already in the identity map,
+        which is the common case in a request (the tenant was resolved from
+        the path/header before the service ran), so a plain ``db.get`` would
+        take NO row lock in production. Passing ``with_for_update`` makes the
+        statement emit a real ``FOR UPDATE`` and is held until the mutator's
+        own commit — the same transaction, no second mechanism.
+        """
+        return await self.db.get(Tenant, tenant_id, with_for_update=True)
+
+    async def _commit_and_invalidate(self, tenant: Tenant, tenant_id: UUID, feature_names: list[str]) -> Tenant:
+        """Commit a tenant-JSONB write and evict its decision keys.
+
+        Runs under ``_flag_cache_locks[features]`` — the SAME singleflight
+        lock ``get_tenant_flags``'s ``_load()`` already holds across its
+        ``db.get`` + ``cache_client.set``. Without it the two interleave:
+        reader loads PRE-commit JSONB, writer commits and deletes the key,
+        reader then writes the PRE-commit map back — stale and un-evictable
+        for CACHE_TTL. Same lock table, same key, no second mechanism.
+
+        Lock order is ``features`` alone, which keeps the graph acyclic:
+        ``get_flag_value`` nests ``feature_value:{name}`` -> ``features``
+        (never the reverse) and ``is_enabled``'s ``_load`` reads Tenant
+        directly and takes no further lock. The row lock is already held
+        here and is released by the commit below, so no holder of the
+        singleflight lock is ever waiting on a second one.
+        """
+
+        async def _run() -> None:
+            await self.db.commit()
+            await self.db.refresh(tenant)
+            await self._invalidate_decision_keys(tenant_id, feature_names)
+
+        await _with_flag_lock(build_tenant_key("features", tenant_id), _run())
+        return tenant
+
+    async def _invalidate_decision_keys(self, tenant_id: UUID, feature_names: Sequence[str]) -> None:
+        """Evict every decision key a tenant-JSONB write can leave stale.
+
+        ONE varargs delete per call (a single round trip, P2). The three
+        shapes are exactly what the accessors read: the whole map
+        (``features``), the boolean decision (``feature:{name}``) and the
+        typed decision (``feature_value:{name}``, F27). The single-flag and
+        bulk paths both come through here so they cannot drift apart again
+        — the bulk path previously omitted ``feature_value:`` and left
+        ``get_flag_value`` serving the pre-bulk value for CACHE_TTL.
+        """
+        try:
             keys = [build_tenant_key("features", tenant_id)]
-            if feature_name:
-                keys.append(build_tenant_key(f"feature:{feature_name}", tenant_id))
-                # F27: get_flag_value caches symmetrically with is_enabled.
-                keys.append(build_tenant_key(f"feature_value:{feature_name}", tenant_id))
-            # P2: single varargs delete via the cache_client adapter (no-ops
-            # when Redis is down; the explicit None-guard is gone).
+            for name in feature_names:
+                keys.append(build_tenant_key(f"feature:{name}", tenant_id))
+                keys.append(build_tenant_key(f"feature_value:{name}", tenant_id))
             await cache_client.delete(*keys)
         except Exception as e:
             # Q-M3: failed invalidation leaves stale tenant flags until TTL —
@@ -673,9 +696,14 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             logger.warning(
                 "Tenant feature flag cache invalidation failed",
                 tenant_id=str(tenant_id),
-                feature_name=feature_name,
+                feature_name=feature_names[0] if len(feature_names) == 1 else None,
+                count=len(feature_names),
                 error=str(e),
             )
+
+    async def _invalidate_cache(self, tenant_id: UUID, feature_name: str | None = None) -> None:
+        """Invalidate cache for tenant feature flags."""
+        await self._invalidate_decision_keys(tenant_id, [feature_name] if feature_name else [])
 
     async def _purge_registry_caches(self, flag_key: str) -> None:
         """Purge one registry row's per-tenant decisions fleet-wide (F1).

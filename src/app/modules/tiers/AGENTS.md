@@ -8,10 +8,10 @@ Subscription tier management with rate limits, feature flags, and quota configur
 
 ```bash
 # Run tier tests
-uv run pytest tests/integration/test_tier_api.py -v
+uv run pytest tests/integration/modules/tiers/test_catalog_auth.py -v
 
 # Create default tiers
-uv run python scripts/create_first_tier.py
+uv run python src/scripts/create_first_tier.py
 
 # List available tiers (crud.py was removed in the C4 refactor; use the service)
 uv run python -c "from src.app.modules.tiers.service import TierService; print('Loaded')"
@@ -111,7 +111,7 @@ rg -n "max_users\|rate_limit" src/app/modules/tiers/
 ## Pre-PR Checks
 
 ```bash
-uv run pytest tests/integration/test_tier_api.py -v && \
+uv run pytest tests/integration/modules/tiers/test_catalog_auth.py -v && \
 uv run ruff check src/app/modules/tiers/ && \
 uv run mypy src/app/modules/tiers/
 ```

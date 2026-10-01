@@ -225,7 +225,7 @@ def export_rows() -> list[SimpleNamespace]:
 
 
 def mock_export_result(mock_db: AsyncMock, rows: list[SimpleNamespace]) -> MagicMock:
-    async def scalars() -> AsyncGenerator[SimpleNamespace, None]:
+    async def scalars() -> AsyncGenerator[SimpleNamespace]:
         for row in rows:
             yield row
 
@@ -243,7 +243,7 @@ def export_service(audit_service: AuditLogService) -> AuditLogService:
     return audit_service
 
 
-async def export_bytes(chunks: AsyncGenerator[bytes, None]) -> bytes:
+async def export_bytes(chunks: AsyncGenerator[bytes]) -> bytes:
     try:
         parts = [chunk async for chunk in chunks]
         assert all(isinstance(chunk, bytes) for chunk in parts)
@@ -391,7 +391,7 @@ async def test_stream_export_closes_result(
     result = mock_export_result(mock_db, export_rows)
     error = RuntimeError("stream failed")
     if failure == "iteration":
-        async def failing_rows() -> AsyncGenerator[SimpleNamespace, None]:
+        async def failing_rows() -> AsyncGenerator[SimpleNamespace]:
             yield export_rows[0]
             raise error
         result.scalars.side_effect = failing_rows

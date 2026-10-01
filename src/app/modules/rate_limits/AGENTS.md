@@ -8,7 +8,7 @@ Tier-based rate limiting for API requests. Integrates with the Tier module to en
 
 ```bash
 # Run rate limit tests
-uv run pytest tests/integration/test_rate_limit_api.py -v
+uv run pytest tests/unit/modules/rate_limits/test_rate_limit_caching.py -v
 
 # View rate limit configuration
 rg -n "RateLimit" src/app/modules/rate_limits/
@@ -104,6 +104,6 @@ rg -n "tier.*rate_limit\|rate_limit.*tier" src/app/modules/
 ## Pre-PR Checks
 
 ```bash
-uv run pytest tests/integration/test_rate_limit_api.py -v && \
+uv run pytest tests/unit/modules/rate_limits/test_rate_limit_caching.py -v && \
 uv run ruff check src/app/modules/rate_limits/
 ```

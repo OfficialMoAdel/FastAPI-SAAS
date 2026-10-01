@@ -27,12 +27,12 @@ the lifecycle policy over them.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 from uuid import UUID
 
+from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import (
     TenantContext,
     clear_tenant_context,
@@ -40,7 +40,7 @@ from src.app.core.tenancy.context import (
     set_current_tenant,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Event wire format keys. Frozen so the pack side (event bus) and the
 # parse side (event worker) can never drift apart again.
@@ -110,15 +110,20 @@ def bind_tenant(tenant: TenantContext | None) -> None:
 
 
 def unbind_tenant() -> None:
-    """Clear the bound context, never raising.
+    """Clear the bound context, never raising. CLEARS — it does not restore.
 
+    The worker calls this between jobs, where there is no outer scope to
+    restore to and leaking one job's tenant into the next is the whole risk.
     A failing clear is logged (the middleware's historical posture) —
     event-loop teardown paths must not crash the worker over cleanup.
+
+    For a NESTED scope, use :func:`bound_tenant` or :func:`preserved_tenant`,
+    which restore the previous value instead of discarding it.
     """
     try:
         clear_tenant_context()
     except Exception as e:  # noqa: BLE001 - cleanup is best-effort
-        logger.warning("Failed to clear tenant context: %s", e)
+        logger.warning("tenant_context_clear_failed", error=str(e))
 
 
 @contextmanager
@@ -149,7 +154,7 @@ def bound_tenant(tenant: TenantContext | None) -> Iterator[TenantContext | None]
         try:
             set_current_tenant(previous)
         except Exception as e:  # noqa: BLE001 - cleanup is best-effort
-            logger.warning("Failed to restore tenant context: %s", e)
+            logger.warning("tenant_context_restore_failed", error=str(e))
 
 
 @contextmanager

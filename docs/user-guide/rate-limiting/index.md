@@ -237,7 +237,7 @@ async def login(body: LoginRequest):
 
 ### AI adapter (sanctioned HTTPException shape)
 
-`modules/ai/middleware.py` keeps its Depends adapter because its 429
+`api/deps/ai_rate_limit.py` keeps its Depends adapter because its 429
 carries Retry-After and X-RateLimit headers with a structured detail body;
 the decision itself comes from `probe(SecurityAction.AI_CHAT, Identity(user_id=...))`.
 

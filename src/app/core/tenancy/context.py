@@ -12,7 +12,7 @@ Memory Optimization (FEATURE_CONTEXTVAR_OPTIMIZATION):
 - Reduces memory overhead by ~90% per request
 """
 
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
@@ -143,13 +143,25 @@ def set_current_tenant(tenant: "TenantLike | TenantContext | None") -> None:
         _current_tenant.set(TenantContext.from_model(tenant))
 
 
-def clear_tenant_context() -> None:
-    """Clear the tenant context.
+def clear_tenant_context() -> "Token[TenantContext | None]":
+    """Genuinely clear the tenant context, and hand back the reset token.
 
-    Should be called in a finally block after request processing
-    to prevent context leakage.
+    Returns the ``ContextVar`` token for the value that was replaced, so a
+    caller finishing a NESTED scope can restore the outer context with
+    ``_current_tenant.reset(token)`` instead of leaving it destroyed.
+
+    Plain ``_current_tenant.set(None)`` overwrites the current slot; it does
+    NOT restore the previous value. Under nesting that discards the outer
+    binding — the docstring previously promised a safety guarantee this
+    function did not provide, which is worse than no function because a
+    reader trusts the docstring.
+
+    Prefer :func:`bound_tenant` / :func:`preserved_tenant``
+    (``core.tenancy.lifecycle``), which own save/restore correctly and are
+    greppable at the call site. This is the low-level verb for code that must
+    clear without a context manager.
     """
-    _current_tenant.set(None)
+    return _current_tenant.set(None)
 
 
 

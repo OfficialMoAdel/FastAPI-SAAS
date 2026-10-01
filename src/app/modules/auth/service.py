@@ -19,6 +19,7 @@ from src.app.core.security import (
     verify_token,
 )
 from src.app.core.utils.ip_utils import get_client_ip
+from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.audit_logs import AuditGuarantee, audit
 from src.app.modules.auth.services.lockout import LoginLockoutPolicy
 from src.app.modules.auth.services.tokens import TokenIssuer
@@ -71,21 +72,35 @@ class AuthService:
         access_token: str | None,
         user_data: Any,
         db: AsyncSession,
+        refresh_token: str | None = None,
     ) -> tuple[dict[str, Any] | None, bool]:
         """Invalidate the specific Redis session on logout.
 
         Returns (db_user, session_revoked) so callers can audit the
         revocation outcome without masking unexpected failures.
+
+        P1-2: the SPA holds the access token in memory and the refresh token
+        in an HttpOnly cookie the frontend cannot read, so a browser logout
+        presents no access token. Falling back to the refresh token recovers
+        the same ``sid`` claim, so the session entry is actually invalidated
+        instead of silently surviving logout.
         """
         from redis.exceptions import RedisError
         from sqlalchemy.exc import SQLAlchemyError
 
-        if not user_data or not access_token:
+        if not user_data:
+            logger.info("logout_session_revoked_skipped", reason="no_resolved_identity", revoked=False)
             return None, False
+        session_token = access_token or refresh_token
+        if not session_token:
+            logger.info("logout_session_revoked_skipped", reason="no_token", revoked=False)
+            return None, False
+        # Which leg carried the sid — header logout vs cookie-only logout.
+        token_source = "access_token" if access_token else "refresh_token"
         db_user: dict[str, Any] | None = None
         try:
             db_user = await self._resolve_user_auth_info(user_data.username_or_email, db)
-            if db_user and access_token:
+            if db_user:
                 from src.app.core.security.jwt_utils import (
                     extract_claim_unverified,
                     extract_jti_unverified,
@@ -93,14 +108,33 @@ class AuthService:
                 from src.app.core.security.session_manager import session_manager as global_session_manager
 
                 session_id = (
-                    extract_claim_unverified(access_token, "sid")
-                    or extract_jti_unverified(access_token)
-                    or access_token[:32]
+                    extract_claim_unverified(session_token, "sid")
+                    or extract_jti_unverified(session_token)
+                    or session_token[:32]
                 )
-                await global_session_manager.invalidate_session(db_user["id"], session_id)
-            return db_user, True
+                # Report what actually happened: invalidate_session returns
+                # False when the registry held no such entry, so claiming True
+                # unconditionally would tell the client a session was revoked
+                # when nothing was. P1-2 added session_revoked so the client
+                # can trust it.
+                revoked = bool(await global_session_manager.invalidate_session(db_user["id"], session_id))
+                # sid is a correlation id, not a credential; token values are
+                # never logged.
+                logger.info(
+                    "logout_session_revocation",
+                    token_source=token_source,
+                    user_id=db_user["id"],
+                    sid=session_id,
+                    entry_found=revoked,
+                )
+                return db_user, revoked
+            return db_user, False
         except (SQLAlchemyError, RedisError, JWTError, AttributeError, KeyError) as e:
-            logger.warning("failed_to_invalidate_session_on_logout", error=str(e))
+            logger.warning(
+                "failed_to_invalidate_session_on_logout",
+                error=str(e),
+                token_source=token_source,
+            )
             return db_user, False
 
     async def authenticate_user(self, username_or_email: str, password: str, db: AsyncSession) -> dict[str, Any] | None:
@@ -225,12 +259,40 @@ class AuthService:
         # Prevents bypass via case variations (e.g., User@example.com vs user@example.com)
         normalized_username = username.lower().strip()
 
-        # SECURITY FIX: Check lockout BEFORE authentication to prevent CPU exhaustion (DoS)
+        # SEC-08: resolve the account BEFORE the lockout check so the counter
+        # is keyed on the user id, which the caller cannot influence. The
+        # previous identifier key let an unauthenticated attacker lock any
+        # known or guessed account, and split the budget in two because
+        # "alice" and "alice@example.com" are separate counters for one
+        # account.
+        #
+        # The lookup is a cached directory read, not a bcrypt verification,
+        # so this does not reintroduce the CPU-exhaustion cost the pre-auth
+        # check existed to avoid: the expensive hash check still runs only
+        # after a known account is confirmed unlocked.
         lockout = self.lockout
-        if await lockout.is_locked(redis, normalized_username):
-            # Avoid DB hit on locked path to prevent resource exhaustion (A-R1-03)
+        # Resolve the account so the counter keys on the id. This lookup is a
+        # cached directory read, not a bcrypt verification, so the expensive
+        # hash check still runs only after a known account is confirmed
+        # unlocked.
+        #
+        # Deliberately NOT wrapped in a try/except: falling back to the
+        # identifier key when the resolve fails would hand the attacker back
+        # exactly the SEC-08 vulnerability on every DB hiccup. Failing loud is
+        # correct — the route is not tenant-exempt, so a tenant is always
+        # bound and this query succeeds in production.
+        auth_info = await self._resolve_user_auth_info(normalized_username, db)
+        # A3 pattern: the directory seam may hand back a model or a dict.
+        resolved_user_id = get_user_attr(auth_info, "id") if auth_info is not None else None
+        if await lockout.is_locked(redis, normalized_username, user_id=resolved_user_id):
             await self._publish_login_audit(
                 request, username, False, reason="account_locked", ip_address=ip_address, user_agent=user_agent
+            )
+            logger.info(
+                "login_locked",
+                submitted=normalized_username,
+                resolved_user_id=resolved_user_id,
+                charged_key=lockout.resolve_key(redis, resolved_user_id, normalized_username),
             )
             raise UnauthorizedError("Wrong username, email or password.")
 
@@ -240,9 +302,26 @@ class AuthService:
         user = await self.authenticate_user(username_or_email=normalized_username, password=password, db=db)
 
         if not user:
-            await lockout.record_failed_attempt(redis, normalized_username)
+            # Charge the resolved account's counter when the account exists, so
+            # a wrong password on a real account accumulates toward ITS budget
+            # even though authentication returned no user. `resolved_user_id` is
+            # the ONLY source of the charged id here — `user` is None by the
+            # branch condition, so there is no second id to fall back to. When
+            # the account could not be resolved, `resolve_key` charges the
+            # identifier key instead, which is what keeps brute-force guessing
+            # from getting cheaper.
+            charged_user_id = resolved_user_id
+            key = lockout.resolve_key(redis, charged_user_id, normalized_username)
+            attempts = await lockout.record_failed_attempt_for_key(redis, key)
             await self._publish_login_audit(
                 request, username, False, reason="invalid_credentials", ip_address=ip_address, user_agent=user_agent
+            )
+            logger.info(
+                "login_failed_attempt",
+                submitted=normalized_username,
+                resolved_user_id=resolved_user_id,
+                charged_key=key,
+                attempts=attempts,
             )
             raise UnauthorizedError("Wrong username, email or password.")
         if not user.get("is_active", False):
@@ -256,7 +335,7 @@ class AuthService:
         # the counter clear is hygiene, not auth. Stale counters self-heal
         # via key TTL and fail closed on the next pre-auth check.
         try:
-            await lockout.clear(redis, normalized_username)
+            await lockout.clear(redis, normalized_username, user_id=resolved_user_id)
         except Exception as e:
             logger.warning("lockout_clear_failed", username=normalized_username, error=str(e))
 
@@ -269,7 +348,6 @@ class AuthService:
         )
 
         if mfa_response is not None:
-
             # Return partial authentication response
             await self._publish_login_audit(
                 request,
@@ -346,9 +424,22 @@ class AuthService:
         try:
             raw = await cache_client.get(f"refresh_rotated:{old_jti}")
         except Exception as e:
-            logger.debug("refresh reuse-marker lookup failed", error=str(e))
+            # P2-3: this used to return silently at DEBUG. Redis loss
+            # downgraded theft detection from "kill the session and blacklist
+            # the replacement token" to "reject this one token" — the stolen
+            # token is still refused by verify_token's DB-backed revocation
+            # check, but the ATTACKER'S ALREADY-ISSUED REPLACEMENT TOKEN stays
+            # valid until its natural expiry. A degradation of theft
+            # detection is an alertable event, so this logs at WARNING (the
+            # malformed-marker path below logs no more quietly for a less
+            # dangerous condition).
+            logger.warning("refresh reuse-marker lookup failed", error=str(e))
             return
         if not raw:
+            # The normal case: this jti was never rotated, so there is no
+            # marker. Returning quietly is correct — and required, because
+            # falling through would treat None as a corrupt marker and warn on
+            # every ordinary refresh.
             return
         try:
             marker = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
@@ -528,6 +619,16 @@ class AuthService:
             except (UnauthorizedError, ExpiredSignatureError):
                 pass  # Token expired or invalid, proceed with logout anyway
 
+        # P1-2: a cookie-only logout presents no access token, so user_data
+        # stayed None and the session-revocation leg was skipped entirely. The
+        # refresh token carries the same sid claim, so resolve identity from it
+        # to reach the session registry.
+        if user_data is None and refresh_token:
+            try:
+                user_data = await verify_token(refresh_token, TokenType.REFRESH, db)
+            except (UnauthorizedError, ExpiredSignatureError):
+                pass  # Unusable refresh token: session revocation is skipped
+
         try:
             await blacklist_tokens(access_token=access_token, refresh_token=refresh_token, db=db)
         except JWTError as e:
@@ -539,7 +640,7 @@ class AuthService:
         if response is not None:
             clear_refresh_cookies(response)
 
-        db_user, session_revoked = await self._revoke_session(access_token, user_data, db)
+        db_user, session_revoked = await self._revoke_session(access_token, user_data, db, refresh_token=refresh_token)
 
         # Audit log logout — reuse db_user from session invalidation (saves 1 DB query)
         username = user_data.username_or_email if user_data else "unknown"

@@ -123,7 +123,22 @@ class PreferenceStorageError(AppException):
 
 
 class PreferencesService:
-    """Service for handling user preferences operations."""
+    """Service for handling user preferences operations.
+
+    Note
+    ----
+    ``PreferencesService`` deliberately does **not** subclass
+    ``BaseService``. Its read/update/delete contracts return preference dicts
+    rather than ORM entities or a configured read schema, so inheriting would
+    give the base a ``select_schema`` it can never honour and would type the
+    CRUD surface as something this service cannot produce. It composes the
+    same primitives (``model``, ``db``, ``crud``) directly instead.
+
+    This mirrors ``users.UserService``, which documents the same choice in its
+    own docstring, and is recorded here as well as in
+    ``user_preferences/AGENTS.md`` so the reason is visible from the class,
+    not only from the module guide. Migration is a separate piece of work.
+    """
 
     async def get_preferences(
         self,

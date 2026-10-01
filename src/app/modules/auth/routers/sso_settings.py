@@ -7,6 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.core.db.database import async_get_db
+from src.app.core.pagination import (
+    PaginationParams,
+    build_paginated_response,
+    get_pagination_params,
+)
 from src.app.modules._base.service import fetch_page_with_total
 from src.app.modules.auth.crud import crud_sso_settings
 from src.app.modules.auth.schemas import (
@@ -15,6 +20,7 @@ from src.app.modules.auth.schemas import (
     SSOSettingsRead,
     SSOSettingsUpdate,
 )
+from src.app.schemas.responses import MessageResponse
 from src.app.shared.exceptions import ModelNotFoundError, ValidationError
 
 if TYPE_CHECKING:
@@ -64,16 +70,14 @@ async def create_sso_settings(
 async def list_sso_settings(
     request: Request,
     ctx: RequestContextDep,
-    page: int = 1,
-    per_page: int = 10,
+    pagination: PaginationParams = Depends(get_pagination_params),
 ) -> Any:
     """List all SSO provider settings (superuser only)."""
-    offset = (page - 1) * per_page
     settings_data = await fetch_page_with_total(
         crud_sso_settings,
         ctx.db,
-        offset=offset,
-        limit=per_page,
+        offset=pagination.offset,
+        limit=pagination.per_page,
         schema_to_select=SSOSettingsRead,
     )
 
@@ -81,14 +85,12 @@ async def list_sso_settings(
     data: list[dict[str, Any]] = data_raw if isinstance(data_raw, list) else []
     total_count = settings_data.get("total_count")
     total: int = total_count if isinstance(total_count, int) else len(data)
-    return {
-        "items": data,
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "has_next": page * per_page < total,
-        "has_previous": page > 1,
-    }
+    return build_paginated_response(
+        items=data,
+        total=total,
+        page=pagination.page,
+        per_page=pagination.per_page,
+    )
 
 
 @router.get("/available-providers", response_model=list[str])
@@ -153,6 +155,7 @@ async def update_sso_settings(
 
 @router.delete(
     "/{provider}",
+    response_model=MessageResponse,
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(get_current_superuser)],
 )
@@ -160,7 +163,7 @@ async def delete_sso_settings(
     request: Request,
     provider: str,
     ctx: RequestContextDep,
-) -> dict[str, str]:
+) -> MessageResponse:
     """Delete SSO settings for a specific provider (superuser only)."""
     from src.app.modules.auth.services.sso_settings import sso_settings_service
 
@@ -169,4 +172,4 @@ async def delete_sso_settings(
         raise ModelNotFoundError("SSO settings", provider, message=f"SSO settings for provider {provider} not found")
 
     await sso_settings_service.delete_settings(ctx.db, provider, user_id=ctx.user_id)
-    return {"message": f"SSO settings for provider {provider} deleted successfully"}
+    return MessageResponse(message=f"SSO settings for provider {provider} deleted successfully")

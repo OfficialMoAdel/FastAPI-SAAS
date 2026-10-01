@@ -46,7 +46,13 @@ import count_broad_excepts as counter  # noqa: E402
 #: and clients/notifications/smtp.py. Re-measure with
 #: ``python scripts/count_broad_excepts.py`` and only move this DOWN, unless a
 #: new broad except is landing and its reasoning is recorded in the commit.
-BROAD_EXCEPT_BASELINE = 357
+#:
+#: 357 -> 356. The drop is the endpoint cache decorator: the fail-closed
+#: response-model path in ``core/utils/cache/decorator.py`` lost a duplicated
+#: error-reporting branch when the GET write path was folded into one
+#: try/finally, and ``core/tenancy/scope.py`` was restored from a
+#: line-ending-corrupted state. Re-measured, not estimated.
+BROAD_EXCEPT_BASELINE = 356
 
 #: The files muse 22 triaged. BLE001 is enforced on each (the per-file-ignores
 #: in pyproject.toml no longer blanket-exempt them), so these are also the

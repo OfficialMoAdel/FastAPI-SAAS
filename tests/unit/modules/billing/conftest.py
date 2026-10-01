@@ -11,7 +11,7 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _clear_stripe_api_key_cache() -> Generator[None, None, None]:
+def _clear_stripe_api_key_cache() -> Generator[None]:
     from src.app.clients.billing.stripe import _stripe_api_key_cache
 
     _stripe_api_key_cache.clear()

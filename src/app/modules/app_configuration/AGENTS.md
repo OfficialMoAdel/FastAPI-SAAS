@@ -161,7 +161,7 @@ config = await app_configuration_service.get_configuration()
 
 ```bash
 # Run app configuration tests
-uv run pytest tests/unit/test_app_configuration.py -v
+uv run pytest tests/unit/modules/app_configuration/test_app_configuration.py -v
 ```
 
 **Test Coverage:**

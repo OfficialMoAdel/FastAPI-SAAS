@@ -10,11 +10,15 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse, PlainTextResponse
-from pydantic import BaseModel
 
 from src.app.api.deps import get_current_superuser
+from src.app.api.monitoring_schemas import (
+    HealthCheckResponse,
+    MetricsErrorResponse,
+    ProbeCheck,
+)
 from src.app.core.config import settings
 from src.app.core.health import (
     HealthResult,
@@ -24,6 +28,7 @@ from src.app.core.health import (
     resolve_readiness_status,
 )
 from src.app.core.logger import get_logger
+from src.app.core.middleware_state import get_request_id
 from src.app.core.monitoring.r1_unified_metrics import get_r1_metrics
 
 logger = get_logger(__name__)
@@ -31,15 +36,45 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 
-class HealthCheckResponse(BaseModel):
-    """Health check response model."""
+def _request_id_of(request: Request | None) -> str | None:
+    """The current request ID, or None when called outside a request.
 
-    status: str
-    timestamp: str
-    checks: dict[str, dict[str, str | float | bool]]
+    ``request`` is optional so the probe helpers stay directly callable
+    from unit tests; FastAPI always injects it on the HTTP path.
+    """
+    return get_request_id(request.state) if request is not None else None
 
 
-async def check_database() -> dict[str, str | float | bool]:
+def _log_probe_failure(probe: str, error: str, request_id: str | None) -> None:
+    """Log the FULL probe failure server-side, correlated by request ID.
+
+    The text is redacted from the response but never discarded: an
+    operator diagnoses a degraded probe from the log line carrying the
+    request ID the client already holds (echoed on ``X-Request-ID``).
+    """
+    logger.warning("health_probe_failed", probe=probe, error=error, request_id=request_id)
+
+
+def _class_name_of(raw: str) -> str:
+    """Reduce a probe failure message to a bare exception class name.
+
+    ``core/health`` formats ``HealthResult.error`` as ``"<ClassName>: <text>"``
+    (or ``"Unexpected: <ClassName>: <text>"``). Only the leading
+    identifier-shaped, capitalised token is published — never the text,
+    which carries the failed statement, the DSN, and credentials. Anything
+    that is not identifier-shaped (e.g. a timeout sentence) gets a fixed
+    label, so this function cannot emit arbitrary message content.
+    """
+    for token in raw.split(":", maxsplit=2):
+        token = token.strip()
+        if not token or token == "Unexpected":
+            continue
+        if token[0].isupper() and token.isidentifier():
+            return token
+    return "ProbeError"
+
+
+async def check_database(request: Request | None = None) -> dict[str, str | float | bool]:
     """Check database connectivity.
 
     Consolidated: delegates the probe to core/health.check_database_health
@@ -59,17 +94,16 @@ async def check_database() -> dict[str, str | float | bool]:
         "max_overflow": settings.postgres.DB_MAX_OVERFLOW,
     }
     if result.error:
-        # Run-3 finding api.monitoring.health_endpoint_error_text_disclosure:
-        # this endpoint is unauthenticated, so raw driver text (asyncpg messages
-        # carry host/port/database/user) must not reach the client. The detail
-        # stays server-side; probe diagnostics are exposed on the already
-        # superuser-gated /metrics route.
-        logger.warning("health_probe_failed", probe="database", error=result.error)
-        payload["error"] = "unhealthy"
+        # core/health's `error` embeds the driver message, which for
+        # SQLAlchemy/asyncpg carries the statement, the DSN, and the
+        # connection user. Publish only the exception class name; the full
+        # text goes to the log, correlated by request_id.
+        _log_probe_failure("database", result.error, _request_id_of(request))
+        payload["error"] = _class_name_of(result.error)
     return payload
 
 
-async def check_redis() -> dict[str, str | float | bool]:
+async def check_redis(request: Request | None = None) -> dict[str, str | float | bool]:
     """Check Redis connectivity."""
     start_time = time.perf_counter()
     try:
@@ -84,14 +118,17 @@ async def check_redis() -> dict[str, str | float | bool]:
         latency = time.perf_counter() - start_time
         return {"status": "healthy", "latency_ms": round(latency * 1000, 2)}
     except Exception as e:  # noqa: BLE001 - P1-17: probes report degraded, never raise
+        # str(e) from redis-py carries the host, port, and username. Class
+        # name only on the wire; full text in the log.
+        _log_probe_failure("redis", str(e), _request_id_of(request))
         return {
             "status": "unhealthy",
-            "error": str(e),
+            "error": type(e).__name__,
             "latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
         }
 
 
-async def check_worker_queue() -> dict[str, str | float | bool]:
+async def check_worker_queue(request: Request | None = None) -> dict[str, str | float | bool]:
     """Check ARQ worker queue status."""
     try:
         from src.app.core.utils.queue import get_queue_size
@@ -104,10 +141,11 @@ async def check_worker_queue() -> dict[str, str | float | bool]:
             "max_jobs": settings.arq.ARQ_MAX_JOBS,
         }
     except Exception as e:  # noqa: BLE001 - P1-17: probes report degraded, never raise
-        return {"status": "unhealthy", "error": str(e), "queue_size": 0}
+        _log_probe_failure("worker_queue", str(e), _request_id_of(request))
+        return {"status": "unhealthy", "error": type(e).__name__, "queue_size": 0}
 
 
-async def check_cache_metrics() -> dict[str, str | float | bool]:
+async def check_cache_metrics(request: Request | None = None) -> dict[str, str | float | bool]:
     """Check cache hit rates."""
     try:
         metrics = get_r1_metrics()
@@ -125,10 +163,11 @@ async def check_cache_metrics() -> dict[str, str | float | bool]:
             "rbac_hit_rate": round(rbac_hits / rbac_total * 100, 2) if rbac_total > 0 else 0,
         }
     except Exception as e:  # noqa: BLE001 - P1-17: probes report degraded, never raise
-        return {"status": "unhealthy", "error": str(e)}
+        _log_probe_failure("cache_metrics", str(e), _request_id_of(request))
+        return {"status": "unhealthy", "error": type(e).__name__}
 
 
-async def check_dlq_size() -> dict[str, str | float | bool]:
+async def check_dlq_size(request: Request | None = None) -> dict[str, str | float | bool]:
     """Check Dead Letter Queue size."""
     try:
         metrics = get_r1_metrics()
@@ -142,42 +181,53 @@ async def check_dlq_size() -> dict[str, str | float | bool]:
             "threshold_exceeded": dlq_pct > 90,
         }
     except Exception as e:  # noqa: BLE001 - P1-17: probes report degraded, never raise
-        return {"status": "unhealthy", "error": str(e)}
+        _log_probe_failure("dlq_size", str(e), _request_id_of(request))
+        return {"status": "unhealthy", "error": type(e).__name__}
 
 
-@router.get("/health", response_model=HealthCheckResponse)
-async def health_check() -> HealthCheckResponse:
+@router.get("/health", response_model=HealthCheckResponse, response_model_exclude_unset=True)
+async def health_check(request: Request = None) -> HealthCheckResponse:  # type: ignore[assignment]
     """Health check endpoint.
 
-    Returns overall system health with component-level checks.
+    Returns overall system health with component-level checks. Every probe
+    failure is reported as an exception CLASS NAME only; see
+    ``api/monitoring_schemas.ProbeCheck`` for why.
     """
     # Run all health checks in parallel
     results = await asyncio.gather(
-        check_database(),
-        check_redis(),
-        check_worker_queue(),
-        check_cache_metrics(),
-        check_dlq_size(),
+        check_database(request),
+        check_redis(request),
+        check_worker_queue(request),
+        check_cache_metrics(request),
+        check_dlq_size(request),
         return_exceptions=True,
     )
 
     keys = ["database", "redis", "worker_queue", "cache_metrics", "dlq_size"]
-    checks: dict[str, dict[str, str | float | bool]] = {}
+    checks: dict[str, ProbeCheck] = {}
 
     for key, result in zip(keys, results, strict=False):
-        # M4: Use Exception instead of BaseException to avoid catching KeyboardInterrupt/SystemExit
-        if isinstance(result, Exception):
-            # Run-3: do not echo exception text on an unauthenticated route.
-            logger.warning("health_probe_failed", probe=key, error=str(result))
-            checks[key] = {"status": "unhealthy", "error": "unhealthy"}
-        else:
-            # Type narrowing: result is guaranteed to be dict after isinstance check
-            checks[key] = result  # type: ignore[assignment]
+        if isinstance(result, dict):
+            # A probe reports only the fields it actually measured, so fields
+            # left unset here are absent from the response rather than
+            # rendered as a wall of nulls. `model_fields_set` is what the
+            # response serializer keys off, so the wire keeps exactly the
+            # keys the probe produced.
+            checks[key] = ProbeCheck.model_validate({k: v for k, v in result.items() if v is not None})
+            continue
+        if not isinstance(result, Exception):
+            # M4: a non-Exception BaseException (KeyboardInterrupt/SystemExit)
+            # is not a probe outcome — propagate it instead of swallowing it.
+            raise result
+        # Full text server-side; the client gets the class name, which is
+        # what tells an operator WHICH dependency failed.
+        _log_probe_failure(key, str(result), _request_id_of(request))
+        checks[key] = ProbeCheck(status="unhealthy", error=type(result).__name__)
 
     # Determine overall status
     overall_status = "ok"
     for check_result in checks.values():
-        status = check_result.get("status")
+        status = check_result.status
         if status == "unhealthy":
             overall_status = "error"
             break
@@ -213,7 +263,7 @@ async def _collect_readiness_results() -> tuple[HealthResult, HealthResult, Heal
 
 
 @router.get("/health/ready", response_model=None)
-async def readiness_probe() -> dict[str, str] | JSONResponse:
+async def readiness_probe(request: Request = None) -> dict[str, str] | JSONResponse:  # type: ignore[assignment]
     """Compatibility alias for the canonical readiness dependency set."""
     try:
         database, redis, queue, events_ready = await _collect_readiness_results()
@@ -225,6 +275,8 @@ async def readiness_probe() -> dict[str, str] | JSONResponse:
             content={
                 "status": "not_ready",
                 "reason": overall_status,
+                # Statuses only. The HealthResult.error text is deliberately
+                # absent: it embeds the driver message (DSN, credentials).
                 "checks": {
                     "database": database.status,
                     "redis": redis.status,
@@ -233,31 +285,85 @@ async def readiness_probe() -> dict[str, str] | JSONResponse:
                 },
             },
         )
-    except Exception:  # noqa: BLE001 - readiness reports not_ready, never raises
+    except Exception as e:  # noqa: BLE001 - readiness reports not_ready, never raises
+        logger.warning("readiness_probe_failed", error=str(e), request_id=_request_id_of(request))
         return JSONResponse(status_code=503, content={"status": "not_ready", "reason": "health_check_failed"})
 
 
-@router.get("/metrics", response_class=PlainTextResponse, dependencies=[Depends(get_current_superuser)])
-async def metrics_export() -> str:
-    """Prometheus metrics export endpoint.
+def _metrics_error_response(exc: Exception, request: Request | None) -> JSONResponse:
+    """Build the operator-only failure envelope for the metrics routes.
 
-    Returns metrics in Prometheus text format.
+    Unlike the probes, this route is gated on ``get_current_superuser`` and
+    the operator scraping it is the person who needs the raw driver text,
+    so ``error_detail`` carries it in full. It is returned as a
+    ``JSONResponse`` rather than raised as ``HTTPException`` because the
+    framework handler renders ``exc.detail`` verbatim into the client
+    body — the old ``detail=f"Failed to export metrics: {e}"`` leaked the
+    text while the adjacent comment claimed the route "never leaks
+    internals". The comment and the code disagreed; the code is now
+    explicit about carrying the text and about WHY that is acceptable here.
+    """
+    request_id = _request_id_of(request)
+    logger.warning("metrics_export_failed", error=str(exc), request_id=request_id)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=MetricsErrorResponse(
+            error_type=type(exc).__name__,
+            error_detail=str(exc),
+            request_id=request_id,
+        ).model_dump(),
+    )
+
+
+@router.get(
+    "/metrics",
+    response_class=PlainTextResponse,
+    response_model=None,
+    dependencies=[Depends(get_current_superuser)],
+)
+async def metrics_export(request: Request = None) -> str | JSONResponse:  # type: ignore[assignment]
+    """Prometheus metrics export endpoint (superuser-gated).
+
+    Returns metrics in Prometheus text format. An export failure returns a
+    500 whose ``error_detail`` holds the FULL exception text — deliberate,
+    and safe only because of the superuser gate; see
+    :func:`_metrics_error_response`.
     """
     try:
         metrics = get_r1_metrics()
         return metrics.export_prometheus()
-    except Exception as e:  # noqa: BLE001 - P1-17: any export failure maps to 500, never leaks internals
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to export metrics: {e}")
+    except Exception as e:  # noqa: BLE001 - P1-17: any export failure maps to 500
+        return _metrics_error_response(e, request)
 
 
-@router.get("/metrics/json", dependencies=[Depends(get_current_superuser)])
-async def metrics_json() -> dict[str, Any]:
-    """Metrics export in JSON format.
+@router.get("/metrics/json", response_model=None, dependencies=[Depends(get_current_superuser)])
+async def metrics_json(request: Request = None) -> dict[str, Any] | JSONResponse:  # type: ignore[assignment]
+    """Metrics export in JSON format (superuser-gated).
 
-    Returns metrics as a JSON object for easier programmatic access.
+    Returns metrics as a JSON object for easier programmatic access. On
+    failure the envelope mirrors ``/metrics``: full text under
+    ``error_detail``, reachable only by a superuser.
     """
     try:
         metrics = get_r1_metrics()
         return metrics.get_all_metrics()
-    except Exception as e:  # noqa: BLE001 - P1-17: any export failure maps to 500, never leaks internals
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to export metrics: {e}")
+    except Exception as e:  # noqa: BLE001 - P1-17: any export failure maps to 500
+        return _metrics_error_response(e, request)
+
+
+__all__ = [
+    "HealthCheckResponse",
+    "MetricsErrorResponse",
+    "ProbeCheck",
+    "check_cache_metrics",
+    "check_database",
+    "check_dlq_size",
+    "check_redis",
+    "check_worker_queue",
+    "health_check",
+    "liveness_probe",
+    "metrics_export",
+    "metrics_json",
+    "readiness_probe",
+    "router",
+]

@@ -1,5 +1,6 @@
 import uuid
 from typing import Any, cast
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -37,6 +38,60 @@ logger = get_logger(__name__)
 
 class SSOService:
     """Service for handling SSO authentication flows."""
+
+    # The callback path is part of OUR deployment, not something a caller
+    # picks. It is fixed relative to the configured public origin below.
+    _CALLBACK_PATH_TEMPLATE = "/api/v1/account/sso/{provider}/callback"
+
+    @classmethod
+    def _configured_public_origin(cls) -> str:
+        """Return the configured public origin this API is reached at.
+
+        The redirect URI is handed to the IdP verbatim and must exactly match
+        the one registered in the IdP console, so it cannot be reconstructed
+        per-request from ``request.base_url``: the Host header is client
+        controlled, so behind a proxy (or from a misconfigured client) it can
+        carry an attacker's host and the flow would advertise an
+        attacker-controlled callback to the provider. Configuration is the
+        authority instead.
+
+        ``FRONTEND_URL`` is the operator-declared public entry point of this
+        deployment — in the shipped topology the SPA and the API share an
+        origin behind a reverse proxy; in a split deployment the operator
+        points it at whichever origin fronts ``/api/v1``. Either way it is
+        declared, never inferred from a request header.
+        """
+        from src.app.core.config import settings
+
+        raw = (settings.app.FRONTEND_URL or "").strip()
+        if not raw:
+            raise ValidationError("FRONTEND_URL is not configured; cannot build the SSO callback URL")
+
+        parsed = urlsplit(raw)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            # Fail closed: a bare hostname or a non-http scheme cannot produce
+            # a redirect URI the IdP will accept, and guessing one would
+            # silently break every login.
+            raise ValidationError("FRONTEND_URL must be an absolute http(s) URL to build the SSO callback URL")
+        if parsed.query or parsed.fragment:
+            raise ValidationError("FRONTEND_URL must not contain a query string or fragment")
+        if parsed.username or parsed.password:
+            # Userinfo in the origin would be embedded in every redirect_uri.
+            raise ValidationError("FRONTEND_URL must not contain embedded credentials")
+
+        # Preserve a path prefix (reverse proxies may mount the app under
+        # one); drop the trailing slash so joining never doubles it.
+        path = parsed.path.rstrip("/")
+        return f"{parsed.scheme}://{parsed.netloc}{path}"
+
+    @classmethod
+    def default_redirect_uri(cls, provider: str) -> str:
+        """Build the configured callback URL for ``provider``."""
+        # ``provider`` is a str-Enum member at the call sites, and an f-string
+        # renders it as "SSOProvider.GOOGLE" — which would bake a bogus path
+        # segment into the URI. Normalize to the wire value first.
+        wire_value = str(getattr(provider, "value", provider))
+        return f"{cls._configured_public_origin()}{cls._CALLBACK_PATH_TEMPLATE.format(provider=wire_value)}"
 
     def _get_provider_instance(
         self, provider_name: str, settings: dict[str, Any], redirect_uri: str
@@ -86,7 +141,9 @@ class SSOService:
             db: Database session
             request: FastAPI request
             provider: SSO provider name
-            redirect_uri: Optional custom redirect URI
+            redirect_uri: Optional custom redirect URI. When omitted the
+                callback is derived from the configured public API origin
+                (``settings.app.FRONTEND_URL``), NOT from the request Host.
             connect_mode: If True, this is linking provider to existing account
             user_id: User ID to link provider to (required if connect_mode=True)
 
@@ -100,8 +157,10 @@ class SSOService:
             raise ValidationError(f"Provider '{provider}' is disabled")
 
         if not redirect_uri:
-            base_url = str(request.base_url).rstrip("/")
-            redirect_uri = f"{base_url}/api/v1/account/sso/{provider}/callback"
+            # Configured origin, never request.base_url (see
+            # _configured_public_origin). A caller-supplied redirect_uri still
+            # wins — the router pins it to the configured origin before here.
+            redirect_uri = self.default_redirect_uri(provider)
 
         tenant = get_current_tenant()
         extra_data: dict[str, Any] = {"tenant_id": tenant.id} if tenant else {}

@@ -19,11 +19,11 @@ def _fake_db_seams():
     """Replace the DB session + RLS bypass with no-op async CMs."""
 
     @asynccontextmanager
-    async def fake_session() -> AsyncGenerator[object, None]:
+    async def fake_session() -> AsyncGenerator[object]:
         yield object()
 
     @asynccontextmanager
-    async def fake_bypass(session: object, reason: str) -> AsyncGenerator[object, None]:
+    async def fake_bypass(session: object, reason: str) -> AsyncGenerator[object]:
         yield session
 
     with (

@@ -14,7 +14,7 @@ class TestLogSanitizationE2E:
     """E2E tests verifying log sanitization in live requests."""
 
     @pytest.fixture
-    def captured_logs(self) -> Generator[io.StringIO, None, None]:
+    def captured_logs(self) -> Generator[io.StringIO]:
         """Capture all log output to StringIO."""
         log_stream = io.StringIO()
         handler = logging.StreamHandler(log_stream)

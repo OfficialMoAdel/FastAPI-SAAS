@@ -4,7 +4,6 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import HTTPException, status
 from sqlalchemy.exc import (
     DisconnectionError,
     OperationalError,
@@ -16,6 +15,7 @@ from sqlalchemy.exc import (
 from src.app.core.logger import get_logger
 from src.app.core.resilience.registry import ServiceType, create_circuit_breaker
 from src.app.core.utils.circuit_breaker import CircuitState
+from src.app.shared.exceptions import ServiceUnavailableError
 
 logger = get_logger(__name__)
 
@@ -49,8 +49,16 @@ async def db_circuit_guard() -> AsyncIterator[None]:
     """Async context manager that protects database operations with the circuit breaker.
 
     Checks if the database circuit breaker is OPEN before executing the wrapped code.
-    If OPEN, raises HTTPException(503 Service Unavailable) to fail fast without
-    overloading the struggling database.
+    If OPEN, raises ServiceUnavailableError (which the central handler maps to
+    HTTP 503) to fail fast without overloading the struggling database.
+
+    P1-10: this used to raise ``fastapi.HTTPException`` directly. That is an
+    HTTP response object escaping below the transport layer, and the ARQ
+    worker reaches this guard with no request in scope — where
+    ``create_error_response`` never runs, so DB degradation surfaced as a
+    silent DLQ entry instead of a visible failure. The domain exception keeps
+    the wire shape identical for HTTP callers while being a handled error for
+    queue consumers.
 
     Only records failures for actual database infrastructure/connection errors
     (timeouts, operational errors, disconnections), ignoring business logic
@@ -59,23 +67,20 @@ async def db_circuit_guard() -> AsyncIterator[None]:
     current_state = db_circuit.state
     if current_state == CircuitState.OPEN:
         logger.warning("Database circuit OPEN, blocking database operation")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database service temporarily degraded due to high failure rate. Please retry later.",
+        raise ServiceUnavailableError(
+            "Database service temporarily degraded due to high failure rate. Please retry later."
         )
 
     if current_state == CircuitState.HALF_OPEN:
         async with db_circuit._get_lock():
             if db_circuit.state == CircuitState.HALF_OPEN:
                 if not db_circuit.try_acquire_probe():
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail="Database service temporarily degraded. Probing recovery.",
+                    raise ServiceUnavailableError(
+                        "Database service temporarily degraded. Probing recovery."
                     )
             elif db_circuit.state == CircuitState.OPEN:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Database service temporarily degraded due to high failure rate. Please retry later.",
+                raise ServiceUnavailableError(
+                    "Database service temporarily degraded due to high failure rate. Please retry later."
                 )
         logger.debug("Database circuit HALF_OPEN — allowing test request")
 

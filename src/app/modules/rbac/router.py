@@ -145,7 +145,7 @@ async def remove_permission_from_role(
 @router.post(
     "/{role_id}/users/{user_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(requires_permission(Permission.USERS_MANAGE))],
+    dependencies=[Depends(requires_permission(Permission.ROLES_ASSIGN))],
 )
 async def assign_role_to_user(
     role_id: int,
@@ -159,7 +159,7 @@ async def assign_role_to_user(
 @router.delete(
     "/{role_id}/users/{user_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(requires_permission(Permission.USERS_MANAGE))],
+    dependencies=[Depends(requires_permission(Permission.ROLES_ASSIGN))],
 )
 async def remove_role_from_user(
     role_id: int,

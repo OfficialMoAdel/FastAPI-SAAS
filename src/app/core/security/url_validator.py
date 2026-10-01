@@ -40,6 +40,14 @@ BLOCKED_NETWORKS = [
     ipaddress.ip_network("192.168.99.0/24"),  # Minikube
 ]
 
+# Cloud metadata (IMDS) addresses — enforced even when ``allow_internal`` is
+# True, so the internal-URLs kill switch can never expose a cloud metadata
+# service through a webhook target.
+METADATA_NETWORKS = [
+    ipaddress.ip_network("169.254.0.0/16"),  # Link-local (AWS/Azure/GCP metadata)
+    ipaddress.ip_network("fd00:ec2::254/128"),  # AWS IPv6 metadata
+]
+
 # Specific blocked hostnames (cloud metadata endpoints)
 BLOCKED_HOSTNAMES = {
     "metadata.google.internal",
@@ -80,19 +88,45 @@ def is_ip_blocked(ip: str) -> bool:
         return True
 
 
+def is_metadata_ip(ip: str) -> bool:
+    """Check if an IP address is a cloud metadata (IMDS) address.
+
+    Unlike :func:`is_ip_blocked`, only the metadata ranges are consulted —
+    RFC1918/loopback/link-local-private targets stay reachable when
+    ``allow_internal`` is enabled. Invalid input fails safe (blocked).
+
+    Args:
+        ip: IP address string (IPv4 or IPv6)
+
+    Returns
+    -------
+        True if the IP is a cloud metadata address (or unparsable), else False
+    """
+    try:
+        ip_obj = ipaddress.ip_address(ip)
+    except ValueError:
+        return True
+    if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped:
+        ip_obj = ip_obj.ipv4_mapped
+    return any(ip_obj in network for network in METADATA_NETWORKS)
+
+
 async def validate_webhook_url(url: str, allow_internal: bool = False) -> str | None:
     """Validate a URL is safe for outbound webhook requests and return its safe resolved IP address.
 
     Performs the following checks:
     1. URL must use HTTPS scheme (ALWAYS enforced, even when ``allow_internal`` is True)
     2. Hostname must not be a blocked hostname (skipped when ``allow_internal`` is True)
-    3. Resolved IP must not be in blocked ranges (skipped when ``allow_internal`` is True)
+    3. Resolved IP must not be in blocked ranges; when ``allow_internal`` is
+       True the private-range check is replaced by a cloud-metadata-only check
+       so DNS pinning still happens for internal targets
 
     Args:
         url: The URL to validate
-        allow_internal: When True, skip private-IP/hostname checks for internal
-            webhook delivery (e.g., self-hosted consumers). The HTTPS scheme
-            check is never skipped.
+        allow_internal: When True, skip the private-network/hostname checks for
+            internal webhook delivery (e.g., self-hosted consumers). The HTTPS
+            scheme check and the cloud-metadata IP check are never skipped, and
+            the hostname is still resolved so the caller receives a pin-able IP.
 
     Returns
     -------
@@ -114,24 +148,18 @@ async def validate_webhook_url(url: str, allow_internal: bool = False) -> str | 
     if not hostname:
         raise SSRFProtectionError("URL must have a valid hostname")
 
-    # When explicitly allowed, skip only the private-network checks.
-    if allow_internal:
-        logger.debug(
-            "ssrf_internal_allowed",
-            url=url,
-            hostname=hostname,
-        )
-        return None
-
-    # Check blocked hostnames
-    hostname_lower = hostname.lower()
-    if hostname_lower in BLOCKED_HOSTNAMES:
-        logger.warning(
-            "ssrf_blocked_hostname",
-            url=url,
-            hostname=hostname,
-        )
-        raise SSRFProtectionError(f"Hostname '{hostname}' is not allowed")
+    # When explicitly allowed, skip only the hostname/private-network checks —
+    # the hostname is still resolved below so the caller gets a pin-able IP
+    # (DNS rebinding protection must not be disabled by the kill switch).
+    if not allow_internal:
+        hostname_lower = hostname.lower()
+        if hostname_lower in BLOCKED_HOSTNAMES:
+            logger.warning(
+                "ssrf_blocked_hostname",
+                url=url,
+                hostname=hostname,
+            )
+            raise SSRFProtectionError(f"Hostname '{hostname}' is not allowed")
 
     # Resolve hostname and check IP
     # OPT P0-1: Use asyncio.to_thread to avoid blocking the event loop during DNS resolution
@@ -142,12 +170,16 @@ async def validate_webhook_url(url: str, allow_internal: bool = False) -> str | 
     except socket.gaierror as e:
         raise SSRFProtectionError(f"Could not resolve hostname '{hostname}': {e}")
 
+    # Full blocked-range check normally; metadata-only check when internal
+    # URLs are allowed (private ranges stay reachable, IMDS never is).
+    ip_is_blocked = is_metadata_ip if allow_internal else is_ip_blocked
+
     # Check all resolved IPs and return the first valid one
     safe_ip = None
     for ip in resolved_ips:
-        if is_ip_blocked(str(ip)):
+        if ip_is_blocked(str(ip)):
             logger.warning(
-                "ssrf_blocked_ip",
+                "ssrf_blocked_metadata_ip" if allow_internal else "ssrf_blocked_ip",
                 url=url,
                 hostname=hostname,
                 blocked_ip=ip,
@@ -168,6 +200,7 @@ async def validate_webhook_url(url: str, allow_internal: bool = False) -> str | 
         hostname=hostname,
         safe_ip=safe_ip,
         resolved_ips=list(resolved_ips),
+        allow_internal=allow_internal,
     )
 
     return safe_ip

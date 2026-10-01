@@ -1,4 +1,10 @@
-"""AI Rate Limiting Middleware.
+"""AI rate-limit dependency (s92p.3: relocated from modules/ai/middleware.py).
+
+It lived under modules/ but was a pure FastAPI adapter: it imported the api
+layer and offered a `Depends`, which is the same category as a router. Under
+the widened feature-must-not-import-api contract that made it the ONE real
+offender among 187 module files. It has no AI-domain logic — only the
+security-budget probe — so it belongs beside the other dependencies it uses.
 
 T099: Add rate limiting middleware (60 req/user/min)
 T100: Add HTTP 429 RateLimitError response

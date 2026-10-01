@@ -29,7 +29,7 @@ src/app/modules/auth/
 
 ```bash
 # Auth tests (unit + integration)
-uv run pytest tests/unit/modules/auth/ tests/integration/test_auth_api.py -v
+uv run pytest tests/unit/modules/auth/ tests/integration/modules/auth/test_auth_lockout.py -v
 
 # Type check
 uv run mypy src/app/modules/auth/

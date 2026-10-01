@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Request, status
 from fastcrud import PaginatedListResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_superuser
+from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.core.db.database import async_get_db
 from src.app.core.schemas import MessageResponse
 from src.app.modules.rate_limits.schemas import RateLimitCreate, RateLimitRead, RateLimitUpdate
@@ -41,24 +41,39 @@ async def write_rate_limit(
 
 @router.get("/tiers/{tier_name}/rate-limits", response_model=PaginatedListResponse[RateLimitRead])
 async def read_rate_limits(
-    request: Request,
+    ctx: RequestContextDep,
     tier_name: str,
     service: RateLimitService = Depends(get_rate_limit_service),
     page: int = 1,
     per_page: int = 10,
 ) -> Any:
-    """Get paginated rate limits for a tier."""
+    """Get paginated rate limits for a tier (authenticated).
+
+    Run-3 pgo0.1 (rate_limits.catalog_reads_are_anonymous): the writes in this
+    router are superuser-gated while the reads carried no auth, so the per-tier
+    rate policy was reachable anonymously. ``RequestContextDep`` is the
+    billing-catalog treatment (``billing/routers/products.py``, pinned by
+    ``test_legacy_catalog_auth.py``) — an authenticated principal, tenant
+    resolved from that principal rather than a caller-supplied header.
+
+    Authentication — not a superuser gate — because ``RateLimit`` rows hang off
+    the GLOBAL ``Tier`` catalog (``tiers/models.py``: no ``tenant_id``) and
+    describe the policy the caller's own users are already subject to.
+    """
     return await service.get_rate_limits(tier_name, page, per_page)
 
 
 @router.get("/tiers/{tier_name}/rate-limits/{id}", response_model=RateLimitRead)
 async def read_rate_limit(
-    request: Request,
+    ctx: RequestContextDep,
     tier_name: str,
     id: int,
     service: RateLimitService = Depends(get_rate_limit_service),
 ) -> Any:
-    """Get a single rate limit by ID."""
+    """Get a single rate limit by ID (authenticated).
+
+    Same ``RequestContextDep`` gate as ``read_rate_limits`` — see its docstring.
+    """
     return await service.get_rate_limit(tier_name, id)
 
 

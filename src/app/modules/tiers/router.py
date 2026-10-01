@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from fastcrud import PaginatedListResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.deps import get_current_superuser
+from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.core.db.database import async_get_db
 from src.app.core.schemas import MessageResponse
 from src.app.modules.tiers.schemas import TierCreate, TierRead, TierUpdate
@@ -40,22 +40,39 @@ async def write_tier(
 
 @router.get("/tiers", response_model=PaginatedListResponse[TierRead])
 async def read_tiers(
-    request: Request,
+    ctx: RequestContextDep,
     service: Annotated[TierService, Depends(get_tier_service)],
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(10, ge=1, le=100, description="Items per page"),
 ) -> Any:
-    """Get paginated list of tiers."""
+    """Get paginated list of tiers (authenticated).
+
+    Run-3 pgo0.1 (tiers.catalog_reads_are_anonymous): every MUTATING route in
+    this router is superuser-gated while both reads carried no auth at all, so
+    the whole catalog was reachable by any anonymous caller. ``RequestContextDep``
+    is the billing-catalog treatment (``billing/routers/products.py``, pinned by
+    ``test_legacy_catalog_auth.py``): require an authenticated principal and
+    resolve the tenant from it rather than from a caller-supplied header.
+
+    Authentication — not a superuser gate — is the correct bar: these rows are
+    the GLOBAL tier catalog (``Tier`` has no ``tenant_id``) that the caller's own
+    users are already subject to, so any principal may read them. That also keeps
+    the reads strictly less privileged than their superuser-gated siblings.
+    """
     return await service.get_tiers(page, per_page)
 
 
 @router.get("/tiers/{name}", response_model=TierRead)
 async def read_tier(
-    request: Request,
+    ctx: RequestContextDep,
     name: str,
     service: Annotated[TierService, Depends(get_tier_service)],
 ) -> Any:
-    """Get tier by name."""
+    """Get tier by name (authenticated).
+
+    Same ``RequestContextDep`` gate as ``read_tiers`` — see its docstring for
+    why the catalog is authenticated rather than superuser-gated.
+    """
     return await service.get_tier(name)
 
 

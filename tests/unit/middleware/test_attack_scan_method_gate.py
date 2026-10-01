@@ -17,6 +17,7 @@ in tests/e2e/core/security/test_attack_scan_bounds_e2e.py.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -41,6 +42,7 @@ MODULE_LOGGER = "src.app.middleware.attack_detection"
 @pytest.fixture
 def middleware() -> AttackDetectionMiddleware:
     return AttackDetectionMiddleware(app=MagicMock())
+
 
 
 def _scope(method: str, body: bytes = b"", *, headers: list | None = None, query: bytes = b""):
@@ -129,18 +131,42 @@ async def test_body_methods_do_drain_and_scan(method: str, middleware: AttackDet
 
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
 async def test_bodyless_skip_is_logged_at_debug(method: str, middleware: AttackDetectionMiddleware) -> None:
-    """The skip emits exactly one DEBUG event carrying queryable fields."""
-    with structlog.testing.capture_logs() as captured:
+    """The skip emits exactly one DEBUG event carrying queryable fields.
+
+    Asserted by spying on the module logger's own ``debug`` call, not via
+    ``structlog.testing.capture_logs()``. That helper swaps the GLOBAL
+    processor chain, and whether the module's already-bound logger picks the
+    swap up depends on which tests ran first in the session — so it returned an
+    empty list in a full run while passing in isolation, twice, for two
+    different files. The same property is observable at the call site, which is
+    also where ``test_skip_is_silent_below_debug`` observes it.
+    """
+    calls: list[tuple[tuple, dict]] = []
+    levels: list[int] = []
+
+    def spy(event, *args, **kwargs):
+        calls.append(((event, *args), kwargs))
+
+    def guard(level):
+        levels.append(level)
+        return True
+
+    with (
+        patch.object(ad.logger, "is_enabled_for", side_effect=guard),
+        patch.object(ad.logger, "debug", side_effect=spy),
+    ):
         await _scan(middleware, method)
 
-    skips = _skips(captured)
-    assert len(skips) == 1, f"expected one skip event for {method}, got {captured}"
-    record = skips[0]
-    assert record["log_level"] == "debug"
-    assert record["method"] == method
-    assert record["path"] == "/api/v1/files"
+    assert len(calls) == 1, f"expected one skip event for {method}, got {calls}"
+    (event_args, fields) = calls[0]
+    event = event_args[0]
+    assert "skipped_body_scan" in event
+    # The event is emitted as DEBUG, not merely at some level.
+    assert levels == [logging.DEBUG], f"skip was gated on {levels}, not DEBUG"
+    assert fields["method"] == method
+    assert fields["path"] == "/api/v1/files"
     # P1-12 contract: fields, not a pre-formatted sentence.
-    assert "method=" not in str(record["event"])
+    assert "method=" not in str(event)
 
 
 async def test_skip_is_silent_below_debug(middleware: AttackDetectionMiddleware) -> None:

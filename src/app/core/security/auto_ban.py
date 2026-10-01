@@ -112,7 +112,7 @@ async def increment_violations(client_ip: str) -> int:
     """
     redis_client = get_redis()
     if not redis_client:
-        logger.warning("Redis unavailable - cannot track violations for %s", client_ip)
+        logger.warning("auto_ban_violation_tracking_unavailable", ip=client_ip)
         return 0
 
     key = VIOLATIONS_KEY_PREFIX.format(ip=client_ip)
@@ -140,7 +140,7 @@ async def increment_violations(client_ip: str) -> int:
                 await redis_client.expire(key, ttl)
             return count
     except Exception as e:
-        logger.error("Failed to increment violations for %s: %s", client_ip, e)
+        logger.error("auto_ban_violation_increment_failed", ip=client_ip, error=str(e))
         return 0
 
 
@@ -163,7 +163,7 @@ async def reset_violations(client_ip: str) -> bool:
         await redis_client.delete(key)
         return True
     except Exception as e:
-        logger.error("Failed to reset violations for %s: %s", client_ip, e)
+        logger.error("auto_ban_violation_reset_failed", ip=client_ip, error=str(e))
         return False
 
 
@@ -220,7 +220,7 @@ async def get_ban_info(client_ip: str, include_count: bool = False) -> BanInfo:
         return BanInfo(is_banned=False, ban_count=ban_count)
 
     except Exception as e:
-        logger.error("Failed to get ban info for %s: %s", client_ip, e)
+        logger.error("auto_ban_info_lookup_failed", ip=client_ip, error=str(e))
         return BanInfo(is_banned=False)
 
 
@@ -535,11 +535,11 @@ async def ban_ip(
     """
     redis_client = get_redis()
     if not redis_client:
-        logger.warning("Redis unavailable - cannot ban IP %s", client_ip)
+        logger.warning("auto_ban_write_unavailable", ip=client_ip)
         return False
 
     if not settings.security.AUTO_BAN_ENABLED:
-        logger.debug("Auto-ban disabled - skipping ban for %s", client_ip)
+        logger.debug("auto_ban_disabled", ip=client_ip)
         return False
 
     # Get ban info for escalation — needs the previous-ban COUNT.
@@ -553,11 +553,11 @@ async def ban_ip(
         capped_ban_count = min(ban_info.ban_count, 30)
         actual_duration = min(base_duration * (2**capped_ban_count), 31536000)
         logger.info(
-            "Escalating ban for %s: previous_bans=%d, base_duration=%d, actual_duration=%d",
-            client_ip,
-            ban_info.ban_count,
-            base_duration,
-            actual_duration,
+            "auto_ban_escalating",
+            ip=client_ip,
+            previous_bans=ban_info.ban_count,
+            base_duration=base_duration,
+            actual_duration=actual_duration,
         )
     else:
         actual_duration = base_duration
@@ -580,7 +580,7 @@ async def ban_ip(
         new_ban_count = int(res[1]) if isinstance(res, list | tuple) and len(res) >= 2 else (ban_info.ban_count + 1)
 
         if not is_new_ban:
-            logger.debug("IP %s already banned by concurrent request", client_ip)
+            logger.debug("auto_ban_already_banned", ip=client_ip)
             return False
 
         # R1-01: evict the negative cache so the unban is reflected on the
@@ -610,17 +610,20 @@ async def ban_ip(
         )
         log_security_event(event)
 
+        # P1-12: a named event with fields, not a percent-formatted sentence.
+        # This is THE ban audit line — under the old form ip/duration/reason/
+        # ban_count were opaque positional elements and could not be queried.
         logger.warning(
-            "IP banned | ip=%s | duration=%ds | reason=%s | ban_count=%d",
-            client_ip,
-            actual_duration,
-            reason,
-            new_ban_count,
+            "auto_ban_applied",
+            ip=client_ip,
+            duration=actual_duration,
+            reason=reason,
+            ban_count=new_ban_count,
         )
 
         return True
     except Exception as e:
-        logger.error("Failed to ban IP %s: %s", client_ip, e)
+        logger.error("auto_ban_write_failed", ip=client_ip, error=str(e))
         return False
 
 
@@ -651,7 +654,7 @@ async def unban_ip(client_ip: str) -> bool:
         except Exception as fanout_exc:  # noqa: BLE001
             logger.warning("unban_l1_fanout_failed", client_ip=client_ip, error=str(fanout_exc))
         if result > 0:
-            logger.info("IP unbanned | ip=%s", client_ip)
+            logger.info("auto_ban_lifted", ip=client_ip)
 
             # Log security event
             event = create_security_event(
@@ -665,7 +668,7 @@ async def unban_ip(client_ip: str) -> bool:
         return True
 
     except Exception as e:
-        logger.error("Failed to unban IP %s: %s", client_ip, e)
+        logger.error("auto_ban_lift_failed", ip=client_ip, error=str(e))
         return False
 
 
@@ -796,7 +799,7 @@ async def get_all_banned_ips() -> list[dict]:
         return banned
 
     except Exception as e:
-        logger.error("Failed to get banned IPs: %s", e)
+        logger.error("auto_ban_list_failed", error=str(e))
         return []
 
 
@@ -853,5 +856,5 @@ async def get_violation_stats(client_ip: str | None = None) -> dict:
         }
 
     except Exception as e:
-        logger.error("Failed to get violation stats: %s", e)
+        logger.error("auto_ban_stats_failed", error=str(e))
         return {"total_ips": 0, "total_violations": 0}

@@ -199,7 +199,7 @@ class RoleService:
                 )
                 return permissions
         except Exception as e:
-            logger.warning("RBAC L1 cache read error: %s", e)
+            logger.warning("rbac_l1_cache_read_failed", error=str(e))
 
         # L2: Check Redis cache (if enabled)
         if settings.r1_unified.RBAC_USE_REDIS_CACHE and self._redis_client:
@@ -216,7 +216,7 @@ class RoleService:
                     try:
                         _L1_RBAC_CACHE[l1_cache_key] = list(perm_dicts)
                     except Exception as e:
-                        logger.warning("RBAC L1 cache write error: %s", e)
+                        logger.warning("rbac_l1_cache_write_failed", error=str(e))
 
                     record_rbac_cache_hit()
                     logger.debug(
@@ -256,7 +256,7 @@ class RoleService:
             try:
                 _L1_RBAC_CACHE[l1_cache_key] = list(perm_dicts)
             except Exception as e:
-                logger.warning("RBAC L1 cache write error: %s", e)
+                logger.warning("rbac_l1_cache_write_failed", error=str(e))
 
             # Populate L2 Redis cache (if enabled)
             if settings.r1_unified.RBAC_USE_REDIS_CACHE and self._redis_client:
@@ -327,7 +327,7 @@ class RoleService:
                 tenant_id=self.tenant_id,
             )
         except Exception as e:
-            logger.warning("RBAC L1 cache invalidation error: %s", e)
+            logger.warning("rbac_l1_cache_invalidation_failed", error=str(e))
 
         # Clear L2 Redis cache
         if not self._redis_client:
@@ -368,7 +368,7 @@ class RoleService:
                 deleted_keys=len(keys_to_remove),
             )
         except Exception as e:
-            logger.warning("RBAC L1 cache invalidation error: %s", e)
+            logger.warning("rbac_l1_cache_invalidation_failed", error=str(e))
 
         # Clear L2 Redis cache
         if not self._redis_client:
@@ -488,8 +488,13 @@ class RoleService:
         """Assign a role to a user within the current tenant.
 
         Security: Validates both role AND user belong to the current tenant.
+        System roles cannot be granted, matching the guard on update/delete
+        and the permission-edit siblings.
         """
-        await self.get_role(role_id)  # Verify role exists and belongs to tenant
+        role = await self.get_role(role_id)  # Verify role exists and belongs to tenant
+
+        if role.is_system:
+            raise ForbiddenError("System roles cannot be assigned to users", reason="system_role")
 
         # Verify user belongs to the same tenant (P1 fix: tenant isolation).
         # Membership seam (not the active gate): role bookkeeping must also

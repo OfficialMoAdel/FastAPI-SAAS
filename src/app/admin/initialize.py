@@ -8,7 +8,7 @@ from src.app.core.config import EnvironmentOption, settings
 from src.app.core.db.database import get_db_context
 
 
-async def _get_db_session() -> AsyncGenerator[AsyncSession, None]:
+async def _get_db_session() -> AsyncGenerator[AsyncSession]:
     """Provide CRUDAdmin-compatible sessions with a cross-tenant contract.
 
     C-2 tenancy contract: the admin panel is an operator surface that manages

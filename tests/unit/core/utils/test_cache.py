@@ -96,7 +96,7 @@ def client() -> MagicMock:
 
 
 @pytest.fixture(autouse=True)
-def patch_client(client: MagicMock) -> AsyncGenerator[None, None]:
+def patch_client(client: MagicMock) -> AsyncGenerator[None]:
     """Patch the module-level client to a mock for Redis-backed tests."""
     with patch.object(cache_mod, "client", client):
         yield

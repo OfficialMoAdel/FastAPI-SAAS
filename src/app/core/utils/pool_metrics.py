@@ -75,9 +75,9 @@ def setup_pool_metrics(engine: Any) -> None:
         _metrics.overflow = pool.overflow()
 
         logger.debug(
-            "DB connection checkout | checked_out=%d | overflow=%d",
-            _metrics.checked_out,
-            _metrics.overflow,
+            "db_connection_checkout",
+            checked_out=_metrics.checked_out,
+            overflow=_metrics.overflow,
         )
 
     @event.listens_for(pool, "checkin")
@@ -87,15 +87,18 @@ def setup_pool_metrics(engine: Any) -> None:
         _metrics.checked_in = pool.checkedin()
 
         logger.debug(
-            "DB connection checkin | checked_in=%d",
-            _metrics.checked_in,
+            "db_connection_checkin",
+            checked_in=_metrics.checked_in,
         )
 
     @event.listens_for(pool, "connect")
     def on_connect(dbapi_conn: Any, connection_record: Any) -> None:
         """Track new connection creation."""
         _metrics.total_connections += 1
-        logger.debug("New DB connection created | total=%d", _metrics.total_connections)
+        logger.debug(
+            "db_connection_created",
+            total=_metrics.total_connections,
+        )
 
     @event.listens_for(pool, "invalidate")
     def on_invalidate(dbapi_conn: Any, connection_record: Any, exception: Any) -> None:
@@ -103,15 +106,15 @@ def setup_pool_metrics(engine: Any) -> None:
         _metrics.total_invalidations += 1
         _metrics.invalidated += 1
         logger.warning(
-            "DB connection invalidated | reason=%s | total_invalidations=%d",
-            str(exception) if exception else "manual",
-            _metrics.total_invalidations,
+            "db_connection_invalidated",
+            reason=str(exception) if exception else "manual",
+            total_invalidations=_metrics.total_invalidations,
         )
 
     logger.info(
-        "Connection pool metrics initialized | pool_size=%d | max_overflow=%d",
-        pool.size(),
-        pool._max_overflow,
+        "pool_metrics_initialized",
+        pool_size=pool.size(),
+        max_overflow=pool._max_overflow,
     )
 
 
@@ -136,11 +139,11 @@ def log_pool_status(engine: Any) -> dict[str, int]:
     status = _metrics.get_snapshot()
 
     logger.info(
-        "Pool status | size=%d | checked_out=%d | checked_in=%d | overflow=%d",
-        status["pool_size"],
-        status["checked_out"],
-        status["checked_in"],
-        status["overflow"],
+        "pool_status",
+        size=status["pool_size"],
+        checked_out=status["checked_out"],
+        checked_in=status["checked_in"],
+        overflow=status["overflow"],
     )
 
     return status

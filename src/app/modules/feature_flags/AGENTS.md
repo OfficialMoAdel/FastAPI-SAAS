@@ -23,18 +23,19 @@ uv run ruff check src/app/modules/feature_flags/
 ```
 src/app/modules/feature_flags/
 ├── __init__.py           # Exports: FeatureFlagService, get_feature_flag_service, models, schemas, CRUD
-├── router.py             # FastAPI routes
+├── router.py             # FastAPI routes (prefix /features) + get_feature_flag_service factory
 ├── service.py            # FeatureFlagService business logic (the single flag API)
 ├── schemas.py            # Pydantic schemas
 ├── models.py             # SQLAlchemy models (FeatureFlag, FeatureFlagOverride)
 └── crud.py               # FastCRUD operations
 ```
 
-B7: the legacy JSONB shims (`is_feature_enabled` / `update_feature_flag` /
-`bulk_update_feature_flags`) were REMOVED, and the module's `utils.py` was
-deleted with them — it had no production callers and its Redis cache key
-collided with the service's. `FeatureFlagService` is the single flag
-module; `get_tenant_flags` is the tenant-JSONB read (with cache).
+There is **no** `utils.py` — it was deleted along with the legacy JSONB
+shims (`is_feature_enabled` / `update_feature_flag` /
+`bulk_update_feature_flags`), which had no production callers and whose
+Redis cache key collided with the service's. `FeatureFlagService` is the
+single flag module; `get_tenant_flags` is the tenant-JSONB read (with
+cache).
 
 ### B7 Precedence Contract (highest wins)
 
@@ -51,11 +52,59 @@ Flag resolution order — implemented in `service.py::is_enabled` and
 is cached per tenant+flag in Redis; mutations go through
 `_invalidate_cache`.
 
+⚠️ **A value that fell through to the caller's `default` is never
+cached.** Both accessors cache only values sourced from the registry, an
+override, or the tenant JSONB, because the cache key
+(`feature:{name}` / `feature_value:{name}`) does not include `default` —
+the first caller's fallback would otherwise be served to everyone else for
+`CACHE_TTL`. The JSONB tier therefore requires the flag to be *in* the
+map (`feature_name in tenant.feature_flags`), not merely that the map is
+non-empty; `is_enabled` mirrors `_resolve_flag_value` exactly. This also
+bounds the key space of `GET /features/{flag_name}`, whose path param is
+unconstrained. See
+`tests/unit/modules/feature_flags/test_flag_default_not_cached.py`.
+
+### Tenant-JSONB writes are locked (concurrency contract)
+
+`update_tenant_flag` / `delete_tenant_flag` / `bulk_update_tenant_flags`
+read-modify-write the whole `Tenant.feature_flags` column, so they must not
+be naive:
+
+- **Row lock** — the Tenant read is `db.get(Tenant, tid, with_for_update=True)`
+  (`_get_tenant_for_update`). A plain `db.get` is answered from the
+  identity map whenever the row is already loaded (the usual case in a
+  request), so it emits no SQL and takes NO lock; `with_for_update` forces
+  a real `SELECT ... FOR UPDATE` held until the mutator's own commit.
+  Without it, two concurrent writes for different flags on one tenant both
+  load the same dict and the second commit discards the first flag, and
+  `delete_tenant_flag` loses its check-then-act too.
+- **Same singleflight lock as the readers** — commit + invalidation run
+  under `_flag_cache_locks[features]` (`_commit_and_invalidate`), the same
+  lock `get_tenant_flags`' `_load()` holds across its `db.get` +
+  `cache_client.set`. Without it a reader that loaded the PRE-commit JSONB
+  writes it back after the writer's eviction — stale and un-evictable for
+  `CACHE_TTL`. No second lock table: reuse `_with_flag_lock` /
+  `_flag_cache_locks`. Lock order is `features` only, keeping the graph
+  acyclic with `get_flag_value`'s `feature_value:{name}` → `features`
+  nesting (never the reverse).
+- **One invalidation shape** — every write evicts all three key shapes in
+  a single varargs delete: `features`, `feature:{name}`, and
+  `feature_value:{name}` (F27). Single and bulk paths both go through
+  `_invalidate_decision_keys`, so they cannot drift apart again; the bulk
+  path previously omitted `feature_value:` and left `get_flag_value`
+  serving the pre-bulk value for `CACHE_TTL`.
+
+See `tests/unit/modules/feature_flags/test_tenant_flag_writes.py`.
+
 ### Feature Flag Storage
-✅ DO: Store flags as JSONB on tenant model for performance
+⚠️ The JSONB column is the **fallback tier** of the B7 contract, not the
+primary store. Registry rows (`FeatureFlag` / `FeatureFlagOverride`) are
+authoritative; this dict is consulted only when no registry row matches.
 ```python
-# src/app/modules/tenants/models.py (lines 30-35)
-feature_flags: dict[str, Any] = Column(JSONB, nullable=True, default=dict)
+# src/app/modules/tenants/models.py:43
+feature_flags: Mapped[dict] = mapped_column(
+    JSONB, nullable=False, default_factory=dict, server_default="{}"
+)
 ```
 
 ### Check if Feature is Enabled
@@ -75,12 +124,22 @@ route through the service so the B7 precedence and cache invalidation apply.
 ### Get All Feature Flags
 ✅ DO: Read the merged per-tenant flag map via the service
 ```python
-# src/app/modules/feature_flags/router.py (list endpoint)
-@router.get("", response_model=FeatureFlagsResponse)
-async def list_feature_flags(ctx: RequestContextDep) -> FeatureFlagsResponse:
-    flags = await ctx.service.get_tenant_flags(ctx.tenant_id)
-    return FeatureFlagsResponse(flags=flags)
+# src/app/modules/feature_flags/router.py:31 (list endpoint)
+@router.get(
+    "",
+    response_model=FeatureFlagsResponse,
+    dependencies=[Depends(requires_permission(Permission.FEATURE_FLAGS_READ))],
+)
+async def list_feature_flags(
+    ctx: RequestContextDep,
+    service: FeatureFlagService = Depends(get_feature_flag_service),
+) -> FeatureFlagsResponse:
+    flags = await service.get_tenant_flags(ctx.tenant_id)
+    return FeatureFlagsResponse(feature_flags=flags)
 ```
+⚠️ The response field is `feature_flags`, **not** `flags` — the Pydantic
+model is `FeatureFlagsResponse.feature_flags: dict[str, Any]`. Passing
+`flags=` silently drops the payload into Pydantic's ignored-extra bucket.
 
 ### Update / Delete / Bulk-Update Flags
 ✅ DO: Mutate through the service (cache invalidation included)
@@ -102,16 +161,25 @@ a plain value or `{"value": ...}` / `{"enabled": ...}`.
 ## Touch Points / Key Files
 
 ### Core Service
-- Service: `src/app/modules/feature_flags/service.py` - `FeatureFlagService` (single flag API: is_enabled, get_flag_value, get_tenant_flags, update/delete/bulk_update_tenant_flag(s), overrides, warm_feature_flags)
-  (`utils.py` was deleted — no production callers, and its cache key collided with the service's)
+- `src/app/modules/feature_flags/service.py` — `FeatureFlagService`, the single
+  flag API: `is_enabled`, `get_flag_value`, `get_tenant_flags`,
+  `update_tenant_flag` / `delete_tenant_flag` / `bulk_update_tenant_flags`,
+  the override CRUD, and the module-level `warm_feature_flags(session)` warmer
+  (`service.py:746` for the `@warmer.register` decorator, `service.py:747`
+  for the `async def`, registered as the `"feature_flags"` warmer).
 
 ### Router
-- Router: `src/app/modules/feature_flags/router.py` - API endpoints at `/api/v1/feature-flags`
+- `src/app/modules/feature_flags/router.py` — mounted at
+  `/api/v1/features` (router prefix `/features` under the `/api` + `/v1`
+  group routers). It is **not** `/api/v1/feature-flags`. The
+  `get_feature_flag_service` DI factory also lives here.
 
 ### Schemas
-- Response: `FeatureFlagsResponse` - `{"flags": {...}}`
-- Check: `FeatureFlagCheckResponse` - `{"flag_name": str, "enabled": Any}`
-- Update: `FeatureFlagUpdateRequest` - `{"value": Any}`
+- `FeatureFlagsResponse` — `{"feature_flags": {...}}` (field name is
+  `feature_flags`, not `flags`)
+- `FeatureFlagCheckResponse` — `{"flag_name": str, "enabled": bool, "value": Any | None}`
+- `FeatureFlagUpdateRequest` — `{"enabled": bool | None, "value": Any | None}`
+- `FeatureFlagBulkUpdateRequest` — `{"feature_flags": {...}}`
 
 ### Models
 - FeatureFlag: Global feature flag definitions
@@ -124,7 +192,7 @@ a plain value or `{"value": ...}` / `{"enabled": ...}`.
 rg -n "is_enabled|get_flag_value" src/app/modules/feature_flags/
 
 # Find feature flag routes
-rg -n "feature-flags" src/app/modules/feature_flags/
+rg -n 'prefix="/features"' src/app/modules/feature_flags/
 
 # Find feature flag updates
 rg -n "update_tenant_flag|bulk_update_tenant_flags" src/app/modules/feature_flags/
@@ -132,8 +200,8 @@ rg -n "update_tenant_flag|bulk_update_tenant_flags" src/app/modules/feature_flag
 # Find flag usage in code
 rg -n "feature_flags\." src/app/modules/
 
-# Find schema definitions
-rg -n "class.*FeatureFlag.*Schema" src/app/modules/feature_flags/
+# Find schema definitions (named FeatureFlag*Base/Create/Update/Read, not *Schema)
+rg -n "^class FeatureFlag" src/app/modules/feature_flags/schemas.py
 ```
 
 ## Common Gotchas
@@ -152,20 +220,35 @@ await service.update_tenant_flag(tenant_id, "limits", {"max_users": 100})
 ```
 
 ### Missing Flags
-✅ DO: Return `False` or `None` for non-existent flags
+⚠️ The service **raises**, it does not return a sentinel. `is_enabled`
+resolves to the caller's `default` (default `False`) when no flag matches —
+but `delete_tenant_flag` on a missing flag raises `ModelNotFoundError`,
+which the central `AppException` handler in `src/app/core/errors.py` maps
+to **404** via the exception's own `http_status`
+(`src/app/shared/exceptions.py:143`).
 ```python
-# The service raises a domain error; the central
-# EXCEPTION_HANDLERS table maps it to 404 for DELETE on non-existent flag
 from src.app.shared.exceptions import ModelNotFoundError
 ```
 
 ### Admin Protection
-✅ DO: Add RBAC check for flag management endpoints
+✅ DONE — RBAC is already enforced per-route; do not re-add it. The
+dependency comes from `src.app.core.rbac.dependencies`
+(`requires_permission`), **not** `src.app.modules.rbac.dependencies`, and
+permissions are `Permission` enum members rather than bare strings:
 ```python
-# TODO in router - add admin permission check
-# from src.app.modules.rbac.dependencies import require_permission
-# require_permission("feature_flags.manage")
+# src/app/modules/feature_flags/router.py — READ on GET, MANAGE on writes
+from src.app.core.rbac.dependencies import requires_permission
+from src.app.core.rbac.permissions import Permission
+
+@router.get(
+    "",
+    response_model=FeatureFlagsResponse,
+    dependencies=[Depends(requires_permission(Permission.FEATURE_FLAGS_READ))],
+)
 ```
+❌ DON'T: hand-roll an admin check on a new endpoint — copy the
+`requires_permission(Permission.FEATURE_FLAGS_*)` dependency from a sibling
+route so the two stay in sync.
 
 ### Performance
 ✅ DO: Cache frequently checked flags in Redis (is_enabled/get_tenant_flags already do)
@@ -175,7 +258,7 @@ from src.app.shared.exceptions import ModelNotFoundError
 
 ```bash
 # Test feature flag functionality
-uv run pytest tests/test_feature_flags.py -v
+uv run pytest tests/unit/modules/feature_flags/ -v
 
 # Type check
 uv run mypy src/app/modules/feature_flags/
@@ -183,6 +266,26 @@ uv run mypy src/app/modules/feature_flags/
 # Lint
 uv run ruff check src/app/modules/feature_flags/
 
-# Test flag checking in context
-uv run pytest tests/test_tenant_context.py -v -k "feature"
+# Integration coverage (router + permissions)
+uv run pytest tests/integration/modules/feature_flags/ -v
 ```
+
+❌ There is no root-level `test_feature_flags` or `test_tenant_context`
+module under `tests/` — those were the two stale commands above. The root
+`tests/` tree holds shared harnesses (`conftest.py`, `pytest_plugin.py`,
+`factories/`, `fixtures/`); suites live under `tests/unit/…`,
+`tests/integration/…` and `tests/contract/…`. Tenant context lives at
+`tests/unit/core/tenancy/test_tenant_context.py`.
+
+## Doc Pointer Integrity
+
+Every rooted `src/…`, `tests/…`, `scripts/…`, `docs/…` and `.github/…`
+path in this file is a claim that the path exists, and is enforced:
+
+```bash
+uv run python scripts/check_doc_paths.py
+```
+
+If you add a pointer here, the checker runs in CI. If it fails, either fix
+the pointer or add a reasoned `ALLOWLIST` entry in the script — never leave
+a dead pointer for the next reader to trip over.

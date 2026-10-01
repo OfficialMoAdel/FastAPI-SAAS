@@ -101,11 +101,7 @@ class CircuitBreaker:
         return before the lock/imports. Every DB op wraps
         ``db_circuit_guard()``, making this the hottest path here.
         """
-        if (
-            self._state is CircuitState.CLOSED
-            and self._failure_count == 0
-            and not self._probe_in_progress
-        ):
+        if self._state is CircuitState.CLOSED and self._failure_count == 0 and not self._probe_in_progress:
             return
         from src.app.core.config import settings
         from src.app.core.monitoring.r1_unified_metrics import record_circuit_breaker_transition
@@ -120,9 +116,9 @@ class CircuitBreaker:
                 if self._success_count >= self.success_threshold:
                     self._close()
                     logger.info(
-                        "Circuit breaker '%s' closed after %d successful recovery tests",
-                        self.name,
-                        self.success_threshold,
+                        "circuit_breaker_closed",
+                        breaker=self.name,
+                        success_threshold=self.success_threshold,
                     )
                     # Record state transition for monitoring
                     if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
@@ -152,9 +148,9 @@ class CircuitBreaker:
             if self.state == CircuitState.HALF_OPEN:
                 self._open()
                 logger.warning(
-                    "Circuit breaker '%s' re-opened after failure during recovery test | error=%s",
-                    self.name,
-                    str(error),
+                    "circuit_breaker_reopened",
+                    breaker=self.name,
+                    error=str(error),
                 )
                 # Record state transition for monitoring
                 if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
@@ -162,10 +158,10 @@ class CircuitBreaker:
             elif self._failure_count >= self.failure_threshold:
                 self._open()
                 logger.warning(
-                    "Circuit breaker '%s' opened after %d failures | error=%s",
-                    self.name,
-                    self.failure_threshold,
-                    str(error),
+                    "circuit_breaker_opened",
+                    breaker=self.name,
+                    failure_threshold=self.failure_threshold,
+                    error=str(error),
                 )
                 # Record state transition for monitoring
                 if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:

@@ -17,11 +17,13 @@ from src.app.core.principal import (
     get_auth_context,  # noqa: F401 — re-exported; the dependency itself lives in core
     register_principal_provider,
 )
+from src.app.core.rbac.superuser_tenant import enforce_superuser_tenant_rule
 from src.app.core.security import TokenType, api_key_scheme, oauth2_scheme, verify_token
 from src.app.core.security.jwt_utils import get_cached_jwt_payload
-from src.app.core.tenancy.context import get_current_tenant
+from src.app.core.tenancy.context import NO_TENANT, get_current_tenant
 from src.app.modules.users import UserDirectory
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
+from src.app.shared.exceptions import TenantContextError
 from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
 logger = get_logger(__name__)
@@ -239,9 +241,23 @@ def _enforce_user_tenant_match(
     user: dict[str, Any],
     current_tenant: Any,
 ) -> None:
-    """Shared tenant-mismatch check (superusers bypass)."""
-    if not current_tenant or user.get("is_superuser", False):
+    """Shared tenant-mismatch check (superusers bypass).
+
+    P1-6: the NO_TENANT sentinel is falsy BY DESIGN, so a truthiness test
+    silently skipped the binding check on tenant-exempt paths. Test identity
+    instead. Identity — not ``is_active``, which is a real field: a
+    legitimately deactivated tenant must still be bound to its own users.
+
+    The superuser bypass runs FIRST, deliberately. Tenant-exempt prefixes
+    such as /api/v1/tenants bind NO_TENANT and are gated by
+    get_current_superuser; checking the sentinel first would 403 those
+    cross-tenant operator routes. Superuser is the authorization decision for
+    them, and a superuser is not tenant-scoped by definition.
+    """
+    if user.get("is_superuser", False):
         return
+    if current_tenant is None or current_tenant is NO_TENANT:
+        raise denial(DenialReason.TENANT_CONTEXT_MISSING)
     user_tid = str(user.get("tenant_id")) if user.get("tenant_id") is not None else None
     curr_tid = str(getattr(current_tenant, "id", getattr(current_tenant, "tenant_id", None)))
     if user_tid != curr_tid:
@@ -280,9 +296,28 @@ async def _resolve_optional_bearer_flow(
         await _enforce_session_valid(session_id, None, user.get("id"), jwt_exp)
         _enforce_user_tenant_match(user, current_tenant)
         return _create_auth_context(user, token_data, current_tenant, db)
-    except (UnauthorizedException, ForbiddenException):
+    except (UnauthorizedException, ForbiddenException, TenantContextError):
+        # P1-6: TenantContextError is a sibling AppException, not an
+        # Unauthorized/Forbidden one, so it used to fall through to the bare
+        # except below and be rewritten as NO_CREDENTIAL — a caller holding a
+        # valid token was served the anonymous view, violating the C3 rule
+        # stated in this function's docstring.
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - deliberate fail-loud boundary: see below
+        # DELIBERATE (muse 22 triage). The boundary is the whole point of the
+        # function: C3 requires a PRESENTED bearer token that fails for ANY
+        # reason to be rejected loudly (401), never served as anonymous. The
+        # three domain errors above are re-raised with their own reasons; this
+        # handler is the catch-all that keeps an UNEXPECTED fault (a DB
+        # driver error, a serialization bug, a blacklisted-session store
+        # failure) from escaping as a 500 and from masquerading as
+        # "no credential" — the first is an outage, the second is a
+        # fail-OPEN that would serve the anonymous view to a caller holding
+        # a bad token. Both are unacceptable, so the fault is logged and
+        # converted to a denial. It is broad on purpose: the set of things
+        # token verification can raise is not knowable at this seam, and a
+        # narrow list would let exactly the unanticipated fault it exists to
+        # contain escape instead.
         logger.warning("optional_auth_context_verify_failed", error=str(e))
         raise denial(DenialReason.NO_CREDENTIAL) from e
 
@@ -508,10 +543,11 @@ async def get_user_by_api_key(
         return None
 
     current_tenant = get_current_tenant()
-    if current_tenant:
-        key_tenant_id = key_info.get("tenant_id")
-        if not key_tenant_id or str(key_tenant_id) != str(current_tenant.tenant_id):
-            raise denial(DenialReason.API_KEY_TENANT_MISMATCH)
+    if current_tenant is None or current_tenant is NO_TENANT:
+        raise denial(DenialReason.TENANT_CONTEXT_MISSING)
+    key_tenant_id = key_info.get("tenant_id")
+    if not key_tenant_id or str(key_tenant_id) != str(current_tenant.tenant_id):
+        raise denial(DenialReason.API_KEY_TENANT_MISMATCH)
 
     directory = UserDirectory(db)
     found = await directory.by_id(key_info["user_id"])
@@ -571,11 +607,44 @@ async def get_optional_user(
 
 async def get_current_superuser(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    auth_context: Annotated[AuthContext | None, Depends(get_auth_context)] = None,
 ) -> AuthenticatedUser:
+    """Require an active superuser, bound to the tenant it acts in.
+
+    P1: this gate checked only ``is_active``/``is_superuser`` while
+    ``requires_permission`` pinned the tenant first — the same documented rule
+    implemented twice, differently, on adjacent mutations in the same router.
+    It now applies the SHARED assertion.
+
+    Note the ordering difference from ``requires_permission``, and why it is
+    correct here: a superuser is not tenant-scoped by definition, and the
+    tenant-exempt operator surface (``/api/v1/tenants``) is exactly where a
+    cross-tenant principal must be admitted. So on a tenant-BOUND request the
+    tenant is asserted; on a tenant-less one there is nothing to compare and
+    the superuser check stands alone.
+
+    The tenant comes from ``auth_context.tenant`` — the same resolved principal
+    ``requires_permission`` reads — NOT from ``get_current_tenant()``. Reading
+    the ContextVar here is the second, divergent resolution path the shared
+    rule exists to delete: under the sanctioned
+    ``app.dependency_overrides[get_auth_context]`` seam the two sources can
+    disagree, and the two gates would then enforce different rules on adjacent
+    mutations. ``get_auth_context`` is already a sub-dependency of
+    ``get_current_user``, so this adds no extra principal resolution (FastAPI
+    caches it per request). ``auth_context`` is optional only so the gate stays
+    callable directly from unit tests; in production it is always supplied.
+    """
     if not current_user.is_active:
         raise denial(DenialReason.INACTIVE_SUPERUSER)
     if not current_user.is_superuser:
         raise denial(DenialReason.NOT_SUPERUSER)
+
+    enforce_superuser_tenant_rule(
+        user_tenant_id=current_user.tenant_id,
+        request_tenant=auth_context.tenant if auth_context is not None else None,
+        user_id=current_user.id,
+        gate="get_current_superuser",
+    )
 
     return current_user
 

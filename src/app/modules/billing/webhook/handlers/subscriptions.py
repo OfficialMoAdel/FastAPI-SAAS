@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import stripe
-
+from src.app.clients.billing import StripeEvent
 from src.app.modules.billing import webhook as _pkg
 from src.app.modules.billing.lifecycle import (
     extract_period_timestamps,
@@ -22,7 +21,7 @@ from src.app.modules.billing.webhook.locks import (
 )
 
 
-async def handle_subscription_updated(event: stripe.Event) -> None:
+async def handle_subscription_updated(event: StripeEvent) -> None:
     """Handle customer.subscription.updated event.
 
     Updates subscription status and period dates.
@@ -122,7 +121,7 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
     )
 
 
-async def handle_subscription_deleted(event: stripe.Event) -> None:
+async def handle_subscription_deleted(event: StripeEvent) -> None:
     """Handle customer.subscription.deleted event.
 
     Marks subscription as canceled/expired.

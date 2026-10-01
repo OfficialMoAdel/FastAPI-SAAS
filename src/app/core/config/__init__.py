@@ -94,6 +94,10 @@ __all__ = [
 ]
 
 
+# H-7: keys already warned about, module-level. See Settings.__getattr__.
+_FLAT_ACCESSOR_WARNED: set[str] = set()
+
+
 class Settings(BaseSettings):
     """Main application settings using composition.
 
@@ -283,26 +287,50 @@ class Settings(BaseSettings):
         target_component = self._delegation_map.get(name)
         if target_component:
             component = super().__getattribute__(target_component)
-            # P2-2: warn on first access through the dynamic delegation map.
-            # The plan is to codemod call sites to ``settings.<component>.<name>``
-            # and delete this fallback. Until that lands, every use of the
-            # legacy flat accessor is a hint to migrate.
-            # P2-2: warn once per field (not per access) — otherwise the
-            # hot path spams stderr and PowerShell treats every warning line
-            # as a NativeCommandError when 2>&1 is used.
-            _warned: set[str] = getattr(self, "_flat_accessor_warned", set())
-            if name not in _warned:
-                _warned.add(name)
-                try:
-                    object.__setattr__(self, "_flat_accessor_warned", _warned)
-                except Exception:
-                    pass
+            # H-7: the flat accessor raises a DeprecationWarning naming the exact
+            # dotted path, instead of the previous logger.debug.
+            #
+            # WHAT THIS IS *NOT*: a self-generating worklist. The comment that
+            # used to sit here claimed "DeprecationWarning is on by default, so
+            # the worklist is self-generating" — that is false. Python's default
+            # filters are `default::DeprecationWarning:__main__` +
+            # `ignore::DeprecationWarning`, so outside `__main__` the warning is
+            # DROPPED, and this repo additionally sets `ignore::DeprecationWarning:`
+            # in pyproject's filterwarnings. Under `uvicorn src.app.main:app` the
+            # warning is therefore exactly as invisible as the logger.debug it
+            # replaced.
+            #
+            # THE ACTUAL WORKLIST is the ratchet:
+            # `tests/unit/core/config/test_flat_settings_access.py::
+            # TestNoFlatConfigAccess`, which greps `src/app` for the flat form
+            # and fails on a new one. `src/app` currently has zero flat reads.
+            # What this warning adds is visibility for a HUMAN running the app
+            # under `python -W default::DeprecationWarning` or a debugger.
+            #
+            # The "warn once" set is MODULE-level, not instance-level, so a
+            # rebuilt `Settings()` does not re-warn and the pinning tests can
+            # reset it with `_FLAT_ACCESSOR_WARNED.discard(...)`. The previous
+            # instance attribute was the wrong scope: it did not survive pydantic
+            # v2 field handling for a non-field name, so every access re-warned —
+            # 28 warnings for a single key in one process, which would flood the
+            # suite and train everyone to ignore them.
+            if name not in _FLAT_ACCESSOR_WARNED:
+                _FLAT_ACCESSOR_WARNED.add(name)
                 import logging
+                import warnings
 
+                dotted = f"settings.{target_component}.{name}"
                 logging.getLogger(__name__).debug(
-                    "config_legacy_flat_accessor_used field=%s component=%s",
+                    "config_legacy_flat_accessor_used field=%s dotted=%s",
                     name,
-                    target_component,
+                    dotted,
+                )
+                warnings.warn(
+                    f"settings.{name} uses the flat config delegation. "
+                    f"Use {dotted} instead — the flat form resolves through "
+                    f"__getattr__, which no static analyser can see through.",
+                    DeprecationWarning,
+                    stacklevel=2,
                 )
             return getattr(component, name)
 

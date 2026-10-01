@@ -17,6 +17,8 @@ Authority contract (P2-#9, deletion test):
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -58,6 +60,41 @@ _in_flight_token_version: dict[str, asyncio.Task[int | None]] = {}
 _token_version_lock = asyncio.Lock()
 
 _jwt_logger = get_logger(__name__)
+
+
+# PII: a user subject (username OR email) is personal data, and this module's
+# events name the subject it is deciding on. The log sanitizer does NOT cover
+# it: ``LogSanitizer._SENSITIVE_KEY_RE`` matches password/secret/token/auth/
+# credential, NOT ``user``/``username``/``email``, and a bare subject with no
+# "@" trips no SENSITIVE_PATTERNS entry either — so ``user=alice_hunt`` was
+# rendered verbatim. An email subject was only shape-masked to
+# ``a***@corp.example.com``, which still identifies the person and their
+# employer. Both are the sites this helper exists for.
+#
+# HMAC, not bare SHA-256: a subject is low-entropy, so an unsalted digest is
+# reversible by rainbow table — exactly the reason ``security/tokens.py``
+# peppers its digests. The domain string is distinct from that module's, so a
+# log reference can never be correlated with a stored token digest.
+_LOG_SUBJECT_DOMAIN = "saas-log-subject-v1"
+
+
+@lru_cache(maxsize=1)
+def _log_subject_pepper() -> bytes:
+    """Pepper for :func:`subject_log_ref`, bound to the log-subject domain."""
+    return f"{_LOG_SUBJECT_DOMAIN}:{settings.SECRET_KEY.get_secret_value()}".encode()
+
+
+def subject_log_ref(subject: str | None) -> str:
+    """Stable, non-reversible log reference for a user subject.
+
+    Same subject -> same reference within a deployment (so an incident can
+    still be followed across events), without the log ever holding the
+    identifier. Empty/None is labelled rather than hashed, so "no subject"
+    stays greppable.
+    """
+    if not subject:
+        return "anonymous"
+    return hmac.new(_log_subject_pepper(), subject.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
 
 
 class TokenVersionLookup(Protocol):
@@ -301,7 +338,7 @@ async def _load_token_version(cache_key: str, username_or_email: str) -> int | N
     if _token_version_lookup is None:
         from src.app.shared.exceptions import ServiceUnavailableError
 
-        _jwt_logger.error("token_version_lookup_unwired", user=username_or_email)
+        _jwt_logger.error("token_version_lookup_unwired", user_ref=subject_log_ref(username_or_email))
         raise ServiceUnavailableError("Token version service unavailable")
     version = await _token_version_lookup(username_or_email)
     if version is None:
@@ -311,7 +348,9 @@ async def _load_token_version(cache_key: str, username_or_email: str) -> int | N
 
         await cache_client.set_nx(cache_key, str(version), ttl=300)
     except Exception as e:
-        _jwt_logger.warning("token_version_cache_write_error", error=str(e), user=username_or_email)
+        _jwt_logger.warning(
+            "token_version_cache_write_error", error=str(e), user_ref=subject_log_ref(username_or_email)
+        )
     return version
 
 
@@ -387,7 +426,9 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
             if cached_value is not None:
                 cached_version = int(cached_value)
         except Exception as e:
-            _jwt_logger.warning("token_version_cache_read_error", error=str(e), user=username_or_email)
+            _jwt_logger.warning(
+                "token_version_cache_read_error", error=str(e), user_ref=subject_log_ref(username_or_email)
+            )
 
         if cached_version is not None:
             if cached_version != token_version:
@@ -404,7 +445,9 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
                 db_version = await task
             except Exception as e:
                 # Fail closed: an unloadable token_version rejects the token.
-                _jwt_logger.error("token_version lookup failed, rejecting", error=str(e), user=username_or_email)
+                _jwt_logger.error(
+                    "token_version lookup failed, rejecting", error=str(e), user_ref=subject_log_ref(username_or_email)
+                )
                 return None
             finally:
                 async with _token_version_lock:
@@ -446,7 +489,7 @@ async def _resolve_tenant_id_for_token(payload: dict[str, Any], db: AsyncSession
         return await _user_tenant_lookup(sub, db)
 
     if sub:
-        _jwt_logger.warning("user_tenant_lookup_unwired", user=sub)
+        _jwt_logger.warning("user_tenant_lookup_unwired", user_ref=subject_log_ref(sub))
     return None
 
 

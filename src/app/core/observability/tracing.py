@@ -20,7 +20,7 @@ def trace_span(
     name: str,
     attributes: dict[str, Any] | None = None,
     kind: trace.SpanKind = trace.SpanKind.INTERNAL,
-) -> Generator[trace.Span, None, None]:
+) -> Generator[trace.Span]:
     """Create and manage a trace span.
 
     Args:

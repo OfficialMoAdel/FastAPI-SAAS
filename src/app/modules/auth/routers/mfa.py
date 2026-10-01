@@ -1,3 +1,4 @@
+
 """MFA router - handles multi-factor authentication endpoints.
 
 Provides API endpoints for:
@@ -30,6 +31,7 @@ from src.app.modules.auth.schemas import (
 )
 from src.app.modules.auth.services.mfa import MFAService, get_mfa_service
 from src.app.modules.auth.services.step_up import verify_step_up_password
+from src.app.schemas.responses import MFADisableResponse, MFAEnableResponse
 from src.app.shared.exceptions import (  # noqa: F401 — re-exported for test patch targets
     RateLimitExceededError,
     UnauthorizedError,
@@ -88,7 +90,7 @@ async def setup_mfa(
     return MFASetupResponse(**result)
 
 
-@router.post("/enable", response_model=dict[str, Any])
+@router.post("/enable", response_model=MFAEnableResponse)
 async def enable_mfa(
     request: MFAEnableRequest,
     ctx: RequestContextDep,
@@ -154,7 +156,7 @@ async def verify_mfa(
     return MFAVerifyResponse(**result)
 
 
-@router.post("/disable", response_model=dict[str, str])
+@router.post("/disable", response_model=MFADisableResponse)
 async def disable_mfa(
     request: MFADisableRequest,
     ctx: RequestContextDep,

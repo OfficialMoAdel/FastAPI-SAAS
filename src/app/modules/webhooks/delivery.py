@@ -245,9 +245,9 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
             # scheduling next_retry_at in the past.
             recovery_time = max(0.0, breaker.recovery_timeout - (current_time - breaker.last_failure_time))
             logger.warning(
-                "Circuit breaker open for webhooks, skipping delivery %s | recovery_in=%.1fs",
-                delivery_id,
-                recovery_time,
+                "webhook_circuit_open_delivery_skipped",
+                delivery_id=delivery_id,
+                recovery_in_s=recovery_time,
             )
             # W4 FIX: a circuit-open skip is NOT a delivery attempt. Previously
             # attempt_count was incremented here, so ~6 consecutive open ticks
@@ -426,7 +426,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
 
         elif circuit_error is not None:
             # Circuit opened during delivery attempt
-            logger.warning("Webhook circuit breaker opened: %s", circuit_error)
+            logger.warning("webhook_circuit_opened", error=str(circuit_error))
             delivery.attempt_count += 1
             delivery.response_body = str(circuit_error)[:1000]
             await _handle_failure(db, delivery, override_delay=getattr(circuit_error, "recovery_in", None))

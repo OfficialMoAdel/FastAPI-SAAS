@@ -124,7 +124,7 @@ class TestWarmAllExecution:
         # args[0] is the log message template.
         events = [call.args[0] for call in mock_logger.info.call_args_list if call.args]
         assert any("cache_warming_started" == e for e in events), events
-        assert any(e == "complete_cache_warming_finished_total_duration_s" for e in events), events
+        assert any(e == "cache_warming_finished" for e in events), events
 
     async def test_warm_all_returns_empty_result_when_no_warmers(self):
         """Test that warm_all returns empty result when no warmers registered."""
@@ -261,7 +261,7 @@ class TestWarmingObservability:
 
         completes = [
             c for c in mock_logger.info.call_args_list
-            if c.args and c.args[0] == "complete_cache_warming_finished_total_duration_s"
+            if c.args and c.args[0] == "cache_warming_finished"
         ]
         assert any(c.kwargs.get("errors") == 1 for c in completes), completes
 
@@ -295,7 +295,7 @@ class TestWarmingObservability:
             await test_warmer.warm_all(mock_session)
 
         assert any(
-            c.args and c.args[0] == "complete_cache_warming_finished_total_duration_s"
+            c.args and c.args[0] == "cache_warming_finished"
             for c in mock_logger.info.call_args_list
         )
 

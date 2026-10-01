@@ -8,7 +8,7 @@ Webhook event subscription and delivery system for real-time event notifications
 
 ```bash
 # Test webhooks module
-uv run pytest tests/test_webhooks.py -v
+uv run pytest tests/unit/modules/webhooks/test_webhooks.py -v
 
 # Type check module
 uv run mypy src/app/modules/webhooks/
@@ -221,7 +221,7 @@ TIMEOUT = httpx.Timeout(10.0, connect=5.0)  # 10s total, 5s connect
 
 ```bash
 # Test webhook creation and listing
-uv run pytest tests/test_webhooks.py -v
+uv run pytest tests/unit/modules/webhooks/test_webhooks.py -v
 
 # Test webhook delivery
 uv run pytest tests/test_webhook_delivery.py -v

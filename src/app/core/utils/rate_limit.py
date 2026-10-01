@@ -108,7 +108,7 @@ class RateLimiter:
                     retry_after = int(math.ceil(result.retry_after)) if result.is_limited else 0
                     return result.is_limited, result.remaining, retry_after
                 except Exception as e:
-                    logger.warning("GCRA rate limit check failed: %s", e)
+                    logger.warning("gcra_rate_limit_check_failed", error=str(e))
                     # Fallback to fixed window handled below
 
         # Fixed window fallback / default
@@ -117,7 +117,7 @@ class RateLimiter:
             remaining = max(0, limit - current_count)
             return is_limited, remaining, 0
         except Exception as fallback_e:
-            logger.error("Rate limit check failed: %s", fallback_e)
+            logger.error("rate_limit_check_failed", error=str(fallback_e))
             # R1 FIX: RATE_LIMIT_FAIL_OPEN lives on settings.rate_limit; the old
             # getattr on the root settings object silently ignored operators.
             # C2: fail_closed=True forces limited regardless of the operator flag.

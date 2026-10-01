@@ -102,10 +102,25 @@ def _admin_mount_prefix() -> str:
     C-2: the admin panel is a cross-tenant operator surface — it must not
     400 on a missing `X-Tenant-ID` header. Falls back to `/admin` if the
     setting is unavailable (import-time safety).
+
+    BLE triage (muse 22): this is an ACCIDENTAL broad except, so it is
+    narrowed rather than annotated. The one thing it was ever written to
+    survive is a bad/absent *settings read* — a renamed or removed
+    ``admin``/``CRUD_ADMIN_MOUNT_PATH`` field raises AttributeError, a
+    non-string value raises TypeError/ValueError from ``.rstrip``. Those
+    three still fall back to ``/admin`` exactly as before.
+
+    The defined behaviour on anything else is now to PROPAGATE. That is
+    the point: the fallback feeds ``ADMIN_EXEMPT_PREFIX``, which decides
+    which paths skip tenant resolution. A blanket ``except Exception``
+    here could hide a genuine fault and silently exempt a path that
+    should have required ``X-Tenant-ID`` — a fail-OPEN on the tenant
+    boundary, reached by a bug nobody could see. Failing at import is
+    loud, safe, and the same outcome the docstring already promised.
     """
     try:
         prefix = (settings.admin.CRUD_ADMIN_MOUNT_PATH or "/admin").rstrip("/") or "/"
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         prefix = "/admin"
     return prefix
 
@@ -163,7 +178,7 @@ class TenantMiddleware:
                 return
 
             # Non-exempt path without header -> 400 Missing required header
-            logger.warning("Tenant resolution failed: missing_header | path=%s", path)
+            logger.warning("tenant_resolution_failed_missing_header", path=path)
             from src.app.core.errors import middleware_reject
 
             response = middleware_reject("tenant_header_missing", header=TENANT_HEADER)
@@ -185,7 +200,7 @@ class TenantMiddleware:
                     await self.app(scope, receive, send)
                 return
 
-            logger.warning("Tenant resolution failed: invalid_slug | slug=%s", tenant_slug)
+            logger.warning("tenant_resolution_failed_invalid_slug", tenant_slug=tenant_slug)
             from src.app.core.errors import middleware_reject
 
             response = middleware_reject("tenant_access_denied")
@@ -193,7 +208,7 @@ class TenantMiddleware:
             return
 
         if not getattr(tenant, "is_active", True):
-            logger.warning("Tenant resolution failed: inactive_tenant | slug=%s", tenant_slug)
+            logger.warning("tenant_resolution_failed_inactive", tenant_slug=tenant_slug)
             from src.app.core.errors import middleware_reject
 
             response = middleware_reject("tenant_inactive")

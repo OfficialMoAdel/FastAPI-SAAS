@@ -39,13 +39,15 @@ class InvalidationChannel:
             msg = payload if payload is not None else "*"
             await redis_client.publish(self.channel, msg)
         except Exception as e:
-            self._logger.warning("Failed to publish L1 invalidation on %s: %s", self.channel, e)
+            self._logger.warning("l1_invalidation_publish_failed", channel=self.channel, error=str(e))
 
     def start(self) -> None:
         """Start the background subscriber listener (idempotent)."""
         redis_client = get_redis()
         if redis_client is None or not hasattr(redis_client, "pubsub"):
-            self._logger.warning("L1 invalidation listener on %s not started: Redis unavailable", self.channel)
+            self._logger.warning(
+                "l1_invalidation_listener_not_started", channel=self.channel, reason="redis_unavailable"
+            )
             return
         if self._task is not None and not self._task.done():
             return
@@ -65,7 +67,7 @@ class InvalidationChannel:
             except asyncio.CancelledError:
                 pass
             except Exception as e:
-                self._logger.warning("L1 invalidation listener on %s exited: %s", self.channel, e)
+                self._logger.warning("l1_invalidation_listener_exited", channel=self.channel, error=str(e))
             finally:
                 # Guaranteed cleanup: unsubscribe and close connection to prevent leaks
                 try:

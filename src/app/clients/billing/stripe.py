@@ -25,6 +25,28 @@ _TRANSIENT_STRIPE_ERRORS: tuple[type[Exception], ...] = (
     stripe.RateLimitError,
 )
 
+# Inbound webhook event type, aliased once at the adapter boundary.
+#
+# This module is the ONLY place ``import stripe`` is sanctioned for outbound
+# calls, but the INBOUND side has a second legitimate need: the verified
+# event object. Stripe's SDK has no separate name for it, so feature code
+# used to write ``import stripe`` in six webhook modules purely to spell the
+# annotation ``stripe.Event``. That is a vendor-SDK dependency imported for a
+# type and nothing else, and it is exactly the inbound leak the adapter
+# boundary is supposed to prevent: a handler could reach any part of the SDK
+# from there, and no gate could tell that apart from the real uses.
+#
+# So the type is aliased HERE, once, and callers import the alias:
+#     from src.app.clients.billing import StripeEvent
+# The alias is the SDK class itself (not a Protocol, not a wrapper) — a
+# pass-by-reference alias, so isinstance checks and Stripe's own attribute
+# access keep working identically.
+#
+# tests/core/test_stripe_adapter_boundary.py is the ratchet: it fails if any
+# file under src/app/modules/ imports the stripe SDK again, or names
+# ``stripe.Event`` outside this module.
+StripeEvent = stripe.Event
+
 # K5: per-tenant resolved Stripe API key cache. get_api_key() runs one SELECT
 # + one decrypt per billing call; the key only changes via
 # StripeSettingsService.update_settings, which invalidates this cache, so a
@@ -282,6 +304,11 @@ def get_payment_gateway(
 
 __all__ = [
     "PaymentGateway",
+    # The inbound verified-event type. Listed here so `import *` from this
+    # module carries the ALIAS rather than forcing a caller back to the vendor
+    # SDK name — the one path that would reintroduce the direct-SDK reach the
+    # alias exists to remove.
+    "StripeEvent",
     "StripeGateway",
     "get_payment_gateway",
 ]

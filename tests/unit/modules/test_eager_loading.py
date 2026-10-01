@@ -21,7 +21,7 @@ from src.app.modules.users.models import User
 
 
 @pytest.fixture(autouse=True)
-def _tenant_context() -> Generator[None, None, None]:
+def _tenant_context() -> Generator[None]:
     """Provide an active tenant context for tenant-scoped CRUD queries."""
     set_current_tenant(
         TenantContext(

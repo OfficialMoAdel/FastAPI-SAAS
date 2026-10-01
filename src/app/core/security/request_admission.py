@@ -50,9 +50,7 @@ _BAN_CHECKED_EXEMPT_PREFIXES: tuple[str, ...] = (
 # throttle at the edge regardless of route existence, and a future /auth/*
 # refresh route inherits the budget. Pinned by
 # test_refresh_budget_exceeded_returns_429 — do not "clean up" this entry.
-_REFRESH_BUDGET_PATHS: frozenset[str] = frozenset(
-    {"/api/v1/account/refresh", "/api/v1/auth/refresh"}
-)
+_REFRESH_BUDGET_PATHS: frozenset[str] = frozenset({"/api/v1/account/refresh", "/api/v1/auth/refresh"})
 
 
 @dataclass(frozen=True)
@@ -157,8 +155,9 @@ class RequestAdmissionService:
             set_token_blacklisted(request.state, is_blacklisted)
             if is_blacklisted is not False:
                 logger.info(
-                    "Blacklisted/unknown token detected in rate limiter | user_id=%s | treating as anonymous",
-                    ctx.user_id,
+                    "blacklisted_token_treated_as_anonymous",
+                    user_id=ctx.user_id,
+                    treated_as_anonymous=True,
                 )
             if ban_info.is_banned:
                 return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
@@ -181,7 +180,12 @@ class RequestAdmissionService:
                 is_limited, remaining, retry_after, degraded = await consume(key, limit, period)
 
         if is_limited:
-            logger.warning("Rate limit exceeded | key=%s | limit=%s | period=%s", key, limit, period)
+            logger.warning(
+                "rate_limit_exceeded",
+                key=key,
+                limit=limit,
+                period=period,
+            )
 
         # Run-3 N-1 (middleware.rate_limit.anonymous_key_path_scoped):
         # per-path buckets alone do not bound an anonymous caller, because
@@ -219,9 +223,7 @@ class RequestAdmissionService:
             return await self._handle_violation(client_ip, verdict)
         return AdmissionOutcome("admit", client_ip, verdict)
 
-    async def _check_anonymous_aggregate(
-        self, client_ip: str
-    ) -> tuple[bool, int, int] | None:
+    async def _check_anonymous_aggregate(self, client_ip: str) -> tuple[bool, int, int] | None:
         """Consume the per-IP aggregate ceiling for anonymous traffic.
 
         Returns ``None`` when the ceiling is disabled, otherwise the
@@ -238,19 +240,17 @@ class RequestAdmissionService:
 
         key = build_anonymous_aggregate_key(client_ip)
         try:
-            is_limited, remaining, retry_after, _degraded = await consume(
-                key, aggregate_limit, aggregate_period
-            )
+            is_limited, remaining, retry_after, _degraded = await consume(key, aggregate_limit, aggregate_period)
         except Exception as exc:  # noqa: BLE001 - ceiling must not break admission
             logger.warning("anonymous_aggregate_check_failed", error=str(exc), key=key)
             return None
 
         if is_limited:
             logger.warning(
-                "Anonymous aggregate rate limit exceeded | key=%s | limit=%s | period=%s",
-                key,
-                aggregate_limit,
-                aggregate_period,
+                "anonymous_aggregate_rate_limit_exceeded",
+                key=key,
+                limit=aggregate_limit,
+                period=aggregate_period,
             )
         return is_limited, remaining, retry_after
 
@@ -287,17 +287,17 @@ class RequestAdmissionService:
                 was_banned, violation_count = await check_and_auto_ban(client_ip)
             except Exception as auto_ban_err:
                 logger.warning(
-                    "Auto-ban check failed, skipping | ip=%s | error=%s",
-                    client_ip,
-                    auto_ban_err,
+                    "auto_ban_check_failed",
+                    ip=client_ip,
+                    error=str(auto_ban_err),
                 )
                 was_banned, violation_count = False, 0
             if was_banned:
                 logger.warning(
-                    "Auto-ban triggered | ip=%s | violations=%d | threshold=%d",
-                    client_ip,
-                    violation_count,
-                    settings.security.AUTO_BAN_THRESHOLD,
+                    "auto_ban_triggered",
+                    ip=client_ip,
+                    violations=violation_count,
+                    threshold=settings.security.AUTO_BAN_THRESHOLD,
                 )
                 # P3: RateLimitVerdict is frozen — build the final headers
                 # dict up front instead of mutating the shared mapping.
@@ -357,8 +357,9 @@ class RequestAdmissionService:
             set_token_blacklisted(request.state, is_blacklisted)
             if is_blacklisted is not False:
                 logger.info(
-                    "Blacklisted/unknown token detected in rate limiter | user_id=%s | treating as anonymous",
-                    user_id,
+                    "blacklisted_token_treated_as_anonymous",
+                    user_id=user_id,
+                    treated_as_anonymous=True,
                 )
                 # P1: downgrade clears the whole tier identity so resolution
                 # falls to the anonymous default — keeping tier_id would let

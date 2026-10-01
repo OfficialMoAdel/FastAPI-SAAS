@@ -9,13 +9,27 @@ Apple Sign-In specifics:
 - Team ID, Key ID, and Private Key required for client secret generation
 """
 
+import asyncio
+import time
 import urllib.parse
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import jwt
 
+from src.app.core.logger import get_logger
 from src.app.modules.auth.providers.base import BaseOAuthProvider
+
+logger = get_logger(__name__)
+
+# P1-4: one client per module, not one per call. Constructing PyJWKClient per
+# request defeated its own key cache, so every login paid a synchronous
+# HTTPS fetch for a URL whose keys change a few times a year.
+# ``lifespan`` is NOT optional: without a bounded lifetime a rotated key
+# would never be picked up, trading a latency bug for a silent outage.
+_JWKS_URL = "https://appleid.apple.com/auth/keys"
+_JWKS_CACHE_SECONDS = 300
+_jwks_client = jwt.PyJWKClient(_JWKS_URL, cache_keys=True, lifespan=_JWKS_CACHE_SECONDS)
 
 
 class AppleUserInfo:
@@ -223,8 +237,17 @@ class AppleProvider(BaseOAuthProvider):
         4. Token is not expired
         """
         try:
-            jwks_client = jwt.PyJWKClient("https://appleid.apple.com/auth/keys")
-            signing_key = jwks_client.get_signing_key_from_jwt(id_token)
+            # get_signing_key_from_jwt performs a SYNCHRONOUS urllib HTTPS GET
+            # (DNS + TCP + TLS + fetch, ~100-400ms). Called directly from
+            # async def it blocks the event loop with zero concurrency, so it
+            # is offloaded to a worker thread. A cold cache costs a real
+            # thread hop; a warm one is a dict lookup.
+            started = time.monotonic()
+            signing_key = await asyncio.to_thread(_jwks_client.get_signing_key_from_jwt, id_token)
+            logger.info(
+                "apple_jwks_signing_key_resolved",
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+            )
 
             claims: dict[str, Any] = jwt.decode(
                 id_token,

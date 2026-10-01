@@ -8,7 +8,7 @@ Email notification service with template support, tenant overrides, and delivery
 
 ```bash
 # No separate install - uses root dependencies
-uv run pytest tests/integration/test_notification_api.py -v
+uv run pytest tests/integration/modules/notifications/test_api.py -v
 
 # View email templates
 ls -la src/app/templates/email/
@@ -111,6 +111,6 @@ rg -n "EmailTemplateOverride" src/app/modules/
 ## Pre-PR Checks
 
 ```bash
-uv run pytest tests/integration/test_notification_api.py -v && \
+uv run pytest tests/integration/modules/notifications/test_api.py -v && \
 uv run ruff check src/app/modules/notifications/
 ```

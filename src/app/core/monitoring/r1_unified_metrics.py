@@ -123,7 +123,7 @@ class R1UnifiedMetrics:
         if name in self._counters:
             self._counters[name] += value
         else:
-            logger.warning("Unknown counter: %s", name)
+            logger.warning("unknown_counter", name=name)
 
     def get_counter(self, name: str) -> float:
         """Get counter value."""
@@ -135,7 +135,7 @@ class R1UnifiedMetrics:
         if name in self._gauges:
             self._gauges[name] = value
         else:
-            logger.warning("Unknown gauge: %s", name)
+            logger.warning("unknown_gauge", name=name)
 
     def get_gauge(self, name: str) -> float:
         """Get gauge value."""
@@ -165,7 +165,7 @@ class R1UnifiedMetrics:
         """
         hist = self._histograms.get(name)
         if hist is None:
-            logger.warning("Unknown histogram: %s", name)
+            logger.warning("unknown_histogram", name=name)
             return
 
         boundaries: tuple[float, ...] = hist["boundaries"]

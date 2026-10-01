@@ -33,6 +33,14 @@ class PendingTokenStore:
         token_val = hashlib.sha256(token.encode()).hexdigest() if self.use_hash else token
         return f"{self.prefix}:{token_val}"
 
+    def _claim_key(self, token: str) -> str:
+        """Key holding the verification claim for a token.
+
+        Separate from the token's own key so the claim can be released while
+        the challenge itself survives a failed factor verify.
+        """
+        return f"{self._get_key(token)}:verify_claim"
+
     async def create(self, token: str, data: dict[str, Any]) -> None:
         """Store token data with TTL.
 
@@ -102,6 +110,61 @@ class PendingTokenStore:
             Remaining TTL in seconds, or -2/-1 per Redis TTL semantics.
         """
         return int(await self._redis.ttl(self._get_key(token)))
+
+    async def claim(self, token: str, ttl_seconds: int, nonce: str) -> bool:
+        """Take exclusive ownership of a token's verification slot.
+
+        One atomic ``SET NX EX`` decides the winner. Returns True for the
+        single request that owns the slot, False for every other request
+        carrying the same token — so a loser is refused BEFORE it can mutate
+        anything, which is the property a plain ``peek`` cannot give.
+
+        The claim is deliberately NOT the token key: a failed factor verify
+        releases it (see :meth:`release_claim`) so a typo costs the user their
+        code attempt, not their whole pending challenge.
+
+        Args:
+            token: The raw token string.
+            ttl_seconds: Claim lifetime; bounds the damage if a holder dies.
+            nonce: Unguessable ownership token for compare-and-delete.
+
+        Returns:
+            True if the claim was taken, False if another request holds it.
+        """
+        from src.app.core.utils.lua_manager import get_lua_manager
+
+        result = await get_lua_manager().execute(
+            self._redis,
+            "mfa_pending_claim",
+            keys=[self._claim_key(token)],
+            args=[str(ttl_seconds), nonce],
+        )
+        return bool(int(result)) if result is not None else False
+
+    async def release_claim(self, token: str, nonce: str) -> bool:
+        """Release a claim, but only if this caller still owns it.
+
+        Compare-and-delete inside one script, so a caller whose claim already
+        expired (and was re-taken by a *different* request) cannot delete the
+        new owner's claim. That is what keeps the release path from
+        reintroducing the race it exists to bound.
+
+        Args:
+            token: The raw token string.
+            nonce: The ownership token passed to :meth:`claim`.
+
+        Returns:
+            True if this caller's claim was released, False otherwise.
+        """
+        from src.app.core.utils.lua_manager import get_lua_manager
+
+        result = await get_lua_manager().execute(
+            self._redis,
+            "lock_release_if_owned",
+            keys=[self._claim_key(token)],
+            args=[nonce],
+        )
+        return bool(int(result)) if result is not None else False
 
     async def delete(self, token: str) -> bool:
         """Delete token data.

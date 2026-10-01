@@ -6,7 +6,7 @@ Manages user preferences including theme, language, notifications, and profile i
 ## Setup & Run
 ```bash
 # Run tests
-uv run pytest tests/unit/test_user_preferences/test_service.py -v
+uv run pytest tests/unit/modules/user_preferences/test_service.py -v
 
 # Type check
 uv run mypy src/app/modules/user_preferences/
@@ -80,7 +80,7 @@ class PreferencesService:
 - Router: `src/app/modules/user_preferences/router.py` - API endpoints
 - Model: `src/app/modules/user_preferences/models.py` - UserPreferences database model
 - Migration: `src/migrations/versions/2d75ef82a66a_add_notification_preferences_to_user_.py` - Notification preferences columns
-- Tests: `tests/unit/modules/user_preferences/test_notification_preferences.py` - Notification preferences tests
+- Tests: `tests/integration/modules/notifications/test_notification_preferences.py` - Notification preferences tests
 
 ## JIT Index Hints
 

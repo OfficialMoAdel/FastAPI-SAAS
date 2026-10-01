@@ -5,6 +5,7 @@ decrypt, the :data:`_PROVIDER_CACHE` pool, and :meth:`StorageAdminService.resolv
 the one seam transfer crosses (narrow :class:`ResolvedStorage`, never the row).
 Transfer lives in :mod:`src.app.modules.storage.service`.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -46,13 +47,12 @@ logger = get_logger(__name__)
 # (onupdate), rotating the key so a new provider is built on next use.
 # Stale entries age out via TTL. Not tenant-scoped by context — keyed by
 # explicit tenant_id argument, so cross-tenant leakage is impossible.
-_PROVIDER_CACHE: TTLCache[tuple[UUID, datetime | None], StorageProvider] = TTLCache(
-    maxsize=512, ttl=600
-)
+_PROVIDER_CACHE: TTLCache[tuple[UUID, datetime | None], StorageProvider] = TTLCache(maxsize=512, ttl=600)
 
 # Bound for the credential-validation network probe (S3/Azure ``exists``).
 # Without it a hung endpoint pins an admin worker indefinitely.
 _CREDENTIAL_PROBE_TIMEOUT = 10.0
+
 
 @dataclass(frozen=True)
 class ResolvedStorage:
@@ -69,6 +69,7 @@ class ResolvedStorage:
     allowed_file_types: list[str] | None
     max_file_count: int
     storage_quota_bytes: int
+
 
 class StorageAdminService:
     """Service for managing tenant storage settings and credential encryption."""
@@ -100,7 +101,7 @@ class StorageAdminService:
     ) -> StorageSettings:
         """Create storage settings for a tenant, validating credentials beforehand."""
         credentials = self._extract_credentials(data)
-        await self._validate_credentials(StorageProviderType(data.provider.value), credentials)
+        await self._validate_credentials(StorageProviderType(data.provider.value), credentials, tenant_id)
 
         credentials_json = str(json_dumps(credentials, as_str=True))
         encryption = get_encryption()
@@ -155,16 +156,14 @@ class StorageAdminService:
                 if data.provider is not None
                 else StorageProviderType(settings.provider)
             )
-            await self._validate_credentials(provider_type, new_credentials)
+            await self._validate_credentials(provider_type, new_credentials, tenant_id)
 
             credentials_json = str(json_dumps(new_credentials, as_str=True))
             encryption = get_encryption()
             settings.credentials_encrypted = encryption.encrypt_credential(credentials_json.encode())
 
             settings.bucket_name = (
-                new_credentials.get("bucket_name")
-                or new_credentials.get("container_name")
-                or settings.bucket_name
+                new_credentials.get("bucket_name") or new_credentials.get("container_name") or settings.bucket_name
             )
             settings.region = new_credentials.get("region") or settings.region
 
@@ -264,9 +263,25 @@ class StorageAdminService:
         self,
         provider: StorageProviderType,
         credentials: dict[str, Any],
+        tenant_id: UUID | None = None,
     ) -> None:
-        storage = self._create_provider(provider, credentials)
+        """Probe credentials, then discard the provider.
+
+        Construction is inside the ``try`` on purpose: the registry raises
+        here for a missing required key and for an absent ``boto3`` — which
+        is a declared dependency (dxub.9, DECIDED: DECLARE) but still absent
+        if the deployment was built from a partial subset — and those are
+        validation outcomes too. With the call outside, they escaped
+        unlogged and the router's ``except ValueError`` rewrote them to
+        "Invalid storage settings payload." — an operator could not tell
+        "install boto3" from "pick another backend". The actionable text now
+        reaches the log, which is where a client must not see it (see
+        ``modules/storage/errors.py``: public messages are deliberately
+        fixed, so provider internals never leak).
+        """
+        storage: StorageProvider | None = None
         try:
+            storage = self._create_provider(provider, credentials)
             if provider == StorageProviderType.LOCAL:
                 # P2-5: writability probe — exists() cannot catch read-only
                 # mounts, and LocalStorage.validate_connection() had no callers.
@@ -285,10 +300,15 @@ class StorageAdminService:
                     timeout=_CREDENTIAL_PROBE_TIMEOUT,
                 )
         except Exception as e:
-            logger.error("Credential validation failed", provider=provider.value, error=str(e))
+            logger.error(
+                "Credential validation failed",
+                provider=provider.value,
+                tenant_id=str(tenant_id) if tenant_id else None,
+                error=str(e),
+            )
             raise InvalidCredentialsError(f"Failed to validate {provider.value} credentials: {e}") from e
         finally:
-            if hasattr(storage, "close"):
+            if storage is not None and hasattr(storage, "close"):
                 await storage.close()
 
     def _create_provider(
@@ -336,9 +356,7 @@ async def close_cached_providers() -> int:
             await provider.close()
             closed += 1
         except Exception as e:  # noqa: BLE001 - teardown must not mask shutdown
-            get_logger(__name__).warning(
-                "Failed to close cached storage provider | tenant=%s | error=%s", tenant_id, e
-            )
+            get_logger(__name__).warning("Failed to close cached storage provider", tenant=str(tenant_id), error=str(e))
     if closed:
         get_logger(__name__).info("Closed cached storage providers", count=closed)
     return closed

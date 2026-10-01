@@ -202,9 +202,9 @@ def extract_jti_unverified(token: str) -> str | None:
             jti = payload.get("jti")
             return str(jti) if jti else None
     except (ValueError, TypeError) as e:
-        logger.debug("Failed to extract unverified JTI: %s", e)
+        logger.debug("jwt_jti_extract_failed", error=str(e))
     except Exception as e:
-        logger.warning("Unexpected error extracting unverified JTI: %s", e)
+        logger.warning("jwt_jti_extract_unexpected_error", error=str(e))
     return None
 
 
@@ -223,9 +223,9 @@ def extract_claim_unverified(token: str, claim: str) -> str | None:
             value = payload.get(claim)
             return str(value) if value else None
     except (ValueError, TypeError) as e:
-        logger.debug("Failed to extract unverified %s: %s", claim, e)
+        logger.debug("jwt_claim_extract_failed", claim=claim, error=str(e))
     except Exception as e:
-        logger.warning("Unexpected error extracting unverified %s: %s", claim, e)
+        logger.warning("jwt_claim_extract_unexpected_error", claim=claim, error=str(e))
     return None
 
 
@@ -328,7 +328,7 @@ async def decode_verified_token(
         _decode_failure_cache[failure_key] = None
         return None
     except PyJWTError as e:
-        logger.debug("JWT decode failed: %s", e)
+        logger.debug("jwt_decode_failed", error=str(e))
         return None
 
 
@@ -392,9 +392,9 @@ async def extract_jwt_claims_to_state(request: Request) -> dict[str, Any] | None
         # Cache in request state for reuse
         request.state.jwt_payload = payload
         logger.debug(
-            "JWT claims cached in request.state: sub=%s, tenant_id=%s",
-            payload.get("sub"),
-            payload.get("tenant_id"),
+            "jwt_claims_cached",
+            sub=payload.get("sub"),
+            tenant_id=payload.get("tenant_id"),
         )
 
     return payload

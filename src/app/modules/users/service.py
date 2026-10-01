@@ -691,7 +691,13 @@ class UserService:
             return {"message": f"User {get_user_attr(db_user, 'name')} already {'active' if is_active else 'inactive'}"}
 
         user_id = get_user_attr(db_user, "id")
-        await self.crud.update(db=self.db, object={"is_active": is_active}, id=user_id, commit=False)
+        update_payload: dict[str, Any] = {"is_active": is_active}
+        if not is_active:
+            # P0-2: Mark as email-verified so the verification service's
+            # "already verified but inactive" guard fires for admin-disabled
+            # accounts, even if the user never completed email verification.
+            update_payload["is_email_verified"] = True
+        await self.crud.update(db=self.db, object=update_payload, id=user_id, commit=False)
 
         # 1B: DEACTIVATION is bump-class — the seam kills existing JWTs in the
         # same commit and invalidates all cache entries with the fresh version.

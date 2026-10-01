@@ -217,7 +217,7 @@ class EventBus:
 
         idempotency_key = f"{self.IDEMPOTENCY_KEY_PREFIX}{event_id}"
 
-        if _pkg.settings.EVENT_BUS_USE_LUA_IDEMPOTENCY:
+        if _pkg.settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY:
             # Optimized path: Atomic Lua script (no race condition)
             try:
                 lua_manager = _pkg.get_lua_manager()
@@ -290,7 +290,7 @@ class EventBus:
             return
         idempotency_key = f"{self.IDEMPOTENCY_KEY_PREFIX}{event_id}"
         try:
-            if _pkg.settings.EVENT_BUS_USE_LUA_IDEMPOTENCY:
+            if _pkg.settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY:
                 try:
                     lua_manager = _pkg.get_lua_manager()
                     await lua_manager.execute(
@@ -469,7 +469,7 @@ class EventBus:
                     # Apply timeout protection
                     await asyncio.wait_for(
                         handler(data),
-                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                        timeout=_pkg.settings.events.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
                     _pkg.logger.debug(
                         "Event handler success",
@@ -481,10 +481,10 @@ class EventBus:
                         "Event handler timed out",
                         event_name=event_name,
                         handler=handler.__name__,
-                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                        timeout=_pkg.settings.events.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
                     failed_handlers.append(
-                        (handler, f"timeout after {_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS}s")
+                        (handler, f"timeout after {_pkg.settings.events.EVENT_HANDLER_TIMEOUT_SECONDS}s")
                     )
                     # We do not re-raise TimeoutError to prevent blocking other handlers
                     # in the gather group (though return_exceptions=True handles that too).
@@ -553,7 +553,7 @@ class EventBus:
         # Changes Sum(RTT) to Max(RTT) for multiple handlers
 
         # P3-3: Batch enqueue using Redis pipeline if enabled
-        if _pkg.settings.EVENT_BUS_USE_BATCH_ENQUEUE and len(handlers) > 1:
+        if _pkg.settings.r1_unified.EVENT_BUS_USE_BATCH_ENQUEUE and len(handlers) > 1:
             try:
                 await self._publish_async_batch(event_name, data, handlers, priority)
                 return True
@@ -717,7 +717,7 @@ class EventBus:
         try:
             await asyncio.wait_for(
                 handler(data),
-                timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                timeout=_pkg.settings.events.EVENT_HANDLER_TIMEOUT_SECONDS,
             )
             _pkg.logger.info(
                 "Handler executed synchronously after " + reason,
@@ -730,7 +730,7 @@ class EventBus:
                 "Sync fallback timed out after " + reason,
                 event_name=event_name,
                 handler=handler.__name__,
-                timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                timeout=_pkg.settings.events.EVENT_HANDLER_TIMEOUT_SECONDS,
             )
             await self._dlq_quietly(event_name, handler, data, error=str(e), attempt_count=0)
             return False

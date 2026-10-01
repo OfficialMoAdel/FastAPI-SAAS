@@ -6,7 +6,7 @@ Blog post CRUD with ownership enforcement and multi-tenancy support. Follows Bas
 ## Setup & Run
 ```bash
 # Run tests
-uv run pytest tests/unit/test_post_service.py -v
+uv run pytest tests/unit/modules/posts/test_service.py -v
 
 # Type check
 uv run mypy src/app/modules/posts/
@@ -86,5 +86,5 @@ class PostService(BaseService[Post]):
 ## Pre-PR Checks
 
 ```bash
-uv run mypy src/app/modules/posts/ && uv run ruff check src/app/modules/posts/ && uv run pytest tests/unit/test_post_service.py -v
+uv run mypy src/app/modules/posts/ && uv run ruff check src/app/modules/posts/ && uv run pytest tests/unit/modules/posts/test_service.py -v
 ```

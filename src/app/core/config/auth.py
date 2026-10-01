@@ -3,7 +3,7 @@
 import re
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 KNOWN_LEAKED_ADMIN_PASSWORDS: frozenset[str] = frozenset(
@@ -146,3 +146,49 @@ class AuthSettings(BaseSettings):
         default=True,
         description="Whether MFA lockout check fails closed (blocks authentication) during Redis outage",
     )
+
+    @model_validator(mode="after")
+    def warn_on_fail_open_knobs(self) -> "AuthSettings":
+        """Warn at construction when an operator has opened a fail-closed knob.
+
+        Every default here is the secure one, so a boot-time warning is the
+        only place the weaker posture becomes visible before an outage turns
+        it into an incident. Silent-by-configuration is the defect: the
+        settings are honest, but nothing told the operator what accepting them
+        costs.
+
+        Warning, never a raise — fail-open is a legal, sometimes deliberate
+        availability trade (S-1's note on TOKEN_CACHE_FAILURE_MODE says so
+        outright). The operator's choice is not the validator's to overturn;
+        making it loud is the validator's whole job. One aggregate event
+        listing every knob, rather than N events, so one startup log line
+        answers "what did this deployment open?".
+        """
+        import logging
+
+        weakened: list[tuple[str, str]] = []
+        if self.AUDIT_LOG_FAILURE_MODE == "fail_open":
+            weakened.append(("AUDIT_LOG_FAILURE_MODE", "audit entries are dropped instead of blocking the operation"))
+        if self.TOKEN_CACHE_FAILURE_MODE == "fail_open":
+            weakened.append(
+                ("TOKEN_CACHE_FAILURE_MODE", "revoked sessions can be accepted for the duration of a Redis outage")
+            )
+        if self.SESSION_REGISTRATION_FAIL_MODE == "fail_open":
+            weakened.append(
+                ("SESSION_REGISTRATION_FAIL_MODE", "concurrent-session limiting is bypassed during a Redis outage")
+            )
+        if not self.MFA_LOCKOUT_FAIL_CLOSED:
+            weakened.append(
+                ("MFA_LOCKOUT_FAIL_CLOSED", "TOTP brute-force lockout does not block during a Redis outage")
+            )
+        if weakened:
+            # stdlib logging, not structlog: the config package constructs
+            # before logger.setup_logging() runs, and every sibling validator
+            # here logs through the stdlib logger. Percent-format to match.
+            logging.getLogger("app.core.config").warning(
+                "Auth fail-open knobs are OPEN: %s. A security control degrades to allow during an "
+                "infrastructure outage. Each is a deliberate availability trade — confirm it was intended. "
+                "Reset to the secure default to fail closed instead.",
+                ", ".join(f"{knob}: {why}" for knob, why in weakened),
+            )
+        return self

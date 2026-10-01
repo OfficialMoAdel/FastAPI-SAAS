@@ -217,13 +217,34 @@ class MagicLinkService:
             )
             raise InvalidMagicLinkError("Token expired or invalid")
 
-        # Step 2: Update audit trail in database immediately BEFORE consuming Redis token
+        # Step 2: Claim the row in the DB BEFORE consuming the Redis token.
+        #
+        # ATOMICITY: the lookup takes SELECT ... FOR UPDATE, mirroring
+        # passwords.reset_password and email_verification.verify_email. Both
+        # of those flows hold the row lock from the ``used`` check until the
+        # single-use marker is written in the SAME transaction, so two
+        # concurrent requests cannot both pass the check. Here the lock
+        # covers the ``used_at``/``expires_at`` guards through the
+        # conditional UPDATE in mark_magic_link_used, whose COMMIT releases
+        # it only once the invariant is durable.
+        #
+        # The conditional UPDATE + rowcount guard below is what actually
+        # decides the race (a stale reader still matches zero rows); the
+        # lock is what makes the check-and-claim a single transaction
+        # instead of two statements separated by a scheduling window.
+        #
+        # for_update=True also downgrades the I2 legacy re-hash in
+        # get_magic_link_by_token from COMMIT to FLUSH. Committing there
+        # would release the lock while the link was still unused — the exact
+        # bug already fixed in those two flows (see passwords.py:278-289).
         from src.app.modules.auth.crud import get_magic_link_by_token, mark_magic_link_used
 
         try:
-            db_link = await get_magic_link_by_token(db=self.db, token=token)
+            db_link = await get_magic_link_by_token(db=self.db, token=token, for_update=True)
             if db_link:
-                # Check DB expiry and used_at guard (A2-12)
+                # Check DB expiry and used_at guard (A2-12). Protected by the
+                # row lock taken above, so a concurrent redeemer cannot change
+                # used_at between this read and the conditional UPDATE.
                 used_at_val = getattr(db_link, "used_at", None)
                 if used_at_val is not None:
                     raise MagicLinkAlreadyUsedError("Token already used")
@@ -232,11 +253,19 @@ class MagicLinkService:
                     exp_tz = expires_at_val if expires_at_val.tzinfo else expires_at_val.replace(tzinfo=UTC)
                     if exp_tz < datetime.now(UTC):
                         raise InvalidMagicLinkError("Token expired")
+                # Raises MagicLinkAlreadyUsedError if a concurrent verify won
+                # the claim (rowcount == 0), so the loser never reaches Redis.
                 await mark_magic_link_used(db=self.db, magic_link=db_link)
         except (MagicLinkAlreadyUsedError, InvalidMagicLinkError):
+            # Roll back explicitly: the FOR UPDATE lock is held by the open
+            # transaction, and an exception must not leave it held while the
+            # error propagates. async_get_db also rolls back on the way out,
+            # but the lock must be released before the next step runs.
+            await self._rollback_quietly()
             raise
         except Exception:
             logger.error("Failed to mark magic link used in DB", exc_info=True)
+            await self._rollback_quietly()
             # DB failure → do NOT consume Redis token, let user retry
             raise InvalidMagicLinkError("Temporary error, please try again")
         # Step 3: NOW consume the Redis token (safe — DB is marked)
@@ -325,6 +354,21 @@ class MagicLinkService:
         )
 
         return LoginTokenResponse(**tokens)
+
+    async def _rollback_quietly(self) -> None:
+        """Release the row lock held by an aborted redemption transaction.
+
+        ``verify_magic_link`` opens a transaction with SELECT ... FOR UPDATE.
+        Every exit path that raises must close it, otherwise the loser of a
+        concurrent redemption holds the lock until the connection is
+        recycled, turning a two-request race into a stalled one. Swallowing
+        the rollback error mirrors async_get_db: the original exception is
+        the one worth surfacing.
+        """
+        try:
+            await self.db.rollback()
+        except Exception:
+            logger.warning("Magic link redemption rollback failed", exc_info=True)
 
     def _get_magic_link_manager(self) -> PendingTokenStore:
         """Get PendingTokenStore instance.

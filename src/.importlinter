@@ -1,15 +1,70 @@
 [importlinter]
 root_packages =
     src
+# P1-10: the core -> fastapi contract names an EXTERNAL package, which
+# import-linter refuses to forbid without this flag. The other contracts name
+# only in-repo modules, so this is additive.
+include_external_packages = True
 
 [importlinter:contract:forbidden-feature-implementation-to-api]
 name = Feature implementation must not import API adapters
 type = forbidden
+# s92p.3: widened from two named service modules to the whole feature package.
+# The old scope let src.app.modules.ai.middleware import src.app.api.deps
+# because it was simply not IN the list — out of scope, not compliant.
 source_modules =
-    src.app.modules.posts.service
-    src.app.modules.billing.subscription_service
+    src.app.modules
 forbidden_modules =
     src.app.api
+unmatched_ignore_imports_alerting = warn
+ignore_imports =
+    # ROUTERS ARE THE DI CONTRACT (s92p.3).
+    #
+    # A FastAPI router obtaining the request context (RequestContextDep,
+    # get_current_user, AuthenticatedUser) from the api layer is the INTENDED
+    # direction of that edge: src.app.api composes the feature routers, and a
+    # router takes its dependencies from there. Forbidding it would break
+    # dependency injection across every feature, so these are listed
+    # deliberately rather than tolerated by accident.
+    #
+    # The contract still binds everything else: services, cruds, schemas,
+    # models, tasks and middleware may not reach into src.app.api. That split
+    # is what catches real debt, and it already has: it surfaced
+    # src.app.modules.ai.middleware, which has been RELOCATED to
+    # src/app/api/deps/ai_rate_limit.py (it was a pure FastAPI adapter with no
+    # AI-domain logic) rather than allowlisted.
+    src.app.modules.ai.router -> src.app.api.deps
+    src.app.modules.ai.router -> src.app.api.deps.ai_rate_limit
+    src.app.modules.api_keys.router -> src.app.api.deps
+    src.app.modules.audit_logs.router -> src.app.api.deps
+    src.app.modules.auth.router -> src.app.api.deps
+    src.app.modules.auth.routers.mfa -> src.app.api.deps
+    src.app.modules.auth.routers.passkey -> src.app.api.deps
+    src.app.modules.auth.routers.sso -> src.app.api.deps
+    src.app.modules.auth.routers.sso_settings -> src.app.api.deps
+    src.app.modules.billing.router -> src.app.api.deps
+    src.app.modules.billing.routers.checkouts -> src.app.api.deps
+    src.app.modules.billing.routers.checkouts -> src.app.api.deps.auth
+    src.app.modules.billing.routers.invoices -> src.app.api.deps
+    src.app.modules.billing.routers.invoices -> src.app.api.deps.auth
+    src.app.modules.billing.routers.prices -> src.app.api.deps
+    src.app.modules.billing.routers.products -> src.app.api.deps
+    src.app.modules.dashboard.router -> src.app.api.deps
+    src.app.modules.feature_flags.router -> src.app.api.deps
+    src.app.modules.notifications.router -> src.app.api.deps
+    src.app.modules.posts.router -> src.app.api.deps
+    src.app.modules.rate_limits.router -> src.app.api.deps
+    src.app.modules.security.router -> src.app.api.deps
+    src.app.modules.security.router -> src.app.api.deps.auth
+    src.app.modules.storage.routers.files -> src.app.api.deps
+    src.app.modules.storage.routers.settings -> src.app.api.deps
+    src.app.modules.tasks.router -> src.app.api.deps
+    src.app.modules.tenants.router -> src.app.api.deps
+    src.app.modules.tiers.router -> src.app.api.deps
+    src.app.modules.user_preferences.router -> src.app.api.deps
+    src.app.modules.users.router -> src.app.api.deps
+    src.app.modules.webhooks.router -> src.app.api.deps
+
 
 [importlinter:contract:forbidden-core-to-modules]
 name = Core must not depend on modules (H-5)
@@ -58,8 +113,15 @@ ignore_imports =
     #   - the three feature helpers core worker tasks call arrive as one
     #     registered FeatureCollaborators record from the same module
     #
-    # That was the last live edge: src/app/core names no feature module.
-    # Both are registered by src.app.models (the single model-registration
+    # CORRECTION (2026-09-29, s92p.2): the sentence this replaced claimed
+    # "That was the last live edge: src/app/core names no feature module."
+    # That was false. The DIRECT core->feature edge is gone, but
+    # core/worker/settings.py still imports the composition root for
+    # registration, which drags feature modules in TRANSITIVELY. Direct
+    # imports are what the list below records; the transitive ones surface as
+    # contract violations and are recorded at the settings->worker entry.
+    #
+    # Both model edges are registered by src.app.models (the single model-registration
     # point) and checked at boot by the tenant_model_gate and
     # permission_graph_gate startup phases. The warmer, the slug resolver and
     # the permission join no longer import a feature module.
@@ -86,8 +148,66 @@ ignore_imports =
     # worker registers every model itself because jobs query tenant-scoped
     # tables before any web request populates the mapper registry.
     src.app.core.worker.settings -> src.app.models
+    # A-M7 composition seam (mirrors setup->models and settings->models above).
+    # The ARQ CLI loads WorkerSettings by dotted path and offers no call-in
+    # point, so core/worker/settings.py must import the composition root for the
+    # SIDE EFFECT of registering the feature task batch and the collaborator
+    # record. Without it the worker starts with no feature tasks.
+    #
+    # This is the ONLY live core -> app edge besides the model-registration
+    # points above, and the previous claim that it was retired was false: the
+    # direct edge is exempt, but the TRANSITIVE feature imports it drags in
+    # (src.app.worker -> modules.webhooks.delivery, -> billing.webhook.
+    # idempotency) were not, and import-linter walks them by default.
+    #
+    # The FeatureCollaborators seam is already the collaborator path:
+    # core/worker/functions.py reads flush_audit_log_buffer from
+    # require_feature_collaborators(), so no feature helper is named by core.
+    # What remains is the registration TRIGGER, which cannot move.
+    src.app.core.worker.settings -> src.app.worker
     # A-M3 composition seam (removed 2026-09-26): the worker registry walked
     # the modules package to aggregate per-module ARQ_FUNCTIONS/ARQ_CRONJOBS.
     # No module ever declared either list, so the aggregator had no adapter
     # and the edge went with it. The registry is now the explicit list in
     # core/worker/settings.py, guarded at startup by assert_all_jobs_registered.
+
+# P1-10 (fzbg.5): core must not raise HTTP-layer objects.
+#
+# `db_circuit_guard` raised fastapi.HTTPException, an HTTP response object
+# escaping below the transport. The ARQ worker reaches that guard with no
+# request in scope, so create_error_response never ran and DB degradation
+# surfaced as a silent DLQ entry rather than a visible failure. It now raises
+# ServiceUnavailableError (mapped to 503 by the central handler).
+#
+# This contract is deliberately NARROW: banning core -> fastapi outright
+# would break 16 legitimate files that use Request/Depends for type
+# annotations. What is forbidden is the `HTTPException`/`status` import —
+# the transport-abuse surface, not the framework dependency.
+[importlinter:contract:forbidden-core-raising-http-objects]
+name = Core must not raise HTTP-layer exception objects (P1-10)
+type = forbidden
+source_modules =
+    src.app.core
+forbidden_modules =
+    fastapi
+unmatched_ignore_imports_alerting = warn
+ignore_imports =
+    # Type annotations and framework wiring, not transport abuse. Each entry
+    # is a real edge today; none of them raises an HTTP object.
+    src.app.core.errors -> fastapi
+    src.app.core.pagination -> fastapi
+    src.app.core.principal -> fastapi
+    src.app.core.rbac.dependencies -> fastapi
+    src.app.core.security.jwt_service -> fastapi
+    src.app.core.security.jwt_utils -> fastapi
+    src.app.core.security.login_helpers -> fastapi
+    src.app.core.security.rate_policy -> fastapi
+    src.app.core.security.request_admission -> fastapi
+    src.app.core.utils.cache.decorator -> fastapi
+    src.app.core.utils.cache -> fastapi
+    src.app.core.utils.ip_utils -> fastapi
+    # A-M7 composition seam, mirroring the H-5 entry above: the same
+    # core/worker/settings.py -> src.app.worker registration trigger. The
+    # fastapi edge arrives only TRANSITIVELY, through the feature modules the
+    # root imports; no core module names fastapi on this path.
+    src.app.core.worker.settings -> src.app.worker

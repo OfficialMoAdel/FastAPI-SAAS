@@ -138,7 +138,7 @@ class OpenAIProvider(AIProvider):
         max_tokens: int | None = None,
         system_prompt: str | None = None,
         **kwargs: Any,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Generate text completion with streaming.
 
         Yields chunks of generated text as they become available.

@@ -125,6 +125,26 @@ class LuaScriptManager:
             local ttl = redis.call('TTL', KEYS[1])
             return {value, ttl}
         """,
+        # Cache stampede single-flight: atomic "read, or become the one caller
+        # allowed to fetch" in a single roundtrip. Claiming the lock inside the
+        # same script as the read is what makes it single-flight: a caller that
+        # read-and-then-locked in Python can be interleaved between its GET and
+        # its SET NX, so N concurrent misses all read empty and all fetch.
+        # ARGV[1] = lock TTL seconds, ARGV[2] = ownership token.
+        # Returns: [value, ttl, claimed] where claimed=1 means "you own the
+        # refresh, go fetch and publish"; claimed=0 means "someone else owns
+        # it, wait and re-read".
+        "xfetch_get_or_claim": """
+            local value = redis.call('GET', KEYS[1])
+            if value then
+                return {value, redis.call('TTL', KEYS[1]), 0}
+            end
+            local set = redis.call('SET', KEYS[2], ARGV[2], 'NX', 'EX', tonumber(ARGV[1]))
+            if not set then
+                return {'', -2, 0}
+            end
+            return {'', -2, 1}
+        """,
         # P3-1: DLQ Bounded Size - LPUSH with LTRIM
         "dlq_bounded_push": """
             -- KEYS[1]: DLQ list key
@@ -156,6 +176,24 @@ class LuaScriptManager:
                 return redis.call('DEL', KEYS[1])
             end
             return 0
+        """,
+        # MFA pending-token single-flight claim. The backup-code redemption
+        # mutates and commits, so exactly one request may be inside the
+        # factor verify at a time or a loser still burns the victim's codes.
+        # SET NX is the arbitration: Redis runs scripts one at a time, so
+        # the winner is decided by a single atomic step and every loser is
+        # refused before it can touch state. The claim is separate from the
+        # token key itself so it can be released on a failed verify (a typo
+        # must not cost the user their pending challenge).
+        # KEYS[1]: claim key
+        # ARGV[1]: claim TTL seconds, ARGV[2]: ownership nonce
+        # Returns: 1 if claimed (you own the verify), 0 if someone else does.
+        "mfa_pending_claim": """
+            local set = redis.call('SET', KEYS[1], ARGV[2], 'NX', 'EX', tonumber(ARGV[1]))
+            if not set then
+                return 0
+            end
+            return 1
         """,
         # Fixed-window rate limit: atomic INCR with window-aligned TTL
         # (migrated from utils/rate_limit.RATE_LIMIT_LUA_SCRIPT)

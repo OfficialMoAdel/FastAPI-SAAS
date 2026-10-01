@@ -23,7 +23,9 @@ driven through a genuine ASGI scope — no mocks on the request path.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 import structlog
@@ -33,6 +35,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from src.app.core.config import settings
+from src.app.middleware import attack_detection as ad
 from src.app.middleware.attack_detection import AttackDetectionMiddleware
 from src.app.middleware.body_limit import DEFAULT_MAX_BODY_SIZE, RequestBodyLimitMiddleware
 
@@ -306,14 +309,34 @@ def test_head_is_unaffected(client) -> None:
 
 
 def test_get_skip_is_logged_at_debug(client) -> None:
-    """The skip the bead asked for is visible to an operator at DEBUG."""
-    with structlog.testing.capture_logs() as captured:
+    """The skip the bead asked for is visible to an operator at DEBUG.
+
+    Spied at the module logger's ``debug`` call rather than captured with
+    ``structlog.testing.capture_logs()``. That helper swaps the GLOBAL processor
+    chain, and a logger already bound by an earlier test in the session does not
+    necessarily pick the swap up — which is why this test passed alone and
+    returned an empty list in a full run.
+    """
+    calls: list[tuple[tuple, dict]] = []
+    levels: list[int] = []
+
+    def spy(event, *args, **kwargs):
+        calls.append(((event, *args), kwargs))
+
+    def guard(level):
+        levels.append(level)
+        return True
+
+    with (
+        patch.object(ad.logger, "is_enabled_for", side_effect=guard),
+        patch.object(ad.logger, "debug", side_effect=spy),
+    ):
         client.get("/users?page=1")
 
-    skips = [r for r in captured if "skipped_body_scan" in r.get("event", "")]
-    assert len(skips) == 1, f"expected one skip event, got {captured}"
-    assert skips[0]["log_level"] == "debug"
-    assert skips[0]["method"] == "GET"
+    skips = [c for c in calls if "skipped_body_scan" in str(c[0][0])]
+    assert len(skips) == 1, f"expected one skip event, got {calls}"
+    assert levels == [logging.DEBUG], f"skip was gated on {levels}, not DEBUG"
+    assert skips[0][1]["method"] == "GET"
 
 
 def test_post_does_not_log_a_skip(client) -> None:

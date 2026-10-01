@@ -21,7 +21,7 @@ from src.app.modules.users.models import User
 @pytest.fixture
 async def test_tenants(
     db_session: AsyncSession,
-) -> AsyncGenerator[tuple[Tenant, Tenant], None]:
+) -> AsyncGenerator[tuple[Tenant, Tenant]]:
     """Create two test tenants for isolation testing.
 
     Returns:
@@ -57,7 +57,7 @@ async def test_tenants(
 @pytest.fixture
 async def test_users(
     db_session: AsyncSession, test_tenants: tuple[Tenant, Tenant]
-) -> AsyncGenerator[tuple[User, User], None]:
+) -> AsyncGenerator[tuple[User, User]]:
     """Create test users for each tenant.
 
     Args:
@@ -97,7 +97,7 @@ async def test_posts(
     db_session: AsyncSession,
     test_tenants: tuple[Tenant, Tenant],
     test_users: tuple[User, User],
-) -> AsyncGenerator[tuple[Post, Post], None]:
+) -> AsyncGenerator[tuple[Post, Post]]:
     """Create test posts for each tenant.
 
     Args:

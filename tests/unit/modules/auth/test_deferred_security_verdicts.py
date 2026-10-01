@@ -28,6 +28,8 @@ from uuid import UUID
 
 import pytest
 
+from tests.helpers.auth import build_test_auth_context
+
 OWNER_TENANT = UUID("22222222-2222-4222-8222-222222222222")
 OTHER_TENANT = UUID("33333333-3333-4333-8333-333333333333")
 
@@ -398,6 +400,7 @@ class TestSSOSettingsReadRouteIsSuperuserOnly:
 
         from src.app.api.deps.auth import get_current_user
         from src.app.core.db.database import async_get_db
+        from src.app.core.principal import get_auth_context
         from src.app.core.tenancy.lifecycle import bound_tenant
 
         app = self._app()
@@ -405,8 +408,16 @@ class TestSSOSettingsReadRouteIsSuperuserOnly:
         # Only the token VERIFICATION is stubbed. ``get_current_superuser``
         # itself runs production code, so the assertions below exercise the
         # real guard rather than a re-implementation of it.
-        app.dependency_overrides[get_current_user] = lambda: self._user(
-            is_superuser=is_superuser, tenant_id=OWNER_TENANT
+        user = self._user(is_superuser=is_superuser, tenant_id=OWNER_TENANT)
+        app.dependency_overrides[get_current_user] = lambda: user
+        # The guard reads the tenant off the resolved principal
+        # (``get_auth_context``), the same principal ``requires_permission``
+        # reads — so the test must supply one, via the sanctioned override
+        # seam, or the REAL ``get_auth_context`` runs here and 401s before the
+        # guard is ever reached. The tenant is the one bound below, so the
+        # guard sees the same binding the route does.
+        app.dependency_overrides[get_auth_context] = lambda: build_test_auth_context(
+            user, self._tenant_ctx(OWNER_TENANT)
         )
 
         # The real tenant binding, not a patched accessor: the route builds a

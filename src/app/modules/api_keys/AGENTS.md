@@ -6,7 +6,7 @@ Manages API key generation, validation, and revocation for programmatic access. 
 ## Setup & Run
 ```bash
 # Run tests
-uv run pytest tests/unit/test_auth_service.py -v
+uv run pytest tests/unit/modules/auth/test_auth_service.py -v
 
 # Type check
 uv run mypy src/app/modules/api_keys/
@@ -73,5 +73,5 @@ def _hash_api_key(self, api_key: str) -> str:
 ## Pre-PR Checks
 
 ```bash
-uv run mypy src/app/modules/api_keys/ && uv run ruff check src/app/modules/api_keys/ && uv run pytest tests/unit/test_auth_service.py -v
+uv run mypy src/app/modules/api_keys/ && uv run ruff check src/app/modules/api_keys/ && uv run pytest tests/unit/modules/auth/test_auth_service.py -v
 ```

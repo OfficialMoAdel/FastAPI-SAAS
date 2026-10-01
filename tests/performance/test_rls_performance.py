@@ -42,7 +42,7 @@ pytestmark = [
 @pytest.fixture
 async def benchmark_tenants(
     db_session: AsyncSession,
-) -> AsyncGenerator[list[Tenant], None]:
+) -> AsyncGenerator[list[Tenant]]:
     """Create tenants for benchmark tests."""
     tenants = [
         Tenant(
@@ -71,7 +71,7 @@ async def benchmark_tenants(
 async def benchmark_users(
     db_session: AsyncSession,
     benchmark_tenants: list[Tenant],
-) -> AsyncGenerator[list[User], None]:
+) -> AsyncGenerator[list[User]]:
     """Create users for benchmark tests."""
     users = []
     for i, tenant in enumerate(benchmark_tenants):
@@ -103,7 +103,7 @@ async def benchmark_posts(
     db_session: AsyncSession,
     benchmark_tenants: list[Tenant],
     benchmark_users: list[User],
-) -> AsyncGenerator[list[Post], None]:
+) -> AsyncGenerator[list[Post]]:
     """Create posts for benchmark tests (100 posts across 5 tenants)."""
     posts = []
 

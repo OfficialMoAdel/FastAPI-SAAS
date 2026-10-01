@@ -329,6 +329,8 @@ async def create_magic_link(
 async def get_magic_link_by_token(
     db: AsyncSession,
     token: str,
+    *,
+    for_update: bool = False,
 ) -> MagicLink | None:
     """Get a magic link by token.
 
@@ -336,18 +338,32 @@ async def get_magic_link_by_token(
     so links issued before that change are invisible to a single-digest
     lookup. Query both; a legacy hit is re-hashed so the row migrates
     forward on first use (subsequent lookups hit the current digest).
+
+    ``for_update=True`` is the redemption path's lock, mirroring the
+    ``SELECT ... FOR UPDATE`` that ``passwords.reset_password`` and
+    ``email_verification.verify_email`` take before reading ``used`` and
+    writing the single-use marker. It also changes the legacy re-hash from a
+    COMMIT to a FLUSH: committing there would release the row lock while the
+    link was still unused — the exact bug fixed in both of those flows.
+    The caller owns the commit and must keep the transaction open until the
+    single-use marker is written (or the session is rolled back on raise).
     """
     from src.app.core.security.tokens import token_digest_candidates
 
     current_digest, legacy_digest = token_digest_candidates(token)
     stmt = select(MagicLink).where(MagicLink.token.in_((current_digest, legacy_digest)))
+    if for_update:
+        stmt = stmt.with_for_update()
     result = await db.execute(stmt)
     magic_link = result.scalar_one_or_none()
 
     if magic_link is not None and magic_link.token == legacy_digest:
         magic_link.token = current_digest
-        await db.commit()
-        await db.refresh(magic_link)
+        if for_update:
+            await db.flush()
+        else:
+            await db.commit()
+            await db.refresh(magic_link)
     return magic_link
 
 

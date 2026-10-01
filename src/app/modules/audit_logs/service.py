@@ -143,7 +143,7 @@ class AuditLogService:
         count: int = result.scalar_one()
         return int(count)
 
-    async def stream_export(self, criteria: AuditExportCriteria, actor: int) -> AsyncGenerator[bytes, None]:
+    async def stream_export(self, criteria: AuditExportCriteria, actor: int) -> AsyncGenerator[bytes]:
         """Validate and record an export before returning its lazy byte stream.
 
         The caller must keep the session open while consuming the stream and
@@ -215,7 +215,7 @@ class AuditLogService:
         )
         export_format = criteria.format
 
-        async def generate() -> AsyncGenerator[bytes, None]:
+        async def generate() -> AsyncGenerator[bytes]:
             async with stream_scoped(
                 stmt,
                 db=self.db,

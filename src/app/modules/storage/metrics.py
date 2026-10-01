@@ -179,7 +179,7 @@ class StorageMetrics:
 
     @staticmethod
     @contextmanager
-    def measure_upload(tenant_id: str, provider: str) -> Generator[None, None, None]:
+    def measure_upload(tenant_id: str, provider: str) -> Generator[None]:
         """Context manager to measure upload duration."""
         start = time.perf_counter()
         try:
@@ -193,7 +193,7 @@ class StorageMetrics:
 
     @staticmethod
     @contextmanager
-    def measure_download(tenant_id: str, provider: str) -> Generator[None, None, None]:
+    def measure_download(tenant_id: str, provider: str) -> Generator[None]:
         """Context manager to measure download duration."""
         start = time.perf_counter()
         try:

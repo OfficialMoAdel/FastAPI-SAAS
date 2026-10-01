@@ -10,10 +10,15 @@ from datetime import UTC, datetime
 from typing import Any
 
 import tiktoken
+from fastcrud.crud.validation import validate_pagination_params
+from sqlalchemy import func, select
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import local_session
+from src.app.core.db.scoped import execute_scoped
 from src.app.core.logger import get_logger
+from src.app.core.security.ownership import require_resource_ownership
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules._base.service import BaseService, fetch_page_with_total
 from src.app.modules.ai.crud import crud_ai_settings, crud_chat_messages, crud_chat_sessions
@@ -30,9 +35,13 @@ from src.app.modules.ai.schemas import (
     ChatSessionUpdate,
 )
 from src.app.modules.ai.unified_errors import SessionLimitExceededError
-from src.app.shared.exceptions import ModelNotFoundError
+from src.app.shared.exceptions import ForbiddenError, ModelNotFoundError
 
 logger = get_logger(__name__)
+
+# P0-5 window-function label, same contract as ``_base.service``'s: the total is
+# evaluated over the scoped set before LIMIT/OFFSET, in one round trip.
+_PAGE_TOTAL_LABEL = "__page_total"
 
 # T096: Token estimation (4 chars per token)
 DEFAULT_CONTEXT_WINDOW = 8192  # Default context window size in tokens
@@ -190,12 +199,23 @@ class ChatSessionService(BaseService[AIChatSession]):
         return dict(session)
 
     async def get_session(self, session_id: int, user_id: int) -> dict[str, Any]:
-        """Get a chat session by ID with ownership check."""
-        session = await crud_chat_sessions.get(db=self.db, id=session_id)
+        """Get a chat session by ID, scoped to its owner.
+
+        SEC-07: the owner predicate is part of the SELECT, so a row the actor
+        does not own is never loaded. The previous shape loaded by id and
+        compared ``user_id`` afterwards — the same TOCTOU trust shape the
+        posts/billing paths moved away from, and one a later refactor could
+        silently drop. The seam call stays as the assertion layer over the
+        already-scoped row; a mismatch is still a 404, not a 403, so it is
+        not an existence oracle (F29 convention, see billing).
+        """
+        session = await crud_chat_sessions.get(db=self.db, id=session_id, user_id=user_id)
         if session is None:
             raise ModelNotFoundError("ChatSession", session_id)
-        if session["user_id"] != user_id:
-            raise ModelNotFoundError("ChatSession", session_id)
+        try:
+            require_resource_ownership(session["user_id"], user_id)
+        except ForbiddenError:
+            raise ModelNotFoundError("ChatSession", session_id) from None
         return session
 
     async def get_user_sessions(self, user_id: int, page: int = 1, limit: int = 20) -> dict[str, Any]:
@@ -213,22 +233,50 @@ class ChatSessionService(BaseService[AIChatSession]):
         )
 
     async def update_session(self, session_id: int, user_id: int, data: ChatSessionUpdate) -> dict[str, Any]:
-        """Update a chat session."""
+        """Update a chat session, scoped to its owner.
+
+        SEC-07: the owner predicate is in the UPDATE's WHERE, not only in the
+        preceding read, so a row the actor does not own cannot be written even
+        if the read guard above is reordered or dropped. A write that matches
+        no row is the same 404 the read produced (billing F29 convention), not
+        a new status.
+        """
         await self.get_session(session_id, user_id)
 
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
-        await crud_chat_sessions.update(db=self.db, object=update_data, id=session_id)
+        try:
+            await crud_chat_sessions.update(
+                db=self.db,
+                object=update_data,
+                id=session_id,
+                user_id=user_id,
+            )
+        except NoResultFound as exc:
+            raise ModelNotFoundError("ChatSession", session_id) from exc
         await self.db.commit()
-        result = await crud_chat_sessions.get(db=self.db, id=session_id)
+        result = await crud_chat_sessions.get(db=self.db, id=session_id, user_id=user_id)
         if result is None:
             raise ModelNotFoundError("ChatSession", session_id)
         return result
 
     async def delete_session(self, session_id: int, user_id: int) -> dict[str, str]:
-        """Delete a chat session."""
+        """Delete a chat session, scoped to its owner.
+
+        The OWNER SCOPE is the `user_id=` filter in the DELETE's own WHERE
+        clause, not a pre-read. ``FastCRUD.db_delete`` does NOT raise
+        ``NoResultFound`` for a zero-row match (only for an ambiguous
+        ``>1`` match), so a missing row deletes nothing and returns normally —
+        the filter is what prevents deleting someone else's session.
+
+        The ``get_session`` call above is the 404 leg: a session that is not
+        the actor's is refused with the same ``ModelNotFoundError`` the read
+        path gives, rather than a silent 200. A row deleted concurrently
+        between that read and this DELETE yields a 200 that deleted zero rows,
+        which is the correct outcome for a delete that raced.
+        """
         await self.get_session(session_id, user_id)
-        await crud_chat_sessions.db_delete(db=self.db, id=session_id)
+        await crud_chat_sessions.db_delete(db=self.db, id=session_id, user_id=user_id)
         await self.db.commit()
         return {"message": "Chat session deleted"}
 
@@ -265,19 +313,63 @@ class ChatMessageService(BaseService[AIChatMessage]):
         await self.db.commit()
         return result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
 
-    async def get_session_messages(self, session_id: int, page: int = 1, limit: int = 50) -> dict[str, Any]:
-        """Get paginated messages for a session."""
-        from src.app.modules.ai.schemas import ChatMessageRead
+    async def get_session_messages(
+        self, session_id: int, user_id: int, page: int = 1, limit: int = 50
+    ) -> dict[str, Any]:
+        """Get paginated messages for a session, scoped to the session's owner.
+
+        SEC-07: ``AIChatMessage`` carries no ``user_id``, so the owner lives one
+        hop up. A correlated EXISTS against the parent session keeps that
+        predicate in the WHERE — a message whose session is not the actor's can
+        never enter the result set — without the row multiplication an explicit
+        JOIN would introduce. Tenant scoping rides the same seam every other
+        operation here uses (``execute_scoped``), so this module keeps one
+        tenant-filter spelling rather than two.
+
+        The session's own row must be readable by this actor; otherwise the
+        answer is the same 404 ``ChatSessionService.get_session`` gives, rather
+        than a bare empty page that reads as "this session has no messages".
+        """
+        await ChatSessionService(self.db).get_session(session_id, user_id)
 
         offset = (page - 1) * limit
-        return await fetch_page_with_total(
-            crud_chat_messages,
-            self.db,
-            session_id=session_id,
-            offset=offset,
-            limit=limit,
-            schema_to_select=ChatMessageRead,
+        validate_pagination_params(offset, limit)
+        owned = select(AIChatSession.id).where(
+            AIChatSession.id == AIChatMessage.session_id,
+            AIChatSession.user_id == user_id,
         )
+        # Explicit table columns, not the ORM entity: the entity form yields one
+        # opaque positional column, while every other message read in this
+        # module hands back named dicts that the router indexes by name.
+        base = select(*AIChatMessage.__table__.c).where(
+            AIChatMessage.session_id == session_id,
+            owned.exists(),
+        )
+        paged = base.add_columns(func.count().over().label(_PAGE_TOTAL_LABEL)).offset(offset)
+        if limit is not None:
+            paged = paged.limit(limit)
+
+        rows = (await execute_scoped(paged, db=self.db, model=AIChatMessage)).mappings().all()
+        if rows:
+            return {
+                "data": [{k: v for k, v in dict(row).items() if k != _PAGE_TOTAL_LABEL} for row in rows],
+                "total_count": int(rows[0][_PAGE_TOTAL_LABEL]),
+            }
+        if offset == 0:
+            return {"data": [], "total_count": 0}
+        # Out-of-range page: the window yields no rows, so the total is
+        # unknowable from it. COUNT the same set directly (the P0-5
+        # windowed-pagination shape from _base.service) — counting ``base``
+        # rather than a subquery wrapper keeps ``ai_chat_messages`` in the
+        # FROM, so the tenant predicate execute_scoped appends still binds to
+        # the right table instead of adding a cross join that would count the
+        # whole tenant.
+        count_stmt = select(func.count()).select_from(AIChatMessage.__table__).where(
+            AIChatMessage.session_id == session_id,
+            owned.exists(),
+        )
+        total = (await execute_scoped(count_stmt, db=self.db, model=AIChatMessage)).scalar()
+        return {"data": [], "total_count": int(total or 0)}
 
 
 class AISettingsService(BaseService[AISettings]):
@@ -506,7 +598,7 @@ class ChatCompletionService:
         temperature: float,
         max_tokens: int | None,
         system_prompt: str | None,
-    ) -> AsyncGenerator[dict[str, Any], None]:
+    ) -> AsyncGenerator[dict[str, Any]]:
         """Stream chat from the AIProvider seam (single dialect).
 
         P2-11: the provider boundary takes typed ChatMessage objects.
@@ -578,7 +670,7 @@ class ChatCompletionService:
         # fast indexed lookups; serial latency is negligible next to the LLM call.
         session = await ChatSessionService(self.db).get_session(session_id, user_id)
         user_settings = await AISettingsService(self.db).get_or_create_settings(user_id)
-        messages_result = await ChatMessageService(self.db).get_session_messages(session_id, limit=50)
+        messages_result = await ChatMessageService(self.db).get_session_messages(session_id, user_id, limit=50)
 
         model = request.model or session.get("model") or user_settings.get("model", "gemma3")
         temperature = request.temperature if request.temperature is not None else user_settings.get("temperature", 0.7)
@@ -762,7 +854,7 @@ class ChatCompletionService:
         session_id: int,
         user_id: int,
         request: ChatCompletionRequest,
-    ) -> AsyncGenerator[dict[str, Any], None]:
+    ) -> AsyncGenerator[dict[str, Any]]:
         """Stream a chat completion for a session.
 
         C2: Releases DB connection during LLM streaming to prevent pool exhaustion.

@@ -9,7 +9,7 @@ Background job processing via ARQ. Manages job creation, status tracking, and re
 uv run arq src.app.modules.tasks.worker
 
 # Run tests
-uv run pytest tests/unit/test_task_service.py -v
+uv run pytest tests/unit/modules/tasks/test_service.py -v
 
 # Type check
 uv run mypy src/app/modules/tasks/
@@ -79,5 +79,5 @@ async def sample_background_task(ctx, message: str):
 ## Pre-PR Checks
 
 ```bash
-uv run mypy src/app/modules/tasks/ && uv run ruff check src/app/modules/tasks/ && uv run pytest tests/unit/test_task_service.py -v
+uv run mypy src/app/modules/tasks/ && uv run ruff check src/app/modules/tasks/ && uv run pytest tests/unit/modules/tasks/test_service.py -v
 ```

@@ -8,7 +8,7 @@ Multi-tenant management with tenant isolation, context management, and whitelist
 
 ```bash
 # Run tenant tests
-uv run pytest tests/integration/test_tenant_api.py -v
+uv run pytest tests/integration/core/tenancy/test_tenant_api.py -v
 
 # Create first tenant
 uv run python scripts/create_first_tenant.py
@@ -97,7 +97,7 @@ rg -n "X-Tenant-ID" src/app/
 ## Pre-PR Checks
 
 ```bash
-uv run pytest tests/integration/test_tenant_api.py -v && \
-uv run pytest tests/integration/test_tenant_middleware.py -v && \
+uv run pytest tests/integration/core/tenancy/test_tenant_api.py -v && \
+uv run pytest tests/contract/test_tenant_middleware.py -v && \
 uv run ruff check src/app/modules/tenants/
 ```

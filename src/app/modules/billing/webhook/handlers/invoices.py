@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import stripe
 from sqlalchemy.exc import IntegrityError
 
+from src.app.clients.billing import StripeEvent
 from src.app.modules.billing import webhook as _pkg
 from src.app.modules.billing.lifecycle import is_valid_transition
 from src.app.modules.billing.schemas import (
@@ -17,7 +17,7 @@ from src.app.modules.billing.webhook.locks import (
 )
 
 
-async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
+async def handle_invoice_payment_succeeded(event: StripeEvent) -> None:
     """Handle invoice.payment_succeeded event.
 
     Creates a billing record with succeeded status.
@@ -128,7 +128,7 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
     _pkg.logger.info("Created succeeded billing record for invoice", val=invoice["id"])
 
 
-async def handle_invoice_payment_failed(event: stripe.Event) -> None:
+async def handle_invoice_payment_failed(event: StripeEvent) -> None:
     """Handle invoice.payment_failed event.
 
     Creates a billing record with failed status and updates subscription to past_due.

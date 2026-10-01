@@ -1,7 +1,33 @@
-"""Query Profiler Middleware for development mode.
+"""SQL profiling middleware for non-production environments.
 
-Tracks and logs slow SQL queries during development to help identify N+1 issues,
-missing indexes, and inefficient queries before they reach production.
+This module owns the single SQLAlchemy `before/after_cursor_execute` pair and
+the per-request view.
+
+`src/app/core/db/profiler.py` used to register a SECOND pair on the same
+engine, gated by the same `QUERY_PROFILER_ENABLED` flag. Both were live at
+once, so enabling profiling timed every query twice, logged each slow query
+twice, and ran N+1 detection twice over the same statement. That is finding
+`muse 12`.
+
+The two modules were MERGED rather than collapsed, because they answer
+different questions and only one of them survives per request:
+
+  * this module — per-request `QueryStats` via a ContextVar, plus the
+    `X-Query-Count` / `X-Query-Time` / `X-Slow-Queries` headers;
+  * `core/db/profiler.py` — the CROSS-REQUEST tracker, which sees a pattern
+    that no single request repeats but that recurs across every request in
+    this process. Per-request counts are structurally blind to that, and it
+    is what a connection-pool leak looks like.
+
+So the single listener below feeds both: its own `QueryStats` when a request
+is being tracked, and `track_global_query()` always. The cross-request view
+is read with `core.db.profiler.get_query_stats()`.
+
+SCOPE LIMIT: this listener lives on the HTTP path only. The ARQ worker's
+engine is built by `core/db/database.py::_create_engine`, which no longer
+wires profiling, so background-task queries are NOT observed by either
+consumer. Cross-request means 'across web requests in this process', not
+'across the web tier and the worker'.
 
 Features:
 - Logs queries exceeding configurable threshold (default 100ms)
@@ -13,6 +39,7 @@ Features:
 
 import threading
 import time
+import weakref
 from collections import defaultdict
 from contextvars import ContextVar
 from typing import Any
@@ -24,6 +51,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.app.core.config import EnvironmentOption, settings
 from src.app.core.db.database import async_engine
+from src.app.core.db.profiler import track_global_query
 from src.app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -79,17 +107,22 @@ class QueryStats:
 
 
 _query_stats_ctx: ContextVar[QueryStats | None] = ContextVar("query_stats_ctx", default=None)
-_profiler_initialized = False
+# Per-ENGINE, not per-process. A module-level bool is the wrong granularity:
+# the invariant is 'one listener pair per engine', so a second engine (a
+# fresh test engine, a separately-configured replica pool) must be
+# instrumented too, while the SAME engine must never be instrumented
+# twice. A WeakSet keys that exactly and does not keep a disposed engine
+# alive.
+_profiler_instrumented: "weakref.WeakSet[Engine]" = weakref.WeakSet()
 _profiler_lock = threading.Lock()
 
 
 def _attach_global_listeners(engine: Engine) -> None:
-    """Attach global listeners exactly once."""
-    global _profiler_initialized
-    if _profiler_initialized:
+    """Attach the listener pair to ``engine``, at most once per engine."""
+    if engine in _profiler_instrumented:
         return
     with _profiler_lock:
-        if _profiler_initialized:
+        if engine in _profiler_instrumented:
             return
 
         @event.listens_for(engine, "before_cursor_execute")
@@ -100,6 +133,17 @@ def _attach_global_listeners(engine: Engine) -> None:
 
         @event.listens_for(engine, "after_cursor_execute")
         def after_execute(conn: Connection, cursor, statement, parameters, context, executemany):
+            # This is the ONLY cursor-execute listener pair in the app (muse 12).
+            # It feeds two consumers from one event:
+            #   1. per-request QueryStats, via the ContextVar below;
+            #   2. the CROSS-REQUEST tracker in core/db/profiler.py, which sees
+            #      patterns that recur across requests and background tasks and
+            #      that no single request's counts can detect.
+            # The second one runs whether or not this request has a QueryStats,
+            # because the interesting cases are exactly the ones where one
+            # request looks fine.
+            track_global_query(str(statement))
+
             stats = _query_stats_ctx.get()
             if stats is not None:
                 start_time = conn.info.get("middleware_query_start_time")
@@ -117,7 +161,7 @@ def _attach_global_listeners(engine: Engine) -> None:
                         duration_ms=duration_ms,
                     )
 
-        _profiler_initialized = True
+        _profiler_instrumented.add(engine)
 
 
 class QueryProfilerMiddleware:
@@ -230,7 +274,13 @@ class QueryProfilerMiddleware:
 
             # Log details of first few slow queries
             for i, sq in enumerate(stats.slow_queries[:3], 1):
-                log_parts.append(f"slow_{i}={sq['duration_ms']}ms: {sq['statement'][:80]}...")
+                # params travel with the statement: the retired engine-level
+                # profiler logged them, and a slow-query line without the
+                # bound values is the line you cannot act on.
+                detail = f"{sq['statement'][:80]}..."
+                if sq.get("params"):
+                    detail = f"{detail} params={sq['params']}"
+                log_parts.append(f"slow_{i}={sq['duration_ms']}ms: {detail}")
 
         # Determine log level based on severity
         if stats.slow_queries or n_plus_1_queries:

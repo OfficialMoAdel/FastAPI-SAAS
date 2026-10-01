@@ -16,8 +16,12 @@ from typing import Any, Protocol
 from cachetools import TTLCache
 
 from src.app.core.config import settings
+from src.app.core.exceptions.cache_exceptions import MissingClientError
 from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.logger import get_logger
 from src.app.core.utils import cache
+
+logger = get_logger(__name__)
 
 
 class IpRules(Protocol):
@@ -86,26 +90,30 @@ class IPFilterService:
             "reason": reason,
             "added_by": added_by,
         }
-        if expires_at:
-            ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
-            if ttl_seconds <= 0:
-                return False
-            async with get_redis_client() as client:
-                if client:
+        try:
+            if expires_at:
+                ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
+                if ttl_seconds <= 0:
+                    return False
+                async with get_redis_client() as client:
                     await client.setex(key, ttl_seconds, json_dumps(data, as_str=True))
-        else:
-            async with get_redis_client() as client:
-                if client:
+            else:
+                async with get_redis_client() as client:
                     await client.set(key, json_dumps(data, as_str=True))
+        except MissingClientError:
+            logger.warning("add_to_whitelist failed: Redis unavailable", ip_address=ip_address)
+            return False
         return True
 
     async def remove_from_whitelist(self, ip_address: str) -> bool:
         """Remove an IP address from the whitelist."""
         invalidate_ip_status_cache(ip_address)
-        async with get_redis_client() as client:
-            if client:
+        try:
+            async with get_redis_client() as client:
                 return bool(await client.delete(f"{self.WHITELIST_PREFIX}{ip_address}") > 0)
-        return False
+        except MissingClientError:
+            logger.warning("remove_from_whitelist failed: Redis unavailable", ip_address=ip_address)
+            return False
 
     async def add_to_blacklist(
         self,
@@ -123,26 +131,30 @@ class IPFilterService:
             "reason": reason,
             "added_by": added_by,
         }
-        if expires_at:
-            ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
-            if ttl_seconds <= 0:
-                return False
-            async with get_redis_client() as client:
-                if client:
+        try:
+            if expires_at:
+                ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
+                if ttl_seconds <= 0:
+                    return False
+                async with get_redis_client() as client:
                     await client.setex(key, ttl_seconds, json_dumps(data, as_str=True))
-        else:
-            async with get_redis_client() as client:
-                if client:
+            else:
+                async with get_redis_client() as client:
                     await client.set(key, json_dumps(data, as_str=True))
+        except MissingClientError:
+            logger.warning("add_to_blacklist failed: Redis unavailable", ip_address=ip_address)
+            return False
         return True
 
     async def remove_from_blacklist(self, ip_address: str) -> bool:
         """Remove an IP address from the blacklist."""
         invalidate_ip_status_cache(ip_address)
-        async with get_redis_client() as client:
-            if client:
+        try:
+            async with get_redis_client() as client:
                 return bool(await client.delete(f"{self.BLACKLIST_PREFIX}{ip_address}") > 0)
-        return False
+        except MissingClientError:
+            logger.warning("remove_from_blacklist failed: Redis unavailable", ip_address=ip_address)
+            return False
 
     async def is_whitelisted(self, ip_address: str) -> bool:
         """Check whether an IP is whitelisted."""
@@ -246,16 +258,17 @@ class IPFilterService:
     async def _clear_list(self, prefix: str) -> int:
         pattern = f"{prefix}*"
         keys: list[str | bytes] = []
-        async with get_redis_client() as client:
-            if not client:
-                return 0
-            cursor = 0
-            while True:
-                cursor, batch = await client.scan(cursor, match=pattern, count=100)
-                keys.extend(batch)
-                if cursor == 0:
-                    break
-            return int(await client.delete(*keys)) if keys else 0
+        try:
+            async with get_redis_client() as client:
+                cursor = 0
+                while True:
+                    cursor, batch = await client.scan(cursor, match=pattern, count=100)
+                    keys.extend(batch)
+                    if cursor == 0:
+                        break
+                return int(await client.delete(*keys)) if keys else 0
+        except MissingClientError:
+            return 0
 
 
 class RedisIpRules:

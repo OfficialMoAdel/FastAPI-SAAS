@@ -92,7 +92,7 @@ async def real_postgres_engine():
 
 
 @pytest_asyncio.fixture
-async def real_postgres(real_postgres_engine) -> AsyncGenerator[AsyncSession, None]:
+async def real_postgres(real_postgres_engine) -> AsyncGenerator[AsyncSession]:
     """Real PostgreSQL session for integration tests.
 
     Uses function scope (default) to ensure each test gets a fresh session,
@@ -238,7 +238,7 @@ async def clean_db(real_postgres):
 # Redis Fixtures
 # -----------------------------------------------------------------------------
 @pytest_asyncio.fixture
-async def real_redis() -> AsyncGenerator[Redis, None]:
+async def real_redis() -> AsyncGenerator[Redis]:
     """Real Redis connection for integration tests.
 
     Uses function scope (default) to create fresh connections per test,
@@ -280,7 +280,7 @@ from src.app.core.utils import cache
 
 
 @pytest_asyncio.fixture
-async def clean_redis(real_redis) -> AsyncGenerator[Redis, None]:
+async def clean_redis(real_redis) -> AsyncGenerator[Redis]:
     """Alias for real_redis for backward compatibility with existing tests.
     real_redis already flushes the DB before and after.
     """
@@ -502,7 +502,7 @@ def skip_without_services(request):
 
 
 @pytest.fixture
-async def async_client(get_test_app, full_mock_context) -> AsyncGenerator[AsyncClient, None]:
+async def async_client(get_test_app, full_mock_context) -> AsyncGenerator[AsyncClient]:
     """Async client fixture."""
     app = get_test_app
     # Note: ASGITransport(app=app) handles lifespan automatically.
@@ -518,7 +518,7 @@ async def async_client(get_test_app, full_mock_context) -> AsyncGenerator[AsyncC
 
 
 @pytest.fixture
-async def unauthenticated_async_client(get_test_app, unauthenticated_mock_context) -> AsyncGenerator[AsyncClient, None]:
+async def unauthenticated_async_client(get_test_app, unauthenticated_mock_context) -> AsyncGenerator[AsyncClient]:
     """Async client WITHOUT authentication for testing auth-required endpoints.
 
     Use this fixture when testing that endpoints correctly reject unauthenticated requests.

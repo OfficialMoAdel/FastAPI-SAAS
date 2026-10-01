@@ -162,9 +162,9 @@ async def consume(
 
                 record_fail_open("rate_limit:gcra_degraded")
                 logger.error(
-                    "GCRA rate limit check failed; degrading to fixed window | key=%s | error=%s",
-                    key,
-                    exc,
+                    "gcra_check_failed_degrading_to_fixed_window",
+                    key=key,
+                    error=str(exc),
                 )
                 degraded = True
 
@@ -236,7 +236,7 @@ async def resolve_rate_limits(
                 except Exception as wb_err:
                     logger.debug("policy cache write-back failed", error=str(wb_err))
         except Exception as e:
-            logger.debug("DB rate-limit query fallback failed: %s", e)
+            logger.debug("rate_limit_db_fallback_failed", error=str(e))
 
     # 3. Settings per-tier fallback
     if limit is None or period is None:

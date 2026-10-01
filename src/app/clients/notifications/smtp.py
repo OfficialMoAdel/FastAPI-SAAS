@@ -64,11 +64,29 @@ class EmailProvider(ABC):
 
 
 async def _close_quietly(conn: "SMTP") -> None:
-    """Close an SMTP connection, swallowing shutdown errors."""
+    """Close an SMTP connection, swallowing shutdown errors.
+
+    DELIBERATE boundary (muse 22 triage), and the widest one in this module:
+    this is a teardown path whose callers are themselves teardown. Every
+    caller — pool release, pool discard, stale-connection drain — is already
+    handling a send that failed or a loop that changed. What must NOT
+    propagate is the connection's own close failure: a peer that already
+    dropped the socket, a half-finished QUIT, an event loop tearing down
+    underneath us. Propagating any of those would convert a recoverable
+    "this message could not be sent" into a crash in cleanup code, taking
+    the caller down with a failure that has no bearing on the work already
+    done. The connection is being discarded either way, so there is nothing
+    left to salvage by reporting.
+
+    It is broad on purpose rather than pinned to ``SMTPException``/``OSError``
+    because ``conn.quit()`` is an aiosmtplib coroutine that can also fail on
+    attribute access on a partially-constructed connection, and because a
+    close whose failure is ignored has no useful failure mode to distinguish.
+    """
     try:
         if conn.is_connected:
             await conn.quit()
-    except Exception:
+    except Exception:  # noqa: BLE001 - deliberate: a close failure must not crash teardown
         pass
 
 
@@ -169,10 +187,7 @@ class SMTPProvider(EmailProvider):
 
         # Check circuit breaker before attempting send
         if not email_circuit.is_closed:
-            logger.warning(
-                "Email circuit breaker open, skipping email to %s",
-                message.to_email,
-            )
+            logger.warning("email_circuit_open_skipping", to=message.to_email)
             return False
 
         try:
@@ -225,7 +240,17 @@ class SMTPProvider(EmailProvider):
             conn = await self._pool.acquire(self)
             try:
                 await conn.send_message(msg)
-            except Exception:
+            except Exception:  # noqa: BLE001 - deliberate: discard must run, then the error re-raises
+                # DELIBERATE (muse 22 triage). Two things must both happen, in
+                # order: a connection whose send failed has UNKNOWN session
+                # state (a partial DATA command may have been accepted), so it
+                # must never go back into the idle pool, and the original
+                # error must still reach the handler below. Catching broad is
+                # what guarantees the discard runs even for a failure we did
+                # not anticipate; the bare `raise` on the next line is what
+                # keeps the error intact. Narrowing to an SMTP exception list
+                # would leak a mid-DATA connection back into the pool, where
+                # the next send reuses a connection with unknown state.
                 await self._pool.discard(conn)
                 raise
             await self._pool.release(conn)
@@ -234,8 +259,21 @@ class SMTPProvider(EmailProvider):
             await email_circuit.record_success()
             return True
 
-        except Exception as e:
-            # Record failure with circuit breaker
+        except Exception as e:  # noqa: BLE001 - deliberate: a failed email must not fail the request
+            # DELIBERATE (muse 22 triage). This is the request-loop boundary
+            # the module exists to provide: `send_email` returns a bool and its
+            # callers (and `send_bulk_emails`, which loops over messages) treat
+            # that bool as the whole outcome. What must NOT propagate is any
+            # failure to deliver ONE message — a refused recipient, a
+            # connection reset mid-send, a MIME build error on a malformed
+            # attachment. Letting any of those escape would turn a
+            # recoverable per-message failure into a 500 on an otherwise
+            # successful request, and in the bulk loop would abandon every
+            # message after the first bad one instead of counting it failed.
+            # The failure is not lost: it is recorded on the circuit breaker
+            # (so a genuinely broken provider opens) and logged, then mapped
+            # to False. Broad is the correct width because a bespoke message
+            # object can raise essentially anything from its own fields.
             await email_circuit.record_failure(e)
             logger.error("Failed to send email", error=e)
             return False
@@ -349,6 +387,17 @@ def reset_email_provider() -> None:
     its pooled connections) so credential rotation takes effect without a
     process restart. Previously only _active was cleared and _default lived
     forever with stale creds/pool.
+
+    DELIBERATE boundary (muse 22 triage). Note the ordering: both globals are
+    cleared BEFORE the guarded block, so by the time anything below can fail
+    the reset has already succeeded. What remains is best-effort teardown of
+    the old pool, and what must NOT propagate is its failure — a loop that is
+    already closed, a provider object from a different event loop, a test
+    fixture tearing down. Callers are test setup and the notification module's
+    own reconfiguration; both need the seam reset to have taken effect, and
+    neither can act on "the pool would not close". Raising would leave the
+    caller believing the reset failed when the state it resets is already
+    correct.
     """
     global _active_email_provider, _default_smtp_provider
     _active_email_provider = None
@@ -366,5 +415,5 @@ def reset_email_provider() -> None:
                     loop = None
                 if loop is not None:
                     loop.create_task(pool.close_all())  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # noqa: BLE001 - deliberate: the reset already succeeded; pool close is best-effort
             pass

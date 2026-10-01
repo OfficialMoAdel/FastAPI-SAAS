@@ -83,15 +83,15 @@ class AITokenUsageService:
         }
 
         logger.info(
-            "AI Token Usage | provider=%s | model=%s | prompt=%d | completion=%d | total=%d | cost=$%.6f | user=%s | tenant=%s",  # noqa: E501
-            provider,
-            model,
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
-            cost,
-            user_id,
-            tenant_id,
+            "ai_token_usage",
+            provider=provider,
+            model=model,
+            prompt=prompt_tokens,
+            completion=completion_tokens,
+            total=total_tokens,
+            cost=cost,
+            user=user_id,
+            tenant=tenant_id,
             extra=usage_data,
         )
 

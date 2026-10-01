@@ -25,7 +25,7 @@ from src.app.modules.storage.service import StorageAdminService
 
 
 @pytest.fixture(autouse=True)
-def _isolated_registry_and_cache() -> Generator[None, None, None]:
+def _isolated_registry_and_cache() -> Generator[None]:
     """Reset the process-global registry and provider cache around each test."""
     StorageProviderRegistry.reset()
     _PROVIDER_CACHE.clear()

@@ -276,10 +276,9 @@ class UnauthorizedError(AppException):
 class TenantContextError(AppException):
     """Raised when a tenant-scoped operation lacks an active tenant context.
 
-    Canonical home (item 7): previously lived in
-    ``core/exceptions/http_exceptions.py`` as an HTTP-shaped
-    ``CustomException`` subclass. Services must raise this domain error;
-    it declares its own 403 mapping (candidate 3 — the core table row is gone).
+    Canonical home (item 7): previously lived in the now-deleted HTTP-shaped
+    exception shim as a ``CustomException`` subclass. Services must raise this
+    domain error; it declares its own 403 mapping.
 
     Attributes:
         message: Human-readable error message.
@@ -358,6 +357,31 @@ class ServiceUnavailableError(AppException):
         super().__init__(self.message)
 
 
+class UnprocessableRequestError(AppException):
+    """Raised when a request is syntactically valid but semantically rejected.
+
+    Added for the pagination deep-scan guard (P1-10 follow-on). That guard
+    raised ``fastapi.HTTPException(422)`` from ``core``, an HTTP response
+    object below the transport layer — the same defect class the DB circuit
+    guard had. This carries 422, so the wire status is unchanged; only the
+    exception TYPE is now a domain one.
+
+    Distinct from :class:`ValidationError` (400): that one means a field is
+    malformed, this one means the combination is rejected even though every
+    field parsed.
+    """
+
+    http_status = 422
+    response_code = ErrorCode.VALIDATION_ERROR
+    log_message = "Unprocessable request"
+    log_error = False
+
+    def __init__(self, message: str):
+        self.message = message
+        self.detail = message
+        super().__init__(self.message)
+
+
 class StripeError(AppException):
     """Raised when a Stripe API call fails.
 
@@ -403,6 +427,7 @@ __all__ = [
     "ModelNotFoundError",
     "RateLimitExceededError",
     "ServiceUnavailableError",
+    "UnprocessableRequestError",
     "StripeError",
     "TenantContextError",
     "UnauthorizedError",

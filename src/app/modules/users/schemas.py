@@ -278,11 +278,20 @@ class UserUpdate(BaseUpdate):
 class UserTierUpdate(BaseModel):
     """Schema for updating user tier."""
 
+    # Reject unknown fields: a superuser-only tier escalation must not be
+    # accepted alongside typos ("tier"), aliases, or mass-assignment attempts
+    # (is_superuser, tenant_id) that would otherwise be silently dropped.
+    model_config = ConfigDict(extra="forbid")
+
     tier_id: int
 
 
 class UserStatusUpdate(BaseModel):
     """Schema for activating/deactivating a user (superuser only)."""
+
+    # Reject unknown fields so status flips cannot smuggle privileged
+    # attributes past the superuser-only gate on the route.
+    model_config = ConfigDict(extra="forbid")
 
     is_active: bool
 

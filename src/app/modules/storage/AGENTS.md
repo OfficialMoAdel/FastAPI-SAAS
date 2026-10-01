@@ -68,7 +68,10 @@ def get_storage(provider: str, settings: StorageSettingsRead) -> StorageProvider
 ```
 
 ### S3 Implementation
-- Uses `boto3` library
+- Uses the `boto3` library — a **declared runtime dependency** (dxub.9,
+  DECIDED: DECLARE; `pyproject.toml` + `uv.lock`), imported lazily at client
+  construction. If it is somehow missing, `_s3_factory` raises a
+  `ValueError` naming the package; it is never a bare `ModuleNotFoundError`.
 - Configuration from `storage_settings` module (AWS keys, bucket, region)
 - Supports presigned URLs for temporary access
 - Automatic retry on transient errors
@@ -84,7 +87,7 @@ def get_storage(provider: str, settings: StorageSettingsRead) -> StorageProvider
 - Service: `src/app/modules/storage/service.py` - StorageService, StorageAdminService, StoredObject, Download
 - Models: `src/app/modules/storage/models.py` - File, StorageSettings, StorageProviderType (re-exported from the outbound seam)
 - Schemas: `src/app/modules/storage/schemas.py` - FileRead, FileUploadResponse, StorageSettingsRead, etc.
-- Routers: `src/app/modules/storage/files_router.py` (/files), `settings_router.py` (/storage)
+- Routers: `src/app/modules/storage/routers/files.py` (/files), `settings_router.py` (/storage)
 - Providers + registry (OUTBOUND, card 16): `src/app/clients/storage/s3_storage.py`,
   `azure_storage.py`, `local_storage.py`, `registry.py` (`StorageProviderRegistry`),
   `provider_type.py` (`StorageProviderType`)

@@ -15,7 +15,6 @@ from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass
 from sqlalchemy.pool import NullPool
 
 from src.app.core.config import settings
-from src.app.core.db.profiler import is_profiler_enabled, setup_query_profiler
 from src.app.core.db.rls import restore_rls_context
 from src.app.core.logger import get_logger
 from src.app.core.observability.tracing import trace_span
@@ -101,14 +100,22 @@ def _create_engine() -> AsyncEngine:
             },
         )
 
-    # Setup query profiler in development mode
-    if settings.query_profiler.QUERY_PROFILER_ENABLED and is_profiler_enabled(settings.env.ENVIRONMENT.value):
-        setup_query_profiler(
-            engine,
-            slow_query_threshold_ms=settings.query_profiler.QUERY_PROFILER_SLOW_THRESHOLD_MS,
-            n_plus_1_threshold=settings.query_profiler.QUERY_PROFILER_N_PLUS_1_THRESHOLD,
-            detailed_logs=settings.query_profiler.QUERY_PROFILER_DETAILED_LOGS,
-        )
+    # Query profiling is NOT wired here, and that is deliberate (muse 12).
+    #
+    # This used to call `core/db/profiler.setup_query_profiler(engine, ...)`
+    # when QUERY_PROFILER_ENABLED was set. That module registered its own
+    # before/after cursor-execute pair on the same engine as
+    # QueryProfilerMiddleware, behind the same flag, so every query was timed
+    # twice and every slow query and N+1 finding reported twice.
+    #
+    # The two were MERGED rather than one being deleted: QueryProfilerMiddleware
+    # now owns the single listener pair and calls
+    # `core.db.profiler.track_global_query()` on every query, so the
+    # cross-request view (patterns that recur across requests and background
+    # tasks, which per-request QueryStats cannot see) is preserved. The second
+    # attachment point is removed, not the capability. Pinned by
+    # tests/unit/core/db/test_single_profiler.py, which fails if the engine
+    # ever carries more than one listener per cursor-execute event.
 
     # Register RLS event listener
     # M8: Add idempotency check to prevent duplicate listener registration
@@ -173,7 +180,7 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
+async def async_get_db() -> AsyncGenerator[AsyncSession]:
     """Get a database session with proper cleanup.
 
     T6 FIX (docstring honesty): this dependency does NOT itself set RLS
@@ -214,7 +221,7 @@ async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 @asynccontextmanager
-async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
+async def get_db_context() -> AsyncGenerator[AsyncSession]:
     """Get a database session for manual context manager usage.
 
     T6 FIX (docstring honesty): like :func:`async_get_db`, this does NOT set

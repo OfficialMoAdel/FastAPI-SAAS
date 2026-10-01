@@ -19,11 +19,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from fastapi import HTTPException, Query, status
+from fastapi import Query
 from sqlalchemy import and_, or_
 from sqlalchemy.sql import ColumnElement, Select
 
 from src.app.core.config import settings
+from src.app.shared.exceptions import UnprocessableRequestError
 
 # L2: Centralized pagination constants
 # Default: 20 items per page (balances UX and performance)
@@ -61,9 +62,13 @@ class PaginationParams:
         elif self.per_page > MAX_PER_PAGE:
             self.per_page = MAX_PER_PAGE
         if self.offset > _MAX_OFFSET:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Pagination offset {self.offset} exceeds {_MAX_OFFSET}",
+            # P1-10 follow-on: a domain exception, not fastapi.HTTPException.
+            # Carries 422, so the wire status is unchanged, but an HTTP
+            # response object no longer escapes from core — this guard is
+            # reachable from a query-string offset, and the ARQ worker has no
+            # request in scope where an HTTPException would be unhandleable.
+            raise UnprocessableRequestError(
+                f"Pagination offset {self.offset} exceeds {_MAX_OFFSET}"
             )
 
     @property

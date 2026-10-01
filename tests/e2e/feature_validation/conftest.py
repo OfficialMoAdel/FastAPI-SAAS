@@ -199,7 +199,7 @@ async def ensure_test_tenant(ensure_tiers):
 
 
 @pytest.fixture
-async def db_session(ensure_test_tenant) -> AsyncGenerator[AsyncSession, None]:
+async def db_session(ensure_test_tenant) -> AsyncGenerator[AsyncSession]:
     """Provide database session for E2E tests."""
     async with _get_test_session_maker()() as session:
         logger.info("Created database session for E2E test")
@@ -208,7 +208,7 @@ async def db_session(ensure_test_tenant) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient, None]:
+async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient]:
     """Provide async HTTP client for E2E tests with initialized Redis."""
     from redis import asyncio as aioredis
 

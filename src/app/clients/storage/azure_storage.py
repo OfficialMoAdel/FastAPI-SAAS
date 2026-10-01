@@ -115,7 +115,7 @@ class AzureBlobStorage(StorageProvider):
             logger.error("Failed to upload blob :", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
-    async def download(self, path: str) -> AsyncGenerator[bytes, None]:
+    async def download(self, path: str) -> AsyncGenerator[bytes]:
         """Download a file from Azure Blob Storage.
 
         Args:

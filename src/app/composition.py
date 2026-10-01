@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+
 async def _start_redis_cache_pool(enabled: bool) -> None:
     if enabled:
         await runtime_setup.create_redis_cache_pool()
@@ -215,7 +216,7 @@ async def _start_cache_warmer(done: asyncio.Event) -> None:
             else:
                 await warm_caches()
         except Exception as e:  # noqa: BLE001 - P1-17: background warming is best-effort by design
-            logger.warning("Cache warming failed: %s", e)
+            logger.warning("cache_warming_failed", error=str(e))
 
     from src.app.core.utils.background_task import create_safe_task
 
@@ -278,7 +279,7 @@ async def _close_storage_providers() -> None:
 
         await close_cached_providers()
     except Exception as e:  # noqa: BLE001 — teardown is best-effort
-        get_logger(__name__).warning("Failed to close cached storage providers: %s", e)
+        get_logger(__name__).warning("Failed to close cached storage providers", error=str(e))
 
 
 async def _teardown_logging() -> None:
@@ -347,9 +348,7 @@ def lifespan_factory(
             StartupPhase("security_budget_gate", _start_security_budget_gate, None),
             StartupPhase("tenant_model_gate", _start_tenant_model_gate, None),
             StartupPhase("permission_graph_gate", _start_permission_graph_gate, None),
-            StartupPhase(
-                "permission_catalog_reconcile", _start_permission_catalog_reconcile, None
-            ),
+            StartupPhase("permission_catalog_reconcile", _start_permission_catalog_reconcile, None),
             StartupPhase("rate_policy_gate", _start_rate_policy_gate, None),
             StartupPhase("bypass_recorder_gate", _start_bypass_recorder_gate, None),
             # The phase NAME is part of the observable startup contract and is
@@ -661,7 +660,7 @@ async def _teardown_security_listeners() -> None:
 
 
 @asynccontextmanager
-async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None]:
     """Startup and shutdown orchestration composing modular phases."""
     from src.app.core.logger import setup_logging
 
@@ -682,16 +681,22 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         admin_phases = [
             StartupPhase("pool_metrics", _start_pool_metrics, None),
             StartupPhase("event_bus_queue", partial(_start_event_bus_and_queue, redis_client), None),
-            StartupPhase(
-                "rate_limiting_security", partial(_init_rate_limiting_and_security, redis_client), None
-            ),
+            StartupPhase("rate_limiting_security", partial(_init_rate_limiting_and_security, redis_client), None),
             StartupPhase("runtime_config", _load_security_runtime_config, None),
             # No tenant_model_gate here: lifespan_with_admin composes
             # lifespan_factory's lifespan (see above), whose `phases` list
             # already runs tenant_model_gate before these admin phases start.
             # The old copy here carried a comment justifying it by what "the
             # worker" needs — a worker concern sitting in the web phase list.
-            StartupPhase("warm_caches", _warm_startup_caches, None),
+            # muse 18: this phase used to be named "warm_caches", the SAME
+            # name as the web phase above, while doing different work — this
+            # one is the blocking, 15s-bounded token-blacklist warm; the web
+            # one is a fire-and-forget application cache warm. Two phases
+            # sharing a name make per-phase timing and any name-keyed
+            # operator signal ambiguous. tests/unit/core/
+            # test_startup_phase_duplication.py asserts the union of BOTH
+            # lists has no repeated name.
+            StartupPhase("warm_token_blacklist", _warm_startup_caches, None),
             StartupPhase("admin", _init_admin, None),
         ]
         async with compose_phases(admin_phases, tail=(_teardown_security_listeners, _teardown_logging)):

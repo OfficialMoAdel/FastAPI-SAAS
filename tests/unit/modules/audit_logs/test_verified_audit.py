@@ -78,7 +78,7 @@ class TestF16ExportIdCapture:
         svc.export_count = AsyncMock(return_value=0)
         svc.create_log = AsyncMock(return_value=SimpleNamespace(id=export_id))
 
-        async def scalars() -> AsyncGenerator[SimpleNamespace, None]:
+        async def scalars() -> AsyncGenerator[SimpleNamespace]:
             return
             yield  # pragma: no cover - empty stream
 

@@ -333,7 +333,7 @@ class StorageService:
         self,
         file: File,
         resolved: ResolvedStorage,
-    ) -> AsyncGenerator[bytes, None]:
+    ) -> AsyncGenerator[bytes]:
         """Stream chunks for an already-resolved file row + resolved policy."""
         provider = resolved.provider
 
@@ -356,7 +356,7 @@ class StorageService:
         tenant_id: UUID,
         file_id: int,
         user_id: int | None = None,
-    ) -> AsyncGenerator[bytes, None]:
+    ) -> AsyncGenerator[bytes]:
         """Stream file chunks from physical storage provider."""
         file = await self.get_file_or_raise(tenant_id, file_id, user_id)
         resolved = await self.admin.resolve(tenant_id)

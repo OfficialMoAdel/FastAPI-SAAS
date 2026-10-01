@@ -79,7 +79,7 @@ class CacheWarmer:
         result = CacheWarmingResult()
         errors: list[str] = []
 
-        logger.info("[START] Cache warming started at | warmers=", start_time=start_time, val=len(self._warmers))
+        logger.info("cache_warming_started", start_time=start_time, warmers=len(self._warmers))
 
         async def _run_single_warmer(
             name: str, warmer_fn: Any, warmer_session: AsyncSession | None
@@ -96,10 +96,10 @@ class CacheWarmer:
 
                 warmer_duration = time.time() - warmer_start
                 logger.info(
-                    "[SUCCESS] Warmer=%s | items=%d | duration=%.2fs",
-                    name,
-                    cached_count,
-                    warmer_duration,
+                    "warmer_success",
+                    warmer=name,
+                    items=cached_count,
+                    duration=warmer_duration,
                 )
                 return name, cached_count, None
 
@@ -107,20 +107,20 @@ class CacheWarmer:
                 warmer_duration = time.time() - warmer_start
                 error_msg = f"{name}: Timeout after {timeout}s"
                 logger.error(
-                    "[TIMEOUT] Warmer=%s | duration=%.2fs | error=%s",
-                    name,
-                    warmer_duration,
-                    error_msg,
+                    "warmer_timeout",
+                    warmer=name,
+                    duration=warmer_duration,
+                    error=error_msg,
                 )
                 return name, None, error_msg
             except Exception as e:
                 warmer_duration = time.time() - warmer_start
                 error_msg = f"{name}: {str(e)}"
                 logger.error(
-                    "[ERROR] Warmer=%s | duration=%.2fs | error=%s",
-                    name,
-                    warmer_duration,
-                    error_msg,
+                    "warmer_error",
+                    warmer=name,
+                    duration=warmer_duration,
+                    error=error_msg,
                     exc_info=True,
                 )
                 return name, None, error_msg
@@ -144,10 +144,10 @@ class CacheWarmer:
         total_duration = time.time() - start_time
 
         logger.info(
-            "[COMPLETE] Cache warming finished | total_duration=%.2fs | tenants=%d | errors=%d",
-            total_duration,
-            result.tenants_cached,
-            len(errors) if errors else 0,
+            "cache_warming_finished",
+            total_duration=total_duration,
+            tenants=result.tenants_cached,
+            errors=len(errors) if errors else 0,
         )
 
         return result
@@ -174,10 +174,10 @@ class CacheWarmer:
             cached_count: int = await asyncio.wait_for(warmer_fn(session), timeout=timeout)
             duration = time.time() - start_time
             logger.info(
-                "[SUCCESS] Warmer=%s | items=%d | duration=%.2fs",
-                name,
-                cached_count,
-                duration,
+                "warmer_success",
+                warmer=name,
+                items=cached_count,
+                duration=duration,
             )
 
             if name == "tenant":
@@ -187,20 +187,20 @@ class CacheWarmer:
             duration = time.time() - start_time
             error_msg = f"{name}: Timeout after {timeout}s"
             logger.error(
-                "[TIMEOUT] Warmer=%s | duration=%.2fs | error=%s",
-                name,
-                duration,
-                error_msg,
+                "warmer_timeout",
+                warmer=name,
+                duration=duration,
+                error=error_msg,
             )
             errors.append(error_msg)
         except Exception as e:
             duration = time.time() - start_time
             error_msg = f"{name}: {str(e)}"
             logger.error(
-                "[ERROR] Warmer=%s | duration=%.2fs | error=%s",
-                name,
-                duration,
-                error_msg,
+                "warmer_error",
+                warmer=name,
+                duration=duration,
+                error=error_msg,
                 exc_info=True,
             )
             errors.append(error_msg)

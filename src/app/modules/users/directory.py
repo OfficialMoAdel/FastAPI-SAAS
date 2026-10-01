@@ -27,6 +27,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
+from src.app.core.security.jwt_service import subject_log_ref
 from src.app.modules.users.cache import UserCacheInvalidator
 from src.app.modules.users.cache_keys import (
     _user_auth_cache_key,
@@ -134,7 +135,7 @@ class UserDirectory:
         ``UserService.get_by_username``)."""
         cached = await UserCacheInvalidator.get_cached_user(_user_username_cache_key(username))
         if cached:
-            logger.debug("Cache hit for username", username=username)
+            logger.debug("user_lookup_cache_hit", lookup="by_username", user_ref=subject_log_ref(username))
             return UserRead.model_validate(cached)
 
         db_user = await crud_users.get(db=self.db, username=username, is_deleted=False)
@@ -150,7 +151,7 @@ class UserDirectory:
         callers catch ``ModelNotFoundError``)."""
         cached = await UserCacheInvalidator.get_cached_user(_user_email_cache_key(email))
         if cached:
-            logger.debug("Cache hit for user email", email=email)
+            logger.debug("user_lookup_cache_hit", lookup="by_email", user_ref=subject_log_ref(email))
             return UserRead.model_validate(cached)
 
         db_user = await crud_users.get(db=self.db, email=email, is_deleted=False)

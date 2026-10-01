@@ -14,7 +14,7 @@ import src.app.core.utils.cache as _cache
 from src.app.core.exceptions.cache_exceptions import MissingClientError
 
 
-async def async_get_redis() -> AsyncGenerator[Redis, None]:
+async def async_get_redis() -> AsyncGenerator[Redis]:
     """Get the shared Redis client from the pool.
 
     Note: The shared client is initialized at startup and reuses

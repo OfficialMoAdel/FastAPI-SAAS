@@ -1,5 +1,5 @@
 # --------- Builder Stage ---------
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
 # Set environment variables for uv
 ENV UV_COMPILE_BYTECODE=1
@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-editable
 
 # --------- Final Stage ---------
-FROM python:3.12-slim-bookworm
+FROM python:3.13-slim-bookworm
 
 # Create a non-root user for security
 RUN groupadd --gid 1000 app \

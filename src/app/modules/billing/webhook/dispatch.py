@@ -5,8 +5,7 @@ Adding a new Stripe event type means registering one entry in
 """
 
 
-import stripe
-
+from src.app.clients.billing import StripeEvent
 from src.app.modules.billing import webhook as _pkg
 from src.app.modules.billing.webhook.idempotency import (
     _release_webhook_event_lock,
@@ -26,7 +25,7 @@ EVENT_HANDLERS: dict[str, str] = {
 }
 
 
-async def handle_webhook_event(event: stripe.Event) -> dict[str, str]:
+async def handle_webhook_event(event: StripeEvent) -> dict[str, str]:
     """
     Route and handle specific Stripe webhook events.
 

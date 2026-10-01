@@ -17,6 +17,7 @@ from src.app.modules.auth.errors import SSOGatewayError
 from src.app.modules.auth.rate_limit import check_auth_rate_limit
 from src.app.modules.auth.schemas import AuthTokenResponse, SSOProvider, SSOProviderRead, SSOProvidersResponse
 from src.app.modules.auth.services.sso import SSOService, get_sso_service
+from src.app.schemas.responses import MessageResponse
 from src.app.shared.exceptions import AppException as _DomainAppException
 from src.app.shared.exceptions import (
     DuplicateError as _DomainDuplicateError,
@@ -365,13 +366,13 @@ async def connect_provider(
     return response
 
 
-@router.delete("/{provider}")
+@router.delete("/{provider}", response_model=MessageResponse)
 async def disconnect_provider(
     request: Request,
     provider: SSOProvider,
     ctx: RequestContextDep,
     sso_service: Annotated[SSOService, Depends(get_sso_service)],
-) -> dict[str, str]:
+) -> MessageResponse:
     """Disconnect SSO provider from account."""
     tenant_id = ctx.tenant_id
     if not ctx.has_tenant:
@@ -383,4 +384,4 @@ async def disconnect_provider(
         provider=provider.value,
         tenant_id=tenant_id,
     )
-    return {"message": f"Provider {provider.value} disconnected successfully"}
+    return MessageResponse(message=f"Provider {provider.value} disconnected successfully")

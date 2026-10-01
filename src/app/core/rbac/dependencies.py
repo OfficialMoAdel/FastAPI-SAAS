@@ -27,6 +27,7 @@ from src.app.core.logger import get_logger
 from src.app.core.rbac.bitmask import PermissionBitmask
 from src.app.core.rbac.models import require_permission_graph
 from src.app.core.rbac.permissions import Permission as PermissionEnum
+from src.app.core.rbac.superuser_tenant import enforce_superuser_tenant_rule
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
 from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
@@ -318,10 +319,14 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
         # permission checks within their tenant, but they cannot act as another tenant.
         # Applies to every principal — test-injected AuthContexts included, so HTTP
         # tests exercise the same isolation as production.
-        current_user_tenant_id = current_user.tenant_id
-
-        if current_user_tenant_id is not None and str(current_user_tenant_id) != str(tenant_id):
-            raise ForbiddenException("User does not belong to the current tenant.")
+        # P1: this is now the SHARED rule, so this gate and
+        # get_current_superuser cannot drift apart again.
+        enforce_superuser_tenant_rule(
+            user_tenant_id=current_user.tenant_id,
+            request_tenant=tenant_id,
+            user_id=user_id,
+            gate="requires_permission",
+        )
 
         if is_superuser:
             logger.info(

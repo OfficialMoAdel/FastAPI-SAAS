@@ -212,7 +212,7 @@ if db_circuit.state == CircuitState.OPEN:
 uv run pytest tests/unit/core/resilience/test_db_circuit_breaker.py
 
 # Run integration tests (requires DB/Redis)
-uv run pytest tests/integration/core/resilience/test_db_circuit_breaker_integration.py
+uv run pytest tests/integration/core/resilience/test_circuit_breaker.py
 ```
 
 ## Touch Points

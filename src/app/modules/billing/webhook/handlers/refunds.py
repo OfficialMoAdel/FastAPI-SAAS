@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import stripe
 from sqlalchemy import func as _func
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from src.app.clients.billing import StripeEvent
 from src.app.core.db.scoped import execute_scoped
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules.billing import webhook as _pkg
@@ -18,7 +18,7 @@ from src.app.modules.billing.webhook.locks import find_subscription_by_stripe_id
 from src.app.shared.exceptions import StripeError
 
 
-async def handle_charge_refunded(event: stripe.Event) -> None:
+async def handle_charge_refunded(event: StripeEvent) -> None:
     """Handle charge.refunded event.
 
     Creates a billing record with refunded status.

@@ -24,9 +24,9 @@ async def _reject_banned_ip(
     send: Send,
 ) -> None:
     logger.warning(
-        "Request from banned IP blocked | ip=%s | reason=%s",
-        client_ip,
-        ban_info.reason,
+        "request_from_banned_ip_blocked",
+        ip=client_ip,
+        reason=ban_info.reason,
     )
     security_event = SecurityEvent(
         event_type=SecurityEventType.ATTACK_DETECTED,
@@ -95,8 +95,8 @@ class RateLimitMiddleware:
         verdict = outcome.verdict
         if verdict is None:
             logger.error(
-                "RateLimitMiddleware: action %s without verdict; failing closed",
-                outcome.action,
+                "rate_limit_middleware_missing_verdict",
+                action=outcome.action,
             )
             response = middleware_reject("internal_error")
             await response(scope, receive, send)

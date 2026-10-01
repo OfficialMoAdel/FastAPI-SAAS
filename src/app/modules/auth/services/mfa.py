@@ -62,6 +62,11 @@ TOTP_REPLAY_MARKER_TTL = (2 * TOTP_SKEW + 2) * TOTP_INTERVAL  # 120 seconds
 BACKUP_CODE_COUNT = 10
 BACKUP_CODE_LENGTH = 10  # Characters after 'BC-' prefix
 BACKUP_CODE_PREFIX = "BC-"
+# P1 (mchw): lifetime of the pending-token verification claim. Bounds how
+# long a crashed/aborted holder can block the other attempts on the same
+# challenge. Deliberately shorter than the challenge itself: if a holder dies
+# mid-verify the claim lapses and the user's own retry works again.
+MFA_VERIFY_CLAIM_TTL_SECONDS = 30
 
 # Audit log action names
 MFA_ACTION_SETUP = "mfa.setup"
@@ -73,15 +78,13 @@ MFA_ACTION_BACKUP_CODE_USED = "mfa.backup_code.used"
 MFA_ACTION_BACKUP_CODES_REGENERATED = "mfa.backup_codes.regenerated"
 
 
-def _totp_qr_data_uri(provisioning_uri: str) -> str:
-    """Render a TOTP provisioning URI as a base64 PNG data URI (S-M5).
+def _render_totp_qr_data_uri_sync(provisioning_uri: str) -> str:
+    """Blocking half of the TOTP QR render — CPU-bound, must not run inline.
 
-    The QR PNG lets authenticator apps onboard by scanning; callers that
-    prefer the raw ``otpauth://`` URI (manual entry) use ``otpauth_url``.
-    Falls back to "" (the pre-S-M5 placeholder contract) if qrcode isn't
-    installed — MFA setup must never 500 on a missing image library.
+    `qrcode.make` + PIL PNG encoding is pure CPU work with no I/O; on the
+    event loop it stalls every other request for the duration of the
+    encode. Callers reach this only through ``_totp_qr_data_uri``.
     """
-    import base64
     import io
 
     try:
@@ -96,6 +99,26 @@ def _totp_qr_data_uri(provisioning_uri: str) -> str:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+async def _totp_qr_data_uri(provisioning_uri: str) -> str:
+    """Render a TOTP provisioning URI as a base64 PNG data URI (S-M5).
+
+    The QR PNG lets authenticator apps onboard by scanning; callers that
+    prefer the raw ``otpauth://`` URI (manual entry) use ``otpauth_url``.
+    Falls back to "" (the pre-S-M5 placeholder contract) if qrcode isn't
+    installed — MFA setup must never 500 on a missing image library.
+
+    PNG rasterisation is synchronous CPU work, so it is dispatched to a
+    worker thread via ``asyncio.to_thread`` and the event loop stays
+    responsive while the image is encoded.
+
+    The rendered image is deliberately NOT cached: the payload embeds the
+    freshly minted TOTP secret, and an in-process cache keyed by URI would
+    keep that secret alive in memory beyond the request that created it.
+    Render once per setup call and let the response body own the bytes.
+    """
+    return await asyncio.to_thread(_render_totp_qr_data_uri_sync, provisioning_uri)
 
 
 class MFAService:
@@ -166,14 +189,36 @@ class MFAService:
         # meter to charge.
         await check(SecurityAction.MFA_VERIFY_ACCOUNT, Identity(user_id=user_id))
 
-        verify_result = await self.verify_totp_token(
-            user_id=user_id,
-            request=MFAVerifyRequest(totp_token=request.totp_token, backup_code=request.backup_code),
-            db=db,
-            prevent_replay=True,
-            redis_client=client,
-        )
+        # P1 (mchw): arbitration must happen BEFORE the factor verify, because
+        # a backup-code verify mutates and commits. Claiming here means a losing
+        # racer is refused without having touched the victim's codes. The claim
+        # is released again on a failed verify, so one typo costs the user their
+        # code attempt and not their whole pending challenge.
+        claim_nonce = secrets.token_hex(16)
+        claimed = await token_store.claim(request.mfa_token, MFA_VERIFY_CLAIM_TTL_SECONDS, claim_nonce)
+        if not claimed:
+            raise UnauthorizedError("Invalid MFA code")
+
+        try:
+            verify_result = await self.verify_totp_token(
+                user_id=user_id,
+                request=MFAVerifyRequest(totp_token=request.totp_token, backup_code=request.backup_code),
+                db=db,
+                prevent_replay=True,
+                redis_client=client,
+            )
+        except BaseException:
+            # verify_totp_token signals a rejected factor by RAISING (and by
+            # returning {"valid": False} on the rarer path), so the release has
+            # to cover both or a single typo would hold the claim until its TTL
+            # and lock the user out of their own retry for 30s.
+            await token_store.release_claim(request.mfa_token, claim_nonce)
+            raise
         if not verify_result.get("valid"):
+            # Wrong code: hand the challenge back so the user can retry. The
+            # release is compare-and-delete, so it can never free a claim that
+            # has since lapsed and been re-taken by a different request.
+            await token_store.release_claim(request.mfa_token, claim_nonce)
             raise UnauthorizedError("Invalid MFA code")
 
         consumed = await token_store.consume(request.mfa_token)
@@ -259,7 +304,7 @@ class MFAService:
             try:
                 await client.setex(f"mfa_setup:{setup_token}", 600, f"{user_id}:{secret}")
             except Exception as e:
-                logger.error("Redis failed during MFA setup: %s", e)
+                logger.error("mfa_setup_redis_failed", error=str(e))
                 raise ServiceUnavailableError("MFA setup is currently unavailable.")
         else:
             raise ServiceUnavailableError("MFA setup is currently unavailable.")
@@ -268,10 +313,12 @@ class MFAService:
         # (qrcode[pil] is a first-class dependency — pyproject line 56).
         # Returned as a data URI so any client can inline it; consumers
         # that only need the raw otpauth:// URI keep using otpauth_url.
+        # Rendering is CPU-bound PNG encoding, so it is awaited from a
+        # worker thread rather than executed inline on the event loop.
         return {
             "setup_token": setup_token,
             "otpauth_url": provisioning_uri,
-            "qr_code_base64": _totp_qr_data_uri(provisioning_uri),
+            "qr_code_base64": await _totp_qr_data_uri(provisioning_uri),
         }
 
     async def enable_mfa(
@@ -403,9 +450,9 @@ class MFAService:
             from src.app.core.config import settings
 
             if settings.auth.MFA_LOCKOUT_FAIL_CLOSED:
-                logger.error("Redis unavailable - MFA lockout failing closed | user_id=%s", user_id)
+                logger.error("mfa_lockout_redis_unavailable_fail_closed", user_id=user_id)
                 raise UnauthorizedError("Authentication temporarily unavailable. Please try again later.")
-            logger.warning("Redis unavailable - MFA lockout disabled (fail open) | user_id=%s", user_id)
+            logger.warning("mfa_lockout_redis_unavailable_fail_open", user_id=user_id)
             return
 
         mfa_attempts_key = f"mfa_attempts:{user_id}"

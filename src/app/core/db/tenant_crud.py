@@ -297,16 +297,38 @@ class TenantAwareCRUD(
         async with db_circuit_guard():
             return await super().count(db, **kwargs)
 
-    async def update(self, db: AsyncSession, object: UpdateSchemaType | dict[str, Any], **kwargs: Any) -> None:
+    async def update(  # type: ignore[override]
+        self, db: AsyncSession, object: UpdateSchemaType | dict[str, Any], **kwargs: Any
+    ) -> dict | SelectSchemaType | None:
         """Update records, filtered by tenant context.
 
         Tenant re-point fix (M7): payload tenant_id would re-parent row in SET.
         WHERE is tenant-scoped but payload still needs stripping/coercion.
 
-        Args:
-            db: The database session.
-            object: The update data.
-            **kwargs: Filter criteria for the update.
+        Returns
+        -------
+            FastCRUD's return value for this call, forwarded unchanged:
+            ``None`` when no ``return_columns`` / ``return_as_model`` is asked
+            for (the common case, and what every current caller relies on);
+            otherwise the updated row as a ``dict``, or as ``SelectSchemaType``
+            with ``return_as_model=True``; or ``{"data": [...]}`` under
+            ``allow_multiple``.
+
+        A filter that matches nothing is NOT reported as ``None`` —
+            FastCRUD's pre-flight count raises ``NoResultFound`` (and
+            ``MultipleResultsFound`` on an ambiguous non-``allow_multiple``
+            match) before any write is attempted. Callers must not read
+            ``None`` as "no such row": it means "no return was requested".
+
+        History: this method used to be annotated ``-> None`` and swallow the
+        base class's return. That silently dropped the row (and the
+        matched-rows signal) for any caller that had opted into
+        ``return_columns``/``schema_to_select``, while advertising a narrower
+        type than the base it overrides — a Liskov violation that made a
+        lossy call site look type-safe. The wrapper's job is tenant
+        enforcement, not value suppression, so the base value is now
+        forwarded verbatim. Callers written against the old ``None`` contract
+        are unaffected: FastCRUD already returned ``None`` for them.
         """
         tenant_id = self._resolve_write_tenant("update")
 
@@ -322,7 +344,9 @@ class TenantAwareCRUD(
                 raise TenantContextError(f"Cannot enforce tenant on update payload: {e}") from e
         kwargs = self.inject_tenant_filter(kwargs)
         async with db_circuit_guard():
-            await super().update(db, object, **kwargs)
+            # cast: the FastCRUD overload set resolves to Any here; the
+            # signature above restates that union for callers.
+            return cast(dict[Any, Any] | SelectSchemaType | None, await super().update(db, object, **kwargs))
 
     async def delete(self, db: AsyncSession, **kwargs: Any) -> None:  # type: ignore[override]
         """Soft delete records, filtered by tenant context.

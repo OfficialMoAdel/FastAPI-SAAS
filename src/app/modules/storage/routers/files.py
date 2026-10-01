@@ -29,6 +29,11 @@ from src.app.modules.storage.schemas import (
 )
 from src.app.modules.storage.service import StorageService
 
+# File.original_name is String(255) (storage/models.py) and the PATCH path
+# already rejects >255 via FileUpdate.original_name. The upload path is the
+# only way to write an unbounded value there, so both paths share one bound.
+MAX_ORIGINAL_NAME_LENGTH = 255
+
 router = APIRouter(prefix="/files", tags=["files"])
 
 
@@ -56,7 +61,14 @@ async def upload_file(
     file: UploadFile = File(..., description="File to upload"),
     service: StorageService = Depends(get_storage),
 ) -> Any:
-    """Upload a file to tenant storage using streaming (file.size probe via seek/tell)."""
+    """Upload a file to tenant storage using streaming (file.size probe via seek/tell).
+
+    ``filename`` is client-controlled and unbounded, so it is truncated to
+    ``MAX_ORIGINAL_NAME_LENGTH`` before it reaches ``File.original_name``.
+    Note this is a storage/response-size bound only: the storage key is
+    built from a fresh ``uuid4()`` in the service, never from the name.
+    """
+    filename = (file.filename or "unnamed")[:MAX_ORIGINAL_NAME_LENGTH]
     await asyncio.to_thread(file.file.seek, 0, os.SEEK_END)
     size_bytes = await asyncio.to_thread(file.file.tell)
     await asyncio.to_thread(file.file.seek, 0, os.SEEK_SET)
@@ -65,7 +77,7 @@ async def upload_file(
         tenant_id=ctx.tenant_id,
         user_id=ctx.user_id,
         file=file.file,
-        filename=file.filename or "unnamed",
+        filename=filename,
         mime_type=(
             (mimetypes.guess_type(file.filename)[0] if file.filename else None)
             or file.content_type

@@ -7,10 +7,10 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import RequestContextDep
+from src.app.api.deps.ai_rate_limit import RateLimitedUser
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps
 from src.app.modules.ai.factory import AIProviderFactory
-from src.app.modules.ai.middleware import RateLimitedUser
 from src.app.modules.ai.schemas import (
     AIModelsListResponse,
     AIServiceError,
@@ -101,7 +101,9 @@ async def get_chat_session(
     message_service = get_chat_message_service(ctx.db)
 
     session = await session_service.get_session(session_id, ctx.user_id)
-    messages_result = await message_service.get_session_messages(session_id, limit=100)
+    # SEC-07: user_id is required so the ownership predicate is part of the
+    # query. Omitting it raised TypeError at runtime (500), not a silent leak.
+    messages_result = await message_service.get_session_messages(session_id, ctx.user_id, limit=100)
     messages = messages_result.get("data", [])
 
     return {**session, "messages": messages}
@@ -146,7 +148,8 @@ async def list_session_messages(
     await session_service.get_session(session_id, ctx.user_id)
 
     message_service = get_chat_message_service(ctx.db)
-    result = await message_service.get_session_messages(session_id, page=page, limit=per_page)
+    # SEC-07: user_id is required so ownership is filtered in SQL.
+    result = await message_service.get_session_messages(session_id, ctx.user_id, page=page, limit=per_page)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
     return {

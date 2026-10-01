@@ -12,7 +12,7 @@ from src.app.core.db.database import Base
 
 
 @pytest.fixture(scope="function")
-async def redis_client() -> AsyncGenerator[Redis, None]:
+async def redis_client() -> AsyncGenerator[Redis]:
     """Redis client with automatic cleanup.
 
     Uses test database (15) to avoid conflicts with development data.
@@ -31,7 +31,7 @@ async def redis_client() -> AsyncGenerator[Redis, None]:
 
 
 @pytest.fixture(scope="function")
-async def db_session() -> AsyncGenerator[AsyncSession, None]:
+async def db_session() -> AsyncGenerator[AsyncSession]:
     """Database session with transaction rollback.
 
     Uses in-memory SQLite for fast, isolated tests.

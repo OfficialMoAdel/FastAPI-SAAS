@@ -123,7 +123,7 @@ async def unauthenticated_contract_context(get_contract_test_app):
 
 
 @pytest.fixture
-async def async_client(get_contract_test_app, contract_mock_context) -> AsyncGenerator[AsyncClient, None]:
+async def async_client(get_contract_test_app, contract_mock_context) -> AsyncGenerator[AsyncClient]:
     """Async client fixture for contract tests."""
     app = get_contract_test_app
     async with AsyncClient(
@@ -137,7 +137,7 @@ async def async_client(get_contract_test_app, contract_mock_context) -> AsyncGen
 @pytest.fixture
 async def unauthenticated_async_client(
     get_contract_test_app, unauthenticated_contract_context
-) -> AsyncGenerator[AsyncClient, None]:
+) -> AsyncGenerator[AsyncClient]:
     """Async client WITHOUT authentication for testing auth-required endpoints."""
     app = get_contract_test_app
     async with AsyncClient(
@@ -149,7 +149,7 @@ async def unauthenticated_async_client(
 
 
 @pytest.fixture
-async def db_session() -> AsyncGenerator[AsyncSession, None]:
+async def db_session() -> AsyncGenerator[AsyncSession]:
     """Async database session fixture for contract tests."""
     from sqlalchemy import text
 

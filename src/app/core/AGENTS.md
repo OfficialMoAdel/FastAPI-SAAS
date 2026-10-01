@@ -18,7 +18,7 @@ src/app/core/
 ├── security/           # JWT, passwords, blacklist cache, ban, encryption → [security/AGENTS.md](security/AGENTS.md)
 ├── cache/              # Redis cache client, deps, invalidation channel, warmer
 ├── events/             # Internal event bus, public registration seam, + DLQ
-├── exceptions/         # FastCRUD-derived HTTP-shaped exceptions (http_exceptions.py, cache_exceptions.py)
+├── exceptions/         # cache_exceptions.py (CacheException tree, still live)
 ├── monitoring/         # Metrics collection
 ├── observability/      # structlog config, log sanitizer
 ├── rbac/               # Permission checking (requires_permission)
@@ -73,7 +73,7 @@ redis: Annotated[Redis, Depends(async_get_redis)]            # router (from core
 
 ### Error handling — central translation
 Domain exceptions derive from `AppException` (`src/app/shared/exceptions.py`). `core/errors.py` builds the `EXCEPTION_HANDLERS` table (`build_exception_table` + `_make_table_handler`) and is registered by `src/app/composition.py::create_application`. Services stay HTTP-free; routers don't catch anything.
-❌ DON'T: Raise raw `HTTPException(409, ...)` from a service, or re-create `_base/exceptions` (deleted). HTTP-shaped exceptions (`core/exceptions/http_exceptions.py`) are the exception for routers that need them directly.
+❌ DON'T: Raise raw `HTTPException(409, ...)` from a service, or re-create `_base/exceptions` (deleted). There is no HTTP-shaped exception tree to reach for: the old FastCRUD-derived shim under `core/exceptions/` was deleted once its last importer migrated, and every error — including router-level ones — is a `src/app/shared/exceptions` domain error translated by `core/errors.py`. A 409 is `DuplicateError`, a 404 is `ModelNotFoundError`. `core/exceptions/cache_exceptions.py` survives for the Redis `CacheException` tree, which is a separate concern.
 
 ### Resilience
 Wrap DB operations with the circuit guard:

@@ -110,7 +110,7 @@ Full passkey functionality (registration, authentication) remains at:
 
 ```bash
 # Run security module tests
-uv run pytest tests/unit/test_security_router.py -v
+uv run pytest tests/unit/modules/security/test_security_router.py -v
 ```
 
 **Test Coverage:**

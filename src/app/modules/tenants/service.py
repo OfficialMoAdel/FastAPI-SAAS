@@ -223,8 +223,8 @@ class TenantService(BaseService[Tenant]):
         slug_exists = await self.crud.exists(db=self.db, slug=tenant.slug)
         if slug_exists:
             logger.warning(
-                "Tenant creation failed: duplicate_slug | slug=%s",
-                tenant.slug,
+                "tenant_creation_failed_duplicate_slug",
+                slug=tenant.slug,
             )
             raise DuplicateError("slug", tenant.slug)
 
@@ -235,8 +235,8 @@ class TenantService(BaseService[Tenant]):
             )
         except IntegrityError:
             logger.warning(
-                "Tenant creation failed: race_condition_duplicate_slug | slug=%s",
-                tenant.slug,
+                "tenant_creation_failed_race_duplicate_slug",
+                slug=tenant.slug,
             )
             raise DuplicateError("slug", tenant.slug)
 
@@ -273,10 +273,10 @@ class TenantService(BaseService[Tenant]):
             )
 
         logger.info(
-            "Tenant created | id=%s | slug=%s | name=%s",
-            result["id"],
-            result["slug"],
-            result["name"],
+            "tenant_created",
+            tenant_id=result["id"],
+            slug=result["slug"],
+            name=result["name"],
         )
 
         return result
@@ -441,8 +441,8 @@ class TenantService(BaseService[Tenant]):
         except IntegrityError:
             await self.db.rollback()
             logger.warning(
-                "Tenant update failed: duplicate_slug | slug=%s",
-                tenant.slug,
+                "tenant_update_failed_duplicate_slug",
+                slug=tenant.slug,
             )
             raise DuplicateError("slug", tenant.slug)
 
@@ -458,9 +458,9 @@ class TenantService(BaseService[Tenant]):
         await self._cache_tenant(updated_dict)
 
         logger.info(
-            "Tenant updated | id=%s | fields=%s",
-            tenant_id,
-            list(update_data.keys()),
+            "tenant_updated",
+            tenant_id=tenant_id,
+            fields=list(update_data.keys()),
         )
 
         return updated_dict
@@ -499,7 +499,7 @@ class TenantService(BaseService[Tenant]):
         # FIXED: Invalidate tenant cache after deactivation to prevent stale data
         await self._invalidate_tenant_cache(tenant_id, tenant.slug)
 
-        logger.info("Tenant deactivated | id=%s | slug=%s", tenant_id, tenant.slug)
+        logger.info("tenant_deactivated", tenant_id=tenant_id, slug=tenant.slug)
 
         # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
         updated_dict = _tenant_to_dict(tenant)  # type: ignore[arg-type]
@@ -540,7 +540,7 @@ class TenantService(BaseService[Tenant]):
         # FIXED: Invalidate tenant cache after reactivation to prevent stale data
         await self._invalidate_tenant_cache(tenant_id, tenant.slug)
 
-        logger.info("Tenant reactivated | id=%s | slug=%s", tenant_id, tenant.slug)
+        logger.info("tenant_reactivated", tenant_id=tenant_id, slug=tenant.slug)
 
         # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
         updated_dict = _tenant_to_dict(tenant)  # type: ignore[arg-type]

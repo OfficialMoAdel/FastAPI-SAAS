@@ -256,7 +256,7 @@ async def rls_context(
     session: AsyncSession,
     tenant_id: str,
     user_id: str | None = None,
-) -> AsyncGenerator[AsyncSession, None]:
+) -> AsyncGenerator[AsyncSession]:
     """
     Context manager that sets RLS context for the duration of the block.
 
@@ -355,7 +355,7 @@ async def bypass_rls(
     session: AsyncSession,
     reason: str,
     user_id: str | None = None,
-) -> AsyncGenerator[AsyncSession, None]:
+) -> AsyncGenerator[AsyncSession]:
     """
     Context manager that bypasses RLS for admin operations.
 

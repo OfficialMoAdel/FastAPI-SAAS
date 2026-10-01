@@ -42,12 +42,31 @@ from src.app.shared.exceptions import ValidationError
 
 T = TypeVar("T")
 
+# io15.2: the read/response schema this service hands back.
+#
+# ``select_schema`` is a RUNTIME attribute holding a schema class, so the CRUD
+# return value cannot be typed as ``T`` (the model): it is an instance of
+# whatever schema was configured, or the legacy FastCRUD dict when none was.
+# Typing it as ``T`` would be a lie; leaving it ``Any`` is what let a caller
+# treat a legitimate ``None`` as a value -- the defect class behind the P0-4
+# near-miss in tenant_crud.
+#
+# A second TypeVar with a DEFAULT (PEP 696) is the mechanism: the 18 existing
+# ``BaseService[Model]`` subclasses keep working untouched, and a service that
+# wants real typing opts in by naming its read schema:
+#
+#     class UserService(BaseService[User, UserRead]): ...
+#
+# Undeclared, it stays ``Any`` and behaves exactly as before, so this is
+# additive -- not a refactor of every service.
+ReadSchemaT = TypeVar("ReadSchemaT", default=Any)
+
 # OPT P0-2: the flyweight cache lives in core.db.scoped (owned by scoped_crud,
 # the single construction path). _CRUD_CACHE is re-exported here — same dict
 # object — for the cache tests and the R4 perf gate importing it from this module.
 
 
-class BaseService(Generic[T]):
+class BaseService(Generic[T, ReadSchemaT]):
     """
     Standardized business logic layer for all modules.
 
@@ -107,7 +126,7 @@ class BaseService(Generic[T]):
             yield
 
 
-    async def get(self, id: Any) -> Any | None:
+    async def get(self, id: Any) -> ReadSchemaT | dict[str, Any] | None:
         """Get a single record by ID as the configured ``select_schema``.
 
         Args:
@@ -129,7 +148,9 @@ class BaseService(Generic[T]):
                 )
             else:
                 result = await self.crud.get(db=self.db, id=id)
-        return result
+        # FastCRUD is the untyped boundary; the union above is what we can
+        # actually promise its return maps onto.
+        return cast("ReadSchemaT | dict[str, Any] | None", result)
 
     async def get_multi(
         self,
@@ -167,8 +188,15 @@ class BaseService(Generic[T]):
         offset = max(0, (page - 1) * per_page)
         _SENSITIVE_COLS = {"hashed_password", "password", "secret", "api_key"}
         if "sort_columns" in kwargs:
-            _sc = kwargs.get("sort_columns") or []
-            if any(c in _SENSITIVE_COLS for c in _sc):
+            # Defence in depth: the column list is also validated per-attribute
+            # in the eager-load branch below (hasattr fails closed), but the
+            # plain path hands it straight to FastCRUD. The input may legally
+            # be a bare string (fetch_page_with_total declares
+            # ``str | list[str] | None``); iterating a string yields CHARACTERS,
+            # so a bare "hashed_password" used to slip past this guard entirely.
+            _sc = kwargs.get("sort_columns")
+            _cols = [_sc] if isinstance(_sc, str) else (_sc or [])
+            if any(c in _SENSITIVE_COLS for c in _cols):
                 raise ValidationError(f"Sorting on sensitive column denied: {_sc}")
         # P2-4: FEATURE_EAGER_LOADING flag removed; callers that want eager
         # loading must opt in via eager_loads. Callers that don't pass it
@@ -293,7 +321,7 @@ class BaseService(Generic[T]):
             return cast(list[dict[str, Any]], result.get("data", []))
         return cast(list[dict[str, Any]], result)
 
-    async def create(self, **kwargs: Any) -> Any:
+    async def create(self, **kwargs: Any) -> ReadSchemaT | dict[str, Any] | None:
         """Create a new record.
 
         Args:
@@ -306,16 +334,19 @@ class BaseService(Generic[T]):
         """
         async with self._guard():
             if self.select_schema is not None:
-                return await self.crud.create(
-                    db=self.db,
-                    object=kwargs,
-                    schema_to_select=self.select_schema,
-                    return_as_model=True,
+                return cast(
+                    "ReadSchemaT | dict[str, Any] | None",
+                    await self.crud.create(
+                        db=self.db,
+                        object=kwargs,
+                        schema_to_select=self.select_schema,
+                        return_as_model=True,
+                    ),
                 )
             result = await self.crud.create(db=self.db, object=kwargs)
-        return result
+        return cast("ReadSchemaT | dict[str, Any] | None", result)
 
-    async def update(self, id: Any, **kwargs: Any) -> Any | None:
+    async def update(self, id: Any, **kwargs: Any) -> ReadSchemaT | dict[str, Any] | None:
         """Update a record by ID.
 
         Args:
@@ -324,9 +355,10 @@ class BaseService(Generic[T]):
 
         Returns:
             The updated record as a validated ``select_schema`` instance when
-            the schema is configured. ``TenantAwareCRUD.update`` returns None
-            unconditionally, so the typed path re-reads via ``get`` (None
-            then means "not found"). Without a schema the legacy union
+            the schema is configured. ``TenantAwareCRUD.update`` returns the
+            row only when ``return_columns`` is requested (P1-4 changed it to
+            forward FastCRUD's return rather than discard it), so the typed
+            path re-reads via ``get``. Without a schema the legacy union
             (``T | dict | None``) is returned.
         """
         async with self._guard():

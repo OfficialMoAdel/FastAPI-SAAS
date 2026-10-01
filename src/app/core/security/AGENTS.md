@@ -116,7 +116,7 @@ rg -n "log_security_event|SecurityEventType" src/app/
 - **Token expiry**: short access tokens, longer refresh tokens; claims include token `type` and `jti`
 - **Logout**: must blacklist both access and refresh tokens
 - **Token-version bump** (password change / global logout) invalidates all issued tokens — don't bypass
-- **Cache warmup**: blacklist cache is warmed at startup (`main.py::_warm_token_blacklist_cache`), capped by `settings.app.TOKEN_BLACKLIST_WARMUP_LIMIT` (0 disables); warmup failure is fail-closed in production
+- **Cache warmup**: blacklist cache is warmed at startup (`composition.py::_warm_token_blacklist_cache`, run in the composition lifespan), capped by `settings.app.TOKEN_BLACKLIST_WARMUP_LIMIT` (0 disables); warmup failure is fail-closed in production
 - **SSRF**: all outbound webhook URLs pass `url_validator.validate_webhook_url`
 - **Whitelist ≠ trust**: a whitelisted IP skips the blacklist and (when
   `IP_WHITELIST_BYPASS_RATE_LIMIT`) rate limiting, but is still authenticated

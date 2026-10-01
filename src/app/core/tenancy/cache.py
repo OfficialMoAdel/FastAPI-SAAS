@@ -20,7 +20,6 @@ channel lives here: ``_L1_INVALIDATION_CHANNEL``.
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from uuid import UUID
@@ -28,10 +27,11 @@ from uuid import UUID
 from cachetools import TTLCache
 
 from src.app.core.cache.l1 import L1Cache, RawKeyCodec
+from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
 from src.app.core.tenancy.context import TenantContext
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # B4: canonical L2 TTL for tenant cache entries. Every writer of the
 # ``tenant:slug:{slug}`` / ``tenant:{id}`` keys (tenants service, middleware
@@ -96,7 +96,7 @@ stop_l1_invalidation_listener = _tenant_l1_seam.stop
 
 
 @asynccontextmanager
-async def _get_tenant_lock(slug: str) -> AsyncGenerator[asyncio.Lock, None]:
+async def _get_tenant_lock(slug: str) -> AsyncGenerator[asyncio.Lock]:
     """Get an asyncio.Lock for the given slug, cleaning up when unused."""
     lock_info = _TENANT_LOCKS.get(slug)
     if lock_info is None:
@@ -125,7 +125,7 @@ async def publish_tenant_l1_invalidation(slug: str | None) -> None:
     try:
         await redis_client.publish(_L1_INVALIDATION_CHANNEL, slug or "*")
     except Exception as e:  # noqa: BLE001 - invalidation must never break requests
-        logger.warning("Failed to publish tenant L1 invalidation: %s", e)
+        logger.warning("tenant_l1_invalidation_publish_failed", error=str(e))
         from src.app.core.monitoring.r1_unified_metrics import record_tenant_l1_publish_failed
 
         record_tenant_l1_publish_failed()

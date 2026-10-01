@@ -17,6 +17,7 @@ from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.modules.billing.schemas import PricingCreate, PricingList, PricingRead, PricingUpdate
 from src.app.modules.billing.service import PricingService
+from src.app.schemas.responses import MessageWithIdResponse
 
 router = APIRouter(prefix="/prices", tags=["prices"])
 logger = get_logger(__name__)
@@ -136,12 +137,13 @@ async def update_price(
 
 @router.delete(
     "/{price_id}",
+    response_model=MessageWithIdResponse,
     dependencies=[Depends(requires_permission(Permission.MANAGE_PRODUCTS))],
 )
 async def delete_price(
     price_id: int,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> MessageWithIdResponse:
     """Deactivate a price (admin only).
 
     Prices are soft-deleted by setting is_active=False.
@@ -157,4 +159,4 @@ async def delete_price(
     # Soft delete by setting is_active=False
     update_data = PricingUpdate(is_active=False)
     await service.update_pricing(price_id, update_data)
-    return {"message": "Price deactivated successfully", "id": price_id}
+    return MessageWithIdResponse(message="Price deactivated successfully", id=price_id)
