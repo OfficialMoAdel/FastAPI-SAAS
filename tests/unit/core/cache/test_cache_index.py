@@ -268,15 +268,28 @@ class TestInvalidateTenantCache:
 
     @pytest.mark.asyncio
     async def test_prefix_no_match_returns_zero(self) -> None:
-        """Should return 0 when sharded index is empty."""
+        """Should return 0 when neither the shard nor the global index matches.
+
+        S-14: an empty SHARD now falls back to the global tenant index before
+        giving up. That fallback was the "strictly speaking we should" comment
+        in tenant_index.py that was never implemented, and it is why
+        `posts.erase_db_post` silently failed to evict a GDPR-erased post: its
+        prefix did not match the writer's shard, so the lookup hit an empty set
+        and returned 0.
+
+        So smembers is called for the shard AND (on a miss) for the global
+        index. The RESULT is unchanged here — 0 — because neither holds a match.
+        """
         mock_redis, _ = create_mock_redis_with_pipeline()
-        # With sharded index, smembers on tenant_index:1:nonexistent returns empty
         mock_redis.smembers.return_value = set()
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await invalidate_tenant_cache(1, prefix="nonexistent")
             assert result == 0
-            mock_redis.smembers.assert_called_once_with("tenant_index:1:nonexistent")
+
+        called = [c.args[0] for c in mock_redis.smembers.call_args_list]
+        assert "tenant_index:1:nonexistent" in called, "the shard must be consulted first"
+        assert "tenant_index:1" in called, "S-14: an empty shard must fall back to the global index"
 
 
 class TestGetTenantIndexSize:

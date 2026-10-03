@@ -449,14 +449,16 @@ class TestUserServiceDelete:
             with patch.object(user_service.crud, "delete", new_callable=AsyncMock) as mock_delete:
                 mock_delete.return_value = mock_existing_user
 
-                with patch("src.app.modules.users.service.blacklist_token", new_callable=AsyncMock):
-                    result = await user_service.delete(
-                        username="testuser",
-                        current_user=mock_current_user,
-                        token="test_token",
-                    )
+                # S-06: `delete` no longer takes a `token` and never calls
+                # blacklist_token — the deleted user's own sessions are revoked
+                # by the DELETION session seam (token_version bump), and the
+                # CALLER's token is deliberately left alone.
+                result = await user_service.delete(
+                    username="testuser",
+                    current_user=mock_current_user,
+                )
 
-                    assert "deleted" in result["message"].lower()
+                assert "deleted" in result["message"].lower()
 
     @pytest.mark.asyncio
     async def test_delete_other_user_forbidden(self, user_service, mock_existing_user):
@@ -467,18 +469,15 @@ class TestUserServiceDelete:
         other_user.email = "other@example.com"
 
         current_user = AuthenticatedUser(id=1, username="testuser", email="test@example.com", is_superuser=False)
-        token = "test_token"
 
-        with (
-            patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get,
-            patch("src.app.modules.users.service.blacklist_token", new_callable=AsyncMock),
-        ):
+        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = other_user
 
             # Run-3: soft-404, identical to a nonexistent user, so DELETE cannot
             # be used to confirm that an identifier is a co-tenant.
+            # S-06: no `token` argument any more.
             with pytest.raises(ModelNotFoundError):
-                await user_service.delete("otheruser", current_user, token)
+                await user_service.delete("otheruser", current_user)
 
     @pytest.mark.asyncio
     async def test_hard_delete_success(self, user_service, mock_db, mock_existing_user):
@@ -493,11 +492,12 @@ class TestUserServiceDelete:
                 with patch.object(user_service.crud, "db_delete", new_callable=AsyncMock) as mock_delete:
                     mock_delete.return_value = None
 
-                    with patch("src.app.modules.users.service.blacklist_token", new_callable=AsyncMock):
-                        result = await user_service.hard_delete(username="testuser", token="token")
+                    # S-06: `hard_delete` no longer takes a `token` and never
+                    # calls blacklist_token — see the module docstring note.
+                    result = await user_service.hard_delete(username="testuser")
 
-                        assert "deleted from the database" in result["message"].lower()
-                        mock_delete.assert_called_once()
+                    assert "deleted from the database" in result["message"].lower()
+                    mock_delete.assert_called_once()
 
 
 class TestUserServiceTierAndRateLimits:

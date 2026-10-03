@@ -5,6 +5,7 @@ P1-18: TierService is the canonical home of tier business logic
 tier_crud — these tests exercise that single implementation directly.
 """
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -19,6 +20,12 @@ from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 def _tier_read(tier_id: int = 1, name: str = "pro") -> TierRead:
     return TierRead(id=tier_id, name=name, created_at=datetime(2025, 1, 1, tzinfo=UTC))
+
+
+@asynccontextmanager
+async def _noop_bypass(session, *, reason: str, user_id: str | None = None):
+    """Stand-in for the audited RLS bypass (see test_delete_tier_success)."""
+    yield session
 
 
 def _make_service():
@@ -129,6 +136,12 @@ async def test_delete_tier_success():
         # A3: invalidation goes through the CacheClient seam, which reads
         # the shared client — simulate Redis down at the global.
         patch("src.app.core.utils.cache.client", None),
+        # S-12: the referential check now runs under an explicit audited RLS
+        # bypass so both counts are tenant-blind. `_make_service` hands out a
+        # bare MagicMock db, which cannot satisfy that async context — and this
+        # test is about delete_tier's own logic, not RLS. The bypass's scope is
+        # pinned separately in test_s12_tier_delete_referential_check.py.
+        patch("src.app.core.db.rls.bypass_rls", _noop_bypass),
     ):
         crud.get = AsyncMock(return_value=_tier_read(1, "pro"))
         crud.delete = AsyncMock()

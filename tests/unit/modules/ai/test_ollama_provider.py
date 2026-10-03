@@ -458,18 +458,52 @@ async def test_embed_text_request_error(provider):
 
 
 @pytest.mark.asyncio
-async def test_embed_text_empty_embedding(provider):
-    """Test embed_text handles empty embedding."""
+async def test_embed_text_reads_the_plural_embeddings_key(provider):
+    """S-30: /api/embed returns PLURAL `embeddings`, not `embedding`.
+
+    The provider already sent the /api/embed request shape (`input`) but read
+    the response with the OLD /api/embeddings key, so the lookup missed and
+    silently produced an EMPTY vector.
+    """
     mock_response = Response(
         status_code=200,
         request=Request("POST", "url"),
-        json={"embedding": [], "model": "llama2"},
+        json={"embeddings": [[0.1, 0.2, 0.3]], "model": "llama2"},
     )
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response):
         result = await provider.embed_text("Test", "llama2")
 
-        assert result.embedding == []
-        assert result.token_count is None
+        assert result.embedding == [0.1, 0.2, 0.3]
+
+
+async def test_embed_text_unwraps_the_nested_batch_shape(provider):
+    """A one-input request can still come back as [[vector]]."""
+    mock_response = Response(
+        status_code=200,
+        request=Request("POST", "url"),
+        json={"embeddings": [[[0.4, 0.5]]]},
+    )
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response):
+        result = await provider.embed_text("Test", "llama2")
+
+        assert result.embedding == [0.4, 0.5]
+
+
+async def test_embed_text_empty_embedding_raises(provider):
+    """S-30: an empty vector must be LOUD.
+
+    The old behaviour returned `[]` silently, which is how empty embeddings
+    reached callers with no error. This test previously asserted that silence;
+    it now pins the fix.
+    """
+    mock_response = Response(
+        status_code=200,
+        request=Request("POST", "url"),
+        json={"embeddings": [], "model": "llama2"},
+    )
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response):
+        with pytest.raises(AIProviderError):
+            await provider.embed_text("Test", "llama2")
 
 
 # ============================================================================

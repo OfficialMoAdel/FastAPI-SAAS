@@ -49,6 +49,10 @@ class TestSystemRoleSeeding:
             "tenant:update",
             # Run-3: dashboard metrics gate (users.dashboard.metrics_missing_authorization)
             "dashboard:read",
+            # S-38: background-task queue gate. The /tasks routes previously had
+            # no permission dependency at all, so any authenticated principal on
+            # any tier could enqueue jobs and read job status.
+            "tasks:manage",
         }
 
         actual_permissions = {p.value for p in Permission}
@@ -61,8 +65,9 @@ class TestSystemRoleSeeding:
 
     def test_permission_enum_has_correct_count(self) -> None:
         """Verify the expected number of permissions."""
+        # 26 after adding tasks:manage (S-38, which gated the /tasks routes).
         # 25 after adding dashboard:read (run-3 users.dashboard.metrics_missing_authorization).
-        assert len(Permission) == 25, f"Expected 25 permissions, got {len(Permission)}"
+        assert len(Permission) == 26, f"Expected 26 permissions, got {len(Permission)}"
 
     def test_permission_slugs_follow_naming_convention(self) -> None:
         """Verify all permission slugs follow resource:action pattern."""
@@ -79,6 +84,8 @@ class TestSystemRoleSeeding:
             "webhooks",
             "tenant",
             "dashboard",
+            # S-38: the background-task queue resource.
+            "tasks",
         }
         valid_actions = {
             "read",
@@ -109,7 +116,9 @@ class TestSystemRoleSeeding:
         """
         # Admin gets ALL permissions per migration logic (line 125-126)
         admin_permissions = set(Permission)
-        assert len(admin_permissions) == 25
+        # 26 after S-38 added tasks:manage. The admin role takes the whole enum,
+        # so the count tracks the enum size.
+        assert len(admin_permissions) == 26
 
     def test_member_role_should_have_read_permissions(self) -> None:
         """

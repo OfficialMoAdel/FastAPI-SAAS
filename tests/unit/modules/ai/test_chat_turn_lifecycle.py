@@ -121,7 +121,9 @@ def _build_service(log: list[str]) -> tuple[ChatCompletionService, AsyncMock, di
 
     message_svc = MagicMock()
 
-    async def _get_messages(session_id: int, page: int = 1, limit: int = 50) -> dict[str, Any]:
+    async def _get_messages(
+        session_id: int, page: int = 1, limit: int = 50, descending: bool = False
+    ) -> dict[str, Any]:
         log.append("get_session_messages")
         recorded["history_limit"] = limit
         return {"data": HISTORY_ROWS, "total_count": len(HISTORY_ROWS)}

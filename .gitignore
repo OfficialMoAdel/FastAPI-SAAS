@@ -216,3 +216,9 @@ docs/adr/*
 .benchmarks
 *.svg
 .workbuddy-ai
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*

@@ -344,6 +344,10 @@ class TestWebhookServiceDelivery:
                 "src.app.core.resilience.registry.get_webhook_breaker",
                 return_value=mock_circuit,
             ),
+            # S-41: _handle_failure now RETURNS the (delivery_id, defer,
+            # tenant_id) to enqueue, or None when the delivery is dead. The
+            # mock must honour that contract — a bare AsyncMock returns a
+            # MagicMock, which is truthy but unpacks to nothing.
             patch("src.app.modules.webhooks.delivery._handle_failure", new_callable=AsyncMock) as patch_handle,
         ):
 
@@ -392,8 +396,13 @@ class TestWebhookServiceDelivery:
         with (
             self._patch_signing(),
             patch("src.app.modules.webhooks.delivery.validate_webhook_url"),
+            # S-41: _handle_failure now RETURNS the (delivery_id, defer,
+            # tenant_id) to enqueue, or None when the delivery is dead. The
+            # mock must honour that contract — a bare AsyncMock returns a
+            # MagicMock, which is truthy but unpacks to nothing.
             patch("src.app.modules.webhooks.delivery._handle_failure", new_callable=AsyncMock) as patch_handle,
         ):
+            patch_handle.return_value = None
             with patch("src.app.modules.webhooks.delivery.get_webhook_http_client") as mock_client_fn:
                 mock_client = AsyncMock()
                 mock_client.post.side_effect = CircuitBreakerOpen("Circuit open", 60)
@@ -417,8 +426,13 @@ class TestWebhookServiceDelivery:
         with (
             self._patch_signing(),
             patch("src.app.modules.webhooks.delivery.validate_webhook_url"),
+            # S-41: _handle_failure now RETURNS the (delivery_id, defer,
+            # tenant_id) to enqueue, or None when the delivery is dead. The
+            # mock must honour that contract — a bare AsyncMock returns a
+            # MagicMock, which is truthy but unpacks to nothing.
             patch("src.app.modules.webhooks.delivery._handle_failure", new_callable=AsyncMock) as patch_handle,
         ):
+            patch_handle.return_value = None
             with patch("src.app.modules.webhooks.delivery.get_webhook_http_client") as mock_client_fn:
                 mock_client = AsyncMock()
                 mock_client.post.side_effect = Exception("Network error")

@@ -116,6 +116,26 @@ class TestBothDoorsShareOneSequence:
 
 
 class TestRateLimitRefusalIsIdenticalOnBothDoors:
+    """Both doors must produce the SAME persisted refusal.
+
+    S-40 changed ONE thing deliberately, and this class now pins the resulting
+    contract rather than the old one.
+
+    The doors still agree on everything observable: the FAILED outbox row and
+    the `notification_rate_limit_exceeded` warning. What they deliberately no
+    longer share is EXCEPTION PROPAGATION:
+
+      * the direct door still raises, so an HTTP caller learns it was rate
+        limited (429);
+      * the event door no longer raises, because its transport is an ARQ
+        worker and a re-raise schedules a RETRY. A quota refusal is permanent,
+        so every retry consumed two more quota windows and wrote another
+        FAILED row — burning ARQ_MAX_TRIES on an outcome that can never change.
+
+    Identical propagation was the wrong contract for two different transports.
+    The persistence side stays identical, which is what this class checks.
+    """
+
     @pytest.mark.asyncio
     @patch("src.app.modules.notifications.service.consume", new_callable=AsyncMock)
     async def test_direct_door_writes_audit_row_and_warns(self, mock_consume) -> None:
@@ -142,7 +162,7 @@ class TestRateLimitRefusalIsIdenticalOnBothDoors:
     @pytest.mark.asyncio
     @patch("src.app.modules.notifications.service.consume", new_callable=AsyncMock)
     async def test_event_door_writes_audit_row_and_warns(self, mock_consume) -> None:
-        """Event door: the same row, the same exception, the same warning."""
+        """Event door: the same row and warning, but NO re-raise (S-40)."""
         mock_consume.return_value = (True, 0, 0, False)
         db, session = _event_door_session()
         tenant_id = uuid4()
@@ -152,8 +172,11 @@ class TestRateLimitRefusalIsIdenticalOnBothDoors:
             patch("src.app.core.db.database.local_session", session),
             patch("src.app.modules.notifications.service.logger") as mock_logger,
         ):
-            with pytest.raises(RateLimitExceededError):
-                await handle_notification_request_event({
+            # S-40: must NOT raise. A raise here becomes an ARQ retry of a
+            # permanent refusal.
+            # S-40: the event door does NOT raise; the direct door above does.
+            # Only the persisted refusal + warning are required to match.
+            await handle_notification_request_event({
                     "to_email": "user@example.com",
                     "template_name": "welcome",
                     "tenant_id": str(tenant_id),
@@ -188,8 +211,11 @@ class TestRateLimitRefusalIsIdenticalOnBothDoors:
             patch("src.app.core.db.database.local_session", session),
             patch("src.app.modules.notifications.service.logger") as mock_logger,
         ):
-            with pytest.raises(RateLimitExceededError):
-                await handle_notification_request_event({
+            # S-40: must NOT raise. A raise here becomes an ARQ retry of a
+            # permanent refusal.
+            # S-40: the event door does NOT raise; the direct door above does.
+            # Only the persisted refusal + warning are required to match.
+            await handle_notification_request_event({
                     "to_email": "user@example.com",
                     "template_name": "welcome",
                     "tenant_id": str(tenant_id),

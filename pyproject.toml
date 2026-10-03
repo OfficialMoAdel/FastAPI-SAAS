@@ -21,6 +21,10 @@ dependencies = [
     "python-multipart>=0.0.9",
     "greenlet>=2.0.2",
     "httpx>=0.26.0",
+    # S-32: ai/providers.py guards this import, but WITHOUT the declaration
+    # `generate_json` silently skipped schema validation while the caller
+    # believed it ran. Declared so the guard can never fall through.
+    "jsonschema>=4.20.0",
     "pydantic-settings>=2.0.3",
     "redis>=5.0.1",
     "arq>=0.25.0",

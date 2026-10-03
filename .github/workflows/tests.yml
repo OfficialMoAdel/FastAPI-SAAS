@@ -88,6 +88,17 @@ jobs:
       - name: Run index definition consistency gate
         run: uv run python scripts/check_index_definition_consistency.py
 
+      # A column mapped on a model but never created by a migration is
+      # invisible to every other gate here: create_all DERIVES the schema from
+      # the ORM, so a create_all database always has it, and the tests run
+      # against such a database. On a migrated database the query then raises
+      # UndefinedColumnError. `pricing.currency` was exactly this, and adding
+      # this gate immediately surfaced three more (passkey_credentials.aaguid
+      # and .transports, magic_links.user_agent, user_sso_connections
+      # .provider_email). Pure AST, no database.
+      - name: Run schema parity gate
+        run: uv run python scripts/check_schema_parity.py
+
   type-check:
     runs-on: ubuntu-latest
     steps:
@@ -152,6 +163,59 @@ jobs:
 
       - name: Install package with dev dependencies
         run: uv pip install -e ".[dev]"
+
+      # Real Alembic parity, against a genuinely migrated database.
+      #
+      # Runs in a SEPARATE database on purpose: `alembic upgrade head` here
+      # would leave test_db with the migration-08 RLS policies enabled, whereas
+      # the suite currently runs against a create_all schema that has none.
+      # Flipping that is a much larger change than adding a gate, so this gets
+      # its own database and test_db is left alone.
+      #
+      # NON-BLOCKING, deliberately. Measured on this repo at 7de0ff2a: ~395
+      # diffs, of which ZERO are "added column" (the defect class that actually
+      # breaks a migrated database). The rest are index naming, column
+      # comments and TIMESTAMP type comparisons — long-standing, and exactly
+      # the classes this repo deliberately gates with precise AST checks
+      # instead (see check_index_definition_consistency.py: "Alembic compares
+      # indexes by NAME, and this repo declares no naming_convention").
+      #
+      # As a BLOCKING gate this would be red on day one and stay red, which
+      # trains people to ignore red. It runs so drift is VISIBLE and
+      # reviewable in the job log; the blocking gate for missing columns is
+      # `Run schema parity gate` in the lint job. Flip continue-on-error to
+      # false only after the noise is reconciled.
+      # Step-level env is NOT inherited from the service block or from the
+      # "Run tests" step, so every step here declares what it needs.
+      - name: Create parity check database
+        run: |
+          PGPASSWORD="${POSTGRES_PASSWORD}" psql -h localhost -U "${POSTGRES_USER}" -d postgres             -c "DROP DATABASE IF EXISTS parity_check;"             -c "CREATE DATABASE parity_check;"
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+
+      - name: Apply migrations to parity check database
+        run: uv run alembic -c src/alembic.ini upgrade head
+        env:
+          ENVIRONMENT: local
+          SECRET_KEY: 12345678901234567890123456789012
+          POSTGRES_SERVER: localhost
+          POSTGRES_PORT: "5432"
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: parity_check
+
+      - name: Run alembic parity check (non-blocking, see comment above)
+        continue-on-error: true
+        run: uv run alembic -c src/alembic.ini check
+        env:
+          ENVIRONMENT: local
+          SECRET_KEY: 12345678901234567890123456789012
+          POSTGRES_SERVER: localhost
+          POSTGRES_PORT: "5432"
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: parity_check
 
       - name: Run tests
         run: uv run pytest

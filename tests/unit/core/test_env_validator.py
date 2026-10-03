@@ -139,24 +139,57 @@ class TestEnvironmentValidator:
             # Should not log errors
             mock_logger.error.assert_not_called()
 
-    def test_check_ai_providers_disabled(self, mock_env):
-        """Test AI provider validation when AI is disabled."""
-        env_vars = {"AI_ENABLED": "false"}
+    def test_check_ai_providers_default_base_url_is_not_an_error(self):
+        """S-37: the default OLLAMA_BASE_URL must NOT be reported missing.
 
-        with mock.patch.dict(os.environ, env_vars):
+        This is the regression the old os.getenv read caused: a deployment that
+        never exported OLLAMA_BASE_URL was told it was required, even though the
+        setting has always defaulted to http://localhost:11434.
+        """
+        with mock.patch("src.app.core.config.settings.ai") as ai:
+            ai.AI_ENABLED = True
+            ai.AI_ACTIVE_PROVIDER = "ollama"
+            ai.OLLAMA_BASE_URL = "http://localhost:11434"
+
+            with mock.patch("httpx.get"):
+                results = EnvironmentValidator._check_ai_providers()
+
+        # No "is required" ERROR. A connectivity WARNING is still legitimate —
+        # this asserts the specific defect, which was an ERROR that blocked boot
+        # for a setting that already had a default.
+        errors = [
+            r for r in results if r.key == "OLLAMA_BASE_URL" and r.severity == ValidationSeverity.ERROR
+        ]
+        assert not errors, errors
+
+    def test_check_ai_providers_disabled(self, mock_env):
+        """AI disabled -> no findings. (S-37: read from typed settings.)"""
+        with mock.patch("src.app.core.config.settings.ai") as ai:
+            ai.AI_ENABLED = False
             results = EnvironmentValidator._check_ai_providers()
-            assert len(results) == 0
+
+        assert len(results) == 0
 
     def test_check_ai_providers_ollama_missing_url(self, mock_env):
-        """Test Ollama validation when base URL is missing."""
-        env_vars = {"AI_ENABLED": "true", "AI_ACTIVE_PROVIDER": "ollama"}
+        """An EMPTY OLLAMA_BASE_URL is still an error.
 
-        with mock.patch.dict(os.environ, env_vars):
+        S-37: the validator now reads the TYPED settings rather than os.getenv.
+        `OLLAMA_BASE_URL` has a Pydantic default, so "unset in the environment"
+        is NOT an error any more — that was the bug, since a valid deployment
+        was blocked at boot for a setting that already had a default. This test
+        covers the case that genuinely IS an error: the value being blank.
+        """
+        with mock.patch("src.app.core.config.settings.ai") as ai:
+            ai.AI_ENABLED = True
+            ai.AI_ACTIVE_PROVIDER = "ollama"
+            ai.OLLAMA_BASE_URL = ""
+
             results = EnvironmentValidator._check_ai_providers()
-            assert len(results) == 1
-            assert results[0].key == "OLLAMA_BASE_URL"
-            assert "required" in results[0].message.lower()
-            assert results[0].severity == ValidationSeverity.ERROR
+
+        assert len(results) == 1
+        assert results[0].key == "OLLAMA_BASE_URL"
+        assert "required" in results[0].message.lower()
+        assert results[0].severity == ValidationSeverity.ERROR
 
     @mock.patch("httpx.get")
     def test_check_ai_providers_ollama_unreachable(self, mock_get, mock_env):

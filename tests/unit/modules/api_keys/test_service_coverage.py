@@ -187,8 +187,12 @@ async def test_validate_api_key_cache_miss_then_cache() -> None:
     ):
         result = await service.validate_api_key("rawkey")
     assert result is not None
-    # I2 bridge: the result is cached under BOTH digests (current + legacy)
-    # so a lookup under either key hits. TTL is 300s on each.
-    assert fake_redis.set.await_count == 2
+    # S-01: cached under the PRIMARY (current HMAC) digest only. The legacy
+    # second write was an orphan (the read loop checks the primary first, both
+    # payloads identical) and unreclaimable (the row migrates to the HMAC on
+    # first use, so a revoke could never delete the SHA-256 entry) — leaving a
+    # revoked key authenticable for the full 300s TTL. The legacy DB lookup is
+    # untouched; `_validate_from_db` still tries both digests.
+    assert fake_redis.set.await_count == 1
     for call in fake_redis.set.await_args_list:
         assert call.kwargs.get("ex") == 300

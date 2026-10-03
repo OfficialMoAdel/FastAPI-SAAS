@@ -296,19 +296,20 @@ All 21 feature modules have a dedicated `AGENTS.md` (see table):
 - If push fails, resolve and retry until it succeeds
 
 
-
-
 <!-- bv-agent-instructions-v6 -->
 
 ---
 
 ## Beads Workflow Integration
+This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
 
-This project uses a Beads tracker—either the Go `bd` CLI or the Rust `br` CLI—for persistent issue tracking, plus [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) (`bv`) for graph-aware triage. Issues are stored in `.beads/`. `bv` auto-discovers supported JSONL exports, including `.beads/issues.jsonl` and legacy `.beads/beads.jsonl`.
+This project uses a Beads tracker—either the Go `bd` Run `bd prime` to see full workflow context and commands. CLI for persistent issue tracking, plus [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) (`bv`) for graph-aware triage. Issues are stored in `.beads/`. `bv` auto-discovers supported JSONL exports, including `.beads/issues.jsonl` and legacy `.beads/beads.jsonl`.
 
 **⚠️ CRITICAL RULES:**
+- Use `bd remember` for persistent project knowledge — do NOT use ad hoc memory files (like MEMORY.md).
+- Understand the architecture: issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export for tools like `bv`.
+- Refer to `.agents/skills/beads/SKILL.md` (if installed) for deep Beads workflow guidance.
 - Choose the tracker CLI from this repository's instructions and configuration
-- Use `bd` commands in a Go Beads workspace and `br` commands in a beads_rust workspace
 - **Do NOT run both trackers against the same workspace**
 - Do NOT infer the tracker solely from the JSONL filename
 - **Do NOT use temporary markdown lists or plans in your context window** - Always use Beads for persistent tracking
@@ -322,13 +323,9 @@ This project uses a Beads tracker—either the Go `bd` CLI or the Rust `br` CLI�
 ```bash
 # Check ready tasks (use your configured tracker)
 bd ready --json              # For Go Beads workspace
-# OR
-br ready --json              # For Rust beads_rust workspace
 
 # Resume unfinished work
 bd list --status in_progress --json
-# OR
-br list --status in_progress --json
 
 # Graph-aware priority analysis
 bv --robot-triage            # THE MEGA-COMMAND: start here
@@ -339,18 +336,12 @@ bv --robot-triage            # THE MEGA-COMMAND: start here
 ```bash
 # Claim task before starting (CRITICAL)
 bd update <id> --claim --json
-# OR
-br update <id> --claim --json
 
 # Create new tasks/bugs when discovered
 bd create "Bug description" -t bug -d "Details" --json
-# OR
-br create --title="Bug description" --type=bug --priority=2 --json
 
 # Add dependencies
 bd dep add <child-id> <parent-id>
-# OR
-br dep add <child-id> <parent-id>
 ```
 
 ### 3️⃣ End of Session (CRITICAL - Never skip):
@@ -358,15 +349,18 @@ br dep add <child-id> <parent-id>
 ```bash
 # Close finished tasks
 bd close <id> --json
-# OR
-br close <id> --reason="Implemented X" --json
+
 
 # Sync for bv (CRITICAL)
 bd export -o .beads/issues.jsonl
-# OR
-br sync --flush-only
 
 # Exit with fresh context
+
+1. **File follow-ups**: Create beads for any discovered bugs or remaining work (`bd create ...`).
+2. **Run quality gates** (if code changed): Ensure tests, linters, and builds pass.
+3. **Update & Close**: Close finished work (`bd close <id> --json`).
+4. **Sync Export**: Run `bd export -o .beads/issues.jsonl` so `bv` and the JSONL export are current.
+5. **Hand off**: Summarize changes, validation results, and closed issues. Stop and wait for user approval before any git commit/push (respecting the Conservative/Minimal profile).
 ```
 
 ---
@@ -471,32 +465,6 @@ bd sync                            # Manual sync
 bd export -o .beads/issues.jsonl   # Refresh compatibility export for bv
 ```
 
-### Rust beads_rust (`br`) Commands:
-
-```bash
-# Discovery
-br ready --json                    # Show issues ready to work (no blockers)
-br list --status open --json       # All open issues
-br list --status in_progress --json
-br show <id> --json                # Full issue details with dependencies
-
-# Create
-br create --title="..." --type=task --priority=2 --json
-
-# Update
-br update <id> --claim --json      # Claim for current actor and start work
-
-# Dependencies
-br dep add <issue> <depends-on>
-
-# Close
-br close <id> --reason="Completed" --json
-br close <id1> <id2> --reason="Completed" --json
-
-# Sync (CRITICAL before git operations)
-br sync --flush-only               # Export DB to JSONL after mutations
-```
-
 ---
 
 ## 🔗 Advanced Dependencies & Patterns
@@ -505,7 +473,6 @@ br sync --flush-only               # Export DB to JSONL after mutations
 
 ```bash
 bd dep add <issue> <depends-on>    # Go Beads
-br dep add <issue> <depends-on>    # Rust beads_rust
 ```
 
 ### Advanced Patterns:
@@ -556,7 +523,6 @@ open → in_progress → closed
 
 ```bash
 bd create "Task" -p 0              # Critical priority
-br create --title="Task" --priority=0
 bd update bd-123 --status blocked --reason "Waiting for API"
 ```
 
@@ -576,7 +542,6 @@ bd update bd-123 --status in_progress --assignee @me
 
 # Check others' work
 bd list --status in_progress
-br list --status in_progress --json
 ```
 
 ### Automation:
@@ -584,25 +549,25 @@ br list --status in_progress --json
 ```bash
 # Get first ready task ID
 bd ready --json | jq -r '.[0].id'
-br ready --json | jq -r '.[0].id'
 ```
 
 ---
 
 ## 🔄 Sync & Git Policy (CRITICAL)
 
-### Sync Commands:
+### Architecture
+Issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for anti-patterns.
 
+### Agent Context Profiles (Permissions)
+- **Conservative/Minimal (Default):** Use `bd` for task tracking. Do NOT run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files and suggest next commands.
+- **Team-maintainer (Opt-in only):** Agents may run quality gates, commit, and push ONLY if the repository explicitly opts in.
+- **Override Rule:** Explicit user or orchestrator instructions always override these profiles.
+
+### Sync Commands
 **For Go Beads (`bd`):**
 ```bash
 bd sync                            # Manual sync
-bd export -o .beads/issues.jsonl   # Refresh for bv
-```
-
-**For Rust beads_rust (`br`):**
-```bash
-br sync --flush-only               # Export DB to JSONL
-```
+bd export -o .beads/issues.jsonl   # Refresh passive export for bv
 
 **⚠️ CRITICAL: Never leave without syncing!**
 
@@ -622,7 +587,7 @@ Tracker commands do not grant permission to commit or push application code. Fol
 
 1. **Triage**: Run `bv --robot-triage` to find the highest-impact actionable work
 2. **Verify**: Check the selected tracker's `show`/`ready` output before claiming
-3. **Claim**: Use `br update <id> --claim --json` or `bd update <id> --claim --json`
+3. **Claim**: Use `bd update <id> --claim --json`
 4. **Work**: Implement the task (ONE issue per session)
 5. **Complete**: Use the selected tracker's `close` command
 6. **Sync**: Run `br sync --flush-only` or `bd export` so the JSONL export is current
@@ -632,13 +597,12 @@ Tracker commands do not grant permission to commit or push application code. Fol
 
 ## 🔑 Key Concepts
 
-- **Dependencies**: Issues can block other issues. `br ready --json` and `bd ready --json` show unblocked work.
+- **Dependencies**: Issues can block other issues. `bd ready --json` show unblocked work.
 - **Priority**: Use numbers 0-4 (P0-P4), not words
 - **Types**: task, bug, feature, epic, chore, docs, question
-- **Blocking**: Use `br dep add <issue> <depends-on>` or `bd dep add <issue> <depends-on>` to add dependencies
+- **Blocking**: Use `bd dep add <issue> <depends-on>` to add dependencies
 - **Session Management**: One issue per session prevents context window panic
 - **Sync**: Always sync before git operations or switching contexts
 
 ---
-
 <!-- end-bv-agent-instructions -->

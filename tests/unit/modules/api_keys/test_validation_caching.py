@@ -11,6 +11,7 @@ Regression test for P1-1: API Key Validation Caching
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -100,12 +101,29 @@ class TestAPIKeyValidationCaching:
 
             assert result is not None
             assert result["user_id"] == 1
-            # I2 bridge: cached under BOTH digests (current + legacy) so a
-            # lookup under either key hits.
-            assert mock_redis.set.call_count == 2
-            # Verify cache TTL is 300 seconds on every write
+            # S-01: cached under the PRIMARY (current HMAC) digest only.
+            #
+            # This used to assert `call_count == 2` — "cached under BOTH
+            # digests so a lookup under either key hits". The intent still
+            # holds, but the second write was not what satisfied it: the read
+            # loop in `validate_api_key` checks `cache_key` (the primary) FIRST
+            # and both entries carried an identical payload, so a lookup could
+            # never reach the legacy entry while the primary was live.
+            #
+            # The legacy write was an orphan AND unreclaimable — the row is
+            # migrated to the HMAC digest on first use, so a later revoke can
+            # only compute the cache key from the stored HMAC and could never
+            # delete the SHA-256 entry, which then authenticated for the full
+            # 300s TTL (finding S-01). The legacy DB lookup is untouched:
+            # `_validate_from_db` still tries both digests.
+            assert mock_redis.set.call_count == 1
+            # Verify cache TTL is 300 seconds on the write
             for call_args in mock_redis.set.call_args_list:
                 assert call_args[1]["ex"] == 300  # TTL
+            # The cached grant must record that the key is active, so a revoke
+            # that raced this write is detectable on the hit path.
+            cached_payload = json.loads(mock_redis.set.call_args_list[0][0][1])
+            assert cached_payload["is_active"] is True
 
     @pytest.mark.asyncio
     async def test_expired_key_in_cache_is_deleted(self, api_key_service: Any) -> None:

@@ -180,8 +180,18 @@ class TestLegacyRowResolution:
             if call.kwargs.get("object") == {"hashed_key": hash_token(raw_key)}
         ]
         assert len(rehash) == 1, "legacy row must be re-hashed exactly once"
-        # Both digest cache keys populated so the next lookup hits either way.
-        assert mock_cache.set.await_count == 2
+        # S-01: the PRIMARY (current HMAC) cache key is written once. The
+        # legacy digest's SECOND cache write was removed: the read loop
+        # checks the primary key first and both entries carried the same
+        # payload, so the legacy entry never served a hit. Worse, it was
+        # unreclaimable — the row is re-hashed above to the HMAC digest, so a
+        # later revoke can only compute the cache key from the HMAC and could
+        # never delete the SHA-256 entry, leaving a revoked key authenticable
+        # for the full 300s TTL.
+        #
+        # The legacy DB lookup this test exists for is unchanged: the row
+        # still resolved and was still re-hashed (asserted above).
+        assert mock_cache.set.await_count == 1
 
     @pytest.mark.asyncio
     async def test_api_key_lookup_rejects_wrong_key(self) -> None:

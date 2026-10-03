@@ -270,8 +270,12 @@ class TestAISettingsService:
 
         with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
-                mock_crud.get = AsyncMock(return_value=None)
-                mock_crud.create = AsyncMock(return_value={"id": 1, "user_id": 1, "tenant_id": 1, "model": "gemma3"})
+                # S-28: miss, then create, then RE-READ the committed row to
+                # satisfy AISettingsRead (which needs model/temperature/
+                # max_tokens, not just the PK create() returns).
+                _row = {"id": 1, "user_id": 1, "tenant_id": 1, "model": "gemma3"}
+                mock_crud.get = AsyncMock(side_effect=[None, _row])
+                mock_crud.create = AsyncMock(return_value={"id": 1})
 
                 service = AISettingsService(mock_db)
                 await service.get_or_create_settings(user_id=1)
@@ -310,8 +314,12 @@ class TestAISettingsService:
 
         with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
-                mock_crud.get = AsyncMock(return_value=None)
-                mock_crud.create = AsyncMock(return_value={"id": 1, "user_id": 1, "tenant_id": 1})
+                # S-28 (second site): miss -> create -> RE-READ the committed
+                # row so the 5-field response model can be satisfied. Returning
+                # a partial dict from create() was the bug.
+                _row = {"id": 1, "user_id": 1, "tenant_id": 1, "model": "gemma3"}
+                mock_crud.get = AsyncMock(side_effect=[None, _row])
+                mock_crud.create = AsyncMock(return_value={"id": 1})
 
                 service = AISettingsService(mock_db)
                 data = AISettingsUpdate(model="llama3")

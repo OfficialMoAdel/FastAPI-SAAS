@@ -118,8 +118,12 @@ class TestAISettingsService:
 
         with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
-                mock_crud.get = AsyncMock(return_value=None)
-                mock_crud.create = AsyncMock(return_value=new_settings)
+                # S-28: the first get() misses, then the row is created and
+                # re-read to build the full response model. This mock used to
+                # return None forever, which encoded the bug (create() handing
+                # back only a PK) rather than the DB's behaviour.
+                mock_crud.get = AsyncMock(side_effect=[None, new_settings])
+                mock_crud.create = AsyncMock(return_value={"id": new_settings["id"]})
 
                 result = await ai_settings_service.get_or_create_settings(user_id)
 
@@ -168,8 +172,12 @@ class TestAISettingsService:
 
         with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
-                mock_crud.get = AsyncMock(return_value=None)
-                mock_crud.create = AsyncMock(return_value=new_settings)
+                # S-28: the first get() misses, then the row is created and
+                # re-read to build the full response model. This mock used to
+                # return None forever, which encoded the bug (create() handing
+                # back only a PK) rather than the DB's behaviour.
+                mock_crud.get = AsyncMock(side_effect=[None, new_settings])
+                mock_crud.create = AsyncMock(return_value={"id": new_settings["id"]})
 
                 update_data = AISettingsUpdate(model="llama3")
                 result = await ai_settings_service.update_settings(user_id, update_data)
@@ -287,8 +295,12 @@ class TestDefaultAISettings:
 
         with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
-                mock_crud.get = AsyncMock(return_value=None)
-                mock_crud.create = AsyncMock(return_value=new_settings)
+                # S-28: the first get() misses, then the row is created and
+                # re-read to build the full response model. This mock used to
+                # return None forever, which encoded the bug (create() handing
+                # back only a PK) rather than the DB's behaviour.
+                mock_crud.get = AsyncMock(side_effect=[None, new_settings])
+                mock_crud.create = AsyncMock(return_value={"id": new_settings["id"]})
 
                 result = await ai_settings_service.get_or_create_settings(user_id)
 
@@ -310,8 +322,12 @@ class TestDefaultAISettings:
 
         with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
-                mock_crud.get = AsyncMock(return_value=None)
-                mock_crud.create = AsyncMock(return_value=new_settings)
+                # S-28: the first get() misses, then the row is created and
+                # re-read to build the full response model. This mock used to
+                # return None forever, which encoded the bug (create() handing
+                # back only a PK) rather than the DB's behaviour.
+                mock_crud.get = AsyncMock(side_effect=[None, new_settings])
+                mock_crud.create = AsyncMock(return_value={"id": new_settings["id"]})
 
                 result = await ai_settings_service.get_or_create_settings(user_id)
 
@@ -333,8 +349,12 @@ class TestDefaultAISettings:
 
         with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
-                mock_crud.get = AsyncMock(return_value=None)
-                mock_crud.create = AsyncMock(return_value=new_settings)
+                # S-28: the first get() misses, then the row is created and
+                # re-read to build the full response model. This mock used to
+                # return None forever, which encoded the bug (create() handing
+                # back only a PK) rather than the DB's behaviour.
+                mock_crud.get = AsyncMock(side_effect=[None, new_settings])
+                mock_crud.create = AsyncMock(return_value={"id": new_settings["id"]})
 
                 result = await ai_settings_service.get_or_create_settings(user_id)
 

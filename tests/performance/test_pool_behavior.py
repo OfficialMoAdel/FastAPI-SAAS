@@ -58,7 +58,9 @@ class _StubSettingsService(_StubSessionService):
 
 
 class _StubMessageService(_StubSessionService):
-    async def get_session_messages(self, session_id: int, user_id: int, limit: int = 50) -> dict:
+    async def get_session_messages(
+        self, session_id: int, user_id: int, limit: int = 50, descending: bool = False
+    ) -> dict:
         self._db.trace.append("read.messages")
         return {"data": []}
 

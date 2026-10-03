@@ -112,7 +112,9 @@ async def test_handle_webhook_event_checkout_completed():
             return_value={"id": 456, "tenant_id": tenant_id},
         ),
         patch(
-            "src.app.modules.billing.webhook._try_acquire_event_lock", new_callable=AsyncMock, return_value=True
+            "src.app.modules.billing.webhook._try_acquire_event_lock",
+            new_callable=AsyncMock,
+            return_value=(True, "tok"),
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_ctx,
@@ -178,7 +180,9 @@ async def test_handle_webhook_event_invoice_payment_succeeded():
         ),
 
         patch(
-            "src.app.modules.billing.webhook._try_acquire_event_lock", new_callable=AsyncMock, return_value=True
+            "src.app.modules.billing.webhook._try_acquire_event_lock",
+            new_callable=AsyncMock,
+            return_value=(True, "tok"),
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
@@ -216,7 +220,12 @@ async def test_handle_webhook_event_invoice_payment_succeeded():
         # Verify bypass context used for lookup (B4 adds a second call for
         # the durable processed-marker write after success).
         assert mock_bypass_ctx.call_count == 2
-        mock_bypass_db.execute.assert_called_once()
+        # S-03: the second bypass context now issues an UPDATE that STAMPS
+        # completed_at on the claim row (it previously inserted a fresh row,
+        # so the claim row stayed un-stamped and read as abandoned). So the
+        # second execute is expected — assert both calls happened rather than
+        # pinning the old single-call shape.
+        assert mock_bypass_db.execute.call_count == 2
 
         # Verify tenant context used for creation
         mock_tenant_ctx.assert_called_once_with(tenant_id)
@@ -259,7 +268,9 @@ async def test_handle_webhook_event_invoice_payment_failed():
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=False),
         patch(
-            "src.app.modules.billing.webhook._try_acquire_event_lock", new_callable=AsyncMock, return_value=True
+            "src.app.modules.billing.webhook._try_acquire_event_lock",
+            new_callable=AsyncMock,
+            return_value=(True, "tok"),
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
@@ -320,7 +331,9 @@ async def test_handle_webhook_event_subscription_updated():
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=False),
         patch(
-            "src.app.modules.billing.webhook._try_acquire_event_lock", new_callable=AsyncMock, return_value=True
+            "src.app.modules.billing.webhook._try_acquire_event_lock",
+            new_callable=AsyncMock,
+            return_value=(True, "tok"),
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
@@ -370,7 +383,9 @@ async def test_handle_webhook_event_subscription_deleted():
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=False),
         patch(
-            "src.app.modules.billing.webhook._try_acquire_event_lock", new_callable=AsyncMock, return_value=True
+            "src.app.modules.billing.webhook._try_acquire_event_lock",
+            new_callable=AsyncMock,
+            return_value=(True, "tok"),
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
@@ -427,7 +442,9 @@ async def test_handle_webhook_event_charge_refunded():
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=False),
         patch(
-            "src.app.modules.billing.webhook._try_acquire_event_lock", new_callable=AsyncMock, return_value=True
+            "src.app.modules.billing.webhook._try_acquire_event_lock",
+            new_callable=AsyncMock,
+            return_value=(True, "tok"),
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,

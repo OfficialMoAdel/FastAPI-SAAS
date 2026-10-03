@@ -37,20 +37,41 @@ def mock_stripe_event():
 
 
 @pytest.mark.asyncio
-@patch("src.app.core.utils.cache.client")
-async def test_try_acquire_event_lock_success(mock_redis):
-    mock_redis.set = AsyncMock(return_value=True)
-    result = await _try_acquire_event_lock("evt_123")
-    assert result is True
-    mock_redis.set.assert_awaited_once()
+async def test_try_acquire_event_lock_success():
+    """Redis present + NX succeeds -> (True, token).
+
+    Patches `idempotency.cache_client`, which is the adapter the module
+    actually imports. The previous patch target
+    (`src.app.core.utils.cache.client`) is a DIFFERENT module, so the real
+    adapter ran and this test asserted nothing about the code under test —
+    and with Redis down it silently exercised the DB-fallback path instead.
+    """
+    client = MagicMock()
+    client.client = client
+    client.set_nx = AsyncMock(return_value=True)
+
+    with patch("src.app.modules.billing.webhook.idempotency.cache_client", client):
+        acquired, token = await _try_acquire_event_lock("evt_123")
+
+    # S-04: returns (acquired, lock_token); the token is what makes the later
+    # release a compare-and-delete rather than a blind DEL.
+    assert acquired is True
+    assert token is not None
+    client.set_nx.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-@patch("src.app.core.utils.cache.client")
-async def test_try_acquire_event_lock_already_processed(mock_redis):
-    mock_redis.set = AsyncMock(return_value=None)  # None when NX=True and key exists
-    result = await _try_acquire_event_lock("evt_123")
-    assert result is False
+async def test_try_acquire_event_lock_already_processed():
+    """Redis present but NX fails (key exists) -> (False, None)."""
+    client = MagicMock()
+    client.client = client
+    client.set_nx = AsyncMock(return_value=False)
+
+    with patch("src.app.modules.billing.webhook.idempotency.cache_client", client):
+        acquired, token = await _try_acquire_event_lock("evt_123")
+
+    assert acquired is False
+    assert token is None
 
 
 @patch("stripe.Webhook.construct_event")
@@ -64,16 +85,41 @@ def test_verify_webhook_signature(mock_construct_event):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.webhook._try_acquire_event_lock", return_value=False)
-async def test_handle_webhook_event_already_processed(mock_lock, mock_stripe_event):
+@patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=False)
+@patch("src.app.modules.billing.webhook._try_acquire_event_lock", return_value=(False, None))
+async def test_in_flight_duplicate_is_reported_as_in_flight(
+    _processed, mock_lock, mock_stripe_event
+):
+    """S-05: a concurrent duplicate holding the lock is NOT "already_processed".
+
+    It previously carried the same status as a durably-finished event, so the
+    endpoint acked 200 and Stripe never retried — losing the event if the
+    in-flight original then failed.
+
+    This test also PATCHES `_is_event_processed`. It previously did not, so its
+    outcome depended on whatever the real durable-marker lookup found in the
+    database/Redis — passing or failing purely on suite ordering.
+    """
+    result = await handle_webhook_event(mock_stripe_event)
+    assert result == {"status": "in_flight"}
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=True)
+@patch("src.app.modules.billing.webhook._try_acquire_event_lock", return_value=(True, "tok"))
+async def test_already_processed_short_circuits_before_the_lock(
+    mock_lock, _processed, mock_stripe_event
+):
+    """A durably-finished event stays `already_processed` and never locks."""
     result = await handle_webhook_event(mock_stripe_event)
     assert result == {"status": "already_processed"}
+    mock_lock.assert_not_called()
 
 
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock)
 @patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=False)
-@patch("src.app.modules.billing.webhook._try_acquire_event_lock", return_value=True)
+@patch("src.app.modules.billing.webhook._try_acquire_event_lock", return_value=(True, "tok"))
 @patch("src.app.modules.billing.webhook.handle_checkout_session_completed")
 async def test_handle_webhook_event_routing(mock_handler, mock_lock, _processed, _mark, mock_stripe_event):
     result = await handle_webhook_event(mock_stripe_event)
@@ -84,7 +130,7 @@ async def test_handle_webhook_event_routing(mock_handler, mock_lock, _processed,
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock)
 @patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=False)
-@patch("src.app.modules.billing.webhook._try_acquire_event_lock", return_value=True)
+@patch("src.app.modules.billing.webhook._try_acquire_event_lock", return_value=(True, "tok"))
 @patch("src.app.core.utils.cache.client")
 async def test_handle_webhook_event_error_releases_lock(mock_redis, mock_lock, _processed, _mark, mock_stripe_event):
     # Route to an unhandled event type which will fail if we patch routing or raise an error
@@ -94,10 +140,20 @@ async def test_handle_webhook_event_error_releases_lock(mock_redis, mock_lock, _
         "src.app.modules.billing.webhook.handle_checkout_session_completed", side_effect=Exception("Test error")
     ):  # noqa: E501
         mock_redis.delete = AsyncMock()
-        with pytest.raises(Exception):
-            await handle_webhook_event(mock_stripe_event)
+        # S-04: the release is a COMPARE-AND-DELETE against our own lock
+        # token, not a blind DEL. A blind delete could erase the terminal
+        # marker a slower, already-successful delivery had written.
+        with patch(
+            "src.app.modules.billing.webhook.idempotency._release_if_owned",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as release:
+            with pytest.raises(Exception):
+                await handle_webhook_event(mock_stripe_event)
 
-        mock_redis.delete.assert_awaited_once()
+        release.assert_awaited_once()
+        assert release.await_args.args[1] == "tok", "must release with OUR lock token"
+        mock_redis.delete.assert_not_awaited()
 
 
 # We mock job_tenant_context to just yield mock_db
@@ -224,14 +280,18 @@ async def test_handle_invoice_payment_succeeded(
 
 
 @pytest.mark.asyncio
-@patch("src.app.core.utils.cache.client", None)
-async def test_try_acquire_event_lock_redis_unavailable(mock_db):
-    """Test fallback to DB idempotency check when Redis is unavailable (line 44)."""
-    # When redis_client is None, should fall back to DB check
-    with patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock) as mock_db_check:
+async def test_try_acquire_event_lock_redis_unavailable():
+    """No Redis client -> fall back to the DB idempotency check."""
+    client = MagicMock()
+    client.client = None
+
+    with patch("src.app.modules.billing.webhook.idempotency.cache_client", client):
+      with patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock) as mock_db_check:
         mock_db_check.return_value = True
-        result = await _try_acquire_event_lock("evt_fallback")
-        assert result is True
+        acquired, token = await _try_acquire_event_lock("evt_fallback")
+        assert acquired is True
+        # No Redis lock of ours exists on the DB-fallback path.
+        assert token is None
         mock_db_check.assert_called_once_with("evt_fallback")
 
 
@@ -239,13 +299,14 @@ async def test_try_acquire_event_lock_redis_unavailable(mock_db):
 @patch("src.app.core.utils.cache.client")
 async def test_try_acquire_event_lock_redis_error(mock_redis):
     """Test Redis error triggers fallback to DB idempotency check (lines 52-59)."""
-    mock_redis.set = AsyncMock(side_effect=Exception("Redis connection failed"))
+    mock_redis.set_nx = AsyncMock(side_effect=Exception("Redis connection failed"))
 
     with patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock) as mock_db_check:
         mock_db_check.return_value = False  # DB says already processed
-        result = await _try_acquire_event_lock("evt_error")
+        acquired, token = await _try_acquire_event_lock("evt_error")
 
-        assert result is False
+        assert acquired is False
+        assert token is None
         mock_db_check.assert_called_once_with("evt_error")
 
 
@@ -253,14 +314,14 @@ async def test_try_acquire_event_lock_redis_error(mock_redis):
 @patch("src.app.core.utils.cache.client")
 async def test_try_acquire_event_lock_redis_exception(mock_redis):
     """Test Redis exception logs error and falls back to DB (lines 52-59)."""
-    mock_redis.set = AsyncMock(side_effect=Exception("Network error"))
+    mock_redis.set_nx = AsyncMock(side_effect=Exception("Network error"))
 
     with patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock) as mock_db_check:
         mock_db_check.return_value = True
-        result = await _try_acquire_event_lock("evt_exception")
+        acquired, _token = await _try_acquire_event_lock("evt_exception")
 
-        # Should fall back to DB and return True (process the event)
-        assert result is True
+        # Should fall back to DB and acquire (process the event)
+        assert acquired is True
 
 
 @pytest.mark.asyncio
@@ -286,26 +347,54 @@ async def test_db_idempotency_check_success():
 
 @pytest.mark.asyncio
 async def test_db_idempotency_check_duplicate():
-    """Test DB idempotency check returns False when event is duplicate (lines 85-90)."""
+    """A COMPLETED duplicate is skipped; an ABANDONED claim is reclaimed.
+
+    S-03: the IntegrityError path re-reads the row to tell the two apart. A
+    completed row means "handled" -> skip (False). An abandoned claim
+    (completed_at NULL) must be taken over -> process (True), otherwise a
+    delivery that died mid-handler suppresses every future retry forever.
+
+    The REAL WebhookEvent model is used (not a MagicMock) because the
+    reclaim path builds a `select(WebhookEvent)` clause, which needs real
+    columns to compile.
+    """
+    from datetime import UTC, datetime
+
     from sqlalchemy.exc import IntegrityError
 
-    mock_db = AsyncMock()
-    mock_db.commit = AsyncMock(side_effect=IntegrityError("duplicate", "duplicate", "duplicate"))
-    mock_db.rollback = AsyncMock()
+    from src.app.modules.billing.models import WebhookEvent
 
-    with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_ctx:
-        mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_db)
-        mock_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
+    def _db_with_existing(row):
+        db = AsyncMock()
+        db.commit = AsyncMock(side_effect=IntegrityError("duplicate", "duplicate", "duplicate"))
+        db.rollback = AsyncMock()
+        db.add = AsyncMock()
+        read = MagicMock()
+        read.scalar_one_or_none.return_value = row
+        db.execute = AsyncMock(return_value=read)
+        return db
 
-        with patch("src.app.modules.billing.models.WebhookEvent") as mock_event_class:
-            mock_event_instance = MagicMock()
-            mock_event_class.return_value = mock_event_instance
-            mock_db.add = AsyncMock()
+    def _ctx(db):
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=db)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        return ctx
 
-            result = await _db_idempotency_check("evt_duplicate")
+    # --- completed row -> skip ---
+    completed = WebhookEvent(event_id="evt_duplicate", completed_at=datetime.now(UTC))
+    with patch("src.app.modules.billing.webhook.job_bypass_context", return_value=_ctx(_db_with_existing(completed))):
+        result = await _db_idempotency_check("evt_duplicate")
 
-            assert result is False
-            mock_db.rollback.assert_called_once()
+    assert result is False, "a completed event must be skipped"
+
+    # --- abandoned claim -> reclaimed and processed ---
+    abandoned = WebhookEvent(event_id="evt_duplicate", completed_at=None)
+    db2 = _db_with_existing(abandoned)
+    with patch("src.app.modules.billing.webhook.job_bypass_context", return_value=_ctx(db2)):
+        result = await _db_idempotency_check("evt_duplicate")
+
+    assert result is True, "an abandoned claim must be reclaimed, not treated as processed"
+    db2.rollback.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -344,18 +433,25 @@ async def test_handle_webhook_event_error_releases_lock_missing_coverage(mock_re
 
     # First call to check lock returns True (we acquired it)
     with patch("src.app.modules.billing.webhook._try_acquire_event_lock", new_callable=AsyncMock) as mock_lock:
-        mock_lock.return_value = True
+        mock_lock.return_value = (True, "tok")
 
         # Handler raises an error
         with patch(
             "src.app.modules.billing.webhook.handle_checkout_session_completed",
             side_effect=Exception("Processing failed"),
         ):
-            with pytest.raises(Exception, match="Processing failed"):
-                await handle_webhook_event(mock_stripe_event)
+            # S-04: see the sibling test — release is compare-and-delete
+            # against our own token, never a blind DEL.
+            with patch(
+                "src.app.modules.billing.webhook.idempotency._release_if_owned",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as release:
+                with pytest.raises(Exception, match="Processing failed"):
+                    await handle_webhook_event(mock_stripe_event)
 
-            # Verify lock was released on error
-            mock_redis.delete.assert_called_once()
+            release.assert_awaited_once()
+            mock_redis.delete.assert_not_called()
 
 
 # ============================================================================

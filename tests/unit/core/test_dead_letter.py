@@ -16,6 +16,10 @@ class _ReadRedis:
 
     async def lrange(self, key: str, start: int, end: int) -> list[str]:
         assert key == DeadLetterQueue.key
+        # Real Redis: -1 means "last element". S-42's filtered read relies on
+        # LRANGE 0 -1, so the fake must honour it or the scan returns nothing.
+        if end == -1:
+            return self.entries[start:]
         return self.entries[start : end + 1]
 
 

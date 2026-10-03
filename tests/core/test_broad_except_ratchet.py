@@ -52,7 +52,29 @@ import count_broad_excepts as counter  # noqa: E402
 #: error-reporting branch when the GET write path was folded into one
 #: try/finally, and ``core/tenancy/scope.py`` was restored from a
 #: line-ending-corrupted state. Re-measured, not estimated.
-BROAD_EXCEPT_BASELINE = 356
+#:
+#: 356 -> 365. Raised, deliberately and re-measured, by the S-08 / S-15 / S-33 /
+#: S-48 remediation in this round. Every addition is a DEGRADATION guard on a
+#: path that had no handler at all, each carrying the `# noqa: BLE001 - <reason>`
+#: the ratchet requires:
+#:
+#:   * core/security/session_manager.py (5) - Redis calls that previously
+#:     propagated and 500'd the strict auth path. Mutators return False/0 rather
+#:     than fake success; readers degrade to []/0 rather than 500.
+#:   * billing/webhook/idempotency.py (2) - a DB fault must still reach the
+#:     Redis revocation write (S-24) and the claim re-read must not mask it.
+#:   * modules/tenants/service.py (1) - L1 cleanup is best-effort and must not
+#:     abort a tenant deactivation (S-15).
+#:   * modules/posts/router.py (1) - the post is already written; a cache error
+#:     must not fail the POST (S-33).
+#:   * modules/notifications/service.py (1) - re-raised as a domain ValueError so
+#:     a broken template fails loudly instead of silently substituting a
+#:     divergent sibling (S-48).
+#:   * core/security/jwt_service.py (1) - see S-24.
+#:
+#: The count went UP because the alternative was an unhandled exception on a
+#: hot path. Each is annotated, which is the trade the ratchet exists to force.
+BROAD_EXCEPT_BASELINE = 365
 
 #: The files muse 22 triaged. BLE001 is enforced on each (the per-file-ignores
 #: in pyproject.toml no longer blanket-exempt them), so these are also the

@@ -1764,18 +1764,47 @@ async def init_real_redis_async(request):
         _L1_TENANT_PARSED.clear()
         _L1_RBAC_CACHE.clear()
     except Exception as e:
+        # A test marked `uses_real_redis` / `e2e` depends on an EXTERNAL
+        # service. When that service is unreachable, `raise` turned the outage
+        # into a hard ERROR for every such test — 24 errors in one run when
+        # Redis was briefly unavailable, all of them reporting as if the
+        # application were broken when nothing under test had run.
+        #
+        # The correct semantic for an unavailable dependency is to SKIP. Skip
+        # only for connectivity failures; anything else (a misconfigured URL, a
+        # bad auth, a programming error) still raises, because that is a real
+        # defect we must not hide.
         print(f"Warning: Failed to initialize real Redis: {e}")
+        # S-08a: the globals below are assigned BEFORE flushdb() runs, so a
+        # failure here left cache.client / the GCRA limiter / session_manager's
+        # Redis client bound to a DEAD pool. Because cleanup lived after the
+        # `yield`, a skip never reached it, and every subsequent test inherited
+        # that dead client. Reset them here, on the way out of the failure.
+        cache.client = None
+        cache.pool = None
+        redis_factory._shared_pool = None  # type: ignore[attr-defined]
+        gcra_module.gcra_rate_limiter = None
+        session_manager.set_redis_client(None)
+
+        if isinstance(
+            e,
+            ConnectionError | TimeoutError | OSError | redis.ConnectionError | redis.TimeoutError,
+        ):
+            pytest.skip(f"Redis unavailable, skipping real-Redis test: {e}")
         raise
 
-    yield
-
-    # Cleanup after test - just reset globals, don't try to close
-    # (the event loop may be closing and we can't operate on closed loops)
-    cache.client = None
-    cache.pool = None
-    redis_factory._shared_pool = None  # type: ignore[attr-defined]
-    gcra_module.gcra_rate_limiter = None
-    session_manager.set_redis_client(None)
+    try:
+        yield
+    finally:
+        # Cleanup after test - just reset globals, don't try to close
+        # (the event loop may be closing and we can't operate on closed loops).
+        # `finally`, not a bare tail: teardown must run even if the test body
+        # or a later fixture raised.
+        cache.client = None
+        cache.pool = None
+        redis_factory._shared_pool = None  # type: ignore[attr-defined]
+        gcra_module.gcra_rate_limiter = None
+        session_manager.set_redis_client(None)
 
 
 @pytest.fixture(autouse=True)
