@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import random
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -390,6 +391,9 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
         if not delivery:
             raise ModelNotFoundError("WebhookDelivery", delivery_id)
 
+        # S-41 FIX: accumulator for the post-commit retry enqueue.
+        pending_retry: tuple[UUID, int, UUID | None] | None = None
+
         # Process HTTP result
         if response is not None:
             delivery.attempt_count += 1
@@ -422,14 +426,16 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
                         status_code=response.status_code,
                     )
                 else:
-                    await _handle_failure(db, delivery)
+                    pending_retry = await _handle_failure(db, delivery)
 
         elif circuit_error is not None:
             # Circuit opened during delivery attempt
             logger.warning("webhook_circuit_opened", error=str(circuit_error))
             delivery.attempt_count += 1
             delivery.response_body = str(circuit_error)[:1000]
-            await _handle_failure(db, delivery, override_delay=getattr(circuit_error, "recovery_in", None))
+            pending_retry = await _handle_failure(
+                db, delivery, override_delay=getattr(circuit_error, "recovery_in", None)
+            )
 
         elif http_error is not None:
             # Network/timeout error - record failure and retry
@@ -437,9 +443,16 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
             await breaker.record_failure(http_error)
             delivery.attempt_count += 1
             delivery.response_body = str(http_error)[:1000]
-            await _handle_failure(db, delivery)
+            pending_retry = await _handle_failure(db, delivery)
 
         await db.commit()
+
+        # S-41 FIX: enqueue only now that the attempt_count / next_retry_at /
+        # status writes are DURABLE. Spawning earlier raced the commit and could
+        # re-POST the same payload to the customer (see _handle_failure).
+        if pending_retry is not None:
+            _spawn_enqueue(*pending_retry)
+
         return delivery
     finally:
         # F6: every exit path releases the claim (covers the raises the
@@ -449,11 +462,31 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
         await _release_delivery_lock(_lock_key, _lock_held, delivery_id)
 
 
-async def _handle_failure(db: Any, delivery: WebhookDelivery, override_delay: float | None = None) -> None:
+async def _handle_failure(
+    db: Any,
+    delivery: WebhookDelivery,
+    override_delay: float | None = None,
+) -> tuple[UUID, int, UUID | None] | None:
     """Handle failed delivery with retry logic.
 
     The retry schedule lives here — the single place that decides
     DEAD vs PENDING.
+
+    S-41 FIX: returns the ``(delivery_id, defer_seconds, tenant_id)`` to
+    enqueue, or None when the delivery is dead. The caller MUST spawn the
+    enqueue only AFTER its ``await db.commit()``.
+
+    The enqueue used to fire from inside this function, which runs BEFORE the
+    commit in ``deliver()``. The code relied on "delay is large enough that
+    commit will finish first" — true for the 60s+ schedule, but NOT for the
+    circuit-open path, where ``override_delay`` collapses the defer to
+    ``max(1, ceil(recovery_in))`` ≈ 1 second. If the commit lost that race, the
+    ARQ retry re-read the row from the DB, saw the PRE-attempt
+    ``attempt_count`` / ``next_retry_at``, and re-POSTed the same payload to
+    the customer — a duplicate webhook delivery caused by our own bookkeeping
+    race, not by the receiver.
+
+    Deferring to post-commit removes the race entirely.
     """
     attempt_idx = delivery.attempt_count - 1
     delays = get_retry_delays()
@@ -462,26 +495,34 @@ async def _handle_failure(db: Any, delivery: WebhookDelivery, override_delay: fl
         # F33: ceil (never truncate) a sub-second circuit override to at
         # least 1s — int(0.5) scheduled an immediate retry hot-loop.
         raw_delay = override_delay if override_delay is not None else delays[attempt_idx]
-        retry_delay = max(1, int(math.ceil(raw_delay)))
+        # Jitter: the ladder is EXACT ([60, 300, 900, 1800, 3600]), so when a
+        # shared upstream fails, every endpoint's deliveries are deferred to
+        # the same second and all re-enqueue together — a thundering herd on
+        # recovery, aimed at both the worker pool and the endpoint that just
+        # came back up. The periodic sweep compounds it by re-enqueueing the
+        # whole PENDING set in one pass.
+        #
+        # +/-10% is enough to decorrelate without disturbing the operator-
+        # visible schedule. `with_retry(jitter=True)` exists for exactly this
+        # reason, but the webhook ladder bypasses with_retry and uses its own
+        # schedule, so it never inherited the jitter.
+        retry_delay = max(1, int(math.ceil(raw_delay * random.uniform(0.9, 1.1))))
         delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=retry_delay)
         delivery.status = WebhookDeliveryStatus.PENDING
-
-        # Enqueue retry task. Delay is large enough that commit will finish first.
-        # Avoid SQLAlchemy event.listen to prevent memory leak accumulation on rollback.
-        delivery_id = delivery.id
-        _spawn_enqueue(delivery_id, retry_delay, delivery.tenant_id)
 
         logger.warning(
             f"Webhook delivery failed, will retry in {retry_delay}s: {delivery.id} (attempt {delivery.attempt_count})"
         )
-    else:
-        # Max retries exhausted
-        delivery.status = WebhookDeliveryStatus.FAILED
-        logger.error(
-            "Webhook delivery failed permanently after attempts:",
-            attempt_count=delivery.attempt_count,
-            id=delivery.id,
-        )
+        return (delivery.id, retry_delay, delivery.tenant_id)
+
+    # Max retries exhausted
+    delivery.status = WebhookDeliveryStatus.FAILED
+    logger.error(
+        "Webhook delivery failed permanently after attempts:",
+        attempt_count=delivery.attempt_count,
+        id=delivery.id,
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------

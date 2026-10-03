@@ -22,7 +22,7 @@ from src.app.core.db.scoped import execute_scoped
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.logger import get_logger
 from src.app.core.principal import AuthenticatedUser
-from src.app.core.security import blacklist_token, get_password_hash
+from src.app.core.security import get_password_hash
 from src.app.core.tenancy.context import get_current_tenant, require_tenant_match
 from src.app.core.tenancy.scope import ExplicitTenant, Unscoped
 from src.app.core.utils.user_utils import get_user_attr
@@ -472,7 +472,6 @@ class UserService:
         self,
         username: str,
         current_user: AuthenticatedUser,
-        token: str,
     ) -> dict[str, str]:
         """Soft delete a user with ownership validation.
 
@@ -482,8 +481,6 @@ class UserService:
             Username of user to delete
         current_user : AuthenticatedUser
             Currently authenticated user
-        token : str
-            Access token to blacklist
 
         Returns
         -------
@@ -524,9 +521,17 @@ class UserService:
         user_id_val = get_user_attr(db_user, "id")
         user_tenant_id = get_user_attr(db_user, "tenant_id")
 
-        # SECURITY FIX: Blacklist token before DB operation to ensure a mid-flight crash
-        # doesn't leave a deleted user with a valid token.
-        await blacklist_token(token=token, db=self.db)
+        # S-06 FIX: the previous `blacklist_token(token=token, ...)` here
+        # blacklisted the CALLER's bearer token, not the deleted user's — so a
+        # superuser deleting someone else revoked their OWN session on every
+        # call, and the deleted user's tokens survived whenever their
+        # token_version was not checked. Its comment claimed it prevented "a
+        # deleted user [keeping] a valid token", which is not what it did.
+        #
+        # It was also redundant: `invalidate_sessions(..., DELETION, ...)`
+        # below is the canonical seam and already bumps the TARGET's
+        # token_version, which invalidates every one of that user's tokens.
+        # The `token` parameter is gone for the same reason — nothing needed it.
 
         await self.db.execute(
             sa_update(User)
@@ -558,15 +563,13 @@ class UserService:
 
         return {"message": "User deleted successfully"}
 
-    async def hard_delete(self, username: str, token: str) -> dict[str, str]:
+    async def hard_delete(self, username: str) -> dict[str, str]:
         """Permanently delete a user from database (superuser only).
 
         Parameters
         ----------
         username : str
             Username of user to delete
-        token : str
-            Access token to blacklist
 
         Returns
         -------
@@ -591,8 +594,11 @@ class UserService:
         # SECURITY FIX: Delete user BEFORE invalidating cache
         # Prevents stale cache if DB operation fails
 
-        # SECURITY FIX: Blacklist token before DB operation
-        await blacklist_token(token=token, db=self.db)
+        # S-06 FIX: the `blacklist_token(token=token, ...)` that used to sit
+        # here blacklisted the CALLER's token, not the hard-deleted user's. The
+        # target's own revocation is the `_invalidate_user_cache(...
+        # DELETION, explicit_token_version=...)` block below, which seeds the
+        # post-delete token_version so the target's tokens stop validating.
 
         db_username = get_user_attr(db_user, "username")
         # Capture the pre-delete version BEFORE the row is gone — reading it

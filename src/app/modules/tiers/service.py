@@ -288,18 +288,38 @@ class TierService:
         tier_id = db_tier.id
 
         if tier_id is not None:
+            # S-12 FIX: both reference counts MUST be tenant-blind.
+            #
+            # `users` is RLS-protected (migration 08) so a count without a
+            # bypass only sees the CURRENT tenant's users, while `rate_limit` is
+            # NOT in TENANT_TABLES so its count is global by default. The two
+            # halves therefore answered different questions: a tier in use by
+            # another tenant's users, with no rate limits, reported
+            # users_count=0 / rl_count=0 and passed the guard.
+            #
+            # Passing is not harmless — `users.tier_id` is ON DELETE SET NULL,
+            # so the delete SUCCEEDS and silently orphans every cross-tenant
+            # user by nulling their tier_id. No error, no warning.
+            #
+            # A superuser operating on a shared installation is exactly the case
+            # where cross-tenant references exist, so the check is run under an
+            # explicit audited bypass rather than left to whatever tenant happens
+            # to be bound.
             try:
-                users_result = await self.db.execute(
-                    select(func.count()).select_from(User).where(User.tier_id == tier_id)
-                )
-                users_count = int(users_result.scalar_one() or 0)
-                # I6: lazy import avoids the module-level tiers↔rate_limits
-                # cycle; the count query itself is unchanged.
-                from src.app.modules.rate_limits.models import RateLimit as _RLModel
-                rl_result = await self.db.execute(
-                    select(func.count()).select_from(_RLModel).where(_RLModel.tier_id == tier_id)
-                )
-                rl_count = int(rl_result.scalar_one() or 0)
+                from src.app.core.db.rls import bypass_rls
+
+                async with bypass_rls(self.db, reason="Tier deletion referential check (cross-tenant)"):
+                    users_result = await self.db.execute(
+                        select(func.count()).select_from(User).where(User.tier_id == tier_id)
+                    )
+                    users_count = int(users_result.scalar_one() or 0)
+                    # I6: lazy import avoids the module-level tiers↔rate_limits
+                    # cycle; the count query itself is unchanged.
+                    from src.app.modules.rate_limits.models import RateLimit as _RLModel
+                    rl_result = await self.db.execute(
+                        select(func.count()).select_from(_RLModel).where(_RLModel.tier_id == tier_id)
+                    )
+                    rl_count = int(rl_result.scalar_one() or 0)
             except Exception as e:
                 logger.error("failed_to_check_tier_references", tier_id=tier_id, name=name, error=str(e))
                 raise RuntimeError(f"Failed to check referential integrity for tier '{name}': {e}") from e

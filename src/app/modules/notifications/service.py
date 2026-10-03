@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from jinja2 import FileSystemLoader, Template
+from jinja2 import FileSystemLoader, Template, TemplateNotFound
 from jinja2.sandbox import SandboxedEnvironment
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -144,9 +144,20 @@ class NotificationService:
                 template_file = f"{template_name}.html.jinja2"
                 try:
                     await asyncio.to_thread(jinja_env.get_template, template_file)
-                except Exception:
+                except TemplateNotFound:
+                    # S-48: fall back ONLY when the .jinja2 genuinely does not
+                    # exist. The old `except Exception` also fell back when the
+                    # .jinja2 EXISTED but failed to parse/compile - and because
+                    # src/app/templates/email/ holds divergent duplicate pairs
+                    # (`email_verification.html` 1844 bytes vs the `.jinja2`
+                    # 1128, different charset and title), that silently served
+                    # DIFFERENT content instead of failing loudly.
                     template_file = f"{template_name}.html"
                     await asyncio.to_thread(jinja_env.get_template, template_file)
+                except Exception as e:  # noqa: BLE001 - re-raised as a domain ValueError
+                    raise ValueError(
+                        f"Template '{template_name}.html.jinja2' exists but failed to load: {e}"
+                    ) from e
 
                 # Default subject from template name
                 subject = template_name.replace("_", " ").title()
@@ -754,6 +765,14 @@ async def send_email_task(
 
             try:
                 # Protect transmission with automatic exponential backoff retry
+                #
+                # S-05 (audit finding #5): this was the ONE `with_retry` call in
+                # the codebase that did NOT override `exceptions`, so it
+                # inherited the `(Exception,)` default and retried EVERY failure
+                # - including TypeError / ValueError / AttributeError, which no
+                # retry count can fix. It is also the longest ladder in the tree
+                # (1.0 + 2.0 = 3 s of sleeping), so a bug in the SMTP provider
+                # cost 3 seconds and three attempts before surfacing.
                 async def _send_with_check() -> bool:
                     result = await provider.send_email(message)
                     if not result:
@@ -765,6 +784,9 @@ async def send_email_task(
                     max_attempts=3,
                     delay_seconds=1.0,
                     backoff_factor=2.0,
+                    # Transport-level failures only. Never retry a TypeError /
+                    # ValueError / AttributeError - those are bugs, not blips.
+                    exceptions=(RuntimeError, OSError, ConnectionError, TimeoutError),
                 )
 
                 # Mark as sent (inside context = RLS enforced)
@@ -857,6 +879,9 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
     user_id = data.get("user_id")
     context = data.get("context", {})
 
+    # S-40: needed by the handler below; fn-local like the sibling importer.
+    from src.app.shared.exceptions import RateLimitExceededError
+
     try:
         from src.app.core.db.database import local_session
         from src.app.core.db.rls import rls_context
@@ -877,6 +902,21 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
                 # here: this door's contract is "accepted or not", and the
                 # sequence already logs the skip and the rate-limit refusal.
                 await service._accept_notification(tenant_id, to_email, template_name, context, user_id)
+
+    except RateLimitExceededError:
+        # S-40: a rate-limit refusal is PERMANENT, not transient. Re-raising it
+        # made ARQ retry, and each attempt consumed two more quota windows and
+        # wrote another FAILED outbox row - burning ARQ_MAX_TRIES on an outcome
+        # that can never change.
+        #
+        # `_accept_notification` has already logged the skip and committed the
+        # FAILED row, so the correct terminal behaviour is to ACKNOWLEDGE and
+        # stop. Transient faults still propagate below so ARQ can retry them.
+        logger.info(
+            "notification_request_rate_limited_not_retried",
+            tenant_id=str(tenant_id) if tenant_id else None,
+        )
+        return
 
     except Exception as e:
         logger.error("failed_to_process_notification_request", error=str(e), exc_info=True)

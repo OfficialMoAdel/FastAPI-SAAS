@@ -1,4 +1,10 @@
-"""S-21: the admin panel must actually be MOUNTED and reachable."""
+"""S-21: the admin panel must actually be MOUNTED and reachable.
+
+#11: the target application is passed to `_init_admin` rather than read from a
+module global. A global is overwritten by the LAST `create_application` call,
+so a process that builds more than one app mounted the panel onto whichever was
+built last rather than the one whose lifespan was running.
+"""
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -27,11 +33,14 @@ async def test_admin_is_mounted_on_the_application():
     with (
         patch.object(comp, "create_admin_interface", create_admin_interface, create=True),
         patch("src.app.admin.initialize.create_admin_interface", return_value=fake_admin),
-        patch.object(comp, "_application", app),
         patch.object(comp, "admin", fake_admin),
         patch.object(comp.settings.admin, "CRUD_ADMIN_ENABLED", True),
     ):
-        await comp._init_admin()
+        # The app is now passed IN (#11). It used to be a module-level
+        # `_application` global, which the last `create_application` call would
+        # overwrite — so a suite building two apps mounted the panel onto the
+        # wrong one. Binding it per-lifespan removes that class entirely.
+        await comp._init_admin(app)
 
     mounts = [r for r in app.routes if isinstance(r, Mount)]
     assert mounts, f"admin panel was NOT mounted; routes={[getattr(r,'path','?') for r in app.routes]}"
@@ -63,9 +72,8 @@ async def test_root_mount_is_refused():
 
     with (
         patch("src.app.admin.initialize.create_admin_interface", return_value=fake_admin),
-        patch.object(comp, "_application", app),
         patch.object(comp, "admin", fake_admin),
     ):
-        await comp._init_admin()
+        await comp._init_admin(app)
 
     assert not [r for r in app.routes if isinstance(r, Mount)]

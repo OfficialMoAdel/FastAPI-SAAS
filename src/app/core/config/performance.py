@@ -121,6 +121,18 @@ class PerformanceSettings(BaseSettings):
     WARNING and above are never sampled. Dropped events skip sanitization and
     rendering entirely."""
 
+    LOG_SAMPLING_RATES: dict[str, float] = Field(default_factory=dict)
+    """S-05c: per-EVENT overrides for ``LOG_SAMPLING_RATE``.
+
+    One global rate forces a bad trade-off: set it low to control volume from
+    hot paths and you lose the rare-but-critical events; set it high to keep
+    those and you drown in noise. An override here pins ONE event name
+    (e.g. ``{"payment_failed": 1.0}``) and wins over the global rate, so a
+    hot event can be sampled hard while a rare one is never dropped.
+
+    Keys are structlog event names. Unknown names are harmless.
+    """
+
 
 class QueryProfilerSettings(BaseSettings):
     """Development mode SQL query profiler configuration.

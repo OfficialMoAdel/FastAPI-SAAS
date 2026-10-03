@@ -29,6 +29,7 @@ from src.app.core.logger import get_logger
 from src.app.core.observability.log_sanitizer import LogSanitizer
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
 from src.app.core.utils.ip_utils import get_client_ip
+from src.app.middleware.body_limit import BodySizeLimitExceeded
 
 logger = get_logger(__name__)
 
@@ -518,6 +519,22 @@ class AttackDetectionMiddleware:
                                 )
                             else:
                                 self._check_for_patterns(sanitized_body, "request_body", detected_attacks)
+                except BodySizeLimitExceeded:
+                    # S-07 FIX: an oversized body is a SIZE violation, not an
+                    # attack. `_drain_body` reads the same shared receive channel
+                    # that RequestBodyLimitMiddleware's `limited_receive` guards,
+                    # and that guard raises BodySizeLimitExceeded mid-stream.
+                    # The broad `except Exception` below used to swallow it and
+                    # record an `invalid_body`/`body_read_error` attack verdict,
+                    # so a legitimate client over the size cap got a 400/403 — and
+                    # in `ban` mode a 24h IP ban — instead of the 413 the body
+                    # limit middleware is designed to return.
+                    #
+                    # Re-raise so the exception escapes to the body-limit
+                    # middleware's own 413 handler. This MUST stay a distinct
+                    # clause placed BEFORE the broad handler: genuine body-read
+                    # errors still fail closed below.
+                    raise
                 except Exception as e:
                     logger.error("attack_detection_body_read_failed", error=str(e))
                     # Fail closed on body read error

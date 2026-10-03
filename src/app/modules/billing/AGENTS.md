@@ -75,6 +75,49 @@ async def webhook(request: Request):
 `ingest_webhook` verifies against the **global** platform secret first, then
 derives the tenant from the verified payload — never from a query param.
 
+### The webhook idempotency contract
+
+`_try_acquire_event_lock` returns `(EventLockResult, lock_token)` — a
+**three**-valued result, and the three values need different HTTP answers:
+
+| Result | Meaning | Route answers |
+|---|---|---|
+| `ACQUIRED` | this delivery owns the event | handler runs → 200 |
+| `IN_FLIGHT` | another delivery holds a **live** claim | 409, Stripe retries |
+| `ALREADY_DONE` | the event already settled | 200, no retry |
+
+Never collapse these into a bool. An earlier version returned one, which made
+both failure modes identical and produced two opposite bugs: a 200 for an
+in-flight duplicate *lost* the event if the holder then failed, and a 409 for
+a settled event made Stripe retry a finished payment for up to 72 hours.
+
+`webhook_events` carries claim state, not just an id:
+
+| Column | Meaning |
+|---|---|
+| `completed_at` | non-NULL = the handler ran to success |
+| `claimed_by` | lock token of the delivery that owns the claim |
+| `claimed_at` | when ownership was taken |
+
+The DB fallback (used when Redis is down) is the **only** mutual exclusion
+available then, so its takeover is a single conditional `UPDATE` whose
+`rowcount` is the election. Do not reintroduce a `SELECT` that asks "is this
+finished?" — two deliveries can both read the same unstamped row, and both
+will conclude it is theirs. A claim younger than
+`_WEBHOOK_ABANDONED_CLAIM_TTL_SECONDS` belongs to a live handler and must
+answer `IN_FLIGHT`.
+
+Releases are ownership-scoped on both legs (`compare_and_delete` in Redis,
+`claimed_by = lock_token` in the DB) so a slow, failing delivery cannot erase
+a successful one's terminal marker.
+
+Schema note: `webhook_events` owns the claim columns directly in migration
+layer `04_billing` — `completed_at`, `claimed_by`, `claimed_at` and the
+`ix_webhook_events_abandoned` partial index are all declared in its
+`create_table`. While no production database has run these layers, that is the
+correct place per `src/migrations/AGENTS.md`; the "unless the layer is already
+applied in production" clause is what would force a stacked revision later.
+
 ### DO: Cancel subscriptions through `UserSubscriptionService`
 
 `lifecycle.py` has **no** `SubscriptionLifecycleService`; it is a module of
@@ -126,7 +169,7 @@ src/app/modules/billing/
 ├── lifecycle.py              # State-machine functions (map_stripe_status, is_valid_transition, can_cancel)
 ├── webhook/                  # Stripe webhook ingest and processing subpackage
 │   ├── client.py             # Wire-level signature validation
-│   ├── idempotency.py        # Distributed Redis lock & terminal DB processed marker
+│   ├── idempotency.py        # Redis SET NX lock, atomic DB claim takeover, terminal markers
 │   ├── ingest.py             # Webhook ingest entrypoint (H1 verified-then-tenant ordering)
 │   ├── dispatch.py           # Event router and registry
 │   ├── locks.py              # Subscription lookup + per-subscription row lock

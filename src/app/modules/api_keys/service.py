@@ -253,17 +253,30 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
         api_key_prefix = key.key_prefix
         api_key_is_active = key.is_active
 
-        # Invalidate cache before revoking (using hashed_key from DB record).
-        # The adapter is None-safe: noop when Redis is down.
-        if api_key_hashed:
-            cache_key = self._get_cache_key(api_key_hashed)
-            await cache_client.delete(cache_key)
-
+        # S-01 FIX (3/3): evict the cache AFTER the revoke commits, not before.
+        # Two reasons:
+        #   * a failed update must not clear the cache of a key that is still
+        #     live (the old order left a revoked-in-cache / active-in-DB split);
+        #   * a concurrent validate between the delete and the commit could
+        #     re-populate the entry from the still-active row, re-arming the
+        #     exact window this finding is about.
         await self.crud.update(
             db=self.db,
             id=key_id,
             object={"is_active": False},
         )
+
+        # The adapter is None-safe: noop when Redis is down.
+        #
+        # A TOMBSTONE, not a delete. Deleting the key looks correct but is not:
+        # the cached payload IS the authentication grant, and nothing else in
+        # the write path carries revocation state, so a plain delete leaves the
+        # read-side `is_active is False` guard with nothing to match and the
+        # revoked key authenticating until its TTL expires. The tombstone gives
+        # that guard something to reject on.
+        if api_key_hashed:
+            tombstone = json_dumps({"is_active": False, "revoked": True}, as_str=True)
+            await cache_client.set(self._get_cache_key(api_key_hashed), tombstone, ttl=API_KEY_CACHE_TTL)
 
         # Audit log the revocation
         await audit(
@@ -402,6 +415,29 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
             if cached is None:
                 continue
             result = json_loads(cached)
+            # A REVOKED KEY IS CACHED AS A TOMBSTONE, not deleted.
+            #
+            # The previous version deleted the entry on revoke and expected
+            # this guard to catch anything that slipped through. It could not:
+            # the only writer of this payload hard-coded ``is_active: True``,
+            # so `is_active is False` was unreachable and a revoked key kept
+            # authenticating for the full API_KEY_CACHE_TTL (300s).
+            # ``revoke`` now writes ``{"is_active": false, ...}`` here, which
+            # makes this branch the thing it was written to be.
+            #
+            # A MISSING `is_active` (an entry written by an older deploy) is
+            # treated as active so it keeps working; those all carry a 300s
+            # TTL, so the exposure is bounded by one TTL from deploy.
+            #
+            # Residual race, stated rather than papered over: a validate that
+            # read the row as active microseconds BEFORE the revoke committed
+            # can still write its grant over this tombstone afterwards. That
+            # window is sub-millisecond and needs a lock to close; the
+            # 300-second window this fixes was not.
+            if result.get("is_active") is False:
+                # Stale grant for a revoked key — drop it and refuse.
+                await cache_client.delete(candidate_cache_key)
+                return None
             # Check expiration on cached data
             if result.get("expires_at"):
                 expires_at = datetime.fromisoformat(result["expires_at"])
@@ -444,7 +480,18 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
                 db=self.db, id=result["key_id"], object={"hashed_key": current_digest}, commit=False
             )
 
-        # Cache the result (adapter noops when Redis is down)
+        # Cache the result (adapter noops when Redis is down).
+        #
+        # S-01 FIX (1/2): only the PRIMARY cache key is written now.
+        # Both were written before, under the same payload, and the read loop
+        # above checks `cache_key` FIRST — so the legacy entry was never needed
+        # to serve a hit; it was an orphan. Worse, it is unreclaimable: the row
+        # is migrated to the HMAC digest on first use, so a later revoke can
+        # only compute the cache key from the stored HMAC and could never
+        # delete the SHA-256 entry, which then authenticated for the full TTL.
+        #
+        # The legacy DB lookup is untouched — `_validate_from_db` still tries
+        # both digests, so pre-I2 rows still resolve and migrate forward.
         cache_data = {
             "user_id": result["user_id"],
             "tenant_id": result["tenant_id"],
@@ -453,11 +500,14 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
             "expires_at": result["expires_at"].isoformat() if result["expires_at"] else None,
             # BUG FIX: Cache valid_from so it can be enforced on cache hits too.
             "valid_from": result["valid_from"].isoformat() if result.get("valid_from") else None,
+            # S-01 FIX (2/2): record that this grant is for an ACTIVE key.
+            # `_validate_from_db` filters `APIKey.is_active.is_(True)`, so an
+            # entry is only ever written for a live key; stating it lets the hit
+            # path above detect a revoke that raced the write.
+            "is_active": True,
         }
         payload = json_dumps(cache_data, as_str=True)
         await cache_client.set(cache_key, payload, ttl=API_KEY_CACHE_TTL)
-        if legacy_cache_key != cache_key:
-            await cache_client.set(legacy_cache_key, payload, ttl=API_KEY_CACHE_TTL)
 
         return {
             "user_id": result["user_id"],

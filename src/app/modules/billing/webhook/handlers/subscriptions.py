@@ -95,10 +95,19 @@ async def handle_subscription_updated(event: StripeEvent) -> None:
             )
             return
 
+        # S-19 FIX: this update used to run with FastCRUD's default
+        # commit=True, so the subscription row was DURABLE before
+        # downgrade_to_free_tier ran below (which itself commits). If the
+        # downgrade raised, the tenant was left with a `canceled`
+        # subscription while the user was still on the paid tier until
+        # Stripe's next redelivery. commit=False puts both writes in ONE
+        # transaction, matching the sibling invoice handler, which already
+        # passes commit=False for exactly this reason.
         await _pkg.crud_user_subscriptions.update(
             db=db,
             object=update_data,
             id=subscription_id,
+            commit=False,
         )
 
         # M-04: Explicitly downgrade user to free tier if canceled/expired.
@@ -176,10 +185,15 @@ async def handle_subscription_deleted(event: StripeEvent) -> None:
             )
             return
 
+        # S-19 FIX (second site): same reasoning as the handle_subscription_updated
+        # path above — FastCRUD's default commit=True made this durable before
+        # downgrade_to_free_tier ran. commit=False puts both in one transaction,
+        # committed explicitly by the `await db.commit()` a few lines below.
         await _pkg.crud_user_subscriptions.update(
             db=db,
             object=update_data,
             id=subscription_id,
+            commit=False,
         )
 
         # M-04: Explicitly downgrade user to free tier

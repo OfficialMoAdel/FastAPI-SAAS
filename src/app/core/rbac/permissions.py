@@ -55,3 +55,15 @@ class Permission(str, Enum):
     # Dashboard / Analytics (run-3 finding users.dashboard.metrics_missing_authorization)
     # Tenant-wide revenue, MRR, ARPU, subscription and login aggregates.
     DASHBOARD_READ = "dashboard:read"
+
+    # Background task queue (S-38: the /tasks routes carried no permission gate).
+    #
+    # Enqueuing an ARQ job is a privileged, resource-consuming action, yet the
+    # router declared only the ambient auth dependency — so any authenticated
+    # principal on any tier could enqueue jobs and read job status.
+    #
+    # This is a NEW slug, so no role holds it until an operator grants it.
+    # That is the fail-closed direction and is deliberate: the routes now 403
+    # rather than letting every authenticated caller enqueue work.
+    # `reconcile_permission_catalog` self-heals the catalog row on boot.
+    TASKS_MANAGE = "tasks:manage"

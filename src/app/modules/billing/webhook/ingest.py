@@ -12,15 +12,34 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from structlog import get_logger
+import structlog
 
 from src.app.core.config import settings
 from src.app.modules.billing.exceptions import WebhookNotConfiguredError
 from src.app.modules.billing.webhook.client import verify_webhook_signature
 from src.app.modules.billing.webhook.dispatch import handle_webhook_event
+from src.app.modules.billing.webhook.idempotency import EventLockResult
 from src.app.shared.exceptions import ValidationError
 
-logger = get_logger(__name__)
+logger = structlog.get_logger(__name__)
+
+
+class WebhookInFlight(Exception):
+    """S-05: a LIVE delivery holds this event's claim; ask Stripe to retry.
+
+    Raised (not returned) so the route maps it to a retryable 409. A 200 here
+    would tell Stripe the event was handled when the holder has not finished
+    and may still fail — Stripe would then stop retrying and the event would
+    be lost.
+
+    Reserved for a genuinely live claim. An event that is merely ALREADY
+    DONE answers 200; conflating the two made a settled payment look like a
+    transient failure.
+    """
+
+    def __init__(self, *, event_id: str) -> None:
+        super().__init__(f"webhook event {event_id} is already in flight")
+        self.event_id = event_id
 
 # Signature-verifier callable: (raw_payload, sig_header, secret) -> verified event.
 # May be sync (run in an executor) or async (awaited directly, e.g. in tests).
@@ -96,9 +115,20 @@ async def ingest_webhook(
     derive_and_attach_tenant(event)
 
     # Handle event directly so that exceptions propagate and Stripe can retry
-    await handle_webhook_event(event)
+    #
+    # S-05 FIX: the dispatch result was discarded and this function always
+    # returned {"status": "success"}. That made EVERY non-exception outcome a
+    # 200 to Stripe. The status now propagates so the endpoint can answer
+    # correctly per outcome.
+    result = await handle_webhook_event(event)
 
-    return {"status": "success"}
+    # Only a LIVE in-flight claim deserves a retryable status. `already_done`
+    # must answer 200 — telling Stripe to retry a settled payment is how you
+    # get a 72-hour retry storm against an event that already succeeded.
+    if result.get("status") == EventLockResult.IN_FLIGHT.value:
+        raise WebhookInFlight(event_id=event["id"])
+
+    return result
 
 
 __all__ = ["derive_and_attach_tenant", "ingest_webhook"]

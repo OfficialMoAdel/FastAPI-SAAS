@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,6 +52,7 @@ from src.app.modules.billing.webhook import (
     ingest_webhook,
     verify_webhook_signature,
 )
+from src.app.modules.billing.webhook.ingest import WebhookInFlight
 from src.app.shared.exceptions import ModelNotFoundError
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -73,6 +74,16 @@ async def stripe_webhook(
     client_ip = get_client_ip(request)
     try:
         return await ingest_webhook(payload, sig_header, verify_fn=verify_webhook_signature)
+    except WebhookInFlight as inflight:
+        # S-05: 409 Conflict — "try again", not "handled". Stripe retries
+        # non-2xx, so the in-flight delivery gets a second chance to finish.
+        # BREAKING CONTRACT CHANGE: this path previously returned 200.
+        logger.info(
+            "stripe_webhook_in_flight",
+            client_ip=client_ip,
+            event_id=inflight.event_id,
+        )
+        return Response(status_code=status.HTTP_409_CONFLICT, content=b'{"status":"in_flight"}')
     except WebhookVerificationError:
         # S1 (SEC-08): per-IP invalid-signature meter via the auto-ban seam.
         # Repeated failures escalate to a ban (the ip_filter guard then blocks

@@ -160,6 +160,14 @@ async def startup(ctx: Worker) -> None:
     be registered here (B8 bug class guard). A missing registration is a
     hard failure — the job would never run.
     """
+    # S-36: logging is configured in `src/app/worker.py` at MODULE IMPORT, not
+    # here. Doing it in this startup hook was too late: `src/app/worker.py`
+    # imports every handler module at module scope, and each binds
+    # `logger = get_logger(__name__)` at import time. `setup_logging` uses
+    # `cache_logger_on_first_use=True`, so those loggers had already bound to
+    # the DEFAULT processor chain — no SanitizingProcessor — by the time this
+    # hook ran. Job logs are exactly where tokens/emails/DSNs appear, so the
+    # redaction is the whole point.
     missing = assert_all_jobs_registered()
     if missing:
         raise RuntimeError(

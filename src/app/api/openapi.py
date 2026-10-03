@@ -73,16 +73,52 @@ def build_custom_openapi(app: FastAPI) -> dict[str, Any]:
     for route in app.routes:
         if not hasattr(route, "dependencies"):
             continue
-        for dep in getattr(route, "dependencies", []):
-            is_auth_dep = isinstance(dep, Security)
-            if not is_auth_dep and hasattr(dep, "dependency") and callable(dep.dependency):
-                fn = dep.dependency
-                if id(fn) in auth_callables:
-                    is_auth_dep = True
-                else:
-                    qualname = f"{getattr(fn, '__module__', '')}.{getattr(fn, '__qualname__', '')}"
-                    if qualname.startswith("src.app.core.rbac.dependencies.requires_permission"):
-                        is_auth_dep = True
+
+        # S-47 FIX: `APIRoute.dependencies` is the ROUTER-level list only. The
+        # signature-level `Depends(...)` that almost every protected route uses
+        # (`ctx: RequestContextDep` in the handler signature) lives on
+        # `route.dependant` - a graph of `Dependant.call`s - and was never read
+        # here. So almost every secured route was published in the OpenAPI
+        # schema with no security marker, and generated clients inherited a
+        # false picture of what is authenticated.
+        #
+        # Walk the dependant graph so signature-level dependencies count too.
+        def _iter_dependant(dependant: Any) -> Any:
+            seen: set[int] = set()
+            stack = [dependant]
+            while stack:
+                node = stack.pop()
+                if node is None or id(node) in seen:
+                    continue
+                seen.add(id(node))
+                yield node
+                stack.extend(getattr(node, "dependencies", None) or [])
+
+        # Collect BOTH shapes: `route.dependencies` holds `params.Depends`
+        # objects, while a dependant node's `.call` is the already-RESOLVED
+        # callable (a plain function for `Depends(get_request_context)`).
+        dep_candidates: list[Any] = list(getattr(route, "dependencies", []) or [])
+        for node in _iter_dependant(getattr(route, "dependant", None)):
+            call = getattr(node, "call", None)
+            if call is not None:
+                dep_candidates.append(call)
+
+        for dep in dep_candidates:
+            # `isinstance(dep, Security)` only ever matched the router-level
+            # params; a dependant's `.call` is never a params object. Both
+            # shapes are normalised to a bare callable here so ONE branch can
+            # classify them - previously the bare-callable case failed the
+            # `hasattr(dep, "dependency")` guard and silently matched nothing,
+            # which is why this walk added exactly zero routes.
+            fn = dep.dependency if (hasattr(dep, "dependency") and callable(dep.dependency)) else dep
+            if not callable(fn):
+                continue
+
+            if isinstance(dep, Security) or id(fn) in auth_callables:
+                is_auth_dep = True
+            else:
+                qualname = f"{getattr(fn, '__module__', '')}.{getattr(fn, '__qualname__', '')}"
+                is_auth_dep = qualname.startswith("src.app.core.rbac.dependencies.requires_permission")
 
             if is_auth_dep and hasattr(route, "path"):
                 for http_method in getattr(route, "methods", set()) or set():

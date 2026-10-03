@@ -312,8 +312,17 @@ async def _check_db_fallback(jti: str | None, token: str) -> bool | None:
                 _db_fallback_cache[cache_key] = True
             return is_blacklisted
         finally:
+            # S-25 FIX: pop only if the registered task is STILL OURS. Every
+            # waiter runs this finally, so an unconditional pop could remove a
+            # NEWLY registered task belonging to an unrelated later request
+            # (owner A completes -> pops -> C registers task_C -> A's late
+            # waiter pops task_C). Correctness held — each task does its own DB
+            # read — but the singleflight the P6/H3 guard was added to collapse
+            # silently degraded to N concurrent SELECTs, worst precisely when
+            # Redis is down and this path is the only revocation oracle.
             async with _db_fallback_lock:
-                _in_flight_db_checks.pop(cache_key, None)
+                if _in_flight_db_checks.get(cache_key) is task:
+                    del _in_flight_db_checks[cache_key]
     except Exception as e:
         _jwt_logger.error("DB fallback failed during token verification. Failing closed.", error=str(e))
         return None
@@ -450,8 +459,11 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
                 )
                 return None
             finally:
+                # S-25 FIX: see the sibling `_check_db_fallback` — pop only the
+                # task this coroutine actually awaited.
                 async with _token_version_lock:
-                    _in_flight_token_version.pop(cache_key, None)
+                    if _in_flight_token_version.get(cache_key) is task:
+                        del _in_flight_token_version[cache_key]
             if db_version != token_version:
                 return None
 
@@ -650,6 +662,23 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
                 # C-2: AsyncSession.rollback() is always awaitable.
                 await db.rollback()
                 _jwt_logger.info("Token already blacklisted in DB (IntegrityError)")
+            except Exception as e:
+                # S-24 FIX: the inner try caught ONLY IntegrityError, so any
+                # other DB fault (OperationalError, TimeoutError, a driver
+                # error) propagated straight past the Redis write below. That
+                # contradicted the "runs on EVERY path" comment on the next
+                # statement and, worse, meant a logout/refresh could leave the
+                # token blacklisted NOWHERE while the caller saw an error.
+                #
+                # `blacklist_tokens` (plural) already got this right by logging
+                # the commit failure and falling through to the Redis write;
+                # mirror that here. The Redis write is the hot-path oracle, so
+                # losing it is what actually breaks revocation.
+                await db.rollback()
+                _jwt_logger.error(
+                    "DB blacklist insert failed; still writing the Redis revocation",
+                    error=str(e),
+                )
             # B1: the Redis cache write runs on EVERY path (fresh insert,
             # IntegrityError retry, tenant-less fallback) so the hot-path
             # check always sees the revocation, and it is LOUD —

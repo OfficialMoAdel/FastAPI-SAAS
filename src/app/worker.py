@@ -12,13 +12,28 @@ dotted path and offers no opportunity to call in before it is evaluated.
 
 from __future__ import annotations
 
-from src.app.core.worker.registry import (
+# S-36: configure logging FIRST, before any handler module is imported.
+#
+# Every handler module binds `logger = get_logger(__name__)` at module import,
+# and `setup_logging()` configures structlog with `cache_logger_on_first_use=
+# True`. Configuring logging any later — including from the worker's `startup()`
+# hook — leaves those already-bound loggers pointing at the DEFAULT processor
+# chain, which has no `SanitizingProcessor`. The worker therefore logged
+# unredacted tokens/emails/DSNs while the web process redacted them.
+#
+# The ARQ CLI imports this module before it loads the worker, so module import
+# is the only hook early enough.
+from src.app.core.logger import setup_logging
+
+setup_logging()
+
+from src.app.core.worker.registry import (  # noqa: E402
     FeatureCollaborators,
     FeatureTask,
     register_feature_collaborators,
     register_feature_tasks,
 )
-from src.app.modules.audit_logs.service import (
+from src.app.modules.audit_logs.service import (  # noqa: E402
     AUDIT_LOG_MAX_FLUSH_PER_RUN,
     flush_audit_log_buffer,
 )

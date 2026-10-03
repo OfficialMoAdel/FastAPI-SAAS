@@ -314,7 +314,12 @@ class ChatMessageService(BaseService[AIChatMessage]):
         return result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
 
     async def get_session_messages(
-        self, session_id: int, user_id: int, page: int = 1, limit: int = 50
+        self,
+        session_id: int,
+        user_id: int,
+        page: int = 1,
+        limit: int = 50,
+        descending: bool = False,
     ) -> dict[str, Any]:
         """Get paginated messages for a session, scoped to the session's owner.
 
@@ -341,9 +346,29 @@ class ChatMessageService(BaseService[AIChatMessage]):
         # Explicit table columns, not the ORM entity: the entity form yields one
         # opaque positional column, while every other message read in this
         # module hands back named dicts that the router indexes by name.
-        base = select(*AIChatMessage.__table__.c).where(
-            AIChatMessage.session_id == session_id,
-            owned.exists(),
+        # S-29 FIX: there was NO ORDER BY, so Postgres returned rows in
+        # arbitrary order and `offset().limit()` paged over that arbitrary
+        # order. The chat builder asks for page=1, limit=50 intending "the most
+        # recent 50 turns", but was actually getting whichever 50 came first -
+        # the OLDEST, contradicting `truncate_context`'s own docstring.
+        #
+        # Ordering is now explicit and deterministic. It stays ASCENDING by
+        # default because that is the natural contract for a history API (and
+        # the order a chat model expects), while `descending=True` gives the
+        # caller the newest window - which the builder reverses back to
+        # chronological before appending the new turn.
+        order = (
+            (AIChatMessage.created_at.desc(), AIChatMessage.id.desc())
+            if descending
+            else (AIChatMessage.created_at.asc(), AIChatMessage.id.asc())
+        )
+        base = (
+            select(*AIChatMessage.__table__.c)
+            .where(
+                AIChatMessage.session_id == session_id,
+                owned.exists(),
+            )
+            .order_by(*order)
         )
         paged = base.add_columns(func.count().over().label(_PAGE_TOTAL_LABEL)).offset(offset)
         if limit is not None:
@@ -405,9 +430,21 @@ class AISettingsService(BaseService[AISettings]):
             create_data["tenant_id"] = tenant_id
             result = await crud_ai_settings.create(db=self.db, object=create_data)  # type: ignore
             await self.db.commit()
-            settings = result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
-            settings["user_id"] = user_id
-            settings["tenant_id"] = tenant_id
+
+            # S-28 FIX: create() hands back only the primary key, but
+            # `AISettingsRead` also requires model / temperature / max_tokens /
+            # system_prompt. Handing the router a 3-key dict produced a
+            # ResponseValidationError, so the FIRST GET/PATCH /ai/settings for
+            # any user answered 500 - and the row was already committed, so
+            # every subsequent call succeeded. This is the same bug
+            # `ChatSessionService` documents and fixes at :188-191 in this very
+            # file; only the sibling was repaired.
+            settings_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
+            if settings_id is None:
+                raise ModelNotFoundError("AISettings", "new")
+            settings = await crud_ai_settings.get(db=self.db, id=settings_id)
+            if settings is None:
+                raise ModelNotFoundError("AISettings", settings_id)
         return settings
 
     async def update_settings(self, user_id: int, data: AISettingsUpdate) -> dict[str, Any]:
@@ -433,11 +470,21 @@ class AISettingsService(BaseService[AISettings]):
                 "tenant_id": tenant_id,
             }
             result = await crud_ai_settings.create(db=self.db, object=create_data_dict)  # type: ignore
-            result_dict = result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
-            result_dict["user_id"] = user_id
-            result_dict["tenant_id"] = tenant_id
             await self.db.commit()
-            return result_dict
+
+            # S-28 FIX (second site): the create path built a 3-key dict
+            # ({id, user_id, tenant_id}) for a response model that also
+            # requires model / temperature / max_tokens / system_prompt - the
+            # same defect fixed in get_or_create_settings and already
+            # documented for ChatSessionService at :188-191. Re-read the
+            # committed row rather than assembling a partial dict.
+            settings_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
+            if settings_id is None:
+                raise ModelNotFoundError("AISettings", "new")
+            created_row = await crud_ai_settings.get(db=self.db, id=settings_id)
+            if created_row is None:
+                raise ModelNotFoundError("AISettings", settings_id)
+            return created_row
         else:
             await crud_ai_settings.update(db=self.db, object=update_data, id=settings["id"])
             await self.db.commit()
@@ -670,7 +717,9 @@ class ChatCompletionService:
         # fast indexed lookups; serial latency is negligible next to the LLM call.
         session = await ChatSessionService(self.db).get_session(session_id, user_id)
         user_settings = await AISettingsService(self.db).get_or_create_settings(user_id)
-        messages_result = await ChatMessageService(self.db).get_session_messages(session_id, user_id, limit=50)
+        messages_result = await ChatMessageService(self.db).get_session_messages(
+        session_id, user_id, limit=50, descending=True
+    )
 
         model = request.model or session.get("model") or user_settings.get("model", "gemma3")
         temperature = request.temperature if request.temperature is not None else user_settings.get("temperature", 0.7)
@@ -678,7 +727,10 @@ class ChatCompletionService:
         system_prompt = user_settings.get("system_prompt")
 
         history = []
-        for m in messages_result.get("data", []):
+        # S-29: the query returns the NEWEST window (descending), but a chat
+        # model needs the conversation chronologically - oldest turn first.
+        # Reverse back before appending the new user message.
+        for m in reversed(messages_result.get("data", [])):
             history.append({"role": m["role"], "content": m["content"]})
 
         sanitized_message = request.message.strip()
@@ -756,8 +808,15 @@ class ChatCompletionService:
                     ),
                     # P2-6: real backoff (was one 50ms retry) + honor
                     # provider-parsed Retry-After via AIProviderError.retry_after.
-                    max_attempts=3,
+                    # S-05a: 3 attempts x 0.5s gave 1.0s of wait for a tier
+                    # whose OLLAMA_TIMEOUT is 120s. 4 attempts gives 0.5+1.0+2.0
+                    # = 3.5s, with max_elapsed bounding the TOTAL (AI calls are
+                    # slow, so the wall-clock guard matters more here than the
+                    # sleep ladder). Comfortably inside ARQ_JOB_TIMEOUT (300)
+                    # for the worker path.
+                    max_attempts=4,
                     delay_seconds=0.5,
+                    max_elapsed=15.0,
                     exceptions=(AIProviderError,),
                     retry_after_attr="retry_after",
                 )
@@ -769,8 +828,20 @@ class ChatCompletionService:
             fb = await self._fallback_candidate()
             if fb is not None:
                 logger.warning("Primary AI provider failed after retries, attempting fallback provider")
-                return await self._invoke_chat(
-                    fb, model, turn.history, turn.temperature, turn.max_tokens, turn.system_prompt
+                # Same treatment as the primary tier: the backup is retried.
+                # Without this the fallback was single-shot, so one transient 500
+                # from the BACKUP provider discarded the request entirely - after
+                # we had already paid to construct candidates in parallel and
+                # health-probe them. The primary tier's work is wasted and the
+                # user gets an error for a failure one retry would absorb.
+                return await with_retry(
+                    lambda: self._invoke_chat(
+                        fb, model, turn.history, turn.temperature, turn.max_tokens, turn.system_prompt
+                    ),
+                    max_attempts=3,
+                    delay_seconds=0.5,
+                    exceptions=(AIProviderError,),
+                    retry_after_attr="retry_after",
                 )
             if _last_err:
                 raise _last_err[0]

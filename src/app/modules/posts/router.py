@@ -49,9 +49,57 @@ async def write_post(
     ctx: RequestContextDep,
     service: PostService = Depends(get_post_service),
 ) -> dict[str, Any]:
-    """Create a new post."""
+    """Create a new post.
+
+    S-33 FIX: this route carried no cache decorator, so creating a post never
+    invalidated the `user_posts:{username}:*` list cache that `read_posts`
+    fills — a new post stayed invisible until those entries aged out (60s).
+    `patch_post` and `erase_post` both invalidated that list; only the create
+    path was missed.
+
+    The invalidation is explicit rather than via `@cache(...,
+    pattern_to_invalidate_extra=...)` because this route has no resource id:
+    `@cache` always infers one and raises `CacheIdentificationInferenceError`
+    when it cannot. A create endpoint has no prior cache entry for the new
+    resource, so only the LIST pattern needs dropping — which is exactly what
+    `invalidate_by_pattern` does.
+
+    THE PATTERN MUST BE SCOPED. This is the part that made the first attempt a
+    silent no-op: `read_posts` registers each list page under
+    `_pattern_index_key(_scoped_invalidation_pattern(...))`, so the index entry
+    is namespaced `tenant:{id}:user:{uid}:user_posts:{username}:*`. Passing the
+    bare pattern here read a DIFFERENT, always-empty Redis set and returned 0.
+    The write was safe and the list was never dropped.
+
+    Fail-soft, matching the decorator: a cache error must not fail the write.
+    """
     _require_post_owner(username, ctx)
-    return await service.create_post(post, ctx.user)
+    result = await service.create_post(post, ctx.user)
+
+    from src.app.core.utils.cache.decorator import _format_prefix, _scoped_invalidation_pattern
+    from src.app.core.utils.cache.patterns import invalidate_by_pattern
+
+    try:
+        tenant = get_current_tenant()
+        # Truthiness, not `is not None`: NO_TENANT is falsy by design, and
+        # scoping by its UUID-zero id would name an index nothing registers.
+        scoped = _scoped_invalidation_pattern(
+            _format_prefix("user_posts:{username}:*", {"username": username}),
+            str(tenant.tenant_id) if tenant else None,
+            ctx.user.id,
+        )
+        evicted = await invalidate_by_pattern(scoped)
+        if not evicted:
+            # 0 is possible but must be visible: this is the exact signature of
+            # the bug this replaced.
+            logger.info("post_create_evicted_no_cached_list_pages", username=username, pattern=scoped)
+    except Exception as e:  # noqa: BLE001 - the write already succeeded
+        logger.warning(
+            "post_create_cache_invalidation_failed",
+            username=username,
+            error=str(e),
+        )
+    return result
 
 
 @router.get("/by-user/{username}", response_model=PaginatedListResponse[PostRead])
@@ -162,16 +210,55 @@ async def erase_db_post(
     # invalidate_tenant_cache() already no-ops when the cache client is absent,
     # so no client check is needed here.
     tenant = get_current_tenant()
-    if tenant is not None:
-        try:
-            await invalidate_tenant_cache(
-                str(tenant.tenant_id), prefix=f"v2:user_post_cache:{username}:{id}"
-            )
-        except Exception as exc:  # noqa: BLE001 - erasure must not 500 the takedown
+    # S-14 FIX: the prefix must match what the WRITER shards on.
+    # `decorator._build_cache_key` builds the base key as
+    # `f"{_CACHE_KEY_VERSION}:{formatted_key_prefix}:{resource_id}"`, but the
+    # tenant index is sharded by `_format_prefix(key_prefix, kwargs)` alone —
+    # so neither the `v2:` version token nor the trailing `:id` belong in the
+    # shard name. Passing them made the shard lookup miss, `invalidate_...`
+    # returned 0, and the erasure silently left the cached post live.
+    #
+    # `invalidate_tenant_cache` now also falls back to the global index on a
+    # shard miss, so a wrong prefix degrades to a filtered sweep rather than
+    # to nothing.
+    try:
+        if not tenant:
+            # NO_TENANT is falsy by design (S-16). There is no tenant index to
+            # sweep here, and there is nothing honest to substitute: entries
+            # were written under WHATEVER tenant was bound at read time, so
+            # this erasure cannot reach them. Saying so is the point — the
+            # previous `if tenant is not None:` test built a UUID-zero id,
+            # looked up an index that exists under no real tenant, and
+            # silently dropped a takedown on the floor.
             logger.warning(
-                "superuser_post_erase_cache_invalidation_failed",
+                "superuser_post_erase_without_tenant_context",
                 username=username,
                 post_id=id,
-                error=str(exc),
+                detail=(
+                    "row is deleted but cached copies under any real tenant "
+                    "index survive until their TTL expires"
+                ),
             )
+        else:
+            evicted = await invalidate_tenant_cache(
+                str(tenant.tenant_id), prefix=f"user_post_cache:{username}"
+            )
+            # S-14: the return value used to be discarded, so a shard miss
+            # looked identical to a successful eviction. 0 is legitimately
+            # possible (nothing was ever cached), but on an ERASURE it must be
+            # observable.
+            if not evicted:
+                logger.info(
+                    "superuser_post_erase_evicted_no_cached_copies",
+                    username=username,
+                    post_id=id,
+                    tenant_id=str(tenant.tenant_id),
+                )
+    except Exception as exc:  # noqa: BLE001 - erasure must not 500 the takedown
+        logger.warning(
+            "superuser_post_erase_cache_invalidation_failed",
+            username=username,
+            post_id=id,
+            error=str(exc),
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

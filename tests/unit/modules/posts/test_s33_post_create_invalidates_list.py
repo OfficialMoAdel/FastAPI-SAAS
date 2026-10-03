@@ -36,6 +36,20 @@ def _decorators(name: str) -> list[str]:
 class TestWritePostInvalidatesTheList:
     @pytest.mark.asyncio
     async def test_create_drops_the_user_posts_pattern(self) -> None:
+        """The pattern MUST be scoped — this is the regression guard.
+
+        The first version of this fix called
+        `invalidate_by_pattern("user_posts:bob:*")`. That reads a DIFFERENT
+        Redis set than the one `read_posts` registers into: the decorator
+        registers under
+        `_pattern_index_key(_scoped_invalidation_pattern(...))`, i.e.
+        `tenant:{id}:user:{uid}:user_posts:bob:*`. The bare pattern is always
+        empty, so the call returned 0 and the list was never dropped — the
+        write was safe and the bug it was filed for was still there.
+
+        The assertion below therefore pins the SCOPED name, not just "it was
+        called". Asserting only the call would pass against the broken code.
+        """
         from src.app.modules.posts.router import write_post
 
         service = MagicMock()
@@ -46,6 +60,7 @@ class TestWritePostInvalidatesTheList:
 
         with (
             patch("src.app.modules.posts.router._require_post_owner"),
+            patch("src.app.modules.posts.router.get_current_tenant", return_value=None),
             patch(
                 "src.app.core.utils.cache.patterns.invalidate_by_pattern",
                 new_callable=AsyncMock,
@@ -54,7 +69,11 @@ class TestWritePostInvalidatesTheList:
         ):
             await write_post(MagicMock(), "bob", MagicMock(), ctx, service)
 
-        invalidate.assert_awaited_once_with("user_posts:bob:*")
+        invalidate.assert_awaited_once()
+        pattern = invalidate.await_args[0][0]
+        assert pattern == "public:user:1:user_posts:bob:*", (
+            f"pattern must be scoped like the decorator's registration, got {pattern!r}"
+        )
 
     @pytest.mark.asyncio
     async def test_cache_failure_does_not_fail_the_write(self) -> None:

@@ -209,8 +209,23 @@ class StripeGateway:
         try:
             return await with_retry(
                 fn=lambda: asyncio.to_thread(lambda: stripe.checkout.Session.create(**kwargs)),
-                max_attempts=3,
-                delay_seconds=0.2,
+                max_attempts=4,
+                delay_seconds=0.5,
+                # S-05a: the ladder slept only 0.2+0.4 = 0.6s, so a ~2s
+                # Stripe 503 — routine, several times a week — exhausted every
+                # attempt and surfaced as a permanent checkout failure. The
+                # base ladder is now 0.5+1.0+2.0, but `with_retry` applies
+                # jitter=True by default, so the ACTUAL wait is that sum
+                # scaled by uniform(0.5, 1.5) — roughly 1.75s to 5.25s, not a
+                # fixed 3.5s. The earlier comment here stated a fixed total and
+                # was wrong about what the operator would observe.
+                #
+                # `max_elapsed` is a TOTAL wall-clock budget and DOES include
+                # time spent inside the HTTP call, so 8s is the real ceiling.
+                # It keeps a held request well inside
+                # EVENT_HANDLER_TIMEOUT_SECONDS (30) and inside any typical
+                # gateway read timeout.
+                max_elapsed=8.0,
                 exceptions=_TRANSIENT_STRIPE_ERRORS,
             )
         except stripe.StripeError as e:
@@ -229,8 +244,23 @@ class StripeGateway:
                         api_key=api_key, customer=customer_id, return_url=return_url
                     )
                 ),
-                max_attempts=3,
-                delay_seconds=0.2,
+                max_attempts=4,
+                delay_seconds=0.5,
+                # S-05a: the ladder slept only 0.2+0.4 = 0.6s, so a ~2s
+                # Stripe 503 — routine, several times a week — exhausted every
+                # attempt and surfaced as a permanent checkout failure. The
+                # base ladder is now 0.5+1.0+2.0, but `with_retry` applies
+                # jitter=True by default, so the ACTUAL wait is that sum
+                # scaled by uniform(0.5, 1.5) — roughly 1.75s to 5.25s, not a
+                # fixed 3.5s. The earlier comment here stated a fixed total and
+                # was wrong about what the operator would observe.
+                #
+                # `max_elapsed` is a TOTAL wall-clock budget and DOES include
+                # time spent inside the HTTP call, so 8s is the real ceiling.
+                # It keeps a held request well inside
+                # EVENT_HANDLER_TIMEOUT_SECONDS (30) and inside any typical
+                # gateway read timeout.
+                max_elapsed=8.0,
                 exceptions=_TRANSIENT_STRIPE_ERRORS,
             )
         except stripe.StripeError as e:
@@ -253,8 +283,23 @@ class StripeGateway:
                 fn=lambda: asyncio.to_thread(
                     lambda: stripe.Subscription.modify(subscription_id, api_key=api_key, **kwargs)
                 ),
-                max_attempts=3,
-                delay_seconds=0.2,
+                max_attempts=4,
+                delay_seconds=0.5,
+                # S-05a: the ladder slept only 0.2+0.4 = 0.6s, so a ~2s
+                # Stripe 503 — routine, several times a week — exhausted every
+                # attempt and surfaced as a permanent checkout failure. The
+                # base ladder is now 0.5+1.0+2.0, but `with_retry` applies
+                # jitter=True by default, so the ACTUAL wait is that sum
+                # scaled by uniform(0.5, 1.5) — roughly 1.75s to 5.25s, not a
+                # fixed 3.5s. The earlier comment here stated a fixed total and
+                # was wrong about what the operator would observe.
+                #
+                # `max_elapsed` is a TOTAL wall-clock budget and DOES include
+                # time spent inside the HTTP call, so 8s is the real ceiling.
+                # It keeps a held request well inside
+                # EVENT_HANDLER_TIMEOUT_SECONDS (30) and inside any typical
+                # gateway read timeout.
+                max_elapsed=8.0,
                 exceptions=_TRANSIENT_STRIPE_ERRORS,
             )
         except stripe.StripeError as e:
@@ -271,8 +316,23 @@ class StripeGateway:
                 fn=lambda: asyncio.to_thread(
                     lambda: stripe.Subscription.retrieve(subscription_id, api_key=api_key, **kwargs)
                 ),
-                max_attempts=3,
-                delay_seconds=0.2,
+                max_attempts=4,
+                delay_seconds=0.5,
+                # S-05a: the ladder slept only 0.2+0.4 = 0.6s, so a ~2s
+                # Stripe 503 — routine, several times a week — exhausted every
+                # attempt and surfaced as a permanent checkout failure. The
+                # base ladder is now 0.5+1.0+2.0, but `with_retry` applies
+                # jitter=True by default, so the ACTUAL wait is that sum
+                # scaled by uniform(0.5, 1.5) — roughly 1.75s to 5.25s, not a
+                # fixed 3.5s. The earlier comment here stated a fixed total and
+                # was wrong about what the operator would observe.
+                #
+                # `max_elapsed` is a TOTAL wall-clock budget and DOES include
+                # time spent inside the HTTP call, so 8s is the real ceiling.
+                # It keeps a held request well inside
+                # EVENT_HANDLER_TIMEOUT_SECONDS (30) and inside any typical
+                # gateway read timeout.
+                max_elapsed=8.0,
                 exceptions=_TRANSIENT_STRIPE_ERRORS,
             )
         except stripe.StripeError as e:
@@ -285,8 +345,23 @@ class StripeGateway:
         try:
             return await with_retry(
                 fn=lambda: asyncio.to_thread(lambda: stripe.Invoice.retrieve(invoice_id, api_key=api_key, **kwargs)),
-                max_attempts=3,
-                delay_seconds=0.2,
+                max_attempts=4,
+                delay_seconds=0.5,
+                # S-05a: the ladder slept only 0.2+0.4 = 0.6s, so a ~2s
+                # Stripe 503 — routine, several times a week — exhausted every
+                # attempt and surfaced as a permanent checkout failure. The
+                # base ladder is now 0.5+1.0+2.0, but `with_retry` applies
+                # jitter=True by default, so the ACTUAL wait is that sum
+                # scaled by uniform(0.5, 1.5) — roughly 1.75s to 5.25s, not a
+                # fixed 3.5s. The earlier comment here stated a fixed total and
+                # was wrong about what the operator would observe.
+                #
+                # `max_elapsed` is a TOTAL wall-clock budget and DOES include
+                # time spent inside the HTTP call, so 8s is the real ceiling.
+                # It keeps a held request well inside
+                # EVENT_HANDLER_TIMEOUT_SECONDS (30) and inside any typical
+                # gateway read timeout.
+                max_elapsed=8.0,
                 exceptions=_TRANSIENT_STRIPE_ERRORS,
             )
         except stripe.StripeError as e:

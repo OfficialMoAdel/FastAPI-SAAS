@@ -204,62 +204,88 @@ class SessionManager:
             True if session is valid, False otherwise
         """
         client = self.redis_client
-        if not client:
-            from src.app.core.config import settings
-            from src.app.core.monitoring.r1_unified_metrics import record_fail_open
-
-            # SECURITY FIX: Fail closed if configured for high-security environments
-            if settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed":
-                record_fail_open("session_validation_failed_closed")
-                logger.critical(
-                    "redis_unavailable_session_rejected_fail_closed",
-                    extra={
-                        "user_id": user_id,
-                        "session_id": session_id,
-                        "severity": "high",
-                        "action": "session_validation_rejected_fail_closed",
-                    },
+        # S-08 FIX: "unavailable" must mean BOTH "no client configured" AND
+        # "the client raised". The guard below used to test `if not client`
+        # only, but self.redis_client is a live Redis over a connection pool and
+        # is never falsy during an outage - a ConnectionError/TimeoutError
+        # propagated straight out of this method. The call chain
+        # (core/principal.py:296 -> api/deps/auth.py _resolve_strict_bearer_flow
+        # -> _enforce_session_valid -> here) has no try/except on the strict
+        # path, so a Redis TIMEOUT - the common case, not a full outage - turned
+        # every authenticated request into a 500 instead of the intended
+        # 401/REVOKED_SESSION. On a Redis error we now fall through to the SAME
+        # fail-closed/degraded policy the "no client" case uses, which is what
+        # this docstring has always claimed.
+        if client:
+            hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
+            try:
+                # O(1) lookup using Hash - HEXISTS (Hash is source of truth)
+                return bool(await client.hexists(hash_key, session_id))
+            except Exception as e:  # noqa: BLE001 - any Redis failure is "unavailable"
+                logger.warning(
+                    "session_validation_redis_error",
+                    user_id=user_id,
+                    session_id=session_id,
+                    error=str(e),
                 )
-                return False
+                # Fall through to the unavailable policy below rather than
+                # propagating (500) or failing open.
 
-            # Degraded mode: accept session if JWT is still within expiry
-            if jwt_exp is not None:
-                now = datetime.now(UTC).timestamp()
-                if jwt_exp > now:
-                    record_fail_open("session_validation_degraded")
-                    logger.warning(
-                        "redis_unavailable_session_accepted_degraded",
-                        extra={
-                            "user_id": user_id,
-                            "session_id": session_id,
-                            "jwt_exp": jwt_exp,
-                            "remaining_seconds": round(jwt_exp - now),
-                            "action": "degraded_mode_accept",
-                        },
-                    )
-                    return True
+        # --- Redis unavailable: no client configured, or the lookup raised. ---
+        from src.app.core.config import settings
+        from src.app.core.monitoring.r1_unified_metrics import record_fail_open
 
-            # Fail closed: no jwt_exp or token already expired
-            record_fail_open("session_validation")
-
+        # SECURITY FIX: Fail closed if configured for high-security environments
+        if settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed":
+            record_fail_open("session_validation_failed_closed")
             logger.critical(
-                "redis_unavailable_session_rejected",
+                "redis_unavailable_session_rejected_fail_closed",
                 extra={
                     "user_id": user_id,
                     "session_id": session_id,
                     "severity": "high",
-                    "action": "session_validation_rejected",
+                    "action": "session_validation_rejected_fail_closed",
                 },
             )
             return False
 
-        # O(1) lookup using Hash - HEXISTS (Hash is source of truth for existence)
-        hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
-        exists: bool = await client.hexists(hash_key, session_id)
-        return exists
+        # Degraded mode: accept session if JWT is still within expiry
+        if jwt_exp is not None:
+            now = datetime.now(UTC).timestamp()
+            if jwt_exp > now:
+                record_fail_open("session_validation_degraded")
+                logger.warning(
+                    "redis_unavailable_session_accepted_degraded",
+                    extra={
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "jwt_exp": jwt_exp,
+                        "remaining_seconds": round(jwt_exp - now),
+                        "action": "degraded_mode_accept",
+                    },
+                )
+                return True
+
+        # Fail closed: no jwt_exp or token already expired
+        record_fail_open("session_validation")
+
+        logger.critical(
+            "redis_unavailable_session_rejected",
+            extra={
+                "user_id": user_id,
+                "session_id": session_id,
+                "severity": "high",
+                "action": "session_validation_rejected",
+            },
+        )
+        return False
 
     async def invalidate_session(self, user_id: int | str, session_id: str) -> bool:
         """Invalidate a specific session (e.g., on logout).
+
+        S-08: the Redis calls are guarded. A failure here means the session may
+        or may not have been removed, so the honest answer is False - the caller
+        must not be told the logout succeeded. Never a silent True.
 
         Args:
             user_id: User identifier
@@ -275,22 +301,30 @@ class SessionManager:
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
         zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
-        # Check if session exists before deleting
-        exists = await client.hexists(hash_key, session_id)
-        if not exists:
-            return False
+        try:
+            # Check if session exists before deleting
+            exists = await client.hexists(hash_key, session_id)
+            if not exists:
+                return False
 
-        # Delete from both Hash and ZSET atomically - O(1) + O(log n)
-        async with client.pipeline() as pipe:
-            pipe.hdel(hash_key, session_id)
-            pipe.zrem(zset_key, session_id)
-            await pipe.execute()
+            # Delete from both Hash and ZSET atomically - O(1) + O(log n)
+            async with client.pipeline() as pipe:
+                pipe.hdel(hash_key, session_id)
+                pipe.zrem(zset_key, session_id)
+                await pipe.execute()
+        except Exception as e:  # noqa: BLE001 - surface failure, never fake success
+            logger.error("session_invalidation_failed", user_id=user_id, session_id=session_id, error=str(e))
+            return False
 
         logger.info("Session invalidated", user_id=user_id, session_id=session_id)
         return True
 
     async def invalidate_all_sessions(self, user_id: int | str) -> int:
         """Invalidate all sessions for a user (e.g., password change).
+
+        S-08: guarded, and it reports 0 rather than raising when Redis fails -
+        the sessions are still live, so 0 is the truthful "nothing was
+        invalidated" answer and the caller can surface it.
 
         Args:
             user_id: User identifier
@@ -305,17 +339,21 @@ class SessionManager:
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
         zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
-        # Get count before deletion - O(1) with HLEN
-        count: int = await client.hlen(hash_key)
+        try:
+            # Get count before deletion - O(1) with HLEN
+            count: int = await client.hlen(hash_key)
 
-        if count == 0:
+            if count == 0:
+                return 0
+
+            # Delete both Hash and ZSET - O(1) with DEL
+            async with client.pipeline() as pipe:
+                pipe.delete(hash_key)
+                pipe.delete(zset_key)
+                await pipe.execute()
+        except Exception as e:  # noqa: BLE001 - surface failure, never fake success
+            logger.error("invalidate_all_sessions_failed", user_id=user_id, error=str(e))
             return 0
-
-        # Delete both Hash and ZSET - O(1) with DEL
-        async with client.pipeline() as pipe:
-            pipe.delete(hash_key)
-            pipe.delete(zset_key)
-            await pipe.execute()
 
         logger.info(
             "All sessions invalidated",
@@ -339,8 +377,14 @@ class SessionManager:
             return []
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
 
-        # Get all sessions from hash - O(N) but only when explicitly requested
-        sessions_raw = await client.hgetall(hash_key)
+        # S-08: guarded - a read-path Redis failure degrades to an empty list
+        # (the caller sees "no sessions" rather than a 500), and is logged.
+        try:
+            # Get all sessions from hash - O(N) but only when explicitly requested
+            sessions_raw = await client.hgetall(hash_key)
+        except Exception as e:  # noqa: BLE001 - read path degrades, never 500s a request
+            logger.warning("get_active_sessions_redis_error", user_id=user_id, error=str(e))
+            return []
 
         if not sessions_raw:
             return []
@@ -367,13 +411,18 @@ class SessionManager:
             return 0
         zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
-        # O(1) count using ZCARD - prefer ZSET as it's the ordering source of truth
-        count: int = await client.zcard(zset_key)
+        # S-08: guarded - a Redis failure reports 0 rather than raising.
+        try:
+            # O(1) count using ZCARD - prefer ZSET as it's the ordering source of truth
+            count: int = await client.zcard(zset_key)
 
-        # Fallback to HLEN if ZSET doesn't exist (migration case)
-        if count == 0:
-            hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
-            count = await client.hlen(hash_key)
+            # Fallback to HLEN if ZSET doesn't exist (migration case)
+            if count == 0:
+                hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
+                count = await client.hlen(hash_key)
+        except Exception as e:  # noqa: BLE001 - read path degrades, never 500s a request
+            logger.warning("count_active_sessions_redis_error", user_id=user_id, error=str(e))
+            return 0
 
         return count
 

@@ -273,13 +273,32 @@ async def check_ban_and_rate_limit(
             return BanInfo(is_banned=False), (False, limit, 0)
         return BanInfo(is_banned=False), (True, limit, 0)
 
-    # R1-01 parity: honor the negative cache — a cached "not banned" from
-    # this process within _BAN_NEGATIVE_TTL skips nothing here (the script
-    # still checks Redis), but keeps get_ban_info's fast path untouched.
+    # R1-01 parity: honor the negative cache. On a hit, only GCRA remains →
+    # delegate to the existing single-RTT limiter to preserve its fail-open
+    # policy.
+    #
+    # S-09 CORRECTION: this comment previously claimed "a cached 'not banned'
+    # skips nothing here (the script still checks Redis)". That was FALSE —
+    # the `ban_and_gcra_check` EVALSHA below is NOT reached on this path. The
+    # ban verdict is nevertheless sound, and it is worth stating precisely why
+    # rather than leaving the old (wrong) justification in place:
+    #
+    #   * `_ban_negative_cache` is populated ONLY in `get_ban_info`, and only
+    #     after an authoritative Redis GET returned no ban key. A hit therefore
+    #     means "Redis said not-banned within _BAN_NEGATIVE_TTL", not "we
+    #     guessed".
+    #   * `ban_ip` (:588) and `unban_ip` (:649) both pop this key locally AND
+    #     publish on `_BAN_L1_INVALIDATION_CHANNEL`, so a fresh ban/unban drops
+    #     the entry in every worker rather than serving it for the full TTL.
+    #   * The residual window — a publish lost to a Redis error, handled
+    #     best-effort and logged — is the SAME bounded staleness `get_ban_info`
+    #     already accepts on its own fast path. It is documented, not new.
+    #
+    # The `limit <= 0` block-path guard below is likewise NOT bypassed here:
+    # `check_rate_limit_algorithm` handles limit <= 0 itself
+    # (gcra_rate_limit.py:126-133, returns is_limited=True).
     cache_key = _ban_cache_key(client_ip)
     if _ban_negative_cache.get(cache_key):
-        # Ban is negative-cached; only GCRA remains → delegate to the
-        # existing single-RTT limiter to preserve its fail-open policy.
         gcra = get_gcra_rate_limiter()
         if gcra is not None:
             from src.app.core.utils.rate_limit import rate_limiter as _rl

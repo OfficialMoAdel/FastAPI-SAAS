@@ -139,14 +139,27 @@ class EnvironmentValidator:
         """Check AI provider configuration."""
         results: list[ValidationResult] = []
 
-        ai_enabled = os.getenv("AI_ENABLED", "true").lower() in ["true", "1"]
-        if not ai_enabled:
+        # S-37 FIX: read the TYPED settings, not os.getenv. Three problems with
+        # the old reads:
+        #   * AI_ENABLED / AI_ACTIVE_PROVIDER were declared nowhere, so
+        #     os.getenv was the only source and the flat-config delegation had
+        #     nothing to resolve;
+        #   * OLLAMA_BASE_URL HAS a Pydantic default ("http://localhost:11434"),
+        #     which os.getenv can never see — so a perfectly valid production
+        #     deployment that never exported it was reported as an ERROR and
+        #     blocked at boot for a setting that was fine;
+        #   * the two sources could disagree (env says one thing, settings say
+        #     another) and the validator would act on the wrong one.
+        from src.app.core.config import settings as _settings
+
+        ai_settings = _settings.ai
+        if not ai_settings.AI_ENABLED:
             return results
 
-        active_provider = os.getenv("AI_ACTIVE_PROVIDER", "ollama").lower()
+        active_provider = ai_settings.AI_ACTIVE_PROVIDER.lower()
 
         if active_provider == "ollama":
-            ollama_base_url = os.getenv("OLLAMA_BASE_URL")
+            ollama_base_url = ai_settings.OLLAMA_BASE_URL
             if not ollama_base_url:
                 results.append(
                     ValidationResult(

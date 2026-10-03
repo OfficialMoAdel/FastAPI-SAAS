@@ -1,6 +1,6 @@
 """R2-03: settings split from core/config.py — services domain."""
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -103,6 +103,34 @@ class DefaultRateLimitSettings(BaseSettings):
 class CRUDAdminSettings(BaseSettings):
     CRUD_ADMIN_ENABLED: bool = False
     CRUD_ADMIN_MOUNT_PATH: str = "/admin"
+    # S-26: this path becomes TENANT_EXEMPT_PREFIXES (middleware/tenant.py),
+    # and _TENANT_EXEMPT_MATCHES keeps a bare "/" when the prefix normalises to
+    # "/". `path.startswith(("/",))` is true for EVERY absolute path, so "/"
+    # silently disables tenant resolution API-wide and every request runs under
+    # the NO_TENANT sentinel. "/admin".rstrip("/") or "/admin" is safe; "/"
+    # is not, and neither is "".
+    #
+    # The mount path is an operator setting, so the failure must be loud rather
+    # than discovered as a tenant-isolation hole in production.
+    #
+    # Checked ONLY when the panel is enabled (#18). A cross-field
+    # `model_validator` rather than a `field_validator` on the path, because a
+    # plain field validator aborts the whole settings build on a bad path even
+    # when CRUD_ADMIN_ENABLED is False — so a cosmetic setting belonging to a
+    # DISABLED feature could block boot of an app that never mounts anything.
+    @model_validator(mode="after")
+    def _validate_mount_path_when_enabled(self) -> "CRUDAdminSettings":
+        if not self.CRUD_ADMIN_ENABLED:
+            return self
+        normalized = self.CRUD_ADMIN_MOUNT_PATH.strip().rstrip("/")
+        if not normalized or normalized == "/":
+            raise ValueError(
+                "CRUD_ADMIN_MOUNT_PATH must be a non-root path (e.g. '/admin') "
+                "when CRUD_ADMIN_ENABLED is true. A root mount would exempt "
+                "EVERY path from tenant resolution."
+            )
+        self.CRUD_ADMIN_MOUNT_PATH = normalized
+        return self
 
     CRUD_ADMIN_ALLOWED_IPS_LIST: list[str] | None = None
     CRUD_ADMIN_ALLOWED_NETWORKS_LIST: list[str] | None = None

@@ -254,6 +254,20 @@ class LuaScriptManager:
             end
             return 1
         """,
+        # S-04: compare-and-delete for the webhook in-flight lock.
+        # A blind DEL let a slow, later-failing delivery erase the terminal
+        # "processed" marker a faster, already-successful delivery had written
+        # to the SAME key, which re-opened double processing.
+        "compare_and_delete": """
+            -- KEYS[1]: the lock / marker key
+            -- ARGV[1]: the lock token this caller owns
+            -- Returns: 1 if deleted (we owned it), 0 if absent or owned by
+            --          someone else (their value is left untouched).
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                return redis.call('DEL', KEYS[1])
+            end
+            return 0
+        """,
         # Session registration + max-session eviction
         # (migrated from session_manager register_session inline script)
         "session_register_with_eviction": """

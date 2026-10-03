@@ -17,7 +17,6 @@ from src.app.core.db.database import async_get_db
 from src.app.core.pagination import PaginationParams, get_pagination_params
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
-from src.app.core.security import oauth2_scheme
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.users import UserService
 from src.app.modules.users.directory import UserDirectory
@@ -175,13 +174,18 @@ async def erase_user(
     user_id: str,
     ctx: RequestContextDep,
     service: UserService = Depends(get_user_service),
-    token: str = Depends(oauth2_scheme),
 ) -> Any:
     """Soft delete a user.
 
     Supports both integer user IDs and username strings for backward compatibility.
+
+    S-06: the ``token: str = Depends(oauth2_scheme)`` parameter is gone. It was
+    the CALLER's own bearer token, threaded down to ``blacklist_token`` — so a
+    superuser deleting another user revoked their own session on every call. The
+    deleted user's tokens are invalidated by the service's DELETION session
+    seam, which bumps that user's ``token_version``.
     """
-    result = await service.delete(user_id, ctx.user, token)
+    result = await service.delete(user_id, ctx.user)
     return UserDeleteResponse(message=result.get("message", "User deleted successfully"))
 
 
@@ -189,15 +193,16 @@ async def erase_user(
 async def erase_db_user(
     user_id: str,
     service: UserService = Depends(get_user_service),
-    token: str = Depends(oauth2_scheme),
 ) -> UserDeleteResponse:
     """Permanently delete a user from database (superuser only).
 
     Supports both integer user IDs and username strings for backward compatibility.
+
+    S-06: see ``erase_user`` — the caller's bearer-token dependency is removed.
     """
     # R1-15: typed DTO instead of dict[str, str] so the response contract is
     # explicit in the OpenAPI schema.
-    return UserDeleteResponse(**await service.hard_delete(user_id, token))
+    return UserDeleteResponse(**await service.hard_delete(user_id))
 
 
 @router.get("/{user_id}/rate-limits", response_model=dict[str, Any], dependencies=[Depends(get_current_superuser)])

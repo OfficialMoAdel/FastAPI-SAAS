@@ -47,10 +47,23 @@ class _PassThroughQueueHandler(QueueHandler):
     then sees the structlog markers with a str msg and crashes
     ('str' object has no attribute 'copy'). Passing records through
     unformatted keeps the dict intact for the listener thread to format.
+
+    S-35 FIX: nulling `args` / `exc_info` WITHOUT rendering first drops them on
+    the floor for FOREIGN (stdlib) records. structlog's
+    `wrap_for_formatter` puts a DICT in `record.msg`, so those must stay
+    untouched — but a plain `logging.getLogger(__name__).warning("x %s", y)`
+    has a str msg with `args`, and `record.getMessage()` then returns the raw
+    "%s" template. Nulling `exc_info` likewise discarded the traceback.
+    Render str messages FIRST (which inlines both the %-args and the
+    traceback), then clear the originals.
     """
 
     def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
         record = copy.copy(record)
+        # Only str messages need rendering; a dict is structlog's event and
+        # must reach the listener intact.
+        if isinstance(record.msg, str):
+            record.msg = self.format(record)
         record.args = None
         record.exc_info = None
         record.stack_info = None
@@ -89,7 +102,14 @@ def setup_logging() -> None:
     # DropEvent from foreign_pre_chain, so stdlib records must never reach the
     # sampler — they keep full sanitization, no sampling.
     structlog_processors = shared_processors + [
-        make_sampling_processor(settings.performance.LOG_SAMPLING_RATE),
+        # S-05c: the per-event overrides were added to `make_sampling_processor`
+        # but never passed, so the whole Mapping machinery was unreachable in
+        # production and a deployment setting a per-event rate got the global
+        # one instead.
+        make_sampling_processor(
+            settings.performance.LOG_SAMPLING_RATE,
+            rates=settings.performance.LOG_SAMPLING_RATES,
+        ),
         SanitizingProcessor(),  # Sanitize sensitive data before rendering
     ]
 

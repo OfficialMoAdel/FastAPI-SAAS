@@ -16,6 +16,7 @@ Safety rules:
 from __future__ import annotations
 
 import random
+from collections.abc import Mapping
 from typing import Any
 
 from structlog.types import EventDict, Processor
@@ -32,34 +33,59 @@ class SamplingProcessor:
             (fast path: no random draw). 0.0 drops every sampleable event.
     """
 
-    __slots__ = ("_rate", "_draw")
+    __slots__ = ("_rate", "_draw", "_rates")
 
-    def __init__(self, rate: float = 1.0, *, _rng: random.Random | None = None) -> None:
+    def __init__(
+        self,
+        rate: float = 1.0,
+        *,
+        rates: Mapping[str, float] | None = None,
+        _rng: random.Random | None = None,
+    ) -> None:
         self._rate = max(0.0, min(1.0, float(rate)))
         # Injectable RNG for deterministic tests.
         self._draw = (_rng or random).random
+        # S-05c: optional per-event overrides, keyed on the structlog event
+        # name. One global rate forces a bad trade-off — set it low to control
+        # volume from hot paths and you lose the rare-but-critical events; set
+        # it high to keep those and you drown in noise. Overrides let a rare
+        # event pin itself to 1.0 while a hot one is sampled hard.
+        self._rates: dict[str, float] = {
+            k: max(0.0, min(1.0, float(v))) for k, v in (rates or {}).items()
+        }
 
     @property
     def rate(self) -> float:
         return self._rate
 
     def __call__(self, logger: Any, method_name: str, event_dict: EventDict) -> EventDict:
+        # Per-event override wins over the global rate, so an event can opt
+        # OUT of sampling even when the global rate is low.
+        event_name = event_dict.get("event")
+        override = self._rates.get(event_name) if (self._rates and isinstance(event_name, str)) else None
+        if override is not None and override >= 1.0:
+            return event_dict
         # Fast path: sampling disabled — zero overhead beyond this check.
-        if self._rate >= 1.0:
+        effective = self._rate if override is None else override
+        if effective >= 1.0:
             return event_dict
         # Never sample warnings/errors or events carrying tracebacks.
         if method_name in _NEVER_SAMPLE or event_dict.get("exc_info"):
             return event_dict
-        if self._rate <= 0.0 or self._draw() >= self._rate:
+        if effective <= 0.0 or self._draw() >= effective:
             from structlog import DropEvent
 
             raise DropEvent
         return event_dict
 
 
-def make_sampling_processor(rate: float) -> Processor:
+def make_sampling_processor(
+    rate: float,
+    *,
+    rates: Mapping[str, float] | None = None,
+) -> Processor:
     """Build the processor; returns a plain pass-through callable when rate >= 1.0."""
-    if rate >= 1.0:
+    if rate >= 1.0 and not rates:
 
         def _passthrough(logger: Any, method_name: str, event_dict: EventDict) -> EventDict:
             return event_dict

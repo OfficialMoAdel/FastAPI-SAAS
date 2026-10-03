@@ -31,6 +31,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.app.modules.billing.webhook import idempotency as idem
+from src.app.modules.billing.webhook.idempotency import EventLockResult
 
 
 def _event_row(*, completed: bool | None) -> MagicMock:
@@ -149,7 +150,11 @@ class TestS05InFlightIsRetryable:
         event = {"id": "evt_1", "type": "checkout.session.completed", "data": {"object": {}}}
 
         with patch.object(dispatch._pkg, "_is_event_processed", AsyncMock(return_value=False)):
-            with patch.object(dispatch._pkg, "_try_acquire_event_lock", AsyncMock(return_value=(False, None))):
+            with patch.object(
+                dispatch._pkg,
+                "_try_acquire_event_lock",
+                AsyncMock(return_value=(EventLockResult.IN_FLIGHT, "tok")),
+            ):
                 result = await dispatch.handle_webhook_event(event)
 
         assert result == {"status": "in_flight"}

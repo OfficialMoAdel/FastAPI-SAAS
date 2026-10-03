@@ -2,7 +2,7 @@ import uuid as uuid_pkg
 from datetime import UTC, datetime
 from enum import Enum
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, text
+from sqlalchemy import Boolean, DateTime, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, MappedAsDataclass, mapped_column
 from uuid6 import uuid7
@@ -75,7 +75,21 @@ class RLSAuditLog(Base):
         insert_default=uuid7,
         init=False,
     )
-    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, init=False)
+    # S-46 FIX: the DB column is VARCHAR(100) (migration 07_observability) and
+    # that is what this must keep matching. The model previously declared
+    # `Integer`, which contradicted the schema.
+    #
+    # Severity note: this was filed as High because the stated consequence was
+    # "every bypass_rls with a numeric actor aborts with RLSAuditFailureError".
+    # A repo-wide grep for `bypass_rls(` callers shows NONE pass `user_id=`,
+    # so that column is permanently NULL today and the bug is dormant — it was
+    # demoted from High for that reason.
+    #
+    # It is still fixed, because the drift is a trap for whoever adds the
+    # FIRST caller that passes an actor id: asyncpg would hand an int to a
+    # varchar column and the write would fail at runtime. Matching the schema
+    # removes the trap rather than leaving it for the next change.
+    user_id: Mapped[str | None] = mapped_column(String(100), nullable=True, init=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False, init=False)
     timestamp: Mapped[datetime] = mapped_column(
         DateTime, server_default=text("now()"), insert_default=lambda: datetime.now(UTC), init=False

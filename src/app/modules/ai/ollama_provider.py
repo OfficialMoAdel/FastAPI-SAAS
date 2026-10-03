@@ -12,6 +12,7 @@ from src.app.core.json_utils import json_loads
 from src.app.core.logger import get_logger
 from src.app.modules.ai.providers import (
     AIProvider,
+    AIProviderError,
     AITokenUsage,
     ChatCompletionResponse,
     ChatMessage,
@@ -241,9 +242,35 @@ class OllamaProvider(AIProvider):
             response.raise_for_status()
             data = response.json()
 
+            # S-30 FIX: the request already uses the /api/embed shape (`input`,
+            # singular text in, one vector out), but the RESPONSE was read with
+            # the OLD /api/embeddings key `embedding`. /api/embed returns
+            # PLURAL `embeddings`, so `data.get("embedding", [])` silently
+            # produced an EMPTY vector rather than raising — embeddings
+            # degraded to all-zeros with no error anywhere.
+            #
+            # Accept the plural key, and fall back to the singular only if the
+            # plural is absent, so an older/vendored Ollama still works.
+            embeddings = data.get("embeddings")
+            if embeddings is None:
+                embeddings = data.get("embedding")
+            if not embeddings:
+                raise AIProviderError(
+                    f"Ollama /api/embed returned no embeddings for model {model!r} "
+                    f"(response keys: {sorted(data)})",
+                    "empty_embedding",
+                    provider="ollama",
+                )
+            # Batch shape: we sent ONE input, so take the first vector. Ollama
+            # may nest it as [[v]] or [[[v]]] depending on version, so unwrap
+            # until the leading element is a scalar rather than assuming one
+            # level.
+            while isinstance(embeddings, list) and embeddings and isinstance(embeddings[0], list):
+                embeddings = embeddings[0]
+
             return EmbeddingResponse(
-                embedding=data.get("embedding", []),
-                model=data.get("model", ""),
+                embedding=list(embeddings),
+                model=data.get("model", model),
                 token_count=None,
             )
         except Exception as e:

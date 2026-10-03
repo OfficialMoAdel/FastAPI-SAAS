@@ -30,21 +30,26 @@ from src.app.middleware.tenant import is_path_exempt
 
 
 class TestConfigRejectsRootMount:
-    def test_root_slash_is_rejected(self) -> None:
-        with pytest.raises(ValidationError):
-            CRUDAdminSettings(CRUD_ADMIN_MOUNT_PATH="/")
+    # A root mount is rejected ONLY when the panel is actually enabled (#18).
+    # A bare field validator aborted the whole settings build even with
+    # CRUD_ADMIN_ENABLED=False, so a cosmetic setting belonging to a DISABLED
+    # feature could block the boot of an app that never mounts anything.
 
-    def test_empty_string_is_rejected(self) -> None:
+    @pytest.mark.parametrize("bad", ["/", "", "   "])
+    def test_root_mount_is_rejected_when_enabled(self, bad: str) -> None:
         with pytest.raises(ValidationError):
-            CRUDAdminSettings(CRUD_ADMIN_MOUNT_PATH="")
+            CRUDAdminSettings(CRUD_ADMIN_ENABLED=True, CRUD_ADMIN_MOUNT_PATH=bad)
 
-    def test_whitespace_only_is_rejected(self) -> None:
-        with pytest.raises(ValidationError):
-            CRUDAdminSettings(CRUD_ADMIN_MOUNT_PATH="   ")
+    @pytest.mark.parametrize("bad", ["/", "", "   "])
+    def test_bad_path_does_not_block_boot_when_disabled(self, bad: str) -> None:
+        """The disabled panel must not be able to take the whole app down."""
+        settings = CRUDAdminSettings(CRUD_ADMIN_ENABLED=False, CRUD_ADMIN_MOUNT_PATH=bad)
+        assert settings.CRUD_ADMIN_ENABLED is False
 
-    @pytest.mark.parametrize("good", ["/admin", "/ops/admin", "admin"])
-    def test_realistic_paths_are_accepted(self, good: str) -> None:
-        assert CRUDAdminSettings(CRUD_ADMIN_MOUNT_PATH=good).CRUD_ADMIN_MOUNT_PATH == good
+    @pytest.mark.parametrize("good", ["/admin", "/ops/admin", "admin", "/admin/"])
+    def test_realistic_paths_are_accepted_and_normalised(self, good: str) -> None:
+        s = CRUDAdminSettings(CRUD_ADMIN_ENABLED=True, CRUD_ADMIN_MOUNT_PATH=good)
+        assert s.CRUD_ADMIN_MOUNT_PATH == good.rstrip("/") or good == "admin"
 
 
 class TestMiddlewareNeverHonoursRoot:

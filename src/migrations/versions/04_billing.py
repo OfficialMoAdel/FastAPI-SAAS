@@ -97,6 +97,11 @@ def upgrade() -> None:
         sa.Column("name", sa.String(length=100), nullable=False),
         sa.Column("amount_cents", sa.Integer(), nullable=False),
         sa.Column("interval", sa.String(length=20), nullable=False),
+        # Declared on the ORM (billing/models.py Pricing.currency, String(3),
+        # nullable=False, default "usd") and READ by billing/service.py, so it
+        # belongs in this layer's table definition. The sibling tables
+        # (subscription_plans, billing_records) already carry it.
+        sa.Column("currency", sa.String(length=3), nullable=False, server_default=sa.text("'usd'")),
         sa.Column("stripe_price_id", sa.String(length=255), nullable=True),
         sa.Column("features", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
@@ -212,16 +217,41 @@ def upgrade() -> None:
     )
 
     # ===== WEBHOOK_EVENTS =====
+    # The claim/completion state machine. `completed_at` discriminates a CLAIM
+    # (inserted before the handler runs, NULL) from a COMPLETION (stamped after
+    # it succeeds); without it a delivery that died mid-handler was
+    # indistinguishable from one that finished, and a paid invoice could be
+    # replayed. `claimed_by`/`claimed_at` make claim OWNERSHIP expressible so a
+    # takeover can be a single conditional UPDATE (exactly one winner) rather
+    # than a SELECT every losing delivery reads identically.
     op.create_table(
         "webhook_events",
         sa.Column("event_id", sa.String(length=255), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "completed_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+            comment="NULL means claimed-but-not-confirmed; set on successful handling",
+        ),
+        sa.Column("claimed_by", sa.String(length=64), nullable=True),
+        sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("event_id", name=op.f("pk_webhook_events")),
     )
     op.create_index("idx_webhook_events_event", "webhook_events", ["event_id"])
+    # Partial index over ABANDONED claims only — the reclaim path in
+    # `_db_idempotency_check` is the sole consumer, and it never scans
+    # completed rows.
+    op.create_index(
+        "ix_webhook_events_abandoned",
+        "webhook_events",
+        ["claimed_at"],
+        postgresql_where=sa.text("completed_at IS NULL"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_index("ix_webhook_events_abandoned", table_name="webhook_events")
     op.drop_table("webhook_events")
     op.drop_table("billing_records")
     op.drop_table("user_subscriptions")

@@ -39,7 +39,27 @@ class BillingSettings(BaseSettings):
 
 
 class AISettings(BaseSettings):
-    """Settings for AI/LLM integration (Ollama)."""
+    """Settings for AI/LLM integration.
+
+    S-31: this declared ONLY the Ollama fields, but `ai/factory.py` resolves
+    the hosted providers with `getattr(settings, "OPENAI_API_KEY", None)`.
+    The flat-config delegation in `core/config` maps DECLARED nested fields to
+    the root — it cannot invent undeclared ones — so every OpenAI/Anthropic
+    lookup returned None and the factory's "missing API key" branch ALWAYS
+    fired. Two of the three providers were unreachable regardless of the
+    environment. Declared here so the delegation can resolve them.
+    """
+
+    # S-37: read by `core/env_validator._check_ai_providers` via os.getenv but
+    # declared NOWHERE, so the validator could not see a Pydantic default and
+    # the flat-config delegation could not resolve them either.
+    AI_ENABLED: bool = True
+    AI_ACTIVE_PROVIDER: str = "ollama"
+
+    OPENAI_API_KEY: SecretStr | None = None
+    OPENAI_BASE_URL: str | None = None
+    ANTHROPIC_API_KEY: SecretStr | None = None
+    ANTHROPIC_BASE_URL: str | None = None
 
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_TIMEOUT: float = 120.0

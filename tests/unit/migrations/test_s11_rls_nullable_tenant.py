@@ -48,11 +48,40 @@ def m08():
 
 
 class TestPredicateSelection:
-    def test_nullable_tables_admit_global_rows(self, m08) -> None:
+    def test_nullable_tables_admit_global_rows_on_READ(self, m08) -> None:
+        """`USING` admits the global (NULL) rows, so they stay visible."""
         for table in m08.GLOBAL_TENANT_TABLES:
-            p = m08._tenant_predicate(table)
+            p = m08._tenant_read_predicate(table)
             assert "tenant_id IS NULL" in p, f"{table} would still reject global rows"
             assert "auth.current_tenant_id()" in p
+
+    def test_nullable_tables_do_NOT_admit_globals_on_WRITE(self, m08) -> None:
+        """`WITH CHECK` stays strict, even for the nullable tables.
+
+        This is the privilege boundary. `USING` and `WITH CHECK` answer
+        different questions — visibility and authorship. Reusing one relaxed
+        string for both granted a WRITE alongside the read: any tenant-bound
+        role could INSERT a row with `tenant_id IS NULL`, and `USING` then made
+        that row visible to EVERY tenant. That is a way to forge a
+        platform-wide notification, or poison the shared AI token-usage ledger,
+        from inside a single tenant.
+
+        Global rows stay creatable through `bypass_rls` — the audited path for
+        system writers.
+        """
+        for table in m08.GLOBAL_TENANT_TABLES:
+            w = m08._tenant_write_predicate(table)
+            assert "IS NULL" not in w, f"{table} would let any tenant author a global row"
+            assert w == "tenant_id = auth.current_tenant_id()"
+
+    def test_read_and_write_predicates_are_distinct_helpers(self, m08) -> None:
+        """Guards against a future refactor re-merging the two."""
+        assert callable(m08._tenant_read_predicate)
+        assert callable(m08._tenant_write_predicate)
+        assert not hasattr(m08, "_tenant_predicate"), (
+            "the single-predicate helper is what caused the write-side grant; "
+            "it must not come back"
+        )
 
     def test_nullable_set_is_exactly_the_two_tables(self, m08) -> None:
         """Pinned deliberately — verified against the live schema.
@@ -64,17 +93,18 @@ class TestPredicateSelection:
 
     @pytest.mark.parametrize("table", ["users", "posts", "api_keys", "billing_records", "audit_logs"])
     def test_tenant_scoped_tables_keep_strict_equality(self, m08, table: str) -> None:
-        """Isolation must be unchanged everywhere else."""
-        p = m08._tenant_predicate(table)
-        assert p == "tenant_id = auth.current_tenant_id()"
-        assert "IS NULL" not in p
+        """Isolation must be unchanged everywhere else — reads AND writes."""
+        for p in (m08._tenant_read_predicate(table), m08._tenant_write_predicate(table)):
+            assert p == "tenant_id = auth.current_tenant_id()"
+            assert "IS NULL" not in p
 
 
 class TestEveryRlsTableHasAPredicate:
     def test_all_tenant_tables_are_classified(self, m08) -> None:
         """No table may fall through to an undefined predicate."""
         for table in m08.TENANT_TABLES:
-            assert m08._tenant_predicate(table), table
+            assert m08._tenant_read_predicate(table), table
+            assert m08._tenant_write_predicate(table), table
 
     def test_global_tables_are_a_subset_of_tenant_tables(self, m08) -> None:
         """A global table outside the RLS set would never get the policy."""
@@ -86,8 +116,10 @@ class TestMigrationUsesTheHelper:
         """Guards against the helper being defined but never wired in."""
         src = MIGRATION.read_text(encoding="utf-8")
         upgrade = src[src.index("def upgrade") : src.index("def downgrade")]
-        assert "_tenant_predicate(table)" in upgrade, "upgrade() bypasses _tenant_predicate"
-        # The literal strict form must only appear inside the helper itself.
+        # Both helpers must be wired in, and to the right clause.
+        assert "_tenant_read_predicate(table)" in upgrade, "upgrade() must use the read predicate for USING"
+        assert "_tenant_write_predicate(table)" in upgrade, "upgrade() must use the write predicate for WITH CHECK"
+        # The literal strict form must only appear inside the helpers themselves.
         assert upgrade.count("tenant_id = auth.current_tenant_id()") == 0, (
-            "upgrade() still hardcodes the strict predicate for every table"
+            "upgrade() still hardcodes a predicate for every table"
         )

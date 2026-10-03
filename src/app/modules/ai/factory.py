@@ -146,25 +146,31 @@ class AIProviderFactory:
         provider_config: dict[str, Any] = {}
 
         if provider_name == "openai":
-            resolved_api_key = api_key or getattr(settings, "OPENAI_API_KEY", None)
+            # S-31: namespaced read (the flat delegation only maps DECLARED
+            # nested fields, and these were previously undeclared, so the
+            # lookup silently returned None for every OpenAI/Anthropic call).
+            # SecretStr is unwrapped because the provider takes a plain str.
+            _cfg = getattr(settings.ai, "OPENAI_API_KEY", None)
+            resolved_api_key = api_key or (_cfg.get_secret_value() if _cfg else None)
             if not resolved_api_key:
                 raise AIServerError(
                     provider=provider_name,
                     message="Missing API key for OpenAI. Set OPENAI_API_KEY environment variable.",
                 )
             provider_config["api_key"] = resolved_api_key
-            resolved_base_url = base_url or getattr(settings, "OPENAI_BASE_URL", None)
+            resolved_base_url = base_url or getattr(settings.ai, "OPENAI_BASE_URL", None)
             if resolved_base_url:
                 provider_config["base_url"] = resolved_base_url
         elif provider_name == "anthropic":
-            resolved_api_key = api_key or getattr(settings, "ANTHROPIC_API_KEY", None)
+            _cfg = getattr(settings.ai, "ANTHROPIC_API_KEY", None)
+            resolved_api_key = api_key or (_cfg.get_secret_value() if _cfg else None)
             if not resolved_api_key:
                 raise AIServerError(
                     provider=provider_name,
                     message="Missing API key for Anthropic. Set ANTHROPIC_API_KEY environment variable.",
                 )
             provider_config["api_key"] = resolved_api_key
-            resolved_base_url = base_url or getattr(settings, "ANTHROPIC_BASE_URL", None)
+            resolved_base_url = base_url or getattr(settings.ai, "ANTHROPIC_BASE_URL", None)
             if resolved_base_url:
                 provider_config["base_url"] = resolved_base_url
         elif provider_name == "ollama":

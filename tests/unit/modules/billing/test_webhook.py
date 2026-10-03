@@ -12,6 +12,7 @@ webhook_module.redis_client = AsyncMock()
 webhook_module.redis_client.get.return_value = None
 
 from src.app.modules.billing.webhook import (
+    EventLockResult,
     handle_webhook_event,
     verify_webhook_signature,
 )
@@ -114,7 +115,7 @@ async def test_handle_webhook_event_checkout_completed():
         patch(
             "src.app.modules.billing.webhook._try_acquire_event_lock",
             new_callable=AsyncMock,
-            return_value=(True, "tok"),
+            return_value=(EventLockResult.ACQUIRED, "tok"),
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_ctx,
@@ -182,7 +183,7 @@ async def test_handle_webhook_event_invoice_payment_succeeded():
         patch(
             "src.app.modules.billing.webhook._try_acquire_event_lock",
             new_callable=AsyncMock,
-            return_value=(True, "tok"),
+            return_value=(EventLockResult.ACQUIRED, "tok"),
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
@@ -270,7 +271,7 @@ async def test_handle_webhook_event_invoice_payment_failed():
         patch(
             "src.app.modules.billing.webhook._try_acquire_event_lock",
             new_callable=AsyncMock,
-            return_value=(True, "tok"),
+            return_value=(EventLockResult.ACQUIRED, "tok"),
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
@@ -333,7 +334,7 @@ async def test_handle_webhook_event_subscription_updated():
         patch(
             "src.app.modules.billing.webhook._try_acquire_event_lock",
             new_callable=AsyncMock,
-            return_value=(True, "tok"),
+            return_value=(EventLockResult.ACQUIRED, "tok"),
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
@@ -385,7 +386,7 @@ async def test_handle_webhook_event_subscription_deleted():
         patch(
             "src.app.modules.billing.webhook._try_acquire_event_lock",
             new_callable=AsyncMock,
-            return_value=(True, "tok"),
+            return_value=(EventLockResult.ACQUIRED, "tok"),
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
@@ -444,7 +445,7 @@ async def test_handle_webhook_event_charge_refunded():
         patch(
             "src.app.modules.billing.webhook._try_acquire_event_lock",
             new_callable=AsyncMock,
-            return_value=(True, "tok"),
+            return_value=(EventLockResult.ACQUIRED, "tok"),
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,

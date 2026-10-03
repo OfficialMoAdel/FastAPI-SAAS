@@ -249,28 +249,66 @@ class DeadLetterQueue:
         include_invalid: bool = False,
         include_legacy: bool = False,
     ) -> list[dict[str, Any]]:
-        """Read normalized entries, optionally retaining malformed legacy rows."""
+        """Read normalized entries, optionally retaining malformed legacy rows.
+
+        S-42 FIX: a ``source`` filter is applied AFTER the LRANGE slice, so
+        offset/limit paged over RAW list positions rather than over matching
+        entries. Consequences: a filtered page returned fewer than ``limit``
+        rows (often none) while matches sat further down the list, and
+        advancing ``offset`` by ``limit`` skipped entries entirely. ``size()``
+        is likewise unfiltered, so no caller could page a filtered list
+        correctly.
+
+        With a filter we now scan the whole list, apply it, and slice the
+        RESULT. The queue is bounded (DLQ_MAX_SIZE, default 10k) so this stays
+        cheap; correctness matters more than saving one LRANGE.
+        """
         client = self._client()
         if client is None:
             return []
 
-        raw_entries = await client.lrange(self.key, offset, offset + limit - 1)
-        entries: list[dict[str, Any]] = []
+        if source is None:
+            raw_entries = await client.lrange(self.key, offset, offset + limit - 1)
+        else:
+            # Fetch everything, then filter, then page the filtered sequence.
+            raw_entries = await client.lrange(self.key, 0, -1)
+
+        matched: list[dict[str, Any]] = []
         for raw in raw_entries:
             parsed = self.decode(raw, include_legacy=include_legacy)
             if parsed is None:
                 if include_invalid:
                     raw_text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
-                    entries.append({"raw": raw_text, "error": "parse_error"})
+                    matched.append({"raw": raw_text, "error": "parse_error"})
                 continue
             if source is None or parsed.get("source") == source:
-                entries.append(parsed)
-        return entries
+                matched.append(parsed)
 
-    async def size(self) -> int:
-        """Return the current queue length."""
+        if source is None:
+            return matched
+        return matched[offset : offset + limit]
+
+    async def size(self, *, source: str | None = None) -> int:
+        """Return the current queue length.
+
+        S-42: accepts an optional ``source`` so a caller can size a filtered
+        list. It previously always returned the RAW length, which is why a
+        filtered read could not be paged coherently.
+
+        A FILTERED count is inherently a scan: Redis has no per-source index,
+        and the queue is bounded by ``DLQ_MAX_SIZE``. That cost is paid here
+        rather than by making every ``read()`` fetch the whole list, and the
+        bound is read through a named setting instead of the bare positional
+        ``self._settings()[1]`` so the intent survives edits to that tuple.
+        """
         client = self._client()
-        return int(await client.llen(self.key)) if client is not None else 0
+        if client is None:
+            return 0
+        if source is None:
+            return int(await client.llen(self.key))
+
+        _, max_size, _ = self._settings()
+        return len(await self.read(source=source, limit=max(1, max_size)))
 
     async def retry(self, source: str | None = None) -> dict[str, Any] | None:
         """Remove and return the oldest entry, optionally filtered by source."""
@@ -331,7 +369,22 @@ class DeadLetterQueue:
         return cleared
 
     async def drain_legacy(self) -> int:
-        """Move legacy EventBus entries into the unified queue with source tags."""
+        """Move legacy EventBus entries into the unified queue with source tags.
+
+        S-43 FIX: two defects, both about losing data on a migration path that
+        exists precisely to preserve it.
+
+        1. An unparseable row was DESTROYED. ``rpop`` removes the row first,
+           so the old ``continue`` dropped it with no record anywhere — and the
+           rows most likely to fail ``json_loads`` are the legacy pipe format
+           (``job|fn|error|ts``) that ``decode(..., include_legacy=True)``
+           handles elsewhere. They are now preserved with their raw text so an
+           operator can still recover them.
+
+        2. The migration LPUSHed without the bounded ``LTRIM`` that ``stage()``
+           applies, so draining a large legacy backlog could push the unified
+           queue past ``DLQ_MAX_SIZE`` and emitted no size metric.
+        """
         client = self._client()
         if client is None:
             return 0
@@ -341,16 +394,30 @@ class DeadLetterQueue:
             raw = await client.rpop(self.legacy_key)
             if not raw:
                 break
+
             try:
                 parsed = json_loads(raw)
             except (TypeError, ValueError, json.JSONDecodeError):
-                continue
-            if isinstance(parsed, dict):
-                parsed.setdefault("source", "event_bus")
-                normalized = self.encode(parsed)
+                raw_text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+                entry: dict[str, Any] = {
+                    "source": "event_bus",
+                    "error": "legacy_parse_error",
+                    "raw": raw_text,
+                    "timestamp": time.time(),
+                }
             else:
-                normalized = self.encode({"source": "event_bus", "payload": parsed})
-            await client.lpush(self.key, normalized)
+                if isinstance(parsed, dict):
+                    parsed.setdefault("source", "event_bus")
+                    entry = parsed
+                else:
+                    entry = {"source": "event_bus", "payload": parsed}
+
+            # stage() applies the DLQ_MAX_SIZE LTRIM; a bare lpush did not.
+            async with client.pipeline(transaction=True) as pipeline:
+                self.stage(pipeline, entry)
+                pipeline.llen(self.key)
+                results = await pipeline.execute()
+            update_dlq_size(int(results[-1]))
             moved += 1
         return moved
 

@@ -38,14 +38,34 @@ def _require_tenant_id(tenant_id: int | str | None = None) -> str | None:
     Tenant context is used for tenant-scoped cache keys to prevent
     cross-tenant cache collisions. When running in pre-auth or global context,
     returns None to allow safe fallback.
+
+    S-16 FIX: the context was read with ``if tenant is not None``, but
+    ``NO_TENANT`` — the sentinel ``TenantMiddleware`` binds for every request
+    with no ``X-Tenant-ID``, for OPTIONS, and for unresolvable slugs on exempt
+    paths — is falsy WITHOUT being None. So those requests produced keys under
+    a phantom UUID-zero namespace:
+
+        NO_TENANT bound -> user:auth:00000000-0000-0000-0000-000000000000:alice
+        no context      -> user:auth:global:alice
+
+    The UUID-zero entry is unreachable by invalidation:
+    ``build_user_invalidation_delete_keys`` derives the tenant from the user
+    row (``None`` for a global user) and emits only the ``:global:`` variant,
+    so a user revoked on an exempt path kept an auth-info cache entry that
+    nothing could delete, for AUTH_INFO_CACHE_TTL.
+
+    Every other tenancy seam already reads this by truthiness
+    (``tenancy/query.py:26``, ``tenancy/scope.py:83``). This now matches, so
+    "no tenant" and "exempt" agree on the same key.
     """
     if tenant_id is not None:
         return str(tenant_id)
 
     tenant = get_current_tenant()
-    if tenant is not None:
-        return str(tenant.id)
-    return None
+    # Truthiness, not `is not None`: NO_TENANT is falsy by design.
+    if not tenant:
+        return None
+    return str(tenant.id)
 
 
 def _user_cache_key(user_id: int | str | UUID) -> str:

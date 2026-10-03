@@ -54,6 +54,55 @@ TENANT_TABLES = [
     "users",
 ]
 
+# S-11: tables whose ``tenant_id`` is LEGITIMATELY nullable. A NULL there means
+# "global / system", not "corrupt".
+#
+# The strict predicate `tenant_id = auth.current_tenant_id()` evaluates to NULL
+# for a NULL tenant_id, and SQL treats NULL as not-true. So under the uniform
+# policy these rows are invisible to EVERY tenant, and inserting one fails
+# WITH CHECK — making global notifications and system AI token-usage rows
+# unpersistable outside a bypass.
+#
+# Verified against the live schema: of the 25 tables in TENANT_TABLES, exactly
+# these two carry a nullable tenant_id. Every other table keeps the strict
+# predicate, so this does not weaken isolation anywhere else.
+#
+# NULL rows are visible to all tenants BY DESIGN — that is what "global"
+# means. A tenant-bound row is still restricted to its own tenant.
+GLOBAL_TENANT_TABLES = frozenset({"notifications", "ai_token_usage"})
+
+
+def _tenant_read_predicate(table: str) -> str:
+    """RLS `USING` predicate for ``table`` — what a tenant may SEE.
+
+    Strict equality for tenant-scoped tables. For the handful whose
+    ``tenant_id`` is legitimately nullable, admit the global (NULL) rows: a
+    strict predicate evaluates to NULL on them and SQL treats NULL as
+    not-true, so they would be invisible to everyone.
+    """
+    if table in GLOBAL_TENANT_TABLES:
+        return "(tenant_id IS NULL OR tenant_id = auth.current_tenant_id())"
+    return "tenant_id = auth.current_tenant_id()"
+
+
+def _tenant_write_predicate(table: str) -> str:
+    """RLS `WITH CHECK` predicate for ``table`` — what a tenant may WRITE.
+
+    Always the strict form, INCLUDING for the nullable-tenant tables.
+
+    This is deliberately NOT the same as the read predicate. `USING` decides
+    visibility; `WITH CHECK` decides authorship. Reusing one relaxed string for
+    both granted a WRITE privilege alongside the read access: any tenant-bound
+    role could INSERT a row with ``tenant_id IS NULL``, and `USING` then made
+    that row visible to EVERY tenant — a way to forge a platform-wide
+    notification, or poison the shared AI token-usage ledger, from inside a
+    single tenant.
+
+    Global rows are still creatable: `bypass_rls` is the audited path for
+    system writers, and that is where they belong.
+    """
+    return "tenant_id = auth.current_tenant_id()"
+
 
 def upgrade() -> None:
     """Enable RLS on all tenant-scoped tables."""
@@ -105,8 +154,8 @@ def upgrade() -> None:
             f"""
             CREATE POLICY tenant_isolation ON "{table}"
                 FOR ALL
-                USING (tenant_id = auth.current_tenant_id())
-                WITH CHECK (tenant_id = auth.current_tenant_id())
+                USING ({_tenant_read_predicate(table)})
+                WITH CHECK ({_tenant_write_predicate(table)})
             """
         )
 

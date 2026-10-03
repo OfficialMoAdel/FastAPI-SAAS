@@ -16,6 +16,9 @@ from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
 
 logger = get_logger(__name__)
+# S-23: local alias so warm_policy_cache can warn without shadowing the
+# module-level `logger` used by the read paths above it.
+_pkg_logger = logger
 
 # Module-level L1 cache (256 entries, 5-minute TTL)
 _tier_policy_l1: TTLCache[int, list[dict[str, Any]] | None] = TTLCache(maxsize=256, ttl=300)
@@ -113,14 +116,35 @@ async def warm_policy_cache(tier_policies: dict[int, list[dict[str, Any]]]) -> i
     Called on app startup to pre-populate cache.
     Uses Redis pipeline for batch operations to reduce startup latency.
 
-    Args:
-        tier_policies: Dict mapping tier_id to list of policies
+    S-23 FIX: this writes REDIS only. It is also called on the H-9 write-back
+    path in ``rate_policy.resolve_rate_limits``, which runs AFTER a cache miss
+    has already populated the L1 layers — with the authoritative, freshly-read
+    policy list. Leaving L1 untouched meant the stale entry kept shadowing the
+    fresh one for up to ``_tier_policy_l1``'s 300s TTL, and the compiled
+    ``_tier_policy_path_map`` (which drives ``get_tier_policy_limits``) stayed
+    empty, so every subsequent request re-ran the DB fallback until that TTL
+    expired.
 
-    Returns:
-        Number of tiers cached
+    Seeding L1 here is what makes the write-back actually accelerate anything:
+    the next request resolves from memory instead of Redis or the DB.
     """
+    if not tier_policies:
+        return 0
+
+    # Seed L1 first so a Redis failure cannot leave the stale entry in place
+    # while the caller believes the cache was refreshed.
+    for tier_id, policies in tier_policies.items():
+        _tier_policy_l1[tier_id] = policies
+        # The compiled path map must be rebuilt from the SAME list; leaving the
+        # previous map in place would resolve limits against the old rows.
+        _tier_policy_path_map.pop(tier_id, None)
+
     redis_client = get_redis()
-    if redis_client is None or not tier_policies:
+    if redis_client is None:
+        _pkg_logger.warning(
+            "Warm policy cache degraded: Redis unavailable; seeded L1 only",
+            tiers=len(tier_policies),
+        )
         return 0
 
     try:

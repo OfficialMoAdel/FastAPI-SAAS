@@ -24,10 +24,13 @@ to go through the middleware chain and the registered exception handlers.
 
 from __future__ import annotations
 
-import pytest
 from httpx import AsyncClient
 
-pytestmark = pytest.mark.asyncio
+# No `pytestmark = pytest.mark.asyncio` here: `asyncio_mode = "auto"` in
+# pyproject.toml already runs the async tests. The global mark was redundant for
+# them and WRONG for the one sync test in this file — it stamped a
+# `@pytest.mark.asyncio` onto a plain `def`, which pytest flagged as
+# "marked with asyncio but it is not an async function".
 
 
 async def test_query_bound_violation_is_422(

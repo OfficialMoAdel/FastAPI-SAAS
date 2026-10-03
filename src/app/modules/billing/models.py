@@ -255,10 +255,37 @@ class BillingRecord(Base, kw_only=True):
 
 
 class WebhookEvent(Base, kw_only=True):
-    """Processed webhook events for idempotency.
+    """Webhook event claims for idempotency.
 
-    Stores the Stripe event IDs that have already been processed to prevent
-    duplicate handling of webhook events when Redis is unavailable.
+    Stores Stripe event IDs so a delivery is processed at most once. Stripe
+    guarantees at-least-once delivery, so this table is what stops a redelivery
+    from double-charging a customer.
+
+    S-03 FIX: the row now records WHICH state it is in. Previously the table
+    held only ``event_id`` + ``created_at``, so the claim that
+    ``_db_idempotency_check`` inserts BEFORE the handler runs was
+    indistinguishable from the completion marker written afterwards. A crash
+    between the two left a row that ``_is_event_processed`` read as proof of
+    completion — and because the row had no expiry, every subsequent Stripe
+    retry was acked ``already_processed`` forever. A paid invoice grant could
+    be dropped with no error anywhere.
+
+    ``completed_at`` is the discriminator: NULL means "claimed, handler never
+    confirmed", non-NULL means "handled".
+
+    CLAIM OWNERSHIP (``claimed_by`` / ``claimed_at``)
+    -------------------------------------------------
+    ``completed_at`` alone cannot keep two concurrent deliveries apart. A
+    reclaiming delivery that sees an unstamped row has no way to tell
+    "abandoned by a dead process" from "actively held by a live handler right
+    now" — so two deliveries both reclaim and both run the handler, which is
+    the double-charge this table exists to prevent.
+
+    ``claimed_by`` is the lock token of the delivery that owns the row and
+    ``claimed_at`` is when it took ownership. Together they make the takeover
+    a single conditional UPDATE: only a row whose claim is older than
+    ``_WEBHOOK_ABANDONED_CLAIM_TTL_SECONDS`` can be stolen, and the theft is
+    atomic, so exactly one delivery wins it.
 
     Scope note: keyed by the provider-global Stripe event id, so this table
     is intentionally tenant-blind — the idempotency domain is the Stripe
@@ -272,4 +299,31 @@ class WebhookEvent(Base, kw_only=True):
         DateTime(timezone=True),
         default_factory=lambda: datetime.now(UTC),
         nullable=False,
+    )
+    # S-03: NULL = claimed but not completed; non-NULL = the handler ran to
+    # success. A NULL row is abandoned ONLY once its `claimed_at` ages past
+    # the TTL — a NULL row inside the window belongs to a LIVE handler.
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+        comment="NULL means claimed-but-not-confirmed; set on successful handling",
+    )
+    # Lock token of the delivery that currently owns this claim. Scopes the
+    # release (`DELETE ... WHERE claimed_by = :token`) so a slow, failing
+    # delivery can never erase a claim or marker belonging to another.
+    claimed_by: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        default=None,
+        comment="Lock token of the delivery that owns this claim; NULL when unclaimed/completed",
+    )
+    # When ownership was taken. The takeover predicate is
+    # `claimed_at < now() - abandoned_ttl`, which is what stops a live claim
+    # from being stolen out from under a running handler.
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+        comment="When the current claim was taken; drives the abandoned-claim TTL",
     )

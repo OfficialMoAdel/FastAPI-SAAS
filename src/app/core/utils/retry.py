@@ -37,6 +37,24 @@ class LuaScriptError(R1OptimizationError):
         super().__init__(message, optimization="lua_script")
         self.script_name = script_name
 
+# Exceptions that signal a BUG, not a dependency blip. Retrying them wastes
+# the caller's latency budget and delays a stack trace nobody wanted anyway.
+# Checked before `exceptions` so they win even when a caller passes the
+# `(Exception,)` default.
+#
+# Deliberately excludes ValueError-adjacent cases that services use as real
+# transient signals (e.g. an HTTP error wrapped in ValueError) — narrowing
+# further belongs in the caller's `exceptions` tuple, not here.
+_NEVER_RETRY: tuple[type[BaseException], ...] = (
+    TypeError,
+    AttributeError,
+    AssertionError,
+    ImportError,
+    NameError,
+    UnboundLocalError,
+)
+
+
 async def with_retry(
     fn: Callable[[], Awaitable[T]],
     max_attempts: int = 3,
@@ -86,6 +104,13 @@ async def with_retry(
         try:
             return await fn()
         except asyncio.CancelledError:
+            raise
+        except _NEVER_RETRY:
+            # A programming error is not a transient dependency failure; no
+            # retry count can fix a TypeError. Re-raise immediately even when
+            # the caller passed `exceptions=(Exception,)` — which is the
+            # default, so without this guard the next caller to omit the
+            # argument silently inherits "retry everything, including bugs".
             raise
         except exceptions as e:
             last_exception = e

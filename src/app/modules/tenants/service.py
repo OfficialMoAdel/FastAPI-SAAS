@@ -126,11 +126,47 @@ class TenantService(BaseService[Tenant]):
         exhaustion policy in ``core.cache.invalidation_exhaustion``, and the
         marker decision is declared on this family's policy row below.
 
-        Deletes go through the CacheClient seam; when Redis is down the
-        adapter reports no client and invalidation is skipped (the TTL
-        bounds the stale window, as before).
+        Deletes go through the CacheClient seam.
+
+        S-15 FIX: the L1 drop used to sit BELOW a
+        ``if cache_client.client is None: return`` guard, so it never ran when
+        Redis was absent — which is exactly the scenario its own docstring
+        describes ("each process keeps an in-memory TTLCache that previously
+        served stale is_active=True for up to 60s"). During a Redis outage a
+        deactivated tenant stayed active in every worker for the full 60s L1
+        TTL, with no log and no other invalidation path.
+
+        The local drop is now unconditional and runs FIRST: it touches only
+        process memory, so it costs nothing and needs no Redis. Only the two
+        Redis-dependent legs (L2 deletes, cross-worker publish) are skipped
+        when there is no client.
         """
+        # Local L1 first — unconditional, no Redis required.
+        try:
+            from src.app.core.tenancy.cache import invalidate_tenant_l1, publish_tenant_l1_invalidation
+
+            # Local process first (publish may not be echoed to self), then fan out.
+            invalidate_tenant_l1(slug)
+        except Exception as e:  # noqa: BLE001 - cleanup is best-effort
+            logger.warning(
+                "Tenant L1 local invalidation failed — stale is_active may persist in this worker",
+                tenant_id=str(tenant_id),
+                slug=slug,
+                error=str(e),
+            )
+
         if cache_client.client is None:
+            # No Redis: the L2 deletes and the cross-worker publish cannot run.
+            # The L1 drop above already covered THIS process; other workers
+            # keep their stale entry until their own 60s TTL expires, which is
+            # the documented bounded-staleness trade for a Redis outage.
+            logger.warning(
+                "Tenant cache invalidation degraded: Redis unavailable; "
+                "only this process's L1 entry was dropped. Other workers keep "
+                "a stale is_active until their L1 TTL expires.",
+                tenant_id=str(tenant_id),
+                slug=slug,
+            )
             return
 
         poison_key = f"tenant:invalidation_failed:{tenant_id}"
@@ -153,10 +189,8 @@ class TenantService(BaseService[Tenant]):
         )
 
         try:
-            from src.app.core.tenancy.cache import invalidate_tenant_l1, publish_tenant_l1_invalidation
+            from src.app.core.tenancy.cache import publish_tenant_l1_invalidation
 
-            # Local process first (publish may not be echoed to self), then fan out.
-            invalidate_tenant_l1(slug)
             await publish_tenant_l1_invalidation(slug)
         except Exception as e:
             # Q-M8: L1 propagation failure means OTHER workers keep serving

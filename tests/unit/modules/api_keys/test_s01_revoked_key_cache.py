@@ -129,11 +129,15 @@ class TestNoUnreclaimableOrphanEntry:
 class TestRevokeEvictsAfterCommit:
     @pytest.mark.asyncio
     async def test_cache_deleted_only_after_update_commits(self, service) -> None:
-        """The delete must not precede the commit.
+        """The tombstone write must not precede the commit.
 
         Old order cleared the cache first, so (a) a failed update left the DB
         saying active with no cache entry, and (b) a concurrent validate in the
-        delete->commit window re-populated the entry from the still-active row.
+        write->commit window re-populated the entry from the still-active row.
+
+        The write is a TOMBSTONE rather than a delete: the cached payload is
+        the authentication grant, so removing it is indistinguishable from
+        "never cached" and the read-side revocation guard never fires.
         """
         from src.app.modules.api_keys.models import APIKey
 
@@ -155,7 +159,7 @@ class TestRevokeEvictsAfterCommit:
             patch("src.app.modules.api_keys.service.execute_scoped", AsyncMock(return_value=stmt_result)),
             patch("src.app.modules.api_keys.service.audit", AsyncMock()),
         ):
-            cache.delete = AsyncMock(side_effect=lambda *_a, **_k: order.append("cache_delete"))
+            cache.set = AsyncMock(side_effect=lambda *_a, **_k: order.append("cache_tombstone"))
 
             async def _update(*_a: Any, **kw: Any) -> None:
                 order.append("db_update_commit")
@@ -166,4 +170,4 @@ class TestRevokeEvictsAfterCommit:
 
             await service.revoke_api_key(key_id=42, user_id=1, tenant_id=uuid4())
 
-        assert order == ["db_update_commit", "cache_delete"], f"wrong eviction order: {order}"
+        assert order == ["db_update_commit", "cache_tombstone"], f"wrong eviction order: {order}"

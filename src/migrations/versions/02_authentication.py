@@ -52,6 +52,12 @@ def upgrade() -> None:
         sa.Column("device_type", sa.String(length=50), nullable=True),
         sa.Column("device_name", sa.String(length=100), nullable=True),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
+        # WebAuthn authenticator metadata. Both are mapped on the ORM
+        # (auth/models.py PasskeyCredential.aaguid / .transports) and were
+        # missing here, so a passkey read raised UndefinedColumnError.
+        # Caught by scripts/check_schema_parity.py.
+        sa.Column("aaguid", sa.UUID(), nullable=True),
+        sa.Column("transports", sa.JSON(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_passkey_credentials")),
@@ -77,6 +83,11 @@ def upgrade() -> None:
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("used_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("ip_address", postgresql.INET(), nullable=True),
+        # Mapped on the ORM (auth/models.py MagicLink.user_agent) but missing
+        # here -> UndefinedColumnError on read. The identically named column on
+        # audit_logs (layer 07) is a DIFFERENT table and does not satisfy this
+        # one; check_schema_parity.py treats them separately.
+        sa.Column("user_agent", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_magic_links")),
         sa.ForeignKeyConstraint(
@@ -184,6 +195,9 @@ def upgrade() -> None:
         sa.Column("refresh_token", sa.LargeBinary(), nullable=True),
         sa.Column("token_expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("profile_data", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        # Mapped on the ORM (auth/models.py SSOConnection.provider_email) but
+        # missing here -> UndefinedColumnError on read.
+        sa.Column("provider_email", sa.String(length=255), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_user_sso_connections")),

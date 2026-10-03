@@ -64,9 +64,19 @@ async def handle_invoice_payment_succeeded(event: StripeEvent) -> None:
         )
         if existing_record is None:
             try:
+                # S-18 FIX: commit=False. The row was being committed HERE,
+                # before lock_subscription_by_id and the past_due -> active
+                # recovery further down. A failure after this point left the
+                # invoice durably recorded as PAID while the subscription was
+                # still past_due -- and the retry then took the
+                # `existing_record["status"] == "succeeded"` early return
+                # below, so the recovery could never run: permanently stuck.
+                # The sibling `update` in this same handler already passes
+                # commit=False for the same reason.
                 await _pkg.crud_billing_records.create(
                     db=db,
                     object=billing_record,
+                    commit=False,
                 )
             except IntegrityError:
                 # Concurrent redelivery inside the dedup window already inserted the

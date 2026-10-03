@@ -89,11 +89,38 @@ def _coerce_user_id(user_id: Any) -> str | None:
     return str(user_id)
 
 
+# The audit_events.entity_id column is String(36) — sized for a UUID.
+ENTITY_ID_MAX_LENGTH = 36
+
+
 def _coerce_entity_id(entity_id: Any) -> str | None:
-    """Safely coerce entity_id to string."""
+    """Coerce entity_id to string, bounded to the column width.
+
+    S-27: this was a bare ``str(entity_id)`` with no bound, and no
+    ``max_length`` exists anywhere in ``audit_logs/schemas.py`` — so an
+    over-length id was accepted from any caller (e.g.
+    ``SSOSettingsCreate.provider``, an uncapped free-text field) and only
+    failed at INSERT time. In the buffered flush path a statement error aborts
+    the whole multi-VALUES insert, so one poison row takes the entire batch
+    with it, and the flush loop re-selects the same rows — a self-sustaining
+    retry of an unresolvable row.
+
+    Truncating (rather than rejecting) keeps the audit write best-effort, which
+    is what `audit()` promises; the warning makes the truncation visible so the
+    caller can be fixed at source.
+    """
     if entity_id is None:
         return None
-    return str(entity_id)
+    coerced = str(entity_id)
+    if len(coerced) <= ENTITY_ID_MAX_LENGTH:
+        return coerced
+
+    logger.warning(
+        "audit_entity_id_truncated",
+        original_length=len(coerced),
+        max_length=ENTITY_ID_MAX_LENGTH,
+    )
+    return coerced[:ENTITY_ID_MAX_LENGTH]
 
 
 async def audit(

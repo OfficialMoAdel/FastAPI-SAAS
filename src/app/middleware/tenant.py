@@ -133,8 +133,17 @@ TENANT_HEADER = "X-Tenant-ID"
 # R5-MICRO: precompute the (prefix, prefix + "/") match pairs once at import
 # so per-request exemption checks are a single C-speed startswith(tuple)
 # instead of a Python loop building f-strings per prefix.
+#
+# S-26: the `prefix == "/"` arm is DEAD-ELIMINATED, not honoured. A root mount
+# would place "/" in this tuple, and `path.startswith(("/",))` is true for
+# every absolute path — silently exempting every request from tenant
+# resolution. The config layer (`CRUDAdminSettings.CRUD_ADMIN_MOUNT_PATH`)
+# now rejects a root mount at boot; this guard is the second line for any path
+# that reaches here another way (a directly-constructed settings object, a
+# test double, a future caller bypassing validation). The true behaviour of a
+# root mount is "admin is NOT exempt", which is the safe direction.
 _TENANT_EXEMPT_MATCHES: tuple[str, ...] = tuple(
-    prefix if prefix == "/" else f"{prefix}/" for prefix in TENANT_EXEMPT_PREFIXES
+    f"{prefix}/" for prefix in TENANT_EXEMPT_PREFIXES if prefix != "/"
 )
 
 
@@ -142,6 +151,12 @@ def is_path_exempt(path: str) -> bool:
     """Check if the request path is exempt from tenant validation."""
     if _shared_is_path_exempt(path, additional=_TENANT_EXTRA_EXEMPT):
         return True
+    # S-26: "/" is excluded here too. It used to be reachable via
+    # `path in TENANT_EXEMPT_PREFIXES`, which matched ONLY the bare "/" — but
+    # paired with `_TENANT_EXEMPT_MATCHES` it also made every absolute path
+    # exempt. A root admin mount must never waive tenant resolution.
+    if path == "/":
+        return False
     return path in TENANT_EXEMPT_PREFIXES or path.startswith(_TENANT_EXEMPT_MATCHES)
 
 

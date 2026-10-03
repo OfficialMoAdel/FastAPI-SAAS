@@ -38,6 +38,14 @@ _WEBHOOK_EVENT_KEY_PREFIX = "stripe:webhook:processed:"
 # instead of the event being permanently marked "processed" and lost.
 _WEBHOOK_PROCESSING_TTL_SECONDS = 300  # 5 minutes max handler time
 
+# How long an UNCONFIRMED DB claim may sit before another delivery is allowed
+# to steal it. This is the DB path's equivalent of the Redis processing TTL,
+# and it must be LONGER than it: the Redis TTL bounds a live handler by clock,
+# but a claim row survives a process crash, and a handler that is merely slow
+# must not be robbed mid-flight. Exceeding it means the previous holder died
+# without releasing — the case reclaim exists for.
+_WEBHOOK_ABANDONED_CLAIM_TTL_SECONDS = 900  # 15 min > 5 min processing TTL
+
 from .client import verify_webhook_signature  # noqa: E402,F401
 from .dispatch import EVENT_HANDLERS, handle_webhook_event  # noqa: E402,F401
 from .handlers import (  # noqa: E402,F401
@@ -49,6 +57,7 @@ from .handlers import (  # noqa: E402,F401
     handle_subscription_updated,
 )
 from .idempotency import (  # noqa: E402,F401
+    EventLockResult,
     _db_idempotency_check,
     _is_event_processed,
     _release_webhook_event_lock,

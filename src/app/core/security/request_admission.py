@@ -134,6 +134,7 @@ class RequestAdmissionService:
         # fixed-window engine would silently serve GCRA here and fixed window
         # everywhere else, so the algorithm gets the last word.
         if settings.security.AUTO_BAN_ENABLED and uses_gcra() and ctx.user_id and ctx.token:
+            downgraded_to_anonymous = False
             (
                 is_blacklisted,
                 limit,
@@ -159,10 +160,18 @@ class RequestAdmissionService:
                     user_id=ctx.user_id,
                     treated_as_anonymous=True,
                 )
+                # S-17 FIX (second site): the GCRA seam performs the SAME
+                # revoked-token downgrade, so the flag has to be set here too.
+                # It was hard-coded False on this branch, which meant the
+                # anonymous aggregate ceiling below was skipped for exactly the
+                # attacker it exists to stop — a caller holding their own
+                # revoked token, now re-keyed into the anonymous bucket.
+                downgraded_to_anonymous = True
             if ban_info.is_banned:
                 return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
         else:
-            limit, period, key = await self._resolve_legacy_config(request, ctx)
+            limit, period, key, downgraded_to_anonymous = await self._resolve_legacy_config(request, ctx)
+
             if settings.security.AUTO_BAN_ENABLED and uses_gcra():
                 ban_info, (is_limited, remaining, retry_after) = await check_ban_and_rate_limit(
                     client_ip, key, limit, period
@@ -178,6 +187,23 @@ class RequestAdmissionService:
                     if ban_info.is_banned:
                         return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
                 is_limited, remaining, retry_after, degraded = await consume(key, limit, period)
+
+        # S-17 FIX: a revoked token is downgraded to ANONYMOUS inside
+        # _resolve_legacy_config (or, on the GCRA branch, by the ban seam
+        # above). `ctx.user_id` still held the pre-downgrade `sub`, so the
+        # aggregate gate further down (`not ctx.user_id`) saw an authenticated
+        # caller and SKIPPED the anonymous ceiling — for a caller that had just
+        # been re-keyed into the anonymous per-path bucket, under anonymous
+        # limits.
+        #
+        # That is exactly the case the ceiling exists for (the comment above it
+        # spells out the rotation attack it closes). The caller owns their own
+        # revoked token, so bypassing it is attacker-controlled.
+        #
+        # Reported explicitly rather than by mutating ctx inside the resolver:
+        # returning the decision keeps it visible at the one place that made it.
+        if downgraded_to_anonymous:
+            ctx = ctx._replace(user_id=None)
 
         if is_limited:
             logger.warning(
@@ -346,7 +372,7 @@ class RequestAdmissionService:
         path = sanitize_path(request.url.path.lower())
         return _RateLimitContext(user_id, tier_name, tenant_id, tier_id_raw, token, jti, path)
 
-    async def _resolve_legacy_config(self, request: Request, ctx: _RateLimitContext) -> tuple[int, int, str]:
+    async def _resolve_legacy_config(self, request: Request, ctx: _RateLimitContext) -> tuple[int, int, str, bool]:
         user_id = ctx.user_id
         tier_name = ctx.tier_name
         tier_id = ctx.tier_id_raw
@@ -376,4 +402,6 @@ class RequestAdmissionService:
         # fragmenting around) a literal IP-looking string.
         anonymous_ip = raw_ip if isinstance(raw_ip, str) and raw_ip and raw_ip != "unknown" else None
         key = build_rate_limit_key(ctx.path, user_id=user_id, tenant_id=ctx.tenant_id, anonymous_ip=anonymous_ip)
-        return limit, period, key
+        # S-17: tell the caller the caller was downgraded, so the anonymous
+        # aggregate ceiling is not skipped for a caller who is now anonymous.
+        return limit, period, key, user_id is None and ctx.user_id is not None

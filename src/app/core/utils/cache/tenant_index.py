@@ -3,6 +3,25 @@
 from src.app.core.utils import cache as _state
 
 
+def _matches_prefix(cache_key: str, prefix: str) -> bool:
+    """Does a FULL cache key belong to the business prefix ``prefix``?
+
+    Index members are complete keys built by ``decorator._build_cache_key``:
+    ``public:{prefix}:{id}`` or ``tenant:{tid}:{user}:{prefix}:{id}``. The
+    business prefix is therefore a SEGMENT after the namespace and version
+    tokens, never a leading substring -- which is why ``startswith`` matched
+    nothing.
+
+    Matching on ``:{prefix}`` at a segment boundary keeps the test correct for
+    both the user-scoped and tenant-scoped shapes without having to know which
+    one it is looking at.
+    """
+    if not prefix:
+        return False
+    tail = cache_key.split(":", 3)[-1]
+    return tail == prefix or tail.startswith(f"{prefix}:")
+
+
 async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = None) -> int:
     """Invalidate all cache entries for a tenant using set-based indexing.
 
@@ -37,18 +56,32 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
     raw_keys = await client.smembers(index_key)  # type: ignore[misc]
     keys: set[str] = {k.decode("utf-8") if isinstance(k, bytes) else k for k in raw_keys}
 
+    # S-14 FIX: fall back to the GLOBAL index when the shard is empty.
+    #
+    # The previous code computed `global_index_key` and then never used it,
+    # with a comment conceding the fallback "should" happen and declining to
+    # implement it ("Let's assume migration has run"). That assumption does not
+    # hold: the only production writer of `tenant_index:*` is the @cache
+    # decorator, so any key whose shard name differs from what the caller
+    # passes is permanently unreachable.
+    #
+    # A concrete instance: `posts.erase_db_post` asked for the shard
+    # `v2:user_post_cache:{username}:{id}` while the writer shards on
+    # `_format_prefix(key_prefix, kwargs)` -> `user_post_cache:{username}`.
+    # Empty shard -> `return 0`, silently.
+    #
+    # The filter must match on the key's TAIL, not its head. Members of the
+    # global index are FULL cache keys (`tenant:{tid}:user:{uid}:v2:...`), so a
+    # `k.startswith(prefix)` test is unconditionally False -- the first
+    # version of this fallback was dead code that added a full SMEMBERS
+    # round-trip on every shard miss while matching nothing.
+    if not keys and prefix and global_index_key:
+        fallback_raw = await client.smembers(global_index_key)  # type: ignore[misc]
+        all_keys = {k.decode("utf-8") if isinstance(k, bytes) else k for k in fallback_raw}
+        keys = {k for k in all_keys if _matches_prefix(k, prefix)}
+
     if not keys:
         return 0
-
-    # Old logic required filtering here if prefix was set but index was global.
-    # Now index_key is already specific if prefix is set.
-    # However, for backward compatibility (during migration where sharded index might be empty),
-    # strictly speaking we should fall back to global index filtering if sharded is empty?
-    # But migrate_tenant_cache_index will populate both.
-    # Let's assume migration has run or we accept that new optimization requires new data.
-
-    # Double check filtering just in case we are using global index (if logic changed)
-    # But here we switched index_key. So keys are already filtered by definition of the set.
 
     # P-M5: collect ALL sharded-index keys via SCAN *before* opening the
     # pipeline. The previous shape issued SCAN round-trips while the pipeline

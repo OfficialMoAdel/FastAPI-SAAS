@@ -146,9 +146,23 @@ async def _start_permission_catalog_reconcile() -> None:
     try:
         async with local_session() as db:
             report = await reconcile_permission_catalog(db)
-            if not report.stale:
-                # A database built from the corrected 03_access_control has no
-                # stale slugs, so there is nothing to carry forward.
+            # S-13 FIX: the condition was inverted (`if not report.stale`).
+            # `migrate_successor_grants` only does work when a STALE slug row
+            # actually exists — it looks each SUCCESSOR_SLUGS key up in the
+            # persisted set and `continue`s when absent. That row exists
+            # precisely when `report.stale` is non-empty, since reconcile
+            # computes `stale = existing - wanted`.
+            #
+            # So the old guard ran the migration exactly when there was
+            # nothing to migrate (every lookup `continue`d), and skipped it
+            # exactly when there was — leaving a role holding the retired
+            # `files:manage` grant with no `files:write`/`files:delete`
+            # successor. Silent, permanent permission loss.
+            if report.stale:
+                # Carry grants forward for the renamed slugs. On a database
+                # built from the corrected 03_access_control `stale` is empty,
+                # so this is a no-op there — migrate_successor_grants is
+                # idempotent and never removes a grant.
                 await migrate_successor_grants(db)
     except Exception as e:  # noqa: BLE001 - catalog sync must not block startup
         logger.error("permission_catalog_reconcile_failed", error=str(e))
@@ -406,10 +420,17 @@ def create_application(
 
     # Environment-specific docs control
     environment = settings.env.ENVIRONMENT
-    # If ENVIRONMENT is set, we might want to hide docs in production
-    # but the legacy logic was checking for EnvironmentSettings instance.
-    # We'll use a more direct check for production.
-    if environment == EnvironmentOption.PRODUCTION:
+    # S-22 FIX: this only nulled the built-in docs URLs for PRODUCTION. But
+    # FastAPI registers its DEFAULT /docs, /redoc and /openapi.json routes
+    # DURING `FastAPI(...)` construction, and Starlette matches routes in
+    # registration order — so on STAGING the ungated built-ins were registered
+    # before the superuser-gated `docs_router` was included, and won. The gate
+    # was dead code that read as protection.
+    #
+    # Nulling the built-ins for every NON-LOCAL environment means only the
+    # gated router can serve them. LOCAL keeps the built-ins so the developer
+    # experience is unchanged.
+    if environment != EnvironmentOption.LOCAL:
         kwargs.update({"docs_url": None, "redoc_url": None, "openapi_url": None})
 
     # Use custom lifespan if provided, otherwise use default factory.
@@ -419,6 +440,14 @@ def create_application(
         lifespan = lifespan_factory(settings, create_tables_on_start=create_tables_on_start)
 
     application = FastAPI(lifespan=lifespan, **kwargs)
+    # S-21 / #11: the admin panel is mounted during the lifespan, which runs
+    # AFTER this function returns, so the app has to reach `_init_admin`
+    # through the phase list. A module-level `_application` global was the first
+    # attempt and was wrong: it is overwritten by the LAST `create_application`
+    # call, so a suite that builds two apps mounted the panel onto whichever was
+    # built last rather than the one whose lifespan was running. The app is now
+    # bound with `functools.partial` at the phase site, alongside every other
+    # phase that needs a constructor argument.
     application.include_router(router)
 
     # C4: CORS is registered by the single middleware wiring point
@@ -465,6 +494,7 @@ def create_application(
 admin: "CRUDAdmin | None" = None
 
 
+
 async def _warm_token_blacklist_cache() -> None:
     """Warm the token blacklist Redis cache from database on startup."""
     # RedisError imported at module top (M-3: duplicate import removed).
@@ -480,23 +510,60 @@ async def _warm_token_blacklist_cache() -> None:
 
     try:
         async with async_session_maker() as db:
-            # P-M9: cap the warmup set — loading every active blacklisted
-            # token made boot cost O(total sessions). Keep the N
-            # longest-lived entries (they stay in the cache longest, so the
-            # warm-up value per slot is highest); the rest fall back to the
-            # on-demand DB check on first lookup. TOKEN_BLACKLIST_WARMUP_LIMIT
-            # is env-tunable (APP_TOKEN_BLACKLIST_WARMUP_LIMIT); 0 disables
-            # warmup entirely (and skips the query). P2: the cap is pushed
-            # into the DB (ORDER BY expires_at DESC + LIMIT) so boot is
-            # O(limit) even before the first row is read.
-            limit = settings.app.TOKEN_BLACKLIST_WARMUP_LIMIT
-            if limit == 0:
-                logger.info("Token blacklist warmup disabled by TOKEN_BLACKLIST_WARMUP_LIMIT=0")
-            else:
-                tokens = await crud_token_blacklist.get_active_tokens(db, limit=limit)
-                if tokens:
-                    count = await warm_cache_from_db(tokens)
-                    logger.info("Token blacklist cache warmed", count=count)
+            # S-10 FIX (mechanism): the warmup SELECT ran tenant-unaware, but
+            # `token_blacklist` is RLS-enforced AND FORCEd (migration 08) with a
+            # NOT NULL tenant_id and policy
+            # `tenant_id = auth.current_tenant_id()`. At boot no tenant is
+            # bound, so that predicate is NULL -> the query matched ZERO ROWS on
+            # every boot, forever. The cache was therefore always cold, which is
+            # exactly what the warmup exists to prevent: is_token_blacklisted
+            # returns None on a miss, so every authenticated request paid a
+            # _check_db_fallback DB round-trip until the negative cache filled.
+            #
+            # The blacklist is a GLOBAL revocation oracle - the model is
+            # explicitly tenant-blind ("the idempotency domain is the account").
+            # Warming it must be tenant-blind too, hence an audited bypass
+            # rather than an RLS exemption.
+            from src.app.core.db.rls import bypass_rls
+
+            async with bypass_rls(db, reason="Token blacklist cache warmup (global revocation set)"):
+                # P-M9: cap the warmup set — loading every active blacklisted
+                # token made boot cost O(total sessions). Keep the N
+                # longest-lived entries (they stay in the cache longest, so the
+                # warm-up value per slot is highest); the rest fall back to the
+                # on-demand DB check on first lookup. TOKEN_BLACKLIST_WARMUP_LIMIT
+                # is env-tunable (APP_TOKEN_BLACKLIST_WARMUP_LIMIT); 0 disables
+                # warmup entirely (and skips the query). P2: the cap is pushed
+                # into the DB (ORDER BY expires_at DESC + LIMIT) so boot is
+                # O(limit) even before the first row is read.
+                limit = settings.app.TOKEN_BLACKLIST_WARMUP_LIMIT
+                if limit == 0:
+                    logger.info("Token blacklist warmup disabled by TOKEN_BLACKLIST_WARMUP_LIMIT=0")
+                else:
+                    tokens = await crud_token_blacklist.get_active_tokens(db, limit=limit)
+                    # S-10 FIX (observability half): an empty result used to
+                    # fall through silently — no log, no error. The query
+                    # SUCCEEDED, so the `except (RedisError, SQLAlchemyError,
+                    # ...)` below cannot fire, and this is the ONLY blacklist
+                    # warmup path in the codebase, so nothing downstream would
+                    # notice either. A warmup that reports nothing when it warms
+                    # nothing is an unmonitorable control.
+                    #
+                    # With the bypass above, an empty result now genuinely means
+                    # "no active revocations", not "RLS hid them". It still
+                    # warns, because a revocation set that empties unexpectedly
+                    # is worth surfacing rather than absorbing.
+                    if tokens:
+                        count = await warm_cache_from_db(tokens)
+                        logger.info("Token blacklist cache warmed", count=count)
+                    else:
+                        logger.warning(
+                            "Token blacklist warmup found no active tokens; "
+                            "the revocation cache starts empty for this process. "
+                            "Expected on a fresh install — investigate if this "
+                            "deployment is known to have revoked tokens.",
+                            limit=limit,
+                    )
     except (RedisError, SQLAlchemyError, ServiceUnavailableError) as e:
         logger.error("Failed to warm token blacklist cache", error=str(e))
         if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
@@ -621,8 +688,13 @@ async def _warm_startup_caches() -> None:
         logger.warning("Cache warming exceeded 15s timeout; continuing boot with partial state")
 
 
-async def _init_admin() -> None:
-    """Initialize admin interface if enabled."""
+async def _init_admin(application: FastAPI) -> None:
+    """Initialize the admin interface if enabled, mounting it onto ``application``.
+
+    The panel is mounted HERE rather than in ``create_application`` because
+    ``CRUDAdmin.initialize()`` provisions the bootstrap credential and must
+    not run at import/construction time.
+    """
     global admin
     if admin is None:
         from src.app.admin.initialize import create_admin_interface
@@ -631,7 +703,36 @@ async def _init_admin() -> None:
     if admin:
         try:
             await admin.initialize()
-            logger.info("Admin interface initialized successfully")
+
+            # S-21 FIX: the panel was BUILT and INITIALIZED but never reachable —
+            # nothing called .mount(), while initialize() had already
+            # provisioned the bootstrap admin credential. The log even claimed
+            # "Admin interface initialized successfully".
+            #
+            # CRUDAdmin builds its own FastAPI app: __init__ sets `self.app` and
+            # calls `self.app.include_router(self.router)`. That is the object to
+            # mount, at `get_url_prefix()` (the router itself carries NO prefix,
+            # so the mount prefix is the only one - no doubling).
+            #
+            # Previously I concluded the package "exposes no ASGI app". That was
+            # wrong, and instructive: `dir(CRUDAdmin)` inspects the CLASS, and
+            # `app` is an INSTANCE attribute. Read __init__, not the class dir.
+            mount_path = admin.get_url_prefix() or settings.admin.CRUD_ADMIN_MOUNT_PATH.rstrip("/")
+            # S-26 guarantees the mount path is non-root at the config layer; a
+            # root mount would exempt every path from tenant resolution.
+            if not mount_path or mount_path == "/":
+                logger.error(
+                    "admin_mount_refused_root_path",
+                    detail="Refusing to mount the admin panel at '/'; it would waive tenant isolation.",
+                )
+                return
+
+            application.mount(mount_path, admin.app)
+            logger.info(
+                "admin_panel_mounted",
+                mount_path=mount_path,
+                detail="CRUDAdmin self.app mounted at get_url_prefix()",
+            )
         except Exception as e:  # noqa: BLE001 - P1-17: admin is optional; API must boot without it
             logger.error("Failed to initialize admin interface", error=str(e))
 
@@ -697,7 +798,7 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None]:
             # test_startup_phase_duplication.py asserts the union of BOTH
             # lists has no repeated name.
             StartupPhase("warm_token_blacklist", _warm_startup_caches, None),
-            StartupPhase("admin", _init_admin, None),
+            StartupPhase("admin", partial(_init_admin, app), None),
         ]
         async with compose_phases(admin_phases, tail=(_teardown_security_listeners, _teardown_logging)):
             yield

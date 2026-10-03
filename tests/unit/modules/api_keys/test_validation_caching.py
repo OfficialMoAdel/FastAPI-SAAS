@@ -190,7 +190,14 @@ class TestAPIKeyRevocationCacheInvalidation:
 
     @pytest.mark.asyncio
     async def test_revoke_invalidates_cache(self, api_key_service: Any) -> None:
-        """Revoking an API key should invalidate its cache entry."""
+        """Revoking an API key must leave a TOMBSTONE, not a deletion.
+
+        The cached payload IS the authentication grant. Deleting it leaves the
+        read-side `is_active is False` guard with nothing to match — and the
+        only writer of that payload hard-codes True — so a revoked key kept
+        authenticating for the full 300s TTL. The tombstone is what makes the
+        guard reachable.
+        """
         from src.app.modules.api_keys.models import APIKey
 
         # Create a proper mock APIKey model object
@@ -211,14 +218,21 @@ class TestAPIKeyRevocationCacheInvalidation:
         ):
             mock_crud.update = AsyncMock()
             mock_redis.delete = AsyncMock()
+            mock_redis.set = AsyncMock()
 
             await api_key_service.revoke_api_key(key_id=42, user_id=1, tenant_id=1)
             mock_audit.assert_awaited_once()
 
-            # Verify cache was invalidated
-            mock_redis.delete.assert_called_once()
-            call_args = mock_redis.delete.call_args[0][0]
+            # A tombstone is written, NOT a deletion.
+            mock_redis.delete.assert_not_called()
+            mock_redis.set.assert_called_once()
+            call_args = mock_redis.set.call_args[0][0]
             assert call_args.startswith("api_key:")
+
+            from src.app.core.json_utils import json_loads
+
+            tombstone = json_loads(mock_redis.set.call_args[0][1])
+            assert tombstone["is_active"] is False
 
     @pytest.mark.asyncio
     async def test_revoke_without_redis_still_works(self, api_key_service: Any) -> None:

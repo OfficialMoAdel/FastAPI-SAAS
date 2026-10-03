@@ -81,8 +81,14 @@ class IPFilterService:
         expires_at: datetime | None = None,
         added_by: int | None = None,
     ) -> bool:
-        """Add an IP address to the whitelist."""
-        invalidate_ip_status_cache(ip_address)
+        """Add an IP address to the whitelist.
+
+        S-39: the negative-status cache is invalidated AFTER the write, not
+        before. Invalidating first let a concurrent `check_ip_status` repopulate
+        the stale `(False, False)` entry after the rule landed, so the new
+        whitelist/blacklist entry took up to _IP_STATUS_NEGATIVE_TTL to become
+        visible.
+        """
         key = f"{self.WHITELIST_PREFIX}{ip_address}"
         data = {
             "ip_address": ip_address,
@@ -90,10 +96,18 @@ class IPFilterService:
             "reason": reason,
             "added_by": added_by,
         }
+        # Normalise a naive expiry to UTC before subtracting. Subtracting a
+        # naive datetime from an aware one raises TypeError, and only
+        # MissingClientError was caught here, so a caller passing a naive
+        # datetime got an unhandled 500 instead of the documented False.
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+
         try:
             if expires_at:
                 ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
                 if ttl_seconds <= 0:
+                    invalidate_ip_status_cache(ip_address)
                     return False
                 async with get_redis_client() as client:
                     await client.setex(key, ttl_seconds, json_dumps(data, as_str=True))
@@ -103,17 +117,20 @@ class IPFilterService:
         except MissingClientError:
             logger.warning("add_to_whitelist failed: Redis unavailable", ip_address=ip_address)
             return False
+        # S-39: invalidate only now that the entry is durable.
+        invalidate_ip_status_cache(ip_address)
         return True
 
     async def remove_from_whitelist(self, ip_address: str) -> bool:
-        """Remove an IP address from the whitelist."""
-        invalidate_ip_status_cache(ip_address)
+        """Remove an IP address from the whitelist. (S-39: invalidate after.)"""
         try:
             async with get_redis_client() as client:
-                return bool(await client.delete(f"{self.WHITELIST_PREFIX}{ip_address}") > 0)
+                removed = bool(await client.delete(f"{self.WHITELIST_PREFIX}{ip_address}") > 0)
         except MissingClientError:
             logger.warning("remove_from_whitelist failed: Redis unavailable", ip_address=ip_address)
             return False
+        invalidate_ip_status_cache(ip_address)
+        return removed
 
     async def add_to_blacklist(
         self,
@@ -122,8 +139,11 @@ class IPFilterService:
         expires_at: datetime | None = None,
         added_by: int | None = None,
     ) -> bool:
-        """Add an IP address to the blacklist."""
-        invalidate_ip_status_cache(ip_address)
+        """Add an IP address to the blacklist.
+
+        S-39: see add_to_whitelist — the cache drop moves after the write so a
+        concurrent reader cannot re-arm the stale "not banned" entry.
+        """
         key = f"{self.BLACKLIST_PREFIX}{ip_address}"
         data = {
             "ip_address": ip_address,
@@ -131,10 +151,18 @@ class IPFilterService:
             "reason": reason,
             "added_by": added_by,
         }
+        # Normalise a naive expiry to UTC before subtracting. Subtracting a
+        # naive datetime from an aware one raises TypeError, and only
+        # MissingClientError was caught here, so a caller passing a naive
+        # datetime got an unhandled 500 instead of the documented False.
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+
         try:
             if expires_at:
                 ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
                 if ttl_seconds <= 0:
+                    invalidate_ip_status_cache(ip_address)
                     return False
                 async with get_redis_client() as client:
                     await client.setex(key, ttl_seconds, json_dumps(data, as_str=True))
@@ -144,17 +172,20 @@ class IPFilterService:
         except MissingClientError:
             logger.warning("add_to_blacklist failed: Redis unavailable", ip_address=ip_address)
             return False
+        # S-39: invalidate only now that the ban is durable.
+        invalidate_ip_status_cache(ip_address)
         return True
 
     async def remove_from_blacklist(self, ip_address: str) -> bool:
-        """Remove an IP address from the blacklist."""
-        invalidate_ip_status_cache(ip_address)
+        """Remove an IP address from the blacklist. (S-39: invalidate after.)"""
         try:
             async with get_redis_client() as client:
-                return bool(await client.delete(f"{self.BLACKLIST_PREFIX}{ip_address}") > 0)
+                removed = bool(await client.delete(f"{self.BLACKLIST_PREFIX}{ip_address}") > 0)
         except MissingClientError:
             logger.warning("remove_from_blacklist failed: Redis unavailable", ip_address=ip_address)
             return False
+        invalidate_ip_status_cache(ip_address)
+        return removed
 
     async def is_whitelisted(self, ip_address: str) -> bool:
         """Check whether an IP is whitelisted."""

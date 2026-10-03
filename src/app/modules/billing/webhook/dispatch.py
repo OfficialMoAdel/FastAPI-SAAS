@@ -8,6 +8,7 @@ Adding a new Stripe event type means registering one entry in
 from src.app.clients.billing import StripeEvent
 from src.app.modules.billing import webhook as _pkg
 from src.app.modules.billing.webhook.idempotency import (
+    EventLockResult,
     _release_webhook_event_lock,
 )
 
@@ -61,22 +62,38 @@ async def handle_webhook_event(event: StripeEvent) -> dict[str, str]:
         _pkg.logger.info("Event durably processed, skipping redelivery", event_id=event_id)
         return {"status": "already_processed"}
 
-    # IDEMPOTENCY CHECK: Atomically acquire processing lock
-    # Uses SET NX for atomic check-and-mark, eliminating TOCTOU race
-    if not await _pkg._try_acquire_event_lock(event_id):
-        _pkg.logger.info("Event already processed, skipping", event_id=event_id)
-        return {"status": "already_processed"}
+    # IDEMPOTENCY CHECK: acquire processing rights.
+    # Uses SET NX for atomic check-and-mark, eliminating TOCTOU race.
+    #
+    # The result is three-valued because "another delivery is working on it"
+    # and "it is already finished" need OPPOSITE HTTP answers. A bare bool
+    # collapsed both into "already_processed", which `ingest_webhook` then
+    # flattened into a 200 for everything — so a concurrent redelivery was
+    # acked "handled" while the in-flight original had not yet succeeded. Had
+    # that original then failed, Stripe had already been told "success", never
+    # retried, and the event was silently lost.
+    lock_result, lock_token = await _pkg._try_acquire_event_lock(event_id)
+    if lock_result is not EventLockResult.ACQUIRED:
+        _pkg.logger.info(
+            "Event not acquirable, reporting disposition",
+            event_id=event_id,
+            event_type=event_type,
+            lock_result=lock_result.value,
+        )
+        return {"status": lock_result.value}
 
     try:
         # Handlers manage their own DB sessions and RLS context.
         # Late-bound through the package namespace (see EVENT_HANDLERS note).
         await getattr(_pkg, handler_name)(event)
 
-        # B4: write the durable terminal marker (Redis 7d TTL + WebhookEvent row)
-        # so late Stripe redeliveries are rejected above.
+        # B4: write the durable terminal marker (Redis 7d TTL + WebhookEvent
+        # row stamped completed) so late Stripe redeliveries are rejected above.
         from src.app.modules.billing.webhook.idempotency import mark_event_processed
 
-        await mark_event_processed(event_id)
+        # Pass our token so the completion stamp cannot land on a claim a
+        # concurrent delivery has since reclaimed for itself.
+        await mark_event_processed(event_id, lock_token=lock_token)
 
     except Exception as e:
         _pkg.logger.error(
@@ -86,7 +103,9 @@ async def handle_webhook_event(event: StripeEvent) -> dict[str, str]:
             error=e,
         )
 
-        await _release_webhook_event_lock(event_id)
+        # S-04: pass our lock token so the release is a compare-and-delete and
+        # cannot erase a terminal marker written by a delivery that succeeded.
+        await _release_webhook_event_lock(event_id, lock_token=lock_token)
 
         raise
 

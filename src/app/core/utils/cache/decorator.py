@@ -302,7 +302,13 @@ def _build_cache_key(
     to prevent cross-tenant / cross-user cache leakage.
     """
     tenant = _state.get_current_tenant()
-    tenant_id = str(tenant.tenant_id) if tenant is not None else None
+    # S-16 FIX: truthiness, not `is not None`. NO_TENANT is falsy by design,
+    # and it is what TenantMiddleware binds for every request without an
+    # X-Tenant-ID header. `tenant is not None` therefore produced
+    # `tenant:00000000-0000-0000-0000-000000000000:v2:...` instead of the
+    # `public:` namespace this branch exists to guarantee — a phantom tenant
+    # whose entries are indexed into a shard no invalidation can name.
+    tenant_id = str(tenant.tenant_id) if tenant else None
 
     user_id: Any = None
     if user_scoped:
@@ -712,7 +718,15 @@ def cache(  # noqa: C901
                             # O(1) lookup never fires under tenant context.
                             if invalidation_patterns:
                                 _reg_tenant = _state.get_current_tenant()
-                                _reg_tenant_id = str(_reg_tenant.tenant_id) if _reg_tenant is not None else None
+                                # S-13 FIX: truthiness, matching
+                                # `_build_cache_key`. `NO_TENANT` is falsy by
+                                # design, so `is not None` produced the
+                                # UUID-zero id here while the DATA was written
+                                # under `public:` — the pattern index was named
+                                # after a tenant that owns none of those keys,
+                                # and every scoped invalidation missed. All
+                                # three seams in this module must agree.
+                                _reg_tenant_id = str(_reg_tenant.tenant_id) if _reg_tenant else None
                                 _reg_user_id = _resolve_user_id(kwargs) if user_scoped else None
                                 formatted_patterns = [_format_prefix(p, kwargs) for p in invalidation_patterns]
                                 for pattern in formatted_patterns:
@@ -792,7 +806,10 @@ def cache(  # noqa: C901
                     # Recompute the authorized principal (mirrors _build_cache_key)
                     # so pattern invalidation never wipes another tenant's / user's keys.
                     _tenant = _state.get_current_tenant()
-                    _tenant_id = str(_tenant.tenant_id) if _tenant is not None else None
+                    # S-13 FIX: truthiness, matching the registration side and
+                    # `_build_cache_key`. Register and invalidate must compute
+                    # the IDENTICAL index name or the O(1) lookup never fires.
+                    _tenant_id = str(_tenant.tenant_id) if _tenant else None
                     _user_id: Any = _resolve_user_id(kwargs) if user_scoped else None
 
                     for pattern in pattern_to_invalidate_extra:
