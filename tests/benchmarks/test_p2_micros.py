@@ -4,24 +4,27 @@ Thresholds come from the round-2 plan guardrails (§6.7):
 - attack-scan clean p50 < 50µs (was 1,133µs pre-P1-6)
 - sanitize-clean < 5µs (was 28µs pre-P1-10)
 
-Everything else is log-only (no assert). The two asserts below use
-best-of-N batches, not a single mean: scheduling jitter on a loaded
-runner only ever pushes timings UP, so the minimum over batches
-measures the code's true cost (same rationale as timeit best-of-N).
+Timing goes through :mod:`src.benchmarks.protocol`, which is the single
+implementation of the H-11 protocol (``best_of(min-of-N, median-of-M)``) and
+which REFUSES a relative pass criterion. The helpers below are thin delegates
+kept so the call sites read the same as before; the estimator itself lives in
+one place and is not reimplemented here.
+
 Heavier benchmarks the plan lists (verify_token,
 get_role_permissions, get_metrics) need live DB/Redis and are excluded;
 those paths are covered by unit tests instead.
 """
 
-import gc
 import logging
+import statistics
 import sys
-import time
 from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from src.benchmarks import protocol
 
 logger = logging.getLogger(__name__)
 
@@ -29,21 +32,24 @@ logger = logging.getLogger(__name__)
 def run_benchmark(
     name: str,
     func: Any,
-    iterations: int = 10000,
+    iterations: int = 2000,
     warmup: int = 100,
 ) -> tuple[float, float]:
-    """Time func(); returns (mean_us, ops_per_sec). Same shape as test_post_optimization."""
-    for _ in range(warmup):
-        func()
-    gc.collect()
-    gc.collect()
-    start = time.perf_counter()
-    for _ in range(iterations):
-        func()
-    elapsed = time.perf_counter() - start
-    mean_us = (elapsed / iterations) * 1_000_000
-    logger.info("%s: %.0f ops/sec (%.2fµs/op)", name, iterations / elapsed, mean_us)
-    return mean_us, iterations / elapsed
+    """Delegate to the protocol runner; returns (median batch mean-µs/op, ops/sec).
+
+    Previously this timed one pass and returned its mean, so a single GC pause
+    was the whole answer. It now returns the median of the per-batch means
+    across the protocol's repetitions, which is the same quantity made robust.
+    """
+    result = protocol.measure(func, name=name, iterations=iterations, warmup=warmup, unit="us")
+    logger.info(
+        "%s: %.0f ops/sec (%.2fµs/op)\n%s",
+        name,
+        1_000_000 / result.best_us,
+        result.best_us,
+        protocol.render(result),
+    )
+    return statistics.median(result.batch_medians_us), 1_000_000 / result.best_us
 
 
 def best_of_benchmark(
@@ -53,21 +59,22 @@ def best_of_benchmark(
     iterations: int = 2000,
     warmup: int = 100,
 ) -> float:
-    """Median mean-µs/op over N batches.
+    """Delegate to the protocol runner; returns best_of(min-of-N, median-of-M) in µs/op.
 
-    A batch can be made arbitrarily slow by a GC pause or a page fault
-    unrelated to the code under test, so a plain min() is not robust: on a
-    loaded runner every batch can catch a spike, and the winner is then
-    whichever batch happened to dodge one. The median ignores a single
-    unlucky batch (and, with 5 batches, any one outlier) while still
-    tracking the true cost rather than the luckiest run."""
-    results = sorted(
-        run_benchmark(f"{name}[{i}]", func, iterations=iterations, warmup=warmup)[0]
-        for i in range(batches)
+    The reason a plain min() over batches is not enough used to live in this
+    function's docstring and still holds — it is now enforced by the protocol,
+    which takes the median OF THE PER-BATCH MINIMA rather than the median of the
+    per-batch means. See ``src/benchmarks/protocol.py`` for why the weaker form
+    is not used anywhere.
+    """
+    result = protocol.measure(func, name=name, iterations=iterations, warmup=warmup, repetitions=batches, unit="us")
+    logger.info(
+        "%s batches mins: %s | best_of(min-of-N, median-of-M) %.2fµs/op",
+        name,
+        ", ".join(f"{r:.2f}" for r in result.batch_mins_us),
+        result.best_us,
     )
-    best = results[len(results) // 2]
-    logger.info("%s batches: %s | median %.2fµs/op", name, ", ".join(f"{r:.2f}" for r in results), best)
-    return best
+    return result.best_us
 
 
 class TestSanitizerBench:
@@ -209,15 +216,20 @@ class TestDecodeSentinelBench:
         token = "not.a.jwt"
         assert await jwt_utils.decode_verified_token(token) is None
 
-        iterations, bad = 300, 0
-        for _ in range(20):
-            await jwt_utils.decode_verified_token(token)
-        gc.collect()
-        start = time.perf_counter()
-        for _ in range(iterations):
+        bad = 0
+
+        async def attempt() -> None:
+            nonlocal bad
             if await jwt_utils.decode_verified_token(token) is not None:
                 bad += 1
-        elapsed = time.perf_counter() - start
-        assert bad == 0
-        mean_us = (elapsed / iterations) * 1_000_000
-        logger.info("decode_sentinel_hit: %.0f ops/sec (%.2fµs/op)", iterations / elapsed, mean_us)
+
+        result = await protocol.measure_async(
+            attempt, name="decode_sentinel_hit", iterations=300, warmup=20, unit="us"
+        )
+        assert bad == 0, f"the invalid-token sentinel returned a token {bad} time(s); it must always fail closed"
+        logger.info(
+            "decode_sentinel_hit: %.0f ops/sec (%.2fµs/op)\n%s",
+            1_000_000 / result.best_us,
+            result.best_us,
+            protocol.render(result),
+        )

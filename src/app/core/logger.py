@@ -102,10 +102,11 @@ def setup_logging() -> None:
     # DropEvent from foreign_pre_chain, so stdlib records must never reach the
     # sampler — they keep full sanitization, no sampling.
     structlog_processors = shared_processors + [
-        # S-05c: the per-event overrides were added to `make_sampling_processor`
-        # but never passed, so the whole Mapping machinery was unreachable in
-        # production and a deployment setting a per-event rate got the global
-        # one instead.
+        # S-05c: per-event overrides. These were added to `make_sampling_processor`
+        # but never forwarded to `SamplingProcessor`, so the whole Mapping
+        # machinery was unreachable and a deployment setting a per-event rate got
+        # the global one instead. Fixed in log_sampling.make_sampling_processor;
+        # tests/unit/core/test_log_sampling.py pins that the map arrives.
         make_sampling_processor(
             settings.performance.LOG_SAMPLING_RATE,
             rates=settings.performance.LOG_SAMPLING_RATES,

@@ -1,20 +1,39 @@
 """Passkey lookup latency benchmark tests.
 
-Verifies the O(log n) hash-based lookup optimization for passkey credentials.
-Target: <5ms p99 at 10k credentials, <10ms at 100k credentials.
+Verifies the hash-indexed lookup for passkey credentials rather than an O(n)
+scan over a materialised credential list.
 
-These tests verify the optimization works correctly, not actual latency
-(which requires real database and production data).
+NO LATENCY TARGET IS ASSERTED FOR THE ENDPOINT. This file previously carried
+"Target: <5ms p99 at 10k credentials, <10ms at 100k credentials", which was
+never measured and cannot be: no such measurement exists, a synthetic in-process
+dictionary is not a database lookup, and every pre-2026-10-04 figure this
+repository holds was taken on Windows and is archived as NON-REPRESENTATIVE
+(addendum A-5). A harness that states the number it is trying to measure is
+worse than one that states nothing.
+
+HOW THE TIMING WORKS
+Every number below is produced by ``src.benchmarks.protocol``, the single
+implementation of the H-11 protocol: ``best_of(min-of-N, median-of-M)`` with a
+warm-up and a ``gc.collect()`` before every timed batch. The estimator is not
+reimplemented here. Pass criteria are ABSOLUTE fixed ceilings chosen in advance,
+never ``new < old``: requiring the new number to be smaller than the old number
+passes on noise, and this repository has measured 7.1x run-to-run variation for
+the SAME unchanged arm (perf C11, perf E1).
 """
 
 import hashlib
 import logging
-import time
 from typing import Any
 
-import pytest
+from src.benchmarks import protocol
 
 logger = logging.getLogger(__name__)
+
+#: The gate this file used to express as ``assert lookup_time < 0.001``. It is a
+#: REGRESSION GUARD on a synthetic dict lookup, not a performance claim: a dict
+#: subscript is nanoseconds, so the ceiling is deliberately loose enough that it
+#: cannot fire on a noisy shared runner.
+HASH_LOOKUP_CEILING_US = protocol.Ceiling(1_000.0, "dict.get over a 10k-entry index")
 
 
 class TestPasskeyHashIndexLookup:
@@ -94,8 +113,7 @@ class TestPasskeyLookupAlgorithm:
 class TestPasskeyLookupPerformance:
     """Performance characteristics verification tests."""
 
-    @pytest.mark.asyncio
-    async def test_hash_lookup_time_complexity(self) -> None:
+    def test_hash_lookup_time_complexity(self) -> None:
         """Verify hash lookup is O(1) dictionary lookup, not O(n) scan."""
         # Simulate the lookup pattern
         credentials_by_hash: dict[str, dict[str, Any]] = {}
@@ -114,20 +132,42 @@ class TestPasskeyLookupPerformance:
         target_cred = b"credential_5000"
         target_hash = hashlib.sha256(target_cred).hexdigest()
 
-        start = time.perf_counter()
-        result = credentials_by_hash.get(target_hash)
-        lookup_time = time.perf_counter() - start
+        found: dict[str, Any] | None = None
 
-        assert result is not None
-        assert result["id"] == 5000
+        def probe() -> None:
+            nonlocal found
+            found = credentials_by_hash.get(target_hash)
 
-        # Hash lookup should be very fast (<1ms)
-        assert lookup_time < 0.001, f"Hash lookup too slow: {lookup_time:.6f}s"
-        logger.info("Hash lookup time: %.6fs (target < 0.001s)", lookup_time)
+        # iterations=1000 because ONE dict.get is tens of nanoseconds: a single
+        # sample would be dominated by the clock's own resolution and by one
+        # scheduler preemption. The protocol aggregates the per-call minima, so
+        # 1000 samples per batch is what makes the per-call figure mean anything.
+        result = protocol.measure(probe, name="passkey_hash_lookup", iterations=1_000, warmup=100)
 
-    @pytest.mark.asyncio
-    async def test_linear_scan_comparison(self) -> None:
-        """Compare hash lookup vs linear scan to show improvement."""
+        assert found is not None
+        assert found["id"] == 5000
+
+        protocol.verdict(result, HASH_LOOKUP_CEILING_US).assert_passed()
+        logger.info("Hash lookup: %s", protocol.render(result))
+
+    def test_linear_scan_comparison(self) -> None:
+        """Compare hash lookup vs linear scan to show improvement.
+
+        TWO KINDS OF CLAIM, HANDLED DIFFERENTLY.
+
+        The ratio is the claim this test exists to make, because a ceiling on
+        the SLOW arm cannot detect a complexity regression: if the scan becomes
+        O(1) the two arms converge and a fixed ceiling would be satisfied while
+        the regression shipped. So the ratio is asserted. It is not asserted as
+        ``linear > hash``, which would be satisfied by two numbers 1% apart; it
+        must clear ``NOISE_FLOOR_RATIO``, which is the ~2x within-noise floor
+        this repository has measured. The previous threshold was ``speedup > 10``,
+        which is stronger than a bare ordering but is still an unsigned constant
+        with nothing behind it.
+
+        Separately the fast arm carries an ABSOLUTE ceiling, so "the ratio is
+        large" can never be satisfied by both arms being slow.
+        """
         credentials: list[dict[str, Any]] = []
         credentials_by_hash: dict[str, dict[str, Any]] = {}
 
@@ -147,35 +187,40 @@ class TestPasskeyLookupPerformance:
         target_cred = b"credential_9999"  # Worst case for linear scan
         target_hash = hashlib.sha256(target_cred).hexdigest()
 
-        # Linear scan (O(n)) - old approach
-        start = time.perf_counter()
-        linear_result = None
-        for cred in credentials:
-            if cred["credential_id"] == target_cred:
-                linear_result = cred
-                break
-        linear_time = time.perf_counter() - start
+        linear_result: dict[str, Any] | None = None
+        hash_result: dict[str, Any] | None = None
 
-        # Hash lookup (O(1)) - new approach
-        start = time.perf_counter()
-        hash_result = credentials_by_hash.get(target_hash)
-        hash_time = time.perf_counter() - start
+        def linear_arm() -> None:
+            nonlocal linear_result
+            linear_result = None
+            for cred in credentials:
+                if cred["credential_id"] == target_cred:
+                    linear_result = cred
+                    break
+
+        def hash_arm() -> None:
+            nonlocal hash_result
+            hash_result = credentials_by_hash.get(target_hash)
+
+        # iterations=5: one 10k-iteration scan IS the unit, so a large inner
+        # loop would measure the loop counter rather than the scan.
+        linear = protocol.measure(linear_arm, name="passkey_linear_scan", iterations=5, warmup=1)
+        hashed = protocol.measure(hash_arm, name="passkey_hash_lookup", iterations=1_000, warmup=100)
 
         assert linear_result is not None
         assert hash_result is not None
         assert linear_result["id"] == hash_result["id"]
 
-        # Hash should be significantly faster
-        speedup = linear_time / hash_time if hash_time > 0 else float("inf")
-        logger.info(
-            "Linear: %.6fs, Hash: %.6fs, Speedup: %.1fx",
-            linear_time,
-            hash_time,
-            speedup,
-        )
+        speedup = linear.best_us / hashed.best_us if hashed.best_us > 0 else float("inf")
+        logger.info("Linear: %s", protocol.render(linear))
+        logger.info("Hash: %s", protocol.render(hashed))
+        logger.info("Speedup: %.1fx (noise floor %.1fx)", speedup, protocol.NOISE_FLOOR_RATIO)
 
-        # At 10k items, hash should be at least 10x faster
-        assert speedup > 10, f"Expected >10x speedup, got {speedup:.1f}x"
+        assert speedup >= protocol.NOISE_FLOOR_RATIO, (
+            f"expected the hash index to beat the scan by more than the noise floor "
+            f"({protocol.NOISE_FLOOR_RATIO:.1f}x), got {speedup:.1f}x"
+        )
+        protocol.verdict(hashed, HASH_LOOKUP_CEILING_US).assert_passed()
 
 
 class TestPasskeyHashCollisionHandling:

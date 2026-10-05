@@ -10,14 +10,12 @@ Expected improvements:
 - HMAC signatures: deterministic, >5k ops/sec
 """
 
-import gc
 import hashlib
 import hmac
 import json
 import logging
 import sys
-import time
-from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -26,6 +24,7 @@ from uuid import uuid4
 import pytest
 
 from src.app.core.json_utils import json_dumps, json_dumps_sorted, json_loads
+from src.benchmarks import protocol
 
 logger = logging.getLogger(__name__)
 
@@ -38,48 +37,52 @@ pytestmark = pytest.mark.skipif(
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class BenchmarkResult:
-    """Benchmark result with timing and ops/sec."""
+def ceiling_from_ops_per_sec(
+    ops_per_sec: float,
+    label: str,
+) -> protocol.Ceiling:
+    """Convert a throughput FLOOR into the protocol's fixed ceiling, exactly.
 
-    name: str
-    iterations: int
-    total_time: float
-    ops_per_sec: float
-    mean_time_us: float  # microseconds
+    Every gate in this file used to read ``result.ops_per_sec > N``, where
+    ``ops_per_sec = iterations / elapsed`` and ``mean_time_us =
+    elapsed / iterations * 1e6``. Those are the same quantity, so ``ops > N``
+    is identically ``mean_time_us < 1e6 / N``. Converting rather than
+    re-typing the number is what keeps the gate EXACTLY as strict as it was: a
+    hand-rounded ceiling in the other direction would quietly weaken it.
+    """
+    return protocol.Ceiling(1_000_000.0 / ops_per_sec, label)
 
-    def __str__(self) -> str:
-        return f"{self.name}: {self.ops_per_sec:.0f} ops/sec ({self.mean_time_us:.2f}μs/op)"
+
+#: The gates this file used to express as throughput floors.
+SORTED_JSON_CEILING = ceiling_from_ops_per_sec(10_000, "json_dumps_sorted(payload)")
+HMAC_CEILING = ceiling_from_ops_per_sec(5_000, "hmac.new(secret, json_dumps_sorted(payload), sha256)")
+UUID_CEILING = ceiling_from_ops_per_sec(50_000, "json_dumps({uuid, uuid})")
+# NOTE: these two were lowered from 50000 "to account for coverage instrumentation
+# overhead". That is a misattribution — this module already skips entirely under
+# coverage via the pytestmark above — but the lowered value is kept verbatim
+# rather than silently raised back, because raising a gate to make it pass is the
+# thing this programme exists to prevent. The comment stays so the claim can be
+# re-examined by whoever measures on the target platform.
+DATETIME_CEILING = ceiling_from_ops_per_sec(30_000, "json_dumps({datetime, datetime})")
+DECIMAL_CEILING = ceiling_from_ops_per_sec(30_000, "json_dumps({Decimal, Decimal})")
+#: orjson's own cost. Paired with every ratio gate below so a "large speedup" can
+#: never be satisfied by both arms being slow.
+ORJSON_SIMPLE_CEILING = ceiling_from_ops_per_sec(10_000_000, "json_loads(json_dumps(simple_payload))")
+ORJSON_COMPLEX_CEILING = ceiling_from_ops_per_sec(1_000_000, "json_loads(json_dumps(complex_payload))")
+HASH_LOOKUP_CEILING = ceiling_from_ops_per_sec(10_000_000, "dict.get over a 10k-entry index")
 
 
-def run_benchmark(
-    name: str,
-    func: Any,
-    iterations: int = 10000,
-    warmup: int = 100,
-) -> BenchmarkResult:
-    """Run a benchmark with warmup and timing."""
-    # Warmup
-    for _ in range(warmup):
-        func()
+def _lookup_arm(target_hash: str, index: dict[str, dict[str, Any]]) -> Callable[[], dict[str, Any] | None]:
+    """Bind the lookup target and index so the timed callable takes no arguments.
 
-    # Force GC before timing
-    gc.collect()
-    gc.collect()
+    A lambda with default arguments would do the same, but its return type cannot
+    be inferred, and the protocol has no way to check a callable it cannot name.
+    """
 
-    # Timed run
-    start = time.perf_counter()
-    for _ in range(iterations):
-        func()
-    elapsed = time.perf_counter() - start
+    def lookup() -> dict[str, Any] | None:
+        return index.get(target_hash)
 
-    return BenchmarkResult(
-        name=name,
-        iterations=iterations,
-        total_time=elapsed,
-        ops_per_sec=iterations / elapsed,
-        mean_time_us=(elapsed / iterations) * 1_000_000,
-    )
+    return lookup
 
 
 class TestOrjsonVsStdlibComparison:
@@ -89,27 +92,34 @@ class TestOrjsonVsStdlibComparison:
         """Compare simple payload serialization."""
         payload = {"id": 123, "name": "test", "active": True}
 
-        # orjson
-        orjson_result = run_benchmark(
-            "orjson_simple",
+        orjson_arm = protocol.measure(
             lambda: json_loads(json_dumps(payload)),
+            name="orjson_simple",
         )
-
-        # stdlib
-        stdlib_result = run_benchmark(
-            "stdlib_simple",
+        stdlib_arm = protocol.measure(
             lambda: json.loads(json.dumps(payload)),
+            name="stdlib_simple",
         )
 
-        speedup = stdlib_result.total_time / orjson_result.total_time
+        speedup = stdlib_arm.best_us / orjson_arm.best_us
 
         logger.info("Simple payload comparison:")
-        logger.info("  %s", orjson_result)
-        logger.info("  %s", stdlib_result)
+        logger.info("  %s", protocol.render(orjson_arm))
+        logger.info("  %s", protocol.render(stdlib_arm))
         logger.info("  Speedup: %.2fx", speedup)
 
-        # orjson should be at least 2x faster
-        assert speedup >= 1.5, f"Expected >=1.5x speedup, got {speedup:.2f}x"
+        # TWO KINDS OF CLAIM, HANDLED DIFFERENTLY.
+        # The ratio is the COMPLEXITY claim: orjson replaces a stdlib walk with a
+        # C walk, and a ceiling on either arm cannot see that class of change -
+        # if both arms were slowed by the same stdlib regression the ratio would
+        # hold while both numbers got worse. But a bare `speedup >= 1.5` passes on
+        # noise (the run-to-run spread here is documented at 7.1x, perf C11), so
+        # the ratio is floored at the noise floor and the fast arm is separately
+        # pinned so "a big speedup" can never be bought by both arms being slow.
+        assert speedup >= protocol.NOISE_FLOOR_RATIO, (
+            f"Expected >={protocol.NOISE_FLOOR_RATIO}x speedup, got {speedup:.2f}x"
+        )
+        protocol.verdict(orjson_arm, ORJSON_SIMPLE_CEILING).assert_passed()
 
     def test_complex_payload_comparison(self) -> None:
         """Compare complex nested payload serialization."""
@@ -123,26 +133,26 @@ class TestOrjsonVsStdlibComparison:
             "metadata": {"created": "2024-01-01T00:00:00Z", "version": "1.0.0"},
         }
 
-        orjson_result = run_benchmark(
-            "orjson_complex",
+        orjson_arm = protocol.measure(
             lambda: json_loads(json_dumps(payload)),
+            name="orjson_complex",
             iterations=5000,
         )
-
-        stdlib_result = run_benchmark(
-            "stdlib_complex",
+        stdlib_arm = protocol.measure(
             lambda: json.loads(json.dumps(payload)),
+            name="stdlib_complex",
             iterations=5000,
         )
 
-        speedup = stdlib_result.total_time / orjson_result.total_time
+        speedup = stdlib_arm.best_us / orjson_arm.best_us
 
         logger.info("Complex payload comparison:")
-        logger.info("  %s", orjson_result)
-        logger.info("  %s", stdlib_result)
+        logger.info("  %s", protocol.render(orjson_arm))
+        logger.info("  %s", protocol.render(stdlib_arm))
         logger.info("  Speedup: %.2fx", speedup)
 
-        assert speedup >= 1.5, f"Expected >=1.5x speedup, got {speedup:.2f}x"
+        assert speedup >= protocol.NOISE_FLOOR_RATIO, f"Expected >={protocol.NOISE_FLOOR_RATIO}x, got {speedup:.2f}x"
+        protocol.verdict(orjson_arm, ORJSON_COMPLEX_CEILING).assert_passed()
 
 
 class TestJsonDumpsSortedPerformance:
@@ -152,13 +162,13 @@ class TestJsonDumpsSortedPerformance:
         """Verify sorted JSON meets throughput target (>10k ops/sec)."""
         payload = {"z": 1, "a": 2, "m": 3, "data": {"x": 1, "b": 2}}
 
-        result = run_benchmark("json_dumps_sorted", lambda: json_dumps_sorted(payload))
+        result = protocol.measure(lambda: json_dumps_sorted(payload), name="json_dumps_sorted")
 
         logger.info("Sorted JSON performance:")
-        logger.info("  %s", result)
+        logger.info("  %s", protocol.render(result))
 
-        # Target: >10k ops/sec
-        assert result.ops_per_sec > 10000, f"Expected >10k ops/sec, got {result.ops_per_sec:.0f}"
+        # Target: >10k ops/sec, expressed now as the identical per-call ceiling.
+        protocol.verdict(result, SORTED_JSON_CEILING).assert_passed()
 
     def test_hmac_signature_throughput(self) -> None:
         """Verify HMAC signature generation meets throughput target (>5k ops/sec)."""
@@ -168,13 +178,15 @@ class TestJsonDumpsSortedPerformance:
         def generate_signature() -> str:
             return hmac.new(secret, json_dumps_sorted(payload), hashlib.sha256).hexdigest()
 
-        result = run_benchmark("hmac_signature", generate_signature)
+        result = protocol.measure(generate_signature, name="hmac_signature")
 
         logger.info("HMAC signature performance:")
-        logger.info("  %s", result)
+        logger.info("  %s", protocol.render(result))
 
-        # Target: >5k ops/sec
-        assert result.ops_per_sec > 5000, f"Expected >5k ops/sec, got {result.ops_per_sec:.0f}"
+        # Target: >5k ops/sec. HMAC is the webhook wire contract, so this gate is
+        # a guard against a pathological regression in the signing path, not a
+        # claim about achievable throughput.
+        protocol.verdict(result, HMAC_CEILING).assert_passed()
 
 
 class TestPasskeyHashLookupPerformance:
@@ -207,18 +219,24 @@ class TestPasskeyHashLookupPerformance:
         def hash_lookup() -> dict[str, Any] | None:
             return credentials_by_hash.get(target_hash)
 
-        linear_result = run_benchmark("linear_scan_10k", linear_lookup, iterations=1000)
-        hash_result = run_benchmark("hash_lookup_10k", hash_lookup, iterations=100000)
+        linear_arm = protocol.measure(linear_lookup, name="linear_scan_10k", iterations=1000)
+        hash_arm = protocol.measure(hash_lookup, name="hash_lookup_10k", iterations=100000)
 
-        speedup = linear_result.mean_time_us / hash_result.mean_time_us
+        speedup = linear_arm.best_us / hash_arm.best_us
 
         logger.info("Passkey lookup comparison (10k credentials):")
-        logger.info("  %s", linear_result)
-        logger.info("  %s", hash_result)
+        logger.info("  %s", protocol.render(linear_arm))
+        logger.info("  %s", protocol.render(hash_arm))
         logger.info("  Speedup: %.0fx", speedup)
 
-        # Hash should be at least 10x faster
-        assert speedup >= 10, f"Expected >=10x speedup, got {speedup:.0f}x"
+        # The ratio IS the O(n) -> O(1) claim and cannot be replaced by a ceiling:
+        # if the scan were accidentally made O(1) both arms would converge and any
+        # fixed ceiling would still pass while the index regressed. But a bare
+        # `speedup >= 10` passes on noise, so it is floored at the noise floor AND
+        # the fast arm is pinned separately so the speedup cannot be bought by the
+        # slow arm getting slower.
+        assert speedup >= protocol.NOISE_FLOOR_RATIO, f"Expected >={protocol.NOISE_FLOOR_RATIO}x, got {speedup:.0f}x"
+        protocol.verdict(hash_arm, HASH_LOOKUP_CEILING).assert_passed()
 
     def test_hash_lookup_scales(self) -> None:
         """Verify hash lookup is O(1) - same time regardless of size."""
@@ -236,17 +254,26 @@ class TestPasskeyHashLookupPerformance:
             # Always look up the last one
             target_hash = hashlib.sha256(f"credential_{size - 1}".encode()).hexdigest()
 
-            result = run_benchmark(
-                f"hash_lookup_{size}",
-                lambda h=target_hash, c=credentials_by_hash: c.get(h),
+            result = protocol.measure(
+                _lookup_arm(target_hash, credentials_by_hash),
+                name=f"hash_lookup_{size}",
                 iterations=50000,
             )
-            lookup_times.append(result.mean_time_us)
+            lookup_times.append(result.best_us)
 
-            logger.info("  Size %d: %.2f μs/op", size, result.mean_time_us)
+            logger.info("  Size %d: %s", size, protocol.render(result))
 
         # All lookup times should be similar (dict is O(1), but microsecond-level
         # measurements on Windows have system noise - 10x threshold)
+        #
+        # THIS IS NOT THE `new < old` FORM, and converting it would make it
+        # vacuous. It is an UPPER bound on how much the per-call cost may grow
+        # while the input grows 50x, which IS the O(1) claim: a real O(n) lookup
+        # would make this ratio ~50x, so the bound has to sit well above the
+        # noise floor and below the linear growth it is detecting. The forbidden
+        # form is `new < old` - requiring the new number to be SMALLER than the
+        # old one - which passes trivially. This requires the ratio to be small,
+        # and smallness is the thing being asserted.
         max_time = max(lookup_times)
         min_time = min(lookup_times)
         ratio = max_time / min_time
@@ -262,10 +289,10 @@ class TestSpecialTypesSerialization:
         """Benchmark UUID serialization."""
         payload = {"id": uuid4(), "ref": uuid4()}
 
-        result = run_benchmark("uuid_serialization", lambda: json_dumps(payload))
+        result = protocol.measure(lambda: json_dumps(payload), name="uuid_serialization")
 
-        logger.info("UUID serialization: %s", result)
-        assert result.ops_per_sec > 50000, f"UUID serialization too slow: {result.ops_per_sec:.0f}"
+        logger.info("UUID serialization: %s", protocol.render(result))
+        protocol.verdict(result, UUID_CEILING).assert_passed()
 
     def test_datetime_serialization(self) -> None:
         """Benchmark datetime serialization."""
@@ -274,21 +301,25 @@ class TestSpecialTypesSerialization:
             "updated_at": datetime.now(UTC),
         }
 
-        result = run_benchmark("datetime_serialization", lambda: json_dumps(payload))
+        result = protocol.measure(lambda: json_dumps(payload), name="datetime_serialization")
 
-        logger.info("Datetime serialization: %s", result)
-        # NOTE: Threshold lowered from 50000 to account for coverage instrumentation overhead
-        assert result.ops_per_sec > 30000, f"Datetime serialization too slow: {result.ops_per_sec:.0f}"
+        logger.info("Datetime serialization: %s", protocol.render(result))
+        # NOTE: the 30k floor this encodes was lowered from 50000 "to account for
+        # coverage instrumentation overhead". That is a misattribution - this module
+        # already skips entirely under coverage - but the lowered value is kept
+        # rather than raised, because raising a gate to make it pass is the thing
+        # this programme exists to prevent.
+        protocol.verdict(result, DATETIME_CEILING).assert_passed()
 
     def test_decimal_serialization(self) -> None:
         """Benchmark Decimal serialization."""
         payload = {"amount": Decimal("123.456"), "tax": Decimal("0.08")}
 
-        result = run_benchmark("decimal_serialization", lambda: json_dumps(payload))
+        result = protocol.measure(lambda: json_dumps(payload), name="decimal_serialization")
 
-        logger.info("Decimal serialization: %s", result)
-        # NOTE: Threshold lowered from 50000 to account for coverage instrumentation overhead
-        assert result.ops_per_sec > 30000, f"Decimal serialization too slow: {result.ops_per_sec:.0f}"
+        logger.info("Decimal serialization: %s", protocol.render(result))
+        # NOTE: same misattribution as test_datetime_serialization; kept verbatim.
+        protocol.verdict(result, DECIMAL_CEILING).assert_passed()
 
 
 class TestOverallOptimizationResults:
@@ -296,18 +327,17 @@ class TestOverallOptimizationResults:
 
     def test_generate_optimization_summary(self) -> None:
         """Generate comprehensive optimization summary."""
-        results: list[tuple[str, str, float, str]] = []
+        arms: list[tuple[str, str, protocol.MicroResult, float | None]] = []
 
         # JSON roundtrip
         payload = {"id": 123, "name": "test", "data": {"nested": True}}
-        orjson_bench = run_benchmark("orjson", lambda: json_loads(json_dumps(payload)))
-        stdlib_bench = run_benchmark("stdlib", lambda: json.loads(json.dumps(payload)))
-        speedup = stdlib_bench.total_time / orjson_bench.total_time
-        results.append(("JSON Roundtrip", "orjson vs stdlib", speedup, f"{orjson_bench.ops_per_sec:.0f} ops/s"))
+        orjson_bench = protocol.measure(lambda: json_loads(json_dumps(payload)), name="orjson")
+        stdlib_bench = protocol.measure(lambda: json.loads(json.dumps(payload)), name="stdlib")
+        arms.append(("JSON Roundtrip", "orjson vs stdlib", orjson_bench, stdlib_bench.best_us / orjson_bench.best_us))
 
         # Sorted JSON
-        sorted_bench = run_benchmark("sorted_json", lambda: json_dumps_sorted(payload))
-        results.append(("Sorted JSON", "json_dumps_sorted", 1.0, f"{sorted_bench.ops_per_sec:.0f} ops/s"))
+        sorted_bench = protocol.measure(lambda: json_dumps_sorted(payload), name="sorted_json")
+        arms.append(("Sorted JSON", "json_dumps_sorted", sorted_bench, None))
 
         # HMAC
         secret = b"secret"
@@ -315,26 +345,41 @@ class TestOverallOptimizationResults:
         def hmac_sig() -> str:
             return hmac.new(secret, json_dumps_sorted(payload), hashlib.sha256).hexdigest()
 
-        hmac_bench = run_benchmark("hmac", hmac_sig)
-        results.append(("HMAC Signature", "deterministic", 1.0, f"{hmac_bench.ops_per_sec:.0f} ops/s"))
+        arms.append(("HMAC Signature", "deterministic", protocol.measure(hmac_sig, name="hmac"), None))
 
         # Hash lookup
         creds = {hashlib.sha256(f"c_{i}".encode()).hexdigest(): i for i in range(10000)}
         target = hashlib.sha256(b"c_5000").hexdigest()
-        hash_bench = run_benchmark("hash_lookup", lambda: creds.get(target), iterations=100000)
-        results.append(("Passkey Lookup", "hash index", 100.0, f"{hash_bench.mean_time_us:.3f} μs"))
+        hash_bench = protocol.measure(lambda: creds.get(target), name="hash_lookup", iterations=100000)
+        arms.append(("Passkey Lookup", "hash index", hash_bench, None))
 
-        # Print summary
+        # Print summary. Every line carries the full run stamp, because a bare
+        # figure is not admissible (H-11 criterion e).
         logger.info("")
         logger.info("=" * 70)
         logger.info("OPTIMIZATION RESULTS SUMMARY")
         logger.info("=" * 70)
 
-        for name, optimization, speedup_val, metric in results:
-            status = "🚀" if speedup_val >= 2.0 else "✅" if speedup_val >= 1.0 else "⚠️"
-            logger.info("%s %-20s | %-20s | %s", status, name, optimization, metric)
+        for name, optimization, result, speedup in arms:
+            rendered = protocol.render(result)
+            assert result.run.one_line() in rendered, (
+                f"{name}: emitted without its run stamp, which makes it inadmissible"
+            )
+            status = "speedup" if speedup is not None else "measured"
+            logger.info("%-20s | %-20s | %-8s | %s", name, optimization, status, rendered)
 
         logger.info("=" * 70)
 
-        # All benchmarks should pass
-        assert all(True for _ in results)
+        # The old closing assertion here was `assert all(True for _ in results)`,
+        # which can never fail - a test whose assertion cannot fail is not a test.
+        # What this summary is actually FOR is that every arm it printed is
+        # reportable, so assert that: an arm with no batches, or a measurement that
+        # did not survive the protocol's own validity checks, is a hole in the
+        # report rather than a row in it.
+        assert arms, "the summary printed nothing at all"
+        for name, _optimization, result, _speedup in arms:
+            assert result.batch_mins_us, f"{name}: no batch minima, so no figure could have been reported"
+            assert result.best_us > 0, f"{name}: reported a non-positive duration"
+            assert result.repetitions >= 1 and result.iterations >= 1, f"{name}: was never actually sampled"
+        protocol.verdict(orjson_bench, ORJSON_SIMPLE_CEILING).assert_passed()
+        protocol.verdict(sorted_bench, SORTED_JSON_CEILING).assert_passed()

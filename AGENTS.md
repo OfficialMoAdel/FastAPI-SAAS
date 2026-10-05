@@ -99,7 +99,7 @@ uv run python -m src.scripts.create_module products --force
 - Middleware stack: `src/app/middleware/` → [see src/app/middleware/AGENTS.md](src/app/middleware/AGENTS.md)
 - Test suite: `tests/` → [see tests/AGENTS.md](tests/AGENTS.md) (suites live under `unit/`, `integration/`, `contract/`; the `tests/` root holds `conftest.py`, `factories/`, `fixtures/`)
 - Database migrations: `src/migrations/` → [see src/migrations/AGENTS.md](src/migrations/AGENTS.md)
-- Ops/perf scripts: `scripts/` (deploy, health-check, benchmarks, doc/module checks); setup scripts: `src/scripts/` (superuser, tier, module generator)
+- Ops/perf scripts: `scripts/` (deploy, health-check, benchmarks, doc/module checks); setup scripts: `src/scripts/` (superuser, tier, module generator); perf **measurement harnesses**: `src/benchmarks/` (tracked, operator-run, never imported by `src/app/`)
 
 ### Doc Pointer Integrity
 

@@ -15,10 +15,10 @@ Metrics captured:
 8. Security: token collision potential, bloom filter sync
 
 Usage:
-    uv run python tests/e2e/r1_opus_advanced/capture_baseline.py
+    uv run python tests/e2e/static_analysis/capture_baseline.py
 
 Output:
-    tests/e2e/r1_opus_advanced/baseline_{timestamp}.json
+    tests/e2e/static_analysis/baseline_{timestamp}.json
 """
 
 from __future__ import annotations
@@ -678,7 +678,6 @@ async def measure_security_baseline(report: BaselineReport) -> None:
 
     except Exception as e:
         report.add_error(f"Token blacklist analysis failed: {e}")
-
 
 
 # =============================================================================

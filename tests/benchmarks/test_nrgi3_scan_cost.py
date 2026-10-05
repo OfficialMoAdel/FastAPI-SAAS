@@ -34,9 +34,7 @@ any machine.
 
 from __future__ import annotations
 
-import gc
 import logging
-import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -46,6 +44,7 @@ from src.app.middleware.attack_detection import (
     AttackDetectionMiddleware,
     _attack_prefilter_hit,
 )
+from src.benchmarks import protocol
 from tests.benchmarks.test_r5_micros import best_of_benchmark, run_benchmark
 
 logger = logging.getLogger(__name__)
@@ -88,21 +87,31 @@ def mw() -> AttackDetectionMiddleware:
     return AttackDetectionMiddleware(app=MagicMock())
 
 
-async def _scan_cost(mw: AttackDetectionMiddleware, method: str, body: bytes, query: bytes, n: int) -> float:
-    """Mean us/call for _scan_request, on fresh receive channels."""
-    for _ in range(20):
-        s = _scope(method, body, query)
+async def _scan_cost(
+    mw: AttackDetectionMiddleware, method: str, body: bytes, query: bytes, n: int, name: str
+) -> protocol.MicroResult:
+    """Us/call for _scan_request on fresh receive channels, per H-11.
+
+    Previously this took a hand-rolled 20-call warm-up, one ``gc.collect()``,
+    and reported the MEAN of ``n`` calls. The mean is the wrong estimator here:
+    one GC pause or scheduler preemption inside the loop drags the whole
+    number up, and there is no way to tell that apart from a real regression.
+    The protocol takes the best of several batches instead, so a single slow
+    call cannot become the headline.
+    """
+    calls = 0
+
+    async def probe() -> None:
+        nonlocal calls
+        calls += 1
+        scope = _scope(method, body, query)
         await AttackDetectionMiddleware._scan_request(
-            mw, s[0]["path"], s[0]["query_string"], s[0]["headers"], s[0]["method"], s[1]
+            mw, scope[0]["path"], scope[0]["query_string"], scope[0]["headers"], scope[0]["method"], scope[1]
         )
-    gc.collect()
-    t0 = time.perf_counter()
-    for _ in range(n):
-        s = _scope(method, body, query)
-        await AttackDetectionMiddleware._scan_request(
-            mw, s[0]["path"], s[0]["query_string"], s[0]["headers"], s[0]["method"], s[1]
-        )
-    return (time.perf_counter() - t0) / n * 1e6
+
+    result = await protocol.measure_async(probe, name=name, iterations=n, warmup=20)
+    assert calls == 20 + n * result.repetitions
+    return result
 
 
 class TestScanCostBench:
@@ -110,32 +119,34 @@ class TestScanCostBench:
 
     async def test_bodyless_get_is_cheap(self, mw: AttackDetectionMiddleware) -> None:
         """The bead's core question: a bodyless request must not pay for the scan."""
-        us = await _scan_cost(mw, "GET", b"", b"page=1&limit=50", n=2000)
-        logger.info("nrgi.3 scan GET bodyless: %.2fus", us)
+        result = await _scan_cost(mw, "GET", b"", b"page=1&limit=50", 2000, "scan_get_bodyless")
+        logger.info("nrgi.3 scan GET bodyless: %s", protocol.render(result))
         # Load-robust tripwire, not a timing gate: a GET that drained a body
         # would be orders of magnitude slower than one that does not.
-        assert us < 2000, f"bodyless GET scan at {us:.1f}us — the method gate is not holding"
+        protocol.verdict(result, protocol.Ceiling(2_000.0, "scan_get_bodyless")).assert_passed()
 
     async def test_typical_post(self, mw: AttackDetectionMiddleware) -> None:
-        us = await _scan_cost(mw, "POST", b'{"email":"user@example.com","password":"hunter2!!"}', b"", n=2000)
-        logger.info("nrgi.3 scan POST 77B: %.2fus", us)
-        assert us < 5000, f"typical POST scan at {us:.1f}us"
+        result = await _scan_cost(
+            mw, "POST", b'{"email":"user@example.com","password":"hunter2!!"}', b"", 2000, "scan_post_77b"
+        )
+        logger.info("nrgi.3 scan POST 77B: %s", protocol.render(result))
+        protocol.verdict(result, protocol.Ceiling(5_000.0, "scan_post_77b")).assert_passed()
 
     async def test_clean_large_body(self, mw: AttackDetectionMiddleware) -> None:
-        us = await _scan_cost(mw, "POST", CLEAN_60K, b"", n=200)
-        logger.info("nrgi.3 scan POST 60KB clean (prefilter miss): %.2fus", us)
-        assert us < 50_000
+        result = await _scan_cost(mw, "POST", CLEAN_60K, b"", 200, "scan_post_60k_clean")
+        logger.info("nrgi.3 scan POST 60KB clean (prefilter miss): %s", protocol.render(result))
+        protocol.verdict(result, protocol.Ceiling(50_000.0, "scan_post_60k_clean")).assert_passed()
 
     async def test_prefilter_hit_large_body_is_the_real_cost(
         self, mw: AttackDetectionMiddleware
     ) -> None:
         """The cost driver the ADR reports. Log-only; the bound is loose."""
-        us = await _scan_cost(mw, "POST", BENIGN_40K, b"", n=50)
-        logger.info("nrgi.3 scan POST 40KB benign 'or' (prefilter HIT): %.2fus", us)
+        result = await _scan_cost(mw, "POST", BENIGN_40K, b"", 50, "scan_post_40k_prefilter_hit")
+        logger.info("nrgi.3 scan POST 40KB benign 'or' (prefilter HIT): %s", protocol.render(result))
 
     async def test_scan_cap_size_benign_hit(self, mw: AttackDetectionMiddleware) -> None:
-        us = await _scan_cost(mw, "POST", BENIGN_128K, b"", n=10)
-        logger.info("nrgi.3 scan POST 128KB benign 'or' (prefilter HIT): %.2fus", us)
+        result = await _scan_cost(mw, "POST", BENIGN_128K, b"", 10, "scan_post_128k_prefilter_hit")
+        logger.info("nrgi.3 scan POST 128KB benign 'or' (prefilter HIT): %s", protocol.render(result))
 
 
 class TestPrefilterCostBench:
@@ -167,10 +178,14 @@ class TestDebugLogCost:
     def test_guarded_debug_beats_unguarded(self) -> None:
         """A bare debug() is more expensive than the scan it would announce.
 
-        Load-robust tripwire: the guard must be strictly cheaper than the
-        call it protects, by a wide margin. Absolute values are in the ADR
-        (44.6us vs 1.9us) because they are machine-specific; the ordering is
-        not.
+        This is the one place in the file that compares two arms of the same
+        run, and H-11 bans ``new < old`` because it passes on noise. The fix is
+        not to delete the comparison - the ORDERING is the whole point here,
+        and the absolute values are machine-specific - but to require the
+        ordering to hold by MORE than the measured noise floor
+        (protocol.NOISE_FLOOR_RATIO). A bare ``guarded < bare`` would be
+        satisfied by two numbers 1% apart, which is exactly the failure this
+        programme exists to end.
         """
         import logging
 
@@ -183,9 +198,12 @@ class TestDebugLogCost:
             "nrgi.3_bare_debug", lambda: ad.logger.debug("nrgi3_probe", method="GET"), iterations=2000, warmup=500
         )
         logger.info("nrgi.3 debug log cost: guarded=%.2fus bare=%.2fus", guarded_us, bare_us)
-        assert guarded_us < bare_us, (
-            f"guarding the debug log ({guarded_us:.2f}us) costs more than calling it "
-            f"({bare_us:.2f}us) — on a 6.7us GET path that would be a regression"
+        ratio = bare_us / guarded_us
+        assert ratio >= protocol.NOISE_FLOOR_RATIO, (
+            f"guarding the debug log ({guarded_us:.2f}us) is only {ratio:.2f}x cheaper than "
+            f"calling it ({bare_us:.2f}us). That gap is inside the {protocol.NOISE_FLOOR_RATIO}x "
+            f"noise floor (perf C11 measured 7.1x run-to-run on identical code), so it is not "
+            f"evidence that the guard pays for itself."
         )
 
 

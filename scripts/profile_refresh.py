@@ -67,6 +67,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.benchmarks.percentiles import nearest_rank  # noqa: E402
+
 API_V1 = "/api/v1"
 DEFAULT_EMAIL = os.getenv("PERF_TEST_EMAIL", "perf_user_0@example.com")
 DEFAULT_PASSWORD = os.getenv("PERF_TEST_PASSWORD", "Str1ngst!")
@@ -350,11 +352,21 @@ async def _one_refresh(client: Any) -> dict[str, Any]:
 
 
 def _pct(values: list[float], q: float) -> float:
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    idx = min(len(ordered) - 1, int(round((len(ordered) - 1) * q)))
-    return ordered[idx]
+    """Nearest-rank percentile. ``q`` is a fraction.
+
+    Delegates to ``src.benchmarks.percentiles.nearest_rank`` so there is one
+    percentile implementation in the harness tree. The rank convention CHANGED:
+    this used ``sorted(v)[round(q * (n - 1))]``, which at n=20 put p0.95 and
+    p0.99 both at index 19 and so reported the same value for both; nearest
+    rank puts p0.95 at index 18. p50 shifts by one sample for the same reason.
+    At n=1000 the two conventions agree to within one index, so large-sample
+    figures are unaffected in practice.
+
+    Unlike the old version this raises on an empty sample rather than
+    returning 0.0, so callers cannot report a 0.0 ms percentile for a
+    measurement that was never taken.
+    """
+    return nearest_rank(values, q)
 
 
 def _ms(values: list[float]) -> tuple[float, float, float, int]:

@@ -5,16 +5,41 @@ PERF-R1-A: Locust Load Test for FastAPI SaaS Hot Path
 Purpose: Establish baseline performance metrics before optimization.
 
 Traffic Distribution (simulating realistic production patterns):
-- 80% GET /api/v1/users/me (authenticated user info - THE HOT PATH)
-- 10% POST /api/v1/ai/chat (AI completions)
-- 10% POST /api/v1/account/refresh (token refresh)
+- 80 GET /api/v1/users/me (authenticated user info - THE HOT PATH)
+- 10 POST /api/v1/ai/chat (AI completions)
+- 10 POST /api/v1/account/refresh (token refresh)
+- 10 POST /api/v1/account/logout (token blacklisting)
+
+Logout used to be fired once per virtual user from `on_stop`, outside this mix
+entirely, so every logout sample was a shutdown-burst sample. It is an ordinary
+weighted task now. The mix is 80/10/10/10, not the 80/10/10 it was, and a run
+before this change is not a same-instrument A/B against a run after it - see
+the note below.
 
 Target Metrics:
-| Endpoint        | Current p95 | Target p95 |
-|-----------------|-------------|------------|
-| /users/me       | ~50ms       | <15ms      |
-| /ai/chat        | ~200ms+     | <100ms     |
-| /account/refresh   | ~30ms       | <10ms      |
+    NONE ARE ASSERTED, AND NONE ARE LISTED HERE.
+
+    This table used to carry a "Current p95" column (~50ms / ~200ms+ / ~30ms)
+    and a "Target p95" column, with no measurement behind either number. A
+    harness that states the answer it is trying to measure is worse than a
+    harness that states nothing: the next reader cannot tell a measurement from
+    an aspiration, and an aspiration in a table gets quoted in a review as
+    though it were a baseline.
+
+    The targets are deliberately absent rather than merely unverified. Round 1
+    established that every pre-2026-10-04 number in this tree was produced on
+    Windows, where the runtime is not the deployment runtime, and that the two
+    existing Locust baselines are not even a same-instrument A/B (the harness
+    changed in commit 4cd00654, fourteen hours AFTER the baseline CSV was
+    stamped). No reproducible Linux measurement of these endpoints exists yet,
+    so there is nothing honest to print. When one does, it belongs here with
+    its full protocol — host, core count, store locality, concurrency, run
+    time, warmup, sample count, and the commit SHA of the instrument.
+
+    What the harness does instead: it reports what it measured. See
+    MetricsCollector.log_summary and the note on sample-size resolution in
+    src/benchmarks/percentiles.py — a percentile the sample cannot resolve is
+    reported as unresolvable, not as a number.
 
 Usage:
     # 1. Seed the account pool FIRST (once per database):
@@ -59,11 +84,19 @@ import itertools
 import json
 import logging
 import os
+import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Final
 
 from locust import HttpUser, between, events, task
 from locust.exception import StopUser
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from src.benchmarks.percentiles import PERCENTILES, nearest_rank, unresolvable_quantiles
 
 # =============================================================================
 # CONFIGURATION
@@ -113,9 +146,18 @@ AI_CHAT_PAYLOAD: Final[dict[str, Any]] = {
 SLOW_REQUEST_THRESHOLD_MS: Final[float] = 100.0
 
 # Traffic distribution weights
+#
+# LOGOUT_WEIGHT is the traffic that logout used to get for free: it used to be
+# fired from on_stop, once per virtual user, outside the weighted task mix
+# entirely. Moving it into the mix is what makes it a measurement rather than a
+# teardown artefact, and it necessarily REDISTRIBUTES the other three. The mix
+# is therefore no longer the 80/10/10 stated at the top of this file, and that
+# line has been corrected. Do not silently renormalise these back to 80/10/10:
+# the weights below are the specification of what a run now exercises.
 TRAFFIC_USER_ME_WEIGHT: Final[int] = 80
 TRAFFIC_AI_CHAT_WEIGHT: Final[int] = 10
 TRAFFIC_TOKEN_REFRESH_WEIGHT: Final[int] = 10
+LOGOUT_WEIGHT: Final[int] = 10
 
 # Wait time configuration (seconds)
 WAIT_TIME_MIN_S: Final[float] = 1.0
@@ -179,34 +221,81 @@ logger = logging.getLogger("perf-test")
 
 
 class MetricsCollector:
-    """Collects and logs detailed performance metrics."""
+    """Collects and logs detailed performance metrics.
+
+    Two sample populations are kept apart, and only the first is reported:
+
+    ``request_times``
+        Steady-state samples. These are the numbers a percentile is computed
+        from.
+    ``burst_times``
+        Shutdown-burst samples, i.e. anything issued while the runner is tearing
+        down. They are counted and reported as a count, never as a percentile.
+
+    The separation exists because a shutdown-burst sample is not a slow
+    request, it is a request competing with the event loop closing, the
+    connection pool draining, and the Redis pool closing. Folding those into a
+    p95 produces a bimodal distribution whose tail is attributable to nothing
+    measurable. The 208.47 ms logout p95 in the 2026-09-22 baseline is the
+    canonical example: that handler performs no bcrypt and does no batched I/O,
+    so the number cannot be attributed to the code it claims to measure.
+
+    The phase is set by :meth:`shutdown_burst` and read by
+    :meth:`record_request`, not passed in by the caller. A caller-supplied tag
+    would be a promise rather than a guarantee; the context manager makes
+    "issued during teardown" a property of where the call sits in the code.
+    """
 
     def __init__(self) -> None:
         self.request_times: dict[str, list[float]] = {}
         self.error_counts: dict[str, int] = {}
+        self.burst_times: dict[str, list[float]] = {}
+        self.burst_error_counts: dict[str, int] = {}
         self.start_time: float = 0
+        self._in_shutdown_burst = False
+
+    @contextmanager
+    def shutdown_burst(self) -> Iterator[None]:
+        """Record every request issued inside the block as a burst sample."""
+        previous = self._in_shutdown_burst
+        self._in_shutdown_burst = True
+        try:
+            yield
+        finally:
+            self._in_shutdown_burst = previous
 
     def record_request(self, name: str, response_time: float, success: bool) -> None:
-        """Record a single request's metrics."""
-        if name not in self.request_times:
-            self.request_times[name] = []
-            self.error_counts[name] = 0
+        """Record a single request's metrics into the current phase's population."""
+        times = self.burst_times if self._in_shutdown_burst else self.request_times
+        errors = self.burst_error_counts if self._in_shutdown_burst else self.error_counts
+
+        times.setdefault(name, [])
+        errors.setdefault(name, 0)
 
         if success:
-            self.request_times[name].append(response_time)
+            times[name].append(response_time)
         else:
-            self.error_counts[name] += 1
+            errors[name] += 1
 
     def get_percentile(self, name: str, percentile: float) -> float:
-        """Calculate percentile for a given endpoint."""
-        times = sorted(self.request_times.get(name, []))
-        if not times:
-            return 0.0
-        index = int(len(times) * percentile / 100)
-        return times[min(index, len(times) - 1)]
+        """Steady-state percentile for ``name``. ``percentile`` is 0-100.
+
+        Delegates to the shared estimator. The formula this replaces was
+        ``times[min(int(len(times) * percentile / 100), len(times) - 1)]``,
+        which TRUNCATED instead of rounding up: at n=20 both p95 and p99
+        indexed sample 19, so both columns were a maximum wearing a
+        percentile's name. It also bypassed the rule in
+        ``src/benchmarks/percentiles.py`` that a percentile the sample cannot
+        resolve must not be quoted as if it were an estimate.
+        """
+        return nearest_rank(self.request_times.get(name, []), percentile / 100)
+
+    def unresolvable_percentiles(self, name: str) -> list[float]:
+        """Fractions in PERCENTILES that this name's sample cannot resolve."""
+        return unresolvable_quantiles(len(self.request_times.get(name, [])), PERCENTILES)
 
     def log_summary(self) -> None:
-        """Log summary metrics at test end."""
+        """Log summary metrics at test end. Steady-state only."""
         logger.info("=" * 60)
         logger.info("PERFORMANCE TEST SUMMARY")
         logger.info("=" * 60)
@@ -218,15 +307,29 @@ class MetricsCollector:
             total = len(times) + errors
             error_rate = (errors / total * 100) if total > 0 else 0
 
+            # A percentile the sample cannot resolve is the maximum. Say so
+            # rather than printing a number that carries no information.
+            cannot_resolve = [f"p{int(q * 100)}" for q in self.unresolvable_percentiles(name)]
+            caveat = f"  [n={len(times)} cannot resolve: {', '.join(cannot_resolve)}]\n" if cannot_resolve else ""
+
             logger.info(
                 f"{name}:\n"
                 f"  Requests: {total} (Errors: {errors}, {error_rate:.1f}%)\n"
+                f"{caveat}"
                 f"  p50: {self.get_percentile(name, 50):.1f}ms\n"
                 f"  p95: {self.get_percentile(name, 95):.1f}ms\n"
                 f"  p99: {self.get_percentile(name, 99):.1f}ms\n"
                 f"  min: {min(times):.1f}ms\n"
                 f"  max: {max(times):.1f}ms\n"
                 f"  avg: {sum(times) / len(times):.1f}ms"
+            )
+
+        withheld = {name: len(t) for name, t in self.burst_times.items() if t}
+        if withheld:
+            logger.info(
+                "Shutdown-burst samples WITHHELD from every percentile above "
+                "(they measure teardown, not the handler): "
+                + ", ".join(f"{name}={count}" for name, count in sorted(withheld.items()))
             )
         logger.info("=" * 60)
 
@@ -338,14 +441,25 @@ class AuthenticatedUser(HttpUser):
         self.authenticate()
 
     def on_stop(self) -> None:
-        """Cleanup on user stop."""
-        if self.access_token:
-            logger.info("User stopping - logging out")
-            self.client.post(
-                f"{API_V1}/account/logout",
-                headers=self._auth_headers(),
-                name="/account/logout (cleanup)",
-            )
+        """Teardown. Issues NO measured request.
+
+        This used to POST ``/account/logout`` from here, which made every
+        logout sample a shutdown-burst sample: taken while the event loop, the
+        DB pool and the Redis pool are all closing, so the number measured
+        teardown contention rather than the handler. The 208.47 ms logout p95
+        in the 2026-09-22 baseline came from here, and it is not attributable
+        to anything, because ``logout`` performs no bcrypt and no batched I/O.
+
+        Logout is now a normal task on ``FastAPISaaSUser`` (see
+        ``logout_account``), where it competes with the same conditions as every
+        other measured request. ``metrics.shutdown_burst()`` still wraps this
+        hook so that anything added here in future is counted as a burst sample
+        and withheld from the percentiles, rather than silently folding teardown
+        into a p95 a second time.
+        """
+        with metrics.shutdown_burst():
+            if self.access_token:
+                logger.info("User stopping - skipping measured logout (teardown is not a measurement)")
 
     # -------------------------------------------------------------------- auth
 
@@ -408,8 +522,18 @@ class AuthenticatedUser(HttpUser):
         raise StopUser()
 
     def _set_token(self, access_token: str) -> None:
-        """Store the token and remember when it goes stale."""
+        """Store the token and remember when it goes stale.
+
+        An empty token means "this user has no usable access token" - set by
+        ``logout_account`` once the token is blacklisted. The expiry goes to the
+        PAST in that case, so ``_ensure_token`` re-mints on the next task that
+        needs one, rather than this user carrying a 900 s lifetime it does not
+        have and skipping its refresh entirely.
+        """
         self.access_token = access_token
+        if not access_token:
+            self._token_expires_at = 0.0
+            return
         expires_at = _jwt_expiry(access_token)
         self._token_expires_at = expires_at if expires_at else time.time() + DEFAULT_TOKEN_LIFETIME_S
 
@@ -539,8 +663,8 @@ class FastAPISaaSUser(AuthenticatedUser):
 
     Lifecycle:
     1. on_start: Login and get tokens
-    2. tasks: Execute weighted API calls
-    3. on_stop: Cleanup (logout)
+    2. tasks: Execute weighted API calls, including logout as an ordinary task
+    3. on_stop: nothing measured (see AuthenticatedUser.on_stop)
     """
 
     # Wait between 1-3 seconds between tasks (realistic user behavior)
@@ -563,7 +687,9 @@ class FastAPISaaSUser(AuthenticatedUser):
         2. get_current_user() - fetches user from DB
         3. Response with user data
 
-        Target: p95 < 15ms (currently ~50ms due to blacklist check)
+        No target is asserted here. The blacklist-check latency figure this
+        docstring used to carry had no measurement behind it; see the note at
+        the top of this file.
         """
         self._fetch_current_user("/users/me")
 
@@ -579,7 +705,9 @@ class FastAPISaaSUser(AuthenticatedUser):
         4. Save assistant message
         5. Update session
 
-        Target: Reduce DB portion from ~200ms to <100ms through batching
+        No target is asserted. The DB-batching figure this docstring used to
+        carry had no measurement behind it; see the note at the top of this
+        file.
 
         Note: the chat call needs an Ollama-backed model. If Ollama is not
         running the API answers 503, which is an environment dependency and
@@ -621,9 +749,54 @@ class FastAPISaaSUser(AuthenticatedUser):
 
         Called periodically to get new access tokens.
 
-        Target: p95 < 10ms (currently ~30ms)
+        No target is asserted; the refresh-path latency figure this docstring
+        used to carry had no measurement behind it.
         """
         self._refresh_token()
+
+    @task(LOGOUT_WEIGHT)
+    def logout_account(self) -> None:
+        """POST /api/v1/account/logout - measured as an ORDINARY task.
+
+        Moved here from ``AuthenticatedUser.on_stop``, where every sample was a
+        shutdown-burst sample: taken while the runner tears down, so the number
+        measured contention with the closing pools rather than the handler.
+        From here it competes with the same conditions as every other measured
+        request.
+
+        ``catch_response=True`` is load-bearing, not decoration. Without it
+        Locust counts a non-2xx as neither success nor failure, so a phase that
+        quietly answered 401 or 429 for every call reported a beautiful
+        zero-failure summary. That is exactly how the 2026-09-22 pack got
+        "n=34, 0 failures" next to a tight 3.17-3.69 s cluster for a handler
+        that does no bcrypt.
+
+        Any 2xx is a success, not just 200: the contract this task is held to
+        is "every non-2xx is a recorded failure", so a 204 from a logout route
+        that later drops its body must not be reported as a failed run.
+
+        Logging out invalidates this user's own access token, so it is followed
+        by a re-authentication. The next task to need a token will mint one;
+        this only clears the local token so nothing reuses a blacklisted one.
+        """
+        if not self.access_token:
+            return
+
+        with self.client.post(
+            f"{API_V1}/account/logout",
+            headers=self._auth_headers(),
+            name="/account/logout",
+            catch_response=True,
+        ) as response:
+            if 200 <= response.status_code < 300:
+                response.success()
+            elif response.status_code == 401:
+                # The access token was already blacklisted or expired: the
+                # handler behaved correctly, the harness was out of date.
+                self._set_token("")
+                response.success()
+            else:
+                response.failure(f"logout failed: {response.status_code}")
 
 
 # =============================================================================

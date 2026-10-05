@@ -26,6 +26,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.benchmarks.percentiles import nearest_rank
+
 if TYPE_CHECKING:
     pass
 
@@ -45,23 +47,44 @@ class ProfileResult:
 
     @property
     def p50(self) -> float:
-        return statistics.median(self.times_us) if self.times_us else 0.0
+        """Nearest-rank median, in microseconds.
+
+        ESTIMATOR CHANGE. This was ``statistics.median``, which for an even
+        sample count averages the two central samples. Nearest rank returns the
+        LOWER of them, so p50 can now read slightly smaller. That is the price
+        of one percentile convention across the harness tree; the alternative is
+        a tree in which "p50" means two different things depending on which
+        file you are reading.
+
+        The empty guard reports an ABSENT measurement, not a percentile of
+        data: ``to_dict`` calls all three of these unconditionally and has no
+        no-data branch, so raising here would turn a failed benchmark into a
+        crashed one. ``mean``, ``min_time``, ``max_time`` and ``stdev`` in this
+        same class guard identically.
+        """
+        if not self.times_us:
+            return 0.0
+        return nearest_rank(self.times_us, 0.50)
 
     @property
     def p95(self) -> float:
+        """Nearest-rank p95, in microseconds.
+
+        This previously computed ``sorted_times[int(len(sorted_times) * 0.95)]``.
+        That TRUNCATES, so at n = 20 both p95 and p99 indexed sample 19 and
+        reported the same value — the defect that made "p95 208.47 ms"
+        attributable to nothing. Nearest rank puts p95 at index 18.
+        """
         if not self.times_us:
             return 0.0
-        sorted_times = sorted(self.times_us)
-        idx = int(len(sorted_times) * 0.95)
-        return sorted_times[min(idx, len(sorted_times) - 1)]
+        return nearest_rank(self.times_us, 0.95)
 
     @property
     def p99(self) -> float:
+        """Nearest-rank p99, in microseconds. See :attr:`p95` for the change."""
         if not self.times_us:
             return 0.0
-        sorted_times = sorted(self.times_us)
-        idx = int(len(sorted_times) * 0.99)
-        return sorted_times[min(idx, len(sorted_times) - 1)]
+        return nearest_rank(self.times_us, 0.99)
 
     @property
     def min_time(self) -> float:

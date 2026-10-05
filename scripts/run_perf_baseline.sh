@@ -22,7 +22,14 @@
 #   ./scripts/run_perf_baseline.sh --seed              # (re)seed account pool first
 #   PERF_TEST_AI_ENABLED=1 ./scripts/run_perf_baseline.sh   # include /ai/chat
 #
-# Output: locust_baseline_<timestamp>.log in the repo root, plus CSVs in reports/.
+# Provenance: every run writes a manifest recording the harness blob SHAs, the
+# app commit SHA, the store addresses and every security budget in force. The run
+# VOIDS if any harness file is untracked, dirty or missing.
+#
+# Output: locust_baseline_<timestamp>.log in the repo root, CSVs in reports/, and
+# reports/baseline_<timestamp>_manifest.json - the provenance record that makes
+# the numbers attributable. The run VOIDS if the harness is not pinned to git;
+# see the provenance gate below.
 
 set -euo pipefail
 
@@ -40,7 +47,7 @@ while [[ $# -gt 0 ]]; do
     -r|--rate)     RATE="$2"; shift 2 ;;
     -t|--duration) DURATION="$2"; shift 2 ;;
     --seed)        SEED=1; shift ;;
-    -h|--help)     sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help)     awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -58,6 +65,8 @@ HOST="http://127.0.0.1:8000"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 LOG="locust_baseline_${STAMP}.log"
 CSV="reports/baseline_${STAMP}"
+# Provenance manifest, written next to the CSVs before anything is measured.
+MANIFEST="reports/baseline_${STAMP}_manifest.json"
 SERVER_PID=""
 
 # ------------------------------------------------------------------- header ---
@@ -76,6 +85,35 @@ SERVER_PID=""
   echo "=============================================================="
   echo
 } > "${LOG}"
+
+# ------------------------------------------------------------ provenance gate --
+# P-9a (perf finding 3): the 2026-09-22 baseline is unrecoverable from git, so
+# the two Locust baselines are not a same-instrument A/B and the headline p95
+# figure cannot be attributed to the application at all. The fix is to make an
+# unpinned instrument impossible to measure with: this gate VOIDS the run if any
+# harness file is untracked, dirty, or missing, and otherwise writes a manifest
+# recording the harness blob SHAs, the app commit SHA, the store addresses, and
+# every security budget actually in force.
+#
+# It runs BEFORE the seed step: there is no reason to create an account pool for
+# a run that is about to void.
+echo "==> Verifying harness provenance"
+set +e
+"${PY}" -m src.benchmarks.run_manifest \
+  --output "${MANIFEST}" \
+  --users "${USERS}" --rate "${RATE}" --duration "${DURATION}" --host "${HOST}" \
+  >> "${LOG}" 2>&1
+PROVENANCE_RC=$?
+set -e
+if [[ "${PROVENANCE_RC}" -ne 0 ]]; then
+  {
+    echo "==> VOID: harness provenance check failed (exit ${PROVENANCE_RC}); see above and ${LOG}"
+    echo "==> VOID: a baseline whose instrument cannot be recovered from git can never"
+    echo "==> VOID: be re-run, so it can never be checked. No numbers were produced."
+  } | tee -a "${LOG}" >&2
+  exit "${PROVENANCE_RC}"
+fi
+echo "==> Provenance OK -> ${MANIFEST}"
 
 # -------------------------------------------------------------- seed pool ----
 if [[ "${SEED}" -eq 1 ]]; then

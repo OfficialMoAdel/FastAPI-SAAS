@@ -34,10 +34,42 @@ uv run ruff check src/
 ```
 src/
 ├── app/           # Main FastAPI application
+├── benchmarks/    # Operator-run perf measurement harnesses (tracked; NOT imported by app/)
 ├── migrations/     # Database migration files
 ├── scripts/        # Setup and utility scripts
 └── __init__.py    # Package initialization
 ```
+
+### Benchmark Harnesses
+✅ DO: Keep perf measurement harnesses tracked in `src/benchmarks/`
+```python
+# src/benchmarks/security_state.py — pure module, no import-time side effects,
+# so tests can import SECURITY_KEY_PATTERNS without booting the app.
+# src/benchmarks/percentiles.py — the ONE percentile estimator (nearest rank).
+# Every harness in the tree delegates to it; a second implementation is a bug
+# the tree-wide scan in tests/unit/benchmarks/test_percentiles.py fails on.
+# src/benchmarks/driver_count_io.py, src/benchmarks/census.py,
+# src/benchmarks/prof_request_path.py — operator-run
+# scripts, `__main__`-guarded so they can never be imported into a test session.
+# Each holds its side effects (os.chdir to the repo root, load_dotenv with
+# override=True, QUERY_PROFILER_ENABLED, the relaxed SECURITY_BUDGETS) in a
+# bootstrap() called only from
+# `__main__`: src/.env exists, so a module-level load_dotenv(override=True)
+# would clobber the environment tests/conftest.py sets for the WHOLE session.
+# src/benchmarks/run_manifest.py — the perf run provenance gate, invoked as
+# `python -m src.benchmarks.run_manifest` by scripts/run_perf_baseline.sh. It
+# REFUSES to write a manifest unless every file in HARNESS_FILES is tracked and
+# clean in git, because a baseline whose instrument cannot be recovered from git
+# can never be re-checked; and unless every repo module the harness IMPORTS is
+# tracked, because a clean checkout would not contain it. It records limits from
+# the settings object, not from the shell's exports, and omits every password.
+```
+❌ DON'T: add a `__main__`-guarded harness to an import path a test imports.
+❌ DON'T: record a run's security limits by reading the script that sets them;
+   record what the SERVER ran with, and skip it entirely when it is unpinned.
+❌ DON'T: compute a percentile inline. `sorted(v)[int(len(v) * q)]` truncates, so
+   `int(20 * 0.95) == int(20 * 0.99)` and p95 and p99 both return the maximum —
+   the arithmetic that produced the unusable "208.47 ms logout p95".
 
 ### Script Organization
 ✅ DO: Use async patterns for all database scripts

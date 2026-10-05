@@ -84,11 +84,16 @@ def make_sampling_processor(
     *,
     rates: Mapping[str, float] | None = None,
 ) -> Processor:
-    """Build the processor; returns a plain pass-through callable when rate >= 1.0."""
+    """Build the processor; returns a plain pass-through callable when rate >= 1.0.
+
+    ``rates`` is forwarded to :class:`SamplingProcessor`. It must reach the
+    constructor, otherwise every caller-supplied per-event override is silently
+    discarded and the whole ``Mapping`` path is unreachable.
+    """
     if rate >= 1.0 and not rates:
 
         def _passthrough(logger: Any, method_name: str, event_dict: EventDict) -> EventDict:
             return event_dict
 
         return _passthrough
-    return SamplingProcessor(rate)
+    return SamplingProcessor(rate, rates=rates)

@@ -35,6 +35,8 @@ from uuid import uuid4
 # Ensure project root is in path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from src.benchmarks.percentiles import nearest_rank  # noqa: E402
+
 
 @dataclass
 class BenchmarkResult:
@@ -56,14 +58,35 @@ class BenchmarkResult:
         return [t / 1_000_000 for t in self.times_ns]
 
     def percentile(self, p: float) -> float:
-        """Get percentile in milliseconds."""
-        if not self.times_ns:
-            return 0.0
-        sorted_times = sorted(self.times_ms)
-        k = (len(sorted_times) - 1) * (p / 100)
-        f = int(k)
-        c = f + 1 if f + 1 < len(sorted_times) else f
-        return sorted_times[f] + (sorted_times[c] - sorted_times[f]) * (k - f)
+        """Nearest-rank percentile in milliseconds. ``p`` is 0-100.
+
+        ESTIMATOR CHANGE - READ BEFORE COMPARING ARTEFACTS. This used to
+        interpolate linearly between the two bracketing samples, which returns
+        values that are frequently not in the sample at all, so a p99 could be
+        quoted for a cost no iteration actually paid. It now delegates to
+        ``src.benchmarks.percentiles.nearest_rank``, which always returns an
+        OBSERVED sample.
+
+        Consequences, stated rather than absorbed:
+
+        - The returned percentile is now always a measured value, so it may be
+          LARGER than the old figure whenever the cost rose monotonically
+          (interpolation reads below the upper neighbour) and SMALLER when the
+          cost fell. Neither direction is a regression on its own.
+        - ``p50`` at an even sample count changes meaning: interpolation
+          returned the midpoint of the two central samples; nearest rank
+          returns the lower of them.
+        - A percentile of an empty result used to return ``0.0``. It now
+          raises ``ValueError``, because a 0.0 ms percentile reads as a
+          measurement when nothing was measured. ``to_dict`` still emits the
+          ``"No timing data collected"`` form for that case.
+
+        Artefacts written before this change are therefore NOT comparable with
+        artefacts written after it on any percentile field. Treat the estimator
+        name (or the harness commit SHA) as part of the measurement
+        provenance, the same way a timing protocol already is.
+        """
+        return nearest_rank(self.times_ms, p / 100)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON output."""
