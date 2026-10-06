@@ -110,8 +110,14 @@ jobs:
             -v
         env:
           ENVIRONMENT: local
-          SECRET_KEY: 12345678901234567890123456789012
-          ADMIN_PASSWORD: Str1ngst!
+          # Quoted: unquoted, YAML parses the 32 digits as a number and
+          # GitHub renders it in scientific notation, which fails the >=32
+          # character check. Throwaway fixture, not a real credential.
+          SECRET_KEY: "12345678901234567890123456789012"
+          # Must satisfy FirstUserSettings: >=16 chars with lower, upper,
+          # digit and one of [@$!%*?&]. The previous value was 10 chars and
+          # also on the known-leaked-password denylist.
+          ADMIN_PASSWORD: "NotASecretCiFixture1!@#"
 
           DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
           REDIS_URL: redis://localhost:6379/0
@@ -396,8 +402,14 @@ jobs:
           exit $PYTEST_RC
         env:
           ENVIRONMENT: local
-          SECRET_KEY: 12345678901234567890123456789012
-          ADMIN_PASSWORD: Str1ngst!
+          # Quoted: unquoted, YAML parses the 32 digits as a number and
+          # GitHub renders it in scientific notation, which fails the >=32
+          # character check. Throwaway fixture, not a real credential.
+          SECRET_KEY: "12345678901234567890123456789012"
+          # Must satisfy FirstUserSettings: >=16 chars with lower, upper,
+          # digit and one of [@$!%*?&]. The previous value was 10 chars and
+          # also on the known-leaked-password denylist.
+          ADMIN_PASSWORD: "NotASecretCiFixture1!@#"
 
           DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
           REDIS_URL: redis://localhost:6379/0

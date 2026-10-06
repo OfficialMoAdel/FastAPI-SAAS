@@ -194,11 +194,19 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
 
+      # `src/migrations/env.py` imports `src.app.models`, which imports the
+      # settings object, and `Settings` includes `FirstUserSettings`, whose
+      # ADMIN_PASSWORD is a REQUIRED field. No migration step reads or uses
+      # that password; the value only has to satisfy the field validator.
       - name: Apply migrations to parity check database
         run: uv run alembic -c src/alembic.ini upgrade head
         env:
           ENVIRONMENT: local
           SECRET_KEY: "12345678901234567890123456789012"
+          # Throwaway CI fixture, NOT a real credential. Must satisfy
+          # FirstUserSettings: >=16 chars with lower, upper, digit and one
+          # of [@$!%*?&].
+          ADMIN_PASSWORD: "NotASecretCiFixture1!@#"
           POSTGRES_SERVER: localhost
           POSTGRES_PORT: "5432"
           POSTGRES_USER: postgres
@@ -211,6 +219,7 @@ jobs:
         env:
           ENVIRONMENT: local
           SECRET_KEY: "12345678901234567890123456789012"
+          ADMIN_PASSWORD: "NotASecretCiFixture1!@#"
           POSTGRES_SERVER: localhost
           POSTGRES_PORT: "5432"
           POSTGRES_USER: postgres
