@@ -106,9 +106,41 @@ _auth_info_l1_seam = L1Cache(
 )
 
 
+def assert_user_payload_shape(payload: dict[str, Any]) -> None:
+    """Fail loudly unless the auth payload is exactly one level deep plus `tier`.
+
+    S-4 oracle guard (permanent, not a one-time test): the two-level copy is
+    only isomorphic while the payload stays one level deep with at most one
+    nested dict, ``tier``, whose own values are all scalars. If someone later
+    adds a nested structure, the fast copy would silently stop copying it, so
+    this raises :class:`TypeError` at the copy site instead of passing a test.
+
+    Shape contract (from ``crud.py`` ``get_user_with_tier_eager``): no
+    top-level value is a ``dict`` or ``list`` except ``tier``, and no value
+    inside ``tier`` is a ``dict`` or ``list``. A non-dict ``tier`` (including
+    ``None`` for users without a tier) passes through unchanged.
+    """
+
+    for key, value in payload.items():
+        if key == "tier":
+            continue
+        if isinstance(value, dict | list):
+            raise TypeError(
+                f"user payload key {key!r} holds {type(value).__name__}; "
+                "the two-level copy only copies the top level plus 'tier'"
+            )
+    tier = payload.get("tier")
+    if isinstance(tier, dict):
+        for nested_key, nested_value in tier.items():
+            if isinstance(nested_value, dict | list):
+                raise TypeError(
+                    f"user payload tier[{nested_key!r}] holds {type(nested_value).__name__}; "
+                    "the two-level copy does not copy below 'tier'"
+                )
+
+
 class UserCacheInvalidator:
     """Collaborator for user profile and auth info caching and invalidation."""
-
     user_cache_key = staticmethod(_user_cache_key)
     user_email_cache_key = staticmethod(_user_email_cache_key)
     user_username_cache_key = staticmethod(_user_username_cache_key)
@@ -124,6 +156,9 @@ class UserCacheInvalidator:
             if hit is not None:
                 # Deep copy: auth payloads nest dicts (tier); callers mutate
                 # the returned dict and shared nested refs would pollute L1.
+                # S-4 oracle: the shape guard stays at every copy site so the
+                # future two-level copy cannot silently go shallow.
+                assert_user_payload_shape(hit)
                 return copy.deepcopy(hit)
         client = get_redis()
         if client is None:
@@ -134,6 +169,7 @@ class UserCacheInvalidator:
             if cached:
                 result: dict[str, Any] = json_loads(cached)
                 if cache_key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:"):
+                    assert_user_payload_shape(result)
                     _auth_info_l1[cache_key] = copy.deepcopy(result)
                 return result
         return None
@@ -191,6 +227,9 @@ class UserCacheInvalidator:
         """Cache user auth info in Redis (and refresh the L1 entry)."""
         # Writer-process visibility is synchronous: populate L1 here so this
         # process never serves a stale entry it just overwrote.
+        # S-4 oracle: shape-checked before it is stored, so a non-conforming
+        # payload fails at the writer rather than at a later reader.
+        assert_user_payload_shape(user_with_tier)
         _auth_info_l1[cache_key] = copy.deepcopy(user_with_tier)
         client = get_redis()
         if client is None:

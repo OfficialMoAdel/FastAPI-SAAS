@@ -61,8 +61,45 @@ src/
 # REFUSES to write a manifest unless every file in HARNESS_FILES is tracked and
 # clean in git, because a baseline whose instrument cannot be recovered from git
 # can never be re-checked; and unless every repo module the harness IMPORTS is
-# tracked, because a clean checkout would not contain it. It records limits from
-# the settings object, not from the shell's exports, and omits every password.
+# tracked, because a clean checkout would not contain it. It omits every
+# password. It has two modes and each is a separate exit code, never a default:
+# `--emit-app-host-report`, run ON THE APP HOST, prints what the server would
+# resolve to (event loop, HTTP impl, the image digest the deployment declared in
+# PERF_IMAGE_DIGEST, effective limits, stores) AND the deployment manifest of
+# addendum 6.1 (orchestrator, distro, CPU model, core count, store locality).
+# The deployment manifest splits by what can honestly produce it: distro, CPU
+# model, core count and (for IP-literal addresses) store locality are read off
+# the machine, so they are evidence; the orchestrator is not knowable from
+# inside a process and is declared in PERF_ORCHESTRATOR, with store locality
+# declared in PERF_STORE_LOCALITY when the addresses are bare hostnames. No
+# repository file records any of it (addendum N-3), and the CI runner's topology
+# is explicitly NOT the answer. The load host passes that file back with
+# `--app-host-report`, and the gate refuses to build a manifest without it (6),
+# refuses a server that is not on uvloop + httptools (7), refuses a manifest
+# missing any REQUIRED_MANIFEST_FIELDS (8), with `--phase end
+# --assert-matches START` refuses a run whose configuration moved while it was in
+# flight (9), and refuses a deployment manifest with a hole in it (10).
+# The limits in the manifest are the APP HOST's, not the load host's and not the
+# script's.
+# The image digest is the one identity field the process cannot resolve about
+# itself, so it is DECLARED and validated, never inferred from the commit or
+# invented; an absent one is recorded and labelled, because a bare-metal app host
+# is a real topology that simply cannot be tied to a build. The five deployment
+# fields are different in kind and are NOT labelled when absent: an absent core
+# count or store locality is missing EVIDENCE for the throughput claims, so it
+# aborts the run instead (exit 10).
+# The same module also reports the run's PHASES (P-5). locust's cold numbers are
+# 5-10x its warm numbers, so a single reported percentile hides the inflation
+# entirely; `--emit-phase-report` emits BOTH, per endpoint, plus the ratio
+# between them, so the inflation is a number in the artefact rather than a
+# surprise. The hold floor is MIN_HOLD_SECONDS (60), a declared constant in the
+# module and NOT a number at the call site — the runner reads it back out with
+# `--print-min-hold-seconds` and refuses a shorter hold rather than clamping it.
+# A phase whose samples are not on disk aborts (11): a missing percentile is
+# missing evidence, exactly like a missing core count. The three phases are
+# three SEPARATE locust processes writing to separate CSV prefixes, so the
+# hold's samples are structurally incapable of reaching a warm percentile —
+# there is no reset to get wrong and no filtering that could drop one.
 ```
 ❌ DON'T: add a `__main__`-guarded harness to an import path a test imports.
 ❌ DON'T: record a run's security limits by reading the script that sets them;

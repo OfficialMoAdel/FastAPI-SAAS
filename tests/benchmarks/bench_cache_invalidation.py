@@ -11,7 +11,10 @@ noise, and the measured noise floor here is 7.1x run-to-run on identical code
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from cachetools import TTLCache
 
+from src.app.core.cache import invalidation_channel as channel_mod
+from src.app.core.cache.l1 import L1Cache, RawKeyCodec
 from src.app.core.utils import cache
 from src.benchmarks import protocol
 
@@ -128,3 +131,149 @@ async def test_benchmark_pattern_invalidation():
     print(f"Speedup (REPORTED, never asserted): {scan_result.best_us / set_result.best_us:.1f}x")
 
     protocol.verdict(set_result, PATTERN_CEILING_US).assert_passed()
+
+
+# ---------------------------------------------------------------------------
+# S-6 oracle (FastAPI_saas-t6r8): ordered payload sequence + double-invalidate
+# idempotence. Landed BEFORE the diff; the S-6 change (batch N publishes into
+# one) must satisfy these, not the other way round.
+#
+# WHY ORDER, NOT SET: batching is only safe because Redis executes a
+# pipeline in submission order on a single connection, so per-subscriber FIFO
+# is preserved. That is a property of Redis, not of this code. Asserting only
+# the SET of payloads would pass while the safety argument silently broke,
+# so the sequence comparison below is list equality, in order.
+#
+# WHAT THE DIFF MUST SHOW: the same two tests run against the batched arm
+# and the published sequence is IDENTICAL (same payloads, same order) and
+# the local end state is IDENTICAL (all drops first, then the publish —
+# l1.py's DROP LOCALLY, THEN PUBLISH invariant). The local drop order is
+# load-bearing too: pub/sub does not echo to the publisher, so publishing
+# before dropping would leave this process serving the entry it just
+# invalidated.
+#
+# ACCEPTED DELTA (quoted from the bead): "one warning per BATCH instead of
+# per MESSAGE on the error path - accept and document". A batched publish
+# that fails names the batch, not each key; that is coarser logging, not a
+# behaviour change, and is accepted here in advance so the diff is not
+# judged against a log shape it was told to change.
+# ---------------------------------------------------------------------------
+
+#: M keys for the sequence test, in an order that is NEITHER sorted NOR
+#: reversed-sorted. 10 keys are enough that an order-destroying change
+#: (set-iteration, sort, dedup, reverse) cannot pass by luck — with
+#: ``range(10)`` insertion order, a ``sorted()`` in the implementation
+#: would still pass, so the shuffled order below is load-bearing.
+_S6_M_KEYS: tuple[str, ...] = tuple(f"s6-oracle-user:{i}" for i in (3, 0, 7, 1, 9, 2, 6, 4, 8, 5))
+
+#: A single key, invalidated twice, for the idempotence test.
+_S6_DOUBLE_KEY = "s6-oracle-user:double"
+
+
+class _FakePubSubRedis:
+    """The subscriber harness: captures exactly what the wire would carry.
+
+    ``publish`` records (channel, message) in call order, which is what a
+    subscriber on a single connection receives — Redis preserves
+    per-connection FIFO, so call order here IS arrival order there.
+    """
+
+    def __init__(self) -> None:
+        self.published: list[tuple[str, str]] = []
+
+    async def publish(self, channel: str, message: str) -> int:
+        self.published.append((channel, message))
+        return 1
+
+
+def _fresh_s6_seam(name: str) -> tuple[L1Cache, TTLCache[str, object], _FakePubSubRedis]:
+    """A publisher/subscriber seam with its own cache, channel and wire tap.
+
+    Each seam gets a UNIQUE channel name so ``register_l1_channel`` never
+    sees a re-registration (which logs loudly and replaces). The caller
+    patches ``channel_mod.get_redis`` to return the fake before invalidating.
+    """
+    local = TTLCache[str, object](maxsize=100, ttl=60.0)
+    wire = _FakePubSubRedis()
+    seam = L1Cache(
+        name=f"s6-oracle-{name}",
+        channel=f"s6-oracle-channel-{name}",
+        codec=RawKeyCodec(),
+        caches=[local],
+    )
+    return seam, local, wire
+
+
+def _payloads_of(wire: _FakePubSubRedis) -> list[str]:
+    return [message for _, message in wire.published]
+
+
+async def _serial_invalidate(seam: L1Cache, keys: tuple[str, ...]) -> None:
+    """The OLD arm: one drop-then-publish per key, in submission order."""
+    for key in keys:
+        await seam.invalidate(key)
+
+
+def test_ordered_payload_sequence_for_m_keys() -> None:
+    """The subscriber receives the IDENTICAL ORDERED sequence for M keys."""
+    import asyncio
+
+    assert len(_S6_M_KEYS) >= 2, "an order test over fewer than 2 keys cannot fail"
+    publisher, pub_local, pub_wire = _fresh_s6_seam("publisher")
+    subscriber, sub_local, _ = _fresh_s6_seam("subscriber")
+    for key in _S6_M_KEYS:
+        pub_local[key] = f"entry-{key}"
+        sub_local[key] = f"entry-{key}"
+
+    expected = [str(key) for key in _S6_M_KEYS]  # RawKeyCodec.encode is str(key)
+    with patch.object(channel_mod, "get_redis", return_value=pub_wire):
+        asyncio.run(_serial_invalidate(publisher, _S6_M_KEYS))
+
+    published = _payloads_of(pub_wire)
+    assert published, "the wire tap saw nothing - the harness is broken, not the code"
+    assert published == expected, "ORDERED sequence, not just the same set"
+    assert dict(pub_local) == {}, "every locally dropped key must be gone on the publisher"
+
+    # Subscriber side: feed the captured wire sequence through handle(), in
+    # order, exactly as Redis would deliver it on one connection.
+    for payload in published:
+        subscriber.handle(payload)
+    assert dict(sub_local) == {}, "subscriber ends with nothing cached"
+    assert dict(sub_local) == dict(pub_local), "local L1 state is identical on both sides"
+
+
+def test_double_invalidate_is_idempotent() -> None:
+    """Invalidating the same key twice changes nothing the second time."""
+    import asyncio
+
+    publisher, pub_local, pub_wire = _fresh_s6_seam("double-publisher")
+    subscriber, sub_local, _ = _fresh_s6_seam("double-subscriber")
+    pub_local[_S6_DOUBLE_KEY] = "entry-double"
+    sub_local[_S6_DOUBLE_KEY] = "entry-double"
+
+    async def _twice() -> None:
+        await publisher.invalidate(_S6_DOUBLE_KEY)
+        after_first = dict(pub_local)
+        await publisher.invalidate(_S6_DOUBLE_KEY)
+        after_second = dict(pub_local)
+        assert after_first == after_second == {}, "second invalidate must be a no-op on state"
+
+    with patch.object(channel_mod, "get_redis", return_value=pub_wire):
+        asyncio.run(_twice())
+
+    published = _payloads_of(pub_wire)
+    assert published == [_S6_DOUBLE_KEY, _S6_DOUBLE_KEY], "both invalidations publish; neither raises"
+
+    for payload in published:
+        subscriber.handle(payload)
+    assert dict(sub_local) == dict(pub_local) == {}, "subscriber tolerates the repeated message too"
+
+
+def test_the_oracle_names_the_sequence_it_pins() -> None:
+    """Anti-vacuity: the golden sequence is M distinct payloads whose order
+    a sort, a reverse, or a set-iteration would all destroy."""
+    expected = [str(key) for key in _S6_M_KEYS]
+    assert len(expected) == len(set(expected)) == 10
+    assert expected != sorted(expected), "a sorted() in the code must fail this oracle"
+    assert expected != sorted(expected, reverse=True), "a reversal must fail it too"
+    assert _S6_DOUBLE_KEY not in _S6_M_KEYS, "the double key must stand alone, not alias the sequence"

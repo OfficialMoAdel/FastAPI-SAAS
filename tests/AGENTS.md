@@ -261,6 +261,8 @@ tests/integration/
 │   │   ├── test_tenant_permissions.py
 │   │   └── test_tenant_whitelist.py
 │   └── test_service_layer.py
+├── performance/                   # Perf-harness verification
+│   └── test_baseline_runner_e2e.py # scripts/run_perf_baseline.sh refusals
 └── test_frontend_compatibility.py
 ├── test_isomorphism_flows.py
 ├── test_p1_verification.py

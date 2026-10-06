@@ -251,20 +251,12 @@ jobs:
           github.ref == 'refs/heads/main' &&
           (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.baseline_update))
         run: |
-          cp benchmark-results.json tests/benchmarks/baselines/main.json
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add tests/benchmarks/baselines/main.json
-
-          if git diff --cached --quiet; then
-            echo "No baseline changes to commit."
-            exit 0
-          fi
-
-          git commit -m "chore: update benchmark baseline"
-          git push
+          # PF-12/AMD-A13 + A-13: tests/benchmarks/baselines/main.json is a
+          # hand-authored stub and must NEVER be overwritten with shared-runner
+          # numbers — this step used to commit benchmark-results.json over it
+          # on every main push, destroying the stub. It now only REPORTS; the
+          # raw numbers already ride the benchmark-results artifact above.
+          echo "Baseline NOT overwritten: main.json is a hand-authored stub (A-13); shared-runner numbers ride the benchmark-results artifact instead." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Comment on PR with results
         if: always() && github.event_name == 'pull_request'
@@ -310,8 +302,133 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body
-            });
+                body
+              });
+
+  microbenchmark:
+    # A-9 second arm (FastAPI_saas-u71j): microbenchmark ONLY. This job runs
+    # the 8 protocol-migrated microsecond benchmarks on a shared runner
+    # against co-located stores. Its numbers are NOT a capacity measurement
+    # and can satisfy NO Gate A checkbox (see the artefact's
+    # gate_a_satisfiable field). It has no compare step, no baseline
+    # overwrite, and no p95/throughput/RTT columns — by design, not by
+    # omission: a shared-runner figure quoted beside a capacity claim is
+    # exactly the misreading this label exists to prevent.
+    name: microbenchmark only - shared runner, co-located stores, NOT a capacity measurement
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d test_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: latest
+
+      - name: Install dependencies
+        run: |
+          uv sync --frozen || uv sync
+
+      - name: Assert uvloop installed (u0ko platform claim)
+        # AMD A-9 (FastAPI_saas-u0ko): this arm's platform claim is ubuntu +
+        # uvloop. uv sync installs uvloop>=0.19.0 on non-Windows (pyproject
+        # marker sys_platform != 'win32'); this step fails the job LOUD if the
+        # install ever stops providing it, instead of silently measuring a
+        # different event loop.
+        run: |
+          uv run python -c "import uvloop; print('uvloop', uvloop.__version__)"
+
+      - name: Run microbenchmarks with loop-lag probe
+        run: |
+          uv run python scripts/probe_loop_lag.py --rate 100 --duration 600 --output loop-lag.json &
+          PROBE_PID=$!
+          uv run pytest tests/benchmarks/test_p2_micros.py tests/benchmarks/test_auth_perf.py tests/benchmarks/bench_cache_invalidation.py tests/benchmarks/test_nrgi3_scan_cost.py tests/benchmarks/bench_r1_opus.py tests/benchmarks/test_passkey_lookup.py tests/benchmarks/test_post_optimization.py tests/benchmarks/test_r5_micros.py -q -p no:randomly
+          PYTEST_RC=$?
+          kill $PROBE_PID || true
+          wait $PROBE_PID || true
+          uv run python - <<'PYEOF'
+          import json
+          import uvloop
+          lag = json.load(open("loop-lag.json"))
+          run = {
+            "label": "microbenchmark only - shared runner, co-located stores, NOT a capacity measurement",
+            "gate_a_satisfiable": False,
+            "uvloop": uvloop.__version__,
+            "loop_lag": lag,
+          }
+          json.dump(run, open("microbench-run.json", "w"), indent=2)
+          PYEOF
+          exit $PYTEST_RC
+        env:
+          ENVIRONMENT: local
+          SECRET_KEY: 12345678901234567890123456789012
+          ADMIN_PASSWORD: Str1ngst!
+
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379/0
+
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_SERVER: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: test_db
+
+          REDIS_CACHE_HOST: localhost
+          REDIS_CACHE_PORT: 6379
+          REDIS_CACHE_PASSWORD: ""
+
+          REDIS_QUEUE_HOST: localhost
+          REDIS_QUEUE_PORT: 6379
+          REDIS_QUEUE_PASSWORD: ""
+
+          CRUD_ADMIN_REDIS_HOST: localhost
+          CRUD_ADMIN_REDIS_PORT: 6379
+          CRUD_ADMIN_REDIS_PASSWORD: ""
+
+      - name: Upload microbenchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: microbench-run-${{ github.sha }}
+          path: |
+            microbench-run.json
+            loop-lag.json
+          retention-days: 30
 
   benchmark-history:
     name: Track Benchmark History

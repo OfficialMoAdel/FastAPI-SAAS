@@ -222,3 +222,7 @@ docs/adr/*
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+AUDIT_*.md
+perf_*
+tests/benchmarks/results
+locust_baseline_NON_REPRESENTATIVE.md

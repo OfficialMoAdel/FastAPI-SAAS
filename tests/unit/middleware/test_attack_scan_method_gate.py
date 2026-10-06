@@ -17,7 +17,8 @@ in tests/e2e/core/security/test_attack_scan_bounds_e2e.py.
 
 from __future__ import annotations
 
-import logging
+from collections.abc import MutableMapping
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -81,7 +82,7 @@ async def _scan(mw: AttackDetectionMiddleware, method: str, body: bytes = b"", *
     )
 
 
-def _skips(events: list[dict]) -> list[dict]:
+def _skips(events: list[MutableMapping[str, Any]]) -> list[MutableMapping[str, Any]]:
     return [r for r in events if "skipped_body_scan" in r.get("event", "")]
 
 
@@ -142,33 +143,32 @@ async def test_bodyless_skip_is_logged_at_debug(method: str, middleware: AttackD
     also where ``test_skip_is_silent_below_debug`` observes it.
     """
     calls: list[tuple[tuple, dict]] = []
-    levels: list[int] = []
 
     def spy(event, *args, **kwargs):
         calls.append(((event, *args), kwargs))
 
-    def guard(level):
-        levels.append(level)
-        return True
-
-    with (
-        patch.object(ad.logger, "is_enabled_for", side_effect=guard),
-        patch.object(ad.logger, "debug", side_effect=spy),
-    ):
+    # S-8 de-mock: no is_enabled_for patch — the real predicate runs.
+    # Which DEBUG level gated the call is now asserted by
+    # test_debug_guard_is_level_aware (KNOWN-FAILING until A-3).
+    with patch.object(ad.logger, "debug", side_effect=spy):
         await _scan(middleware, method)
 
     assert len(calls) == 1, f"expected one skip event for {method}, got {calls}"
     (event_args, fields) = calls[0]
     event = event_args[0]
     assert "skipped_body_scan" in event
-    # The event is emitted as DEBUG, not merely at some level.
-    assert levels == [logging.DEBUG], f"skip was gated on {levels}, not DEBUG"
     assert fields["method"] == method
     assert fields["path"] == "/api/v1/files"
     # P1-12 contract: fields, not a pre-formatted sentence.
     assert "method=" not in str(event)
 
 
+@pytest.mark.xfail(
+    reason="KNOWN-FAILING until A-3: is_enabled_for is structurally always-True on HEAD "
+    "(structlog.configure sets no wrapper_class), so debug IS attempted and the spy fires. "
+    "strict=True so the suite goes red the day A-3 lands and this marker must come off.",
+    strict=True,
+)
 async def test_skip_is_silent_below_debug(middleware: AttackDetectionMiddleware) -> None:
     """With DEBUG disabled the log call must not even be ATTEMPTED.
 
@@ -187,13 +187,29 @@ async def test_skip_is_silent_below_debug(middleware: AttackDetectionMiddleware)
     def spy(*args, **kwargs):  # pragma: no cover - must never run
         called.append((args, kwargs))
 
-    with (
-        patch.object(ad.logger, "is_enabled_for", return_value=False),
-        patch.object(ad.logger, "debug", side_effect=spy),
-    ):
+    with patch.object(ad.logger, "debug", side_effect=spy):
         await _scan(middleware, "GET")
 
     assert called == [], "logger.debug was invoked despite DEBUG being disabled"
+
+
+@pytest.mark.xfail(
+    reason="KNOWN-FAILING until A-3: the guard predicate is structurally always-True on HEAD, "
+    "so is_enabled_for(DEBUG) is True at every level. strict=True so landing A-3 "
+    "turns this XPASS into a red suite until the marker comes off.",
+    strict=True,
+)
+def test_debug_guard_is_level_aware() -> None:
+    """The DEBUG guard must actually consult the level — not return True always.
+
+    S-8 oracle, de-mocked: the real module logger, no patches. On HEAD this
+    FAILS by design (the predicate is ``level >= min_level`` with the default
+    filtering bound logger, structurally always True). A-3 lands the
+    level-aware ``wrapper_class`` and this flips green.
+    """
+    import logging as _logging
+
+    assert ad.logger.is_enabled_for(_logging.DEBUG) is False
 
 
 @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH"])

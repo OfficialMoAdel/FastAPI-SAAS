@@ -58,10 +58,10 @@ PERF_TEST_USER_COUNT=200 python scripts/setup_locust_test_data.py
 Credentials are resolved by `PERF_TEST_EMAILS` (comma-separated, highest priority) or
 `PERF_TEST_USER_COUNT` (default 100). The seeding script uses the same resolution order.
 
-### 3. Relax the per-IP limits for the duration of the run
+### 3. Start the server under PRODUCTION limits, on its own host
 
-A 100-user test from a single host **cannot** pass the defaults — all of these are
-per client IP, and every virtual user shares it:
+All of these defaults are per client IP, and every virtual user on a load host shares
+one:
 
 | Setting | Default | Effect |
 |---|---|---|
@@ -69,19 +69,29 @@ per client IP, and every virtual user shares it:
 | `DEFAULT_ANONYMOUS_LIMIT` | `(10, 3600)` | 10 logins/hour (login is anonymous) |
 | `AUTO_BAN_ENABLED` | `true`, threshold 10 | bans the IP 1h, escalating to 2h |
 
-`scripts/run_perf_baseline.sh` below does this for you. Doing it by hand:
+A capacity number measured with those limits relaxed is not a capacity number. So the
+script does **not** relax them, and it does **not** start the server. You start the app
+yourself on a separate host, exactly as the image does:
+
+```bash
+# on the APP HOST, exactly the Dockerfile CMD — no --loop, no --http,
+# so uvicorn resolves uvloop + httptools itself
+uvicorn src.app.main:app --host 0.0.0.0 --port 8000
+```
+
+If you deliberately measure a run with the limits relaxed — a rate-limit smoke test,
+not a baseline — override them in the server's process env and expect the artefact to
+say so. The app-host report records the effective values, and `AUTO_BAN_ENABLED=false`
+becomes a label in the manifest:
 
 ```bash
 export AUTO_BAN_ENABLED=false
-export SECURITY_BUDGETS='{"auth":[10000,60],"mfa_verify":[5,60],"mfa_verify_global":[15,60],"mfa_mutate":[5,60],"magic_link_send":[3,60],"passkey_login":[10,60],"refresh":[10000,60],"ai_chat":[10000,60]}'
+export SECURITY_BUDGETS='{"auth":[10000,60],"refresh":[10000,60],"ai_chat":[10000,60]}'
 export DEFAULT_ANONYMOUS_LIMIT="[100000,3600]"
-export DEFAULT_AUTHENTICATED_LIMIT="[100000,3600]"
-uvicorn src.app.main:app --host 127.0.0.1 --port 8000
 ```
 
-These are process-env overrides — `src/.env` is never modified. Start uvicorn without
-them to restore normal behaviour. If an IP does get banned, clear it in Redis:
-`security:ban:<ip>` and `security:ban_count:<ip>`.
+These are process-env overrides — `src/.env` is never modified. If an IP does get
+banned, clear it in Redis: `security:ban:<ip>` and `security:ban_count:<ip>`.
 
 ### 4. Bypass the HTTP proxy (if your host sets one)
 
@@ -103,21 +113,57 @@ PERF_TEST_AI_ENABLED=1 ./scripts/run_perf_baseline.sh
 
 ### 1. Scripted baseline (recommended)
 
-Starts a dedicated uvicorn with the limits relaxed, waits for health, runs Locust, and
-tears the server down. Writes `locust_baseline_<timestamp>.log` in the repo root plus
-CSVs in `reports/`.
+Three steps across two hosts. The load host refuses to generate load against a server on
+itself, because gevent's hub and Locust's CSV aggregation competing with the app for CPU
+makes every latency figure a contention measurement rather than a server measurement.
 
 ```bash
-./scripts/run_perf_baseline.sh                      # 100 users, ramp 10/s, 5m
-./scripts/run_perf_baseline.sh -u 20 -r 5 -t 1m     # quick smoke
-./scripts/run_perf_baseline.sh --seed               # (re)seed the account pool first
+# 1. APP HOST — record what the server resolves to, and WHERE it runs. Run from
+#    the same checkout and the same image as the server itself. Two facts about
+#    the deployment cannot be read from inside the process and no in-repo file
+#    records either, so they are declared: the image digest and the orchestrator.
+#    PERF_STORE_LOCALITY is only needed when the store addresses are bare
+#    hostnames (they usually are); a loopback or routable IP literal is derived.
+#    Any of the six fields left unrecorded STOPS the run — a manifest missing the
+#    core count reads as complete and is not.
+PERF_IMAGE_DIGEST=sha256:... \
+PERF_ORCHESTRATOR=docker-compose \
+PERF_STORE_LOCALITY=remote \
+  python -m src.benchmarks.run_manifest --emit-app-host-report > app_host_report.json
+scp app_host_report.json LOAD_HOST:reports/
+
+# 2. APP HOST — start the server under production limits
+uvicorn src.app.main:app --host 0.0.0.0 --port 8000
+
+# 3. LOAD HOST — measure in three phases. --host is required; there is no default.
+./scripts/run_perf_baseline.sh --host http://app-host.internal:8000
+./scripts/run_perf_baseline.sh --host http://app-host.internal:8000 -u 20 -r 5 -t 1m
+./scripts/run_perf_baseline.sh --host http://app-host.internal:8000 --seed
 ```
+
+The run is three separate locust processes, each writing its own CSVs: a **cold**
+window (`--cold-window`, default 30s, `..._cold_*`), a **hold** (`--hold`, default
+the 60s floor the harness declares, `..._hold_*`), and the **measured** phase
+(`-t`, `--reset-stats`). The hold is not a reset that might come early — it is a
+different process writing different files, so its samples are structurally
+incapable of reaching a reported percentile. `--hold` shorter than the floor is
+REFUSED rather than clamped, and a phase whose CSVs are missing aborts the run.
+
+`reports/baseline_<timestamp>_phases.json` then records cold and warm **per
+endpoint**, side by side, with the ratio between them — the cold numbers are
+5-10x the warm ones, so reporting only one of them is what let that inflation hide
+in the first place. The script also writes `locust_baseline_<timestamp>.log` in the
+repo root, CSVs in `reports/`, and two manifests: one at run start and one at run
+end. The end manifest is written only if every invariant section (git, harness,
+python, load host, stores, limits, labels, app host, run params) is byte-identical
+to the start; a run whose configuration moved while it was in flight is void and
+the end record is not written.
 
 ### 2. Web UI Mode
 
 ```bash
-# Start the API server WITH the relaxed limits from Prerequisite 3, then:
-locust -f tests/performance/locustfile.py --host http://127.0.0.1:8000
+# Start the API server on the app host (Prerequisite 3), then:
+locust -f tests/performance/locustfile.py --host http://app-host.internal:8000
 # Open http://localhost:8089, set users: 10, spawn rate: 2, click "Start swarming"
 ```
 
@@ -232,8 +278,9 @@ Two gotchas that cost time:
 
 - The IP-filter middleware rejects the default `python-httpx` UA as a bad bot
   (403), so the script sends a browser UA.
-- Rate limits are relaxed via process env (same overrides as
-  `run_perf_baseline.sh`); otherwise the auth budget stops the run at 5 refreshes.
+- The auth budget stops the run at 5 refreshes unless the server's process env is
+  overridden (`SECURITY_BUDGETS` etc.). That makes the run a rate-limit measurement
+  rather than a baseline, so `run_perf_baseline.sh` does not do it for you.
 
 ### Result — 2026-09-22 (PERF-R1-B1)
 

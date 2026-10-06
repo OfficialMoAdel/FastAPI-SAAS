@@ -33,6 +33,12 @@ through the exact entry point ``run_perf_baseline.sh`` invokes,
 gate's contract is this process refusing to start, and the shell wrapper's only
 remaining job is to propagate the exit code, which ``test_run_manifest.py``
 already pins.
+
+Every invocation below also passes ``--app-host-report``, because the load
+script no longer starts the application and the gate therefore requires the
+server's own report (H-9). The report written here declares ``uvloop`` and
+``httptools`` so the exit code under test is the harness one and not the runtime
+one; the runtime refusals are covered in ``test_run_manifest.py``.
 """
 
 from __future__ import annotations
@@ -41,16 +47,21 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from src.benchmarks.run_manifest import (
+    EXPECTED_EVENT_LOOP,
+    EXPECTED_HTTP_IMPL,
     HARNESS_FILES,
     REPO_ROOT,
     HarnessDependencyNotTracked,
     HarnessNotPinned,
     assert_clean_checkout_reproducible,
+    build_app_host_report,
     build_manifest,
     harness_dependencies,
     untracked_harness_dependencies,
@@ -61,6 +72,29 @@ from src.benchmarks.run_manifest import (
 EXIT_UNPINNED = 3
 EXIT_NO_HEAD = 4
 EXIT_UNTRACKED_DEPENDENCY = 5
+
+#: A syntactically valid OCI digest, declared rather than resolved. Nothing here
+#: runs a container (the repository forbids it), so a real digest would be a
+#: fabricated identity.
+DECLARED_IMAGE_DIGEST = "sha256:" + "0" * 64
+
+#: The deployment manifest the fixture declares. Not this repository's answer -
+#: L-2's whole point is that no in-repo file records where the application runs -
+#: but it has to be complete, because a manifest missing one of these fields is
+#: refused before the harness gates ever get to be the thing under test.
+DECLARED_DEPLOYMENT: dict[str, Any] = {
+    "orchestrator": "docker-compose",
+    "distro": "Debian GNU/Linux 12 (bookworm)",
+    "cpu_model": "AMD EPYC 7763 64-Core Processor",
+    "core_count": 8,
+    "store_locality": "remote",
+    "image_digest": DECLARED_IMAGE_DIGEST,
+    "store_addresses": {
+        "postgres": "db.internal:5432/app",
+        "redis_cache": "cache.internal:6379",
+        "redis_queue": "queue.internal:6379",
+    },
+}
 
 #: Content for the scratch checkout. ``locustfile`` deliberately imports a repo
 #: module so the dependency closure has something to find; without that the
@@ -107,21 +141,72 @@ def _scratch_checkout(root: Path, *, commit: bool = True, exclude_from_commit: t
     return repo
 
 
-def _gate(repo: Path, *extra: str) -> subprocess.CompletedProcess[str]:
-    """Invoke the gate exactly as the load script does."""
-    return subprocess.run(
-        [sys.executable, "-m", "src.benchmarks.run_manifest", "--repo-root", str(repo), *extra],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-        env=os.environ,
+def _app_host_report(directory: Path) -> Path:
+    """Write a representative app-host report and return its path.
+
+    The gate now refuses a run whose app-host report is absent, so every process
+    invocation here needs one. It declares ``uvloop`` and ``httptools`` - what the
+    Dockerfile's flagless CMD resolves to - because the runtime gate is not what
+    this file is testing; the runtime gate's own refusals are covered by
+    ``test_run_manifest.py``. What these tests assert is the exit code, and an
+    absent report would give every one of them the same wrong one. The digest is
+    declared rather than resolved so the fixture cannot read the suite's own
+    ``PERF_IMAGE_DIGEST``, which would make these tests environment-dependent.
+    """
+    report = build_app_host_report(
+        event_loop=EXPECTED_EVENT_LOOP,
+        http_impl=EXPECTED_HTTP_IMPL,
+        image_digest=DECLARED_IMAGE_DIGEST,
+        deployment=dict(DECLARED_DEPLOYMENT),
     )
+    target = directory / "app_host_report.json"
+    target.write_text(json.dumps(report), encoding="utf-8")
+    return target
+
+
+def _gate(repo: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+    """Invoke the gate exactly as the load script does, app-host report included."""
+    with tempfile.TemporaryDirectory() as directory:
+        report = _app_host_report(Path(directory))
+        return subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "src.benchmarks.run_manifest",
+                "--repo-root",
+                str(repo),
+                "--app-host-report",
+                str(report),
+                *extra,
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=os.environ,
+        )
 
 
 @pytest.fixture
 def scratch_repo(tmp_path: Path) -> Path:
     return _scratch_checkout(tmp_path)
+
+
+@pytest.fixture
+def app_host() -> dict[str, Any]:
+    """The in-process form of what :func:`_app_host_report` writes to disk.
+
+    Declares the digest and the whole deployment manifest so it is identical to the
+    file :func:`_gate` hands the subprocess: the exit codes asserted below are about
+    the harness gates, and a report missing a deployment field would stop the run
+    earlier with a different code than the one under test.
+    """
+    return build_app_host_report(
+        event_loop=EXPECTED_EVENT_LOOP,
+        http_impl=EXPECTED_HTTP_IMPL,
+        image_digest=DECLARED_IMAGE_DIGEST,
+        deployment=dict(DECLARED_DEPLOYMENT),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -268,7 +353,7 @@ def test_stdlib_and_site_packages_are_not_dependencies(scratch_repo: Path):
     assert every == {"src/benchmarks/percentiles.py"}, every
 
 
-def test_the_application_is_covered_by_the_commit_not_by_the_closure(scratch_repo: Path):
+def test_the_application_is_covered_by_the_commit_not_by_the_closure(scratch_repo: Path, app_host: dict[str, Any]):
     """`src/app` is thousands of files; `git.sha` describes it exactly.
 
     Listing them would say nothing the commit SHA does not, so the closure
@@ -277,13 +362,13 @@ def test_the_application_is_covered_by_the_commit_not_by_the_closure(scratch_rep
     closure = harness_dependencies(scratch_repo)
     assert not any(relative.startswith("src/app/") for deps in closure.values() for relative in deps)
 
-    manifest = build_manifest(repo_root=scratch_repo)
+    manifest = build_manifest(app_host=app_host, run_params={"users": "100"}, repo_root=scratch_repo)
     assert manifest["git"]["sha"] == _git(scratch_repo, "rev-parse", "HEAD").stdout.strip()
 
 
-def test_the_closure_is_written_into_the_manifest(scratch_repo: Path):
+def test_the_closure_is_written_into_the_manifest(scratch_repo: Path, app_host: dict[str, Any]):
     """Criterion 3's output: the artefact declares what a checkout must contain."""
-    manifest = build_manifest(repo_root=scratch_repo)
+    manifest = build_manifest(app_host=app_host, run_params={"users": "100"}, repo_root=scratch_repo)
 
     assert manifest["harness"]["dependencies"]["tests/performance/locustfile.py"] == ["src/benchmarks/percentiles.py"]
 
@@ -372,14 +457,14 @@ def test_an_import_cycle_does_not_hang_the_walk(tmp_path: Path):
 # --------------------------------------------------------------------------
 
 
-def test_both_shas_reach_the_manifest(scratch_repo: Path):
+def test_both_shas_reach_the_manifest(scratch_repo: Path, app_host: dict[str, Any]):
     """Harness at BYTE level (blob SHA), application at COMMIT level (HEAD).
 
     The two are different granularities on purpose: the harness is a handful of
     files whose exact bytes decide the number, while the application is fully
     described by the commit it was checked out at.
     """
-    manifest = build_manifest(repo_root=scratch_repo)
+    manifest = build_manifest(app_host=app_host, run_params={"users": "100"}, repo_root=scratch_repo)
     expected_blob = _git(scratch_repo, "rev-parse", "HEAD:tests/performance/locustfile.py").stdout.strip()
 
     by_path = {entry["path"]: entry for entry in manifest["harness"]["files"]}
@@ -433,12 +518,12 @@ def test_a_checkout_with_no_head_is_refused_separately(tmp_path: Path):
     assert _gate(repo).returncode in {EXIT_NO_HEAD, EXIT_UNPINNED}
 
 
-def test_harness_not_pinned_carries_the_offending_states(scratch_repo: Path):
+def test_harness_not_pinned_carries_the_offending_states(scratch_repo: Path, app_host: dict[str, Any]):
     """The exception is the structured form of the same fact, for in-process callers."""
     (scratch_repo / "scripts" / "setup_locust_test_data.py").unlink()
 
     with pytest.raises(HarnessNotPinned) as caught:
-        build_manifest(repo_root=scratch_repo)
+        build_manifest(app_host=app_host, run_params={"users": "100"}, repo_root=scratch_repo)
 
     offenders = {state.path: state.reason for state in caught.value.files}
     assert offenders == {"scripts/setup_locust_test_data.py": "missing"}

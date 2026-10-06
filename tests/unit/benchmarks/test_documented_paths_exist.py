@@ -113,14 +113,38 @@ def _tracked_docstrings() -> list[tuple[Path, str]]:
     return found
 
 
-def _sources() -> list[tuple[str, str]]:
-    """Every place a reader could be told to run a harness: docs and docstrings."""
+#: This file. It has to name the dangling paths in order to record the defect
+#: it fixes, so it is exempt from its own rule. The alternative -- rewording the
+#: docstring so the paths stop matching -- would keep the rule green and lose
+#: the record, which is strictly worse: an oracle that cannot state its own
+#: subject has to describe it in words no longer specific enough to match, and
+#: the next reader learns nothing. This was not hypothetical: committing this
+#: file made ``git ls-files`` return it and the rule failed on its own
+#: documentation. Exempting ONE file is not a weakening -- no other file gains
+#: one -- and ``test_the_exemption_is_load_bearing_and_covers_only_this_file``
+#: pins both that it stays one file and that it is still earning its place.
+ORACLE_SELF_PATH = "tests/unit/benchmarks/test_documented_paths_exist.py"
+EXEMPT_SOURCES: frozenset[str] = frozenset({ORACLE_SELF_PATH})
+
+
+def _all_sources() -> list[tuple[str, str]]:
+    """Every place a reader could be told to run a harness, EXEMPTIONS INCLUDED.
+
+    Split from :func:`_sources` so the exemption can be audited: the rule reads
+    the filtered list, and the guard test reads this one to prove the filter is
+    actually removing something rather than sitting there unused.
+    """
     sources = [
         (doc.relative_to(REPO_ROOT).as_posix(), doc.read_text(encoding="utf-8", errors="replace"))
         for doc in _tracked_docs()
     ]
     sources.extend((path.relative_to(REPO_ROOT).as_posix(), docstring) for path, docstring in _tracked_docstrings())
     return sources
+
+
+def _sources() -> list[tuple[str, str]]:
+    """Every place a reader could be told to run a harness: docs and docstrings."""
+    return [(where, text) for where, text in _all_sources() if where not in EXEMPT_SOURCES]
 
 
 def _missing_capture_baseline_refs() -> list[str]:
@@ -167,6 +191,42 @@ def test_tracked_documents_and_docstrings_never_name_a_capture_baseline_that_doe
     """
     offenders = _missing_capture_baseline_refs()
     assert not offenders, "sources name a capture_baseline.py that does not exist:\n  " + "\n  ".join(offenders)
+
+
+def test_the_exemption_is_load_bearing_and_covers_only_this_file():
+    """An exemption that covers nothing is dead weight; one that grows is a hole.
+
+    Both failure modes are checked here, because the exemption exists precisely
+    so this file can record the defect it was written for:
+
+    - it must still be EARNING its place, i.e. this file must really do name a
+      dangling path that the rule would otherwise reject;
+    - it must stay ONE file, so a second exemption has to be added in the open
+      next to this reason rather than accumulated somewhere nobody reads.
+    """
+    assert len(EXEMPT_SOURCES) == 1, f"the exemption grew to {sorted(EXEMPT_SOURCES)}; each one needs its own reason"
+    assert ORACLE_SELF_PATH in EXEMPT_SOURCES
+    assert Path(__file__).resolve().relative_to(REPO_ROOT).as_posix() == ORACLE_SELF_PATH, (
+        "this file was moved or renamed, so it is no longer exempting itself and its own "
+        "record of the defect will fail the rule"
+    )
+
+    exempt_text = dict(_all_sources()).get(ORACLE_SELF_PATH)
+    assert exempt_text is not None, f"{ORACLE_SELF_PATH} is not in the scanned sources, so the exemption is pointless"
+    named_here = sorted(set(CAPTURE_BASELINE.findall(exempt_text)))
+    assert named_here, (
+        "this file no longer names any capture_baseline.py at all, so it cannot be documenting the defect"
+    )
+    # Only the MISSING ones matter: the file legitimately names the real
+    # producer too, and requiring every path it mentions to be absent would be
+    # asserting the opposite of what the exemption is for.
+    dangling = [named for named in named_here if not (REPO_ROOT / named).exists()]
+    assert dangling, (
+        "this file no longer names a capture_baseline.py that is missing, so the exemption "
+        "is dead weight and should be deleted rather than left in place"
+    )
+    for named in dangling:
+        assert Path(named).name == "capture_baseline.py"
 
 
 def test_the_repo_still_names_a_producer_that_exists():
