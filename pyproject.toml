@@ -84,7 +84,12 @@ dev = [
     "pytest-timeout>=2.3.0",
     "faker>=26.0.0",
     "mypy>=1.8.0",
-    "types-redis>=4.6.0",
+    # No `types-redis`. It is a stub package for redis 4.x, and it SHADOWS the
+    # real package's inline types: redis>=5.0.1 ships its own `py.typed`, so
+    # installing 4.x stubs over it makes 5.x-only APIs (`aclose`) disappear and
+    # narrows overloads (`Pipeline.zadd`) that the real package types loosely.
+    # That produced four mypy errors that exist ONLY when the stubs are
+    # installed, on code that is correct against redis 5.x.
     "ruff>=0.1.0",
     "locust>=2.43.0",
 ]

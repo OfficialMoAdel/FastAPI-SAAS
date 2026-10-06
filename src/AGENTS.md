@@ -54,8 +54,9 @@ src/
 # Each holds its side effects (os.chdir to the repo root, load_dotenv with
 # override=True, QUERY_PROFILER_ENABLED, the relaxed SECURITY_BUDGETS) in a
 # bootstrap() called only from
-# `__main__`: src/.env exists, so a module-level load_dotenv(override=True)
-# would clobber the environment tests/conftest.py sets for the WHOLE session.
+# `__main__`: a developer `.env` in `src/` is gitignored by design, so a
+# module-level load_dotenv(override=True) would clobber the environment
+# tests/conftest.py sets for the WHOLE session.
 # src/benchmarks/run_manifest.py — the perf run provenance gate, invoked as
 # `python -m src.benchmarks.run_manifest` by scripts/run_perf_baseline.sh. It
 # REFUSES to write a manifest unless every file in HARNESS_FILES is tracked and

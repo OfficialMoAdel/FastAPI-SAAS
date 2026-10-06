@@ -61,4 +61,18 @@ jobs:
       - name: Run isomorphism tests
         # Run from the repository root: the validator locates the project by
         # walking up from its own path, and it imports only stdlib + structlog.
+        #
+        # The credentials below are NOT database credentials: nothing here
+        # connects to Postgres or Redis. `test_c2_pixel_ua_differential`
+        # imports the real `src.app.middleware.attack_detection`, whose
+        # module-level `settings` construction requires `POSTGRES_USER` and
+        # `POSTGRES_PASSWORD` to be present and `SECRET_KEY` to be >=32
+        # characters. Without them the import raises before the assertion
+        # runs, so the test reports a config error instead of its result.
+        # These are throwaway values for a process that only validates them.
+        env:
+          ENVIRONMENT: local
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          SECRET_KEY: "12345678901234567890123456789012"
         run: uv run python scripts/perf-validation/isomorphism_validator.py
