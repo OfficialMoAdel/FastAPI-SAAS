@@ -404,9 +404,19 @@ jobs:
         # uvloop vs asyncio and httptools vs h11, so passing either flag here
         # would make the identity assertion test something other than what
         # ships. 0.0.0.0 rather than 127.0.0.1 so the server is reachable.
+        #
+        # The venv's interpreter DIRECTLY, not `uv run uvicorn`. `uv run` puts
+        # a wrapper around the very PID the evidence step later reads /proc for:
+        # it may exec the interpreter or fork it, and `$!` names the server only
+        # in the first case. When it forks, `$!` is uv's own PID and
+        # /proc/$!/maps lists uv's Rust binary, which mentions neither extension
+        # -- an empty result indistinguishable from "the server fell back to
+        # asyncio". Same interpreter and same uvicorn either way; this just has no
+        # process in between, and matches the Dockerfile CMD, which invokes the
+        # venv's uvicorn directly.
         run: |
           mkdir -p reports
-          nohup uv run uvicorn src.app.main:app --host 0.0.0.0 --port 8000 \
+          nohup .venv/bin/python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8000 \
             > reports/app_host_server.log 2>&1 &
           echo $! > reports/app_host_server.pid
 
@@ -438,6 +448,16 @@ jobs:
         # to asyncio/h11 does not. Kept as an artefact, not just an assertion.
         run: |
           pid=$(cat reports/app_host_server.pid)
+          # An empty file here is ambiguous on its face -- it reads as "the
+          # server fell back to asyncio" whether or not that is true -- so say
+          # what this PID actually is before concluding anything. Do not paper
+          # over it and do not fail here: the gate two steps down fails loudly,
+          # and this line makes the failure diagnosable from the log.
+          if ! grep -Eqi 'uvloop|httptools' "/proc/${pid}/maps" 2>/dev/null; then
+            echo "::warning::pid ${pid} maps neither extension; its cmdline is:"
+            tr '\0' ' ' < "/proc/${pid}/cmdline" || echo "(pid ${pid} is gone)"
+            echo ""
+          fi
           grep -Ei 'uvloop|httptools' "/proc/${pid}/maps" | awk '{print $NF}' | sort -u > reports/app_host_mapped_extensions.txt
           echo "--- extensions mapped by the running server (pid ${pid}) ---"
           cat reports/app_host_mapped_extensions.txt
