@@ -119,9 +119,18 @@ refuse() {
 
 # POSIX layout first. The old script tested .venv/Scripts/python.exe first, which
 # is why a Windows host silently produced the pack's e2e baselines.
+# The Windows probe tests EXISTENCE, not the exec bit. A Windows python.exe
+# carried onto a POSIX host cannot have one: Windows filesystems have no
+# execute permission, and git records such a file 100644. Testing -x here made
+# this branch unreachable in exactly the scenario it exists to catch -- a
+# Windows venv that reached a Linux checkout -- so the A-5 refusal never fired
+# and the run fell through to "no interpreter found". MSYS bash on Windows
+# synthesises -x for any readable file, which is why this only ever passed on
+# a Windows dev box. The POSIX probe above keeps -x because we do intend to
+# execute that one.
 if [[ -x ".venv/bin/python" ]]; then
     PY=".venv/bin/python"
-elif [[ -x ".venv/Scripts/python.exe" ]]; then
+elif [[ -e ".venv/Scripts/python.exe" ]]; then
     refuse "this checkout has a Windows .venv (Scripts/python.exe) and no POSIX one. uvloop cannot be installed on Windows, so no number produced on this host is representative (addendum A-5), and a Windows run must not be able to pass as a Linux one. Create a Linux virtualenv (.venv/bin/python) and re-run."
 else
     refuse "no interpreter found. Expected .venv/bin/python; create the virtualenv with 'uv sync'."
