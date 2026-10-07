@@ -664,6 +664,109 @@ class TestManifestContents:
         labels = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["labels"]
         assert "AUTO_BAN_ENABLED=false" not in labels
 
+    def test_the_production_budgets_are_the_app_defaults_not_a_harness_choice(self):
+        """Criterion (a). The runner is already proved to export nothing, but that
+        only moves the question: are what the SERVER keeps by default the
+        production values the plan names? Measured here rather than assumed,
+        because a default changed to a relaxed value would leave the runner's
+        clean exports and still measure the wrong path.
+        """
+        from src.app.core.config import settings
+
+        assert tuple(settings.rate_limit.SECURITY_BUDGETS["auth"]) == (5, 60)
+        assert tuple(settings.rate_limit.DEFAULT_ANONYMOUS_LIMIT) == (10, 3600)
+
+    def test_it_records_both_whitelist_preconditions(self, pinned_repo: Path, app_host_report):
+        """Both halves, not just the bypass flag. The flag alone is inert: a
+        bypass also needs the whitelist ENABLED and the request's IP IN it, so a
+        reader given one boolean could not tell a live bypass from an
+        unreachable one."""
+        from src.app.core.config import settings
+
+        limits = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["limits"]
+        assert limits["ip_whitelist_bypass_rate_limit"] is settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT
+        assert limits["ip_whitelist_enabled"] is settings.security.IP_WHITELIST_ENABLED
+
+    def test_a_possible_bypass_is_labelled_non_representative(self, pinned_repo: Path, app_host_report):
+        """Only the reachable combination is a POSSIBLE bypass: the flag set AND
+        the whitelist enabled. An earlier revision parametrised the flag-only case
+        in here too, which contradicted the unreachable-bypass test below and
+        could not pass against production.
+        """
+        app_host_report["limits"]["ip_whitelist_bypass_rate_limit"] = True
+        app_host_report["limits"]["ip_whitelist_enabled"] = True
+        labels = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["labels"]
+        assert any(label.startswith("rate-limit-bypass-possible") and "NON-REPRESENTATIVE" in label for label in labels)
+
+    def test_a_bypass_label_names_the_mechanism_it_breaks(self, pinned_repo: Path, app_host_report):
+        """A bare flag name would satisfy the presence check while leaving the
+        reader to guess why it matters. The label has to say the budgets were
+        skipped, because that is the finding."""
+        app_host_report["limits"]["ip_whitelist_bypass_rate_limit"] = True
+        app_host_report["limits"]["ip_whitelist_enabled"] = True
+        labels = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["labels"]
+        bypass = next(label for label in labels if label.startswith("rate-limit-bypass-possible"))
+        assert "SKIP" in bypass
+        assert "not have been exercised" in bypass
+
+    @pytest.mark.parametrize(
+        ("bypass", "whitelist"),
+        [
+            pytest.param(False, False, id="both-off"),
+            pytest.param(False, True, id="whitelist-only"),
+            pytest.param(True, False, id="flag-only-is-unreachable"),
+        ],
+    )
+    def test_an_unreachable_bypass_is_not_labelled(
+        self, pinned_repo: Path, app_host_report, bypass: bool, whitelist: bool
+    ):
+        app_host_report["limits"]["ip_whitelist_bypass_rate_limit"] = bypass
+        app_host_report["limits"]["ip_whitelist_enabled"] = whitelist
+        labels = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["labels"]
+        assert not [label for label in labels if label.startswith("rate-limit-bypass")]
+
+    def test_a_report_predating_the_fields_says_unknown_not_no(self, pinned_repo: Path, app_host_report):
+        """Absent is its own outcome. `load_app_host_report` validates only the
+        TOP-LEVEL fields, so a report left over from a previous run -- a case its
+        own docstring names -- arrives with `limits` present and non-empty but
+        missing these keys. Reading that as False would report "no bypass" for a
+        report that cannot say, which is the undisclosed default this criterion
+        exists to remove.
+        """
+        del app_host_report["limits"]["ip_whitelist_bypass_rate_limit"]
+        del app_host_report["limits"]["ip_whitelist_enabled"]
+        labels = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["labels"]
+        assert any(label.startswith("rate-limit-bypass: UNKNOWN") for label in labels)
+        assert not [label for label in labels if label.startswith("rate-limit-bypass-possible")]
+
+    def test_the_bypass_is_read_from_the_app_host_not_this_process(self, pinned_repo: Path, app_host_report):
+        """The SERVER's setting, like the auto-ban label directly above it.
+        Reading the load host's would produce a manifest that is confident and
+        about the wrong machine."""
+        app_host_report["limits"]["ip_whitelist_bypass_rate_limit"] = True
+        app_host_report["limits"]["ip_whitelist_enabled"] = True
+        labels = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["labels"]
+        assert any(label.startswith("rate-limit-bypass-possible") for label in labels)
+
+    def test_the_bypass_flag_drifting_mid_run_voids_the_run(self, pinned_repo: Path, app_host_report):
+        """Criterion (b) applied to the new field. `limits` is an invariant
+        section, so the flag is asserted at run start AND run end for free --
+        and a run that started enforcing the budgets and stopped, or the
+        reverse, is exactly the run whose numbers attribute to neither."""
+        start = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo, phase="start")
+        drifted = copy.deepcopy(app_host_report)
+        # Flip whatever the fixture actually carries, rather than assigning a
+        # value guessed to be different. `_limits()` reads `settings`, and a
+        # developer `.env` may already set this flag, so a hardcoded `True`
+        # produced no drift at all and the run was correctly NOT voided.
+        drifted["limits"]["ip_whitelist_bypass_rate_limit"] = not drifted["limits"]["ip_whitelist_bypass_rate_limit"]
+        drifted["limits"]["ip_whitelist_enabled"] = not drifted["limits"]["ip_whitelist_enabled"]
+        assert drifted["limits"] != start["limits"], "the fixture must actually differ before this test means anything"
+        end = build_manifest(app_host=drifted, run_params=RUN_PARAMS, repo_root=pinned_repo, phase="end")
+        with pytest.raises(RunEndMismatch) as caught:
+            assert_run_end_matches(start, end)
+        assert "limits" in caught.value.sections
+
     def test_it_labels_a_non_linux_load_host_as_non_representative(
         self, pinned_repo: Path, app_host_report, monkeypatch
     ):

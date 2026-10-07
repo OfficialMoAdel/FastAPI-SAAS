@@ -723,6 +723,22 @@ def _limits() -> dict[str, Any]:
     can diverge (a script typo, an env file, a stale export). A field that does
     not exist raises here, at preflight, instead of being quietly dropped from
     the artefact.
+
+    The whitelist pair is recorded because a BUDGET is not the same thing as a
+    budget that was ENFORCED. ``modules/auth/rate_limit.py`` skips the budget
+    entirely for a whitelisted request when ``IP_WHITELIST_BYPASS_RATE_LIMIT``
+    is set, so an artefact recording only the numbers cannot tell its reader
+    whether the limiter ran at all -- which is the disclosure P-4 exists to
+    require (unified plan 4.2, 4.5). Both halves are recorded rather than only
+    the bypass flag, because the flag alone is inert: a bypass needs the
+    whitelist ENABLED and the request's IP IN it, so a reader given one boolean
+    could not tell a live bypass from an unreachable one.
+
+    Whitelist MEMBERSHIP is deliberately not counted here. The whitelist is
+    Redis-backed (``guard/ip_rules.py``), so reading it is async and this
+    function is a synchronous preflight read of settings. The consequence is
+    stated in the label rather than papered over: a possible bypass is labelled,
+    never quietly assumed either way.
     """
     from src.app.core.config import settings
 
@@ -735,6 +751,8 @@ def _limits() -> dict[str, Any]:
         "auto_ban_enabled": settings.security.AUTO_BAN_ENABLED,
         "auto_ban_threshold": settings.security.AUTO_BAN_THRESHOLD,
         "auto_ban_violation_window": settings.security.AUTO_BAN_VIOLATION_WINDOW,
+        "ip_whitelist_bypass_rate_limit": settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT,
+        "ip_whitelist_enabled": settings.security.IP_WHITELIST_ENABLED,
     }
 
 
@@ -1346,6 +1364,32 @@ def _labels(app_host: Mapping[str, Any]) -> list[str]:
         )
     if not app_host["limits"]["auto_ban_enabled"]:
         labels.append("AUTO_BAN_ENABLED=false")
+    # A bypass needs the flag AND the whitelist enabled; membership is not
+    # recorded (Redis-backed, see _limits), so this labels a bypass as POSSIBLE
+    # and never asserts one happened. Asserting a bypass occurred needs the
+    # T-5 violation counter, which is what makes the label honest.
+    #
+    # Absent is its own outcome, not a False. An app-host report may predate
+    # these fields -- `load_app_host_report` validates only the TOP-LEVEL
+    # fields, so `limits` merely has to be present and non-empty, and a report
+    # left over from a previous run is a case its docstring names. Reading
+    # absent as False would report "no bypass" for a report that cannot say,
+    # which is the undisclosed default this bead exists to remove.
+    app_limits = app_host["limits"]
+    bypass_flag = app_limits.get("ip_whitelist_bypass_rate_limit")
+    whitelist_on = app_limits.get("ip_whitelist_enabled")
+    if bypass_flag is None or whitelist_on is None:
+        labels.append(
+            "rate-limit-bypass: UNKNOWN, the app-host report predates the whitelist fields, so "
+            "whether the recorded budgets were enforced cannot be established -- re-emit the "
+            "report on the app host with the current harness (P-4)"
+        )
+    elif bypass_flag and whitelist_on:
+        labels.append(
+            "rate-limit-bypass-possible: NON-REPRESENTATIVE, IP_WHITELIST_BYPASS_RATE_LIMIT is set with "
+            "the whitelist enabled, so a whitelisted request would SKIP every recorded budget and the "
+            "rate limiter would not have been exercised (P-4)"
+        )
     if platform.system() != "Linux":
         labels.append("load-host-not-Linux: NON-REPRESENTATIVE, may never serve as a `before` arm (A-5)")
     app_platform = app_host["host"]["platform"]
