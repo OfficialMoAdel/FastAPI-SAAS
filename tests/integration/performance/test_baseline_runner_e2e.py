@@ -15,10 +15,15 @@ WHAT IS REAL AND WHAT IS A STAND-IN, stated once and plainly:
   runner just moved into. Its exit codes are its own.
 * The app host is a stand-in: a stub ``curl`` that answers 200, and a stub
   ``locust`` that writes CSVs of the right shape. Neither computes a latency.
-* Real locust against a real application on a second machine is
-  ``test_the_whole_stack_on_the_linux_target`` at the end of this file, which
-  only runs on the Linux target and is therefore
-  ``[Unverified - Needs-Linux-measure]`` until it is run there.
+* One class at the end, ``TestTheAppHostIdentityIsReadOffARealLinuxServer``, does
+  not use any stub: it reads a report emitted by a real uvicorn process on a real
+  Linux host, and cross-checks the runtime against what that process actually
+  mapped. Everything before it is the harness against stand-ins.
+* What is still NOT built, and why no test here pretends otherwise: the
+  three-phase load measurement. ``run_perf_baseline.sh`` refuses to measure a
+  server bound on the host it runs on -- by design, because a number measured
+  across one machine's loopback is not the number the programme claims -- so it
+  needs two hosts. No shared runner can be both.
 
 PER-STEP LOGGING (acceptance criterion (g)). The runner is driven as a
 subprocess, so "request id / status code / resolved latency / assertion under
@@ -46,12 +51,14 @@ from typing import Any
 import pytest
 
 from src.benchmarks.run_manifest import (
+    APP_HOST_REPORT_SCHEMA,
     EXIT_NO_APP_HOST_REPORT,
     EXIT_RUN_END_MISMATCH,
     EXPECTED_EVENT_LOOP,
     EXPECTED_HTTP_IMPL,
     MIN_HOLD_SECONDS,
     REQUIRED_MANIFEST_FIELDS,
+    assert_deployment_recorded,
     build_app_host_report,
 )
 
@@ -705,14 +712,125 @@ class TestEveryStepRecordsItsOwnIdStatusLatencyAndAssertion:
         assert step.assertion == "a loopback target is refused"
 
 
-@pytest.mark.e2e
-@pytest.mark.skipif(platform.system() != "Linux", reason="[Unverified - Needs-Linux-measure] the Linux target")
-def test_the_whole_stack_on_the_linux_target() -> None:
-    """A real locust, a real application, a real second host.
+APP_HOST_REPORT = REPO_ROOT / "reports" / "app_host_report.json"
+APP_HOST_MAPPED_EXTENSIONS = REPO_ROOT / "reports" / "app_host_mapped_extensions.txt"
 
-    Not runnable here and not simulated: it needs the app host started the way
-    the Dockerfile starts it, and a load host that is not that host. It stays
-    ``[Unverified - Needs-Linux-measure]`` until it is run on the Linux target,
-    and the answer to that is not a number invented in a test.
+
+def _skip_without_app_host_evidence() -> None:
+    """Skip unless a real app host left its evidence in ``reports/``.
+
+    A skip rather than a failure, and only because a developer machine has no app
+    host by definition -- there is nothing for it to have measured. The dispatch
+    arm is not allowed to rely on this skip: the ``perf-harness`` job in
+    ``.github/workflows/tests.yml`` asserts the same two files as a job step, so
+    there a missing report fails the run instead of quietly reducing the suite.
     """
-    pytest.skip("[Unverified - Needs-Linux-measure] needs APP_HOST_URL for a server on another host")
+    missing = [
+        path.name for path in (APP_HOST_REPORT, APP_HOST_MAPPED_EXTENSIONS) if not path.exists()
+    ]
+    if not missing:
+        return
+    pytest.skip(
+        f"no app host evidence in reports/: {', '.join(missing)}. Written by the perf-harness "
+        "job; dispatch it with `gh workflow run tests.yml --ref <branch>`."
+    )
+
+
+def _app_host_report() -> dict[str, Any]:
+    """The report as the load host receives it, across the machine boundary."""
+    _skip_without_app_host_evidence()
+    return dict(json.loads(APP_HOST_REPORT.read_text(encoding="utf-8")))
+
+
+def _mapped_extensions() -> list[str]:
+    """The shared objects the live server process has actually loaded."""
+    _skip_without_app_host_evidence()
+    text = APP_HOST_MAPPED_EXTENSIONS.read_text(encoding="utf-8")
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+class TestTheAppHostIdentityIsReadOffARealLinuxServer:
+    """The five addendum-6.1 / L-1 identity fields, off a real Linux app host.
+
+    Every test above this one drives the runner against an injected report --
+    ``build_app_host_report(event_loop=EXPECTED_EVENT_LOOP, http_impl=
+    EXPECTED_HTTP_IMPL)`` -- which asserts the wiring and nothing about the
+    machine. This class is the second opinion: it reads a report emitted by a real
+    uvicorn process started the way the Dockerfile starts it, on a host where
+    ``uvloop`` and ``httptools`` are genuinely installed rather than injectable.
+    That is the distinction ``i1jy`` turns on, so it is asserted here on
+    artefacts and not on a fixture.
+
+    The mapped-extensions check is the half the report cannot supply.
+    ``resolve_event_loop`` says in its own docstring that it reports what uvicorn's
+    auto-selection RESOLVES TO on this host, not what a process already running
+    installed. uvloop and httptools are C extensions, so a server genuinely on
+    them has their ``.so`` in ``/proc/<pid>/maps``; that turns the resolver's own
+    stated limitation into an observation, and it is why the job reads the live
+    process rather than trusting the report's word.
+
+    The refusals in the other direction -- a server on asyncio, or on h11, is
+    refused with exit 7 -- are pinned in ``tests/unit/benchmarks/
+    test_run_manifest.py`` (``test_a_server_on_asyncio_is_refused``,
+    ``test_a_server_on_h11_is_refused``). They are not repeated here: an
+    integration test that re-runs the unit test it exists to re-verify stops
+    being a second opinion.
+
+    Deliberately NOT marked ``e2e``. The autouse ``init_real_redis_async``
+    fixture engages on that marker and skips on a Redis connectivity failure, so
+    marking it would let a Redis outage be reported as if it were this evidence
+    being unavailable. Nothing here touches Redis.
+    """
+
+    def test_the_report_carries_the_emitters_own_schema_stamp(self) -> None:
+        """Not a hand-written dict: only the real emitter stamps the schema."""
+        assert _app_host_report()["schema"] == APP_HOST_REPORT_SCHEMA
+
+    def test_the_runtime_pair_is_the_production_one(self) -> None:
+        """uvloop + httptools, reached by auto -- which is what ships.
+
+        The Dockerfile runs ``uvicorn src.app.main:app`` with no ``--loop`` and no
+        ``--http``, so ``auto`` is the premise. Asserting the pair without the
+        flags would pass on a host where someone had pinned them explicitly, which
+        is a different deployment than the one being claimed.
+        """
+        report = _app_host_report()
+        assert report["event_loop"] == EXPECTED_EVENT_LOOP
+        assert report["http"] == EXPECTED_HTTP_IMPL
+        assert report["uvicorn"]["loop_arg"] == "auto"
+        assert report["uvicorn"]["http_arg"] == "auto"
+
+    def test_the_report_is_labelled_representative(self) -> None:
+        """``representative`` is the claim; the empty reason list is the evidence.
+
+        A report that recorded the right values but was labelled
+        non-representative would be refused by the gate at load time, so the
+        label has to agree with the fields above it.
+        """
+        report = _app_host_report()
+        assert report["representative"] is True
+        assert report["non_representative_reasons"] == []
+
+    def test_the_deployment_manifest_has_no_hole_in_it(self) -> None:
+        """Production's own gate, so the test cannot be laxer than the gate.
+
+        ``assert_deployment_recorded`` raises ``DeploymentUndeclared`` on a hole
+        in any of the five evidence fields (exit 10 on the runner). Calling it
+        here means this assertion is the shipped rule rather than a restatement
+        of it that could drift.
+        """
+        deployment = _app_host_report()["deployment"]
+        assert assert_deployment_recorded(deployment) == dict(deployment)
+
+    def test_the_live_process_actually_mapped_both_extensions(self) -> None:
+        """The resolved-to claim, cross-checked against the running process.
+
+        This is the assertion the report cannot make for itself. If uvicorn had
+        fallen back to asyncio, or to h11, the report would say so and the gate
+        would refuse the run -- but a report that merely CLAIMED uvloop, emitted
+        from a process that had actually loaded neither, would satisfy every other
+        test in this class.
+        """
+        mapped = " ".join(_mapped_extensions()).lower()
+        assert "uvloop" in mapped, f"the server never mapped uvloop; it mapped: {mapped}"
+        assert "httptools" in mapped, f"the server never mapped httptools; it mapped: {mapped}"
