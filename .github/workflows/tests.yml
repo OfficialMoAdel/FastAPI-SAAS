@@ -496,13 +496,17 @@ jobs:
           .venv/bin/python -X importtime -c "import src.app.main" 2> reports/importtime.txt
           echo "importtime lines: $(wc -l < reports/importtime.txt)"
           echo "--- top 15 self-time import contributors ---"
-          # Fields: import time: self [us] | cumulative | imported package
-          sort -t"|" -k2 -rn reports/importtime.txt | head -15
+          # Fields: import time: self [us] | cumulative | imported package.
+          # Sorted into a file and THEN headed: `sort | head` under
+          # `set -o pipefail` SIGPIPEs sort (exit 141) when head closes
+          # the pipe after 15 lines, which fails the whole step.
+          sort -t"|" -k2 -rn reports/importtime.txt > reports/importtime.sorted
+          head -15 reports/importtime.sorted
           {
             echo "### L-14 importtime (Linux image, cold import only)"
             echo "import != boot: this is the import wall, not the lifespan boot below."
             echo "```"
-            sort -t"|" -k2 -rn reports/importtime.txt | head -15
+            head -15 reports/importtime.sorted
             echo "```"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "--- L-14 (2): per-phase boot breakdown from compose_phases timers ---"
