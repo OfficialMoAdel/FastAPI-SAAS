@@ -5,9 +5,18 @@ name: Backend CI
 # pointer or a CI gate alone never started this workflow — the checks were
 # present in the file and unrunnable in practice. Dropping the filter is
 # what makes the gates below mandatory rather than advisory.
+#
+# workflow_dispatch is here for ON-DEMAND arms only. The perf-harness job at
+# the bottom of this file gates itself on `github.event_name ==
+# 'workflow_dispatch'`, so push and PR runs skip it entirely and CI cost is
+# unchanged; the dispatch trigger is what makes that arm launchable at all.
+# Without it the perf-harness job would be permanently unreachable, which is
+# how the previous `!` skipif-only arrangement in the harness left its Linux
+# target unexecuted.
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   lint:
@@ -287,3 +296,69 @@ jobs:
           CRUD_ADMIN_REDIS_HOST: localhost
           CRUD_ADMIN_REDIS_PORT: 6379
           CRUD_ADMIN_REDIS_PASSWORD: ""
+  perf-harness:
+    # ON DEMAND ONLY. Runs the perf-harness refusal suite against a real
+    # Linux host and reports what actually happened, rather than leaving the
+    # Linux branch of the harness asserted only by a skipif.
+    #
+    # The gate is the whole design: push and PR runs must not pay for this,
+    # so the job no-ops on every event except workflow_dispatch. Launch it with
+    #   gh workflow run tests.yml --ref <branch>
+    #
+    # performance.yml was the obvious home for this and cannot be used: GitHub
+    # only registers a workflow that exists on the DEFAULT branch, and
+    # performance.yml is not on main (`gh workflow list` shows only Backend CI
+    # and Semgrep; dispatching it returns HTTP 404 "not found on the default
+    # branch"). tests.yml IS registered, which is what makes this arm
+    # launchable without merging anything to main.
+    #
+    # Scope, stated plainly: this proves the harness runs on Linux and its
+    # refusals behave. It does NOT produce a throughput/p95 measurement -- the
+    # three-phase --emit-app-host-report path against a second host is still
+    # open work in bead amxv, and a number from here must never be quoted as
+    # a capacity result.
+    name: perf harness refusal suite (on demand, shared runner)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: latest
+
+      - name: Install package with dev dependencies
+        run: uv pip install -e ".[dev]"
+
+      - name: Report which tests the platform gate would hide
+        # The Linux target is asserted by skipif, so a skipped suite and a
+        # passing one look identical in the summary line. Print the per-test
+        # outcome with the skip reasons visible, because "the job was green"
+        # must not be able to mean "nothing ran".
+        run: |
+          set -o pipefail
+          uv run pytest tests/integration/performance/ -v -rs --color=no 2>&1 | tee harness-output.txt
+        env:
+          ENVIRONMENT: local
+          SECRET_KEY: "12345678901234567890123456789012"
+          # Throwaway CI fixture, NOT a real credential. Required because the
+          # root conftest imports settings, which constructs FirstUserSettings.
+          ADMIN_PASSWORD: "NotASecretCiFixture1!@#"
+
+      - name: Upload harness output
+        # Keeps the record as a file instead of a claim in a comment.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-harness-${{ github.sha }}
+          path: |
+            harness-output.txt
+          retention-days: 30
