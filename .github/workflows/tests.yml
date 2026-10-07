@@ -476,11 +476,31 @@ jobs:
         # correct on a developer machine and wrong here: this job exists to
         # produce that evidence. So the evidence is checked as a job output, not
         # only as a test outcome, and a skip can never be reported as success.
+        #
+        # The first check is the point of the whole arm, stated literally: the
+        # job asserts one specific test id AND that it PASSED. A skipped suite
+        # and a passing suite print the same summary line -- that
+        # indistinguishability is what let this file carry an unexecuted Linux
+        # target for so long -- so the id plus its outcome is the only thing
+        # that separates the two from the outside.
         run: |
+          test_id='TestTheAppHostIdentityIsReadOffARealLinuxServer::test_the_runtime_pair_is_the_production_one'
+          grep -qE "$test_id PASSED" harness-output.txt || { echo "::error::the Linux-only identity test did not PASS -- it must EXECUTE, not skip"; exit 1; }
           test -s reports/app_host_report.json || { echo "::error::no app-host report was emitted"; exit 1; }
           test -s reports/app_host_mapped_extensions.txt || { echo "::error::the live server's mapped extensions were not recorded"; exit 1; }
           grep -q uvloop reports/app_host_mapped_extensions.txt || { echo "::error::the running server never mapped uvloop"; exit 1; }
           grep -q httptools reports/app_host_mapped_extensions.txt || { echo "::error::the running server never mapped httptools"; exit 1; }
+          # The shared-runner label goes in the STEP SUMMARY, not only in the
+          # job name, because the summary is what someone reads before quoting
+          # a number out of this run -- and there is no number here to quote.
+          {
+            echo '### perf harness: SHARED RUNNER with co-located stores -- NOT a capacity result'
+            echo ''
+            echo '- app host bound in this job; Postgres and Redis are service containers on the same host'
+            echo '- uvloop + httptools confirmed MAPPED BY THE RUNNING SERVER, not merely resolved'
+            echo '- no p95 / throughput / RTT number is produced by this job'
+            echo '- **this run satisfies NO Gate A checkbox**'
+          } >> "$GITHUB_STEP_SUMMARY"
           echo "app host identity evidence is present"
 
       - name: Upload harness output
