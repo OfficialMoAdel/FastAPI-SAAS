@@ -158,10 +158,36 @@ DECLARED_DEPLOYMENT: dict[str, Any] = {
     },
 }
 
+#: T-8 run parameters. ``hold_seconds`` and ``cleanup`` are REQUIRED manifest
+#: fields (they answer "how long did the host sit idle before measurement" and
+#: "what did the run tear down"), so every build_manifest call site below
+#: supplies them. The values are fixtures, not this repository's answer: the
+#: suite must never make its own numbers look like a recorded deployment.
+RUN_PARAMS: dict[str, Any] = {
+    "users": "100",
+    "hold_seconds": "60",
+    "cleanup": {"removed": ["health_body"], "reason": "run teardown"},
+}
+
+
 
 # --------------------------------------------------------------------------
 # fixture: a real git repository holding a copy of the harness
 # --------------------------------------------------------------------------
+
+
+def _run_field_flags(tmp_path: Path) -> list[str]:
+    """The T-8 flags ``scripts/run_perf_baseline.sh`` passes on every real run.
+
+    Warm-up duration and the cleanup log are REQUIRED manifest fields, so the
+    program-level tests must pass them exactly as the script does. Supplying them
+    here rather than relaxing ``assert_manifest_complete`` is the whole point of
+    AC (b)/(e): a missing field must still void the run, and the test that proves
+    it does is :func:`test_the_gate_voids_when_the_run_fields_are_absent`.
+    """
+    cleanup = tmp_path / "cleanup.json"
+    cleanup.write_text(json.dumps({"removed": ["health_body"]}), encoding="utf-8")
+    return ["--hold-seconds", "60", "--cleanup-log", str(cleanup)]
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -386,12 +412,132 @@ class TestTheGateVoids:
 # --------------------------------------------------------------------------
 
 
+class TestTheHostTopologyIsDerivedNotAsserted:
+    """T-8: which host ran load and which ran server must be CHECKED.
+
+    The label this replaces was the constant string "topology: load generator and
+    application on separate hosts", emitted on every run having compared nothing.
+    Two identical Linux boxes would have produced a manifest claiming separation
+    it never established, and the RTT argument would rest on it.
+    """
+
+    def test_different_fingerprints_are_distinct(self, pinned_repo: Path, app_host_report):
+        app_host_report["host"]["machine"] = "a-different-machine"
+        topology = build_manifest(
+            app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo
+        )["topology"]
+        assert topology["verdict"] == "distinct"
+
+    def test_identical_fingerprints_are_not_proof_of_separation(self, pinned_repo: Path, app_host_report):
+        """Identical is its own verdict, not `distinct` and not a co-location
+        claim. A reader must not have to guess which way the evidence points."""
+        topology = build_manifest(
+            app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo
+        )["topology"]
+        assert topology["verdict"] == "identical-fingerprint"
+
+    def test_a_wholly_absent_host_block_never_reaches_the_manifest(self, tmp_path: Path):
+        """Pins the BOUNDARY, not a verdict.
+
+        An earlier revision of this test deleted the whole ``host`` block and
+        asserted ``verdict == "unknown"``. It could not pass, and production was
+        right: ``host`` is in ``APP_HOST_REPORT_FIELDS``, so
+        ``load_app_host_report`` refuses such a report before a manifest is ever
+        built. The absence is therefore unreachable, which is why the reachable
+        route to ``"unknown"`` is a hole INSIDE the block and not its removal.
+
+        Recorded because the distinction is load-bearing in both directions:
+        deleting the block is refused (a reader must never be handed a topology
+        computed from a host that reported nothing), while a hole yields an
+        explicit ``"unknown"`` rather than a silent comparison of equal-looking
+        fingerprints.
+        """
+        report = write_app_host_report(tmp_path)
+        document = json.loads(report.read_text(encoding="utf-8"))
+        del document["host"]
+        report.write_text(json.dumps(document), encoding="utf-8")
+        with pytest.raises(AppHostReportMissing) as caught:
+            load_app_host_report(report)
+        assert "host" in str(caught.value)
+
+    def test_a_hole_in_the_app_host_block_is_unknown(self, pinned_repo: Path, app_host_report):
+        app_host_report["host"]["cpu_count"] = None
+        topology = build_manifest(
+            app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo
+        )["topology"]
+        assert topology["verdict"] == "unknown"
+
+    def test_it_records_both_hosts_and_what_each_one_did(self, pinned_repo: Path, app_host_report):
+        topology = build_manifest(
+            app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo
+        )["topology"]
+        for field in ("load_host", "app_host"):
+            assert set(topology[field]) == {"platform", "machine", "cpu_count"}
+        assert "load generator" in topology["load_host_role"]
+        assert "server under test" in topology["app_host_role"]
+
+    def test_a_distinct_pair_is_labelled_separate(self, pinned_repo: Path, app_host_report):
+        app_host_report["host"]["machine"] = "a-different-machine"
+        labels = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["labels"]
+        assert "topology: load generator and application on separate hosts" in labels
+
+    def test_an_unproven_pair_is_never_labelled_separate(self, pinned_repo: Path, app_host_report):
+        labels = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["labels"]
+        assert "topology: load generator and application on separate hosts" not in labels
+
+    def test_an_unknown_pair_says_so(self, pinned_repo: Path, app_host_report):
+        """The reachable route to UNKNOWN: a hole inside the host block.
+
+        See ``test_a_wholly_absent_host_block_never_reaches_the_manifest`` for why
+        removing the whole block is not the way in.
+        """
+        app_host_report["host"]["cpu_count"] = None
+        labels = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["labels"]
+        assert any(label.startswith("topology: UNKNOWN") for label in labels)
+
+
+class TestTheRequiredRunFieldsAbortRatherThanDefault:
+    """AC (b)/(e): a missing field FAILS the run. T-8 named no defaults for these,
+    so each has to reach ``assert_manifest_complete`` as a named absence."""
+
+    def test_the_run_fields_are_required_fields(self):
+        assert "run.hold_seconds" in REQUIRED_MANIFEST_FIELDS
+        assert "run.cleanup" in REQUIRED_MANIFEST_FIELDS
+        assert "topology.verdict" in REQUIRED_MANIFEST_FIELDS
+
+    def test_a_manifest_without_the_warm_up_duration_voids(self, pinned_repo: Path, app_host_report):
+        holed = {k: v for k, v in RUN_PARAMS.items() if k != "hold_seconds"}
+        with pytest.raises(ManifestIncomplete) as caught:
+            build_manifest(app_host=app_host_report, run_params=holed, repo_root=pinned_repo)
+        assert "run.hold_seconds" in str(caught.value)
+
+    def test_a_manifest_without_the_cleanup_log_voids(self, pinned_repo: Path, app_host_report):
+        holed = {k: v for k, v in RUN_PARAMS.items() if k != "cleanup"}
+        with pytest.raises(ManifestIncomplete) as caught:
+            build_manifest(app_host=app_host_report, run_params=holed, repo_root=pinned_repo)
+        assert "run.cleanup" in str(caught.value)
+
+    def test_an_empty_cleanup_log_voids_rather_than_reading_as_done(self, pinned_repo: Path, app_host_report):
+        """An empty record says the run tore nothing down, which is a claim. An
+        absent record says nobody wrote one. Only the second is honest here."""
+        holed = {**RUN_PARAMS, "cleanup": {}}
+        with pytest.raises(ManifestIncomplete) as caught:
+            build_manifest(app_host=app_host_report, run_params=holed, repo_root=pinned_repo)
+        assert "run.cleanup" in str(caught.value)
+
+    def test_the_gate_voids_when_the_run_fields_are_absent(self, tmp_path: Path, pinned_repo: Path):
+        report = write_app_host_report(tmp_path)
+        rc = main(["--app-host-report", str(report), "--repo-root", str(pinned_repo), "--users", "100"])
+        assert rc == EXIT_INCOMPLETE_MANIFEST
+        assert not (tmp_path / "manifest.json").exists(), "a voided run must write no artefact"
+
+
 class TestManifestContents:
     @pytest.fixture
     def manifest(self, pinned_repo: Path, app_host_report):
         return build_manifest(
             app_host=app_host_report,
-            run_params={"users": "100", "host": "http://app-host.internal:8000"},
+            run_params={**RUN_PARAMS, "host": "http://app-host.internal:8000"},
             repo_root=pinned_repo,
         )
 
@@ -416,7 +562,12 @@ class TestManifestContents:
             assert entry["blob_sha"] == harness_state(pinned_repo, entry["path"]).blob_sha
 
     def test_it_records_the_run_parameters(self, manifest):
-        assert manifest["run"] == {"host": "http://app-host.internal:8000", "users": "100"}
+        assert manifest["run"] == {
+            "cleanup": {"removed": ["health_body"], "reason": "run teardown"},
+            "host": "http://app-host.internal:8000",
+            "users": "100",
+            "hold_seconds": "60",
+        }
 
     def test_it_records_every_security_budget_not_a_summary(self, manifest):
         """P-9a asks for ALL budgets. A summary is how two runs with different
@@ -503,14 +654,14 @@ class TestManifestContents:
         that is confident and about the wrong machine.
         """
         app_host_report["limits"]["auto_ban_enabled"] = False
-        labels = build_manifest(app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo)["labels"]
+        labels = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["labels"]
         assert "AUTO_BAN_ENABLED=false" in labels
 
     def test_it_omits_the_auto_ban_label_when_the_server_has_auto_ban_on(
         self, pinned_repo: Path, app_host_report
     ):
         app_host_report["limits"]["auto_ban_enabled"] = True
-        labels = build_manifest(app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo)["labels"]
+        labels = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["labels"]
         assert "AUTO_BAN_ENABLED=false" not in labels
 
     def test_it_labels_a_non_linux_load_host_as_non_representative(
@@ -521,19 +672,33 @@ class TestManifestContents:
         import src.benchmarks.run_manifest as mod
 
         monkeypatch.setattr(mod.platform, "system", lambda: "Windows")
-        labels = build_manifest(app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo)["labels"]
+        labels = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["labels"]
         assert any("load-host-not-Linux" in label and "NON-REPRESENTATIVE" in label for label in labels)
 
     def test_it_labels_a_non_linux_app_host_as_non_representative(self, pinned_repo: Path, app_host_report):
         """The server's platform matters as much as the load generator's: a Linux
         load host driving a Windows server is not the shipped topology either."""
         app_host_report["host"]["platform"] = "Windows"
-        labels = build_manifest(app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo)["labels"]
+        labels = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)["labels"]
         assert any("app-host-not-Windows" in label and "NON-REPRESENTATIVE" in label for label in labels)
 
-    def test_it_always_labels_the_shared_runner_and_the_two_host_topology(self, manifest):
+    def test_it_always_labels_the_shared_runner_and_the_topology(self, manifest):
+        """The label must ALWAYS be present -- an unlabelled topology is the
+        failure this programme has permanently rejected.
+
+        It previously demanded the constant string claiming the two hosts were
+        separate. That was the defect: the manifest asserted a conclusion it had
+        compared nothing to reach. The fixture's app host reports THIS host's
+        fingerprint, so the honest verdict is "identical, separation unproven",
+        and demanding the separation claim here would have demanded the lie.
+        """
         assert any("not a capacity measurement" in label for label in manifest["labels"])
-        assert "topology: load generator and application on separate hosts" in manifest["labels"]
+        topology = [label for label in manifest["labels"] if label.startswith("topology:")]
+        assert len(topology) == 1, f"exactly one topology label, got {topology}"
+        assert "UNPROVEN" in topology[0], (
+            "identical fingerprints do not prove separation, so the label must say unproven"
+        )
+        assert "separate hosts" not in topology[0], "an unproven verdict must not also claim separation"
 
     def test_it_does_not_claim_the_runner_relaxed_anything(self, manifest):
         """The old script exported ``AUTO_BAN_ENABLED=false`` and relaxed budgets
@@ -547,7 +712,7 @@ class TestManifestContents:
         it looks complete."""
         (pinned_repo / HARNESS_FILES[1]).write_text("# dirty\n", encoding="utf-8")
         with pytest.raises(HarnessNotPinned):
-            build_manifest(app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo)
+            build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)
 
     def test_it_refuses_to_build_without_a_readable_head(self, pinned_repo: Path, app_host_report):
         _git(pinned_repo, "checkout", "--orphan", "no-commits-yet")
@@ -555,7 +720,7 @@ class TestManifestContents:
         for rel in HARNESS_FILES:
             (pinned_repo / rel).unlink()
         with pytest.raises((HarnessNotPinned, RuntimeError)):
-            build_manifest(app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo)
+            build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)
 
     def test_it_writes_json_that_round_trips(self, manifest, tmp_path: Path):
         out = write_manifest(manifest, tmp_path / "nested" / "m.json")
@@ -1075,15 +1240,15 @@ class TestTheImageDigestIsDeclaredNotInvented:
             deployment=dict(DECLARED_DEPLOYMENT),
         )
         assert report["image_digest"] is None
-        manifest = build_manifest(app_host=report, run_params={"users": "100"}, repo_root=pinned_repo)
+        manifest = build_manifest(app_host=report, run_params=RUN_PARAMS, repo_root=pinned_repo)
         assert any("image-digest-unknown" in label for label in manifest["labels"]), manifest["labels"]
 
     def test_a_declared_digest_carries_no_such_label(self, pinned_repo: Path, app_host_report):
-        manifest = build_manifest(app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo)
+        manifest = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)
         assert not any("image-digest-unknown" in label for label in manifest["labels"]), manifest["labels"]
 
     def test_a_declared_digest_reaches_the_manifest(self, pinned_repo: Path, app_host_report):
-        manifest = build_manifest(app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo)
+        manifest = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)
         assert manifest["app_host"]["image_digest"] == DECLARED_IMAGE_DIGEST
 
     def test_a_truncated_digest_is_refused_on_load(self, tmp_path: Path):
@@ -1131,10 +1296,10 @@ class TestTheImageDigestIsDeclaredNotInvented:
         end = dict(app_host_report)
         end["image_digest"] = "sha256:" + "1" * 64
         started = build_manifest(
-            app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo
+            app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo
         )
         finished = build_manifest(
-            app_host=end, run_params={"users": "100"}, repo_root=pinned_repo, phase="end"
+            app_host=end, run_params=RUN_PARAMS, repo_root=pinned_repo, phase="end"
         )
         with pytest.raises(RunEndMismatch) as caught:
             assert_run_end_matches(started, finished)
@@ -1157,7 +1322,7 @@ class TestTheDeploymentManifestIsRecordedNotGuessed:
 
     def test_the_manifest_carries_the_deployment_verbatim(self, pinned_repo: Path, app_host_report):
         manifest = build_manifest(
-            app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo
+            app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo
         )
         for field in ("orchestrator", "distro", "cpu_model", "core_count", "store_locality"):
             assert manifest["deployment"][field] == DECLARED_DEPLOYMENT[field], (
@@ -1182,14 +1347,14 @@ class TestTheDeploymentManifestIsRecordedNotGuessed:
             deployment = {k: v for k, v in DECLARED_DEPLOYMENT.items() if k != field}
             holed["deployment"] = deployment
             with pytest.raises(DeploymentUndeclared) as caught:
-                build_manifest(app_host=holed, run_params={"users": "100"}, repo_root=pinned_repo)
+                build_manifest(app_host=holed, run_params=RUN_PARAMS, repo_root=pinned_repo)
             assert field in caught.value.fields, f"dropping {field} did not refuse the run"
 
     def test_the_refusal_names_where_a_declaration_comes_from(self, pinned_repo: Path, app_host_report):
         holed = dict(app_host_report)
         holed["deployment"] = {k: v for k, v in DECLARED_DEPLOYMENT.items() if k != "orchestrator"}
         with pytest.raises(DeploymentUndeclared) as caught:
-            build_manifest(app_host=holed, run_params={"users": "100"}, repo_root=pinned_repo)
+            build_manifest(app_host=holed, run_params=RUN_PARAMS, repo_root=pinned_repo)
         message = str(caught.value)
         assert ORCHESTRATOR_ENV in message, "the operator must be told which variable to set"
         assert "defaulting" in message
@@ -1350,10 +1515,10 @@ class TestTheDeploymentManifestIsRecordedNotGuessed:
         moved = dict(app_host_report)
         moved["deployment"] = {**DECLARED_DEPLOYMENT, "core_count": 64}
         started = build_manifest(
-            app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo
+            app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo
         )
         finished = build_manifest(
-            app_host=moved, run_params={"users": "100"}, repo_root=pinned_repo, phase="end"
+            app_host=moved, run_params=RUN_PARAMS, repo_root=pinned_repo, phase="end"
         )
         with pytest.raises(RunEndMismatch) as caught:
             assert_run_end_matches(started, finished)
@@ -1437,19 +1602,19 @@ class TestANonRepresentativeServerIsRefused:
     def test_a_server_on_asyncio_is_refused(self, pinned_repo: Path, tmp_path: Path):
         report = load_app_host_report(write_app_host_report(tmp_path, event_loop="asyncio"))
         with pytest.raises(NonRepresentativeRuntime) as caught:
-            build_manifest(app_host=report, run_params={"users": "100"}, repo_root=pinned_repo)
+            build_manifest(app_host=report, run_params=RUN_PARAMS, repo_root=pinned_repo)
         assert "asyncio" in str(caught.value)
 
     def test_a_server_on_h11_is_refused(self, pinned_repo: Path, tmp_path: Path):
         report = load_app_host_report(write_app_host_report(tmp_path, http="h11"))
         with pytest.raises(NonRepresentativeRuntime) as caught:
-            build_manifest(app_host=report, run_params={"users": "100"}, repo_root=pinned_repo)
+            build_manifest(app_host=report, run_params=RUN_PARAMS, repo_root=pinned_repo)
         assert "h11" in str(caught.value)
 
     def test_the_refusal_names_the_expected_runtime(self, pinned_repo: Path, tmp_path: Path):
         report = load_app_host_report(write_app_host_report(tmp_path, event_loop="asyncio", http="h11"))
         with pytest.raises(NonRepresentativeRuntime) as caught:
-            build_manifest(app_host=report, run_params={"users": "100"}, repo_root=pinned_repo)
+            build_manifest(app_host=report, run_params=RUN_PARAMS, repo_root=pinned_repo)
         message = str(caught.value)
         assert EXPECTED_EVENT_LOOP in message and EXPECTED_HTTP_IMPL in message
 
@@ -1474,7 +1639,7 @@ class TestANonRepresentativeServerIsRefused:
 
 class TestAMissingFieldAbortsRatherThanDefaulting:
     def test_a_complete_manifest_passes(self, pinned_repo: Path, app_host_report):
-        manifest = build_manifest(app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo)
+        manifest = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)
         assert_manifest_complete(manifest)
 
     def test_every_required_field_is_load_bearing(self, pinned_repo: Path, app_host_report):
@@ -1482,7 +1647,7 @@ class TestAMissingFieldAbortsRatherThanDefaulting:
         must ABORT: the alternative is a manifest that omits what it could not
         establish and reads as complete, which is the failure this module exists to
         make impossible."""
-        manifest = build_manifest(app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo)
+        manifest = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)
         for field in REQUIRED_MANIFEST_FIELDS:
             damaged = copy.deepcopy(manifest)
             top, _, rest = field.partition(".")
@@ -1498,12 +1663,12 @@ class TestAMissingFieldAbortsRatherThanDefaulting:
         """``run: {}`` describes no run at all: no users, no target. Reading it as
         present would let a perf artefact that measured nothing be filed as a
         baseline."""
-        manifest = build_manifest(app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo)
+        manifest = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)
         with pytest.raises(ManifestIncomplete):
             assert_manifest_complete({**manifest, "run": {}})
 
     def test_the_refusal_says_it_is_a_harness_defect(self, pinned_repo: Path, app_host_report):
-        manifest = build_manifest(app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo)
+        manifest = build_manifest(app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo)
         with pytest.raises(ManifestIncomplete) as caught:
             assert_manifest_complete({**manifest, "schema": ""})
         assert "defect in the harness" in str(caught.value)
@@ -1512,7 +1677,7 @@ class TestAMissingFieldAbortsRatherThanDefaulting:
 class TestTheRunEndMustMatchTheRunStart:
     def _build(self, pinned_repo: Path, app_host_report, phase: str = "start"):
         return build_manifest(
-            app_host=app_host_report, run_params={"users": "100"}, repo_root=pinned_repo, phase=phase
+            app_host=app_host_report, run_params=RUN_PARAMS, repo_root=pinned_repo, phase=phase
         )
 
     def test_an_unchanged_run_matches_its_start(self, pinned_repo: Path, app_host_report):
@@ -1611,7 +1776,17 @@ class TestTheModuleAsAProgramEndToEnd:
         report = write_app_host_report(tmp_path)
         start = tmp_path / "start.json"
         end = tmp_path / "end.json"
-        common = ["--app-host-report", str(report), "--repo-root", str(pinned_repo), "--users", "100", "--host", "http://app-host.internal:8000"]
+        common = [
+            "--app-host-report",
+            str(report),
+            "--repo-root",
+            str(pinned_repo),
+            "--users",
+            "100",
+            "--host",
+            "http://app-host.internal:8000",
+            *_run_field_flags(tmp_path),
+        ]
         assert main([*common, "--output", str(start)]) == 0
         assert main([*common, "--output", str(end), "--phase", "end", "--assert-matches", str(start)]) == 0
         assert json.loads(start.read_text(encoding="utf-8"))["phase"] == "start"
@@ -1621,7 +1796,15 @@ class TestTheModuleAsAProgramEndToEnd:
         report = write_app_host_report(tmp_path)
         start = tmp_path / "start.json"
         end = tmp_path / "end.json"
-        common = ["--app-host-report", str(report), "--repo-root", str(pinned_repo), "--users", "100"]
+        common = [
+            "--app-host-report",
+            str(report),
+            "--repo-root",
+            str(pinned_repo),
+            "--users",
+            "100",
+            *_run_field_flags(tmp_path),
+        ]
         assert main([*common, "--output", str(start)]) == 0
         (pinned_repo / HARNESS_FILES[1]).write_text("# landed mid-run\n", encoding="utf-8")
         _git(pinned_repo, "add", "-A")
@@ -1829,7 +2012,7 @@ def p5_run(tmp_path: Path, pinned_repo: Path, app_host_report: dict[str, Any]) -
 
     manifest = build_manifest(
         app_host=app_host_report,
-        run_params={"users": "100", "rate": "10", "duration": "30s", "host": "http://app-host.internal:8000"},
+        run_params={**RUN_PARAMS, "rate": "10", "duration": "30s", "host": "http://app-host.internal:8000"},
         repo_root=pinned_repo,
     )
     manifest_path = tmp_path / "manifest.json"

@@ -665,10 +665,54 @@ class TestTheManifestTheRunnerWroteIsCompleteAndLabelled:
         assert "AUTO_BAN_ENABLED=false" in manifest["labels"]
 
     def test_the_label_is_derived_so_it_cannot_be_left_off(self, measured: Runner) -> None:
-        labels = measured.start_manifest()["labels"]
+        """The shared-runner label must be read off the manifest, not hardcoded.
+
+        The AUTO_BAN half of this was the original point and is unchanged: the
+        label tracks ``limits.auto_ban_enabled`` rather than being written into
+        the test.
+
+        The topology half is the one that had to be corrected. This revision
+        used to assert that some label contains "separate hosts". That is FALSE
+        for this fixture and always was: ``declared_app_host_report`` builds the
+        app-host report with ``build_app_host_report``, which reads the host
+        block off the machine the test runs on, and the load host is that same
+        machine. Measured on this host, both fingerprints are
+        ``{platform: Windows, machine: AMD64, cpu_count: 12}`` -- identical.
+        So the manifest now carries::
+
+            topology: UNPROVEN - the load host and the app host report identical
+            fingerprints, so separation is not established and co-location is
+            possible
+
+        which is the truth. The label this assertion used to look for was a
+        CONSTANT the harness emitted unconditionally: it claimed a separation
+        the fixture cannot establish, and would have claimed it for two boxes
+        that were in fact the same machine. Asserting it made the test
+        enshrine the falsehood.
+
+        What is asserted here instead is the property the test name claims: the
+        label is DERIVED, so it is present and it tracks the verdict. The
+        verdict itself is not re-tested here -- all three verdicts, and the
+        "distinct" case that does produce "separate hosts", are covered in
+        ``TestTheHostTopologyIsDerivedNotAsserted`` in
+        tests/unit/benchmarks/test_run_manifest.py. Re-deriving them here would
+        re-run the unit test this integration file exists to second-opinion.
+        """
+        manifest = measured.start_manifest()
+        labels = manifest["labels"]
         assert "AUTO_BAN_ENABLED=false" not in labels
-        assert measured.start_manifest()["limits"]["auto_ban_enabled"] is True
-        assert any("separate hosts" in label for label in labels)
+        assert manifest["limits"]["auto_ban_enabled"] is True
+
+        topology_labels = [label for label in labels if label.startswith("topology:")]
+        assert topology_labels, "the topology label cannot be left off"
+        # The verdict is recorded as a field as well as a label; the label is
+        # derived from it, so the two cannot drift.
+        assert manifest["topology"]["verdict"] in {"distinct", "identical-fingerprint", "unknown"}
+        assert len(topology_labels) == 1
+        assert "separate hosts" not in topology_labels[0], (
+            "this fixture's load host and app host are the same machine, so the "
+            f"manifest must not claim separation; it says: {topology_labels[0]!r}"
+        )
 
     def test_the_runner_overrides_no_security_limit(self, measured: Runner) -> None:
         code = "\n".join(

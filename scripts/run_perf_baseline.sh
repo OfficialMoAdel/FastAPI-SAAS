@@ -237,11 +237,50 @@ PHASES="reports/baseline_${STAMP}_phases.json"
 } > "${LOG}"
 
 # ---------------------------------------------------------------------------
+# what this run will tear down, recorded BEFORE the run-start provenance gate
+# ---------------------------------------------------------------------------
+#
+# T-8 requires the manifest to carry a cleanup log. It carries the PLAN, not the
+# outcome, and that is forced rather than chosen: `run` is an invariant section,
+# so the start and end manifests must agree byte for byte or the run is refused
+# (exit 9). A record of what cleanup actually removed does not exist yet at the
+# start gate, and anything that changed it afterwards would make the two
+# manifests disagree. So the plan is written first and never touched again.
+#
+# What the teardown actually removed is written beside it, by record_teardown.
+# A temp file present at teardown that the plan does not name is itself the
+# finding: an undeclared leak the manifest never admitted to.
+CLEANUP_LOG="reports/baseline_${STAMP}_cleanup.json"
+CLEANUP_ACTUAL="reports/baseline_${STAMP}_cleanup_actual.json"
+cat > "${CLEANUP_LOG}" <<JSON
+{
+  "planned_removal": [
+    "the mktemp health body (its path is random, so the actual teardown records it)",
+    "${CSV}_cold_stats.csv",
+    "${CSV}_cold_failures.csv",
+    "${CSV}_hold_stats.csv",
+    "${CSV}_hold_failures.csv"
+  ],
+  "retained_on_purpose": [
+    "${MANIFEST}",
+    "${MANIFEST_END}",
+    "${PHASES}",
+    "${CSV}_stats.csv",
+    "${CSV}_failures.csv",
+    "${LOG}",
+    "${CLEANUP_LOG}"
+  ],
+  "teardown": "the explicit record_teardown runs before the run-end gate; the EXIT trap is the last resort and records the same way"
+}
+JSON
+
+# ---------------------------------------------------------------------------
 # provenance gate, at the START of the run
 # ---------------------------------------------------------------------------
 
 set +e
-"${PY}" -m src.benchmarks.run_manifest --output "${MANIFEST}" --users "${USERS}" --rate "${RATE}" --duration "${DURATION}" --host "${HOST_URL}" --app-host-report "${APP_HOST_REPORT}" --phase start >> "${LOG}" 2>&1
+"${PY}" -m src.benchmarks.run_manifest --output "${MANIFEST}" --users "${USERS}" --rate "${RATE}" --duration "${DURATION}" --host "${HOST_URL}" --app-host-report "${APP_HOST_REPORT}" --phase start \
+    --hold-seconds "${HOLD}" --cleanup-log "${CLEANUP_LOG}" >> "${LOG}" 2>&1
 PROVENANCE_RC=$?
 set -e
 if [[ "${PROVENANCE_RC}" -ne 0 ]]; then
@@ -262,7 +301,39 @@ fi
 # ---------------------------------------------------------------------------
 
 HEALTH_BODY="$(mktemp)"
-cleanup() { rm -f "${HEALTH_BODY}"; }
+TEARDOWN_RECORDED=0
+
+# Records what the teardown ACTUALLY removed, beside the plan the manifest
+# embeds. Never inside a manifest: `run` must not change between the two
+# provenance gates. Hand-rolled JSON rather than jq or ${PY} because this runs on
+# the failure path too, where the whole point is that it cannot itself fail
+# loudly or need an interpreter that may be the thing that broke.
+record_teardown() {
+    local status="nothing left to remove"
+    if [[ -n "${HEALTH_BODY:-}" && -e "${HEALTH_BODY}" ]]; then
+        rm -f "${HEALTH_BODY}"
+        status="removed the health body"
+    fi
+    {
+        echo "{"
+        echo "  \"health_body\": \"${HEALTH_BODY:-}\","
+        echo "  \"status\": \"${status}\","
+        echo "  \"recorded_by\": \"${TEARDOWN_BY:-the explicit teardown}\","
+        echo "  \"note\": \"compare against the plan in ${CLEANUP_LOG}; a file named in neither is a leak\""
+        echo "}"
+    } > "${CLEANUP_ACTUAL}"
+    TEARDOWN_RECORDED=1
+}
+
+# The trap is the LAST resort, for a run that died before reaching the explicit
+# teardown. Without the guard it would overwrite the explicit record with
+# \"nothing left to remove\" on every clean exit, which is exactly backwards.
+cleanup() {
+    if [[ "${TEARDOWN_RECORDED}" -eq 0 ]]; then
+        TEARDOWN_BY="the EXIT trap, because the run did not reach the explicit teardown" \
+            record_teardown
+    fi
+}
 trap cleanup EXIT
 
 health_code() {
@@ -287,6 +358,12 @@ if [[ "${READY}" -ne 1 ]]; then
     } | tee -a "${LOG}" >&2
     exit 64
 fi
+
+# health_code() has had its last call, so the health body can go now rather than
+# sitting on disk for the rest of the run. Recording the real teardown here, well
+# before the run-end gate, is what makes the EXIT trap the genuine last resort it
+# claims to be.
+record_teardown
 
 # ---------------------------------------------------------------------------
 # cold, then the hold, then the measured window
@@ -332,7 +409,8 @@ set -e
 # that did not happen and the numbers in between cannot be attributed to anything.
 
 set +e
-"${PY}" -m src.benchmarks.run_manifest --output "${MANIFEST_END}" --users "${USERS}" --rate "${RATE}" --duration "${DURATION}" --host "${HOST_URL}" --app-host-report "${APP_HOST_REPORT}" --phase end --assert-matches "${MANIFEST}" >> "${LOG}" 2>&1
+"${PY}" -m src.benchmarks.run_manifest --output "${MANIFEST_END}" --users "${USERS}" --rate "${RATE}" --duration "${DURATION}" --host "${HOST_URL}" --app-host-report "${APP_HOST_REPORT}" --phase end --assert-matches "${MANIFEST}" \
+    --hold-seconds "${HOLD}" --cleanup-log "${CLEANUP_LOG}" >> "${LOG}" 2>&1
 PROVENANCE_RC=$?
 set -e
 if [[ "${PROVENANCE_RC}" -ne 0 ]]; then
@@ -372,6 +450,8 @@ fi
     echo ""
     echo "manifest (start):  ${MANIFEST}"
     echo "manifest (end):    ${MANIFEST_END}"
+    echo "cleanup (plan):    ${CLEANUP_LOG}"
+    echo "cleanup (actual):  ${CLEANUP_ACTUAL}"
     echo "cold and warm:     ${PHASES}"
     echo "cold CSVs:         ${CSV}_cold_stats.csv"
     echo "hold CSVs:         ${CSV}_hold_stats.csv (discarded)"

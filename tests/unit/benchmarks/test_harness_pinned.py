@@ -51,9 +51,22 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+#: T-8 run parameters. ``hold_seconds`` and ``cleanup`` are REQUIRED manifest
+#: fields (they answer "how long did the host sit idle before measurement" and
+#: "what did the run tear down"), so every build_manifest call site below
+#: supplies them. The values are fixtures, not this repository's answer: the
+#: suite must never make its own numbers look like a recorded deployment.
+RUN_PARAMS: dict[str, Any] = {
+    "users": "100",
+    "hold_seconds": "60",
+    "cleanup": {"removed": ["health_body"], "reason": "run teardown"},
+}
+
+
 import pytest
 
 from src.benchmarks.run_manifest import (
+    EXIT_INCOMPLETE_MANIFEST,
     EXPECTED_EVENT_LOOP,
     EXPECTED_HTTP_IMPL,
     HARNESS_FILES,
@@ -164,10 +177,22 @@ def _app_host_report(directory: Path) -> Path:
     return target
 
 
-def _gate(repo: Path, *extra: str) -> subprocess.CompletedProcess[str]:
-    """Invoke the gate exactly as the load script does, app-host report included."""
+def _gate(repo: Path, *extra: str, with_run_fields: bool = True) -> subprocess.CompletedProcess[str]:
+    """Invoke the gate exactly as the load script does, app-host report included.
+
+    T-8 made the warm-up duration and the cleanup log required manifest fields,
+    so by default this passes them the way the real script now does. Pass
+    ``with_run_fields=False`` to assert the opposite: that omitting them VOIDS the
+    run rather than defaulting, which is the half of the contract that makes
+    supplying them above meaningful.
+    """
     with tempfile.TemporaryDirectory() as directory:
         report = _app_host_report(Path(directory))
+        run_fields: list[str] = []
+        if with_run_fields:
+            cleanup = Path(directory) / "cleanup.json"
+            cleanup.write_text(json.dumps({"removed": ["health_body"]}), encoding="utf-8")
+            run_fields = ["--hold-seconds", "60", "--cleanup-log", str(cleanup)]
         return subprocess.run(
             [
                 sys.executable,
@@ -177,6 +202,7 @@ def _gate(repo: Path, *extra: str) -> subprocess.CompletedProcess[str]:
                 str(repo),
                 "--app-host-report",
                 str(report),
+                *run_fields,
                 *extra,
             ],
             cwd=REPO_ROOT,
@@ -289,6 +315,29 @@ def test_a_pinned_harness_lets_the_run_through(scratch_repo: Path, tmp_path: Pat
     assert "pinned " in result.stdout
 
 
+def test_the_run_voids_when_the_warm_up_duration_is_absent(scratch_repo: Path, tmp_path: Path):
+    """T-8 named no default for the warm-up duration, so there is none to fall
+    back to. Without this the gates above would pass whether or not the field
+    existed."""
+    output = tmp_path / "reports" / "manifest.json"
+
+    result = _gate(
+        scratch_repo,
+        "--output",
+        str(output),
+        "--users",
+        "100",
+        "--duration",
+        "5m",
+        with_run_fields=False,
+    )
+
+    assert result.returncode == EXIT_INCOMPLETE_MANIFEST
+    assert "run.hold_seconds" in result.stderr, "the refusal must NAME the missing field"
+    assert "run.cleanup" in result.stderr
+    assert not output.exists(), "a voided run must write no artefact"
+
+
 # --------------------------------------------------------------------------
 # criterion 3 - a clean checkout reproduces the declared configuration
 # --------------------------------------------------------------------------
@@ -362,13 +411,13 @@ def test_the_application_is_covered_by_the_commit_not_by_the_closure(scratch_rep
     closure = harness_dependencies(scratch_repo)
     assert not any(relative.startswith("src/app/") for deps in closure.values() for relative in deps)
 
-    manifest = build_manifest(app_host=app_host, run_params={"users": "100"}, repo_root=scratch_repo)
+    manifest = build_manifest(app_host=app_host, run_params=RUN_PARAMS, repo_root=scratch_repo)
     assert manifest["git"]["sha"] == _git(scratch_repo, "rev-parse", "HEAD").stdout.strip()
 
 
 def test_the_closure_is_written_into_the_manifest(scratch_repo: Path, app_host: dict[str, Any]):
     """Criterion 3's output: the artefact declares what a checkout must contain."""
-    manifest = build_manifest(app_host=app_host, run_params={"users": "100"}, repo_root=scratch_repo)
+    manifest = build_manifest(app_host=app_host, run_params=RUN_PARAMS, repo_root=scratch_repo)
 
     assert manifest["harness"]["dependencies"]["tests/performance/locustfile.py"] == ["src/benchmarks/percentiles.py"]
 
@@ -464,7 +513,7 @@ def test_both_shas_reach_the_manifest(scratch_repo: Path, app_host: dict[str, An
     files whose exact bytes decide the number, while the application is fully
     described by the commit it was checked out at.
     """
-    manifest = build_manifest(app_host=app_host, run_params={"users": "100"}, repo_root=scratch_repo)
+    manifest = build_manifest(app_host=app_host, run_params=RUN_PARAMS, repo_root=scratch_repo)
     expected_blob = _git(scratch_repo, "rev-parse", "HEAD:tests/performance/locustfile.py").stdout.strip()
 
     by_path = {entry["path"]: entry for entry in manifest["harness"]["files"]}
@@ -523,7 +572,7 @@ def test_harness_not_pinned_carries_the_offending_states(scratch_repo: Path, app
     (scratch_repo / "scripts" / "setup_locust_test_data.py").unlink()
 
     with pytest.raises(HarnessNotPinned) as caught:
-        build_manifest(app_host=app_host, run_params={"users": "100"}, repo_root=scratch_repo)
+        build_manifest(app_host=app_host, run_params=RUN_PARAMS, repo_root=scratch_repo)
 
     offenders = {state.path: state.reason for state in caught.value.files}
     assert offenders == {"scripts/setup_locust_test_data.py": "missing"}

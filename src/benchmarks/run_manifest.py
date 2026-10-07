@@ -298,6 +298,15 @@ REQUIRED_MANIFEST_FIELDS: tuple[str, ...] = (
     "app_host.http",
     "labels",
     "run",
+    # T-8's three, which P-9 omitted: which host ran the load and which ran the
+    # server, how long the warm-up actually ran, and what the harness cleaned up.
+    # All three are REQUIRED and none has a default. A manifest that omits the
+    # warm-up cannot be read as a steady-state number, and one that omits the
+    # cleanup cannot say what the run left behind; both are absences a reader
+    # cannot distinguish from "there was none".
+    "topology.verdict",
+    "run.hold_seconds",
+    "run.cleanup",
 )
 
 #: Exit codes. Distinct per failure so a CI job can tell "the harness was edited"
@@ -1252,6 +1261,58 @@ def assert_run_end_matches(start: Mapping[str, Any], end: Mapping[str, Any]) -> 
     return dict(end)
 
 
+def _topology(app_host: Mapping[str, Any]) -> dict[str, Any]:
+    """Which host ran the load, and which ran the server -- DERIVED, not asserted.
+
+    This exists because the label it replaces asserted the answer rather than
+    checking it. ``_labels`` used to emit the constant string "topology: load
+    generator and application on separate hosts" on every run, having compared
+    nothing: two identical Linux boxes behind one hostname would have produced a
+    manifest claiming separation it never established, and the whole RTT
+    argument would rest on it.
+
+    The verdict is deliberately three-valued rather than a bool, because two
+    identical fingerprints do NOT prove co-location (they are what two identical
+    hosts look like) while two different ones do prove separation:
+
+    ``distinct``
+        the fingerprints differ in at least one identifying field, so the two
+        processes cannot be the same machine.
+    ``identical-fingerprint``
+        every field matches. Co-location is *possible* and separation is
+        *unproven*. Reported as its own verdict so no reader has to guess which
+        way the evidence points.
+    ``unknown``
+        the app host reported no host block, or one with a hole in it. Not
+        defaulted to either answer.
+    """
+    load: dict[str, Any] = {
+        "platform": platform.system(),
+        "machine": platform.machine(),
+        "cpu_count": os.cpu_count(),
+    }
+    app_block = dict(app_host.get("host") or {})
+    app: dict[str, Any] = {
+        "platform": app_block.get("platform"),
+        "machine": app_block.get("machine"),
+        "cpu_count": app_block.get("cpu_count"),
+    }
+    fields = tuple(load)
+    if not app_block or any(app[name] is None for name in fields):
+        verdict = "unknown"
+    elif all(app[name] == load[name] for name in fields):
+        verdict = "identical-fingerprint"
+    else:
+        verdict = "distinct"
+    return {
+        "verdict": verdict,
+        "load_host_role": "load generator: produced this artefact and drove the load",
+        "app_host_role": "server under test: was measured",
+        "load_host": load,
+        "app_host": app,
+    }
+
+
 def _labels(app_host: Mapping[str, Any]) -> list[str]:
     """Standing-rule labels that MUST travel with every number this harness emits.
 
@@ -1266,8 +1327,23 @@ def _labels(app_host: Mapping[str, Any]) -> list[str]:
     """
     labels = [
         "non-representative: not a capacity measurement (shared runner, co-located stores)",
-        "topology: load generator and application on separate hosts",
     ]
+    # The topology label is DERIVED. It used to be a constant that claimed
+    # separation on every run without comparing the two hosts, so a single-host
+    # run produced a manifest asserting a two-host topology it never had.
+    verdict = _topology(app_host)["verdict"]
+    if verdict == "distinct":
+        labels.append("topology: load generator and application on separate hosts")
+    elif verdict == "identical-fingerprint":
+        labels.append(
+            "topology: UNPROVEN - the load host and the app host report identical "
+            "fingerprints, so separation is not established and co-location is possible"
+        )
+    else:
+        labels.append(
+            "topology: UNKNOWN - the app host reported no usable host block, so which "
+            "host ran the load and which ran the server could not be established"
+        )
     if not app_host["limits"]["auto_ban_enabled"]:
         labels.append("AUTO_BAN_ENABLED=false")
     if platform.system() != "Linux":
@@ -1641,6 +1717,11 @@ def build_manifest(
             "machine": platform.machine(),
             "cpu_count": os.cpu_count(),
         },
+        # Which host ran the load and which ran the server, as a derived fact.
+        # Kept beside load_host (the local fingerprint) because this is the
+        # pairing of that fingerprint with the app host's, and a reader needs
+        # both to know what the numbers were produced across.
+        "topology": _topology(app_host),
         # Everything below describes the SERVER, and is taken from what the server
         # reported rather than from what this host would have used.
         "stores": dict(app_host["stores"]),
@@ -1660,6 +1741,43 @@ def write_manifest(manifest: dict[str, Any], output: Path) -> Path:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return output
+
+
+def _run_params(args: argparse.Namespace) -> tuple[dict[str, Any], str | None]:
+    """Assemble the manifest's ``run`` section. Returns ``(params, problem)``.
+
+    ``problem`` is the operator-facing refusal, returned rather than printed for
+    the same reason as :func:`_load_start_manifest`: this stays a function of its
+    input, which is what makes it testable without capturing stdout.
+
+    ``hold_seconds`` survives the ``None`` filter even when the operator omitted
+    it, unlike the four fields above it. That is deliberate: it is a REQUIRED
+    manifest field, so it has to reach :func:`assert_manifest_complete` as an
+    absence the refusal can NAME. Dropping it here would fail the run without
+    saying which field was missing, which is the failure mode T-8 exists to
+    prevent.
+
+    The cleanup log is left out of ``params`` entirely when it was not supplied,
+    for the same reason. Both absences are then reported by name in one place
+    instead of being papered over in two.
+    """
+    params: dict[str, Any] = {
+        "users": args.users,
+        "rate": args.rate,
+        "duration": args.duration,
+        "host": args.host,
+        "hold_seconds": args.hold_seconds,
+    }
+    params = {k: v for k, v in params.items() if v is not None or k == "hold_seconds"}
+    if args.cleanup_log is None:
+        return params, None
+    try:
+        return {**params, "cleanup": json.loads(args.cleanup_log.read_text(encoding="utf-8"))}, None
+    except (OSError, json.JSONDecodeError) as exc:
+        return params, (
+            f"VOID: cannot read the cleanup log {args.cleanup_log} ({exc}). Without it the manifest "
+            "cannot say what the run tore down, so it would record a run whose teardown is unknown."
+        )
 
 
 def _load_start_manifest(args: argparse.Namespace) -> tuple[Any, str | None]:
@@ -1776,6 +1894,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--duration", default=None, help="recorded in manifest.run")
     parser.add_argument("--host", default=None, help="recorded in manifest.run")
     parser.add_argument(
+        "--hold-seconds",
+        default=None,
+        help=(
+            "REQUIRED (recorded as manifest.run.hold_seconds): how long the hold "
+            "was REQUESTED, in seconds. The hold FLOOR is this module's MIN_HOLD_SECONDS "
+            "and is printed by --print-min-hold-seconds, but a floor is a promise and the "
+            "artefact has to carry the number that happened, or the reader cannot tell a "
+            "warmed measurement from a truncated one. Omitted means the manifest aborts "
+            "(8): a manifest with no warm-up duration reads as a steady-state number."
+        ),
+    )
+    parser.add_argument(
+        "--cleanup-log",
+        type=Path,
+        default=None,
+        help=(
+            "REQUIRED (embedded as manifest.run.cleanup): a JSON file the harness wrote "
+            "listing what it tore down and what it left behind. Omitted means the manifest "
+            "aborts (8): a run whose teardown was never recorded cannot say whether the "
+            "artefacts beside it are still warm state or were cleaned."
+        ),
+    )
+    parser.add_argument(
         "--emit-app-host-report",
         action="store_true",
         help=(
@@ -1878,8 +2019,10 @@ def main(argv: list[str] | None = None) -> int:
         print(start_problem, file=sys.stderr)
         return EXIT_NO_APP_HOST_REPORT
 
-    params = {"users": args.users, "rate": args.rate, "duration": args.duration, "host": args.host}
-    params = {k: v for k, v in params.items() if v is not None}
+    params, params_problem = _run_params(args)
+    if params_problem is not None:
+        print(params_problem, file=sys.stderr)
+        return EXIT_INCOMPLETE_MANIFEST
     try:
         manifest = build_manifest(
             run_params=params, repo_root=args.repo_root, app_host=report, phase=args.phase
