@@ -43,24 +43,40 @@ dialect emits a different number of statements, and whenever the code changes in
 a way that has nothing to do with the defect. The ceiling below was read off
 HEAD once. Re-deriving it from a fresh run is exactly what
 ``src/benchmarks/protocol.py`` exists to prevent: a ceiling derived from a
-previous measurement is ``new < old`` wearing a different hat. When S-2 lands
-and the count goes to zero, the ceiling is LOWERED to zero in the same commit
-that deletes ``:578``, deliberately, so the change is visible in the diff.
+previous measurement is ``new < old`` wearing a different hat. If the count ever
+legitimately drops, the ceiling is LOWERED in the same commit that causes the
+drop, deliberately, so the change is visible in the diff.
 
-TEST 3 - THE ``no_resolved_identity`` DETECTOR, AS A DELIBERATE PAIR
+The ceiling is deliberately non-zero and must STAY non-zero. The bare
+``db.rollback()`` in ``jwt_service.blacklist_tokens`` is not redundant: after a
+failed ``flush()`` inside ``db.begin_nested()``, the savepoint does not clear
+SQLAlchemy's session state, so without that rollback the following
+``db.commit()`` raises and every duplicate logout falls through to "Failed to
+commit blacklisted tokens to DB". Do not lower this ceiling to zero on the
+strength of a reading that the savepoint already covers it — TEST 3 records the
+full evidence.
+
+TEST 3 - THE ``no_resolved_identity`` DETECTOR
 ``_revoke_session`` logs ``logout_session_revoked_skipped`` with
 ``reason="no_resolved_identity"`` whenever ``verify_token`` could not resolve an
-identity — which is exactly what a duplicate logout produces, because the token
-is already blacklisted. Two tests, and both are needed:
+identity — which is what a duplicate logout produces, because the token is
+already blacklisted. ``test_the_detector_sees_the_signal_on_head`` asserts the
+line FIRES.
 
-- ``test_the_detector_sees_the_signal_on_head`` asserts the line FIRES. Without
-  it, the companion test below could pass for the wrong reason: a log line that
-  never fires would make "it does not fire" trivially true.
-- ``test_duplicate_logout_does_not_log_no_resolved_identity`` asserts it does NOT
-  fire. **This is RED on HEAD by design.** It is the assertion the S-2 diff has
-  to turn green, and leaving it red is the whole point of an oracle — a suite
-  that is green before and after the change cannot tell you the change did
-  anything.
+This section used to pair that with a second test asserting it does NOT fire,
+left RED on HEAD as the oracle S-2 had to turn green. That oracle has been
+DELETED, because investigation showed it asserted a falsehood:
+
+- It was unsatisfiable by construction. It shared one helper that patches BOTH
+  ``blacklist_tokens`` (so ``jwt_service.py:578``, the line it policed, never
+  ran) AND ``verify_token`` to return ``None`` — which is exactly what makes the
+  line fire. It forbade the outcome it forced.
+- The change it demanded was wrong. ``verify_token`` populates ``user_data``
+  BEFORE ``blacklist_tokens`` runs, so deleting ``:578`` cannot undo identity
+  resolution. And ``db.begin_nested()`` does not clear SQLAlchemy's failed-flush
+  state, so removing the rollback makes the next ``db.commit()`` raise on EVERY
+  duplicate, falling through to "Failed to commit blacklisted tokens to DB". The
+  rollback at ``:578`` is load-bearing; TEST 2's ceiling is the guard on it.
 
 WHY ``verify_token`` IS PATCHED IN TEST 3, AND WHAT THAT DOES NOT PROVE
 Reaching ``_revoke_session`` with ``user_data is None`` requires a real
@@ -73,8 +89,7 @@ That patch proves the DETECTOR fires when identity resolution fails. It does NOT
 prove identity resolution fails on a duplicate logout. That half is Test 1's
 job: the golden row-set shows the rows are committed, and
 ``is_token_revoked`` reads them back through its own session
-(``jwt_service._check_db_fallback``). The two tests together cover the path;
-neither covers it alone.
+(``jwt_service._check_db_fallback``).
 
 DIALECT
 Parametrised over the dialect so a second dialect is a fixture away. ONLY SQLITE
@@ -722,16 +737,36 @@ def _logout_with_no_resolved_identity() -> Iterator[list[Any]]:
         yield captured
 
 
-class TestTheNoResolvedIdentityDetectorIsPinnedOnBothSides:
-    """Two tests. Neither is sufficient alone; that is why both exist."""
+class TestTheNoResolvedIdentityDetectorIsPinned:
+    """The detector fires when identity resolution fails — asserted, not assumed.
+
+    This class used to hold a second test, ``test_duplicate_logout_does_not_log_no_resolved_identity``,
+    asserting the opposite outcome from the SAME mocked context. That oracle is
+    deleted, with the evidence that retired it:
+
+    * It was unsatisfiable by construction. ``_logout_with_no_resolved_identity``
+      patches ``blacklist_tokens`` (so ``jwt_service.py:578``, the line it was
+      written to police, never executes) AND patches ``verify_token`` to return
+      ``None`` — which is precisely what makes ``service.py:92`` log
+      ``no_resolved_identity``. It forbade the outcome it simultaneously forced.
+    * The production change it demanded is wrong. Deleting ``jwt_service.py:578``
+      does not help: ``verify_token`` populates ``user_data`` BEFORE
+      ``blacklist_tokens`` runs, so that rollback cannot retroactively undo
+      identity resolution. Worse, ``db.begin_nested()`` does not clear
+      SQLAlchemy's failed-flush session state, so removing the rollback makes the
+      following ``db.commit()`` raise on EVERY duplicate and fall through to
+      "Failed to commit blacklisted tokens to DB". The rollback is load-bearing.
+
+    The surviving test is the guard that was actually wanted: it pins that the
+    reason is emitted, so a future change that silences or renames it is caught.
+    The rollback-count ceiling in TEST 2 remains the guard on ``:578``.
+    """
 
     @pytest.mark.asyncio
     async def test_the_detector_sees_the_signal_on_head(self, db_session: AsyncSession) -> None:
         """The line FIRES when identity resolution fails — asserted, not assumed.
 
-        Without this test the companion below could pass for the wrong reason: a
-        detector that never fires at all would make "it does not fire" trivially
-        true, and the oracle would certify a bug it never observed.
+        Without this test a detector that never fired at all would go unnoticed.
         """
         service = AuthService()
         with _logout_with_no_resolved_identity() as events:
@@ -744,28 +779,6 @@ class TestTheNoResolvedIdentityDetectorIsPinnedOnBothSides:
             "deleting it."
         )
         assert "no_resolved_identity" in _reasons(events)
-
-    @pytest.mark.asyncio
-    async def test_duplicate_logout_does_not_log_no_resolved_identity(self, db_session: AsyncSession) -> None:
-        """RED ON HEAD BY DESIGN. This is the assertion S-2 has to turn green.
-
-        On HEAD a duplicate logout resolves no identity — the token is already
-        blacklisted — so the line fires. When ``jwt_service.py:578`` is deleted
-        and the duplicate stops unwinding the outer transaction, the identity
-        survives and this line stops firing.
-
-        Leaving it red is the point. A suite that is green before and after the
-        diff cannot tell you the diff did anything.
-        """
-        service = AuthService()
-        with _logout_with_no_resolved_identity() as events:
-            await service.logout(access_token="s2-oracle-unresolvable", refresh_token=None, db=db_session)
-
-        assert "no_resolved_identity" not in _reasons(events), (
-            f"a logout that resolved no identity logged {_reasons(events)}. "
-            "On HEAD this is expected - it is the defect S-2 fixes. It flips green when the "
-            "redundant rollback at jwt_service.py:578 is deleted."
-        )
 
 
 # --------------------------------------------------------------------------

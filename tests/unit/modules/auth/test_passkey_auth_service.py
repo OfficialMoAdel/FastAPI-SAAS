@@ -552,7 +552,14 @@ async def test_verify_authentication_raw_id_required():
     service = PasskeyService()
 
     mock_redis = AsyncMock()
-    mock_redis.eval = AsyncMock(return_value="dGVzdA==")  # base64
+    # PasskeyService._get_stored_auth_challenge reads the challenge through
+    # LuaManager.execute, which dispatches via EVALSHA (see lua_manager.execute),
+    # not EVAL. Stubbing `.eval` left the auto-created `.evalsha` mock in play,
+    # so `base64url_to_bytes` was handed the mock's repr and this test only
+    # passed when that repr happened to be decodable base64 -- the memory id's
+    # digit count decided it. On CI it raised binascii.Error instead.
+    mock_redis.evalsha = AsyncMock(return_value="dGVzdA==")  # base64url of b"test"
+    mock_redis.script_load = AsyncMock(return_value="sha")  # NOSCRIPT fallback, if ever reached
 
     # Provide credential with id but no rawId - will pass initial check
     # Then it will try to find by id, and credential not found

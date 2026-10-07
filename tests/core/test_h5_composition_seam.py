@@ -27,11 +27,16 @@ from src.app.core.worker import registry
 # This file is tests/core/<file>.py, so the repo root is parents[2].
 REPO = Path(__file__).resolve().parents[2]
 
+#: See the same constant in test_feature_api_contract.py: the hardcoded
+#: `.venv/Scripts/lint-imports.exe` is a Windows-only layout and does not exist
+#: on the Linux runner, so the contract could not report anything there.
+LINT_IMPORTS_ARGV = [sys.executable, "-c", "from importlinter.cli import lint_imports_command as c; c()"]
+
 
 def _lint_imports() -> tuple[int, str]:
     """Run the contracts; return (exit_code, output)."""
     result = subprocess.run(
-        [str(REPO / ".venv/Scripts/lint-imports.exe")],
+        LINT_IMPORTS_ARGV,
         cwd=REPO / "src",
         capture_output=True,
         text=True,

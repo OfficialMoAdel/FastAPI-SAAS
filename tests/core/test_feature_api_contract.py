@@ -16,6 +16,7 @@ widening was meant to expose.
 """
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,14 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 CONFIG = REPO / "src/.importlinter"
 MODULES = REPO / "src/app/modules"
+
+#: Invoke the `lint-imports` console script through the interpreter running
+#: this test. Hardcoding `.venv/Scripts/lint-imports.exe` is a Windows-only
+#: layout, so on Linux the path does not exist and the gate failed with
+#: FileNotFoundError before it could report a single contract. Calling the
+#: entry point directly is layout-independent AND guarantees the gate runs
+#: against the same import-linter install the rest of the suite is using.
+LINT_IMPORTS_ARGV = [sys.executable, "-c", "from importlinter.cli import lint_imports_command as c; c()"]
 
 #: Every ignore entry in the feature->api contract, parsed from the config.
 _CONTRACT_START = "[importlinter:contract:forbidden-feature-implementation-to-api]"
@@ -59,7 +68,7 @@ def _is_router(module: str) -> bool:
 
 def _lint_imports() -> tuple[int, str]:
     result = subprocess.run(
-        [str(REPO / ".venv/Scripts/lint-imports.exe")],
+        LINT_IMPORTS_ARGV,
         cwd=REPO / "src",
         capture_output=True,
         text=True,

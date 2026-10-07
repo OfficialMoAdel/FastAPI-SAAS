@@ -226,6 +226,44 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: parity_check
 
+      # `test_db` needs a schema BEFORE pytest, and it deliberately gets
+      # `create_all` rather than `alembic upgrade head` — see the comment above
+      # on the parity database for why the two must not share a database.
+      #
+      # Nothing was populating test_db: the main suite builds its own SQLite
+      # file (tests/conftest.py), and the app's lifespan is NOT exercised by
+      # tests that drive the ASGI app through `httpx.ASGITransport`
+      # (tests/contract/conftest.py, tests/e2e/*) — that transport never runs
+      # startup, so the `create_all` phase in the lifespan never fires either.
+      # The code paths that DO talk to the app's real engine then hit an empty
+      # database: `src/app/core/db/rls.py::_write_bypass_audit` imports
+      # `async_engine` from `core.db.database` rather than using the caller's
+      # session, so it raised UndefinedTableError on `rls_audit_log` (50
+      # outcomes across contract + e2e).
+      #
+      # `create_all` is the shape those tests are written against and the shape
+      # local dev gets from the same startup phase; migration 08 would instead
+      # enable RLS policies on test_db and break every write that does not
+      # first set a tenant context.
+      #
+      # This calls the app's own `create_tables()` — the same function the
+      # lifespan calls — so CI and local dev cannot drift into using different
+      # schema-creation paths. It needs SECRET_KEY/ADMIN_PASSWORD only because
+      # importing settings constructs `FirstUserSettings`, whose ADMIN_PASSWORD
+      # is required and validated; no migration step reads the value.
+      - name: Create schema in test database
+        run: uv run python -c "import asyncio; from src.app.core.setup import create_tables; asyncio.run(create_tables())"
+        env:
+          ENVIRONMENT: local
+          SECRET_KEY: "12345678901234567890123456789012"
+          # Throwaway CI fixture, NOT a real credential.
+          ADMIN_PASSWORD: "NotASecretCiFixture1!@#"
+          POSTGRES_SERVER: localhost
+          POSTGRES_PORT: "5432"
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+
       - name: Run tests
         run: uv run pytest
         env:

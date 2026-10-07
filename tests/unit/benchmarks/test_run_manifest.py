@@ -108,6 +108,32 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "run_perf_baseline.sh"
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 
+#: Env var names whose VALUES must never reach the manifest. Checked against the
+#: manifest's recorded values (not its serialized blob) because the stores block
+#: is keyed by store kind, so a password that happens to equal a store name would
+#: otherwise be reported as a leak in an artefact holding no secret.
+_SECRET_ENV_NAMES = ("POSTGRES_PASSWORD", "REDIS_CACHE_PASSWORD", "REDIS_QUEUE_PASSWORD", "SECRET_KEY")
+
+
+def _secret_values() -> list[str]:
+    """Every configured credential, as plaintext, skipping empty ones.
+
+    An empty password is contained in every string, so it can only produce a
+    vacuous failure; a real credential is always non-empty. The redis passwords
+    are read from the environment rather than off a settings namespace so this
+    does not have to know which namespace owns them.
+    """
+    candidates: list[Any] = [settings.POSTGRES_PASSWORD, settings.SECRET_KEY]
+    candidates += [os.environ.get(name) for name in _SECRET_ENV_NAMES]
+    values: list[str] = []
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        plaintext = candidate.get_secret_value() if hasattr(candidate, "get_secret_value") else str(candidate)
+        if plaintext:
+            values.append(plaintext)
+    return values
+
 #: A syntactically valid OCI digest. Not a real image: nothing in this suite runs
 #: a container (the repository forbids it), and a real digest recorded here would
 #: be a fabricated identity, which is the exact defect the field exists to prevent.
@@ -441,9 +467,32 @@ class TestManifestContents:
         blob = json.dumps(manifest)
         for secret_name in ("POSTGRES_PASSWORD", "REDIS_CACHE_PASSWORD", "REDIS_QUEUE_PASSWORD", "SECRET_KEY"):
             assert secret_name not in blob
-        password = settings.POSTGRES_PASSWORD
-        if password is not None:
-            assert password.get_secret_value() not in blob
+
+        # The password check is over the manifest's VALUES, not over the
+        # serialized blob. A substring search over the blob also matches KEY
+        # names, and the stores block is keyed by store kind — so any password
+        # that happens to equal a store name trips it. CI sets
+        # POSTGRES_PASSWORD=postgres while the manifest records a "postgres"
+        # store, which failed this assert on a manifest with no secret in it.
+        # Walking the values keeps the guarantee that matters: a password
+        # recorded in any field is still a leak, and still fails here.
+        values: list[str] = []
+
+        def collect(node: Any) -> None:
+            if isinstance(node, str):
+                values.append(node)
+            elif isinstance(node, dict):
+                for key, item in node.items():
+                    assert not isinstance(key, str) or key not in _SECRET_ENV_NAMES
+                    collect(item)
+            elif isinstance(node, list | tuple):
+                for item in node:
+                    collect(item)
+
+        collect(manifest)
+        for secret in _secret_values():
+            for value in values:
+                assert secret not in value, f"a credential value leaked into a recorded field: {value!r}"
 
     def test_it_labels_a_run_with_auto_ban_disabled(self, pinned_repo: Path, app_host_report):
         """Unified plan 4.2: a number produced with ``AUTO_BAN_ENABLED=false`` may

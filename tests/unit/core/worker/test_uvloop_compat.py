@@ -110,9 +110,17 @@ class TestEventLoopPerformance:
     """Benchmark event loop performance (Unix only)."""
 
     @pytest.mark.skipif(IS_WINDOWS, reason="uvloop not available on Windows")
-    @pytest.mark.asyncio
-    async def test_event_loop_performance_comparison(self) -> None:
-        """Compare uvloop vs asyncio default loop performance."""
+    def test_event_loop_performance_comparison(self) -> None:
+        """Compare uvloop vs asyncio default loop performance.
+
+        Deliberately NOT an async test. `@pytest.mark.asyncio` leaves an event
+        loop RUNNING for the test body, and `run_until_complete` on a second
+        loop then raises "Cannot run the event loop while another loop is
+        running". That only bit on Linux CI, where the Windows skipif does not
+        apply. Each loop is instead created, driven, and closed here, so the
+        two measurements are also symmetric: loop construction sits outside
+        both timed regions.
+        """
         import time
 
         import uvloop
@@ -124,20 +132,22 @@ class TestEventLoopPerformance:
             await asyncio.sleep(0)
             return 1
 
-        # Test with default asyncio loop (current)
-        start = time.perf_counter()
-        for _ in range(iterations):
-            await simple_async_work()
-        asyncio_time = time.perf_counter() - start
+        async def drive() -> None:
+            for _ in range(iterations):
+                await simple_async_work()
 
-        # Test with uvloop (create new loop)
-        uvloop_policy = uvloop.EventLoopPolicy()
-        uvloop_loop = uvloop_policy.new_event_loop()
-
+        default_loop = asyncio.new_event_loop()
         try:
             start = time.perf_counter()
-            for _ in range(iterations):
-                uvloop_loop.run_until_complete(simple_async_work())
+            default_loop.run_until_complete(drive())
+            asyncio_time = time.perf_counter() - start
+        finally:
+            default_loop.close()
+
+        uvloop_loop = uvloop.EventLoopPolicy().new_event_loop()
+        try:
+            start = time.perf_counter()
+            uvloop_loop.run_until_complete(drive())
             uvloop_time = time.perf_counter() - start
         finally:
             uvloop_loop.close()
