@@ -526,6 +526,40 @@ jobs:
             reports/boot_phases.raw
           retention-days: 30
 
+      - name: "L-11 on-target read the Linux image installed CPython start-method source"
+        # ADR-0016 Item 1 (A-11) read concurrent/futures/process.py and
+        # multiprocessing/context.py from the WINDOWS host's installed
+        # CPython 3.13.7 and concluded fork from the source branch -- sound,
+        # but the addendum's method for L-11 is to read the installed
+        # source IN THE TARGET IMAGE, and [Inference] may not be promoted
+        # to [Confirmed] without that citation. This step does that read
+        # HERE, on the Linux runner, so the citation names the file the
+        # Linux target actually ships.
+        run: |
+          set -o pipefail
+          ctx="$(python -c 'import multiprocessing, pathlib; print(pathlib.Path(multiprocessing.__file__).parent)')"
+          fut="$(python -c 'import concurrent.futures, pathlib; print(pathlib.Path(concurrent.futures.__file__).parent)')"
+          echo "--- Linux runner CPython: $(python --version) ---"
+          echo "multiprocessing package: $ctx"
+          echo "concurrent.futures package: $fut"
+          echo '--- multiprocessing/context.py: the platform default ---'
+          grep -n "_default_context" "$ctx/context.py" | head -6
+          echo '--- concurrent/futures/process.py: the mp_context resolution ---'
+          grep -n "max_tasks_per_child is not None" "$fut/process.py" | head -4
+          {
+            echo '### L-11 on-target: CPython start method, read on the Linux runner'
+            echo "\`$(python --version)\`"
+            echo '```'
+            grep -n "_default_context" "$ctx/context.py" | head -6
+            grep -n "max_tasks_per_child is not None" "$fut/process.py" | head -4
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # The Linux default must be fork on the target: the else branch
+          # of context.py is what A-8 lands on. Assert it is present.
+          grep -q "_concrete_contexts\['fork'\]" "$ctx/context.py" \
+            || { echo "::error::the Linux image's multiprocessing/context.py does not carry the fork default ADR-0016 cites"; exit 1; }
+          echo "fork default present in the Linux image's installed CPython source"
+
       - name: Report which tests the platform gate would hide
         # The Linux target is asserted by skipif, so a skipped suite and a
         # passing one look identical in the summary line. Print the per-test
