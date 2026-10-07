@@ -462,6 +462,70 @@ jobs:
           echo "--- extensions mapped by the running server (pid ${pid}) ---"
           cat reports/app_host_mapped_extensions.txt
 
+      - name: "L-14 (A-16/A-17) importtime on the Linux image + per-phase boot breakdown"
+        # Two artefacts the addendum demands, both previously missing.
+        #
+        # (1) python -X importtime run HERE, on the Linux runner,
+        #     against the same interpreter the server started with.
+        #     F-4 recorded an 8.38 s import wall and 1 801 modules but
+        #     NEVER ran the breakdown; addendum A-16 splits F-4 -- the
+        #     seconds are [Unverified - Needs-Linux-measure] precisely
+        #     because the breakdown was never taken on Linux, and
+        #     UV_COMPILE_BYTECODE=1 (PF-5) changes import cost. The
+        #     total here is the import wall only; it is NOT comparable
+        #     to the lifespan boot figures below (import != boot) --
+        #     F-4 error was conflating them. Cold only: importtime
+        #     is a one-shot process.
+        #
+        # (2) The per-phase boot breakdown, from the timers
+        #     src/app/core/runtime.py compose_phases ALREADY emits as
+        #     startup_phase_completed (phase, duration_ms, boot_elapsed_ms).
+        #     Both boots run SERIALLY IN ONE PROCESS: the web root phases
+        #     (composition.py lifespan_factory) nest inside the admin
+        #     root (lifespan_with_admin, main.py:23), so the log carries
+        #     the web phases first, then the admin phases.
+        #     Kept as artefacts under reports/ so a number is never
+        #     quoted out of a step summary, and so the A-11 ADR item
+        #     (gated on this bead by addendum A-17) can cite the file.
+        run: |
+          set -o pipefail
+          echo "--- L-14 (1): python -X importtime on the Linux image ---"
+          # Same interpreter the server started with (.venv/bin/python),
+          # importing the app object exactly as the Dockerfile CMD uvicorn
+          # would import it. -X importtime writes to stderr.
+          .venv/bin/python -X importtime -c "import src.app.main" 2> reports/importtime.txt
+          echo "importtime lines: $(wc -l < reports/importtime.txt)"
+          echo "--- top 15 self-time import contributors ---"
+          # Fields: import time: self [us] | cumulative | imported package
+          sort -t"|" -k2 -rn reports/importtime.txt | head -15
+          {
+            echo "### L-14 importtime (Linux image, cold import only)"
+            echo "import != boot: this is the import wall, not the lifespan boot below."
+            echo "```"
+            sort -t"|" -k2 -rn reports/importtime.txt | head -15
+            echo "```"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "--- L-14 (2): per-phase boot breakdown from compose_phases timers ---"
+          grep -o "startup_phase_completed.*" reports/app_host_server.log > reports/boot_phases.raw || true
+          if [ -s reports/boot_phases.raw ]; then
+            echo "phases recorded: $(wc -l < reports/boot_phases.raw)"
+            cat reports/boot_phases.raw
+          else
+            echo "no startup_phase_completed lines in the app host log; the"
+            echo "per-phase breakdown is absent, not zero. Reported as absent"
+            echo "rather than invented."
+          fi
+
+      - name: Upload L-14 boot artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-breakdown-${{ github.sha }}
+          path: |
+            reports/importtime.txt
+            reports/boot_phases.raw
+          retention-days: 30
+
       - name: Report which tests the platform gate would hide
         # The Linux target is asserted by skipif, so a skipped suite and a
         # passing one look identical in the summary line. Print the per-test
