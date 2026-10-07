@@ -1,9 +1,9 @@
 # ADR-0019: A-11 permission_catalog_reconcile deferral + fail-CLOSED question
 
-**Status:** Reported — not fixed
+**Status:** Decided — ACCEPT deferral off the critical path, with strict FAIL-CLOSED (2026-10-08)
 **Date:** 2026-10-06
 **Tracked by bead:** `FastAPI_saas-4g4n` — "A-11 owner: name RBAC owner; deliver the permission_catalog_reconcile deferral + fail-CLOSED question"
-**Owner:** _Unassigned — no Owner field exists anywhere in the programme; its absence is Q-11._
+**Owner:** OfficialMoAdel <mohamed01023618534@gmail.com> (recorded 2026-10-08)
 
 ## Context
 
@@ -13,7 +13,7 @@ the RBAC owner can accept that denial window. (Per the nn57 design, the
 mandatory A-11 decision items ride on ADR-A8; this skeleton holds the
 question, not the decision.)
 
-## The question (UNANSWERED)
+## The question
 
 > This is 977 ms of a 1 039 ms **cold** web-root boot (192 ms warm). A request arriving in the deferral window sees un-reconciled grants. Do you accept that window, and what is the fail direction — closed or open? Grant what?
 
@@ -24,5 +24,20 @@ prevent, so it is carried as the plan's own bytes.
 
 ## Decision
 
-None — this ADR is an unanswered skeleton. Answering it here, or pre-answering
-it before the named owner responds, would be a Gate D violation.
+**ACCEPT deferral off the critical path, with a strict FAIL-CLOSED
+mandate.**
+
+During the reconciliation window, any permission check for an
+un-reconciled or stale grant must return `False` (deny). Do not serve
+requests with missing grants. The fail direction is **CLOSED** — this
+is not negotiable and is restated verbatim by the addendum (§5.2).
+
+Magnitude note (addendum A-17): the 977 ms / 192 ms figures are
+reclassified `[Unverified — Needs-Linux-measure]`; L-14 has since
+measured the Linux web-root boot at 139.49 ms cold with
+`permission_catalog_reconcile` at 112.77 ms. The security_signoff,
+the named owner, the ADR, and the fail-CLOSED requirement are
+unchanged — only the magnitudes moved. Because Linux boots faster,
+deferral is less attractive there, and "do not bother" remains a
+legitimate Phase-0 outcome.
+

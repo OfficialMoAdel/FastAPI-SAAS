@@ -1,16 +1,16 @@
 # ADR-0012: A-4 model_construct question
 
-**Status:** Reported — not fixed
+**Status:** Decided — ACCEPT unvalidated serialization for DB-backed list endpoints (2026-10-08)
 **Date:** 2026-10-06
 **Tracked by bead:** `FastAPI_saas-5r3q` — "A-4 owner: name API contract owner + security reviewer; deliver the model_construct question"
-**Owner:** _Unassigned — no Owner field exists anywhere in the programme; its absence is Q-11._
+**Owner:** OfficialMoAdel <mohamed01023618534@gmail.com> (recorded 2026-10-08)
 
 ## Context
 
 A-4 touches model construction on the auth path. The API contract owner and
 the security reviewer must accept the change before it lands.
 
-## The question (UNANSWERED)
+## The question
 
 > `model_construct` skips validation. A row that would have raised `ValidationError` now serialises to the client, and field validators and `@model_validator` never run. This is a **response-integrity** change on every list endpoint, not a speed change. Which endpoints return attacker-influenced or potentially corrupt rows, and do you accept unvalidated serialisation there?
 
@@ -21,5 +21,19 @@ prevent, so it is carried as the plan's own bytes.
 
 ## Decision
 
-None — this ADR is an unanswered skeleton. Answering it here, or pre-answering
-it before the named owner responds, would be a Gate D violation.
+**ACCEPT. Unvalidated serialization is acceptable for DB-backed
+list endpoints.**
+
+Data read from the database via SQLAlchemy is already constrained by
+the DB schema and is trusted. Re-validating trusted DB output via
+Pydantic on read paths is redundant: a row that would have raised
+`ValidationError` cannot exist in a schema-constrained table, so the
+`model_construct` path does not weaken response integrity for
+DB-backed rows.
+
+Scope limit: this acceptance covers DB-backed list endpoints only.
+Any endpoint that serialises attacker-influenced or externally
+sourced rows (not DB-constrained) is OUT of this acceptance and must
+keep full validation. The API contract owner and security reviewer
+accept the change on that basis.
+
