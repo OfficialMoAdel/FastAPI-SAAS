@@ -210,16 +210,16 @@ src/.env.local
 *live-baseline.json
 .codegraph
 codegraph.json
-docs/adr/*
-# ADR-0007 is the exception to the blanket ignore above: `AGENTS.md` and
-# `CLAUDE.md` both link it as a live architectural claim ("the AI providers
-# are deliberately NOT in src/app/clients/"), and `scripts/check_doc_paths.py`
-# is a mandatory gate that treats every rooted path in those documents as a
-# statement that the path EXISTS. A gitignored ADR is absent from every CI
-# checkout, so the pointer is false in CI and the gate fails there — and only
-# there, which is the worst place for a gate to fail. ADRs 0001 and 0002 were
-# already tracked before the blanket rule landed.
-!docs/adr/0007-inbound-stripe-boundary-and-ai-provider-placement.md
+# ADRs are TRACKED. The blanket `docs/adr/*` ignore was removed because it made
+# the repository lie: `AGENTS.md` and `CLAUDE.md` link ADRs as live
+# architectural claims, and `scripts/check_doc_paths.py` is a mandatory gate that
+# treats every rooted path in those documents as a statement that the path
+# EXISTS. A gitignored ADR is absent from every CI checkout, so the pointer is
+# false in CI and the gate fails there — and only there, which is the worst place
+# for a gate to fail. That defect was previously worked around by carving out
+# ADR-0007 alone (via `!`); the root cause was the ignore itself, so the ignore
+# went and seventeen untracked ADRs came with it. `tests/unit/scripts/test_adr_tracking.py`
+# now fails if a referenced ADR goes untracked, so this cannot rot back.
 # Local architecture review reports (working notes, not versioned)
 *.html
 .benchmarks
