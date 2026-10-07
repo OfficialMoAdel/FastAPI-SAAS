@@ -105,6 +105,28 @@ bpo-33725; this host is Windows, where `_concrete_contexts` contains only
 `spawn`, so the Linux default was read from the source branch, not by running it
 here.)
 
+### On-target confirmation (L-11, read on the Linux runner)
+
+The read above was taken from the WINDOWS host's installed CPython
+3.13.7. That is sound -- the `else` branch is the Linux default by
+source -- but the addendum's L-11 method is to read the installed
+source IN THE TARGET IMAGE, and [Inference] may not be promoted to
+[Confirmed] without that citation. The perf-harness job now does that
+read on `ubuntu-latest` (CI step "L-11 on-target read the Linux
+image installed CPython start-method source", tests.yml): it locates
+the runner's installed `multiprocessing` and `concurrent.futures`
+packages, prints the platform-default branch and the `mp_context`
+resolution, and asserts `_concrete_contexts['fork']` is present in
+the Linux image's own `context.py`. The step passed, so the fork
+default is confirmed in the Linux target's installed CPython, not
+merely in the Windows host's copy of the same source.
+
+This discharges the addendum's L-11 method on the target. The
+conclusion is unchanged -- production Linux + A-8 as specified still
+lands on `fork`, and `max_tasks_per_child` still raises `ValueError`
+under it -- but the citation now names the file the Linux image
+actually ships, which is what moves the item off [Inference].
+
 ### The hazard, and something stronger than a warning
 
 The fork-with-inherited-sockets hazard is real — an inherited asyncpg or Redis
