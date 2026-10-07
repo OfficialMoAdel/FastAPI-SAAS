@@ -48,6 +48,7 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
+import structlog
 from redis.asyncio import Redis
 from structlog.testing import capture_logs
 
@@ -163,13 +164,25 @@ class TestRedisDownNeverFakesSuccess:
         assert await mgr.invalidate_session(USER_ID, SESSION_ID) is False
 
     @pytest.mark.asyncio
-    async def test_raising_client_logs_invalidation_failed(self) -> None:
+    async def test_raising_client_logs_invalidation_failed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         mgr = _manager(_BoomRedis())
-        with capture_logs() as cap_logs:
+        # capture_logs() swaps structlog's config, but a structlog proxy freezes
+        # its processor list the first time it is USED (cache_logger_on_first_use=
+        # True in core/logger.py::setup_logging). Whichever earlier test ran the
+        # app lifespan has already used the module-level `sm.logger`, so its
+        # frozen copy never sees the swap and this capture comes back empty.
+        # Rebinding INSIDE the capture window forces a proxy built from the
+        # capturing config, which makes the assertion hold in isolation and in
+        # the full suite alike. caplog is not an option: setup_logging() clears
+        # root_logger.handlers, which wipes pytest's capture handler.
+        with capture_logs() as captured, monkeypatch.context() as mp:
+            mp.setattr(sm, "logger", structlog.get_logger(sm.__name__))
             result = await mgr.invalidate_session(USER_ID, SESSION_ID)
         assert result is False
         assert result is not True
-        assert any(e.get("event") == "session_invalidation_failed" for e in cap_logs)
+        assert any(e.get("event") == "session_invalidation_failed" for e in captured)
 
     @pytest.mark.asyncio
     async def test_absent_client_returns_false(self, monkeypatch: Any) -> None:

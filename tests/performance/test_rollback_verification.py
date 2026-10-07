@@ -98,15 +98,16 @@ this session forbids ``git commit`` and ``git push``; the acceptance clause
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator, MutableMapping
+from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+import structlog
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
@@ -566,6 +567,11 @@ class TestTheRedundantRollbackIsPinnedByAnAbsoluteCeiling:
         transaction-wide rollback on the ``rollback`` ConnectionEvent. If either
         stops happening, the ceiling tests would quietly keep passing while
         measuring nothing, so both are asserted rather than assumed.
+
+        The IntegrityError is read from the jwt service module's own structlog
+        proxy, rebound inside the capture window for the same reason as
+        ``_logout_with_no_resolved_identity``: a proxy frozen by an earlier test
+        never sees the config swap, so the capture would silently come back empty.
         """
         del patched_seams
         token = "s2-oracle-reaches-rollback-token"
@@ -574,14 +580,19 @@ class TestTheRedundantRollbackIsPinnedByAnAbsoluteCeiling:
         await _logout_n_times(db_session, token, payload, 1)
         await db_session.commit()
 
-        with capture_logs() as events:
-            with _statement_ledger(db_session) as ledger:
+        with capture_logs() as captured, _statement_ledger(db_session) as ledger:
+            with patch.object(
+                jwt_service_mod,
+                "_jwt_logger",
+                structlog.get_logger(jwt_service_mod.__name__),
+            ):
                 await _logout_n_times(db_session, token, payload, 1)
                 await db_session.commit()
 
+        events: list[Any] = cast(list[Any], captured)
         integrity_error_reported = any(
-            event.get("event") == "Token already blacklisted in DB" or "IntegrityError" in str(event.get("event", ""))
-            for event in events
+            e.get("event") == "Token already blacklisted in DB" or "IntegrityError" in str(e.get("event", ""))
+            for e in events
         )
         assert integrity_error_reported, (
             "the duplicate logout did not report the IntegrityError, so jwt_service.py:571-578 was never "
@@ -641,7 +652,7 @@ class TestTheRedundantRollbackIsPinnedByAnAbsoluteCeiling:
 # --------------------------------------------------------------------------
 
 
-def _reasons(events: list[MutableMapping[str, Any]], event_name: str = NO_RESOLVED_IDENTITY_EVENT) -> list[str]:
+def _reasons(events: list[Any], event_name: str = NO_RESOLVED_IDENTITY_EVENT) -> list[str]:
     """The ``reason`` of every captured occurrence of ``event_name``.
 
     Scoped to the ONE event rather than scanning every captured event: the
@@ -658,7 +669,7 @@ def _reasons(events: list[MutableMapping[str, Any]], event_name: str = NO_RESOLV
 
 
 @contextmanager
-def _logout_with_no_resolved_identity() -> Iterator[list[MutableMapping[str, Any]]]:
+def _logout_with_no_resolved_identity() -> Iterator[list[Any]]:
     """Patch ``logout``'s seams and capture its structlog events.
 
     Three things must be true for ``_revoke_session`` to be reached with
@@ -680,22 +691,35 @@ def _logout_with_no_resolved_identity() -> Iterator[list[MutableMapping[str, Any
     blanket ``pytest.raises``, so it asserted against a log line that had never
     been reached.
 
-    CAPTION IS AT THE STRUCTLOG LEVEL, NOT THE STDLIB ONE. ``service.py`` uses
-    ``logger.info("event_name", reason=...)`` — structlog, where the first
-    positional argument is the EVENT and the rest are context. Whether that
-    becomes a stdlib ``LogRecord`` at all depends on the processor chain the
-    session happens to have configured, and the first draft installed a
-    stdlib handler and saw nothing, because no ``LogRecord`` was ever created.
-    ``structlog.testing.capture_logs`` swaps the processor chain instead, so it
-    observes the event regardless of how logging is configured downstream.
+    CAPTURE MECHANISM: the module-level ``logger`` in the auth service module is
+    a structlog proxy, and the app configures structlog with
+    ``cache_logger_on_first_use=True``, so the first test in the session that
+    *uses* that proxy freezes its processor list forever. In a full-suite run an
+    earlier test's app lifespan has already used it, which made two earlier
+    attempts at this capture silently return nothing:
+
+    - ``capture_logs()`` alone swaps the config, but the frozen proxy never sees
+      the swap;
+    - ``caplog`` alone relies on the proxy re-emitting a stdlib ``LogRecord``,
+      but ``setup_logging()`` clears ``root_logger.handlers``, which wipes the
+      handler pytest installs to capture them.
+
+    Rebinding the module logger INSIDE the capture window gives a proxy built
+    from the capturing config, so the capture is identical in isolation and in
+    a full-suite run. The rebinding is undone with the context manager.
     """
     with (
+        capture_logs() as captured,
         patch.object(auth_service_mod, "verify_token", AsyncMock(return_value=None)),
         patch.object(auth_service_mod, "blacklist_tokens", AsyncMock()),
         patch.object(auth_service_mod, "audit", AsyncMock()),
-        capture_logs() as events,
+        patch.object(
+            auth_service_mod,
+            "logger",
+            structlog.get_logger(auth_service_mod.__name__),
+        ),
     ):
-        yield events
+        yield captured
 
 
 class TestTheNoResolvedIdentityDetectorIsPinnedOnBothSides:

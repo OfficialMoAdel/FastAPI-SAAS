@@ -24,13 +24,48 @@ from __future__ import annotations
 
 import ast
 import inspect
+import os
 import re
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests.performance import locustfile
-from tests.performance.locustfile import AuthenticatedUser, FastAPISaaSUser, MetricsCollector
+# Importing `locust` runs `gevent.monkey.patch_all()` as an import side effect
+# (locust/__init__.py:16), which rebinds `ssl.SSLContext` to
+# `gevent.ssl.SSLContext` for the WHOLE interpreter - not just for locust.
+#
+# `urllib3.util.ssl_` binds `from ssl import SSLContext` into its OWN module
+# global when *it* is imported, while CPython's setter re-reads the name from
+# `ssl`'s globals at CALL time:
+#
+#   super(SSLContext, SSLContext).minimum_version.__set__(self, value)
+#                                                  ^ ssl.py
+#
+# So if anything imported urllib3 BEFORE this module, `create_urllib3_context()`
+# builds a context from the pre-patch class and that super() resolves back to
+# the stdlib property, which calls itself: RecursionError at import time. That
+# is order-dependent, which is why collecting this file alone passed while the
+# full suite died during collection and aborted the entire run (exit 2).
+#
+# `LOCUST_SKIP_MONKEY_PATCH` is locust's own supported switch for this. It is
+# also the honest scope for a unit contract test: the four contracts below
+# assert pure-Python logic (a teardown that fires no request, catch_response,
+# burst samples kept out of the percentiles, a locator that resolves against
+# the real route table). None of them depend on gevent having replaced socket,
+# threading or ssl, so the patch buys nothing here and costs the other 8693
+# tests a monkey-patched interpreter. The real harness still gets the patch -
+# it runs `python -m locust` in its own process (scripts/run_perf_baseline.sh).
+os.environ["LOCUST_SKIP_MONKEY_PATCH"] = "1"
+
+from tests.performance import locustfile  # noqa: E402
+from tests.performance.locustfile import (  # noqa: E402
+    AuthenticatedUser,
+    FastAPISaaSUser,
+    MetricsCollector,
+)
 
 REPO_ROOT = inspect.getfile(locustfile)
 LOCUSTFILE = REPO_ROOT
@@ -440,3 +475,62 @@ class TestNoUnsourcedLatencyClaims:
         }
         sample = samples[pattern.pattern]
         assert pattern.search(sample), f"{pattern.pattern} does not match its own sample {sample!r}"
+
+
+# --------------------------------------------------------------------------
+# 6. the import itself must not depend on what ran before it
+# --------------------------------------------------------------------------
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class TestTheImportIsNotOrderDependent:
+    """The failure this file used to die with, reproduced deliberately.
+
+    Importing `locust` patches the interpreter; anything that imported
+    urllib3 first then left `create_urllib3_context()` recursing forever.
+    Because that happens at COLLECTION time it did not fail one test - it
+    aborted the whole suite with exit 2, and it only reproduced in a full run,
+    so running this file on its own could never have caught it. Each test
+    below therefore drives a fresh interpreter with the offending order.
+    """
+
+    @staticmethod
+    def _import_urllib3_then_locustfile(skip_patch: bool) -> subprocess.CompletedProcess[str]:
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(_REPO_ROOT), env.get("PYTHONPATH", ""))))
+        if skip_patch:
+            env["LOCUST_SKIP_MONKEY_PATCH"] = "1"
+        else:
+            env.pop("LOCUST_SKIP_MONKEY_PATCH", None)
+        return subprocess.run(
+            [sys.executable, "-c", "import urllib3.util.ssl_; from tests.performance import locustfile"],
+            cwd=_REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+    def test_urllib3_imported_first_no_longer_kills_the_import(self):
+        result = self._import_urllib3_then_locustfile(skip_patch=True)
+        assert result.returncode == 0, (
+            "importing urllib3 before the locustfile must not fail; "
+            f"this is what aborted the whole suite (exit 2).\n{result.stderr[-2000:]}"
+        )
+
+    def test_importing_this_module_leaves_ssl_unpatched(self):
+        """Why the switch above is load-bearing, asserted on this interpreter.
+
+        A guard that quietly stopped working would leave the previous test
+        green for the wrong reason, so the state it depends on is checked
+        directly rather than inferred from the subprocess.
+        """
+        import ssl
+
+        assert ssl.SSLContext.__module__ != "gevent.ssl", (
+            "importing this module monkey-patched ssl for the entire test session; "
+            "LOCUST_SKIP_MONKEY_PATCH is no longer taking effect"
+        )

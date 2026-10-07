@@ -74,7 +74,18 @@ import count_broad_excepts as counter  # noqa: E402
 #:
 #: The count went UP because the alternative was an unhandled exception on a
 #: hot path. Each is annotated, which is the trade the ratchet exists to force.
-BROAD_EXCEPT_BASELINE = 365
+#:
+#: 365 -> 367. Raised, deliberately and re-measured, for the two handlers the
+#: ``src/benchmarks/`` harness brought with it. Neither is a production path
+#: (``src/app/`` never imports ``src/benchmarks/``; every harness there is
+#: ``__main__``-guarded), and neither is narrowing-friendly:
+#:
+#:   * benchmarks/protocol.py:155 (1) - reading the event-loop policy to stamp a
+#:     run; a policy that cannot be introspected must not fail the benchmark.
+#:     Guessing the exception type would defeat the point of the guard.
+#:   * benchmarks/prof_request_path.py:288 (1) - the RSS sampler thread. A
+#:     failed sample must cost one sample, not the sampler.
+BROAD_EXCEPT_BASELINE = 367
 
 #: The files muse 22 triaged. BLE001 is enforced on each (the per-file-ignores
 #: in pyproject.toml no longer blanket-exempt them), so these are also the
