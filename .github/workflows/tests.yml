@@ -335,6 +335,13 @@ jobs:
         with:
           version: latest
 
+      # uv pip refuses to install without a target environment, so the venv
+      # is created explicitly, exactly as the lint, type-check and tests jobs
+      # above do. Omitting this step fails the install with
+      # "No virtual environment found" and never reaches pytest.
+      - name: Create venv
+        run: uv venv
+
       - name: Install package with dev dependencies
         run: uv pip install -e ".[dev]"
 
