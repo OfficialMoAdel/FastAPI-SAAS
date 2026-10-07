@@ -75,6 +75,10 @@ class R1UnifiedMetrics:
             "r1_lua_script_fallbacks_total": 0,
             "r1_security_fail_open_total": 0,
             "r1_tenant_l1_publish_failed_total": 0,
+            # A-1 canary: necessary-literal prefilter prunes. See
+            # record_attack_subset_compiled() for what this counts and
+            # what it will count once branch-subset compilation lands.
+            "r1_attack_subset_compiled_total": 0,
         }
 
         # Gauges
@@ -309,6 +313,37 @@ def record_rbac_cache_hit() -> None:
 def record_rbac_cache_miss() -> None:
     """Record an RBAC cache miss."""
     get_r1_metrics().inc_counter("r1_rbac_cache_misses_total")
+
+
+def record_attack_subset_compiled() -> None:
+    """Record that A-1 pruned this scan instead of running the full regex.
+
+    This is the canary named in ADR-0009 mitigation (c). A-1 decides not
+    to run ``COMBINED_ATTACK_RE`` when no necessary literal is present,
+    and that decision is a DETECTION-SOUNDNESS judgement: a literal set
+    that is too narrow makes the prefilter prune a payload the regex
+    would have caught, and nothing in the performance programme would
+    surface it -- every throughput ratio is measured on benign traffic.
+    So this counter is the only running evidence that the pruning is
+    happening at all, and a rate anomaly in it is the signal that the
+    literal set or the workload moved.
+
+    NOTE ON THE ALERT RULE. ADR-0009 records the owner's threshold as
+    "alert if non-zero after warmup". That threshold is only meaningful
+    once subset compilation is memoised, because then a miss is rare by
+    construction. TODAY there is no memo and no compiled subset -- the
+    prefilter answers one yes/no question -- so a prune is the COMMON
+    case (most benign requests contain no attack literal) and this
+    counter is routinely non-zero. An alert on non-zero would fire
+    permanently and be muted within a day. The actionable form here is
+    a RATE threshold, to be set from observed traffic; that number is
+    the open item this counter exists to supply, and it is deliberately
+    NOT hardcoded to a guess.
+
+    Cost: one dict membership test and a float add, on the branch that
+    already avoided a ~1.1 ms regex scan.
+    """
+    get_r1_metrics().inc_counter("r1_attack_subset_compiled_total")
 
 
 

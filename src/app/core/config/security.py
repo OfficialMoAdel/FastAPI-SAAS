@@ -116,3 +116,15 @@ class AttackDetectionSettings(BaseSettings):
         default=False,
         description="Log full request URL (True) or just matched pattern (False). Privacy consideration.",
     )
+    ATTACK_DETECTION_BRANCH_PRUNE: bool = Field(
+        default=True,
+        description=(
+            "Kill switch for the necessary-literal prefilter (A-1). True (default): "
+            "skip the combined-regex scan when no necessary literal is present. "
+            "False: run the FULL COMBINED_ATTACK_RE on every scan, at roughly the "
+            "pre-P1 cost. Set False to make every request match the regex so a "
+            "suspected-too-narrow literal set cannot hide a detection. This is a "
+            "SECURITY control, so it fails safe toward the regex: the prefilter is "
+            "an optimisation and the regex is the detector."
+        ),
+    )

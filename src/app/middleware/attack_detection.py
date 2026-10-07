@@ -26,6 +26,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from src.app.core.config import settings
 from src.app.core.guard.ip_rules import IpRules
 from src.app.core.logger import get_logger
+from src.app.core.monitoring.r1_unified_metrics import record_attack_subset_compiled
 from src.app.core.observability.log_sanitizer import LogSanitizer
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
 from src.app.core.utils.ip_utils import get_client_ip
@@ -283,6 +284,11 @@ class AttackDetectionMiddleware:
         self._mode = settings.attack_detection.ATTACK_DETECTION_MODE
         self._log_full_request = settings.attack_detection.ATTACK_DETECTION_LOG_FULL_REQUEST
         self._enabled = settings.attack_detection.ATTACK_DETECTION_ENABLED
+        # A-1 kill switch, mitigation (b) in ADR-0009. Refreshed per request
+        # below like the other three flags, so it can be flipped without a
+        # restart -- a security control that needs a deploy to disable is not
+        # a control you can use in an incident.
+        self._branch_prune = settings.attack_detection.ATTACK_DETECTION_BRANCH_PRUNE
 
     def _is_exempt_path(self, path: str) -> bool:
         """Check if path is exempt from attack detection.
@@ -557,8 +563,16 @@ class AttackDetectionMiddleware:
 
         P1-7: a necessary-literal prefilter (Aho-Corasick, str.find fallback)
         skips the regex entirely when no group can possibly match.
+
+        A-1 (ADR-0009): that skip is the only pruning decision in this scan,
+        so ATTACK_DETECTION_BRANCH_PRUNE governs it. False means run the
+        FULL regex on every scan -- i.e. the pre-P1 behaviour -- which is
+        what an operator reaches for if the literal set is ever suspected
+        too narrow. The prunes are counted (mitigation (c)) because a prune
+        is a detection-soundness judgement and nothing else observes it.
         """
-        if not _attack_prefilter_hit(content):
+        if self._branch_prune and not _attack_prefilter_hit(content):
+            record_attack_subset_compiled()
             return
         for match in COMBINED_ATTACK_RE.finditer(content):
             group_name = match.lastgroup
@@ -679,6 +693,7 @@ class AttackDetectionMiddleware:
         self._mode = settings.attack_detection.ATTACK_DETECTION_MODE
         self._log_full_request = settings.attack_detection.ATTACK_DETECTION_LOG_FULL_REQUEST
         self._enabled = settings.attack_detection.ATTACK_DETECTION_ENABLED
+        self._branch_prune = settings.attack_detection.ATTACK_DETECTION_BRANCH_PRUNE
 
         if self._mode not in ("log", "block", "ban"):
             # S-7 FIX: an invalid mode previously degraded SILENTLY to

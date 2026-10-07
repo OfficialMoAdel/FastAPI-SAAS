@@ -259,6 +259,60 @@ optimisation author and the person accepting a missed detection is absent, and
 the repo cannot derive a second name. Accepted by the owner as recorded above;
 flagged here so it is a decision on the record rather than an omission.
 
+## Deviation 2: the differential oracle is the compensating control
+
+Deviation 1 records that reviewer independence was not achieved. The owner has
+answered that gap as a **documented control gap, not an omission**, and has
+accepted the residual risk on the record, verbatim:
+
+> accepted as a documented control gap, not an omission. **I accept the risk
+> -- the oracle (P1 mandatory, 20k cases, expanded corpus) serves as the
+> automated reviewer. Record this explicitly in the ADR as a compensating
+> control.**
+
+This section is that record. It states what the compensating control is and,
+just as importantly, **the exact boundary of what it covers.**
+
+### What the compensating control is
+
+`tests/unit/middleware/test_attack_pruning_differential.py` is the automated
+reviewer. It is not a human sign-off substitute in general; it is the control
+that mechanically answers the one question a human reviewer would have to
+answer here: *does pruning this branch change any verdict?* It drives the real
+`_check_for_patterns` over `random.Random(20261004)` with
+`N_DIFFERENTIAL_CASES = 20000`, comparing full `attacks` lists rather than a
+count, and its non-ASCII and zero-width arms are what make that comparison
+meaningful (see the ASCII fast-path fact below). Its module docstring already
+calls P1 "the ONLY over-strengthened-literal catcher".
+
+### Why the gap is narrower than it looks for the code that exists today
+
+The compensating control is stronger here than the wording "compensating"
+suggests, and the reason is an empirical finding, not an argument.
+`tests/unit/middleware/test_attack_pruning_kill_switch.py` carries a witness
+per branch of `COMBINED_ATTACK_RE` and asserts that **every payload the regex
+can match necessarily contains at least one registered literal** -- so the
+necessary-literal prefilter is *sound* for all 17 branches, with no exception
+found. Where the prefilter is sound, the two code paths cannot disagree: turning
+the flag off cannot change a verdict, only cost.
+
+That narrows what the gap has to cover. A missed detection is not currently
+reachable by way of the flag.
+
+### The boundary, stated plainly so this cannot be over-read
+
+The compensating control is **not** a retirement of the oracle, and the
+soundness finding must not be read as making A-1 safe by itself. Soundness holds
+for the prefilter **as it exists**: a whole-scan skip gated on "is any of the
+15 literals present". A-1 proper replaces that with **per-branch subset
+compilation**, which selects *which alternation branches* to compile. A branch
+selection can be wrong while the literal test still passes -- that is precisely
+the failure mode P1 is built to catch, and it does not exist yet in any code.
+
+So: **the compensating control is adequate for what has landed, and remains
+inadequate for what A-1 actually proposes.** P1 stays mandatory at 20,000 cases
+with the expanded corpus, unchanged, and `muro` is not unblocked by this ADR.
+
 ## Two facts about the current code that bear on the answer
 
 Recorded before the answer was given, and retained because both still hold.
@@ -284,6 +338,15 @@ it as "the reason qk6z evidence is unobtainable", and that reason is
 discharged (dispatch run `37637419697`, all jobs success).
 
 **No branch of `COMBINED_ATTACK_RE` may be pruned yet.** This ADR records that
-the basis is *accepted*; it does not record that the change has landed. The
-kill switch and the monitoring hook do not exist, and `FastAPI_saas-muro`
-remains blocked on them.
+the basis is *accepted*; it does not record that the change has landed.
+
+The two mitigations the answer made mandatory now exist:
+`ATTACK_DETECTION_BRANCH_PRUNE` on `AttackDetectionSettings` and
+`record_attack_subset_compiled()` in `r1_unified_metrics.py`, both additive,
+both default-on, with the flag-off path falling back to the full
+`COMBINED_ATTACK_RE`. **What does not exist is A-1 itself** -- there is no
+`select_branches`, no memoisation, and no compiled alternation. The flag governs
+the one pruning decision the code has today (the whole-scan skip) and the counter
+observes that skip. `FastAPI_saas-muro` therefore remains blocked on the subset
+compilation, which is the change this ADR approves and this mitigation set does
+not perform.
