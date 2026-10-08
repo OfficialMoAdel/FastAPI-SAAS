@@ -818,20 +818,29 @@ jobs:
         # on the job that needed it, where it is not.
         run: |
           set -uo pipefail
-          fail=0
-          for f in app_host_report.json mechanism_probe.json; do
-            if [ ! -s "reports/$f" ]; then
-              size=$( [ -f "reports/$f" ] && wc -c < "reports/$f" | tr -d ' ' || echo "absent" )
-              echo "::error::reports/$f is $size bytes - refusing to upload a corrupt artefact"
-              fail=1
-            else
-              echo "reports/$f: $(wc -c < "reports/$f" | tr -d ' ') bytes"
-            fi
-          done
-          if [ "$fail" -ne 0 ]; then
-            echo "=== reports/ contents ==="
-            ls -la reports/
+          # The two files are NOT equally important, and treating them alike is
+          # how a nice-to-have starts blocking a deliverable:
+          #
+          #   app_host_report.json  - CONSUMED by perf-load. run_perf_baseline.sh
+          #                             refuses to run without it (exit 6). A
+          #                             corrupt one stops the measurement, so it
+          #                             must stop the PRODUCER too.
+          #   mechanism_probe.json  - evidence only. Nothing consumes it in this
+          #                             arm; its absence is recorded, not fatal.
+          if [ ! -s reports/app_host_report.json ]; then
+            size=$( [ -f reports/app_host_report.json ] && wc -c < reports/app_host_report.json | tr -d ' ' || echo "absent" )
+            echo "::error::app_host_report.json is $size bytes - refusing to upload a corrupt artefact"
+            echo "=== reports/ contents ==="; ls -la reports/
             exit 1
+          fi
+          echo "app_host_report.json: $(wc -c < reports/app_host_report.json | tr -d ' ') bytes"
+
+          if [ -s reports/mechanism_probe.json ]; then
+            echo "mechanism_probe.json: $(wc -c < reports/mechanism_probe.json | tr -d ' ') bytes"
+          else
+            echo "::warning::mechanism_probe.json is absent or empty. Nothing in this arm"
+            echo "  consumes it - the L-14/L-11/L-16 probe evidence is missing from"
+            echo "  this run and the artefact will not carry it."
           fi
           echo "=== app_host_report.json ==="
           head -c 600 reports/app_host_report.json; echo
