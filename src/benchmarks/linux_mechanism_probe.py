@@ -78,6 +78,35 @@ class NotTheProductionRuntime(RuntimeError):
     """
 
 
+def install_production_loop() -> str:
+    """Put uvloop in place the way uvicorn's ``--loop auto`` does, and report it.
+
+    NECESSARY, and its absence is why the first Linux run of this probe failed.
+    ``uvloop`` being IMPORTABLE is not the same as it being INSTALLED: uvloop only
+    becomes the running loop if something calls ``uvloop.install()`` or constructs a
+    ``uvloop.Loop``. The perf-harness job's SERVER gets uvloop because uvicorn's
+    auto-selection does that for it - but this probe runs in its own interpreter,
+    where the default policy is still asyncio. So on a host with uvloop installed
+    the probe reported ``asyncio.unix_events`` and refused, which reads exactly like
+    "uvloop is missing on the Linux target" when it is present and unused.
+
+    Installing here is not a workaround; it is what makes the probe measure the
+    loop the server measures.
+    """
+    import asyncio
+
+    try:
+        import uvloop
+    except ImportError as error:
+        raise NotTheProductionRuntime(
+            f"uvloop is not importable on this host: {error}. pyproject declares it "
+            f"under sys_platform != 'win32', so its absence on the Linux target is a "
+            f"packaging fault, not a platform fact."
+        ) from error
+    uvloop.install()
+    return type(asyncio.get_event_loop()).__module__
+
+
 def assert_on_production_runtime() -> str:
     """Return the running loop's implementation, refusing anything but uvloop."""
     loop_module = type(asyncio.get_event_loop()).__module__
@@ -100,6 +129,7 @@ async def run_mechanism_probe(*, seconds: float = DEFAULT_SECONDS) -> dict[str, 
     that asked for 100 Hz and managed less has not met it, and reporting the
     requested figure would be a claim the run does not support.
     """
+    install_production_loop()
     loop_module = assert_on_production_runtime()
 
     sampler = LoopLagSampler(enabled=True, interval=SAMPLE_INTERVAL)
@@ -296,14 +326,42 @@ async def _commandstats_total(client: Any) -> int:
 
 async def _main(args: argparse.Namespace) -> int:
     probes: dict[str, Any] = {}
+    failures: list[str] = []
+
+    # Each probe is run in isolation and its failure RECORDED rather than allowed
+    # to abort the other. The first Linux run failed at the mechanism probe and
+    # produced no artefact at all, which cost the diagnosis: the evidence that had
+    # already been collected was discarded with the run. A probe that fails writes
+    # its reason into the artefact and lets the process exit non-zero, so the other
+    # probe's numbers survive and the failure is still visible.
     if args.probe in ("mechanism", "all"):
-        probes["mechanism"] = await run_mechanism_probe(seconds=args.seconds)
+        try:
+            # INSIDE the guard. Called outside it, a host without uvloop aborted
+            # before any try block ran and no artefact was written at all, which is
+            # how the first Linux failure arrived with no evidence attached.
+            install_production_loop()
+            probes["mechanism"] = await run_mechanism_probe(seconds=args.seconds)
+        except Exception as error:  # noqa: BLE001 - recorded, then re-signalled below
+            failures.append(f"mechanism: {type(error).__name__}: {error}")
+            probes["mechanism"] = {"failed": True, "error": f"{type(error).__name__}: {error}"}
+
     if args.probe in ("redis", "all"):
-        probes["redis"] = await run_redis_probe(
-            target_url=args.redis_url, password=args.redis_password
-        )
+        try:
+            probes["redis"] = await run_redis_probe(
+                target_url=args.redis_url, password=args.redis_password
+            )
+        except Exception as error:  # noqa: BLE001
+            failures.append(f"redis: {type(error).__name__}: {error}")
+            probes["redis"] = {"failed": True, "error": f"{type(error).__name__}: {error}"}
+
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(probes, indent=2, sort_keys=True, default=str) + "\n")
+    args.output.write_text(
+        json.dumps(probes, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8"
+    )
+    for failure in failures:
+        print(f"PROBE FAILED - {failure}", file=sys.stderr)
+    if failures:
+        return 1
     print(json.dumps(probes, indent=2, sort_keys=True, default=str))
     return 0
 

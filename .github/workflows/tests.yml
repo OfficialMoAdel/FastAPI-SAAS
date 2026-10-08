@@ -552,17 +552,56 @@ jobs:
           import json
           from pathlib import Path
           probe = json.loads(Path("reports/mechanism_probe.json").read_text())
-          mech = probe["mechanism"]
-          print("loop_module           :", mech["loop_module"])
-          print("achieved_rate_hz      :", mech["achieved_rate_hz"])
-          print("meets_minimum_rate    :", mech["meets_minimum_rate"])
-          print("gc_pause_collections  :", mech["gc_pause"]["gc_pause_collection_count"])
-          print("gc_pause_total_ms     :", mech["gc_pause"]["gc_pause_total_ms"])
-          red = probe["redis"]
-          print("shim commands         :", red["shim_total_commands"])
-          print("info commandstats     :", red["info_commandstats_delta"])
-          print("commands / round trips:", red["total_commands"], "/", red["total_round_trips"])
-          print("shim absent on import :", not red["absent_unless_injected"]["installed_on_import"])
+          for name, block in probe.items():
+              if isinstance(block, dict) and block.get("failed"):
+                  print(f"{name} FAILED: {block.get('error')}")
+          mech = probe.get("mechanism", {})
+          print("loop_module           :", mech.get("loop_module"))
+          print("achieved_rate_hz      :", mech.get("achieved_rate_hz"))
+          print("meets_minimum_rate    :", mech.get("meets_minimum_rate"))
+          print("gc_pause_collections  :", (mech.get("gc_pause") or {}).get("gc_pause_collection_count"))
+          print("gc_pause_total_ms     :", (mech.get("gc_pause") or {}).get("gc_pause_total_ms"))
+          red = probe.get("redis", {})
+          print("shim commands         :", red.get("shim_total_commands"))
+          print("info commandstats     :", red.get("info_commandstats_delta"))
+          print("commands / round trips:", red.get("total_commands"), "/", red.get("total_round_trips"))
+          print("shim absent on import :", not ((red.get("absent_unless_injected") or {}).get("installed_on_import", False)))
+          PYEOF
+
+      - name: Refuse a mechanism probe that reported a failure
+        # The probe tolerates its own failure so its evidence survives; that makes
+        # the step's exit code unreliable as a gate, so the recorded failure IS the
+        # gate. A missing artefact fails too - a probe that wrote nothing has not
+        # produced evidence, and letting that pass would report success for a run
+        # that measured nothing.
+        run: |
+          test -s reports/mechanism_probe.json || {
+            echo "::error::no mechanism probe artefact; the probe wrote nothing"
+            exit 1
+          }
+          uv run python - <<'PYEOF'
+          import json, sys
+          from pathlib import Path
+          probe = json.loads(Path("reports/mechanism_probe.json").read_text())
+          failed = [n for n, b in probe.items() if isinstance(b, dict) and b.get("failed")]
+          for name in failed:
+              print(f"::error::{name} probe FAILED: {probe[name].get('error')}")
+          if failed:
+              sys.exit(1)
+          mech, red = probe["mechanism"], probe["redis"]
+          if mech.get("loop_module") != "uvloop":
+              print(f"::error::probe ran on {mech.get('loop_module')!r}, not uvloop; "
+                    f"addendum A-2 makes this NON-REPRESENTATIVE")
+              sys.exit(1)
+          if not mech.get("meets_minimum_rate"):
+              print(f"::error::achieved {mech.get('achieved_rate_hz')} Hz, below the required 100 Hz")
+              sys.exit(1)
+          if not red.get("counts_agree"):
+              print("::error::the two Redis counts did not agree")
+              sys.exit(1)
+          print("mechanism probe: uvloop at "
+                f"{mech['achieved_rate_hz']} Hz; Redis counts agree "
+                f"({red['shim_total_commands']} commands / {red['total_round_trips']} round trips)")
           PYEOF
 
       - name: Upload mechanism probe artefacts
