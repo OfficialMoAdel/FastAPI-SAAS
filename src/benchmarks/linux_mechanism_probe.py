@@ -104,7 +104,15 @@ def install_production_loop() -> str:
             f"packaging fault, not a platform fact."
         ) from error
     uvloop.install()
-    return type(asyncio.get_event_loop()).__module__
+    # Deliberately does NOT call asyncio.get_event_loop() to report the result.
+    # That call with no running loop raises RuntimeError on Python 3.12+ when the
+    # policy is uvloop, and it raised UNCAUGHT - escaping main() before any
+    # artefact was written, which is why the fourth Linux run produced no evidence.
+    # The policy is installed here; the RUNNING loop is verified in
+    # assert_on_production_runtime(), which executes inside the coroutine where a
+    # loop actually exists.
+    del asyncio
+    return PRODUCTION_LOOP
 
 
 def assert_on_production_runtime() -> str:
