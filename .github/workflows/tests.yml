@@ -442,10 +442,7 @@ jobs:
       # getting it wrong would make every round-trip figure an order of
       # magnitude less relevant than assumed.
       PERF_STORE_LOCALITY: co-located
-      # The registry digest of the image the app is ACTUALLY started from - the
-      # same value the compose override pins web to. Not the tag, and not the
-      # local image ID.
-      PERF_IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -476,40 +473,6 @@ jobs:
 
       - name: Install package with dev dependencies
         run: uv pip install -e ".[dev]"
-
-      - name: Create .env for Docker Compose
-        # src/.env is GITIGNORED (.gitignore:147), so it is absent from every
-        # checkout - including this one. docker-compose.yml declares
-        # env_file: ./src/.env for db and web, so without this file `compose up`
-        # fails or starts a stack with no configuration at all.
-        #
-        # Hosts are SERVICE NAMES, not localhost: the web container reaches its
-        # peers by compose DNS, and `localhost` inside that container is the
-        # container itself. That is the difference between a working stack and a
-        # web container that cannot find its database.
-        run: |
-          set -euo pipefail
-          mkdir -p src
-          cat > src/.env <<EOF
-          ENVIRONMENT=local
-          SECRET_KEY=${SECRET_KEY}
-          ADMIN_PASSWORD=${ADMIN_PASSWORD}
-          POSTGRES_SERVER=db
-          POSTGRES_PORT=5432
-          POSTGRES_USER=${POSTGRES_USER}
-          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-          POSTGRES_DB=${POSTGRES_DB}
-          REDIS_CACHE_HOST=redis
-          REDIS_CACHE_PORT=6379
-          REDIS_QUEUE_HOST=redis
-          REDIS_QUEUE_PORT=6379
-          CRUD_ADMIN_REDIS_HOST=redis
-          CRUD_ADMIN_REDIS_PORT=6379
-          PERF_ORCHESTRATOR=${PERF_ORCHESTRATOR}
-          PERF_STORE_LOCALITY=${PERF_STORE_LOCALITY}
-          PERF_IMAGE_DIGEST=${PERF_IMAGE_DIGEST}
-          EOF
-          echo "wrote src/.env for compose"
 
       - name: Build and publish the measured image, pinned by digest
         # WHY PUSH AT ALL
@@ -550,6 +513,46 @@ jobs:
           echo "pinned=${image}@${digest}" >> "$GITHUB_OUTPUT"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           echo "published and pinned: ${image}@${digest}"
+
+      - name: Create .env for Docker Compose
+        # src/.env is GITIGNORED (.gitignore:147), so it is absent from every
+        # checkout - including this one. docker-compose.yml declares
+        # env_file: ./src/.env for db and web, so without this file `compose up`
+        # fails or starts a stack with no configuration at all.
+        #
+        # Hosts are SERVICE NAMES, not localhost: the web container reaches its
+        # peers by compose DNS, and `localhost` inside that container is the
+        # container itself. That is the difference between a working stack and a
+        # web container that cannot find its database.
+        env:
+          # STEP level, not job level: a job-level env cannot reference
+          # steps.* - it is evaluated before any step has run, and the workflow
+          # fails to parse with "Unrecognized named-value: 'steps'". The digest
+          # only exists after the publish step, so it is threaded through here.
+          PERF_IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p src
+          cat > src/.env <<EOF
+          ENVIRONMENT=local
+          SECRET_KEY=${SECRET_KEY}
+          ADMIN_PASSWORD=${ADMIN_PASSWORD}
+          POSTGRES_SERVER=db
+          POSTGRES_PORT=5432
+          POSTGRES_USER=${POSTGRES_USER}
+          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+          POSTGRES_DB=${POSTGRES_DB}
+          REDIS_CACHE_HOST=redis
+          REDIS_CACHE_PORT=6379
+          REDIS_QUEUE_HOST=redis
+          REDIS_QUEUE_PORT=6379
+          CRUD_ADMIN_REDIS_HOST=redis
+          CRUD_ADMIN_REDIS_PORT=6379
+          PERF_ORCHESTRATOR=${PERF_ORCHESTRATOR}
+          PERF_STORE_LOCALITY=${PERF_STORE_LOCALITY}
+          PERF_IMAGE_DIGEST=${PERF_IMAGE_DIGEST}
+          EOF
+          echo "wrote src/.env for compose"
 
       - name: Start services with Docker Compose
         # WHY COMPOSE AND NOT THE `services:` BLOCK
