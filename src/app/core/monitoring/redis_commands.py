@@ -79,6 +79,10 @@ from src.app.core.monitoring.telemetry import (
 #: different experiment from one that sent everything singly, and a single total
 #: cannot express that.
 PATH_SINGLE = "send_command"
+#: Recorded so the artefact can say the single-command path was deliberately NOT
+#: counted, rather than leaving a reader to wonder why it appears in the patched
+#: list but not in the totals.
+SINGLE_PATH_FUNNELS_INTO_PACKED = True
 PATH_PACKED_TRANSACTION = "send_packed_command"
 PATH_PACKED_PIPELINE = "send_pipelined_command"
 
@@ -231,8 +235,19 @@ class RedisCommandShim:
 
         if path == PATH_SINGLE:
             def send_command(this_connection: Any, *args: Any, **kwargs: Any) -> Any:
-                if enabled:
-                    counts.record_single(_command_name(args))
+                # DELIBERATELY DOES NOT COUNT. redis-py's send_command packs the
+                # command and calls send_packed_command itself, so counting here AND
+                # there counted every single command twice. Measured on a live
+                # async client: the shim reported 50 commands where the server
+                # reported 38, and the arithmetic showed why - 11 send_command
+                # calls and 39 send_packed_command calls, where 11 singles plus a
+                # 28-command pipeline is exactly 39.
+                #
+                # It went unnoticed because a hand-written fake connection does not
+                # chain, so the sync-path test could not see it; only a live client
+                # does. Counting solely at the packed level is correct because EVERY
+                # command the server receives arrives there - including the single
+                # ones.
                 return original(this_connection, *args, **kwargs)
             return send_command
 

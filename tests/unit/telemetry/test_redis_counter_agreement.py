@@ -22,8 +22,8 @@ from redis.connection import Connection
 
 from src.app.core.monitoring.redis_commands import (
     CANDIDATE_SEND_PATHS,
-    PATH_PACKED_TRANSACTION,
     PATH_SINGLE,
+    SINGLE_PATH_FUNNELS_INTO_PACKED,
     RedisCommandShim,
     assert_counts_agree,
     assert_pipeline_aware,
@@ -101,13 +101,31 @@ class TestAPipelineOfNCountsAsN:
         assert shim.export()["redis_total_commands"] == 3
         assert shim.export()["redis_total_round_trips"] == 3
 
-    def test_single_and_packed_paths_are_both_counted(self, shim: RedisCommandShim) -> None:
+    def test_a_single_command_is_counted_once_not_twice(self, shim: RedisCommandShim) -> None:
+        """redis-py routes a single command THROUGH send_packed_command.
+
+        So counting on both paths double-counts every single command. This was
+        found on a live async client, not by reading: the shim reported 50 where
+        the server reported 38, and the arithmetic was 11 ``send_command`` calls
+        plus 39 ``send_packed_command`` calls - a 28-command pipeline plus those
+        same 11 singles. It stayed hidden because a hand-written fake connection
+        does not chain, so only a live client can see it.
+
+        A real Connection is used here, not the fake, precisely because the fake
+        cannot reproduce the delegation this bug lived in.
+        """
         connection = RecordingConnection()
-        connection.send_command(b"PING")
-        connection.send_packed_command(connection.pack_commands([(b"SET", b"a", b"1")]))
+        connection.send_packed_command(connection.pack_commands([(b"PING",)]))
         export = shim.export()
-        assert export["redis_commands_by_path"][PATH_SINGLE] == 1
-        assert export["redis_commands_by_path"][PATH_PACKED_TRANSACTION] == 1
+        assert export["redis_total_commands"] == 1
+        assert export["redis_commands_by_name"] == {"PING": 1}
+
+    def test_the_single_path_is_patched_but_deliberately_not_counted(self) -> None:
+        """It stays patched so a future redis-py that STOPS delegating is still
+        observed - the flag records the intent rather than leaving it to be
+        inferred from an absent key."""
+        assert SINGLE_PATH_FUNNELS_INTO_PACKED is True
+        assert PATH_SINGLE in CANDIDATE_SEND_PATHS
 
 
 class TestTheHookTargetIsPinned:

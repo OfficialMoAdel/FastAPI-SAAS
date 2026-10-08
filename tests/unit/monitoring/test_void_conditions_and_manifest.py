@@ -54,6 +54,7 @@ from src.app.core.monitoring.void_conditions import (
     phase_is_void,
 )
 
+
 def _runtime(**overrides: object) -> dict:
     """A runtime block carrying all five A-2 values, correct unless overridden."""
     runtime = {
@@ -228,8 +229,15 @@ class TestRedisCommandShim:
         shim.uninstall(type(connection))
 
         export = shim.export()
-        assert export["redis_total_commands"] == 6
-        assert export["redis_commands_by_path"]["send_command"] == 1
+        # send_command delegates into send_packed_command, so a single command is
+        # counted ONCE, at the packed level. This assertion was 6 before the live
+        # Linux run exposed the double-count.
+        assert export["redis_total_commands"] == 5
+        # redis-py routes send_command THROUGH send_packed_command, so the single
+        # path must not be counted separately or every single command counts twice.
+        # Found by a live Linux run against a real client, not by reading: the shim
+        # reported 50 where the server reported 38.
+        assert "send_command" not in export["redis_commands_by_path"]
         assert export["redis_commands_by_path"]["send_packed_command"] == 3
         assert export["redis_commands_by_path"]["send_pipelined_command"] == 2
 

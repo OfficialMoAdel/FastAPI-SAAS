@@ -72,6 +72,16 @@ ALLOWED_RAW_TIMERS: dict[str, str] = {
         "Collects samples and reports them itself; it is a sample store, not an estimator. "
         "Its percentile arithmetic already delegates to src/benchmarks/percentiles.py."
     ),
+    "src/benchmarks/linux_mechanism_probe.py": (
+        "A SAMPLE STORE, like baseline_metrics.py and middleware_profiler.py: it "
+        "RECORDS the event-loop lag series and the GC pause histogram and reports "
+        "them as collected, so it has no estimate to route through the protocol. "
+        "Routing it through a per-call timer would measure the sampler rather than "
+        "the loop - which is the failure T-2 exists to prevent. It also asserts its "
+        "own achieved sampling rate against a fixed ceiling, and asserts the two "
+        "Redis counts against each other, neither of which the protocol's "
+        "best_of(min-of-N, median-of-M) estimator expresses."
+    ),
     "tests/benchmarks/middleware_profiler.py": (
         "Collects ASGI middleware samples and reports them itself; same reason as "
         "baseline_metrics.py."

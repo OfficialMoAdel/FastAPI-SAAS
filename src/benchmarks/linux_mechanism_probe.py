@@ -129,7 +129,6 @@ async def run_mechanism_probe(*, seconds: float = DEFAULT_SECONDS) -> dict[str, 
     that asked for 100 Hz and managed less has not met it, and reporting the
     requested figure would be a claim the run does not support.
     """
-    install_production_loop()
     loop_module = assert_on_production_runtime()
 
     sampler = LoopLagSampler(enabled=True, interval=SAMPLE_INTERVAL)
@@ -336,12 +335,21 @@ async def _main(args: argparse.Namespace) -> int:
     # probe's numbers survive and the failure is still visible.
     if args.probe in ("mechanism", "all"):
         try:
-            # INSIDE the guard. Called outside it, a host without uvloop aborted
-            # before any try block ran and no artefact was written at all, which is
-            # how the first Linux failure arrived with no evidence attached.
-            install_production_loop()
+            # install_production_loop() runs in main(), BEFORE asyncio.run builds
+            # the loop. Calling it HERE was the second Linux failure: the loop
+            # already existed by the time this coroutine ran, so uvloop.install()
+            # replaced a policy nothing would consult again and the probe still
+            # measured asyncio. The policy has to be in place before the loop is
+            # CONSTRUCTED, not after.
+            assert_on_production_runtime()
             probes["mechanism"] = await run_mechanism_probe(seconds=args.seconds)
-        except Exception as error:  # noqa: BLE001 - recorded, then re-signalled below
+        except (NotTheProductionRuntime, CeilingExceeded, AssertionError, RuntimeError) as error:
+            # The four failure kinds this probe can raise, each recorded rather than
+            # aborting the other probe: refusing the runtime, failing the sampling
+            # rate, two counts that disagree, and a probe that could not start.
+            # A catch-all here would swallow a programming error - a NameError in
+            # the probe itself - and report it as a measurement failure, which is
+            # how a broken instrument comes to read as a working one.
             failures.append(f"mechanism: {type(error).__name__}: {error}")
             probes["mechanism"] = {"failed": True, "error": f"{type(error).__name__}: {error}"}
 
@@ -350,7 +358,7 @@ async def _main(args: argparse.Namespace) -> int:
             probes["redis"] = await run_redis_probe(
                 target_url=args.redis_url, password=args.redis_password
             )
-        except Exception as error:  # noqa: BLE001
+        except (AssertionError, RuntimeError, OSError, ValueError) as error:
             failures.append(f"redis: {type(error).__name__}: {error}")
             probes["redis"] = {"failed": True, "error": f"{type(error).__name__}: {error}"}
 
@@ -376,6 +384,14 @@ def main(argv: list[str] | None = None) -> int:
         "--output", type=Path, default=Path("reports/mechanism_probe.json")
     )
     args = parser.parse_args(argv)
+    if args.probe in ("mechanism", "all"):
+        # BEFORE asyncio.run: a loop is constructed there, and uvloop.install()
+        # only affects loops constructed afterwards.
+        try:
+            install_production_loop()
+        except NotTheProductionRuntime as error:
+            print(f"PROBE REFUSING - {error}", file=sys.stderr)
+            return 2
     return asyncio.run(_main(args))
 
 
