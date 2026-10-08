@@ -110,7 +110,13 @@ def _read(getter: Any, name: str, default: Any = None) -> Any:
     for accessor in (lambda: getattr(getter, name, None), lambda: getter(name, None)):
         try:
             value = accessor()
-        except Exception:  # noqa: BLE001 - a settings read may raise anything
+        except (AttributeError, TypeError, KeyError, ValueError):
+            # The specific ways a settings read fails: no such attribute, the
+            # flat accessor is not callable, no such key, or a pydantic
+            # ValidationError (which subclasses ValueError). Anything broader
+            # would swallow a genuine defect in a caller and read it as "this
+            # setting is unset" - which is how an incomplete manifest comes to
+            # look complete.
             continue
         if value is not None:
             return value
@@ -155,7 +161,10 @@ def resolve_http_impl() -> str:
 
     try:
         return _resolve()
-    except Exception as error:  # noqa: BLE001 - recorded as absent, not as a guess
+    except (RuntimeError, ImportError, AttributeError) as error:
+        # RuntimeError is what resolve_http_impl raises for an unrecognised
+        # resolution; ImportError is a host without uvicorn. Recorded as absent,
+        # never guessed.
         return f"unresolved: {error}"
 
 
@@ -186,14 +195,18 @@ def collect_app_config(*, settings: Any = None, security: Any = None,
             from src.app.core.config.security import SecuritySettings
 
             security = SecuritySettings()
-        except Exception:  # noqa: BLE001 - absent security config is a hole, not a crash
+        except (ImportError, ValueError):
+            # ImportError: the module is absent. ValueError: pydantic rejected
+            # the environment (ValidationError subclasses it). Either way the
+            # field is recorded as a hole and the run is refused by the
+            # completeness check - which is the point.
             security = None
     if services is None:
         try:
             from src.app.core.config.services import DefaultRateLimitSettings
 
             services = DefaultRateLimitSettings()
-        except Exception:  # noqa: BLE001 - same: a hole, recorded rather than crashed on
+        except (ImportError, ValueError):
             services = None
 
     postgres = getattr(settings, "postgres", None)
@@ -204,8 +217,8 @@ def collect_app_config(*, settings: Any = None, security: Any = None,
             from src.app.core.config.services import RedisQueueSettings
 
             redis_queue = redis_queue if redis_queue is not None else RedisQueueSettings()
-        except Exception:  # noqa: BLE001
-            pass
+        except (ImportError, ValueError):
+            redis_queue = None
 
     pg_host, pg_port = _address(_read(postgres, "POSTGRES_SERVER") or _read(postgres, "server"))
     if pg_host is None:
@@ -269,7 +282,10 @@ def _event_loop_module() -> str | None:
         import asyncio
 
         return type(asyncio.get_event_loop()).__module__
-    except Exception:  # noqa: BLE001 - no loop in this thread is normal at import
+    except RuntimeError:
+        # get_event_loop raises RuntimeError when the thread has no loop, which
+        # is entirely normal while a manifest is being built. Recorded as absent;
+        # the A-2 assertion treats an absent runtime identity as a failure.
         return None
 
 
@@ -308,7 +324,10 @@ def _resolved_loop() -> str | None:
 
     try:
         return resolve_event_loop()
-    except Exception:  # noqa: BLE001 - recorded as absent, never guessed
+    except (ImportError, ValueError, RuntimeError):
+        # find_spec raises ImportError/ValueError, including the ValueError a
+        # module already in sys.modules with __spec__ = None raises. Recorded as
+        # absent, never guessed.
         return None
 
 

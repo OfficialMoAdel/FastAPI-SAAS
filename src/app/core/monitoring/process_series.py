@@ -90,6 +90,29 @@ _STATM = "/proc/self/statm"
 _PAGE_SIZE = os.sysconf("SC_PAGE_SIZE") if hasattr(os, "sysconf") else 4096
 
 
+def _statm_is_readable() -> bool:
+    """Whether ``/proc/self/statm`` can be read here. Evaluated ONCE.
+
+    A module constant rather than a per-sample check because the answer cannot
+    change while the process runs, and re-asking costs a syscall plus a raised
+    exception on every sample on a host without ``/proc``.
+    """
+    try:
+        fd = os.open(_STATM, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        return bool(os.read(fd, 1))
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+#: Resolved once at import. See :func:`_statm_is_readable`.
+_STATM_AVAILABLE = _statm_is_readable()
+
+
 def _max_rss_bytes() -> int | None:
     """Peak RSS from the kernel's own accounting, or ``None`` if unavailable.
 
@@ -184,27 +207,35 @@ class ProcessSeriesSampler:
 
     @staticmethod
     def _rss_bytes() -> int:
-        """Resident set size in bytes.
+        """Resident set size in bytes, or 0 where the platform cannot report it.
 
-        ``/proc/self/statm`` field 2 is resident pages; multiplied by the page
-        size. Read with ``os.open``/``os.read`` rather than ``Path.read_text`` so
-        a failure here cannot raise into the sampler and stop the series mid-run -
-        a sampler that raises on one bad read would truncate the run's memory
-        evidence, which is the one thing it exists to preserve.
+        ``/proc/self/statm`` field 2 is resident pages, times the page size. Read
+        with ``os.open``/``os.read`` rather than ``Path.read_text`` so a failure
+        cannot raise into the sampler and stop the series mid-run - a sampler that
+        raised on one bad read would lose exactly the data it exists to preserve.
+
+        THE CAPABILITY CHECK IS DONE ONCE (:data:`_STATM_AVAILABLE`), and that is
+        not a micro-optimisation. Probing ``/proc`` per sample meant a host without
+        it paid a failing syscall and a raised-and-caught exception on EVERY
+        sample - pure waste, and enough of it to push this instrument past its own
+        cost ceiling under load: the T-7 ceiling test was failing at 69 us against
+        a 50 us ceiling for a function whose steady-state cost is 15 us. That gap
+        was this, not the scheduler.
         """
-        try:
-            fd = os.open(_STATM, os.O_RDONLY)
+        if _STATM_AVAILABLE:
             try:
-                data = os.read(fd, 128)
-            finally:
-                os.close(fd)
-            fields = data.split()
-            if len(fields) >= 2:
-                return int(fields[1]) * _PAGE_SIZE
-        except (OSError, ValueError, IndexError):
-            pass
-        usage = _max_rss_bytes()
-        return usage if usage is not None else 0
+                fd = os.open(_STATM, os.O_RDONLY)
+                try:
+                    data = os.read(fd, 128)
+                finally:
+                    os.close(fd)
+                fields = data.split()
+                if len(fields) >= 2:
+                    return int(fields[1]) * _PAGE_SIZE
+            except (OSError, ValueError, IndexError):
+                # /proc exists but did not answer this time; fall through.
+                pass
+        return _max_rss_bytes() or 0
 
     @staticmethod
     def _cpu_seconds() -> float:
