@@ -704,14 +704,14 @@ jobs:
               --probe all \
               --seconds 30 \
               --redis-url "redis://redis:6379/0" \
-              --output reports/mechanism_probe.json
+              --output /tmp/mechanism_probe.json
           docker compose -f docker-compose.yml -f docker-compose.perf.yml \
-            exec -T web cat reports/mechanism_probe.json
+            exec -T web cat /tmp/mechanism_probe.json
           docker compose -f docker-compose.yml -f docker-compose.perf.yml \
             exec -T web python -c "
           import json
           from pathlib import Path
-          probe = json.loads(Path('reports/mechanism_probe.json').read_text())
+          probe = json.loads(Path('/tmp/mechanism_probe.json').read_text())
           for name, block in probe.items():
               if isinstance(block, dict) and block.get('failed'):
                   print(f'::error::{name} probe FAILED: {block.get("error")}')
