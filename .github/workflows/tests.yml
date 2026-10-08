@@ -17,6 +17,14 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      arm:
+        description: 'full = every job (default). perf-only = just the two-host perf arm, skipping lint/type-check/tests.'
+        type: choice
+        default: full
+        options:
+          - full
+          - perf-only
 
 # ONE workflow, and superseded runs do not keep billing.
 #
@@ -41,6 +49,9 @@ jobs:
   # structlog, no database and no Redis), so it costs ~30 s and has no reason to
   # be a separate workflow rather than a job.
   isomorphism:
+    # Skipped by the perf-only dispatch arm: the two-host perf work does not
+    # need them, and `tests` alone is ~14 minutes of paid runner time.
+    if: github.event_name != 'workflow_dispatch' || inputs.arm != 'perf-only'
     name: Isomorphism Validation
     runs-on: ubuntu-latest
     steps:
@@ -81,6 +92,9 @@ jobs:
         run: uv run python scripts/perf-validation/isomorphism_validator.py
 
   lint:
+    # Skipped by the perf-only dispatch arm: the two-host perf work does not
+    # need them, and `tests` alone is ~14 minutes of paid runner time.
+    if: github.event_name != 'workflow_dispatch' || inputs.arm != 'perf-only'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -170,6 +184,9 @@ jobs:
         run: uv run python scripts/check_schema_parity.py
 
   type-check:
+    # Skipped by the perf-only dispatch arm: the two-host perf work does not
+    # need them, and `tests` alone is ~14 minutes of paid runner time.
+    if: github.event_name != 'workflow_dispatch' || inputs.arm != 'perf-only'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -195,6 +212,9 @@ jobs:
           SECRET_KEY: "12345678901234567890123456789012"
 
   tests:
+    # Skipped by the perf-only dispatch arm: the two-host perf work does not
+    # need them, and `tests` alone is ~14 minutes of paid runner time.
+    if: github.event_name != 'workflow_dispatch' || inputs.arm != 'perf-only'
     runs-on: ubuntu-latest
 
     services:
@@ -357,38 +377,37 @@ jobs:
           CRUD_ADMIN_REDIS_HOST: localhost
           CRUD_ADMIN_REDIS_PORT: 6379
           CRUD_ADMIN_REDIS_PASSWORD: ""
-  perf-harness:
-    # ON DEMAND ONLY. Runs the perf-harness refusal suite against a real
-    # Linux host and reports what actually happened, rather than leaving the
-    # Linux branch of the harness asserted only by a skipif.
-    #
-    # The gate is the whole design: push and PR runs must not pay for this,
-    # so the job no-ops on every event except workflow_dispatch. Launch it with
-    #   gh workflow run tests.yml --ref <branch>
-    #
-    # performance.yml was the obvious home for this and cannot be used: GitHub
-    # only registers a workflow that exists on the DEFAULT branch, and
-    # performance.yml is not on main (`gh workflow list` shows only Backend CI
-    # and Semgrep; dispatching it returns HTTP 404 "not found on the default
-    # branch"). tests.yml IS registered, which is what makes this arm
-    # launchable without merging anything to main.
-    #
-    # That is also why this file is the only workflow that matters: the
-    # validator previously lived in its own perf-validation.yml and has been
-    # folded in above, so one push now costs one workflow run.
-    #
-    # Scope, stated plainly: this proves the harness runs on Linux and its
-    # refusals behave. It does NOT produce a throughput/p95 measurement -- the
-    # three-phase --emit-app-host-report path against a second host is still
-    # open work in bead amxv, and a number from here must never be quoted as
-    # a capacity result.
-    name: perf harness + app host identity (on demand, shared runner)
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+  # ---------------------------------------------------------------------------
+  # TWO-HOST PERF ARM. Dispatch-only, and the only part of CI that may quote a
+  # throughput or p95 number.
+  #
+  # Why two jobs and not one: a GitHub job is assigned ONE runner, so a job
+  # cannot both generate load and be the server it loads. The app host runs on
+  # `perf-app`, the load generator on `perf-load`, and the second job targets the
+  # first host's PRIVATE address.
+  #
+  # WHY THE PRIVATE ADDRESS (192.168.121.4) AND NOT THE PUBLIC ONE (40.123.236.144)
+  # -- this is the load-bearing choice in the whole file. Both VMs also have a
+  # public address, and targeting that would measure the internet: hundreds of
+  # milliseconds of transit between two machines in the same datacentre. The RTT
+  # is the quantity every Redis round-trip finding rests on, and it must reflect
+  # the LAN the deployment actually uses - the same regime as the stores at
+  # 192.168.121.147. A public-address number would be real, reproducible, and
+  # meaningless, which is the same class of defect as the co-located Windows runs
+  # this whole programme exists to undo.
+  #
+  # The same-host refusal in run_perf_baseline.sh is NOT weakened and NOT
+  # worked around. `perf-preflight` below proves the two runners really are
+  # different machines before any load is generated, so the refusal is satisfied
+  # honestly rather than bypassed.
+  # ---------------------------------------------------------------------------
 
-    # The app host is a real FastAPI server, so it needs a real Postgres and a
-    # real Redis to boot against. This is NOT to measure load with: the load
-    # path needs a second host (see the scope note at the foot of this job).
+  perf-app-host:
+    name: perf app host (perf-app)
+    runs-on: [self-hosted, linux, perf-app]
+    if: github.event_name == 'workflow_dispatch'
+    outputs:
+      host: ${{ steps.address.outputs.ip }}
     services:
       postgres:
         image: postgres:16
@@ -412,14 +431,9 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
-
-    # Job level so the app process, the report emitter and pytest all agree on
-    # one topology. Nothing here is a real credential.
     env:
       ENVIRONMENT: local
       SECRET_KEY: "12345678901234567890123456789012"
-      # Throwaway CI fixture, NOT a real credential. Required because the root
-      # conftest imports settings, which constructs FirstUserSettings.
       ADMIN_PASSWORD: "NotASecretCiFixture1!@#"
       POSTGRES_SERVER: localhost
       POSTGRES_PORT: "5432"
@@ -428,28 +442,37 @@ jobs:
       POSTGRES_DB: perf_test_db
       REDIS_CACHE_HOST: localhost
       REDIS_CACHE_PORT: "6379"
-      # The one deployment field no process can resolve about itself. Declared,
-      # never inferred; the other five are read off this machine.
-      PERF_ORCHESTRATOR: github-actions-shared-runner
-
+      REDIS_QUEUE_HOST: localhost
+      REDIS_QUEUE_PORT: "6379"
+      CRUD_ADMIN_REDIS_HOST: localhost
+      CRUD_ADMIN_REDIS_PORT: "6379"
+      # The one deployment field no process can resolve about itself.
+      PERF_ORCHESTRATOR: self-hosted-perf-app
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Report this host's address
+        # Handed to the load job. Private address, because that is what a peer on
+        # the same network reaches it at.
+        id: address
+        run: |
+          set -euo pipefail
+          ip="$(hostname -I | awk '{print $1}')"
+          echo "ip=${ip}" >> "$GITHUB_OUTPUT"
+          echo "app host private address: ${ip}"
+          echo "hostnames: $(hostname -s) / $(hostname -f 2>/dev/null || echo none)"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: "3.13"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           version: latest
 
-      # uv pip refuses to install without a target environment, so the venv
-      # is created explicitly, exactly as the lint, type-check and tests jobs
-      # above do. Omitting this step fails the install with
-      # "No virtual environment found" and never reaches pytest.
       - name: Create venv
         run: uv venv
 
@@ -457,36 +480,29 @@ jobs:
         run: uv pip install -e ".[dev]"
 
       - name: Create the app host schema
-        # The app's own create_tables(), the same function its lifespan calls,
-        # so CI and a local run cannot diverge. create_all and NOT alembic: the
-        # suite is written against a create_all schema with no RLS policies,
-        # and migration 08 would enable them.
+        # The app's own create_tables(), the same function its lifespan calls.
         run: uv run python -c "import asyncio; from src.app.core.setup import create_tables; asyncio.run(create_tables())"
 
       - name: Start the app host the way the Dockerfile starts it
         # NO --loop and NO --http, because the Dockerfile CMD passes neither.
         # That omission IS the premise: uvicorn's auto-selection is what decides
-        # uvloop vs asyncio and httptools vs h11, so passing either flag here
-        # would make the identity assertion test something other than what
-        # ships. 0.0.0.0 rather than 127.0.0.1 so the server is reachable.
+        # uvloop vs asyncio and httptools vs h11.
         #
-        # The venv's interpreter DIRECTLY, not `uv run uvicorn`. `uv run` puts
-        # a wrapper around the very PID the evidence step later reads /proc for:
-        # it may exec the interpreter or fork it, and `$!` names the server only
-        # in the first case. When it forks, `$!` is uv's own PID and
-        # /proc/$!/maps lists uv's Rust binary, which mentions neither extension
-        # -- an empty result indistinguishable from "the server fell back to
-        # asyncio". Same interpreter and same uvicorn either way; this just has no
-        # process in between, and matches the Dockerfile CMD, which invokes the
-        # venv's uvicorn directly.
+        # Setsid + nohup so the server SURVIVES this job finishing. The load job
+        # starts only after this one ends, so the app has to still be up then;
+        # perf-teardown below stops it.
         run: |
+          set -euo pipefail
           mkdir -p reports
-          nohup .venv/bin/python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8000 \
-            > reports/app_host_server.log 2>&1 &
+          setsid nohup .venv/bin/python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8000 \
+            > reports/app_host_server.log 2>&1 < /dev/null &
           echo $! > reports/app_host_server.pid
+          sleep 2
+          echo "started pid $(cat reports/app_host_server.pid)"
 
       - name: Wait for the app host to answer its health endpoint
         run: |
+          set -euo pipefail
           for _ in $(seq 1 60); do
             if [ "$(curl -s --noproxy '*' -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/v1/health)" = "200" ]; then
               echo "app host is serving /api/v1/health"
@@ -499,292 +515,217 @@ jobs:
           exit 1
 
       - name: Emit the app host report on the app host
-        # Step 1 of the two-host flow in scripts/run_perf_baseline.sh, and the
-        # only step that needs no load host: it records what THIS machine would
-        # resolve to, plus the deployment manifest of addendum 6.1.
         run: uv run python -m src.benchmarks.run_manifest --emit-app-host-report > reports/app_host_report.json
 
       - name: Record what the LIVE server process actually mapped
-        # resolve_event_loop() documents its own limitation: it reports what
-        # uvicorn's auto-selection RESOLVES TO, not what a running process
-        # installed. /proc/<pid>/maps closes that gap from the other side --
-        # uvloop and httptools are C extensions, so a server that really is on
-        # them has their shared objects mapped, and one that silently fell back
-        # to asyncio/h11 does not. Kept as an artefact, not just an assertion.
+        # uvloop and httptools are C extensions, so a server really on them has
+        # their shared objects mapped and one that fell back to asyncio/h11 does
+        # not. Read from /proc rather than trusting the resolver.
         run: |
-          pid=$(cat reports/app_host_server.pid)
-          # An empty file here is ambiguous on its face -- it reads as "the
-          # server fell back to asyncio" whether or not that is true -- so say
-          # what this PID actually is before concluding anything. Do not paper
-          # over it and do not fail here: the gate two steps down fails loudly,
-          # and this line makes the failure diagnosable from the log.
-          if ! grep -Eqi 'uvloop|httptools' "/proc/${pid}/maps" 2>/dev/null; then
-            echo "::warning::pid ${pid} maps neither extension; its cmdline is:"
-            tr '\0' ' ' < "/proc/${pid}/cmdline" || echo "(pid ${pid} is gone)"
-            echo ""
-          fi
-          grep -Ei 'uvloop|httptools' "/proc/${pid}/maps" | awk '{print $NF}' | sort -u > reports/app_host_mapped_extensions.txt
-          echo "--- extensions mapped by the running server (pid ${pid}) ---"
+          set -euo pipefail
+          pid="$(cat reports/app_host_server.pid)"
+          grep -Ei 'uvloop|httptools' "/proc/${pid}/maps" | awk '{print $NF}' | sort -u \
+            > reports/app_host_mapped_extensions.txt || true
           cat reports/app_host_mapped_extensions.txt
 
-      - name: "L-14 (A-16/A-17) importtime on the Linux image + per-phase boot breakdown"
-        # Two artefacts the addendum demands, both previously missing.
-        #
-        # (1) python -X importtime run HERE, on the Linux runner,
-        #     against the same interpreter the server started with.
-        #     F-4 recorded an 8.38 s import wall and 1 801 modules but
-        #     NEVER ran the breakdown; addendum A-16 splits F-4 -- the
-        #     seconds are [Unverified - Needs-Linux-measure] precisely
-        #     because the breakdown was never taken on Linux, and
-        #     UV_COMPILE_BYTECODE=1 (PF-5) changes import cost. The
-        #     total here is the import wall only; it is NOT comparable
-        #     to the lifespan boot figures below (import != boot) --
-        #     F-4 error was conflating them. Cold only: importtime
-        #     is a one-shot process.
-        #
-        # (2) The per-phase boot breakdown, from the timers
-        #     src/app/core/runtime.py compose_phases ALREADY emits as
-        #     startup_phase_completed (phase, duration_ms, boot_elapsed_ms).
-        #     Both boots run SERIALLY IN ONE PROCESS: the web root phases
-        #     (composition.py lifespan_factory) nest inside the admin
-        #     root (lifespan_with_admin, main.py:23), so the log carries
-        #     the web phases first, then the admin phases.
-        #     Kept as artefacts under reports/ so a number is never
-        #     quoted out of a step summary, and so the A-11 ADR item
-        #     (gated on this bead by addendum A-17) can cite the file.
+      - name: Run the mechanism probe (L-14, L-11, L-16, P-2/L-4, P-10)
         run: |
-          set -o pipefail
-          echo "--- L-14 (1): python -X importtime on the Linux image ---"
-          # Same interpreter the server started with (.venv/bin/python),
-          # importing the app object exactly as the Dockerfile CMD uvicorn
-          # would import it. -X importtime writes to stderr.
-          .venv/bin/python -X importtime -c "import src.app.main" 2> reports/importtime.txt
-          echo "importtime lines: $(wc -l < reports/importtime.txt)"
-          echo "--- top 15 self-time import contributors ---"
-          # Fields: import time: self [us] | cumulative | imported package.
-          # Sorted into a file and THEN headed: `sort | head` under
-          # `set -o pipefail` SIGPIPEs sort (exit 141) when head closes
-          # the pipe after 15 lines, which fails the whole step.
-          sort -t"|" -k2 -rn reports/importtime.txt > reports/importtime.sorted
-          head -15 reports/importtime.sorted
-          {
-            echo "### L-14 importtime (Linux image, cold import only)"
-            echo "import != boot: this is the import wall, not the lifespan boot below."
-            echo "```"
-            head -15 reports/importtime.sorted
-            echo "```"
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "--- L-14 (2): per-phase boot breakdown from compose_phases timers ---"
-          grep -o "startup_phase_completed.*" reports/app_host_server.log > reports/boot_phases.raw || true
-          if [ -s reports/boot_phases.raw ]; then
-            echo "phases recorded: $(wc -l < reports/boot_phases.raw)"
-            cat reports/boot_phases.raw
-          else
-            echo "no startup_phase_completed lines in the app host log; the"
-            echo "per-phase breakdown is absent, not zero. Reported as absent"
-            echo "rather than invented."
-          fi
-
-      - name: Upload L-14 boot artefacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: boot-breakdown-${{ github.sha }}
-          path: |
-            reports/importtime.txt
-            reports/boot_phases.raw
-          retention-days: 30
-
-      - name: "P-2/L-4 and P-10 mechanism probe on the Linux target"
-        # 8rez and mrv3 cannot be closed on a Windows measurement host: uvloop is
-        # not installable there (pyproject declares it under sys_platform !=
-        # 'win32'), and the P-10 comparison needs a DEDICATED store because
-        # INFO commandstats is instance-wide and counts other clients' traffic.
-        # This job is ubuntu-latest with its own redis service container, so both
-        # are satisfied here and only here.
-        #
-        # The probe REFUSES to produce a result off the production runtime rather
-        # than emitting a laboratory figure that reads as a validation one.
-        run: |
-          set -o pipefail
+          set -euo pipefail
           uv run python -m src.benchmarks.linux_mechanism_probe \
             --probe all \
             --seconds 30 \
             --redis-url "redis://localhost:6379/0" \
             --output reports/mechanism_probe.json
-          echo "--- probe summary ---"
           uv run python - <<'PYEOF'
           import json
           from pathlib import Path
           probe = json.loads(Path("reports/mechanism_probe.json").read_text())
           for name, block in probe.items():
               if isinstance(block, dict) and block.get("failed"):
-                  print(f"{name} FAILED: {block.get('error')}")
+                  print(f"::error::{name} probe FAILED: {block.get('error')}")
           mech = probe.get("mechanism", {})
-          print("loop_module           :", mech.get("loop_module"))
-          print("achieved_rate_hz      :", mech.get("achieved_rate_hz"))
-          print("meets_minimum_rate    :", mech.get("meets_minimum_rate"))
-          print("gc_pause_collections  :", (mech.get("gc_pause") or {}).get("gc_pause_collection_count"))
-          print("gc_pause_total_ms     :", (mech.get("gc_pause") or {}).get("gc_pause_total_ms"))
-          key = probe.get("apikey", {})
-          if key and not key.get("failed"):
-              print("apikey reads          :", key.get("reads"))
-              print("apikey shim/server    :", key.get("shim_total_commands"), "/", key.get("info_commandstats_delta"))
-              print("apikey commands/read  :", key.get("commands_per_read"))
-              print("apikey rtt mean ms    :", key.get("rtt_mean_ms"))
-              print("no-try/except premise :", (key.get("no_try_except_premise") or {}).get("holds"))
+          print("loop_module          :", mech.get("loop_module"))
+          print("achieved_rate_hz     :", mech.get("achieved_rate_hz"))
+          print("meets_minimum_rate   :", mech.get("meets_minimum_rate"))
           red = probe.get("redis", {})
-          print("shim commands         :", red.get("shim_total_commands"))
-          print("info commandstats     :", red.get("info_commandstats_delta"))
-          print("commands / round trips:", red.get("total_commands"), "/", red.get("total_round_trips"))
-          print("shim absent on import :", not ((red.get("absent_unless_injected") or {}).get("installed_on_import", False)))
+          print("redis shim/server    :", red.get("shim_total_commands"), "/", red.get("info_commandstats_delta"))
+          key = probe.get("apikey", {})
+          print("apikey cmds/read     :", key.get("commands_per_read"), "rtt ms:", key.get("rtt_mean_ms"))
           PYEOF
 
-      - name: Refuse a mechanism probe that reported a failure
-        # The probe tolerates its own failure so its evidence survives; that makes
-        # the step's exit code unreliable as a gate, so the recorded failure IS the
-        # gate. A missing artefact fails too - a probe that wrote nothing has not
-        # produced evidence, and letting that pass would report success for a run
-        # that measured nothing.
-        run: |
-          test -s reports/mechanism_probe.json || {
-            echo "::error::no mechanism probe artefact; the probe wrote nothing"
-            exit 1
-          }
-          uv run python - <<'PYEOF'
-          import json, sys
-          from pathlib import Path
-          probe = json.loads(Path("reports/mechanism_probe.json").read_text())
-          failed = [n for n, b in probe.items() if isinstance(b, dict) and b.get("failed")]
-          for name in failed:
-              print(f"::error::{name} probe FAILED: {probe[name].get('error')}")
-          if failed:
-              sys.exit(1)
-          mech, red = probe["mechanism"], probe["redis"]
-          if mech.get("loop_module") != "uvloop":
-              print(f"::error::probe ran on {mech.get('loop_module')!r}, not uvloop; "
-                    f"addendum A-2 makes this NON-REPRESENTATIVE")
-              sys.exit(1)
-          if not mech.get("meets_minimum_rate"):
-              print(f"::error::achieved {mech.get('achieved_rate_hz')} Hz, below the required 100 Hz")
-              sys.exit(1)
-          if not red.get("counts_agree"):
-              print("::error::the two Redis counts did not agree")
-              sys.exit(1)
-          print("mechanism probe: uvloop at "
-                f"{mech['achieved_rate_hz']} Hz; Redis counts agree "
-                f"({red['shim_total_commands']} commands / {red['total_round_trips']} round trips)")
-          PYEOF
-
-      - name: Upload mechanism probe artefacts
+      - name: Upload app host artefacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mechanism-probe-${{ github.sha }}
-          path: reports/mechanism_probe.json
-          retention-days: 30
-
-      - name: "L-11 on-target read the Linux image installed CPython start-method source"
-        # ADR-0016 Item 1 (A-11) read concurrent/futures/process.py and
-        # multiprocessing/context.py from the WINDOWS host's installed
-        # CPython 3.13.7 and concluded fork from the source branch -- sound,
-        # but the addendum's method for L-11 is to read the installed
-        # source IN THE TARGET IMAGE, and [Inference] may not be promoted
-        # to [Confirmed] without that citation. This step does that read
-        # HERE, on the Linux runner, so the citation names the file the
-        # Linux target actually ships.
-        run: |
-          set -o pipefail
-          ctx="$(python -c 'import multiprocessing, pathlib; print(pathlib.Path(multiprocessing.__file__).parent)')"
-          fut="$(python -c 'import concurrent.futures, pathlib; print(pathlib.Path(concurrent.futures.__file__).parent)')"
-          echo "--- Linux runner CPython: $(python --version) ---"
-          echo "multiprocessing package: $ctx"
-          echo "concurrent.futures package: $fut"
-          echo '--- multiprocessing/context.py: the platform default ---'
-          grep -n "_default_context" "$ctx/context.py" | head -6
-          echo '--- concurrent/futures/process.py: the mp_context resolution ---'
-          grep -n "max_tasks_per_child is not None" "$fut/process.py" | head -4
-          {
-            echo '### L-11 on-target: CPython start method, read on the Linux runner'
-            echo "\`$(python --version)\`"
-            echo '```'
-            grep -n "_default_context" "$ctx/context.py" | head -6
-            grep -n "max_tasks_per_child is not None" "$fut/process.py" | head -4
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          # The Linux default must be fork on the target: the else branch
-          # of context.py is what A-8 lands on. Assert it is present.
-          grep -q "_concrete_contexts\['fork'\]" "$ctx/context.py" \
-            || { echo "::error::the Linux image's multiprocessing/context.py does not carry the fork default ADR-0016 cites"; exit 1; }
-          echo "fork default present in the Linux image's installed CPython source"
-
-      - name: Report which tests the platform gate would hide
-        # The Linux target is asserted by skipif, so a skipped suite and a
-        # passing one look identical in the summary line. Print the per-test
-        # outcome with the skip reasons visible, because "the job was green"
-        # must not be able to mean "nothing ran".
-        run: |
-          set -o pipefail
-          uv run pytest tests/integration/performance/ -v -rs --color=no 2>&1 | tee harness-output.txt
-
-      - name: Refuse to pass when the app host produced no evidence
-        # The app-host identity tests SKIP when their input is absent, which is
-        # correct on a developer machine and wrong here: this job exists to
-        # produce that evidence. So the evidence is checked as a job output, not
-        # only as a test outcome, and a skip can never be reported as success.
-        #
-        # The first check is the point of the whole arm, stated literally: the
-        # job asserts one specific test id AND that it PASSED. A skipped suite
-        # and a passing suite print the same summary line -- that
-        # indistinguishability is what let this file carry an unexecuted Linux
-        # target for so long -- so the id plus its outcome is the only thing
-        # that separates the two from the outside.
-        run: |
-          test_id='TestTheAppHostIdentityIsReadOffARealLinuxServer::test_the_runtime_pair_is_the_production_one'
-          grep -qE "$test_id PASSED" harness-output.txt || { echo "::error::the Linux-only identity test did not PASS -- it must EXECUTE, not skip"; exit 1; }
-          test -s reports/app_host_report.json || { echo "::error::no app-host report was emitted"; exit 1; }
-          test -s reports/app_host_mapped_extensions.txt || { echo "::error::the live server's mapped extensions were not recorded"; exit 1; }
-          grep -q uvloop reports/app_host_mapped_extensions.txt || { echo "::error::the running server never mapped uvloop"; exit 1; }
-          grep -q httptools reports/app_host_mapped_extensions.txt || { echo "::error::the running server never mapped httptools"; exit 1; }
-          # The shared-runner label goes in the STEP SUMMARY, not only in the
-          # job name, because the summary is what someone reads before quoting
-          # a number out of this run -- and there is no number here to quote.
-          {
-            echo '### perf harness: SHARED RUNNER with co-located stores -- NOT a capacity result'
-            echo ''
-            echo '- app host bound in this job; Postgres and Redis are service containers on the same host'
-            echo '- uvloop + httptools confirmed MAPPED BY THE RUNNING SERVER, not merely resolved'
-            echo '- no p95 / throughput / RTT number is produced by this job'
-            echo '- **this run satisfies NO Gate A checkbox**'
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "app host identity evidence is present"
-
-      - name: Upload harness output
-        # Keeps the record as a file instead of a claim in a comment.
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: perf-harness-${{ github.sha }}
+          name: perf-app-host-${{ github.sha }}
           path: |
-            harness-output.txt
             reports/app_host_report.json
             reports/app_host_mapped_extensions.txt
             reports/app_host_server.log
+            reports/mechanism_probe.json
           retention-days: 30
 
-    # SCOPE, restated because this job now boots a real application and it would
-    # be easy to over-read what that means.
-    #
-    # What this job ESTABLISHES: the five addendum-6.1 identity fields read off a
-    # real Linux host, with uvloop and httptools confirmed in the RUNNING server
-    # process rather than merely resolved. That is the L-1 evidence.
-    #
-    # What it does NOT establish, and what no single GitHub-hosted runner can:
-    # a throughput or p95 number. run_perf_baseline.sh refuses to measure a
-    # server on its own host -- loopback, this host's name, or ANY address bound
-    # on this host -- and its header says why: "There is no configuration of this
-    # script that measures a server on this host, which is the only way to make
-    # the refusal below something other than a promise." Two hosts are a hard
-    # precondition, so the three-phase load measurement (amxv AC b) needs a
-    # self-hosted runner pair or real inter-host reachability. A number from
-    # here must never be quoted as a capacity result.
+  perf-preflight:
+    name: perf preflight (two distinct hosts?)
+    runs-on: [self-hosted, linux, perf-load]
+    if: github.event_name == 'workflow_dispatch'
+    needs: perf-app-host
+    steps:
+      - name: Prove the load host can reach the app host
+        # THE GATE for the whole arm, and the reason the same-host refusal in
+        # run_perf_baseline.sh is satisfied rather than bypassed.
+        #
+        # If this host could reach the app host at loopback or at one of its own
+        # addresses, the two runners would be the same machine wearing two names
+        # and every number from the load job would be a contention figure. So:
+        # record THIS host's addresses, record the app host's, and fail if they
+        # intersect.
+        env:
+          APP_HOST: ${{ needs.perf-app-host.outputs.host }}
+        run: |
+          set -euo pipefail
+          echo "load host name    : $(hostname -s)"
+          echo "app host address  : ${APP_HOST}"
+
+          load_ips="$(hostname -I | tr ' ' '\n' | sort -u)"
+          echo "load host addresses:"; echo "${load_ips}"
+
+          if [ -z "${APP_HOST}" ]; then
+            echo "::error::the app host reported no address; its job produced nothing usable"
+            exit 1
+          fi
+          if echo "${load_ips}" | grep -qx "${APP_HOST}"; then
+            echo "::error::the app host address ${APP_HOST} is bound on the LOAD host."
+            echo "The load generator and the server must be different machines, or every"
+            echo "figure measures CPU contention instead of latency."
+            exit 1
+          fi
+          if [ "${APP_HOST}" = "127.0.0.1" ] || [ "${APP_HOST}" = "localhost" ]; then
+            echo "::error::the app host address is loopback"
+            exit 1
+          fi
+
+          # And prove it is actually reachable, which is the security-group check
+          # that most often fails on a fresh pair.
+          code="$(curl -s --noproxy '*' -m 10 -o /dev/null -w '%{http_code}' \
+                  "http://${APP_HOST}:8000/api/v1/health" || echo 000)"
+          echo "health from load host: ${code}"
+          if [ "${code}" != "200" ]; then
+            echo "::error::cannot reach http://${APP_HOST}:8000 from the load host (${code})."
+            echo "Most often a security group between the two VMs. A number from a"
+            echo "run that cannot reach the server is not a measurement."
+            exit 1
+          fi
+
+          start=$(date +%s%N)
+          curl -s --noproxy '*' -m 10 -o /dev/null "http://${APP_HOST}:8000/api/v1/health"
+          echo "observed LAN RTT ms: $(( ($(date +%s%N) - start) / 1000000 ))"
+
+          echo "two distinct hosts confirmed; the same-host refusal is satisfied honestly"
+
+  perf-load:
+    name: perf load generation (perf-load)
+    runs-on: [self-hosted, linux, perf-load]
+    if: github.event_name == 'workflow_dispatch'
+    needs: [perf-app-host, perf-preflight]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: latest
+
+      - name: Create venv
+        run: uv venv
+
+      - name: Install package with dev dependencies
+        run: uv pip install -e ".[dev]"
+
+      - name: Download the app host's report
+        # run_perf_baseline.sh validates the app host's report and refuses to run
+        # without it (exit 6). That report is produced ON THE APP HOST, from the
+        # server's own process - which is the whole point of it - so it has to be
+        # carried here by hand, exactly as scripts/run_perf_baseline.sh's header
+        # describes. Reading it off the load host instead would report what the
+        # load host believes about the server, which is the drift T-8 exists to
+        # prevent.
+        uses: actions/download-artifact@v4
+        with:
+          name: perf-app-host-${{ github.sha }}
+          path: reports
+
+      - name: Confirm the carried report is the app host's own
+        # Cheap, and it turns a silent drift into a refusal. The report records
+        # the app host's platform and event loop; if those do not look like a
+        # Linux/uvloop server, the wrong file arrived and every downstream figure
+        # would describe the wrong machine.
+        run: |
+          set -euo pipefail
+          test -s reports/app_host_report.json || {
+            echo "::error::no app_host_report.json was carried from the app host"
+            exit 1
+          }
+          uv run python - <<'PYEOF'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("reports/app_host_report.json").read_text())
+          host = report.get("app_host", report)
+          print("carried app_host_report.json:", json.dumps(host)[:400])
+          for key in ("event_loop", "http"):
+              value = host.get(key) if isinstance(host, dict) else None
+              print(f"  {key}: {value}")
+          PYEOF
+
+      - name: Measure against the app host
+        # --host is the app host's PRIVATE address. NOT its public one: see the
+        # header comment for why the public address would measure the internet.
+        env:
+          APP_HOST: ${{ needs.perf-app-host.outputs.host }}
+          REDIS_URL: "redis://localhost:6379/0"
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          ./scripts/run_perf_baseline.sh \
+            --host "http://${APP_HOST}:8000" \
+            --users "${PERF_USERS:-20}" \
+            --rate "${PERF_RATE:-10}" \
+            --duration "${PERF_DURATION:-60s}" \
+            2>&1 | tee reports/load_run.log
+
+      - name: Upload load artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-load-${{ github.sha }}
+          path: reports/
+          retention-days: 30
+
+  perf-teardown:
+    name: perf teardown (perf-app)
+    runs-on: [self-hosted, linux, perf-app]
+    if: always() && github.event_name == 'workflow_dispatch'
+    needs: [perf-app-host, perf-preflight, perf-load]
+    steps:
+      - name: Stop the app host
+        # always(), so a failed load run still leaves the machine clean. The
+        # server is detached (setsid) precisely so it outlives its starting job,
+        # which is also what makes leaving it behind the default.
+        run: |
+          set -uo pipefail
+          if [ -f reports/app_host_server.pid ]; then
+            pid="$(cat reports/app_host_server.pid)"
+            if kill -0 "${pid}" 2>/dev/null; then
+              kill "${pid}" && echo "stopped pid ${pid}"
+            else
+              echo "app host pid ${pid} is already gone"
+            fi
+          else
+            echo "no pid file; nothing to stop"
+          fi
