@@ -14,6 +14,8 @@ is written against the failure, not the happy path.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from src.app.core.monitoring.app_config_manifest import (
@@ -103,3 +105,29 @@ class TestTheAssertionFires:
         """Absence of the digest is absence of a specific build."""
         with pytest.raises(ManifestIncomplete, match="image_digest"):
             assert_runtime_identity(_manifest(image_digest=None))
+
+
+class TestTheManifestIsWrittenBesideTheArtefact:
+    def test_a_complete_manifest_is_written(self, tmp_path: object) -> None:
+        """AC(a): EMITTED into the artefact. Collecting without writing leaves the
+        run with no record of what it ran with, which is the omission §6.2 calls
+        the single one that made every prior run uninterpretable."""
+        from src.app.core.monitoring import write_app_config_manifest
+
+        output = write_app_config_manifest(tmp_path / "app_config.json")
+        assert output.exists()
+        assert json.loads(output.read_text())["schema"] == "app-config-manifest/1"
+
+    def test_the_writer_creates_missing_parent_directories(self, tmp_path: object) -> None:
+        from src.app.core.monitoring import write_app_config_manifest
+
+        output = write_app_config_manifest(tmp_path / "reports" / "nested" / "app_config.json")
+        assert output.exists()
+
+    def test_keys_are_sorted_so_two_runs_diff_cleanly(self, tmp_path: object) -> None:
+        """A manifest's job is to show what CHANGED between runs, not just what
+        each one said."""
+        from src.app.core.monitoring import write_app_config_manifest
+
+        output = write_app_config_manifest(tmp_path / "app_config.json")
+        assert list(json.loads(output.read_text())) == sorted(json.loads(output.read_text()))

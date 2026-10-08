@@ -45,9 +45,11 @@ port, never a password. :func:`assert_no_credentials` proves it.
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import sys
+from pathlib import Path
 from typing import Any
 
 from src.app.core.monitoring.telemetry import Counter
@@ -516,6 +518,33 @@ def build_app_config_manifest(*, settings: Any = None, security: Any = None,
     if require_complete:
         assert_manifest_complete(manifest)
     return manifest
+
+
+def write_app_config_manifest(output: Path, *, settings: Any = None, security: Any = None,
+                             services: Any = None, require_complete: bool = True) -> Path:
+    """Build, check and WRITE the manifest beside the artefact.
+
+    The write is separate from :func:`build_app_config_manifest` so the check and
+    the emission cannot be separated by a caller who forgets one. A manifest built
+    and never written leaves the run with no record of what it ran with, which is
+    the omission unified plan §6.2 calls "the single omission that let every prior
+    run be uninterpretable" - so the artefact and its manifest are produced by one
+    call or not at all.
+
+    Written with ``sort_keys`` so two runs of the same configuration diff cleanly,
+    which is what makes a manifest useful for spotting what CHANGED between runs
+    rather than only what it said.
+
+    ``require_complete`` exists for a caller that deliberately wants a partial
+    manifest - a local run, or a test asserting the refusal. There is no path by
+    which a partial manifest reaches an artefact silently.
+    """
+    manifest = build_app_config_manifest(
+        settings=settings, security=security, services=services, require_complete=require_complete
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return output
 
 
 def security_budgets_to_counter(budgets: dict[str, Any]) -> Counter:

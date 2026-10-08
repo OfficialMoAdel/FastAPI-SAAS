@@ -29,6 +29,7 @@ from src.app.core.monitoring.app_config_manifest import (
     assert_runtime_identity,
     build_app_config_manifest,
     collect_app_config,
+    write_app_config_manifest,
 )
 from src.app.core.monitoring.gc_pause import (
     GCPauseObserver,
@@ -193,4 +194,5 @@ __all__ = [
     "assert_runtime_identity",
     "build_app_config_manifest",
     "collect_app_config",
+    "write_app_config_manifest",
 ]
