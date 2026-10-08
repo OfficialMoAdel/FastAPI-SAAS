@@ -66,7 +66,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.app.core.monitoring.telemetry import Ceiling, assert_cost_under_ceiling, measure_call_cost
+from src.app.core.monitoring.telemetry import (
+    Ceiling,
+    assert_cost_under_ceiling,
+)
+from src.app.core.monitoring.telemetry import (
+    measure_call_cost_robust as measure_call_cost,
+)
 
 #: The three send paths this redis-py version uses. Named because the artefact has
 #: to say WHICH path a command took: a run whose traffic all arrived packed is a

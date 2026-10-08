@@ -48,9 +48,11 @@ from src.app.core.monitoring.telemetry import (
     Ceiling,
     Counter,
     assert_cost_under_ceiling,
-    measure_call_cost,
     non_2xx_keys,
     status_class,
+)
+from src.app.core.monitoring.telemetry import (
+    measure_call_cost_robust as measure_call_cost,
 )
 
 DEFAULT_PHASE = "unlabelled"

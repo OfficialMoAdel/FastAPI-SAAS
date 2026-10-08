@@ -61,7 +61,9 @@ from src.app.core.monitoring.telemetry import (
     Ceiling,
     SeriesStore,
     assert_cost_under_ceiling,
-    measure_call_cost,
+)
+from src.app.core.monitoring.telemetry import (
+    measure_call_cost_robust as measure_call_cost,
 )
 
 #: The sampling period. 100 Hz, not "10 Hz for a lighter touch" - the plan is

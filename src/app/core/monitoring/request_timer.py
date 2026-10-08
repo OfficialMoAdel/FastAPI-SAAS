@@ -55,8 +55,10 @@ from src.app.core.monitoring.telemetry import (
     Ceiling,
     SeriesStore,
     assert_cost_under_ceiling,
-    measure_call_cost,
     summarise,
+)
+from src.app.core.monitoring.telemetry import (
+    measure_call_cost_robust as measure_call_cost,
 )
 
 #: The response header the load generator reads for the server-side figure.

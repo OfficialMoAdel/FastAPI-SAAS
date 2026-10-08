@@ -54,6 +54,19 @@ from src.app.core.monitoring.void_conditions import (
     phase_is_void,
 )
 
+def _runtime(**overrides: object) -> dict:
+    """A runtime block carrying all five A-2 values, correct unless overridden."""
+    runtime = {
+        "python_version": "3.13.7",
+        "event_loop_module": "uvloop.loop",
+        "event_loop_resolved": "uvloop",
+        "http_impl": "httptools",
+        "image_digest": "sha256:" + "b" * 64,
+    }
+    runtime.update(overrides)
+    return {"runtime": runtime}
+
+
 # -- T-4: status distribution ------------------------------------------------
 
 
@@ -437,11 +450,17 @@ class TestAppConfigManifest:
         """A run on asyncio is a different instrument, not a faster version of this one."""
         with pytest.raises(ManifestIncomplete, match="uvloop"):
             assert_runtime_identity(
-                {"runtime": {"event_loop_module": "asyncio.unix_events", "http_impl": "h11"}}
+                _runtime(event_loop_resolved="asyncio", event_loop_module="asyncio.unix_events")
             )
 
+    def test_addendum_a2_refuses_an_h11_runtime(self) -> None:
+        """The HTTP half is asserted too. Recording it and forgetting to check it
+        is how a run on h11 gets quoted as a run on httptools."""
+        with pytest.raises(ManifestIncomplete, match="httptools"):
+            assert_runtime_identity(_runtime(http_impl="h11"))
+
     def test_addendum_a2_accepts_the_production_runtime(self) -> None:
-        manifest = {"runtime": {"event_loop_module": "uvloop.loop", "http_impl": "httptools"}}
+        manifest = _runtime()
         assert assert_runtime_identity(manifest) is manifest
 
     def test_required_fields_are_resolvable_paths_into_the_manifest(self) -> None:

@@ -45,6 +45,7 @@ port, never a password. :func:`assert_no_credentials` proves it.
 
 from __future__ import annotations
 
+import os
 import platform
 import sys
 from typing import Any
@@ -138,6 +139,24 @@ def _address(value: Any) -> tuple[Any, Any]:
     return text or None, None
 
 
+def resolve_http_impl() -> str:
+    """The HTTP implementation uvicorn uses for ``--http auto``.
+
+    Delegated to :mod:`src.benchmarks.run_manifest` rather than reimplemented,
+    because that module already resolves it off uvicorn's OWN bound symbol - and
+    a second copy of that decision is a second thing to rot. An unrecognised
+    resolution raises there rather than returning a guess, which is the right
+    behaviour: an HTTP implementation this function cannot name is not a runtime
+    to report a number from.
+    """
+    from src.benchmarks.run_manifest import resolve_http_impl as _resolve
+
+    try:
+        return _resolve()
+    except Exception as error:  # noqa: BLE001 - recorded as absent, not as a guess
+        return f"unresolved: {error}"
+
+
 def collect_app_config(*, settings: Any = None, security: Any = None,
                       services: Any = None) -> dict[str, Any]:
     """Read the running configuration into a manifest.
@@ -202,6 +221,9 @@ def collect_app_config(*, settings: Any = None, security: Any = None,
             "system": platform.system(),
             "cpu_count": _cpu_count(),
             "event_loop_module": _event_loop_module(),
+            "event_loop_resolved": _resolved_loop(),
+            "http_impl": resolve_http_impl(),
+            "image_digest": _image_digest(),
         },
         "stores": {
             "postgres_host": pg_host,
@@ -246,6 +268,45 @@ def _event_loop_module() -> str | None:
 
         return type(asyncio.get_event_loop()).__module__
     except Exception:  # noqa: BLE001 - no loop in this thread is normal at import
+        return None
+
+
+def _image_digest() -> str | None:
+    """The OCI image digest this process was started from.
+
+    Read from ``PERF_IMAGE_DIGEST``, declared by the deployment. No process can
+    ask its own orchestrator which image it is running without the orchestrator's
+    API, so this is DECLARED and validated - never synthesised, and absent rather
+    than guessed. A container runtime knows the digest it pulled; nothing inside
+    the process can derive it, so a manifest that reported a fabricated digest
+    would be worse than one that reports none.
+    """
+    from src.benchmarks.run_manifest import IMAGE_DIGEST_ENV
+
+    return (os.environ.get(IMAGE_DIGEST_ENV) or "").strip() or None
+
+
+def _resolved_loop() -> str | None:
+    """The loop uvicorn would install for ``--loop auto`` on THIS host.
+
+    Distinct from ``event_loop_module`` (what this thread currently has running)
+    because A-2 is about what the Dockerfile's flagless CMD SELECTS, not about
+    whatever a manifest-building thread happens to be doing. They are usually the
+    same; they are not the same question, so both are recorded.
+
+    Delegated to :func:`src.benchmarks.run_manifest.resolve_event_loop`, which
+    already reads uvicorn's own resolution. An earlier version here tried to walk
+    ``uvicorn.config.LOOP_SETUPS`` itself and returned None, because the entry is a
+    function whose ``__name__`` is ``"auto_loop_setup"`` - a constant that says
+    nothing about WHICH loop it installs. That failure mode is worth naming: the
+    field read as "not recorded" rather than as "the resolver was wrong", and an
+    absent runtime identity is exactly the omission A-2 exists to close.
+    """
+    from src.benchmarks.run_manifest import resolve_event_loop
+
+    try:
+        return resolve_event_loop()
+    except Exception:  # noqa: BLE001 - recorded as absent, never guessed
         return None
 
 
@@ -383,33 +444,59 @@ def assert_no_credentials(manifest: dict[str, Any], _depth: int = 0) -> dict[str
     return manifest
 
 
-def assert_runtime_identity(manifest: dict[str, Any], *, expected_loop: str = "uvloop",
-                            expected_http: str = "httptools") -> dict[str, Any]:
-    """ADDENDUM A-2: the runtime identity is recorded AND asserted.
+def assert_runtime_identity(
+    manifest: dict[str, Any],
+    *,
+    expected_loop: str = "uvloop",
+    expected_http: str = "httptools",
+) -> dict[str, Any]:
+    """ADDENDUM A-2: the runtime identity is recorded AND asserted, and both halves must be present.
 
-    A run on asyncio or h11 is labelled non-representative and does not satisfy
-    Gate A. The point of asserting rather than recording is that the Dockerfile's
-    CMD passes no ``--loop`` and no ``--http``, so uvicorn picks both by
-    importability - meaning a run can silently resolve differently than production
-    without anyone changing a flag, and the artefact is the only place that shows
-    it.
+    Acceptance: "the manifest contains all five values and the assertion fails the
+    run when the loop or HTTP class does not match the Dockerfile CMD; a mismatched
+    run is labelled non-representative in the artefact rather than silently
+    accepted."
+
+    Two properties this had to earn, both by failing first:
+
+    **Absence is a failure, not a pass.** An earlier version only compared the HTTP
+    implementation ``if http is not None``, so a manifest that never resolved it
+    skipped the HTTP check entirely and passed. The loop check handled absence;
+    the HTTP one did not, and the asymmetry meant the most-missed field was the one
+    that could be missed silently. A field that is absent is now a failure for
+    both, because "we did not record it" and "it matched" are not the same fact.
+
+    **All five values are required**, not just the two that gate. Python version,
+    resolved loop and HTTP implementation are what let a reader place a number;
+    image digest is what makes it about a specific build. Two of them failing the
+    assertion is enough to refuse, but a manifest missing any of them is not a
+    manifest that can be asserted on.
     """
-    recorded = manifest.get("runtime", {})
-    loop = recorded.get("event_loop_module")
-    http = recorded.get("http_impl")
+    runtime = manifest.get("runtime", {})
+    missing = [
+        field
+        for field in ("python_version", "event_loop_resolved", "event_loop_module", "http_impl", "image_digest")
+        if not runtime.get(field)
+    ]
     problems: list[str] = []
-    if loop is None:
-        problems.append("event_loop_module is absent")
-    elif not str(loop).startswith(expected_loop):
-        problems.append(f"event loop is {loop!r}, not {expected_loop!r}")
-    if http is not None and http != expected_http:
-        problems.append(f"HTTP implementation is {http!r}, not {expected_http!r}")
+    if missing:
+        problems.append(f"not recorded: {missing} (A-2 requires all five)")
+
+    resolved = runtime.get("event_loop_resolved")
+    if resolved and resolved != expected_loop:
+        problems.append(f"--loop auto resolves to {resolved!r}, not {expected_loop!r}")
+    http = runtime.get("http_impl")
+    if http and http != expected_http:
+        problems.append(f"--http auto resolves to {http!r}, not {expected_http!r}")
+
     if problems:
         raise ManifestIncomplete(
-            "T-8 runtime identity does not match the production runtime (A-2): "
+            "T-8/A-2 runtime identity does not match the production runtime: "
             + "; ".join(problems)
-            + ". A run on a different loop or HTTP implementation is a different "
-            "instrument, not a faster or slower version of this one."
+            + ". Dockerfile's CMD passes no --loop and no --http, so uvicorn selects "
+            "both by importability and a run can resolve differently than production "
+            "without anyone changing a flag. This run is NON-REPRESENTATIVE: a "
+            "different instrument, not a faster or slower version of this one."
         )
     return manifest
 
