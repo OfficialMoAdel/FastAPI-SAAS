@@ -793,6 +793,44 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.perf.yml \\
             logs --tail=80 web > reports/app_host_server.log 2>&1 || true
 
+      - name: Refuse to upload a corrupted app host report
+        # THE PRODUCER CHECKS ITS OWN OUTPUT BEFORE UPLOADING IT.
+        #
+        # A redirect on this host once truncated app_host_report.json to zero
+        # bytes. The job still went GREEN: `Upload` carries `if: always()` and
+        # `if-no-files-found: warn`, so uploading a corrupt artefact succeeds. The
+        # corruption surfaced only in the consumer - a different runner, a
+        # different job - where it failed as:
+        #
+        #   no app_host_report.json was carried from the app host
+        #
+        # which names a transport problem that did not exist, and points away
+        # from the one that did. The failure was only diagnosable by opening the
+        # artefact and finding app_host_report.json at 0 bytes.
+        #
+        # So: refuse here. A run that cannot hand over a usable report must fail
+        # on the job that produced it, where the cause is visible, rather than
+        # on the job that needed it, where it is not.
+        run: |
+          set -uo pipefail
+          fail=0
+          for f in app_host_report.json mechanism_probe.json; do
+            if [ ! -s "reports/$f" ]; then
+              size=$( [ -f "reports/$f" ] && wc -c < "reports/$f" | tr -d ' ' || echo "absent" )
+              echo "::error::reports/$f is $size bytes - refusing to upload a corrupt artefact"
+              fail=1
+            else
+              echo "reports/$f: $(wc -c < "reports/$f" | tr -d ' ') bytes"
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "=== reports/ contents ==="
+            ls -la reports/
+            exit 1
+          fi
+          echo "=== app_host_report.json ==="
+          head -c 600 reports/app_host_report.json; echo
+
       - name: Upload app host artefacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -908,10 +946,23 @@ jobs:
         # would describe the wrong machine.
         run: |
           set -euo pipefail
-          test -s reports/app_host_report.json || {
-            echo "::error::no app_host_report.json was carried from the app host"
+          # The message distinguishes "never arrived" from "arrived empty",
+          # because they have completely different causes and the old wording
+          # named the wrong one: a zero-byte report reads exactly like a missing
+          # one under `test -s`, and sent the reader looking at transport.
+          if [ ! -f reports/app_host_report.json ]; then
+            echo "::error::no app_host_report.json was carried from the app host AT ALL."
+            echo "  check the Upload app host artefacts step in perf app host; the"
+            echo "  download itself is reported separately by download-artifact."
+            ls -la reports/ 2>/dev/null || echo "  (no reports/ directory)"
             exit 1
-          }
+          fi
+          if [ ! -s reports/app_host_report.json ]; then
+            echo "::error::app_host_report.json was carried but is EMPTY (0 bytes)."
+            echo "  This is a PRODUCER fault, not a transport one: something"
+            echo "  truncated the file on the app host after it was written."
+            exit 1
+          fi
           uv run python - <<'PYEOF'
           import json
           from pathlib import Path
