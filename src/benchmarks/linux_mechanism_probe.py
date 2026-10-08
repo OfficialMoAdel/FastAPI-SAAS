@@ -387,12 +387,33 @@ def main(argv: list[str] | None = None) -> int:
     if args.probe in ("mechanism", "all"):
         # BEFORE asyncio.run: a loop is constructed there, and uvloop.install()
         # only affects loops constructed afterwards.
+        #
+        # A refusal here still WRITES the artefact. An earlier version returned 2
+        # with nothing on disk, so the third Linux run produced no evidence at all
+        # and the reason had to be recovered from a step summary - which is the same
+        # failure the probe was built to avoid, committed in the probe itself.
         try:
             install_production_loop()
         except NotTheProductionRuntime as error:
+            _write_refusal(args, "mechanism", error)
             print(f"PROBE REFUSING - {error}", file=sys.stderr)
             return 2
     return asyncio.run(_main(args))
+
+
+def _write_refusal(args: argparse.Namespace, probe: str, error: Exception) -> None:
+    """Record a refusal as an artefact, so the reason travels with the run."""
+    payload = {
+        probe: {
+            "failed": True,
+            "refused_before_running": True,
+            "error": f"{type(error).__name__}: {error}",
+        }
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8"
+    )
 
 
 if __name__ == "__main__":
