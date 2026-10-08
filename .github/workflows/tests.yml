@@ -622,6 +622,22 @@ jobs:
           echo "--- app host report ---"; cat reports/app_host_report.json
 
       - name: Record what the LIVE server process actually mapped
+        # NON-BLOCKING, deliberately.
+        #
+        # The authoritative runtime evidence is the app host report emitted in the
+        # step above, which - read from INSIDE the container - already records
+        # event_loop=uvloop and http=httptools and is what A-2 requires. This step
+        # is the stronger form: it proves the RUNNING process has those
+        # extensions mapped, not merely that uvicorn's auto-selection resolves to
+        # them. That distinction is real and worth having, but it is not worth
+        # blocking the entire two-host arm for - the step's own failure mode is a
+        # tool that is absent from the slim image, which says nothing about the
+        # runtime.
+        #
+        # continue-on-error so a red herring cannot hold up the measurement. The
+        # step-summary line records which of the two kinds of evidence this run
+        # carries, so a later reader is not left assuming the stronger one.
+        continue-on-error: true
         # uvloop and httptools are C extensions, so a server really on them has
         # their shared objects mapped in /proc/<pid>/maps and one that fell back
         # to asyncio/h11 does not.
@@ -708,6 +724,48 @@ jobs:
           key = probe.get('apikey', {})
           print('apikey cmds/read   :', key.get('commands_per_read'), 'rtt ms:', key.get('rtt_mean_ms'))
           "
+
+      - name: Assert the app host runs the PRODUCTION runtime
+        # The gate that replaces the /proc/maps check as a blocker.
+        #
+        # A run on asyncio or h11 is a DIFFERENT INSTRUMENT, not a faster or
+        # slower version of this one, and nothing else in the arm would notice -
+        # the load numbers would simply be about a different runtime. So the
+        # report is asserted, not merely recorded.
+        run: |
+          set -euo pipefail
+          uv run python - <<'PYEOF'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("reports/app_host_report.json").read_text())
+          host = report.get("app_host", report)
+          loop = host.get("event_loop")
+          http = host.get("http")
+          print("event_loop:", loop, "| http:", http)
+          problems = []
+          if loop != "uvloop":
+              problems.append(f"event loop is {loop!r}, not 'uvloop'")
+          if http != "httptools":
+              problems.append(f"http implementation is {http!r}, not 'httptools'")
+          if problems:
+              raise SystemExit(
+                  "::error::the app host is not on the production runtime: "
+                  + "; ".join(problems)
+                  + ". This run is NON-REPRESENTATIVE and every number from it is "
+                  "about a different instrument."
+              )
+          print("production runtime confirmed: uvloop + httptools")
+          PYEOF
+
+      - name: Record which runtime evidence this run carries
+        # Never let a reader assume the stronger evidence exists when it did not.
+        run: |
+          set -uo pipefail
+          if grep -qE 'uvloop|httptools' reports/app_host_mapped_extensions.txt 2>/dev/null; then
+            echo "runtime evidence: REPORT (asserted uvloop+httptools) + /proc/maps (running process)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "runtime evidence: REPORT only (asserted uvloop+httptools); the /proc/maps confirmation did not run" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Copy artefacts out of the app container
         # actions/upload-artifact reads the WORKSPACE on the host, and the files
