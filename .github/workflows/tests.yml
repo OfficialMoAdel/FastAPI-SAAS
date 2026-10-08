@@ -633,9 +633,22 @@ jobs:
           set -euo pipefail
           docker compose -f docker-compose.yml -f docker-compose.perf.yml \
             exec -T web sh -c '
-              pid=$(pgrep -f "uvicorn src.app.main:app" | head -1)
+              # /proc scanned in shell, NOT pgrep: the image is a slim one and
+              # has no procps, so pgrep is simply absent. Its failure looks like
+              # "no uvicorn process found", which reads as a dead server rather
+              # than a missing tool.
+              pid=""
+              for d in /proc/[0-9]*; do
+                if grep -qa "uvicorn" "$d/cmdline" 2>/dev/null; then
+                  pid="${d#/proc/}"
+                  break
+                fi
+              done
               if [ -z "$pid" ]; then
                 echo "no uvicorn process found inside the container" >&2
+                ls /proc | grep -E '^[0-9]+$' | while read -r p; do
+                  echo "  pid $p: $(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-80)"
+                done
                 exit 1
               fi
               echo "uvicorn pid inside the container: $pid"
