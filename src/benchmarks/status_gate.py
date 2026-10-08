@@ -295,28 +295,47 @@ def assert_counters_agree(
     the server sees every request including ones the client retried or failed to
     send - so an absolute allowance would have to be either zero (never satisfied)
     or large enough to hide the miss this exists to catch.
+
+    THE COMPARISON IS PER CLASS, NOT PER TOTAL, and an earlier version compared
+    only the totals and was WRONG. The verification bead caught it: an observer
+    that classified all 100 rejections as successes and one that counted them
+    correctly produce the same total (200) and disagree completely (100 x 4xx
+    versus none). Totals alone therefore report agreement for precisely the
+    failure this exists to catch - H-7's missing ``catch_response``, where the
+    client-side classification is what went wrong. Each class is compared
+    separately, so a rejection counted by one observer and missed by the other
+    shows up as a disagreement in the 4xx bucket rather than cancelling out in the
+    total.
     """
     server_total = sum(server.values())
     client_total = sum(client.values())
     if server_total == 0 and client_total == 0:
         return {"agree": True, "server_total": 0, "client_total": 0, "relative_delta": 0.0}
 
-    larger = max(server_total, client_total)
-    relative_delta = abs(server_total - client_total) / larger if larger else 0.0
-    if relative_delta > tolerance:
-        # The two nested maps are flattened into the reason string rather than
-        # passed as the distribution, because PhaseVoided.distribution is typed
-        # as a single phase's status counts and a nested map would misrepresent
-        # what it holds. Both sides are named in the message below.
+    classes = sorted(set(server) | set(client))
+    larger = max(server_total, client_total) or 1
+    disagreements: list[str] = []
+    for klass in classes:
+        server_count = int(server.get(klass, 0))
+        client_count = int(client.get(klass, 0))
+        bucket_delta = abs(server_count - client_count)
+        if bucket_delta / larger > tolerance:
+            disagreements.append(
+                f"{klass}: server {server_count} vs client {client_count}"
+            )
+
+    total_delta = abs(server_total - client_total) / larger
+    if disagreements or total_delta > tolerance:
         raise PhaseVoided(
             "all",
             {},
             [
-                f"the server-side counter ({server_total}) and the client-side "
-                f"classification ({client_total}) disagree by "
-                f"{relative_delta:.1%}, beyond the {tolerance:.1%} tolerance. One of "
-                f"them is blind - H-7's missing catch_response is the precedent - and "
-                f"every per-phase figure derived from this run is void until it is "
+                f"the server-side counter and the client-side classification "
+                f"disagree ({'; '.join(disagreements) or 'total mismatch'}; total "
+                f"delta {total_delta:.1%}). One of them is blind - H-7's missing "
+                f"catch_response is the precedent, and it is exactly a per-class "
+                f"disagreement that a totals-only comparison cancels out - and every "
+                f"per-phase figure derived from this run is void until it is "
                 f"identified."
             ],
         )
@@ -324,5 +343,6 @@ def assert_counters_agree(
         "agree": True,
         "server_total": server_total,
         "client_total": client_total,
-        "relative_delta": round(relative_delta, 6),
+        "relative_delta": round(total_delta, 6),
+        "compared_classes": classes,
     }

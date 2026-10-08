@@ -277,27 +277,20 @@ def _command_name(args: tuple[Any, ...]) -> str:
 def _packed_command_names(all_cmds: Any) -> list[str]:
     """Command names out of redis-py's PACKED buffer.
 
-    The shape was read off the installed library rather than assumed, and the
-    assumption an earlier version of this function made was wrong in a way that
-    mattered. ``Connection.send_packed_command`` does::
+    THE SHAPE IS NOT WHAT IT LOOKS LIKE, and the verification bead caught it.
+    ``Connection.pack_commands`` does not return one element per command. Under
+    the buffer cutoff it CONCATENATES them: five staged commands came back as a
+    single ``output`` element with ``SYM_EMPTY`` joins between the pieces. An
+    earlier version of this function parsed one RESP header per element and
+    therefore reported ``MULTI`` alone for a five-command pipeline - a count of 1
+    for 5 commands, which reads as a low count rather than as a bug.
 
-        for item in command:
-            self._sock.sendall(item)
+    So the whole buffer is walked, parsing successive RESP arrays. Each command is
+    ``*<n>\r\n$<len>\r\n<name>\r\n<arg>...``, and the first bulk header of each
+    array is that command's verb.
 
-    so ``command`` is a list of ALREADY-SERIALISED RESP chunks - one complete
-    command per element, each looking like
-    ``b"*3\r\n$4\r\nZADD\r\n$1\r\nk\r\n..."``. Taking every second
-    element as a name (the flat name/arg-array assumption) therefore reads
-    argument bytes as commands: a ``ZADD key 1 member`` produced the names
-    ``MULTI``, ``ZADD``, ``1``, ``EXEC``.
-
-    Counting elements would also be wrong, because the number of commands in a
-    packed transaction is not the number of elements unless the caller happened to
-    pass one element per command - ``MULTI`` and ``EXEC`` are bracketed in by the
-    transaction machinery and are not user commands.
-
-    So the name is parsed out of each RESP chunk's bulk header. That is the only
-    reading that is correct for both shapes redis-py produces.
+    Arguments are skipped, never decoded: an instrument that decodes payloads is
+    doing work on the Redis hot path the application did not ask for.
     """
     names: list[str] = []
     try:
@@ -305,45 +298,63 @@ def _packed_command_names(all_cmds: Any) -> list[str]:
     except TypeError:
         return names
     for entry in entries:
-        names.append(_resp_command_name(entry))
+        if isinstance(entry, str):
+            entry = entry.encode("utf-8", "replace")
+        if isinstance(entry, bytes | bytearray):
+            names.extend(_resp_command_names(bytes(entry)))
     return names
 
 
-def _resp_command_name(chunk: Any) -> str:
-    """Pull the verb out of one serialised RESP command chunk.
-
-    A RESP array of bulk strings is ``*<n>\r\n$<len>\r\n<name>\r\n...``. Only the
-    second header is read; the arguments are never decoded, because an instrument
-    that decodes payloads is doing work on the Redis hot path that the application
-    did not ask for and cannot afford.
-
-    Anything that does not parse is reported as ``<unparsed>`` rather than
-    guessed. A wrong command name in the artefact is worse than an obviously
-    unparsed one, because a wrong one is believed.
-    """
-    if isinstance(chunk, str):
-        chunk = chunk.encode("utf-8", "replace")
-    if not isinstance(chunk, bytes | bytearray):
-        return "<unparsed>"
-    data = bytes(chunk)
-    if not data.startswith(b"*"):
-        return "<unparsed>"
-    # Skip the array header to the first bulk header, then take its payload.
-    marker = data.find(b"$")
-    if marker == -1:
-        return "<unparsed>"
-    length_end = data.find(b"\r\n", marker)
-    if length_end == -1:
-        return "<unparsed>"
-    try:
-        length = int(data[marker + 1 : length_end])
-    except ValueError:
-        return "<unparsed>"
-    start = length_end + 2
-    end = start + length
-    if end > len(data):
-        return "<unparsed>"
-    return data[start:end].decode("ascii", "replace").upper()
+def _resp_command_names(buffer: bytes) -> list[str]:
+    """Every command verb in one packed RESP buffer, in order."""
+    names: list[str] = []
+    offset = 0
+    length = len(buffer)
+    while offset < length:
+        # Skip the whitespace pack_commands leaves between joined pieces.
+        if buffer[offset : offset + 1] in (b"\r", b"\n"):
+            offset += 1
+            continue
+        if buffer[offset : offset + 1] != b"*":
+            # Not a RESP array: the remainder is unparseable, and guessing at it
+            # would put invented command names into the artefact.
+            if buffer[offset :].strip(b"\r\n"):
+                names.append("<unparsed>")
+            break
+        line_end = buffer.find(b"\r\n", offset)
+        if line_end == -1:
+            names.append("<unparsed>")
+            break
+        try:
+            argc = int(buffer[offset + 1 : line_end])
+        except ValueError:
+            names.append("<unparsed>")
+            break
+        offset = line_end + 2
+        verb: str | None = None
+        for index in range(argc):
+            if buffer[offset : offset + 1] != b"$":
+                verb = "<unparsed>"
+                break
+            bulk_end = buffer.find(b"\r\n", offset)
+            if bulk_end == -1:
+                verb = "<unparsed>"
+                break
+            try:
+                size = int(buffer[offset + 1 : bulk_end])
+            except ValueError:
+                verb = "<unparsed>"
+                break
+            start = bulk_end + 2
+            end = start + size
+            if end + 2 > length:
+                verb = "<unparsed>"
+                break
+            if index == 0:
+                verb = buffer[start:end].decode("ascii", "replace").upper()
+            offset = end + 2
+        names.append(verb if verb is not None else "<unparsed>")
+    return names
 
 
 def commandstats_total(commandstats: dict[str, Any]) -> int:

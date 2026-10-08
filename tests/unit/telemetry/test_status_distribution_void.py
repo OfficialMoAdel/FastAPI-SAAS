@@ -189,3 +189,103 @@ class TestClassification:
         assert classify_status(100) == "1xx"
         with pytest.raises(PhaseVoided, match="1xx"):
             admit_phase("warm", {"1xx": 1})
+
+
+class TestTheProductionCounterAndTheHarnessAssertionAgree:
+    """u788 (d) beyond P-6's: the agreement is between the PRODUCTION counter and
+    the HARNESS decision, not between two harness-side fixtures.
+
+    T-4 counts server-side because locust can only see what it chose to classify,
+    and H-7's missing ``catch_response`` is the precedent for that being wrong. So
+    the two are genuinely independent observers and comparing them is worth doing -
+    but comparing two dicts built in the same test proves only that the comparison
+    function works. This drives the real production counter and feeds its actual
+    output to the harness admission rule.
+    """
+
+    def test_the_real_counter_output_drives_the_harness_verdict(self) -> None:
+        from src.app.core.monitoring.void_conditions import StatusDistribution
+
+        counter = StatusDistribution(enabled=True)
+        for _ in range(500):
+            counter.record("warm", 200)
+        for _ in range(12):
+            counter.record("warm", 429)
+
+        verdicts = admit_phases(
+            {"warm": counter.phase_distribution("warm")},
+            codes={"warm": {"429": 12}},
+        )
+        assert void_phases(verdicts) == ["warm"]
+        assert verdicts[0].distribution == {"2xx": 500, "4xx": 12}
+
+    def test_a_counter_and_harness_that_disagree_void_the_run(self) -> None:
+        """One observer saw the rejections, the other did not. Neither can be
+        trusted, so the run is void until it is identified."""
+        from src.app.core.monitoring.void_conditions import StatusDistribution
+
+        counter = StatusDistribution(enabled=True)
+        for _ in range(100):
+            counter.record("warm", 200)
+            counter.record("warm", 429)
+
+        server = counter.phase_distribution("warm")
+        # The client classified every one of them as a success.
+        client = {"2xx": 200, "4xx": 0}
+
+        with pytest.raises(PhaseVoided, match="disagree"):
+            assert_counters_agree(server, client)
+
+    def test_agreement_is_reported_with_its_delta(self) -> None:
+        result = assert_counters_agree({"2xx": 500}, {"2xx": 495})
+        assert result["agree"] is True
+        assert result["relative_delta"] > 0
+
+
+class TestTheDisabledPathIsCostFreeAndRecorded:
+    """u788 (f). Two halves, and the second is the one that is easy to skip: the
+    enabled/disabled state must be RECORDED, because a series that is absent
+    because it was never enabled and a series that is absent because nothing
+    happened are different facts that look identical otherwise."""
+
+    def test_the_disabled_path_is_under_its_ceiling(self) -> None:
+        from src.app.core.monitoring.telemetry import measure_call_cost_robust
+        from src.app.core.monitoring.void_conditions import (
+            COUNTER_COST_CEILING_US,
+            SecurityEventCounter,
+            StatusDistribution,
+        )
+
+        status = StatusDistribution(enabled=False)
+        security = SecurityEventCounter(enabled=False)
+
+        def one_request() -> None:
+            status.record("warm", 200)
+            security.record_rate_limit()
+
+        assert measure_call_cost_robust(one_request) <= COUNTER_COST_CEILING_US
+
+    def test_a_disabled_counter_records_nothing_at_all(self) -> None:
+        from src.app.core.monitoring.void_conditions import StatusDistribution
+
+        counter = StatusDistribution(enabled=False)
+        for code in (200, 401, 429, 500):
+            counter.record("warm", code)
+        assert counter.phase_distribution("warm") == {}
+        assert counter.export()["phases"] == {}
+
+    def test_the_enabled_state_is_exported(self) -> None:
+        from src.app.core.monitoring.void_conditions import StatusDistribution
+
+        counter = StatusDistribution(enabled=False)
+        counter.record("warm", 200)
+        assert counter.export()["enabled"] is False
+        assert counter.export()["cost_ceiling_us"] > 0
+
+    def test_the_enabled_state_is_recorded_in_the_manifest(self) -> None:
+        """T-8 acceptance (d): the flag itself is part of the configuration."""
+        from src.app.core.monitoring.app_config_manifest import collect_app_config
+
+        flags = collect_app_config()["telemetry"]["enabled_flags"]
+        assert "status_distribution" in flags
+        assert "security_events" in flags
