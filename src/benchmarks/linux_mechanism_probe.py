@@ -48,9 +48,9 @@ from src.app.core.monitoring.loop_lag import (
     assert_validated_on_production_loop,
 )
 from src.app.core.monitoring.redis_commands import (
+    PATH_PACKED_TRANSACTION,
     RedisCommandShim,
     assert_counts_agree,
-    assert_pipeline_aware,
     commandstats_total,
 )
 from src.app.core.monitoring.telemetry import CeilingExceeded
@@ -260,7 +260,24 @@ async def run_redis_probe(*, target_url: str, password: str | None = None) -> di
             f"figure from this run is void."
         )
     assert_counts_agree(shim_total, redis_total)
-    assert_pipeline_aware(shim_total, shim_total)
+    # Prove the PIPELINED commands were seen. The workload staged 26 commands in a
+    # transaction and sent 10 singly, so the packed path must have carried the 26 -
+    # that is the property, and it is asserted against the count rather than
+    # against a number passed twice.
+    #
+    # An earlier version called assert_pipeline_aware(shim_total, shim_total),
+    # comparing the shim to ITSELF, which cannot fail and so asserted nothing. The
+    # Linux run reported "shim counted 39 commands, identical to the
+    # send_command-only count" - the check working for the wrong reason.
+    staged_in_pipeline = 26
+    packed_commands = shim_export["redis_commands_by_path"].get(PATH_PACKED_TRANSACTION, 0)
+    if packed_commands < staged_in_pipeline:
+        raise AssertionError(
+            f"the packed send path saw {packed_commands} commands but the workload "
+            f"staged {staged_in_pipeline} in one transaction. The shim is blind to "
+            f"pipelined traffic - exactly the defect perf J6 describes - and every "
+            f"per-command figure from this run is void."
+        )
 
     return {
         "probe": "p10-redis-commands",

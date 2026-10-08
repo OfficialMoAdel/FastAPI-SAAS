@@ -66,10 +66,23 @@ from src.app.core.monitoring.telemetry import (
     measure_call_cost_robust as measure_call_cost,
 )
 
-#: The sampling period. 100 Hz, not "10 Hz for a lighter touch" - the plan is
-#: explicit that 10 Hz would sample a 740 ms p95 seven times across a run and
-#: that attributing a stall needs resolution finer than the stall.
-SAMPLE_INTERVAL_SECONDS = 0.01
+#: The sampling period: 125 Hz, i.e. an 8 ms grid.
+#:
+#: The requirement is >=100 Hz. 10 Hz would sample a 740 ms p95 seven times across
+#: a run and cannot resolve a stall finer than the stall, so the plan asks for
+#: 100 Hz and no less. An EXACT 10 ms grid cannot demonstrate that, though: the
+#: last sample of any window falls part-way through its interval and is never
+#: counted, so a sampler that does everything right measures 99.5-99.99 Hz and
+#: fails a >=100 Hz bar. Measured on the Linux target: 98.5 Hz with a per-iteration
+#: sleep, 99.99 Hz after switching to an absolute grid - both short of the bar they
+#: were supposed to clear.
+#:
+#: Requesting 125 Hz clears it with margin and is strictly better for the
+#: instrument's purpose: more samples across the run means a p95 tail is
+#: characterised rather than inferred, which is the whole reason T-1 exists.
+#: Over-sampling costs one extra wake per 40 ms, which the cost ceiling absorbs
+#: several times over.
+SAMPLE_INTERVAL_SECONDS = 0.008
 
 #: The floor on the achieved rate. A run that only managed 97 Hz has not met the
 #: requirement even though the code asked for 100 Hz; the achieved rate is
@@ -149,9 +162,22 @@ class LoopLagSampler:
         if not self._enabled:
             return
         self._started_at = time.monotonic()
+        # Schedule against an ABSOLUTE grid, not a fixed sleep per iteration.
+        #
+        # Sleeping ``interval`` each time accumulates every overshoot: measured on
+        # the Linux target this yielded 98.5 Hz against a required 100, because
+        # each wake ran a little late and the next deadline was that little later
+        # again. Anchoring to ``t0 + n * interval`` makes the overshoot a constant
+        # per sample instead of a per-sample tax on every sample after it, and a
+        # sampler that must report >=100 Hz cannot afford the accumulating kind.
+        origin = time.monotonic()
+        sample_index = 0
         try:
             while self._enabled:
-                self._series.record(await self._sample_once())
+                due = origin + sample_index * self._interval
+                await asyncio.sleep(max(0.0, due - time.monotonic()))
+                self._series.record((time.monotonic() - due) * 1000.0)
+                sample_index += 1
         except asyncio.CancelledError:
             # Cancellation is the normal shutdown path, not an error. Re-raised
             # so the task ends in the cancelled state as callers expect.

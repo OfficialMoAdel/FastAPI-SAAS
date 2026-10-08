@@ -18,7 +18,68 @@ on:
   pull_request:
   workflow_dispatch:
 
+# ONE workflow, and superseded runs do not keep billing.
+#
+# This block was absent, so a second push left the first run burning its full
+# ~14 minutes alongside the new one: every job in it was real work whose result
+# nobody would read, because the newer commit had already invalidated it.
+# cancel-in-progress is what turns "two runs" into "one run".
+#
+# The group is deliberately SHARED with the other workflows by name. A GitHub
+# concurrency group is repository-wide, so `ci-${{ github.ref }}` means a push
+# here cancels an in-flight perf-validation run on the same ref too, rather than
+# the two coexisting because they live in different files.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Folded in from the standalone "Performance Validation" workflow.
+  #
+  # Two workflows meant two checks to discover, two sets of annotations to read,
+  # and two runs for one push. The validator is self-contained (stdlib +
+  # structlog, no database and no Redis), so it costs ~30 s and has no reason to
+  # be a separate workflow rather than a job.
+  isomorphism:
+    name: Isomorphism Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: latest
+
+      - name: Install project
+        run: uv sync
+
+      - name: Run isomorphism tests
+        # Run from the repository root: the validator locates the project by
+        # walking up from its own path, and it imports only stdlib + structlog.
+        #
+        # The credentials below are NOT database credentials: nothing here
+        # connects to Postgres or Redis. `test_c2_pixel_ua_differential` imports
+        # the real `src.app.middleware.attack_detection`, whose module-level
+        # `settings` construction requires POSTGRES_USER/POSTGRES_PASSWORD to be
+        # present, SECRET_KEY to be >=32 characters, and ADMIN_PASSWORD to be
+        # present and to satisfy the complexity validator. Without them the import
+        # raises before the assertion runs, so the test reports a config error
+        # instead of its result. These are throwaway values for a process that
+        # only validates them.
+        env:
+          ENVIRONMENT: local
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          SECRET_KEY: "12345678901234567890123456789012"
+          ADMIN_PASSWORD: "NotASecretCiFixture1!@#"
+        run: uv run python scripts/perf-validation/isomorphism_validator.py
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -311,6 +372,10 @@ jobs:
     # and Semgrep; dispatching it returns HTTP 404 "not found on the default
     # branch"). tests.yml IS registered, which is what makes this arm
     # launchable without merging anything to main.
+    #
+    # That is also why this file is the only workflow that matters: the
+    # validator previously lived in its own perf-validation.yml and has been
+    # folded in above, so one push now costs one workflow run.
     #
     # Scope, stated plainly: this proves the harness runs on Linux and its
     # refusals behave. It does NOT produce a throughput/p95 measurement -- the
