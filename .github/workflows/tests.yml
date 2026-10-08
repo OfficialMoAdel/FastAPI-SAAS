@@ -529,17 +529,46 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.perf.yml \
             down --remove-orphans 2>/dev/null || true
 
-          # Only what the measurement needs. `worker` is excluded deliberately:
-          # a background worker competes for CPU with the app under measurement,
-          # which is the same contention the two-host split exists to exclude.
+          # STORES FIRST, THEN SCHEMA, THEN WEB - in that order, deliberately.
+          #
+          # The app's startup opens an RLS bypass, which requires the
+          # rls_audit_log table to exist already:
+          #
+          #   RLSAuditFailureError: RLS bypass aborted due to audit log failure:
+          #   UndefinedTableError: relation "rls_audit_log" does not exist
+          #   ERROR: Application startup failed. Exiting.
+          #
+          # Starting web before the schema exists puts it straight into a crash
+          # loop, and `compose exec` into a crash-looping container is unreliable.
+          # So the schema is created by a ONE-OFF container (`run --rm`), which
+          # needs nothing but the stores to be up.
+          #
+          # `worker` is excluded deliberately: a background worker competes for
+          # CPU with the app under measurement, which is the same contention the
+          # two-host split exists to exclude.
+          echo "=== 1/3 stores (db, redis) ==="
           docker compose -f docker-compose.yml -f docker-compose.perf.yml \
-            up -d --build db redis web
+            up -d --build db redis
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            exec -T db pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"
+
+          echo "=== 2/3 schema, via a one-off container ==="
+          # The app's OWN create_tables(), the same function its lifespan calls,
+          # run INSIDE the web image so it sees the same src/.env - whose
+          # POSTGRES_SERVER is the compose service name `db`, not localhost.
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            run --rm -T --entrypoint python web \
+            -c "import asyncio; from src.app.core.setup import create_tables; asyncio.run(create_tables())"
+
+          echo "=== 3/3 the app ==="
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            up -d --build web
 
           echo "=== Running containers ==="
           docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
           echo "=== Waiting for services to be ready ==="
-          sleep 20
+          sleep 15
 
       - name: Wait for the app host to answer its health endpoint
         run: |
