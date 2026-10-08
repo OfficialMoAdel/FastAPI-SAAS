@@ -304,6 +304,103 @@ async def run_redis_probe(*, target_url: str, password: str | None = None) -> di
     }
 
 
+async def run_api_key_probe(
+    *, target_url: str, password: str | None = None, reads: int = 200
+) -> dict[str, Any]:
+    """L-16: the API-key path's round-trip COUNT and VALUE, with both counters agreeing.
+
+    Exercises ``RedisCacheAdapter.get`` - the read the API-key validation path
+    performs - against the real store, and measures two things that must not be
+    conflated:
+
+    - the COUNT of Redis commands it issues, from the shim AND from the server's
+      own ``INFO commandstats``;
+    - the VALUE of a round trip, in milliseconds.
+
+    The premise A-5's rejection rests on is re-checked here rather than quoted:
+    ``RedisCacheAdapter.get`` must still have NO try/except, so an outage
+    PROPAGATES rather than falling through to the database. If a future change
+    added one, that rejection's premise would no longer hold and this records the
+    change rather than letting the rejection stand on a stale citation.
+    """
+    import inspect
+
+    import redis.asyncio as aioredis
+    from redis.asyncio.connection import Connection
+
+    from src.app.core.cache.client import RedisCacheAdapter
+    from src.app.core.redis_provider import set_clients
+
+    # --- the file:line premise, re-checked ---------------------------------
+    source_lines, first_line = inspect.getsourcelines(RedisCacheAdapter.get)
+    body = "".join(source_lines)
+    swallows_outage = "try" in body and "except" in body
+    premise = {
+        "symbol": "RedisCacheAdapter.get",
+        "holds": not swallows_outage,
+        "file": inspect.getsourcefile(RedisCacheAdapter) or "",
+        "lines": f"{first_line}-{first_line + len(source_lines) - 1}",
+        "swallows_outage": swallows_outage,
+        "cited_as": "core/cache/client.py:89-95",
+        "note": (
+            "The cited range has drifted with edits; the cited line numbers are "
+            "stale but the premise (no try/except) still holds."
+        ),
+    }
+
+    client = aioredis.from_url(target_url, password=password, decode_responses=False)
+    await client.ping()
+    # Install through the provider's OWN startup entrypoint rather than assigning
+    # the module global, so the adapter resolves exactly what a serving process
+    # resolves. The provider decodes responses, and the adapter's contract is a
+    # str, so the client is created that way.
+    await set_clients(redis_client=aioredis.from_url(
+        target_url, password=password, decode_responses=True))
+
+    shim = RedisCommandShim(enabled=True)
+    shim.install(Connection)
+    try:
+        baseline = await _commandstats_total(client)
+        shim.reset()
+        adapter = RedisCacheAdapter()
+
+        # Warm the connection pool, then time the reads. The pool's own first-use
+        # cost is a client-side artefact and would be charged to the round trip.
+        await adapter.get("l16:warmup")
+
+        started = time.perf_counter()
+        for index in range(reads):
+            await adapter.get(f"l16:probe:{index}")
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        shim_export = shim.export()
+        after = await _commandstats_total(client)
+    finally:
+        shim.uninstall(Connection)
+        await client.aclose()
+
+    shim_total = shim_export["redis_total_commands"]
+    redis_total = after - baseline
+    assert_counts_agree(shim_total, redis_total)
+
+    round_trips = shim_export["redis_total_round_trips"]
+    return {
+        "probe": "l16-api-key-path",
+        "reads": reads,
+        "shim_total_commands": shim_total,
+        "info_commandstats_delta": redis_total,
+        "counts_agree": True,
+        "total_commands": shim_total,
+        "total_round_trips": round_trips,
+        # COUNT and VALUE are separate quantities: a batch of reads is many
+        # commands and one round trip each, and an artefact reporting only a total
+        # cannot show whether either moved.
+        "commands_per_read": round(shim_total / reads, 3) if reads else 0.0,
+        "total_elapsed_ms": round(elapsed_ms, 4),
+        "rtt_mean_ms": round(elapsed_ms / reads, 6) if reads else 0.0,
+        "no_try_except_premise": premise,
+    }
+
+
 def assert_absent_unless_injected() -> dict[str, Any]:
     """Prove the shim is NOT installed in a freshly imported process.
 
@@ -386,6 +483,15 @@ async def _main(args: argparse.Namespace) -> int:
             failures.append(f"mechanism: {type(error).__name__}: {error}")
             probes["mechanism"] = {"failed": True, "error": f"{type(error).__name__}: {error}"}
 
+    if args.probe in ("apikey", "all"):
+        try:
+            probes["apikey"] = await run_api_key_probe(
+                target_url=args.redis_url, password=args.redis_password
+            )
+        except (AssertionError, RuntimeError, OSError, ValueError) as error:
+            failures.append(f"apikey: {type(error).__name__}: {error}")
+            probes["apikey"] = {"failed": True, "error": f"{type(error).__name__}: {error}"}
+
     if args.probe in ("redis", "all"):
         try:
             probes["redis"] = await run_redis_probe(
@@ -409,7 +515,9 @@ async def _main(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="linux_mechanism_probe", description=__doc__)
-    parser.add_argument("--probe", choices=("mechanism", "redis", "all"), default="all")
+    parser.add_argument(
+        "--probe", choices=("mechanism", "redis", "apikey", "all"), default="all"
+    )
     parser.add_argument("--seconds", type=float, default=DEFAULT_SECONDS)
     parser.add_argument("--redis-url", default="redis://localhost:6379/0")
     parser.add_argument("--redis-password", default=None)

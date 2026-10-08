@@ -626,6 +626,13 @@ jobs:
           print("meets_minimum_rate    :", mech.get("meets_minimum_rate"))
           print("gc_pause_collections  :", (mech.get("gc_pause") or {}).get("gc_pause_collection_count"))
           print("gc_pause_total_ms     :", (mech.get("gc_pause") or {}).get("gc_pause_total_ms"))
+          key = probe.get("apikey", {})
+          if key and not key.get("failed"):
+              print("apikey reads          :", key.get("reads"))
+              print("apikey shim/server    :", key.get("shim_total_commands"), "/", key.get("info_commandstats_delta"))
+              print("apikey commands/read  :", key.get("commands_per_read"))
+              print("apikey rtt mean ms    :", key.get("rtt_mean_ms"))
+              print("no-try/except premise :", (key.get("no_try_except_premise") or {}).get("holds"))
           red = probe.get("redis", {})
           print("shim commands         :", red.get("shim_total_commands"))
           print("info commandstats     :", red.get("info_commandstats_delta"))
