@@ -30,4 +30,5 @@ tasks
 reports
 logs
 *.md
+!README.md
 *.db
