@@ -549,6 +549,20 @@ jobs:
           echo "=== 1/3 stores (db, redis) ==="
           docker compose -f docker-compose.yml -f docker-compose.perf.yml \
             up -d --build db redis
+          # WAIT FOR POSTGRES, do not ask once. `compose up -d` returns as soon
+          # as the container is STARTED, not ready, and postgres needs a moment to
+          # initialise a fresh volume. A single check failed here with
+          # "/var/run/postgresql:5432 - no response" and exit 2 - which reads like
+          # a database problem and is a race.
+          for _ in $(seq 1 60); do
+            if docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+                 exec -T db pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
+                 > /dev/null 2>&1; then
+              echo "postgres is accepting connections"
+              break
+            fi
+            sleep 2
+          done
           docker compose -f docker-compose.yml -f docker-compose.perf.yml \
             exec -T db pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"
 
