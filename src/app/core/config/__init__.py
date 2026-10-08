@@ -46,7 +46,13 @@ from src.app.core.config.database import (
 )
 from src.app.core.config.environment import CORSSettings, EnvironmentOption, EnvironmentSettings, StorageSettings
 from src.app.core.config.integrations import AISettings, ArqSettings, BillingSettings
-from src.app.core.config.performance import EventSettings, PerformanceSettings, QueryProfilerSettings, R1UnifiedSettings
+from src.app.core.config.performance import (
+    EventSettings,
+    PerformanceSettings,
+    QueryProfilerSettings,
+    R1UnifiedSettings,
+    TelemetrySettings,
+)
 from src.app.core.config.security import AttackDetectionSettings, SecuritySettings
 from src.app.core.config.services import (
     CRUDAdminSettings,
@@ -89,6 +95,7 @@ __all__ = [
     "R1UnifiedSettings",
     "PerformanceSettings",
     "QueryProfilerSettings",
+    "TelemetrySettings",
     "Settings",
     "settings",
 ]
@@ -130,6 +137,7 @@ class Settings(BaseSettings):
     arq: ArqSettings = Field(default_factory=ArqSettings)
     r1_unified: R1UnifiedSettings = Field(default_factory=R1UnifiedSettings)
     performance: PerformanceSettings = Field(default_factory=PerformanceSettings)
+    telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     query_profiler: QueryProfilerSettings = Field(default_factory=QueryProfilerSettings)
 
     model_config = SettingsConfigDict(

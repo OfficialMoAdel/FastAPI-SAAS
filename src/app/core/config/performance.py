@@ -134,6 +134,44 @@ class PerformanceSettings(BaseSettings):
     """
 
 
+class TelemetrySettings(BaseSettings):
+    """Phase-0 telemetry (T-1..T-8) on/off switches.
+
+    Every field DEFAULTS OFF, and that default is a design constraint rather than
+    a conservative guess. Each instrument is only useful during a measurement run,
+    while its cost is paid by every deployment that imports the module which
+    imports it. An instrument on by default is an instrument whose overhead is
+    charged to users who will never read its output.
+
+    The enabled state is recorded in the manifest (T-8, acceptance criterion d), so
+    an artefact can distinguish "this series was never enabled" from "this series
+    recorded nothing" - which are different facts and look identical otherwise.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="TELEMETRY_")
+
+    LOOP_LAG_ENABLED: bool = False
+    """T-1: event-loop lag sampler at >=100 Hz on the app host."""
+
+    GC_PAUSE_ENABLED: bool = False
+    """T-2: GC pause counter and pause-time histogram. A separate series from T-1."""
+
+    REQUEST_TIMER_ENABLED: bool = False
+    """T-3: server-side request timer emitting X-Response-Time."""
+
+    STATUS_DISTRIBUTION_ENABLED: bool = False
+    """T-4: per-phase status-code distribution; a non-2xx voids the phase."""
+
+    SECURITY_EVENTS_ENABLED: bool = False
+    """T-5: rate-limit and auto-ban event counter; zero required for the run."""
+
+    REDIS_COMMANDS_ENABLED: bool = False
+    """T-6: pipeline-aware Redis command counting, shim-installed not shipped."""
+
+    PROCESS_SERIES_ENABLED: bool = False
+    """T-7: CPU% and RSS series for the whole run, on the app host."""
+
+
 class QueryProfilerSettings(BaseSettings):
     """Development mode SQL query profiler configuration.
 
