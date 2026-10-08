@@ -408,29 +408,6 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     outputs:
       host: ${{ steps.address.outputs.ip }}
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: perf_test_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-      redis:
-        image: redis:7
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
     env:
       ENVIRONMENT: local
       SECRET_KEY: "12345678901234567890123456789012"
@@ -479,26 +456,90 @@ jobs:
       - name: Install package with dev dependencies
         run: uv pip install -e ".[dev]"
 
-      - name: Create the app host schema
-        # The app's own create_tables(), the same function its lifespan calls.
-        run: uv run python -c "import asyncio; from src.app.core.setup import create_tables; asyncio.run(create_tables())"
-
-      - name: Start the app host the way the Dockerfile starts it
-        # NO --loop and NO --http, because the Dockerfile CMD passes neither.
-        # That omission IS the premise: uvicorn's auto-selection is what decides
-        # uvloop vs asyncio and httptools vs h11.
+      - name: Create .env for Docker Compose
+        # src/.env is GITIGNORED (.gitignore:147), so it is absent from every
+        # checkout - including this one. docker-compose.yml declares
+        # env_file: ./src/.env for db and web, so without this file `compose up`
+        # fails or starts a stack with no configuration at all.
         #
-        # Setsid + nohup so the server SURVIVES this job finishing. The load job
-        # starts only after this one ends, so the app has to still be up then;
-        # perf-teardown below stops it.
+        # Hosts are SERVICE NAMES, not localhost: the web container reaches its
+        # peers by compose DNS, and `localhost` inside that container is the
+        # container itself. That is the difference between a working stack and a
+        # web container that cannot find its database.
         run: |
           set -euo pipefail
-          mkdir -p reports
-          setsid nohup .venv/bin/python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8000 \
-            > reports/app_host_server.log 2>&1 < /dev/null &
-          echo $! > reports/app_host_server.pid
-          sleep 2
-          echo "started pid $(cat reports/app_host_server.pid)"
+          mkdir -p src
+          cat > src/.env <<EOF
+          ENVIRONMENT=local
+          SECRET_KEY=${SECRET_KEY}
+          ADMIN_PASSWORD=${ADMIN_PASSWORD}
+          POSTGRES_SERVER=db
+          POSTGRES_PORT=5432
+          POSTGRES_USER=${POSTGRES_USER}
+          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+          POSTGRES_DB=${POSTGRES_DB}
+          REDIS_CACHE_HOST=redis
+          REDIS_CACHE_PORT=6379
+          REDIS_QUEUE_HOST=redis
+          REDIS_QUEUE_PORT=6379
+          CRUD_ADMIN_REDIS_HOST=redis
+          CRUD_ADMIN_REDIS_PORT=6379
+          PERF_ORCHESTRATOR=${PERF_ORCHESTRATOR}
+          EOF
+          echo "wrote src/.env for compose"
+
+      - name: Start services with Docker Compose
+        # WHY COMPOSE AND NOT THE `services:` BLOCK
+        # -----------------------------------------
+        # A GitHub `services:` container is tied to the JOB that declared it:
+        # when the job ends, GitHub destroys it. The previous shape therefore
+        # could not work - the app host job finished, its Postgres and Redis were
+        # torn down with it, uvicorn died with them, and the load job that ran
+        # next found nothing listening on 192.168.121.4:8000. The symptom was a
+        # "cannot reach the app host" that looked exactly like a firewall, and it
+        # was not one. Compose containers are ordinary containers and outlive the
+        # job that started them, which is the property the two-host design needs.
+        #
+        # THE OVERRIDE IS NOT OPTIONAL
+        # ---------------------------
+        # docker-compose.yml's `web` service does NOT reproduce the runtime that
+        # ships, and using it unmodified would produce a green run measuring the
+        # wrong thing:
+        #   * its command is `uvicorn app.main:app ... --reload`, but the
+        #     Dockerfile's CMD is `uvicorn src.app.main:app` with no --reload.
+        #     Different import path, and --reload adds a supervising process that
+        #     is not what production runs.
+        #   * it mounts ./src/app over /code/app, but the image puts the code at
+        #     /code/src (WORKDIR /code, PYTHONPATH=/code). The mount creates an
+        #     empty /code/app and shadows nothing that matters.
+        # The override restores the Dockerfile's CMD and drops the bogus mount, so
+        # what runs here is what runs in production.
+        run: |
+          set -euo pipefail
+          cat > docker-compose.perf.yml <<'YAML'
+          services:
+            web:
+              command: uvicorn src.app.main:app --host 0.0.0.0 --port 8000
+              volumes: []
+              restart: unless-stopped
+          YAML
+          echo "=== compose override ==="; cat docker-compose.perf.yml
+
+          # Clean up any previous run's leftovers before starting.
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            down --remove-orphans 2>/dev/null || true
+
+          # Only what the measurement needs. `worker` is excluded deliberately:
+          # a background worker competes for CPU with the app under measurement,
+          # which is the same contention the two-host split exists to exclude.
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            up -d --build db redis web
+
+          echo "=== Running containers ==="
+          docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+          echo "=== Waiting for services to be ready ==="
+          sleep 20
 
       - name: Wait for the app host to answer its health endpoint
         run: |
@@ -511,47 +552,115 @@ jobs:
             sleep 2
           done
           echo "::error::the app host never answered /api/v1/health"
-          cat reports/app_host_server.log
+          echo "=== Docker compose logs (web) ==="
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml logs --tail=50 web
+          echo "=== Docker compose logs (db) ==="
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml logs --tail=20 db
+          echo "=== Docker compose logs (redis) ==="
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml logs --tail=20 redis
           exit 1
 
-      - name: Emit the app host report on the app host
-        run: uv run python -m src.benchmarks.run_manifest --emit-app-host-report > reports/app_host_report.json
+      - name: Emit the app host report from INSIDE the app container
+        # INSIDE the container, not on the host.
+        #
+        # The app host report describes the RUNTIME - which event loop uvicorn's
+        # auto-selection resolved, which HTTP implementation it bound. With the app
+        # in a container, the host is a different machine's environment and would
+        # report the HOST's resolution, which is the drift T-8 exists to prevent.
+        # The report is only meaningful when it comes from the process it describes.
+        #
+        # compose exec is the same process namespace, so this is the app's view.
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            exec -T web python -m src.benchmarks.run_manifest --emit-app-host-report \
+            > reports/app_host_report.json
+          echo "--- app host report ---"; cat reports/app_host_report.json
 
       - name: Record what the LIVE server process actually mapped
         # uvloop and httptools are C extensions, so a server really on them has
-        # their shared objects mapped and one that fell back to asyncio/h11 does
-        # not. Read from /proc rather than trusting the resolver.
+        # their shared objects mapped in /proc/<pid>/maps and one that fell back
+        # to asyncio/h11 does not.
+        #
+        # The PID is found INSIDE the container. There is no host PID for a
+        # containerised process, which is why the previous version - reading a
+        # host pid file - could not have worked once the app moved into compose.
         run: |
           set -euo pipefail
-          pid="$(cat reports/app_host_server.pid)"
-          grep -Ei 'uvloop|httptools' "/proc/${pid}/maps" | awk '{print $NF}' | sort -u \
-            > reports/app_host_mapped_extensions.txt || true
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            exec -T web sh -c '
+              pid=$(pgrep -f "uvicorn src.app.main:app" | head -1)
+              if [ -z "$pid" ]; then
+                echo "no uvicorn process found inside the container" >&2
+                exit 1
+              fi
+              echo "uvicorn pid inside the container: $pid"
+              if ! grep -Eqi "uvloop|httptools" "/proc/$pid/maps"; then
+                echo "::warning::pid $pid maps neither extension; its cmdline is:"
+                tr "\0" " " < "/proc/$pid/cmdline" || echo "(pid $pid is gone)"
+              fi
+              grep -Ei "uvloop|httptools" "/proc/$pid/maps" | awk "{print \$NF}" | sort -u
+            ' | tee reports/app_host_mapped_extensions.txt
+          echo "--- extensions mapped by the running server ---"
           cat reports/app_host_mapped_extensions.txt
 
-      - name: Run the mechanism probe (L-14, L-11, L-16, P-2/L-4, P-10)
+      - name: Run the mechanism probe from INSIDE the app container
+        # L-14, L-11, L-16, P-2/L-4, P-10 - all measured where the app actually
+        # runs.
+        #
+        # INSIDE, and at redis://redis:6379/0 rather than localhost:
+        #   * loop lag and GC pauses are properties of the process running the
+        #     app. Sampling the HOST's loop measures a host that is not serving
+        #     anything, which would make the "mechanism behind the 39x p95"
+        #     claim a statement about the wrong loop.
+        #   * redis is `expose`d, not published, so it has no host port at all -
+        #     from the host it is simply not reachable. Inside the compose
+        #     network the service name resolves.
         run: |
           set -euo pipefail
-          uv run python -m src.benchmarks.linux_mechanism_probe \
-            --probe all \
-            --seconds 30 \
-            --redis-url "redis://localhost:6379/0" \
-            --output reports/mechanism_probe.json
-          uv run python - <<'PYEOF'
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            exec -T web python -m src.benchmarks.linux_mechanism_probe \
+              --probe all \
+              --seconds 30 \
+              --redis-url "redis://redis:6379/0" \
+              --output reports/mechanism_probe.json
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            exec -T web cat reports/mechanism_probe.json
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            exec -T web python -c "
           import json
           from pathlib import Path
-          probe = json.loads(Path("reports/mechanism_probe.json").read_text())
+          probe = json.loads(Path('reports/mechanism_probe.json').read_text())
           for name, block in probe.items():
-              if isinstance(block, dict) and block.get("failed"):
-                  print(f"::error::{name} probe FAILED: {block.get('error')}")
-          mech = probe.get("mechanism", {})
-          print("loop_module          :", mech.get("loop_module"))
-          print("achieved_rate_hz     :", mech.get("achieved_rate_hz"))
-          print("meets_minimum_rate   :", mech.get("meets_minimum_rate"))
-          red = probe.get("redis", {})
-          print("redis shim/server    :", red.get("shim_total_commands"), "/", red.get("info_commandstats_delta"))
-          key = probe.get("apikey", {})
-          print("apikey cmds/read     :", key.get("commands_per_read"), "rtt ms:", key.get("rtt_mean_ms"))
-          PYEOF
+              if isinstance(block, dict) and block.get('failed'):
+                  print(f'::error::{name} probe FAILED: {block.get("error")}')
+          mech = probe.get('mechanism', {})
+          print('loop_module        :', mech.get('loop_module'))
+          print('achieved_rate_hz   :', mech.get('achieved_rate_hz'))
+          print('meets_minimum_rate :', mech.get('meets_minimum_rate'))
+          red = probe.get('redis', {})
+          print('redis shim/server  :', red.get('shim_total_commands'), '/', red.get('info_commandstats_delta'))
+          key = probe.get('apikey', {})
+          print('apikey cmds/read   :', key.get('commands_per_read'), 'rtt ms:', key.get('rtt_mean_ms'))
+          "
+
+      - name: Copy artefacts out of the app container
+        # actions/upload-artifact reads the WORKSPACE on the host, and the files
+        # were produced inside the container. Copy them across so they are
+        # actually attached to the run rather than silently missing.
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          for f in app_host_report.json mechanism_probe.json; do
+            docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+              exec -T web cat "reports/$f" > "reports/$f" 2>/dev/null \
+              || echo "note: reports/$f was not produced in the container"
+          done
+          cp reports/app_host_mapped_extensions.txt reports/ 2>/dev/null || true
+          ls -la reports/
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            logs --tail=80 web > reports/app_host_server.log 2>&1 || true
 
       - name: Upload app host artefacts
         if: always()
@@ -713,19 +822,25 @@ jobs:
     if: always() && github.event_name == 'workflow_dispatch'
     needs: [perf-app-host, perf-preflight, perf-load]
     steps:
-      - name: Stop the app host
-        # always(), so a failed load run still leaves the machine clean. The
-        # server is detached (setsid) precisely so it outlives its starting job,
-        # which is also what makes leaving it behind the default.
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Stop all Docker Compose services
+        # `always()`, so a failed load run still leaves the machine clean - and
+        # `down --volumes` so the next run does not inherit a postgres volume
+        # carrying the previous run's schema and rows.
+        #
+        # The override file is regenerated here rather than relied on from the
+        # app-host job: this job may run after a checkout that never wrote it.
         run: |
           set -uo pipefail
-          if [ -f reports/app_host_server.pid ]; then
-            pid="$(cat reports/app_host_server.pid)"
-            if kill -0 "${pid}" 2>/dev/null; then
-              kill "${pid}" && echo "stopped pid ${pid}"
-            else
-              echo "app host pid ${pid} is already gone"
-            fi
-          else
-            echo "no pid file; nothing to stop"
-          fi
+          cat > docker-compose.perf.yml <<'YAML'
+          services:
+            web:
+              command: uvicorn src.app.main:app --host 0.0.0.0 --port 8000
+              volumes: []
+          YAML
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            down --remove-orphans --volumes || true
+          echo "All services stopped and cleaned up"
+          docker ps --format "table {{.Names}}\t{{.Status}}" || true
