@@ -765,6 +765,11 @@ jobs:
           fi
 
       - name: Copy the probe artefact out of the app container
+        # NON-BLOCKING. This step only concerns mechanism_probe.json.
+        # app_host_report.json - the file the LOAD job actually needs - is
+        # produced on this host and uploaded from here regardless of what this
+        # step does, so a failure here cannot stop the measurement.
+        continue-on-error: true
         # Only the PROBE needs copying: app_host_report.json was produced by
         # redirecting stdout on the HOST, so it is already in reports/ here.
         #
