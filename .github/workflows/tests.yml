@@ -767,21 +767,33 @@ jobs:
             echo "runtime evidence: REPORT only (asserted uvloop+httptools); the /proc/maps confirmation did not run" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Copy artefacts out of the app container
-        # actions/upload-artifact reads the WORKSPACE on the host, and the files
-        # were produced inside the container. Copy them across so they are
-        # actually attached to the run rather than silently missing.
+      - name: Copy the probe artefact out of the app container
+        # Only the PROBE needs copying: app_host_report.json was produced by
+        # redirecting stdout on the HOST, so it is already in reports/ here.
+        #
+        # The previous version looped over both files and ran `cat reports/$f`
+        # INSIDE the container. That path does not exist there, so cat failed -
+        # and because the redirect `> reports/$f` is evaluated by the host shell
+        # FIRST, it truncated the perfectly good host-side report to zero bytes
+        # before cat ran. The artefact then uploaded an empty report and the load
+        # job refused it.
+        #
+        # `cat` to a temp name and move only on success, so a failed copy can
+        # never destroy what is already there.
         run: |
-          set -euo pipefail
+          set -uo pipefail
           mkdir -p reports
-          for f in app_host_report.json mechanism_probe.json; do
-            docker compose -f docker-compose.yml -f docker-compose.perf.yml \
-              exec -T web cat "reports/$f" > "reports/$f" 2>/dev/null \
-              || echo "note: reports/$f was not produced in the container"
-          done
-          cp reports/app_host_mapped_extensions.txt reports/ 2>/dev/null || true
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \\
+            exec -T web cat /tmp/mechanism_probe.json > reports/.probe.tmp 2>/dev/null || true
+          if [ -s reports/.probe.tmp ]; then
+            mv reports/.probe.tmp reports/mechanism_probe.json
+            echo "copied mechanism_probe.json out of the container"
+          else
+            rm -f reports/.probe.tmp
+            echo "note: the probe did not produce /tmp/mechanism_probe.json in the container"
+          fi
           ls -la reports/
-          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \\
             logs --tail=80 web > reports/app_host_server.log 2>&1 || true
 
       - name: Upload app host artefacts
