@@ -530,6 +530,49 @@ jobs:
             reports/boot_phases.raw
           retention-days: 30
 
+      - name: "P-2/L-4 and P-10 mechanism probe on the Linux target"
+        # 8rez and mrv3 cannot be closed on a Windows measurement host: uvloop is
+        # not installable there (pyproject declares it under sys_platform !=
+        # 'win32'), and the P-10 comparison needs a DEDICATED store because
+        # INFO commandstats is instance-wide and counts other clients' traffic.
+        # This job is ubuntu-latest with its own redis service container, so both
+        # are satisfied here and only here.
+        #
+        # The probe REFUSES to produce a result off the production runtime rather
+        # than emitting a laboratory figure that reads as a validation one.
+        run: |
+          set -o pipefail
+          uv run python -m src.benchmarks.linux_mechanism_probe \
+            --probe all \
+            --seconds 30 \
+            --redis-url "redis://localhost:6379/0" \
+            --output reports/mechanism_probe.json
+          echo "--- probe summary ---"
+          uv run python - <<'PYEOF'
+          import json
+          from pathlib import Path
+          probe = json.loads(Path("reports/mechanism_probe.json").read_text())
+          mech = probe["mechanism"]
+          print("loop_module           :", mech["loop_module"])
+          print("achieved_rate_hz      :", mech["achieved_rate_hz"])
+          print("meets_minimum_rate    :", mech["meets_minimum_rate"])
+          print("gc_pause_collections  :", mech["gc_pause"]["gc_pause_collection_count"])
+          print("gc_pause_total_ms     :", mech["gc_pause"]["gc_pause_total_ms"])
+          red = probe["redis"]
+          print("shim commands         :", red["shim_total_commands"])
+          print("info commandstats     :", red["info_commandstats_delta"])
+          print("commands / round trips:", red["total_commands"], "/", red["total_round_trips"])
+          print("shim absent on import :", not red["absent_unless_injected"]["installed_on_import"])
+          PYEOF
+
+      - name: Upload mechanism probe artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mechanism-probe-${{ github.sha }}
+          path: reports/mechanism_probe.json
+          retention-days: 30
+
       - name: "L-11 on-target read the Linux image installed CPython start-method source"
         # ADR-0016 Item 1 (A-11) read concurrent/futures/process.py and
         # multiprocessing/context.py from the WINDOWS host's installed
