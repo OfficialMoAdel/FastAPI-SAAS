@@ -631,33 +631,41 @@ jobs:
         # host pid file - could not have worked once the app moved into compose.
         run: |
           set -euo pipefail
+          # sh -s + a QUOTED heredoc, NOT sh -c '...': the payload itself needs
+          # single quotes ('^[0-9]+$', '\0'), and nested single quotes inside a
+          # single-quoted sh -c argument terminate the OUTER runner's quoting,
+          # so the inner shell received a truncated script - ending in an
+          # unterminated "$(tr" - and died with
+          # "Syntax error: end of file unexpected (expecting ")")", exit 2.
+          # A quoted heredoc is delivered verbatim, so the payload may quote
+          # freely. (Same convention as the <<'PY' / <<'YAML' blocks above.)
           docker compose -f docker-compose.yml -f docker-compose.perf.yml \
-            exec -T web sh -c '
-              # /proc scanned in shell, NOT pgrep: the image is a slim one and
-              # has no procps, so pgrep is simply absent. Its failure looks like
-              # "no uvicorn process found", which reads as a dead server rather
-              # than a missing tool.
-              pid=""
-              for d in /proc/[0-9]*; do
-                if grep -qa "uvicorn" "$d/cmdline" 2>/dev/null; then
-                  pid="${d#/proc/}"
-                  break
-                fi
+            exec -T web sh -s <<'SH' | tee reports/app_host_mapped_extensions.txt
+            # /proc scanned in shell, NOT pgrep: the image is a slim one and
+            # has no procps, so pgrep is simply absent. Its failure looks like
+            # "no uvicorn process found", which reads as a dead server rather
+            # than a missing tool.
+            pid=""
+            for d in /proc/[0-9]*; do
+              if grep -qa "uvicorn" "$d/cmdline" 2>/dev/null; then
+                pid="${d#/proc/}"
+                break
+              fi
+            done
+            if [ -z "$pid" ]; then
+              echo "no uvicorn process found inside the container" >&2
+              ls /proc | grep -E '^[0-9]+$' | while read -r p; do
+                echo "  pid $p: $(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-80)"
               done
-              if [ -z "$pid" ]; then
-                echo "no uvicorn process found inside the container" >&2
-                ls /proc | grep -E '^[0-9]+$' | while read -r p; do
-                  echo "  pid $p: $(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-80)"
-                done
-                exit 1
-              fi
-              echo "uvicorn pid inside the container: $pid"
-              if ! grep -Eqi "uvloop|httptools" "/proc/$pid/maps"; then
-                echo "::warning::pid $pid maps neither extension; its cmdline is:"
-                tr "\0" " " < "/proc/$pid/cmdline" || echo "(pid $pid is gone)"
-              fi
-              grep -Ei "uvloop|httptools" "/proc/$pid/maps" | awk "{print \$NF}" | sort -u
-            ' | tee reports/app_host_mapped_extensions.txt
+              exit 1
+            fi
+            echo "uvicorn pid inside the container: $pid"
+            if ! grep -Eqi "uvloop|httptools" "/proc/$pid/maps"; then
+              echo "::warning::pid $pid maps neither extension; its cmdline is:"
+              tr "\0" " " < "/proc/$pid/cmdline" || echo "(pid $pid is gone)"
+            fi
+            grep -Ei "uvloop|httptools" "/proc/$pid/maps" | awk '{print $NF}' | sort -u
+          SH
           echo "--- extensions mapped by the running server ---"
           cat reports/app_host_mapped_extensions.txt
 
