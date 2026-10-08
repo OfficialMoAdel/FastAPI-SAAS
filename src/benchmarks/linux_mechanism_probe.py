@@ -47,6 +47,9 @@ from src.app.core.monitoring.loop_lag import (
     LoopLagSampler,
     assert_validated_on_production_loop,
 )
+from src.app.core.monitoring.loop_lag import (
+    SAMPLE_INTERVAL_SECONDS as LOOP_SAMPLE_INTERVAL,
+)
 from src.app.core.monitoring.redis_commands import (
     PATH_PACKED_TRANSACTION,
     RedisCommandShim,
@@ -64,9 +67,14 @@ PRODUCTION_LOOP = "uvloop"
 #: series with a tail in it, short enough that CI can afford it on every dispatch.
 DEFAULT_SECONDS = 30.0
 
-#: The sampling interval P-2/L-4 requires. 10 Hz would sample a 740 ms p95 seven
-#: times across a run and cannot resolve a stall finer than the stall.
-SAMPLE_INTERVAL = 0.01
+#: The sampling interval, taken from the instrument rather than restated here.
+#:
+#: A local 0.01 duplicated the sampler's own setting, and that duplication cost
+#: the margin: on uvloop the 10 ms grid measured exactly 100.0 Hz against a
+#: >=100 Hz bar - a pass with ZERO headroom, which the next run would flip on
+#: rounding alone. loop_lag.SAMPLE_INTERVAL_SECONDS is 8 ms (125 Hz) precisely so
+#: the measured rate clears the bar with margin. One constant, set in one place.
+SAMPLE_INTERVAL = LOOP_SAMPLE_INTERVAL
 
 
 class NotTheProductionRuntime(RuntimeError):
