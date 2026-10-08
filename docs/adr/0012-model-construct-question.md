@@ -37,3 +37,24 @@ sourced rows (not DB-constrained) is OUT of this acceptance and must
 keep full validation. The API contract owner and security reviewer
 accept the change on that basis.
 
+## Per-endpoint verdict
+
+`model_construct` is not yet called anywhere in `src/app/` (verified
+by `rg model_construct src/app/` — no matches), so this verdict
+governs the change when it lands, not code that exists today. When
+it lands, the verdict is per-endpoint:
+
+| Endpoint class | Rows are DB-backed (schema-constrained)? | Verdict |
+|---|---|---|
+| User list / directory (`modules/users/directory.py`, `UserRead.model_validate`) | Yes — rows come from the `users` table, constrained by the DB schema and RLS | **ACCEPT** unvalidated serialization |
+| API-key list (`modules/api_keys/`) | Yes — rows from the `api_keys` table, schema-constrained | **ACCEPT** |
+| Billing/webhook list (`modules/billing/`, `modules/webhooks/`) | Yes — rows from their tables, schema-constrained | **ACCEPT** |
+| Any endpoint serialising **request-supplied** or **externally sourced** rows (not DB-constrained) | No — attacker-influenced | **OUT OF SCOPE — keep full `model_validate`** |
+
+The named fail direction: the change is a **response-integrity**
+change only on DB-backed list endpoints; on any endpoint whose rows
+are not DB-constrained, the full validation path is retained. The
+API contract owner and security reviewer accept the change on that
+per-endpoint basis.
+
+

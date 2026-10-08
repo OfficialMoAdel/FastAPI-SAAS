@@ -34,6 +34,35 @@ Action required (recorded, not optional): update the ~10
 higher, or explicitly configure DEBUG in the test fixtures, so the
 test suite does not silently lose the records it currently asserts.
 
+## capture_logs pre-flight table
+
+The action item above names the test modules that assert `debug`
+records and will silently lose them once the wrapper filters at
+INFO. Pre-flighted here so the A-3 implementation (bead
+`FastAPI_saas-49yx`) cannot land without re-asserting them. 13
+modules use `capture_logs`; the ones that assert `debug` records
+are marked and must be updated to assert at INFO level or higher,
+or explicitly configure DEBUG in the fixture.
+
+| Module | Level asserted | Action |
+|---|---|---|
+| `tests/unit/core/test_logging_wrapper_oracle.py` | **debug (26 refs)** | Re-assert at INFO+, or configure DEBUG in fixture |
+| `tests/unit/middleware/test_attack_scan_method_gate.py` | **debug (13 refs)** | Re-assert at INFO+, or configure DEBUG in fixture |
+| `tests/e2e/core/security/test_attack_scan_bounds_e2e.py` | **debug (3 refs)** | Re-assert at INFO+, or configure DEBUG in fixture |
+| `tests/unit/core/security/test_pii_and_fail_open_knobs.py` | **debug (2 refs)** | Re-assert at INFO+, or configure DEBUG in fixture |
+| `tests/e2e/modules/billing/test_checkout_tenant_authority_e2e.py` | debug (2) + info (2) | Re-assert the debug records at INFO+ |
+| `tests/unit/modules/billing/test_checkout_tenant_resolution.py` | debug (2) + info (2) | Re-assert the debug records at INFO+ |
+| `tests/unit/core/test_log_sanitizer.py` | debug (1) + info (9) | Re-assert the debug record at INFO+ |
+| `tests/unit/core/test_structlog_kwarg_enforcement.py` | debug (1) + info (2) | Re-assert the debug record at INFO+ |
+| `tests/unit/core/utils/test_ip_utils_x_real_ip.py` | debug (1) + info (1) | Re-assert the debug record at INFO+ |
+| `tests/unit/core/security/test_s01_session_invalidation_oracle.py` | info (12) only | No change — asserts at INFO already |
+| `tests/e2e/api/test_monitoring_error_redaction.py` | none | No change — no level assertion |
+| `tests/performance/test_rollback_verification.py` | none | No change — no level assertion |
+| `tests/unit/modules/storage/test_storage_interface_conformance.py` | info (2) only | No change — asserts at INFO already |
+
+Nine modules assert `debug` records and need the re-assertion; four
+are already INFO-only or level-agnostic and need no change.
+
 Gate D note: the fail-direction change (reduced DEBUG record set)
 is named here explicitly, as §14 requires.
 
