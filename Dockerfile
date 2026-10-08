@@ -43,6 +43,17 @@ COPY --from=builder --chown=app:app /app/src /code/src
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/code"
 
+# The app writes rotating file logs to <repo-root>/logs, which resolves to
+# /code/logs given WORKDIR /code and PYTHONPATH=/code (AppSettings.LOG_DIR,
+# core/config/app.py). The image never created it, and /code is root-owned, so
+# the non-root `app` user could not create it either - every container exited at
+# startup with:
+#
+#     PermissionError: [Errno 13] Permission denied: '/code/logs'
+#
+# Owned by app BEFORE dropping privileges, so the runtime user can write to it.
+RUN mkdir -p /code/logs && chown -R app:app /code/logs
+
 # Switch to the non-root user
 USER app
 
