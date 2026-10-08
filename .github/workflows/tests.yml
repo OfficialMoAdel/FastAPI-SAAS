@@ -622,68 +622,65 @@ jobs:
           echo "--- app host report ---"; cat reports/app_host_report.json
 
       - name: Record what the LIVE server process actually mapped
-        # NON-BLOCKING, deliberately.
+        # The inner script is written to a FILE and then run, rather than passed
+        # as `sh -c '...'`.
         #
-        # The authoritative runtime evidence is the app host report emitted in the
-        # step above, which - read from INSIDE the container - already records
-        # event_loop=uvloop and http=httptools and is what A-2 requires. This step
-        # is the stronger form: it proves the RUNNING process has those
-        # extensions mapped, not merely that uvicorn's auto-selection resolves to
-        # them. That distinction is real and worth having, but it is not worth
-        # blocking the entire two-host arm for - the step's own failure mode is a
-        # tool that is absent from the slim image, which says nothing about the
-        # runtime.
+        # The inline form could not survive its own quoting: the script contains a
+        # single quote in `tr "\0" " "`, which terminated the OUTER runner
+        # single-quoted string, so the inner shell received a truncated script
+        # ending in an unterminated "$(tr" and died with
+        # "Syntax error: end of file unexpected". A file has no such problem.
         #
-        # continue-on-error so a red herring cannot hold up the measurement. The
-        # step-summary line records which of the two kinds of evidence this run
-        # carries, so a later reader is not left assuming the stronger one.
+        # NON-BLOCKING (continue-on-error below): the authoritative runtime
+        # evidence is the app host report, which records event_loop=uvloop and
+        # http=httptools from inside the container. This proves the stronger
+        # claim - that the RUNNING process has those extensions mapped - and is
+        # not worth blocking the whole arm over, since its failure mode here is a
+        # quoting bug and says nothing about the runtime.
         continue-on-error: true
-        # uvloop and httptools are C extensions, so a server really on them has
-        # their shared objects mapped in /proc/<pid>/maps and one that fell back
-        # to asyncio/h11 does not.
-        #
-        # The PID is found INSIDE the container. There is no host PID for a
-        # containerised process, which is why the previous version - reading a
-        # host pid file - could not have worked once the app moved into compose.
         run: |
-          set -euo pipefail
-          # sh -s + a QUOTED heredoc, NOT sh -c '...': the payload itself needs
-          # single quotes ('^[0-9]+$', '\0'), and nested single quotes inside a
-          # single-quoted sh -c argument terminate the OUTER runner's quoting,
-          # so the inner shell received a truncated script - ending in an
-          # unterminated "$(tr" - and died with
-          # "Syntax error: end of file unexpected (expecting ")")", exit 2.
-          # A quoted heredoc is delivered verbatim, so the payload may quote
-          # freely. (Same convention as the <<'PY' / <<'YAML' blocks above.)
-          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
-            exec -T web sh -s <<'SH' | tee reports/app_host_mapped_extensions.txt
-            # /proc scanned in shell, NOT pgrep: the image is a slim one and
-            # has no procps, so pgrep is simply absent. Its failure looks like
-            # "no uvicorn process found", which reads as a dead server rather
-            # than a missing tool.
-            pid=""
-            for d in /proc/[0-9]*; do
-              if grep -qa "uvicorn" "$d/cmdline" 2>/dev/null; then
-                pid="${d#/proc/}"
-                break
-              fi
+          set -uo pipefail
+          cat > /tmp/maps.sh <<'INNER'
+          # /proc scanned in shell, NOT pgrep: the image is slim and has no
+          # procps, so pgrep is absent - and its absence reports itself as "no
+          # uvicorn process found", which reads as a dead server.
+          pid=""
+          for d in /proc/[0-9]*; do
+            if grep -qa uvicorn "$d/cmdline" 2>/dev/null; then
+              pid="${d#/proc/}"
+              break
+            fi
+          done
+          if [ -z "$pid" ]; then
+            echo "no uvicorn process found inside the container" >&2
+            for p in $(ls /proc | grep -E '^[0-9]+$'); do
+              echo "  pid $p: $(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-90)"
             done
-            if [ -z "$pid" ]; then
-              echo "no uvicorn process found inside the container" >&2
-              ls /proc | grep -E '^[0-9]+$' | while read -r p; do
-                echo "  pid $p: $(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-80)"
-              done
-              exit 1
-            fi
-            echo "uvicorn pid inside the container: $pid"
-            if ! grep -Eqi "uvloop|httptools" "/proc/$pid/maps"; then
-              echo "::warning::pid $pid maps neither extension; its cmdline is:"
-              tr "\0" " " < "/proc/$pid/cmdline" || echo "(pid $pid is gone)"
-            fi
-            grep -Ei "uvloop|httptools" "/proc/$pid/maps" | awk '{print $NF}' | sort -u
-          SH
-          echo "--- extensions mapped by the running server ---"
-          cat reports/app_host_mapped_extensions.txt
+            exit 1
+          fi
+          echo "uvicorn pid inside the container: $pid"
+          if ! grep -Eqi "uvloop|httptools" "/proc/$pid/maps"; then
+            echo "::warning::pid $pid maps neither extension; its cmdline is:"
+            tr '\0' ' ' < "/proc/$pid/cmdline" || echo "(pid $pid is gone)"
+          fi
+          grep -Ei "uvloop|httptools" "/proc/$pid/maps" | awk '{print $NF}' | sort -u
+          INNER
+          mkdir -p reports
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            cp /dev/null /tmp/maps.sh 2>/dev/null || true
+          docker cp /tmp/maps.sh "$(docker compose -f docker-compose.yml -f docker-compose.perf.yml ps -q web)":/tmp/maps.sh
+          docker compose -f docker-compose.yml -f docker-compose.perf.yml \
+            exec -T web sh /tmp/maps.sh > reports/.maps.tmp 2>&1 || true
+          if grep -qE "uvloop|httptools" reports/.maps.tmp 2>/dev/null; then
+            grep -E "uvloop|httptools" reports/.maps.tmp | sort -u > reports/app_host_mapped_extensions.txt
+            echo "--- extensions mapped by the running server ---"
+            cat reports/app_host_mapped_extensions.txt
+          else
+            echo "note: the /proc/maps confirmation did not run; see reports/.maps detail in the log"
+            sed -n '1,20p' reports/.maps.tmp
+            : > reports/app_host_mapped_extensions.txt
+          fi
+          rm -f reports/.maps.tmp
 
       - name: Run the mechanism probe from INSIDE the app container
         # L-14, L-11, L-16, P-2/L-4, P-10 - all measured where the app actually
