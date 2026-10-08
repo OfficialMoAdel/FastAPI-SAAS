@@ -597,10 +597,12 @@ jobs:
           services:
             web:
               image: ${{ steps.image.outputs.pinned }}
+              build: null
               command: uvicorn src.app.main:app --host 0.0.0.0 --port 8000
               volumes: []
               restart: unless-stopped
           YAML
+
           echo "=== compose override ==="; cat docker-compose.perf.yml
 
           # Clean up any previous run's leftovers before starting.
