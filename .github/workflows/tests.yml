@@ -494,12 +494,16 @@ jobs:
         id: image
         env:
           REGISTRY: ghcr.io
+          # github.repository preserves the owner's capitalisation
+          # ("OfficialMoAdel/FastAPI-SAAS"); GHCR requires the path to be
+          # lowercase, so it is lowered here rather than at every use site.
           IMAGE_NAME: ${{ github.repository }}
         run: |
           set -euo pipefail
+          image_lower="$(echo "${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login "$REGISTRY" \
             -u "${{ github.actor }}" --password-stdin
-          image="${REGISTRY}/${IMAGE_NAME}:perf"
+          image="${REGISTRY}/${image_lower}:perf"
           docker build -t "${image}" -f Dockerfile .
           docker push "${image}"
           # The digest, as the registry reports it - not the tag, and not the
