@@ -406,6 +406,14 @@ jobs:
     name: perf app host (perf-app)
     runs-on: [self-hosted, linux, perf-app]
     if: github.event_name == 'workflow_dispatch'
+    # packages: write is needed to push the measured image to GHCR, which is
+    # what gives PERF_IMAGE_DIGEST a REAL OCI registry digest. Without a
+    # registry the field can only ever be a local image ID, which is a
+    # different hash over different bytes - and declaring one as the other is
+    # exactly the provenance lie the deployment gate exists to refuse.
+    permissions:
+      contents: read
+      packages: write
     outputs:
       host: ${{ steps.address.outputs.ip }}
     env:
@@ -425,6 +433,19 @@ jobs:
       CRUD_ADMIN_REDIS_PORT: "6379"
       # The one deployment field no process can resolve about itself.
       PERF_ORCHESTRATOR: self-hosted-perf-app
+      # ALSO unresolvable from inside: the store addresses are compose SERVICE
+      # NAMES ("db:5432", "redis:6379"), and resolve_store_locality returns None
+      # for a bare hostname rather than guessing. It is declared here because it
+      # is a fact about the topology this job creates: `docker compose up db
+      # redis web` puts all three on ONE host, so the stores are co-located with
+      # the app. That is the value Phase 0's RTT regime is read against, and
+      # getting it wrong would make every round-trip figure an order of
+      # magnitude less relevant than assumed.
+      PERF_STORE_LOCALITY: co-located
+      # The registry digest of the image the app is ACTUALLY started from - the
+      # same value the compose override pins web to. Not the tag, and not the
+      # local image ID.
+      PERF_IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -485,8 +506,50 @@ jobs:
           CRUD_ADMIN_REDIS_HOST=redis
           CRUD_ADMIN_REDIS_PORT=6379
           PERF_ORCHESTRATOR=${PERF_ORCHESTRATOR}
+          PERF_STORE_LOCALITY=${PERF_STORE_LOCALITY}
+          PERF_IMAGE_DIGEST=${PERF_IMAGE_DIGEST}
           EOF
           echo "wrote src/.env for compose"
+
+      - name: Build and publish the measured image, pinned by digest
+        # WHY PUSH AT ALL
+        # --------------
+        # The deployment manifest requires an `image_digest`, and the harness
+        # refuses the run without it (EXIT_DEPLOYMENT_UNDECLARED = 10). That
+        # field wants an OCI REGISTRY digest - sha256 over the manifest - which
+        # only exists once the image has been pushed somewhere that computes one.
+        #
+        # A locally built compose image has an IMAGE ID, which is a different
+        # hash over different bytes (config + layers, not the manifest). It even
+        # matches the pattern the loader accepts. Passing it would therefore be
+        # undetectable and wrong - a provenance lie in the one field whose whole
+        # purpose is to say what was measured. So the image is really published.
+        #
+        # Once pushed, the compose override pins web to that exact digest, so the
+        # container that serves the load is provably the one that was built here,
+        # and the number is reproducible by anyone pulling the same digest.
+        id: image
+        env:
+          REGISTRY: ghcr.io
+          IMAGE_NAME: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login "$REGISTRY" \
+            -u "${{ github.actor }}" --password-stdin
+          image="${REGISTRY}/${IMAGE_NAME}:perf"
+          docker build -t "${image}" -f Dockerfile .
+          docker push "${image}"
+          # The digest, as the registry reports it - not the tag, and not the
+          # local image ID.
+          digest="$(docker image inspect "${image}" \
+            --format '{{index .RepoDigests 0}}' | sed 's/.*@//')"
+          if [ -z "${digest}" ] || [ "${digest}" = "<no value>" ]; then
+            echo "::error::the pushed image reported no repo digest; provenance cannot be established"
+            exit 1
+          fi
+          echo "pinned=${image}@${digest}" >> "$GITHUB_OUTPUT"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "published and pinned: ${image}@${digest}"
 
       - name: Start services with Docker Compose
         # WHY COMPOSE AND NOT THE `services:` BLOCK
@@ -516,9 +579,17 @@ jobs:
         # what runs here is what runs in production.
         run: |
           set -euo pipefail
-          cat > docker-compose.perf.yml <<'YAML'
+          # web runs the PUBLISHED image BY DIGEST, not a local build.
+          #
+          # `build:` is dropped so compose pulls what the publish step pushed, and
+          # `image:` is the digest reference rather than the tag - a tag can be
+          # moved, a digest cannot. So the container serving the load is provably
+          # the image that was just built, and reproducible by pulling the same
+          # digest.
+          cat > docker-compose.perf.yml <<YAML
           services:
             web:
+              image: ${{ steps.image.outputs.pinned }}
               command: uvicorn src.app.main:app --host 0.0.0.0 --port 8000
               volumes: []
               restart: unless-stopped
