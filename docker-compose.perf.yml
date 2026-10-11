@@ -1,0 +1,112 @@
+# Two-host Phase-0 perf stack.
+#
+# Separate from docker-compose.yml on purpose. That file is the local-dev stack and
+# carries two settings that make it unusable for measurement:
+#   * its `web` command is `uvicorn app.main:app --reload` with the app mounted at
+#     /code/app, while the image puts the code at /code/src - so it runs a
+#     different entrypoint under a reloader that production does not have;
+#   * its env_file is ./src/.env, which in the development checkout points at the
+#     LAN stores, and in a perf stack they must be the containers beside the app.
+# Overriding it also does NOT work: `build: null` does not clear an inherited
+# `build:` in Compose v5, so a merged override carrying `image:` fails with
+# "build tag cannot contain a digest".
+#
+# Usage (app host):
+#   docker compose -f docker-compose.perf.yml up -d db redis
+#   docker compose -f docker-compose.perf.yml run --rm -T --entrypoint python web \
+#       -c "import asyncio; from src.app.core.setup import create_tables; asyncio.run(create_tables())"
+#   docker compose -f docker-compose.perf.yml up -d web
+#   docker compose -f docker-compose.perf.yml exec -T -e PERF_TEST_EMAILS=... web \
+#       sh -c 'cd /code && python scripts/setup_locust_test_data.py'
+#
+# THEN, on the LOAD host (a different machine):
+#   PERF_ORCHESTRATOR=... PERF_STORE_LOCALITY=co-located PERF_IMAGE_DIGEST=... \
+#   PERF_TEST_EMAILS=... ./scripts/run_perf_baseline.sh \
+#       --host http://<app-host>:8000 --app-host-report reports/app_host_report.json -u 10 -r 2 -t 30s
+#
+# SECURITY: the store passwords here are THROWAWAY values for a disposable
+# measurement stack. The host's src/.env is never read by this file.
+#
+name: perfstack
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: perf_test_db
+    expose: ['5432']
+    healthcheck:
+      test: ['CMD-SHELL','pg_isready -U postgres -d perf_test_db']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7
+    # Password-PROTECTED, mirroring the real deployment: the stores at
+    # 192.168.121.147 run redis with a password, and a perf stack without one
+    # misrepresents the thing being measured. With no password here, the app
+    # sent AUTH and every login died with AuthenticationError.
+    command: ['redis-server','--requirepass','perfredis']
+    expose: ['6379']
+    healthcheck:
+      test: ['CMD-SHELL','redis-cli -a perfredis ping']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fastapi-saas:perf
+    command: uvicorn src.app.main:app --host 0.0.0.0 --port 8000
+    ports: ['8000:8000']
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: local
+      SECRET_KEY: '12345678901234567890123456789012'
+      ADMIN_PASSWORD: 'NotASecretCiFixture1!@#'
+      POSTGRES_SERVER: db
+      POSTGRES_PORT: '5432'
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: perf_test_db
+      REDIS_CACHE_HOST: redis
+      REDIS_CACHE_PORT: '6379'
+      REDIS_CACHE_PASSWORD: perfredis
+      REDIS_QUEUE_HOST: redis
+      REDIS_QUEUE_PORT: '6379'
+      REDIS_QUEUE_PASSWORD: perfredis
+      REDIS_RATE_LIMIT_HOST: redis
+      REDIS_RATE_LIMIT_PORT: '6379'
+      REDIS_RATE_LIMIT_PASSWORD: perfredis
+      CRUD_ADMIN_REDIS_HOST: redis
+      CRUD_ADMIN_REDIS_PORT: '6379'
+      CRUD_ADMIN_REDIS_PASSWORD: perfredis
+      # RECORDED DEVIATION - two auth bounds raised for the perf stack, for the
+      # same reason the whitelist bypass is: a measurement must not be altered by
+      # the harness's own mechanics. Recorded here AND in the app-host report, which
+      # the harness copies into the manifest verbatim.
+      #
+      # ACCESS_TOKEN_EXPIRE_MINUTES 30 -> 120. The three phases run ~2 min, so TTL
+      # alone cannot explain the expiry; raised anyway so it is demonstrably not the
+      # cause rather than assumed not to be.
+      #
+      # AUTH_MAX_SESSIONS 5 -> 50 (the column max). Each phase re-authenticates, and
+      # oldest-session eviction on login invalidates the prior token - which surfaces
+      # as a 401 on refresh and voids the phase under plan 4.5.
+      ACCESS_TOKEN_EXPIRE_MINUTES: '120'
+      AUTH_MAX_SESSIONS: '50'
+      IP_WHITELIST_ENABLED: 'true'
+      # §4.2 permits raising the limits for accounts under test ONLY with the
+      # exact value recorded in the artefact. The load generator is a single
+      # host whose IP is whitelisted, so the production budgets stay in force
+      # for every real caller; only this IP bypasses them. The value is in the
+      # app-host report's limits section, which the harness carries into the
+      # manifest verbatim.
+      IP_WHITELIST_BYPASS_RATE_LIMIT: 'true'
