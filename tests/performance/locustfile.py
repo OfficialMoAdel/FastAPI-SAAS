@@ -583,6 +583,15 @@ class AuthenticatedUser(HttpUser):
         """
         if self.access_token and time.time() < self._token_expires_at - TOKEN_REFRESH_MARGIN_S:
             return
+
+        # No access token means logout ran: the session is gone server-side, so
+        # refresh CANNOT work. Attempting it anyway records a 401 that plan 4.5
+        # treats as voiding the phase - for a call whose outcome was already
+        # decided before it was made. Go straight to a login.
+        if not self.access_token:
+            self.authenticate(sample_name="/account/login (re-auth)")
+            return
+
         if self._refresh_token():
             return
         logger.warning(
