@@ -21,6 +21,23 @@ from benchmarks.perf_accounts import PERF_TIER_ID, PERF_TIERS, perf_username
 # exhausts within seconds and trips the auto-ban.
 PERF_TEST_TIER_ID = PERF_TIER_ID  # from src.benchmarks.perf_accounts
 
+#: Permissions the perf accounts are granted. Without these the fixture accounts
+#: carry NO role at all, so every permission-gated route answers 403 - which is an
+#: authorisation check working correctly, not a broken endpoint, but it caps the
+#: measurable endpoint matrix at the unauthenticated and self-service routes.
+#:
+#: Deliberately READ-only. Granting `users:manage` or `notifications:manage` would
+#: let a load test mutate state, and a benchmark that writes is not measuring what
+#: a production read path costs.
+#:
+#: `users:read` unlocks GET /users; `notifications:read` unlocks GET /notifications.
+#: The self-service rate-limit route is `users:manage` and stays out of reach.
+PERF_ROLE_NAME = "perf-fixture"
+PERF_PERMISSION_SLUGS: tuple[str, ...] = (
+    "users:read",
+    "notifications:read",
+)
+
 TENANT_SLUG = "test-tenant-e2e"
 LEGACY_EMAIL = "premium_e2e@example.com"
 DEFAULT_PASSWORD = "Str1ngst!"
@@ -114,11 +131,81 @@ async def _ensure_tiers(session) -> None:
     )
 
 
-async def _create_user_if_missing(session, tenant_id: object, email: str, hashed_password: str) -> bool:
-    """Insert a test user unless it already exists. Returns True when created."""
+async def _ensure_perf_role(session, tenant_id: object) -> int:
+    """Create the fixture role and grant it read permissions. Idempotent.
+
+    Returns the role id. Every statement is ON CONFLICT DO NOTHING, so a re-run
+    against an existing database changes nothing and a fresh one builds the same
+    role - which matters because a fixture that behaves differently on the second
+    run than the first is a fixture whose measurements cannot be compared.
+    """
+    await session.execute(
+        text(
+            "INSERT INTO roles (tenant_id, name, description, is_system) "
+            "VALUES (:tenant_id, :name, :description, false) "
+            "ON CONFLICT (tenant_id, name) DO NOTHING"
+        ),
+        {
+            "tenant_id": tenant_id,
+            "name": PERF_ROLE_NAME,
+            "description": "Fixture role for performance measurement. Read-only by design.",
+        },
+    )
+    role_row = await session.execute(
+        text("SELECT id FROM roles WHERE tenant_id = :tenant_id AND name = :name"),
+        {"tenant_id": tenant_id, "name": PERF_ROLE_NAME},
+    )
+    role_id = role_row.scalar_one()
+
+    # Permission rows are global; seed only the slugs that are missing.
+    await session.execute(
+        text(
+            "INSERT INTO permissions (slug, description) "
+            "SELECT unnest(CAST(:slugs AS text[])), 'performance fixture' "
+            "ON CONFLICT (slug) DO NOTHING"
+        ),
+        {"slugs": list(PERF_PERMISSION_SLUGS)},
+    )
+    await session.execute(
+        text(
+            "INSERT INTO role_permissions (role_id, permission_id) "
+            "SELECT :role_id, p.id FROM permissions p "
+            "WHERE p.slug = ANY(CAST(:slugs AS text[])) "
+            "ON CONFLICT (role_id, permission_id) DO NOTHING"
+        ),
+        {"role_id": role_id, "slugs": list(PERF_PERMISSION_SLUGS)},
+    )
+    await session.flush()
+    return int(role_id)
+
+
+async def _assign_role(session, user_id: object, tenant_id: object, role_id: int) -> None:
+    """Attach the fixture role to one account, idempotently."""
+    await session.execute(
+        text(
+            "INSERT INTO user_roles (user_id, tenant_id, role_id) "
+            "VALUES (:user_id, :tenant_id, :role_id) "
+            "ON CONFLICT DO NOTHING"
+        ),
+        {"user_id": user_id, "tenant_id": tenant_id, "role_id": role_id},
+    )
+
+
+async def _create_user_if_missing(
+    session, tenant_id: object, email: str, hashed_password: str
+) -> tuple[object, bool]:
+    """Insert a test user unless it already exists.
+
+    Returns ``(user_id, created)``. The id is returned for BOTH outcomes on
+    purpose: a re-run against an existing database creates nothing, and if the role
+    were only granted to freshly-created accounts then the fixture would depend on
+    whether the database was empty - so the same measurement would describe
+    different permissions on a first run and a re-run.
+    """
     result = await session.execute(SELECT_USER_ID, {"email": email})
-    if result.scalar():
-        return False
+    existing = result.scalar()
+    if existing:
+        return existing, False
 
     await session.execute(
         INSERT_USER,
@@ -141,7 +228,8 @@ async def _create_user_if_missing(session, tenant_id: object, email: str, hashed
             "uuid": str(uuid.uuid4()),
         },
     )
-    return True
+    inserted = await session.execute(SELECT_USER_ID, {"email": email})
+    return inserted.scalar(), True
 
 
 async def setup_test_data():
@@ -168,10 +256,20 @@ async def setup_test_data():
             hashed_password = await get_password_hash(password)
             print(f"Ensuring {len(emails)} test user(s)...")
 
+            role_id = await _ensure_perf_role(session, tenant_id)
+            print(
+                f"Perf role ready: {PERF_ROLE_NAME} (id={role_id}) "
+                f"granting {', '.join(PERF_PERMISSION_SLUGS)}"
+            )
+
             created = 0
             for index, email in enumerate(emails, start=1):
-                if await _create_user_if_missing(session, tenant_id, email, hashed_password):
+                user_id, was_created = await _create_user_if_missing(
+                    session, tenant_id, email, hashed_password
+                )
+                if was_created:
                     created += 1
+                await _assign_role(session, user_id, tenant_id, role_id)
                 if index % 25 == 0:
                     print(f"  ...{index}/{len(emails)} checked")
 
