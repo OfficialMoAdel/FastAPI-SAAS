@@ -97,6 +97,7 @@ from locust.exception import StopUser
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.benchmarks.percentiles import PERCENTILES, nearest_rank, unresolvable_quantiles
+from src.benchmarks.perf_accounts import collision_risk, perf_username
 
 # =============================================================================
 # CONFIGURATION
@@ -375,6 +376,20 @@ def on_test_start(environment: Any, **kwargs: Any) -> None:
     logger.info("PERF-R1-A: Starting performance baseline test")
     logger.info(f"Target host: {environment.host}")
     logger.info(f"Credential pool: {len(CREDENTIAL_POOL)} account(s) -> {CREDENTIAL_POOL[0][0]} ...")
+    # A pool whose derived usernames collide means two virtual users share an
+    # account, and logging in as the same account evicts the earlier session - so
+    # the run still completes and still produces numbers, but the session
+    # behaviour it measured is not the one described. Reported here, loudly,
+    # because nothing downstream would ever reveal it.
+    clashes = collision_risk([email for email, _ in CREDENTIAL_POOL])
+    if clashes:
+        logger.error(
+            "CREDENTIAL POOL COLLISION: %d username(s) are derived from more than one "
+            "address (%s). Virtual users will share accounts and evict each other's "
+            "sessions. Give each address a distinct local part.",
+            len(clashes),
+            ", ".join(clashes[:5]),
+        )
     logger.info(
         f"AI chat task: {'ENABLED' if AI_ENABLED else 'DISABLED (needs Ollama; set PERF_TEST_AI_ENABLED=1)'}"
     )
@@ -480,7 +495,13 @@ class AuthenticatedUser(HttpUser):
         with self.client.post(
             f"{API_V1}/account/login",
             data={
-                "username": self.email,
+                # perf_username(self.email), NOT self.email. The seeder stores the
+                # local part as the username (users.username is varchar(20), and a
+                # generated address is longer than that), so authenticating with
+                # the full address looked up a username that does not exist and
+                # every login returned 403. Both sides now call perf_username, so
+                # they cannot drift apart again.
+                "username": perf_username(self.email),
                 "password": self.password,
             },
             headers={"X-Tenant-ID": TEST_TENANT},

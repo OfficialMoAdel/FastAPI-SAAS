@@ -20,7 +20,9 @@ coverage.xml
 .mypy_cache
 .pytest_cache
 .hypothesiss
-scripts
+scripts/*
+!scripts/run_perf_baseline.sh
+!scripts/setup_locust_test_data.py
 crudadmin_data
 .github
 tests

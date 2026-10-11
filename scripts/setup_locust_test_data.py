@@ -14,11 +14,12 @@ from sqlalchemy import text
 # Project Imports
 from app.core.db.database import async_session_maker
 from app.core.security import get_password_hash
+from benchmarks.perf_accounts import PERF_TIER_ID, PERF_TIERS, perf_username
 
 # Pro tier: rate_limit grants 1000/hr on /users/me. A NULL tier falls
 # through to the anonymous budget (10/hr per IP), which a load test
 # exhausts within seconds and trips the auto-ban.
-PERF_TEST_TIER_ID = 2
+PERF_TEST_TIER_ID = PERF_TIER_ID  # from src.benchmarks.perf_accounts
 
 TENANT_SLUG = "test-tenant-e2e"
 LEGACY_EMAIL = "premium_e2e@example.com"
@@ -89,6 +90,30 @@ async def _ensure_tenant(session) -> object:
     return tenant_id
 
 
+async def _ensure_tiers(session) -> None:
+    """Create the tier rows the accounts reference.
+
+    ``create_tables()`` creates the ``tier`` TABLE but never a row in it, so
+    seeding an account with ``tier_id`` fails its foreign key:
+
+        ForeignKeyViolationError: insert or update on table "users"
+        violates foreign key constraint "users_tier_id_fkey"
+
+    and nothing in the message points at the missing tier - it reads as a broken
+    seeder rather than a missing prerequisite. The Pro tier also matters for the
+    measurement itself: a NULL tier falls through to the anonymous budget
+    (10/hr per IP), which a load test exhausts in seconds, so accounts left
+    un-tiered produce a run voided on 429s rather than one that measures.
+    """
+    await session.execute(
+        text(
+            "INSERT INTO tier (id, name, created_at) VALUES (:id, :name, NOW()) "
+            "ON CONFLICT (id) DO NOTHING"
+        ),
+        [{"id": tier_id, "name": tier_name} for tier_id, tier_name in PERF_TIERS],
+    )
+
+
 async def _create_user_if_missing(session, tenant_id: object, email: str, hashed_password: str) -> bool:
     """Insert a test user unless it already exists. Returns True when created."""
     result = await session.execute(SELECT_USER_ID, {"email": email})
@@ -101,7 +126,7 @@ async def _create_user_if_missing(session, tenant_id: object, email: str, hashed
             "email": email,
             "hashed_password": hashed_password,
             "name": f"Perf {email.split('@')[0]}",
-            "username": email.split("@")[0],
+            "username": perf_username(email),
             "tenant_id": tenant_id,
             "is_superuser": False,
             "is_email_verified": True,
@@ -130,6 +155,9 @@ async def setup_test_data():
     async with async_session_maker() as session:
         try:
             print("Setting up test data for locust...")
+
+            await _ensure_tiers(session)
+            print(f"Tiers ready: {', '.join(f'{i}={n}' for i, n in PERF_TIERS)}")
 
             tenant_id = await _ensure_tenant(session)
             print(f"Test tenant ready: {TENANT_SLUG} (id={tenant_id})")

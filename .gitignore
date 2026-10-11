@@ -232,6 +232,14 @@ codegraph.json
 .beads/proxieddb/
 *.gate.lock*
 AUDIT_*.md
-perf_*
+# Perf ARTEFACTS only. The bare `perf_*` also matched SOURCE modules -
+# src/benchmarks/perf_accounts.py was silently untracked, so the file the
+# seeder and the load file both import was absent from the repo. Scoped to
+# what it was written for: the generated CSVs and logs.
+perf_*.csv
+perf_*.log
+perf_*.out
+perf_*.json
+!src/benchmarks/perf_*.py
 tests/benchmarks/results
 locust_baseline_NON_REPRESENTATIVE.md
