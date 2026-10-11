@@ -93,14 +93,6 @@ services:
       # the harness's own mechanics. Recorded here AND in the app-host report, which
       # the harness copies into the manifest verbatim.
       #
-      # ACCESS_TOKEN_EXPIRE_MINUTES 30 -> 120. The three phases run ~2 min, so TTL
-      # alone cannot explain the expiry; raised anyway so it is demonstrably not the
-      # cause rather than assumed not to be.
-      #
-      # AUTH_MAX_SESSIONS 5 -> 50 (the column max). Each phase re-authenticates, and
-      # oldest-session eviction on login invalidates the prior token - which surfaces
-      # as a 401 on refresh and voids the phase under plan 4.5.
-      ACCESS_TOKEN_EXPIRE_MINUTES: '120'
       AUTH_MAX_SESSIONS: '50'
       IP_WHITELIST_ENABLED: 'true'
       # §4.2 permits raising the limits for accounts under test ONLY with the
