@@ -169,12 +169,15 @@ TRAFFIC_HEALTH_WEIGHT: Final[int] = 5
 #: Reads that make up the authenticated surface walk. Paths only - the user id
 #: is substituted per user, since a hard-coded id would measure the same row for
 #: every virtual user and make the cache look warm in a way production never is.
+#: `/users/me/rate-limits` is deliberately ABSENT. The real route is
+#: `/users/{user_id}/rate-limits` and a user may not read another user's, so
+#: self-access answers 403 by design - it is an authorisation check working, not a
+#: missing endpoint, and measuring it would report a correct 403 as a failure.
 SESSION_SURFACE_PATHS: Final[tuple[str, ...]] = (
     "/account/sessions",
     "/account/sessions/count",
     "/notifications",
     "/users",
-    "/users/me/rate-limits",
 )
 # Settable, because a weighted logout cannot coexist with a CERTIFIED phase.
 #
@@ -868,6 +871,7 @@ class FastAPISaaSUser(AuthenticatedUser):
         """
         with self.client.get(
             f"{API_ROOT}/health/live",
+            headers={"X-Tenant-ID": TEST_TENANT},
             name="/health/live",
             catch_response=True,
         ) as response:
