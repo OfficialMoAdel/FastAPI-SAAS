@@ -180,10 +180,19 @@ TRAFFIC_HEALTH_WEIGHT: Final[int] = 5
 #: denial as an endpoint failure and void the phase under 4.5 for a reason that
 #: says nothing about the endpoint. Granting the permission is a separate change
 #: to the seeder and is not silently made here.
+#: Three paths were removed after each answered 403 for a seeded perf account:
+#: /users/me/rate-limits (no such route; the real one is per-user and denies self),
+#: /notifications (permission-gated), and /users (permission-gated list). All three
+#: are authorisation checks WORKING, not broken endpoints, and measuring them
+#: reports a correct denial as a failure and voids the phase under 4.5 for a
+#: reason that says nothing about the endpoint.
+#:
+#: Granting those permissions is a change to what the seeded account IS, and is
+#: deliberately not made here - it is a different decision from changing what we
+#: measure, and it belongs to whoever owns the perf fixture.
 SESSION_SURFACE_PATHS: Final[tuple[str, ...]] = (
     "/account/sessions",
     "/account/sessions/count",
-    "/users",
 )
 # Settable, because a weighted logout cannot coexist with a CERTIFIED phase.
 #
