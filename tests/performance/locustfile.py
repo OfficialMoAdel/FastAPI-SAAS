@@ -173,10 +173,16 @@ TRAFFIC_HEALTH_WEIGHT: Final[int] = 5
 #: `/users/{user_id}/rate-limits` and a user may not read another user's, so
 #: self-access answers 403 by design - it is an authorisation check working, not a
 #: missing endpoint, and measuring it would report a correct 403 as a failure.
+#: `/notifications` is deliberately ABSENT for the same reason as
+#: `/users/me/rate-limits`: a seeded perf account answers 403 on it, because the
+#: notification surface is gated behind a permission the pool does not grant. That
+#: 403 is an authorisation check WORKING. Measuring it would report a correct
+#: denial as an endpoint failure and void the phase under 4.5 for a reason that
+#: says nothing about the endpoint. Granting the permission is a separate change
+#: to the seeder and is not silently made here.
 SESSION_SURFACE_PATHS: Final[tuple[str, ...]] = (
     "/account/sessions",
     "/account/sessions/count",
-    "/notifications",
     "/users",
 )
 # Settable, because a weighted logout cannot coexist with a CERTIFIED phase.
