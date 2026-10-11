@@ -478,7 +478,7 @@ class AuthenticatedUser(HttpUser):
 
     # -------------------------------------------------------------------- auth
 
-    def authenticate(self) -> None:
+    def authenticate(self, *, sample_name: str = "/account/login (setup)") -> None:
         """Log in, or retire this virtual user cleanly.
 
         Raises StopUser instead of calling ``self.stop()``: Locust's
@@ -505,7 +505,7 @@ class AuthenticatedUser(HttpUser):
                 "password": self.password,
             },
             headers={"X-Tenant-ID": TEST_TENANT},
-            name="/account/login (setup)",
+            name=sample_name,
             catch_response=True,
         ) as response:
             status_code = response.status_code
@@ -565,10 +565,31 @@ class AuthenticatedUser(HttpUser):
         return {"X-Tenant-ID": TEST_TENANT}
 
     def _ensure_token(self) -> None:
-        """Refresh proactively when the token is about to expire."""
+        """Refresh proactively when the token is about to expire, else log in again.
+
+        The re-login fallback is the fix for a run that voided itself. Logout is a
+        WEIGHTED task (10% of traffic) and it destroys the session server-side, so
+        the refresh token is revoked along with the access token. Refresh can
+        therefore never recover from a logout - every request after one returned
+        401, and plan 4.5 makes a 401 void the phase.
+
+        The old docstring claimed "the next task to need a token will mint one", but
+        the only mint path reachable from here was _refresh_token, which is exactly
+        the call that cannot work.
+
+        The re-login is named separately rather than as setup: a mid-run login
+        costs a full bcrypt verify (~310 ms), and folding those into the login
+        metric would report them as if they were part of the measured mix.
+        """
         if self.access_token and time.time() < self._token_expires_at - TOKEN_REFRESH_MARGIN_S:
             return
-        self._refresh_token()
+        if self._refresh_token():
+            return
+        logger.warning(
+            "refresh failed for %s; re-authenticating (logout revokes the session)",
+            self.email,
+        )
+        self.authenticate(sample_name="/account/login (re-auth)")
 
     def _refresh_token(self) -> bool:
         """Refresh the access token using the session refresh cookie."""
