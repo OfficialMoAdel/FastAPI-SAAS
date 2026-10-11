@@ -158,7 +158,36 @@ SLOW_REQUEST_THRESHOLD_MS: Final[float] = 100.0
 TRAFFIC_USER_ME_WEIGHT: Final[int] = 80
 TRAFFIC_AI_CHAT_WEIGHT: Final[int] = 10
 TRAFFIC_TOKEN_REFRESH_WEIGHT: Final[int] = 10
-LOGOUT_WEIGHT: Final[int] = 10
+# Settable, because a weighted logout cannot coexist with a CERTIFIED phase.
+#
+# Logout revokes the session server-side, so the refresh token dies with the access
+# token and every request behind it carries credentials that are already dead. Plan
+# 4.5 makes a 401 void the phase, so a run with logout in the mix measures what it
+# wants and then refuses to certify it: measured 92 errors, then 29, 13, 8 as the
+# recovery paths were fixed - and the residue is structural. Those requests cannot
+# succeed, because the thing they need was destroyed by the task beside them.
+#
+# Set PERF_LOGOUT_WEIGHT=0 to certify a phase. The default is UNCHANGED at 10, so
+# the specified mix still exercises logout by default. Which is right depends on
+# what the run is FOR: a latency baseline wants logout out; a logout-inclusive load
+# profile wants it in, and accepts a void.
+#
+# Whichever was used belongs in the artefact beside the other deviations, because a
+# traffic mix is part of what was measured.
+def _int_env(name: str, default: int) -> int:
+    """An integer env override, falling back to the specification on anything odd.
+
+    A malformed value must not silently become a different traffic mix, so anything
+    unparseable keeps the default rather than guessing.
+    """
+    raw = os.getenv(name, "").strip()
+    try:
+        return int(raw) if raw else default
+    except ValueError:
+        return default
+
+
+LOGOUT_WEIGHT: Final[int] = _int_env("PERF_LOGOUT_WEIGHT", 10)
 
 # Wait time configuration (seconds)
 WAIT_TIME_MIN_S: Final[float] = 1.0
