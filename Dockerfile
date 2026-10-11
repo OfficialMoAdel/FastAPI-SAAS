@@ -39,6 +39,14 @@ COPY --from=builder --chown=app:app /app/.venv /app/.venv
 # Copy application source code (required for standalone docker build)
 COPY --from=builder --chown=app:app /app/src /code/src
 
+# The perf harness, so the image can run the measurement it is built for.
+#
+# The runtime stage copies ONLY src/, so scripts/ never reached it: seeding
+# inside the container needed a `docker cp` plus a reconstructed src/ layout
+# built by hand, every single run. .dockerignore also excluded scripts/, so
+# both layers had to agree before the files arrived at all.
+COPY --from=builder --chown=app:app /app/scripts /code/scripts
+
 # Set PATH to use the virtual environment
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/code"
