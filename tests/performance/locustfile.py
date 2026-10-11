@@ -84,6 +84,7 @@ import itertools
 import json
 import logging
 import os
+import random
 import sys
 import time
 from collections.abc import Iterator
@@ -105,6 +106,10 @@ from src.benchmarks.perf_accounts import collision_risk, perf_username
 
 # API base path
 API_V1: Final[str] = "/api/v1"
+# The monitoring router is mounted at /api, NOT /api/v1. The health
+# endpoints live here, and assuming the v1 shape yields a 404 that
+# reads as a missing endpoint rather than a wrong prefix.
+API_ROOT: Final[str] = "/api"
 
 # Default test credentials — must match scripts/setup_locust_test_data.py
 DEFAULT_TEST_EMAIL: Final[str] = "premium_e2e@example.com"
@@ -158,6 +163,19 @@ SLOW_REQUEST_THRESHOLD_MS: Final[float] = 100.0
 TRAFFIC_USER_ME_WEIGHT: Final[int] = 80
 TRAFFIC_AI_CHAT_WEIGHT: Final[int] = 10
 TRAFFIC_TOKEN_REFRESH_WEIGHT: Final[int] = 10
+TRAFFIC_SESSION_SURFACE_WEIGHT: Final[int] = 10
+TRAFFIC_HEALTH_WEIGHT: Final[int] = 5
+
+#: Reads that make up the authenticated surface walk. Paths only - the user id
+#: is substituted per user, since a hard-coded id would measure the same row for
+#: every virtual user and make the cache look warm in a way production never is.
+SESSION_SURFACE_PATHS: Final[tuple[str, ...]] = (
+    "/account/sessions",
+    "/account/sessions/count",
+    "/notifications",
+    "/users",
+    "/users/me/rate-limits",
+)
 # Settable, because a weighted logout cannot coexist with a CERTIFIED phase.
 #
 # Logout revokes the session server-side, so the refresh token dies with the access
@@ -659,6 +677,43 @@ class AuthenticatedUser(HttpUser):
 
     # ------------------------------------------------------------------ helpers
 
+    def _get_authenticated(self, path: str) -> None:
+        """GET an authenticated path, refreshing the token once on a 401.
+
+        One retry, and only on 401. The retry is what distinguishes "this token was
+        stale" from "this endpoint is broken", and without it a stale token is
+        reported as an endpoint failure - which would void the phase under 4.5 for
+        a reason that has nothing to do with the endpoint.
+        """
+        self._ensure_token()
+        name = path.rsplit("/", 1)[-1] or path
+        with self.client.get(
+            f"{API_V1}{path}",
+            headers=self._auth_headers(),
+            name=name,
+            catch_response=True,
+        ) as response:
+            if response.status_code == 401:
+                self.access_token = ""
+                self._ensure_token()
+                with self.client.get(
+                    f"{API_V1}{path}",
+                    headers=self._auth_headers(),
+                    name=name,
+                    catch_response=True,
+                ) as retry:
+                    self._record_status(retry, name)
+                return
+            self._record_status(response, name)
+
+    def _record_status(self, response: Any, name: str) -> None:
+        """Any 2xx is a success. The contract is "every non-2xx is recorded",
+        so the check is the whole range and not the 200 alone."""
+        if 200 <= response.status_code < 300:
+            response.success()
+            return
+        response.failure(f"Unexpected status: {response.status_code} on {name}")
+
     def _fetch_current_user(self, name: str) -> bool:
         """GET /users/me, retrying once after a token refresh on 401."""
         self._ensure_token()
@@ -772,6 +827,51 @@ class FastAPISaaSUser(AuthenticatedUser):
         the top of this file.
         """
         self._fetch_current_user("/users/me")
+
+    @task(TRAFFIC_SESSION_SURFACE_WEIGHT)  # 10% of traffic
+    def session_surface(self) -> None:
+        """Walk the ACCOUNT and USER surface, not just /users/me.
+
+        Until now every measured request but /users/me was the auth trio, so the
+        endpoint matrix was two rows deep no matter how long the run. Unified plan
+        4.4 asks for all ten, and a matrix that cannot reach ten is a matrix that
+        cannot be completed by waiting.
+
+        The reads here are the ones an authenticated page load actually issues -
+        session count, the user's own notification feed, the user list, and the
+        per-user rate-limit and tier lookups. They differ from /users/me in kind,
+        not only in path: /users/me is the cached identity read, while these hit
+        the session table, the notification join and the rate-limit store, so a
+        regression that only shows up away from the hot path has somewhere to
+        appear.
+
+        One request per task, not a loop. A task that issued all five would report
+        one aggregate latency for five endpoints and lose the ability to say which
+        one moved - the same conflation that makes a summed number unattributable.
+        """
+        choice = random.choice(SESSION_SURFACE_PATHS)
+        self._get_authenticated(choice)
+
+    @task(TRAFFIC_HEALTH_WEIGHT)  # 5% of traffic
+    def health_probe(self) -> None:
+        """GET /api/health/live - the orchestrator's readiness view.
+
+        Unauthenticated on purpose, and it is the ONE endpoint in this file that
+        is not part of an authenticated user journey. It answers from process
+        state rather than from the database, so it isolates framework and event
+        loop cost from everything the other tasks measure - which is what makes
+        it the control against which the others are read.
+
+        It lives under /api/health, NOT /api/v1/health: the monitoring router is
+        mounted at /api while the v1 router carries the /api/v1 prefix, and
+        assuming the v1 shape yields a 404 that looks like a missing endpoint.
+        """
+        with self.client.get(
+            f"{API_ROOT}/health/live",
+            name="/health/live",
+            catch_response=True,
+        ) as response:
+            self._record_status(response, "/health/live")
 
     @task(TRAFFIC_AI_CHAT_WEIGHT)  # 10% of traffic
     def ai_chat_completion(self) -> None:
