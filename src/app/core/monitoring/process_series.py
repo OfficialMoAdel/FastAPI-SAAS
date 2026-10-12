@@ -113,6 +113,26 @@ def _statm_is_readable() -> bool:
 _STATM_AVAILABLE = _statm_is_readable()
 
 
+def _schedstat_is_readable() -> bool:
+    """Whether ``/proc/self/schedstat`` reports nanosecond CPU time. Evaluated ONCE.
+
+    The distinction matters more than it looks: ``/proc/<pid>/stat`` reports
+    utime/stime in clock ticks, so at the usual ``SC_CLK_TCK=100`` a cross-process
+    CPU series quantises to 10 ms. That cannot resolve a 50 us budget, and a
+    series that cannot resolve what it is compared against must not be compared
+    against it. ``schedstat``'s first field is nanoseconds.
+    """
+    try:
+        with open("/proc/self/schedstat", encoding="utf-8") as fh:
+            return bool(int(fh.read().split()[0]))
+    except (OSError, ValueError, IndexError):
+        return False
+
+
+#: Resolved once at import, for the same reason as ``_STATM_AVAILABLE``.
+_SCHEDSTAT_AVAILABLE = _schedstat_is_readable()
+
+
 def _max_rss_bytes() -> int | None:
     """Peak RSS from the kernel's own accounting, or ``None`` if unavailable.
 
@@ -160,6 +180,15 @@ class ProcessSeriesSampler:
         # its own window - the sampler simply had nowhere to record them.
         self._request_count: int | None = None
         self._concurrency: int | None = None
+        # WHICH process this series describes. None means "me", which is right
+        # when the sampler runs inside the app and wrong when it runs beside it:
+        # a standalone scripts/rss_window.py would otherwise report the RSS of
+        # its own small interpreter and call it a server-side measurement. That
+        # is not a rounding error, it is the wrong instrument pointed at the
+        # wrong process - so the target is named in the export, and a run that
+        # never named one is visibly self-sampled rather than quietly so.
+        self._target_pid: int | None = None
+        self._target_name: str | None = None
         # CPU time is read as a delta between samples rather than a rate, because
         # a rate needs a denominator that changes with the interval and a delta
         # does not.
@@ -184,6 +213,71 @@ class ProcessSeriesSampler:
         """
         self._host_identity = identity
 
+    def record_target(self, pid: int, name: str | None = None) -> None:
+        """Point this series at another process, by PID.
+
+        Required for any server-side claim made from outside the server. The
+        default reads ``/proc/self/statm``, so a standalone sampler measures
+        ITSELF unless told otherwise - which is how a 35-minute run produced a
+        beautifully flat RSS curve for a small Python interpreter that was doing
+        nothing but sleeping. The export names the target so a reader can tell
+        which process the series describes, and records ``self`` when none was
+        named rather than leaving it ambiguous.
+        """
+        self._target_pid = int(pid)
+        self._target_name = name
+
+    @staticmethod
+    def _target_rss_bytes(pid: int) -> int:
+        """Resident set size of ``pid``, from field 2 of ``/proc/<pid>/statm``."""
+        fd = os.open(f"/proc/{pid}/statm", os.O_RDONLY)
+        try:
+            data = os.read(fd, 128)
+        finally:
+            os.close(fd)
+        fields = data.split()
+        if len(fields) < 2:
+            raise OSError(f"/proc/{pid}/statm returned only {len(fields)} fields")
+        return int(fields[1]) * _PAGE_SIZE
+
+    @staticmethod
+    def _target_cpu_resolution() -> str:
+        """Which reader this host supports, so a coarse series is never silent.
+
+        ``/proc/<pid>/schedstat`` reports nanoseconds; ``/proc/<pid>/stat``
+        reports clock TICKS, which at the usual SC_CLK_TCK=100 quantises to
+        10 ms. That is not a small error: the 20261012 cross-process run
+        reported a median of exactly 10000 us against a 50 us ceiling, which
+        was the tick granularity rather than any real cost. A series that
+        cannot resolve the thing it is being compared against must say so.
+        """
+        return "nanoseconds" if _SCHEDSTAT_AVAILABLE else "clock-ticks"
+
+    @staticmethod
+    def _target_cpu_seconds(pid: int) -> float:
+        """CPU seconds for ``pid``, at the best resolution this host offers.
+
+        PREFERS ``/proc/<pid>/schedstat``, whose first field is nanoseconds on
+        CPU. Falls back to ``/proc/<pid>/stat``, whose utime/stime are in ticks.
+
+        The ``stat`` parser skips to after the LAST ``)`` rather than splitting
+        the whole line: the parenthesised comm field can itself contain spaces
+        and parentheses, and parsing that wrongly corrupts the CPU series
+        silently instead of raising.
+        """
+        if _SCHEDSTAT_AVAILABLE:
+            try:
+                with open(f"/proc/{pid}/schedstat", encoding="utf-8") as fh:
+                    return int(fh.read().split()[0]) / 1_000_000_000.0
+            except (OSError, ValueError, IndexError):
+                pass
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
+            raw = fh.read()
+        rest = raw[raw.rindex(")") + 1 :].split()
+        ticks = os.sysconf("SC_CLK_TCK")
+        # rest[0] is state (field 3), so utime (14) and stime (15) are 11 and 12.
+        return (int(rest[11]) + int(rest[12])) / ticks
+
     def start(self) -> None:
         if not self._enabled:
             return
@@ -198,14 +292,30 @@ class ProcessSeriesSampler:
         self._ended_at = time.monotonic()
 
     def sample(self) -> None:
-        """Take one sample. Returns immediately when disabled."""
+        """Take one sample. Returns immediately when disabled.
+
+        Reads the TARGET process when one was named and this process otherwise.
+        A target that exits mid-run is not silently replaced by this process's
+        numbers: the read fails, the sample is skipped, and the window still
+        reports its true sample count. Swapping in our own RSS would turn a dead
+        server into a flat, healthy-looking line - which is the exact shape of
+        confident error this programme exists to catch.
+        """
         if not self._enabled:
             return
-        rss = self._rss_bytes()
+        pid = self._target_pid
+        try:
+            if pid is None:
+                rss = self._rss_bytes()
+                cpu_seconds = self._cpu_seconds()
+            else:
+                rss = self._target_rss_bytes(pid)
+                cpu_seconds = self._target_cpu_seconds(pid)
+        except (OSError, ValueError, IndexError):
+            return
         self._rss.record(float(rss))
         if self._first_rss_bytes is None:
             self._first_rss_bytes = rss
-        cpu_seconds = self._cpu_seconds()
         if self._last_cpu_seconds is not None:
             self._cpu.record(max(0.0, cpu_seconds - self._last_cpu_seconds))
         self._last_cpu_seconds = cpu_seconds
@@ -273,6 +383,14 @@ class ProcessSeriesSampler:
         rss_values = self._rss.values()
         return {
             "instrument": self.name,
+            # WHICH process the series describes. "is_self" is stated rather than
+            # implied, so a reader is never left guessing whether a series that
+            # looks server-side actually watched the server.
+            "target": {
+                "pid": self._target_pid,
+                "name": self._target_name,
+                "is_self": self._target_pid is None,
+            },
             "enabled": self._enabled,
             "host_identity": self._host_identity,
             "host_recorded": self._host_identity != HOST_UNRECORDED,
@@ -306,6 +424,23 @@ class ProcessSeriesSampler:
             "tracemalloc_divergence": self._tracemalloc_divergence(),
             "cpu_series_seconds": self._cpu.export(),
             "cpu_summary_seconds": summarise(self._cpu.values()),
+            # The resolution this CPU series was ACTUALLY measured at. A reader
+            # comparing a clock-tick series (10 ms quantisation) against a
+            # microsecond ceiling would conclude the sampler is 200x over budget
+            # when it is merely unresolvable - which is exactly what the
+            # 20261012 cross-process run reported. Stated so it cannot recur.
+            "cpu_resolution": (
+                "clock-ticks"
+                if self._target_pid is not None and not _SCHEDSTAT_AVAILABLE
+                else "nanoseconds"
+            ),
+            "cpu_resolution_note": (
+                "clock-ticks quantises to 1/SC_CLK_TCK seconds, so this series "
+                "CANNOT resolve a microsecond cost ceiling and must not be "
+                "compared against one."
+                if self._target_pid is not None and not _SCHEDSTAT_AVAILABLE
+                else None
+            ),
             "cost_ceiling_us": SAMPLER_COST_CEILING_US,
         }
 

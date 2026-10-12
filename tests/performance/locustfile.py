@@ -271,6 +271,31 @@ CREDENTIAL_POOL: Final[list[tuple[str, str]]] = _build_credential_pool()
 # under gevent's cooperative scheduling (no await between read and increment).
 _pool_cursor = itertools.count()
 
+#: Each virtual user presents a distinct client IP through X-Forwarded-For.
+#:
+#: The security budgets are keyed PER CLIENT IP, and every request from a
+#: single-box load generator arrives from 127.0.0.1. Ten rate-limit violations
+#: then trip AUTO_BAN and the server answers 403 to the very traffic meant to
+#: exercise it: the 20261012 run recorded 6,870 failures of 8,348 requests while
+#: the app correctly refused one address hammering it.
+#:
+#: This does not weaken the control. `get_client_ip` consults X-Forwarded-For
+#: only when the peer is a trusted proxy, and loopback is trusted, so each
+#: simulated user gets its own budgeted identity - which is what real users have
+#: and what a per-IP budget is for. A user that exceeds its OWN budget is still
+#: banned; it simply can no longer ban its peers. One box, many addresses, same
+#: enforcement.
+#:
+#: 10.0.0.0/8 is used because it is inside the RFC1918 range the app already
+#: treats as internal, and no host on this network answers for it.
+CLIENT_IP_POOL_BASE: Final[tuple[int, int, int]] = (10, 77, 0)
+
+
+def _client_ip_for(index: int) -> str:
+    """A stable, distinct client IP for virtual user ``index``."""
+    a, b, c = CLIENT_IP_POOL_BASE
+    return f"{a}.{b}.{(c + index) % 254 + 1}"
+
 # Set once, to avoid spamming the log on every failed login.
 _pool_hint_logged = False
 
@@ -520,6 +545,10 @@ class AuthenticatedUser(HttpUser):
         """Claim a dedicated account from the pool and authenticate."""
         index = next(_pool_cursor) % len(CREDENTIAL_POOL)
         self.email, self.password = CREDENTIAL_POOL[index]
+        # Distinct per-user client IP; see CLIENT_IP_POOL_BASE. Without it the
+        # whole run shares one budget and one AUTO_BAN, and the server bans its
+        # own load generator.
+        self.client_ip = _client_ip_for(index)
         self.authenticate()
 
     def on_stop(self) -> None:
@@ -626,10 +655,20 @@ class AuthenticatedUser(HttpUser):
         self._token_expires_at = expires_at if expires_at else time.time() + DEFAULT_TOKEN_LIFETIME_S
 
     def _auth_headers(self) -> dict[str, str]:
-        """Get authorization + tenant headers."""
+        """Authorization, tenant, and this user's own client IP.
+
+        ``X-Forwarded-For`` is what keeps one load generator from consuming one
+        address's entire rate-limit budget and triggering AUTO_BAN against
+        itself. The app trusts it only because loopback is a trusted proxy, so
+        this models N users behind an edge rather than bypassing a control.
+        """
+        headers = {"X-Tenant-ID": TEST_TENANT}
+        client_ip = getattr(self, "client_ip", None)
+        if client_ip:
+            headers["X-Forwarded-For"] = client_ip
         if self.access_token:
-            return {"Authorization": f"Bearer {self.access_token}", "X-Tenant-ID": TEST_TENANT}
-        return {"X-Tenant-ID": TEST_TENANT}
+            headers["Authorization"] = f"Bearer {self.access_token}"
+        return headers
 
     def _ensure_token(self) -> None:
         """Refresh proactively when the token is about to expire, else log in again.
