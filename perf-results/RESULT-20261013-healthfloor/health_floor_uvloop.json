@@ -1,0 +1,57 @@
+{
+  "schema": "perf-health-floor/1",
+  "endpoint": "GET /api/v1/health",
+  "purpose": "zero-I/O floor: isolates transport and framework cost from application work. The handler performs no I/O.",
+  "driver": "in-process over ASGITransport (no socket, so kernel network variance does not contaminate a sub-millisecond measurement)",
+  "loop_requested": "uvloop",
+  "loop_policy_in_use": "EventLoopPolicy",
+  "repetitions": 5,
+  "requests_per_repetition": 300,
+  "warmup_discarded": 50,
+  "per_repetition": [
+    {
+      "repetition": 1,
+      "n": 300,
+      "min_ms": 0.4577,
+      "p50_ms": 0.5002,
+      "p95_ms": 0.7084
+    },
+    {
+      "repetition": 2,
+      "n": 300,
+      "min_ms": 0.4604,
+      "p50_ms": 0.4995,
+      "p95_ms": 0.7617
+    },
+    {
+      "repetition": 3,
+      "n": 300,
+      "min_ms": 0.4611,
+      "p50_ms": 0.5017,
+      "p95_ms": 0.7081
+    },
+    {
+      "repetition": 4,
+      "n": 300,
+      "min_ms": 0.4618,
+      "p50_ms": 0.5098,
+      "p95_ms": 0.851
+    },
+    {
+      "repetition": 5,
+      "n": 300,
+      "min_ms": 0.4607,
+      "p50_ms": 0.5627,
+      "p95_ms": 1.2577
+    }
+  ],
+  "summary": {
+    "min_of_mins_ms": 0.4577,
+    "median_of_mins_ms": 0.4607,
+    "min_of_p50s_ms": 0.4995,
+    "median_of_p50s_ms": 0.5017,
+    "min_spread_x": 1.01,
+    "p50_spread_x": 1.13
+  },
+  "summary_method": "median-of-medians and min-of-medians over repetitions, per 4.4"
+}

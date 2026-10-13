@@ -1,0 +1,75 @@
+{
+  "schema": "perf-login-floor/1",
+  "endpoint": "POST /api/v1/account/login",
+  "driver": "in-process over ASGITransport; form-encoded body, as the endpoint parses",
+  "repetitions": 5,
+  "requests_per_repetition": 40,
+  "warmup_discarded": 8,
+  "n_measured": 200,
+  "status_distribution": {
+    "200": 200
+  },
+  "crypto": {
+    "bcrypt_rounds": 12,
+    "bcrypt_thread_pool_size": 8,
+    "source": "src.app.core.config.settings.crypt, read at run time"
+  },
+  "expectation": {
+    "reference_us": 902,
+    "measured_min_us": 227649.8,
+    "ratio_vs_reference": 252.4,
+    "statement": "The plan's reference for this endpoint is ~902 us. Min here is expected to be roughly TWO ORDERS OF MAGNITUDE above it, and that is NOT a regression: it is bcrypt at BCRYPT_ROUNDS=12 on a 2-core box. The cost is the WORK FACTOR and the CPU budget, not the application. Anyone comparing this figure against 902 us without that context would file a defect against the endpoint that does not exist."
+  },
+  "latency": {
+    "min_ms": 227.6498,
+    "p50_ms": 240.0022,
+    "p95_ms": 251.8428,
+    "p99_ms": 274.9075,
+    "server_min_ms": 226.975,
+    "server_p50_ms": 239.352,
+    "median_of_repetition_mins_ms": 235.8376
+  },
+  "per_repetition": [
+    {
+      "repetition": 1,
+      "n": 40,
+      "min_ms": 227.6498,
+      "p50_ms": 235.3351,
+      "p95_ms": 250.2789,
+      "server_min_ms": 226.975
+    },
+    {
+      "repetition": 2,
+      "n": 40,
+      "min_ms": 236.0043,
+      "p50_ms": 240.3749,
+      "p95_ms": 274.9075,
+      "server_min_ms": 235.404
+    },
+    {
+      "repetition": 3,
+      "n": 40,
+      "min_ms": 234.5425,
+      "p50_ms": 240.43,
+      "p95_ms": 249.075,
+      "server_min_ms": 233.925
+    },
+    {
+      "repetition": 4,
+      "n": 40,
+      "min_ms": 236.6785,
+      "p50_ms": 241.4667,
+      "p95_ms": 248.6896,
+      "server_min_ms": 235.952
+    },
+    {
+      "repetition": 5,
+      "n": 40,
+      "min_ms": 235.8376,
+      "p50_ms": 239.4274,
+      "p95_ms": 248.4229,
+      "server_min_ms": 235.261
+    }
+  ],
+  "p99_reportable": false
+}

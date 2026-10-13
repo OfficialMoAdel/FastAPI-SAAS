@@ -32,6 +32,7 @@ class TestMiddlewareOrder:
         """user_middleware (request execution order) matches the contract."""
         from fastapi.middleware.cors import CORSMiddleware
 
+        from src.app.core.monitoring.request_timer import RequestTimer
         from src.app.main import app
         from src.app.middleware.attack_detection import AttackDetectionMiddleware
         from src.app.middleware.body_limit import RequestBodyLimitMiddleware
@@ -49,6 +50,11 @@ class TestMiddlewareOrder:
 
         expected = [
             CORSMiddleware,  # outermost — wraps every guard short-circuit (C4)
+            # T-3: inside CORS (which must stay outermost) and outside every
+            # guard, so the reported span is the whole server-side cost.
+            # Mounted disabled-by-default, so this changes the stack, not the
+            # timings.
+            RequestTimer,
             GZipFilterMiddleware,
             QueryProfilerMiddleware,
             IPFilterMiddleware,

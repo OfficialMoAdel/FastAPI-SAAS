@@ -1,0 +1,69 @@
+{
+  "schema": "perf-health-floor/1",
+  "endpoint": "GET /api/v1/health",
+  "purpose": "zero-I/O floor: isolates transport and framework cost from application work. The handler performs no I/O.",
+  "driver": "in-process over ASGITransport (no socket, so kernel network variance does not contaminate a sub-millisecond measurement)",
+  "repetitions": 7,
+  "requests_per_repetition": 400,
+  "warmup_discarded": 50,
+  "per_repetition": [
+    {
+      "repetition": 1,
+      "n": 400,
+      "min_ms": 0.4594,
+      "p50_ms": 0.5103,
+      "p95_ms": 0.7749
+    },
+    {
+      "repetition": 2,
+      "n": 400,
+      "min_ms": 0.4569,
+      "p50_ms": 0.4981,
+      "p95_ms": 0.9313
+    },
+    {
+      "repetition": 3,
+      "n": 400,
+      "min_ms": 0.4601,
+      "p50_ms": 0.5074,
+      "p95_ms": 0.654
+    },
+    {
+      "repetition": 4,
+      "n": 400,
+      "min_ms": 0.4587,
+      "p50_ms": 0.4977,
+      "p95_ms": 0.7101
+    },
+    {
+      "repetition": 5,
+      "n": 400,
+      "min_ms": 0.4701,
+      "p50_ms": 0.5234,
+      "p95_ms": 0.8393
+    },
+    {
+      "repetition": 6,
+      "n": 400,
+      "min_ms": 0.4602,
+      "p50_ms": 0.5017,
+      "p95_ms": 0.8217
+    },
+    {
+      "repetition": 7,
+      "n": 400,
+      "min_ms": 0.4551,
+      "p50_ms": 0.498,
+      "p95_ms": 0.6578
+    }
+  ],
+  "summary": {
+    "min_of_mins_ms": 0.4551,
+    "median_of_mins_ms": 0.4594,
+    "min_of_p50s_ms": 0.4977,
+    "median_of_p50s_ms": 0.5017,
+    "min_spread_x": 1.03,
+    "p50_spread_x": 1.05
+  },
+  "summary_method": "median-of-medians and min-of-medians over repetitions, per 4.4"
+}

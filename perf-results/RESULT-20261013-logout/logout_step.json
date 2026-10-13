@@ -1,0 +1,79 @@
+{
+  "schema": "perf-logout-step/1",
+  "endpoint": "POST /api/v1/account/logout",
+  "measured": "as an ordinary steady-state request, NOT from on_stop",
+  "why_not_on_stop": "on_stop samples are taken while the event loop, the DB pool and the Redis pool are closing, so they measure teardown contention rather than the handler. The 208.47 ms logout p95 in the 2026-09-22 baseline came from there and is attributable to nothing - logout performs no bcrypt and no batched I/O.",
+  "repetitions": 5,
+  "requests_per_repetition": 200,
+  "warmup_discarded": 20,
+  "n_measured": 1000,
+  "reauthentications": 1020,
+  "reauth_note": "logout revokes the session behind it and auth caps at 5 concurrent sessions, so each measured logout is preceded by a fresh login. Without this the probe would measure the session limiter instead of the endpoint. The re-login cost is EXCLUDED from the timings.",
+  "status_distribution": {
+    "200": 1000
+  },
+  "success_rate": 1.0,
+  "latency": {
+    "min_ms": 7.4981,
+    "p50_ms": 12.6707,
+    "p95_ms": 33.8342,
+    "p99_ms": 56.9391,
+    "max_ms": 117.6545,
+    "median_of_repetition_p50s_ms": 12.7829,
+    "server_p50_ms": 11.807
+  },
+  "per_repetition": [
+    {
+      "repetition": 1,
+      "n": 200,
+      "min_ms": 7.7709,
+      "p50_ms": 12.7829,
+      "p95_ms": 46.7783,
+      "server_p50_ms": 11.996
+    },
+    {
+      "repetition": 2,
+      "n": 200,
+      "min_ms": 8.1073,
+      "p50_ms": 13.4957,
+      "p95_ms": 31.9597,
+      "server_p50_ms": 12.599
+    },
+    {
+      "repetition": 3,
+      "n": 200,
+      "min_ms": 8.7092,
+      "p50_ms": 12.8296,
+      "p95_ms": 23.2331,
+      "server_p50_ms": 12.056
+    },
+    {
+      "repetition": 4,
+      "n": 200,
+      "min_ms": 7.8547,
+      "p50_ms": 12.357,
+      "p95_ms": 46.0219,
+      "server_p50_ms": 11.58
+    },
+    {
+      "repetition": 5,
+      "n": 200,
+      "min_ms": 7.4981,
+      "p50_ms": 11.9398,
+      "p95_ms": 20.3873,
+      "server_p50_ms": 11.13
+    }
+  ],
+  "p50_reportable": true,
+  "recorded_step": {
+    "range_ms": [
+      3170.0,
+      3690.0
+    ],
+    "samples_in_range": 0,
+    "share": 0.0,
+    "reproduced": false,
+    "verdict": "0 of 1000 samples fall in the recorded 3.17-3.69 s band. The step DOES NOT REPRODUCE on Linux in steady state, which is itself a result: the recorded figure came from a shutdown burst, and a burst is exactly the condition this measurement removes. Reported as absent rather than hunted for."
+  },
+  "p99_reportable": false
+}

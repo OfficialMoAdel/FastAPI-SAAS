@@ -1,0 +1,90 @@
+{
+  "schema": "perf-users-me-repetitions/1",
+  "endpoint": "GET /api/v1/users/me (authenticated, warm)",
+  "driver": "in-process over ASGITransport; X-Response-Time is the app's own header",
+  "repetitions": 5,
+  "requests_per_repetition": 400,
+  "warmup_discarded": 60,
+  "n_measured": 2000,
+  "per_repetition": [
+    {
+      "repetition": 1,
+      "n": 400,
+      "client_min_ms": 3.4684,
+      "client_p50_ms": 5.6977,
+      "client_p95_ms": 7.6414,
+      "server_min_ms": 3.098,
+      "server_p50_ms": 5.036,
+      "server_p95_ms": 6.872,
+      "throughput_rps": 172.88
+    },
+    {
+      "repetition": 2,
+      "n": 400,
+      "client_min_ms": 3.606,
+      "client_p50_ms": 5.8065,
+      "client_p95_ms": 7.9835,
+      "server_min_ms": 3.177,
+      "server_p50_ms": 5.129,
+      "server_p95_ms": 7.11,
+      "throughput_rps": 168.39
+    },
+    {
+      "repetition": 3,
+      "n": 400,
+      "client_min_ms": 2.9649,
+      "client_p50_ms": 4.9966,
+      "client_p95_ms": 7.2043,
+      "server_min_ms": 2.637,
+      "server_p50_ms": 4.438,
+      "server_p95_ms": 6.57,
+      "throughput_rps": 193.47
+    },
+    {
+      "repetition": 4,
+      "n": 400,
+      "client_min_ms": 2.7972,
+      "client_p50_ms": 4.352,
+      "client_p95_ms": 6.3926,
+      "server_min_ms": 2.481,
+      "server_p50_ms": 3.824,
+      "server_p95_ms": 5.814,
+      "throughput_rps": 223.44
+    },
+    {
+      "repetition": 5,
+      "n": 400,
+      "client_min_ms": 3.0658,
+      "client_p50_ms": 4.6022,
+      "client_p95_ms": 6.7295,
+      "server_min_ms": 2.722,
+      "server_p50_ms": 4.073,
+      "server_p95_ms": 6.123,
+      "throughput_rps": 209.04
+    }
+  ],
+  "summary": {
+    "client_min_of_mins_ms": 2.7972,
+    "client_median_of_mins_ms": 3.0658,
+    "client_min_of_p50s_ms": 4.352,
+    "client_median_of_p50s_ms": 4.9966,
+    "server_min_of_mins_ms": 2.481,
+    "server_median_of_mins_ms": 2.722,
+    "server_min_of_p50s_ms": 3.824,
+    "server_median_of_p50s_ms": 4.438,
+    "client_min_spread_x": 1.29,
+    "server_min_spread_x": 1.28
+  },
+  "co_location_gap_ms": 0.5586,
+  "sql_crosscheck": {
+    "source": "X-Query-Count per request, summed over the measured window",
+    "total_queries": 0,
+    "requests": 2000,
+    "queries_per_request": 0.0,
+    "expected": 0,
+    "confirms_p21": true,
+    "responses_without_header": 2000
+  },
+  "server_side_header_missing": 0,
+  "summary_method": "median-of-medians and min-of-medians over repetitions, per 4.4"
+}

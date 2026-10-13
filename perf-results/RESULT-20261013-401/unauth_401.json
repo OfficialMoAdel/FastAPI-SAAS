@@ -1,0 +1,93 @@
+{
+  "schema": "perf-401-class/1",
+  "endpoint": "GET /api/v1/users/me",
+  "credential_sent": false,
+  "purpose": "the 401 class - traceback exposure and refusal cost, unauthenticated",
+  "driver": "in-process over ASGITransport; no Authorization header is sent",
+  "repetitions": 5,
+  "requests_per_repetition": 400,
+  "warmup_discarded": 60,
+  "n_measured": 2000,
+  "expected_401_exemption": {
+    "applies_to": 401,
+    "reason": "A 401 is this endpoint working: no credential was supplied, so the request is correctly refused. Counting it as a failure would report a healthy endpoint as broken. The exemption is recorded here rather than applied silently in the counting code, so a reader can tell an exemption from a metric ignoring failures.",
+    "counts_as_failure": false
+  },
+  "status_distribution": {
+    "401": 2000
+  },
+  "fatal_statuses": {
+    "statuses": [
+      429,
+      403
+    ],
+    "observed": {},
+    "meaning": "429 means a rate limit tripped and the run is measuring rejection; 403 means an unauthenticated request was denied rather than challenged, which this endpoint must never do. Either voids the run under 4.5.",
+    "clean": true
+  },
+  "error_traceback": {
+    "count": 0,
+    "per_request": 0.0,
+    "clean": true,
+    "markers_checked": [
+      "Traceback (most recent call last)",
+      "File \"",
+      "sqlalchemy.exc",
+      "pydantic_core",
+      "raise "
+    ],
+    "note": "checked in the response BODY, not inferred from the status, because a clean refusal and a loud one share a status"
+  },
+  "latency": {
+    "min_ms": 1.9843,
+    "p50_ms": 3.4173,
+    "p95_ms": 8.7648,
+    "p99_ms": 10.1587,
+    "median_of_repetition_p50s_ms": 3.2905,
+    "server_p50_ms": 2.886
+  },
+  "per_repetition": [
+    {
+      "repetition": 1,
+      "n": 400,
+      "min_ms": 3.8903,
+      "p50_ms": 7.1771,
+      "p95_ms": 9.8747,
+      "server_p50_ms": 6.042
+    },
+    {
+      "repetition": 2,
+      "n": 400,
+      "min_ms": 2.9014,
+      "p50_ms": 6.2519,
+      "p95_ms": 9.0463,
+      "server_p50_ms": 5.309
+    },
+    {
+      "repetition": 3,
+      "n": 400,
+      "min_ms": 1.9843,
+      "p50_ms": 2.8948,
+      "p95_ms": 3.5751,
+      "server_p50_ms": 2.456
+    },
+    {
+      "repetition": 4,
+      "n": 400,
+      "min_ms": 2.0253,
+      "p50_ms": 2.9457,
+      "p95_ms": 3.6246,
+      "server_p50_ms": 2.515
+    },
+    {
+      "repetition": 5,
+      "n": 400,
+      "min_ms": 2.4391,
+      "p50_ms": 3.2905,
+      "p95_ms": 4.2896,
+      "server_p50_ms": 2.792
+    }
+  ],
+  "p99_reportable": false,
+  "p99_note": "n=2000; 4.4 requires 10,000 for a p99 claim and 4.6 says a column below its sample size is not reported. p99 is computed here for completeness but p99_reportable is False."
+}

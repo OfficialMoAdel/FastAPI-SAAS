@@ -1,0 +1,96 @@
+{
+  "schema": "perf-refresh/1",
+  "endpoint": "POST /api/v1/account/refresh",
+  "why_this_endpoint": "the only endpoint whose code changed at the baseline boundary, so a 200 alone cannot be trusted as evidence the handler ran",
+  "driver": "in-process over ASGITransport",
+  "repetitions": 5,
+  "requests_per_repetition": 200,
+  "warmup_discarded": 20,
+  "n_measured": 1000,
+  "logins": 1020,
+  "logins_note": "refresh REUSES a token, so every measured refresh is preceded by a fresh login. Without that the probe would measure the refresh-token exhaustion path rather than the endpoint. The login cost is excluded from the timings and the count is recorded.",
+  "handler_execution_assertion": {
+    "method": "positive evidence, not a status code: a 200 can come from a cache, a replay, or a middleware short-circuit. The handler's job is to ROTATE the access token, so a NEW access token differing from the one just issued is proof the handler ran.",
+    "refreshes": 1000,
+    "rotations_observed": 1000,
+    "no_new_access_token": 0,
+    "all_rotated": true,
+    "share_rotated": 1.0
+  },
+  "sql": {
+    "source": "inferred from the endpoint's contract, asserted not assumed",
+    "expected_per_request": "1 UPDATE (rotation marker) + tenant/session reads",
+    "note": "per-request SQL for this endpoint is measured by the query profiler, which is disabled in this run because its listeners change what is being measured. Recorded as a CONTRACT rather than a measurement, deliberately, so it is not mistaken for one.",
+    "measured": false
+  },
+  "redis": {
+    "commands_and_round_trips": "reported separately per P-10; this probe measures LATENCY, and the command/round-trip counts for the stores are in the committed store_rtt.json",
+    "artefact": "perf-results/RESULT-20261012-sweepB/store_rtt.json"
+  },
+  "rtt_breakdown": {
+    "redis_at_1": "0.4322 ms p50",
+    "redis_at_64": "13.6116 ms p50",
+    "postgres_at_1": "0.192 ms p50",
+    "postgres_at_64": "4.6111 ms p50",
+    "source": "committed store_rtt.json, per store per concurrency level",
+    "note": "These are STORE round trips under synthetic load, not this endpoint's own I/O, and are recorded as a bound on what the stores can contribute rather than as this endpoint's cost."
+  },
+  "commit_on_critical_path": {
+    "position": "The handler COMMITS a transaction on the request path. Its cost is NOT separately attributed here and MUST NOT be read as included: M-2 (bead z0oi) measures the COMMIT in isolation and remains open. This artefact reports the endpoint's total and states that the COMMIT's share of it is not yet established.",
+    "separately_measured": false,
+    "open_bead": "z0oi (M-2)",
+    "must_not_infer": "the COMMIT is not assumed to be negligible here"
+  },
+  "status_distribution": {
+    "200": 1000
+  },
+  "latency": {
+    "min_ms": 8.9697,
+    "p50_ms": 14.3261,
+    "p95_ms": 56.0295,
+    "p99_ms": 86.995,
+    "median_of_repetition_p50s_ms": 14.3813,
+    "server_p50_ms": 13.541
+  },
+  "per_repetition": [
+    {
+      "repetition": 1,
+      "n": 200,
+      "min_ms": 9.7703,
+      "p50_ms": 19.9603,
+      "p95_ms": 67.5176
+    },
+    {
+      "repetition": 2,
+      "n": 200,
+      "min_ms": 8.9738,
+      "p50_ms": 14.6075,
+      "p95_ms": 26.881
+    },
+    {
+      "repetition": 3,
+      "n": 200,
+      "min_ms": 8.9697,
+      "p50_ms": 12.4704,
+      "p95_ms": 20.0625
+    },
+    {
+      "repetition": 4,
+      "n": 200,
+      "min_ms": 10.0672,
+      "p50_ms": 14.0831,
+      "p95_ms": 67.4504
+    },
+    {
+      "repetition": 5,
+      "n": 200,
+      "min_ms": 9.7031,
+      "p50_ms": 14.3813,
+      "p95_ms": 62.3974
+    }
+  ],
+  "p50_reportable": true,
+  "p99_reportable": false,
+  "server_side_header_missing": 0,
+  "query_header_missing": 0
+}
