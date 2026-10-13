@@ -366,6 +366,22 @@ markers = [
 [dependency-groups]
 dev = [
     "aiosqlite>=0.21.0",
+    # q2ik (d): `src/benchmarks/prof_request_path.py:482` and
+    # `src/benchmarks/census.py:443` both do a lazy
+    # `from asgi_lifespan import LifespanManager` inside the phase that drives
+    # the app in-process. The lazy import is deliberate - neither module may be
+    # imported into a test session - but the PACKAGE was never declared, so both
+    # instruments died with ModuleNotFoundError on any machine that did not
+    # happen to have it installed. That is how an instrument that is supposed to
+    # produce a number produces a traceback instead, and it is invisible until
+    # the instrument is actually run on a clean checkout.
+    #
+    # Found by criterion (d) of the Phase-0 Step 1 exit gate, which asks that
+    # this file either compile and produce a profile on the Linux target or be
+    # deleted. It compiled; it did not produce a profile. Deleting a 766-line
+    # profiler over a missing one-line declaration would have been the wrong
+    # trade, so the declaration is what got added.
+    "asgi-lifespan>=2.1.0",
     "faker>=37.3.0",
     # s92p.1: the layering gate is cited as an enforced invariant in
     # AGENTS.md/ARCHITECTURE.md, so it must be runnable BEFORE a push. It was

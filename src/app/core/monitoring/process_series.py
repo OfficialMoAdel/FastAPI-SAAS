@@ -153,6 +153,13 @@ class ProcessSeriesSampler:
         self._first_rss_bytes: int | None = None
         self._host_identity = HOST_UNRECORDED
         self._tracemalloc_peak_bytes: int | None = None
+        # The workload the window covered. L-10 requires the RSS series to be
+        # reported WITH the request count and concurrency it spans: a flat RSS
+        # curve means "no leak" only relative to the traffic that produced it,
+        # and the 20261011-190914 artefact could not supply either number for
+        # its own window - the sampler simply had nowhere to record them.
+        self._request_count: int | None = None
+        self._concurrency: int | None = None
         # CPU time is read as a delta between samples rather than a rate, because
         # a rate needs a denominator that changes with the interval and a delta
         # does not.
@@ -288,6 +295,15 @@ class ProcessSeriesSampler:
             # tracemalloc attributes; it never concludes.
             "tracemalloc_peak_bytes": self._tracemalloc_peak_bytes,
             "tracemalloc_role": "attribution-only",
+            # The workload this window covered. Absent rather than defaulted: a
+            # series carrying no traffic figures is a series whose "flat" cannot
+            # be weighed against anything, which is what L-10 exists to prevent.
+            "workload": {
+                "request_count": self._request_count,
+                "concurrency": self._concurrency,
+                "recorded": self._request_count is not None,
+            },
+            "tracemalloc_divergence": self._tracemalloc_divergence(),
             "cpu_series_seconds": self._cpu.export(),
             "cpu_summary_seconds": summarise(self._cpu.values()),
             "cost_ceiling_us": SAMPLER_COST_CEILING_US,
@@ -304,6 +320,61 @@ class ProcessSeriesSampler:
     def record_tracemalloc_peak(self, peak_bytes: int) -> None:
         """Record a tracemalloc peak for attribution alongside the RSS series."""
         self._tracemalloc_peak_bytes = peak_bytes
+
+    def record_workload(self, *, request_count: int, concurrency: int) -> None:
+        """Record the traffic this window covered.
+
+        Set by the caller rather than inferred: the sampler watches one process
+        and cannot know how many requests the load generator sent, or at what
+        concurrency. A recorded value is a claim the caller owns; an inferred one
+        would be a guess wearing the same field name.
+        """
+        self._request_count = int(request_count)
+        self._concurrency = int(concurrency)
+
+    def _rss_growth_bytes(self) -> int | None:
+        values = self._rss.values()
+        if not values or self._first_rss_bytes is None:
+            return None
+        return values[-1] - self._first_rss_bytes
+
+    def _tracemalloc_divergence(self) -> dict[str, Any]:
+        """The disagreement between RSS growth and tracemalloc: stated, not resolved.
+
+        L-10 asks for the instruments to be cross-checked with the divergence
+        REPORTED rather than resolved by fiat. Two honest outcomes exist and both
+        carry information: tracemalloc accounts for part of the RSS delta and the
+        remainder is allocator arenas and non-Python allocations, or tracemalloc
+        was never enabled for this window and there is nothing to compare.
+
+        The second is reported as its own ``status`` rather than left as a bare
+        null, because a silent null is indistinguishable from "the difference was
+        zero" - which is exactly how the 20261011-190914 artefact's
+        ``tracemalloc_peak_bytes: null`` read, and why its divergence could not be
+        assessed at all.
+        """
+        growth = self._rss_growth_bytes()
+        peak = self._tracemalloc_peak_bytes
+        if peak is None:
+            return {
+                "status": "not-available",
+                "reason": (
+                    "tracemalloc was not enabled for this window, so RSS has no "
+                    "second instrument to be compared against. tracemalloc is "
+                    "attribution-only and enabling it perturbs the series it would "
+                    "cross-check, so it runs in a companion window."
+                ),
+                "rss_growth_bytes": growth,
+                "tracemalloc_accounted_bytes": None,
+            }
+        accounted = max(0, min(peak, growth)) if growth is not None and growth > 0 else 0
+        return {
+            "status": "compared",
+            "rss_growth_bytes": growth,
+            "tracemalloc_peak_bytes": peak,
+            "tracemalloc_accounted_bytes": accounted,
+            "unattributed_bytes": (growth - accounted) if growth is not None else None,
+        }
 
 
 def assert_window_long_enough(window_seconds: float,
@@ -359,8 +430,28 @@ def assert_tracemalloc_is_attribution_only(export: dict[str, Any]) -> dict[str, 
             "tracemalloc attributes and never concludes (addendum A-8); the two "
             "must be reported side by side so their disagreement stays visible."
         )
+    # The divergence block is the ONE shape that legitimately sits under a
+    # tracemalloc* key: it exists to put the two instruments side by side, which
+    # is what this guard exists to enforce. It is allowed only if it actually
+    # carries an RSS figure beside the tracemalloc one - otherwise it would be a
+    # tracemalloc number wearing the name of a comparison, and the guard's
+    # original objection would apply in full.
+    divergence = export.get("tracemalloc_divergence")
+    if divergence is not None:
+        if not isinstance(divergence, dict) or divergence.get("rss_growth_bytes") is None:
+            raise AssertionError(
+                "T-7 export carries 'tracemalloc_divergence' with no RSS figure "
+                "beside it, so it reports a tracemalloc number rather than a "
+                "disagreement between two instruments. Either include "
+                "rss_growth_bytes or drop the block."
+            )
     for key in export:
-        if "tracemalloc" in key and "role" not in key and "peak" not in key:
+        if (
+            "tracemalloc" in key
+            and "role" not in key
+            and "peak" not in key
+            and key != "tracemalloc_divergence"
+        ):
             raise AssertionError(
                 f"T-7 export promotes tracemalloc into key {key!r}; it may only be "
                 f"reported as an attribution beside RSS."

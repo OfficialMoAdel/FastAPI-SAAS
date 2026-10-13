@@ -1,0 +1,565 @@
+{
+  "env": {
+    "python": "3.13.16 (main, Oct  9 2026, 15:23:36) [Clang 22.1.3 ]",
+    "cwd": "/home/ansible/FastAPI-Saas"
+  },
+  "testclient": {
+    "registered": [
+      "CORSMiddleware",
+      "GZipFilterMiddleware",
+      "QueryProfilerMiddleware",
+      "IPFilterMiddleware",
+      "RequestBodyLimitMiddleware",
+      "SecurityHeadersMiddleware",
+      "RateLimitMiddleware",
+      "TenantMiddleware",
+      "AttackDetectionMiddleware",
+      "RequestIDMiddleware"
+    ],
+    "get_unwrapped": {
+      "n": 25,
+      "p50": 4.53197200113209,
+      "p95": 5.250736998277716,
+      "p99": 5.309997999574989,
+      "min": 4.055988996697124,
+      "max": 5.309997999574989,
+      "mean": 4.56757535925135
+    },
+    "x_query_count": {
+      "0": 25
+    },
+    "sql_per_req": 0.0,
+    "redis_per_req": 3.0,
+    "pool_checkouts_per_req": 0.0,
+    "sql_ops": {},
+    "redis_ops": {
+      "EVALSHA(token_blacklist_check)": 25,
+      "EVALSHA(rate_limit_gcra)": 25,
+      "EVALSHA(composite_auth_prefetch)": 25
+    },
+    "rss_after_boot": 185.515625,
+    "mw_order_timed": [
+      "CORSMiddleware",
+      "GZipFilterMiddleware",
+      "QueryProfilerMiddleware",
+      "IPFilterMiddleware",
+      "RequestBodyLimitMiddleware",
+      "SecurityHeadersMiddleware",
+      "RateLimitMiddleware",
+      "TenantMiddleware",
+      "AttackDetectionMiddleware",
+      "RequestIDMiddleware"
+    ],
+    "sql_per_req_wrapped": 0.0,
+    "rss_after_get_phase": 187.515625,
+    "post": {
+      "n": 5,
+      "fails": 0,
+      "p50": 12.214764996315353,
+      "p95": 19.145065001794137,
+      "p99": 19.145065001794137,
+      "mean": 13.657960398995783,
+      "x_query_count": {
+        "1": 5
+      },
+      "sql_per_req": 1.0,
+      "redis_per_req": 10.0
+    },
+    "rss_after_post_phase": 187.515625
+  },
+  "async": {
+    "cprofile": {
+      "n": 25,
+      "clean_wall_s": 0.10583429200050887,
+      "clean_ms_per_req": 4.233371680020355,
+      "profiled_wall_s": 0.20521077699959278,
+      "distortion_x": 1.9389819038861817,
+      "total_tottime_s": 0.204843026,
+      "top_src": [
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/observability/log_sanitizer.py:192(<genexpr>)",
+          "tottime_s": 0.002169025,
+          "cumtime_s": 0.002169025,
+          "pct": 1.0588717821420977
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/attack_detection.py:558(_check_for_patterns)",
+          "tottime_s": 0.0015635870000000002,
+          "cumtime_s": 0.002596651,
+          "pct": 0.7633098526869058
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/observability/log_sanitizer.py:252(sanitize_value)",
+          "tottime_s": 0.000691373,
+          "cumtime_s": 0.007345433,
+          "pct": 0.3375135651432917
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/observability/log_sanitizer.py:182(_maybe_sensitive)",
+          "tottime_s": 0.0006748310000000001,
+          "cumtime_s": 0.006064693,
+          "pct": 0.32943811326044364
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/attack_detection.py:165(_attack_prefilter_hit)",
+          "tottime_s": 0.000563227,
+          "cumtime_s": 0.000801464,
+          "pct": 0.2749554187898005
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/observability/log_sanitizer.py:333(__call__)",
+          "tottime_s": 0.000558274,
+          "cumtime_s": 0.007919338,
+          "pct": 0.27253746974036597
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/ip_filter.py:102(__call__)",
+          "tottime_s": 0.0005448790000000001,
+          "cumtime_s": 0.11518813000000001,
+          "pct": 0.2659983161935911
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/security/request_admission.py:80(evaluate)",
+          "tottime_s": 0.000523238,
+          "cumtime_s": 0.02031256,
+          "pct": 0.25543364117263134
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/request_id.py:81(__call__)",
+          "tottime_s": 0.0005007060000000001,
+          "cumtime_s": 0.078417517,
+          "pct": 0.24443399893926582
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/gzip_filter.py:96(__call__)",
+          "tottime_s": 0.000494948,
+          "cumtime_s": 0.12021198200000001,
+          "pct": 0.24162306604472833
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/security/auth_prefetch.py:34(execute_composite_auth_prefetch)",
+          "tottime_s": 0.00047044100000000004,
+          "cumtime_s": 0.0034778110000000004,
+          "pct": 0.22965927089946425
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/tenant.py:178(__call__)",
+          "tottime_s": 0.000468555,
+          "cumtime_s": 0.08911126000000001,
+          "pct": 0.22873856589093736
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/utils/lua_manager.py:701(execute)",
+          "tottime_s": 0.000426152,
+          "cumtime_s": 0.007891740000000001,
+          "pct": 0.20803832491714896
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/query_profiler.py:195(__call__)",
+          "tottime_s": 0.00041089,
+          "cumtime_s": 0.116459091,
+          "pct": 0.20058774175694905
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/api/deps/auth.py:456(_resolve_strict_bearer_flow)",
+          "tottime_s": 0.00040862,
+          "cumtime_s": 0.010462314,
+          "pct": 0.1994795761316277
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/attack_detection.py:399(_scan_request)",
+          "tottime_s": 0.00038913600000000005,
+          "cumtime_s": 0.007182503000000001,
+          "pct": 0.1899679025440681
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/observability/log_sanitizer.py:196(sanitize_message)",
+          "tottime_s": 0.00036608100000000003,
+          "cumtime_s": 0.006486014,
+          "pct": 0.178712942856058
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/attack_detection.py:683(__call__)",
+          "tottime_s": 0.000344623,
+          "cumtime_s": 0.08640062000000001,
+          "pct": 0.16823760453528938
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/rate_limit.py:52(__call__)",
+          "tottime_s": 0.000341066,
+          "cumtime_s": 0.110543793,
+          "pct": 0.16650115293649292
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/security/token_blacklist_cache.py:147(is_token_blacklisted)",
+          "tottime_s": 0.000331265,
+          "cumtime_s": 0.0036101960000000004,
+          "pct": 0.16171651360002856
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/security/request_admission.py:349(_get_rate_limit_config)",
+          "tottime_s": 0.00030734,
+          "cumtime_s": 0.010624345,
+          "pct": 0.15003683845209356
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/security/request_admission.py:375(_resolve_legacy_config)",
+          "tottime_s": 0.000298058,
+          "cumtime_s": 0.004823611,
+          "pct": 0.14550556385551539
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/request_id.py:60(sender)",
+          "tottime_s": 0.000290493,
+          "cumtime_s": 0.0044350940000000005,
+          "pct": 0.14181249206892696
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/utils/gcra_rate_limit.py:53(_execute_gcra_script)",
+          "tottime_s": 0.000281644,
+          "cumtime_s": 0.0027339720000000003,
+          "pct": 0.1374925988449321
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/request_id.py:37(request_id_from_scope)",
+          "tottime_s": 0.000279951,
+          "cumtime_s": 0.001903776,
+          "pct": 0.13666611232349204
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/utils/gcra_rate_limit.py:93(check_rate_limit)",
+          "tottime_s": 0.000277929,
+          "cumtime_s": 0.003103251,
+          "pct": 0.1356790150131838
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/body_limit.py:42(__call__)",
+          "tottime_s": 0.000277646,
+          "cumtime_s": 0.111418391,
+          "pct": 0.1355408604440358
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/redis_provider.py:83(get_redis)",
+          "tottime_s": 0.00024467600000000004,
+          "cumtime_s": 0.00024467600000000004,
+          "pct": 0.1194456090489505
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/modules/users/cache.py:109(assert_user_payload_shape)",
+          "tottime_s": 0.00024257,
+          "cumtime_s": 0.000353207,
+          "pct": 0.11841750472871845
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/security/jwt_utils.py:269(decode_verified_token)",
+          "tottime_s": 0.00023462000000000003,
+          "cumtime_s": 0.005049748000000001,
+          "pct": 0.11453648414664604
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/security/jwt_utils.py:351(extract_jwt_claims_to_state)",
+          "tottime_s": 0.00022758400000000002,
+          "cumtime_s": 0.009792135,
+          "pct": 0.11110165888683952
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/db/database.py:183(async_get_db)",
+          "tottime_s": 0.00020447100000000001,
+          "cumtime_s": 0.004916162,
+          "pct": 0.09981838483483446
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/security/rate_policy.py:106(consume)",
+          "tottime_s": 0.00019999700000000002,
+          "cumtime_s": 0.003339663,
+          "pct": 0.09763427337770338
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/security/tokens.py:56(_pepper)",
+          "tottime_s": 0.000199096,
+          "cumtime_s": 0.000275182,
+          "pct": 0.09719442437840183
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/api/deps/auth.py:210(_load_and_validate_user)",
+          "tottime_s": 0.00019212500000000002,
+          "cumtime_s": 0.005190818000000001,
+          "pct": 0.0937913307334173
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/modules/users/service.py:333(resolve_current_profile)",
+          "tottime_s": 0.000190306,
+          "cumtime_s": 0.008479211,
+          "pct": 0.09290333369709154
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/api/deps/auth.py:383(resolve_principal)",
+          "tottime_s": 0.00018704,
+          "cumtime_s": 0.010959895,
+          "pct": 0.09130894209695965
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/api/deps/auth.py:43(_create_auth_context)",
+          "tottime_s": 0.000183525,
+          "cumtime_s": 0.001024542,
+          "pct": 0.0895929940031251
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/request_id.py:26(resolve_request_id)",
+          "tottime_s": 0.00018097000000000002,
+          "cumtime_s": 0.001496806,
+          "pct": 0.08834569745127667
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/rate_limit.py:121(send_wrapper)",
+          "tottime_s": 0.000176114,
+          "cumtime_s": 0.0036198970000000004,
+          "pct": 0.08597510173473027
+        }
+      ],
+      "buckets": {
+        "other": 0.13105259199999997,
+        "builtin/C": 0.001152829,
+        "site-packages/redis": 0.010364041000000004,
+        "site-packages/sqlalchemy": 0.0021204040000000006,
+        "site-packages/jwt": 0.0017189969999999999,
+        "site-packages/starlette": 0.012480894000000001,
+        "site-packages/httpx": 0.018627071999999998,
+        "site-packages/structlog": 0.0027743399999999997,
+        "site-packages/sniffio": 0.000548204,
+        "site-packages/idna": 0.004991793,
+        "site-packages/pydantic": 0.000697501,
+        "site-packages/email_validator": 0.003425385,
+        "site-packages/fastapi": 0.008705970000000002,
+        "site-packages/anyio": 0.0041876430000000004,
+        "site-packages/cachetools": 0.00164042,
+        "site-packages/opentelemetry": 0.000354941
+      }
+    },
+    "tracemalloc": {
+      "n": 25,
+      "peak_bytes": 879206,
+      "current_bytes": 132436,
+      "top": [
+        {
+          "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/httpx/_models.py:162",
+          "size_bytes": 35589,
+          "count": 561,
+          "size_per_req": 1423.56,
+          "count_per_req": 22.44
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/benchmarks/prof_request_path.py:133",
+          "size_bytes": 23896,
+          "count": 250,
+          "size_per_req": 955.84,
+          "count_per_req": 10.0
+        },
+        {
+          "site": "/home/ansible/.local/share/uv/python/cpython-3.13.16-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py:817",
+          "size_bytes": 7880,
+          "count": 66,
+          "size_per_req": 315.2,
+          "count_per_req": 2.64
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/benchmarks/prof_request_path.py:152",
+          "size_bytes": 5808,
+          "count": 242,
+          "size_per_req": 232.32,
+          "count_per_req": 9.68
+        },
+        {
+          "site": "/home/ansible/.local/share/uv/python/cpython-3.13.16-linux-x86_64-gnu/lib/python3.13/asyncio/events.py:38",
+          "size_bytes": 5440,
+          "count": 85,
+          "size_per_req": 217.6,
+          "count_per_req": 3.4
+        },
+        {
+          "site": "/home/ansible/.local/share/uv/python/cpython-3.13.16-linux-x86_64-gnu/lib/python3.13/http/cookiejar.py:1110",
+          "size_bytes": 4051,
+          "count": 70,
+          "size_per_req": 162.04,
+          "count_per_req": 2.8
+        },
+        {
+          "site": "/home/ansible/.local/share/uv/python/cpython-3.13.16-linux-x86_64-gnu/lib/python3.13/re/__init__.py:285",
+          "size_bytes": 3431,
+          "count": 73,
+          "size_per_req": 137.24,
+          "count_per_req": 2.92
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/structlog/processors.py:548",
+          "size_bytes": 2550,
+          "count": 51,
+          "size_per_req": 102.0,
+          "count_per_req": 2.04
+        },
+        {
+          "site": "/home/ansible/.local/share/uv/python/cpython-3.13.16-linux-x86_64-gnu/lib/python3.13/contextlib.py:109",
+          "size_bytes": 2008,
+          "count": 22,
+          "size_per_req": 80.32,
+          "count_per_req": 0.88
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/query_profiler.py:215",
+          "size_bytes": 1672,
+          "count": 22,
+          "size_per_req": 66.88,
+          "count_per_req": 0.88
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/core/tenancy/context.py:141",
+          "size_bytes": 1672,
+          "count": 22,
+          "size_per_req": 66.88,
+          "count_per_req": 0.88
+        },
+        {
+          "site": "<string>:1",
+          "size_bytes": 1488,
+          "count": 28,
+          "size_per_req": 59.52,
+          "count_per_req": 1.12
+        },
+        {
+          "site": "/home/ansible/.local/share/uv/python/cpython-3.13.16-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py:780",
+          "size_bytes": 1464,
+          "count": 61,
+          "size_per_req": 58.56,
+          "count_per_req": 2.44
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/structlog/_base.py:168",
+          "size_bytes": 1440,
+          "count": 12,
+          "size_per_req": 57.6,
+          "count_per_req": 0.48
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/fastapi/dependencies/utils.py:661",
+          "size_bytes": 1232,
+          "count": 22,
+          "size_per_req": 49.28,
+          "count_per_req": 0.88
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/query_profiler.py:214",
+          "size_bytes": 1232,
+          "count": 11,
+          "size_per_req": 49.28,
+          "count_per_req": 0.44
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/redis/utils.py:163",
+          "size_bytes": 1152,
+          "count": 24,
+          "size_per_req": 46.08,
+          "count_per_req": 0.96
+        },
+        {
+          "site": "/home/ansible/.local/share/uv/python/cpython-3.13.16-linux-x86_64-gnu/lib/python3.13/gzip.py:240",
+          "size_bytes": 1104,
+          "count": 23,
+          "size_per_req": 44.16,
+          "count_per_req": 0.92
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/fastapi/dependencies/utils.py:638",
+          "size_bytes": 1080,
+          "count": 9,
+          "size_per_req": 43.2,
+          "count_per_req": 0.36
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/fastapi/responses.py:46",
+          "size_bytes": 1057,
+          "count": 1,
+          "size_per_req": 42.28,
+          "count_per_req": 0.04
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:190",
+          "size_bytes": 992,
+          "count": 9,
+          "size_per_req": 39.68,
+          "count_per_req": 0.36
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/attack_detection.py:577",
+          "size_bytes": 893,
+          "count": 19,
+          "size_per_req": 35.72,
+          "count_per_req": 0.76
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/fastapi/dependencies/utils.py:689",
+          "size_bytes": 832,
+          "count": 13,
+          "size_per_req": 33.28,
+          "count_per_req": 0.52
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/app/middleware/query_profiler.py:77",
+          "size_bytes": 792,
+          "count": 11,
+          "size_per_req": 31.68,
+          "count_per_req": 0.44
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/httpx/_models.py:238",
+          "size_bytes": 784,
+          "count": 14,
+          "size_per_req": 31.36,
+          "count_per_req": 0.56
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/httpx/_models.py:82",
+          "size_bytes": 740,
+          "count": 3,
+          "size_per_req": 29.6,
+          "count_per_req": 0.12
+        },
+        {
+          "site": "/home/ansible/.local/share/uv/python/cpython-3.13.16-linux-x86_64-gnu/lib/python3.13/email/_policybase.py:317",
+          "size_bytes": 728,
+          "count": 13,
+          "size_per_req": 29.12,
+          "count_per_req": 0.52
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/src/benchmarks/prof_request_path.py:148",
+          "size_bytes": 720,
+          "count": 10,
+          "size_per_req": 28.8,
+          "count_per_req": 0.4
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/structlog/_native.py:164",
+          "size_bytes": 720,
+          "count": 6,
+          "size_per_req": 28.8,
+          "count_per_req": 0.24
+        },
+        {
+          "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/structlog/_base.py:223",
+          "size_bytes": 720,
+          "count": 6,
+          "size_per_req": 28.8,
+          "count_per_req": 0.24
+        }
+      ]
+    },
+    "rss": {
+      "boot_rss_mb": 188.015625,
+      "peak_rss_mb": 191.765625,
+      "end_rss_mb": 191.765625,
+      "delta_mb": 3.75,
+      "samples": 53,
+      "window_s": 0.29981814100028714
+    }
+  }
+}

@@ -1460,6 +1460,21 @@ def read_locust_phase(prefix: Path, *, phase: str) -> dict[str, Any]:
 
     endpoints: dict[str, dict[str, Any]] = {}
     for row in stats:
+        # The total row must be excluded, and locust identifies it by NAME: the
+        # `Type` cell on that row is EMPTY, so testing `Type == "Aggregated"`
+        # never matched and the total was admitted as if it were another
+        # endpoint. Summing the endpoints then counted every request twice,
+        # because the total IS the sum of the rows above it.
+        #
+        # That is where the 122040 came from in RESULT-20261011-190914: 61020
+        # of real requests plus a duplicate 61020 from the total row. It made
+        # `warm_population.verified` false, which in turn made every reported
+        # percentile carry a "no ramp request can be PROVEN absent" caveat -
+        # over a population that was in fact correct, since the ramp lives in
+        # the cold phase's own file. Both spellings are tested because locust's
+        # column layout has varied across versions.
+        if (row.get(LOCUST_NAME_COLUMN) or "").strip() == AGGREGATED_ROW_TYPE:
+            continue
         if (row.get(LOCUST_TYPE_COLUMN) or "").strip() == AGGREGATED_ROW_TYPE:
             continue
         name = (row.get(LOCUST_NAME_COLUMN) or "").strip()

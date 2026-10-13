@@ -1,0 +1,92 @@
+{
+  "deployment": {
+    "core_count": 2,
+    "cpu_model": "AMD EPYC 7763 64-Core Processor",
+    "distro": "Debian GNU/Linux 12 (bookworm)",
+    "image_digest": "sha256:39a80dbe9a9a9a987173a8b40645e7372d6bf73c6f7cb78d47bedb7fd6fd2b09",
+    "orchestrator": "self-hosted-perf-app",
+    "store_addresses": {
+      "postgres": "db:5432/perf_test_db",
+      "redis_cache": "redis:6379",
+      "redis_queue": "redis:6379"
+    },
+    "store_locality": "co-located"
+  },
+  "event_loop": "uvloop",
+  "host": {
+    "cpu_count": 2,
+    "machine": "x86_64",
+    "platform": "Linux",
+    "release": "6.8.0-1064-azure"
+  },
+  "http": "httptools",
+  "image_digest": "sha256:39a80dbe9a9a9a987173a8b40645e7372d6bf73c6f7cb78d47bedb7fd6fd2b09",
+  "limits": {
+    "algorithm": "gcra",
+    "auto_ban_enabled": true,
+    "auto_ban_threshold": 10,
+    "auto_ban_violation_window": 86400,
+    "default_anonymous_limit": [
+      10,
+      3600
+    ],
+    "default_authenticated_limit": [
+      50,
+      3600
+    ],
+    "ip_whitelist_bypass_rate_limit": true,
+    "ip_whitelist_enabled": true,
+    "security_budgets": {
+      "ai_chat": [
+        60,
+        60
+      ],
+      "auth": [
+        5,
+        60
+      ],
+      "magic_link_send": [
+        3,
+        60
+      ],
+      "mfa_mutate": [
+        5,
+        60
+      ],
+      "mfa_verify": [
+        5,
+        60
+      ],
+      "mfa_verify_global": [
+        15,
+        60
+      ],
+      "passkey_login": [
+        10,
+        60
+      ],
+      "refresh": [
+        60,
+        60
+      ]
+    }
+  },
+  "non_representative_reasons": [],
+  "python": {
+    "executable": "/app/.venv/bin/python",
+    "implementation": "CPython",
+    "version": "3.13.16 (main, Oct  6 2026, 02:04:05) [GCC 12.2.0]"
+  },
+  "representative": true,
+  "schema": "perf-app-host-report/1",
+  "stores": {
+    "postgres": "db:5432/perf_test_db",
+    "redis_cache": "redis:6379",
+    "redis_queue": "redis:6379"
+  },
+  "uvicorn": {
+    "http_arg": "auto",
+    "loop_arg": "auto",
+    "version": "0.34.3"
+  }
+}

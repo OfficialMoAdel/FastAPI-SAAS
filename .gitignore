@@ -236,10 +236,29 @@ AUDIT_*.md
 # src/benchmarks/perf_accounts.py was silently untracked, so the file the
 # seeder and the load file both import was absent from the repo. Scoped to
 # what it was written for: the generated CSVs and logs.
-perf_*.csv
-perf_*.log
-perf_*.out
-perf_*.json
+# Perf artefact DIRECTORIES. The old bare `perf_*` matched these by name,
+# which is also why it silently matched src/benchmarks/perf_*.py. Restore the
+# directory-level coverage explicitly and scope the file patterns below.
+#
+# SCOPED TO THE ROOT. Every pattern here is anchored with a leading slash so it
+# matches a generated artefact at the repository root and nothing deeper. The
+# unanchored forms were themselves a second bug: a bare `perf-*` added to fix the
+# first one swallowed `perf-results/` wholesale, which silently untracked the
+# measurement EVIDENCE - six RESULT-* directories, the 2,101.9 s RSS/CPU series,
+# and the hand-written STATE.md. An ignore rule that hides the proof is worse
+# than the untracked source module it was written to fix, so the directory is
+# negated explicitly below rather than left to pattern subtlety.
+/reports/perf_*/
+/perf_*.csv
+/perf_*.log
+/perf_*.out
+/perf_*.json
 !src/benchmarks/perf_*.py
+# Evidence is TRACKED. The RSS/CPU series is the answer to L-10 and the run
+# artefacts are what every latency claim in STATE.md rests on; neither survives
+# a clone unless committed. This negation is deliberately explicit rather than
+# relying on the anchoring above to keep missing it - a leading `!` is the only
+# way to be sure, and getting this backwards silently untracked the evidence.
+!/perf-results/
 tests/benchmarks/results
 locust_baseline_NON_REPRESENTATIVE.md
