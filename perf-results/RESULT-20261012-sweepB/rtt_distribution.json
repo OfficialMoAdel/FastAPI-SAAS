@@ -1,0 +1,28 @@
+{
+  "schema": "perf-rtt-distribution/1",
+  "endpoint": "GET /users/me (authenticated, warm)",
+  "n_requests": 200,
+  "warmup_discarded": 10,
+  "denominator": "n_requests - the measured requests only. Warm-ups are excluded from both numerator and denominator; including them would inflate the denominator with requests whose cost is not the steady state.",
+  "denominator_value": 200,
+  "rtt_per_request": {
+    "min": 2,
+    "modal": 2,
+    "p50": 2,
+    "p95": 2,
+    "p99": 2,
+    "max": 2,
+    "mean": 2.0
+  },
+  "distribution": {
+    "2": 200
+  },
+  "above_modal": {
+    "count": 0,
+    "share": 0.0,
+    "one_in": null
+  },
+  "claim_tested": "Round-1 .out showed 1 request in 20 doing 4 RTT instead of 2, and recorded the rate as unestimable at n=20.",
+  "total_commands_issued": 500,
+  "percentile_method": "nearest rank over the raw per-request sample list"
+}

@@ -132,6 +132,14 @@ def _schedstat_is_readable() -> bool:
 #: Resolved once at import, for the same reason as ``_STATM_AVAILABLE``.
 _SCHEDSTAT_AVAILABLE = _schedstat_is_readable()
 
+#: Upper bound on how many cores' worth of CPU one sample interval may consume.
+#: A sample cannot use more CPU than wall time x cores, so anything above that is
+#: a measurement artefact rather than a fact about the process. Set to 4 because
+#: the highest core count this project is measured on is a 4-core VM; a wider
+#: bound would let a genuinely saturated machine's samples through, and the point
+#: is to catch a mixed-population reader, not to cap real saturation.
+_MAX_CPU_CORES_PER_SAMPLE = 4
+
 
 def _max_rss_bytes() -> int | None:
     """Peak RSS from the kernel's own accounting, or ``None`` if unavailable.
@@ -255,28 +263,43 @@ class ProcessSeriesSampler:
 
     @staticmethod
     def _target_cpu_seconds(pid: int) -> float:
-        """CPU seconds for ``pid``, at the best resolution this host offers.
+        """CPU seconds for ``pid``, from ONE reader chosen once and never mixed.
 
-        PREFERS ``/proc/<pid>/schedstat``, whose first field is nanoseconds on
-        CPU. Falls back to ``/proc/<pid>/stat``, whose utime/stime are in ticks.
+        ``/proc/<pid>/schedstat`` field 0 is nanoseconds on CPU for the MAIN
+        THREAD. ``/proc/<pid>/stat`` utime+stime is ticks for the WHOLE PROCESS.
+        Those are not two resolutions of one quantity - they are two different
+        quantities, and the process total is the larger.
+
+        So the previous "try schedstat, fall back to stat" was a trap: one
+        transient read failure mid-run switched the series from thread-only to
+        process-wide, and the delta across that switch was reported as a single
+        52-second sample of CPU consumed inside a 1-second interval. The reader
+        is therefore bound per sampler and never changes underneath a series.
 
         The ``stat`` parser skips to after the LAST ``)`` rather than splitting
         the whole line: the parenthesised comm field can itself contain spaces
-        and parentheses, and parsing that wrongly corrupts the CPU series
-        silently instead of raising.
+        and parentheses, and parsing that wrongly corrupts the series silently
+        instead of raising.
         """
         if _SCHEDSTAT_AVAILABLE:
-            try:
-                with open(f"/proc/{pid}/schedstat", encoding="utf-8") as fh:
-                    return int(fh.read().split()[0]) / 1_000_000_000.0
-            except (OSError, ValueError, IndexError):
-                pass
+            with open(f"/proc/{pid}/schedstat", encoding="utf-8") as fh:
+                return int(fh.read().split()[0]) / 1_000_000_000.0
         with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
             raw = fh.read()
         rest = raw[raw.rindex(")") + 1 :].split()
         ticks = os.sysconf("SC_CLK_TCK")
         # rest[0] is state (field 3), so utime (14) and stime (15) are 11 and 12.
         return (int(rest[11]) + int(rest[12])) / ticks
+
+    @staticmethod
+    def _target_cpu_scope() -> str:
+        """Which quantity this host's reader actually reports.
+
+        schedstat counts the main THREAD; stat counts the whole PROCESS. Stating
+        it matters because the two are not comparable, so a series must never be
+        read as if it were the other's.
+        """
+        return "main-thread" if _SCHEDSTAT_AVAILABLE else "whole-process"
 
     def start(self) -> None:
         if not self._enabled:
@@ -317,7 +340,14 @@ class ProcessSeriesSampler:
         if self._first_rss_bytes is None:
             self._first_rss_bytes = rss
         if self._last_cpu_seconds is not None:
-            self._cpu.record(max(0.0, cpu_seconds - self._last_cpu_seconds))
+            delta = cpu_seconds - self._last_cpu_seconds
+            # A CPU delta cannot exceed the wall time between two samples. It
+            # exceeded 50x in the 20261012 cross-process run, because the reader
+            # switched from thread-only to process-wide mid-series. Discarding
+            # the impossible sample - rather than clamping or recording it - is
+            # what keeps a mixed-population series from reading as a real spike.
+            if 0.0 <= delta <= self._interval * _MAX_CPU_CORES_PER_SAMPLE:
+                self._cpu.record(delta)
         self._last_cpu_seconds = cpu_seconds
 
     # -- the readings ------------------------------------------------------
@@ -440,6 +470,16 @@ class ProcessSeriesSampler:
                 "compared against one."
                 if self._target_pid is not None and not _SCHEDSTAT_AVAILABLE
                 else None
+            ),
+            # WHICH quantity a cross-process CPU series counts. schedstat
+            # reports the MAIN THREAD; the stat fallback reports the WHOLE
+            # PROCESS. Those are different numbers, so a cross-process series
+            # must never be read against a process-wide ceiling - it is a
+            # different population, not merely a coarser one.
+            "cpu_scope": (
+                "main-thread"
+                if self._target_pid is not None and _SCHEDSTAT_AVAILABLE
+                else "whole-process"
             ),
             "cost_ceiling_us": SAMPLER_COST_CEILING_US,
         }

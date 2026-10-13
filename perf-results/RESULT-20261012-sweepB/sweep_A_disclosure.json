@@ -1,0 +1,7 @@
+{
+  "schema": "perf-config-disclosure/1",
+  "overrides": {},
+  "override_count": 0,
+  "reason": "Arm A: the DEPLOYED knee. Production security controls exactly as shipped - auth 5/60 per IP, authenticated paths 50/hour per user, AUTO_BAN on. Paired with arm B, which measured the same sweep with the controls relaxed. The gap between the two arms is the cost of the controls and is itself the finding.",
+  "reading": "NO SECURITY OVERRIDE WAS IN FORCE. This run describes the system as it is configured to run in production."
+}

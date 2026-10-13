@@ -120,6 +120,38 @@ it was not re-run (long harness), only its import path was confirmed to resolve.
 meant rewriting **8 files** (4 of them binding plan documents) to paper over a
 one-line missing declaration. The file was never broken; the environment was.
 
+## 4c. The knee, measured twice (arm A vs arm B) — `perf-results/RESULT-20261012-sweepB/`
+
+Sweep 1/8/32/64/128/256 on `perf-local` (2 cores, bcrypt `rounds=12`), run twice:
+**arm A** with production security controls exactly as shipped, **arm B** with them
+relaxed. Both disclosures are recorded next to the numbers — A reports
+**0 overrides**, B reports **4** with each production value alongside.
+
+| Users | A: reqs / fail / min / p50 | B: reqs / fail / min / p50 |
+|---|---|---|
+| 1 | 79 / 0 / 4 / 7 | 108 / 0 / 4 / 7 |
+| 8 | 491 / 3 / 4 / 8 | 803 / 0 / 3 / 8 |
+| **32** | **49 / 49** / 133 / 280 | 3,283 / 0 / 3 / 7 |
+| 64 | 97 / 97 / 88 / 220 | 6,480 / 0 / 2 / 7 |
+| 128 | 193 / 193 / 173 / 850 | 10,570 / 97 / 2 / 15 |
+| 256 | 385 / 385 / 167 / 1400 | 565 / 553 / 4 / 640 |
+
+**Arm A's knee is 8 users; arm B's is 128.** A cliff, not a slope: from 32 users on,
+arm A fails 100% of requests.
+
+**The gap is the security controls, and nothing else differs between the arms.**
+
+The useful finding is the shape of that gap. At 1 and 8 users the two arms are
+IDENTICAL — min 4 ms, p50 7-8 ms. The controls cost nothing at realistic concurrency.
+They are not a performance tax; they are a load ceiling, and that ceiling sits
+BELOW where the infrastructure saturates anyway. Arm B proves the point: with every
+budget relaxed, 256 users still yields 98% failures and throughput *falls* to 29 rps.
+
+**So the bottleneck on this box is bcrypt at login, not the rate limiter.** Relaxing
+the budgets does not make 256 users work; it only moves the failure from "correctly
+refused" to "correctly overwhelmed". `min` at 2-4 ms throughout confirms the request
+path itself is never the constraint.
+
 ## 5. What remains
 
 **80 tasks, effectively all behind Gate A.** Only `d1gh` (green-suites guard) is not

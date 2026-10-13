@@ -1,0 +1,63 @@
+{
+  "schema": "perf-config-disclosure/1",
+  "overrides": {
+    "AUTO_BAN_ENABLED": {
+      "measured_with": "false",
+      "production": "true"
+    },
+    "SECURITY_BUDGETS": {
+      "measured_with": "{\"auth\": [1000, 60], \"mfa_verify\": [1000, 60], \"mfa_verify_global\": [1000, 60], \"mfa_mutate\": [1000, 60], \"magic_link_send\": [1000, 60], \"passkey_login\": [1000, 60], \"refresh\": [1000, 60], \"ai_chat\": [1000, 60]}",
+      "production": {
+        "auth": [
+          5,
+          60
+        ],
+        "mfa_verify": [
+          5,
+          60
+        ],
+        "mfa_verify_global": [
+          15,
+          60
+        ],
+        "mfa_mutate": [
+          5,
+          60
+        ],
+        "magic_link_send": [
+          3,
+          60
+        ],
+        "passkey_login": [
+          10,
+          60
+        ],
+        "refresh": [
+          60,
+          60
+        ],
+        "ai_chat": [
+          60,
+          60
+        ]
+      }
+    },
+    "DEFAULT_AUTHENTICATED_LIMIT": {
+      "measured_with": "[100000,3600]",
+      "production": [
+        50,
+        3600
+      ]
+    },
+    "DEFAULT_ANONYMOUS_LIMIT": {
+      "measured_with": "[100000,3600]",
+      "production": [
+        10,
+        3600
+      ]
+    }
+  },
+  "override_count": 4,
+  "reason": "Locate the request-path knee, which production budgets make unreachable: auth is 5/60 per IP, authenticated paths 50/hour per user, AUTO_BAN trips at 10 violations. Arm B measures the INFRASTRUCTURE knee; arm A with production controls measures the DEPLOYED knee. The gap is the cost of the security controls and is itself the finding.",
+  "reading": "SECURITY CONTROLS WERE OVERRIDDEN. This run describes a configuration that does not exist in production and must not be compared against a run that left them in force. The reason is recorded above."
+}
