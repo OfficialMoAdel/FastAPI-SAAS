@@ -1,0 +1,101 @@
+{
+  "schema": "perf-config-disclosure/1",
+  "source": "/proc/187509/environ - the process actually measured",
+  "measured_pid": 187509,
+  "overrides": {
+    "AUTO_BAN_ENABLED": {
+      "measured_with": "false",
+      "production": "true"
+    },
+    "SECURITY_BUDGETS": {
+      "measured_with": "{\"auth\": [1000000, 60], \"mfa_verify\": [1000000, 60], \"mfa_verify_global\": [1000000, 60], \"mfa_mutate\": [1000000, 60], \"magic_link_send\": [1000000, 60], \"passkey_login\": [1000000, 60], \"refresh\": [1000000, 60], \"ai_chat\": [1000000, 60]}",
+      "production": {
+        "auth": [
+          5,
+          60
+        ],
+        "mfa_verify": [
+          5,
+          60
+        ],
+        "mfa_verify_global": [
+          15,
+          60
+        ],
+        "mfa_mutate": [
+          5,
+          60
+        ],
+        "magic_link_send": [
+          3,
+          60
+        ],
+        "passkey_login": [
+          10,
+          60
+        ],
+        "refresh": [
+          60,
+          60
+        ],
+        "ai_chat": [
+          60,
+          60
+        ]
+      }
+    },
+    "DEFAULT_AUTHENTICATED_LIMIT": {
+      "measured_with": "[1000000,3600]",
+      "production": [
+        50,
+        3600
+      ]
+    },
+    "DEFAULT_ANONYMOUS_LIMIT": {
+      "measured_with": "[1000000,3600]",
+      "production": [
+        10,
+        3600
+      ]
+    },
+    "TIER_RATE_LIMITS": {
+      "measured_with": "{\"free\": [1000000, 3600], \"basic\": [1000000, 3600], \"pro\": [1000000, 3600], \"enterprise\": [1000000, 3600]}",
+      "production": {
+        "free": [
+          10,
+          3600
+        ],
+        "basic": [
+          100,
+          3600
+        ],
+        "pro": [
+          1000,
+          3600
+        ],
+        "enterprise": [
+          10000,
+          3600
+        ]
+      }
+    },
+    "ANONYMOUS_IP_AGGREGATE_LIMIT": {
+      "measured_with": "[1000000,3600]",
+      "production": [
+        300,
+        3600
+      ]
+    },
+    "DEFAULT_RATE_LIMIT_LIMIT": {
+      "measured_with": "1000000",
+      "production": null
+    },
+    "DEFAULT_RATE_LIMIT_PERIOD": {
+      "measured_with": "1000000",
+      "production": null
+    }
+  },
+  "override_count": 8,
+  "reason": "Step 4 ten-endpoint matrix at 64 users, the last clean step below the 128-user knee. Production rate limits make 4.4 sample sizes unreachable, and there are MORE of them than the four the plan names: SECURITY_BUDGETS per-budget, DEFAULT_AUTHENTICATED/ANONYMOUS per-path, ANONYMOUS_IP_AGGREGATE per-IP on the PEER address, TIER_RATE_LIMITS per-user-per-path, and DEFAULT_RATE_LIMIT_LIMIT/PERIOD fallbacks. Two prior runs were voided by finding the fourth and fifth one at a time (645 then 20696 violations). Overrides disclosed per P-4 and read from /proc of the measured process. The deployed knee (arm A, production controls) is 8 users and is reported separately; the gap is the cost of the controls.",
+  "reading": "SECURITY CONTROLS WERE OVERRIDDEN. This run describes a configuration that does not exist in production and must not be compared against a run that left them in force. The reason is recorded above."
+}

@@ -1,0 +1,93 @@
+{
+  "schema": "perf-emailstr-cost/1",
+  "dispute": {
+    "low_claim_us": 75.0,
+    "high_claim_us": 974.0,
+    "high_claim_range_us": [
+      150.0,
+      974.0
+    ],
+    "resolved": "NEITHER: 34.3 us, below the 75 us low claim",
+    "status": "RESOLVED",
+    "reasoning": "Marginal cost over a no-email baseline is 34.3 us, BELOW the 75 us low claim and far below the 974 us high claim. Neither published figure is reproduced on this target. The boundary that WAS named here is pydantic EmailStr + email_validator 2.2.0 pydantic 2.11.5 + idna 3.10, with deliverability checking OFF, so no DNS is performed. A figure near 974 us is consistent with a different boundary - email_validator WITH check_deliverability, or idna encoding a long internationalised domain - not with the validation this application performs on a response field. Both published numbers can be right about different code and wrong about this one."
+  },
+  "library_boundary": {
+    "named": "pydantic EmailStr + email_validator 2.2.0 pydantic 2.11.5 + idna 3.10",
+    "why_named": "Whether pydantic routes EmailStr through email_validator is a property of the INSTALLED versions, so it is read from the environment rather than assumed. Assuming either answer is how a boundary dispute begins."
+  },
+  "validation_layers": {
+    "layers": {
+      "baseline_str_no_validation": {
+        "library": "pydantic-core str validation (no email rule)",
+        "best_us": 0.285,
+        "median_us": 0.323
+      },
+      "emailstr_as_pydantic_wires_it": {
+        "library": "pydantic EmailStr + email_validator 2.2.0 pydantic 2.11.5 + idna 3.10",
+        "best_us": 34.548,
+        "median_us": 36.426
+      },
+      "idna_domain_encode_alone": {
+        "library": "idna.encode on the domain only",
+        "domain": "subdomain.example.co.uk",
+        "best_us": 15.323,
+        "median_us": 15.836
+      }
+    },
+    "marginal_email_over_baseline_us": 34.263,
+    "note": "The marginal figure is the one to quote for 'what does email validation cost'. The absolute EmailStr figure includes the same pydantic-core str validation every other field pays, so quoting it attributes the model's fixed cost to the email rule."
+  },
+  "share_of_real_request": {
+    "endpoint": "GET /api/v1/users/me (authenticated, warm)",
+    "why_this_endpoint": "the same endpoint used throughout this series, so the share is against a real Phase-0 request rather than a microbenchmark of a validator, which would answer a different question",
+    "n_measured": 1250,
+    "request_p50_us": 4553.3,
+    "request_min_us": 2824.1,
+    "mean_response_bytes": 252,
+    "validation_share_of_p50": 0.007525,
+    "validation_share_of_min": 0.012132,
+    "share_units": "fraction of the request's latency"
+  },
+  "rate_limit_state": {
+    "cleared": true,
+    "keys_before": 12
+  },
+  "latency": {
+    "min_ms": 2.8241,
+    "p50_ms": 4.5533,
+    "p95_ms": 6.8484,
+    "server_p50_ms": 3.916,
+    "per_repetition": [
+      {
+        "repetition": 1,
+        "n": 250,
+        "min_ms": 3.0332,
+        "p50_ms": 4.6454
+      },
+      {
+        "repetition": 2,
+        "n": 250,
+        "min_ms": 2.9075,
+        "p50_ms": 4.6656
+      },
+      {
+        "repetition": 3,
+        "n": 250,
+        "min_ms": 2.8241,
+        "p50_ms": 4.2535
+      },
+      {
+        "repetition": 4,
+        "n": 250,
+        "min_ms": 2.945,
+        "p50_ms": 4.2688
+      },
+      {
+        "repetition": 5,
+        "n": 250,
+        "min_ms": 3.4041,
+        "p50_ms": 4.9664
+      }
+    ]
+  }
+}

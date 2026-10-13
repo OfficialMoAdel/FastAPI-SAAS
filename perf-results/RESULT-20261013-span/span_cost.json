@@ -1,0 +1,90 @@
+{
+  "schema": "perf-span-cost/1",
+  "purpose": "A per-DB-request span cost for S-3's BEFORE number, on the Linux target, with the asyncpg/SQLAlchemy layer reported SEPARATELY so S-3 is not credited with - or blamed for - work it does not touch.",
+  "no_prior_number_quoted": "perf H6 asserted a cost for this and never produced a microsecond figure, which is how the estimate drifted into three incompatible numbers. NOTHING here quotes H6 or any successor. Every figure is measured in this run, on this target, with this protocol, and the only comparanda are the request figures from this same run.",
+  "protocol": {
+    "estimator": "best-of-N",
+    "span_repeats": 20000,
+    "db_connects": 60,
+    "gc_collected_before_timing": true,
+    "raw_distribution_retained": true,
+    "why": "A span cost of a few microseconds sits well inside the range where a mean misleads, and 4.4 records 7.1x run-to-run variance on this target, so the ceiling-style estimator is the only defensible one and the distribution is retained rather than summarised away."
+  },
+  "span_layer": {
+    "tracer_class": "ProxyTracer",
+    "otel_sdk_present": false,
+    "state": "NO SDK - dead ProxyTracer path, which IS S-3's before number",
+    "per_invocation": {
+      "best_us": 3.123,
+      "median_us": 3.308,
+      "p99_us": 10.954,
+      "max_us": 119.262,
+      "n": 20000
+    },
+    "spans_opened_by_one_invocation": 1,
+    "counting_note": "One trace_span call opens exactly one span. Per-DB-request cost is this figure multiplied by the spans a real request opens, which is COUNTED in the request run rather than assumed."
+  },
+  "asyncpg_sqlalchemy_layer": {
+    "best_us": 34200.079,
+    "median_us": 37205.567,
+    "n": 60,
+    "what_it_includes": "a real connection, a real execute and a close - so network, engine and result handling. This is the layer S-3 does NOT touch."
+  },
+  "layer_split_note": "The span figure and the ORM figure are different quantities and are NOT summed into a single 'DB overhead'. The span is dead instrumentation removable without changing behaviour; the ORM layer is the query itself.",
+  "share_of_request": {
+    "endpoint": "GET /api/v1/users?page=1&per_page=100 (issues SQL)",
+    "why_this_endpoint": "the warm /users/me hot path issues ZERO SQL - confirmed three times in this series - so it has no per-DB-request span to price. An endpoint that DOES query gives the denominator a non-zero numerator.",
+    "n_measured": 1250,
+    "request_p50_us": 14226.7,
+    "avg_queries_per_request": 0,
+    "spans_per_request_conservative": 1,
+    "span_cost_per_db_request_us": 3.123,
+    "share_of_request_p50": 0.00021952,
+    "multiplier_note": "spans_per_request is 1 session span plus one per query, which is CONSERVATIVE and stated so the reader can apply their own count. It is not derived from an instrumented span tally."
+  },
+  "rate_limit_state": {
+    "cleared": true,
+    "keys_before": 0
+  },
+  "status_distribution": {
+    "200": 1250
+  },
+  "latency": {
+    "min_ms": 10.7515,
+    "p50_ms": 14.2267,
+    "p95_ms": 71.5043,
+    "per_repetition": [
+      {
+        "repetition": 1,
+        "n": 250,
+        "min_ms": 10.9204,
+        "p50_ms": 13.7008
+      },
+      {
+        "repetition": 2,
+        "n": 250,
+        "min_ms": 10.7515,
+        "p50_ms": 13.8743
+      },
+      {
+        "repetition": 3,
+        "n": 250,
+        "min_ms": 11.1026,
+        "p50_ms": 13.7371
+      },
+      {
+        "repetition": 4,
+        "n": 250,
+        "min_ms": 11.119,
+        "p50_ms": 29.5152
+      },
+      {
+        "repetition": 5,
+        "n": 250,
+        "min_ms": 10.9064,
+        "p50_ms": 14.5247
+      }
+    ]
+  },
+  "usable_as_s3_before": true
+}

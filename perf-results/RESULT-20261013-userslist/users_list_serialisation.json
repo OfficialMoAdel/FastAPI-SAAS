@@ -1,0 +1,232 @@
+{
+  "schema": "perf-users-list-serialisation/1",
+  "endpoint": "GET /api/v1/users?page=1&per_page=100",
+  "requests_profiled": 60,
+  "per_page": 100,
+  "profiler": "cProfile, in-process over ASGITransport",
+  "clean_ms_per_request": 19.6603,
+  "profiled_ms_per_request": 33.4141,
+  "distortion_x": 1.7,
+  "distortion_note": "cProfile inflates everything it measures. The SHARE below is the figure; the absolute tottimes are not a latency measurement and are reported only so the inflation is visible.",
+  "status": 200,
+  "attribution": {
+    "total_tottime_s": 2.001453,
+    "buckets": {
+      "other": {
+        "tottime_s": 1.669129,
+        "share": 0.833959,
+        "top_frames": [
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/email_validator/syntax.py:446(validate_email_domain_name)",
+            "tottime_s": 0.111815,
+            "calls": 6000
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/idna/core.py:245(check_label)",
+            "tottime_s": 0.091692,
+            "calls": 24000
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/email_validator/validate_email.py:15(validate_email)",
+            "tottime_s": 0.059538,
+            "calls": 6000
+          },
+          {
+            "site": "~:0(<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>)",
+            "tottime_s": 0.054225,
+            "calls": 360
+          }
+        ]
+      },
+      "framework": {
+        "tottime_s": 0.089251,
+        "share": 0.044593,
+        "top_frames": [
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/fastapi/dependencies/utils.py:572(solve_dependencies)",
+            "tottime_s": 0.012425,
+            "calls": 1020
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/starlette/routing.py:717(app)",
+            "tottime_s": 0.006716,
+            "calls": 660
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/starlette/middleware/exceptions.py:46(__call__)",
+            "tottime_s": 0.006104,
+            "calls": 660
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/starlette/routing.py:72(app)",
+            "tottime_s": 0.005168,
+            "calls": 660
+          }
+        ]
+      },
+      "serialisation_orm": {
+        "tottime_s": 0.058397,
+        "share": 0.029177,
+        "top_frames": [
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/sqlalchemy/orm/loading.py:207(chunks)",
+            "tottime_s": 0.010754,
+            "calls": 120
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/sqlalchemy/engine/result.py:543(_allrows)",
+            "tottime_s": 0.003961,
+            "calls": 60
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/sqlalchemy/engine/row.py:156(_mapping)",
+            "tottime_s": 0.003298,
+            "calls": 6000
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/sqlalchemy/engine/result.py:219(__init__)",
+            "tottime_s": 0.003149,
+            "calls": 6000
+          }
+        ]
+      },
+      "driver": {
+        "tottime_s": 0.051229,
+        "share": 0.025596,
+        "top_frames": [
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/httpx/_urlparse.py:213(urlparse)",
+            "tottime_s": 0.002695,
+            "calls": 120
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/httpx/_transports/asgi.py:99(handle_async_request)",
+            "tottime_s": 0.002663,
+            "calls": 780
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/httpx/_models.py:144(__init__)",
+            "tottime_s": 0.002647,
+            "calls": 300
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/httpx/_client.py:1717(_send_single_request)",
+            "tottime_s": 0.002632,
+            "calls": 780
+          }
+        ]
+      },
+      "app_core": {
+        "tottime_s": 0.047704,
+        "share": 0.023835,
+        "top_frames": [
+          {
+            "site": "/home/ansible/FastAPI-Saas/src/app/core/observability/log_sanitizer.py:192(<genexpr>)",
+            "tottime_s": 0.008136,
+            "calls": 51840
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/src/app/core/observability/log_sanitizer.py:182(_maybe_sensitive)",
+            "tottime_s": 0.00283,
+            "calls": 1620
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/src/app/core/observability/log_sanitizer.py:252(sanitize_value)",
+            "tottime_s": 0.002813,
+            "calls": 1800
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/src/app/core/observability/log_sanitizer.py:333(__call__)",
+            "tottime_s": 0.002669,
+            "calls": 300
+          }
+        ]
+      },
+      "app_middleware": {
+        "tottime_s": 0.046187,
+        "share": 0.023077,
+        "top_frames": [
+          {
+            "site": "/home/ansible/FastAPI-Saas/src/app/middleware/attack_detection.py:558(_check_for_patterns)",
+            "tottime_s": 0.017864,
+            "calls": 300
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/src/app/middleware/body_limit.py:42(__call__)",
+            "tottime_s": 0.005029,
+            "calls": 780
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/src/app/middleware/request_id.py:81(__call__)",
+            "tottime_s": 0.002195,
+            "calls": 660
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/src/app/middleware/ip_filter.py:102(__call__)",
+            "tottime_s": 0.001985,
+            "calls": 780
+          }
+        ]
+      },
+      "serialisation_pydantic": {
+        "tottime_s": 0.033945,
+        "share": 0.01696,
+        "top_frames": [
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/pydantic/networks.py:1264(validate_email)",
+            "tottime_s": 0.019224,
+            "calls": 6000
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/pydantic/networks.py:997(_validate)",
+            "tottime_s": 0.006048,
+            "calls": 6000
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/pydantic/_internal/_model_construction.py:277(__instancecheck__)",
+            "tottime_s": 0.003856,
+            "calls": 6240
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/pydantic/type_adapter.py:532(dump_python)",
+            "tottime_s": 0.002798,
+            "calls": 60
+          }
+        ]
+      },
+      "serialisation_schema": {
+        "tottime_s": 0.00561,
+        "share": 0.002803,
+        "top_frames": [
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/fastapi/routing.py:588(matches)",
+            "tottime_s": 0.002134,
+            "calls": 3120
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/fastapi/routing.py:240(app)",
+            "tottime_s": 0.001737,
+            "calls": 660
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/fastapi/routing.py:204(run_endpoint_function)",
+            "tottime_s": 0.001102,
+            "calls": 180
+          },
+          {
+            "site": "/home/ansible/FastAPI-Saas/.venv/lib/python3.13/site-packages/fastapi/routing.py:143(serialize_response)",
+            "tottime_s": 0.000638,
+            "calls": 60
+          }
+        ]
+      }
+    },
+    "serialisation_share": 0.04894
+  },
+  "method_limits": [
+    "buckets are checked in a stated order so each frame is counted once",
+    "the share is for a 100-row response and is NOT a per-row cost; dividing it out would need a second measurement at another row count",
+    "in-process ASGI transport, so transport cost is absent from all buckets - the share is of SERVER work only"
+  ],
+  "why_not_the_committed_profile": "The committed Linux profile has a top-5 tottime share of 2.8% with 64% in the remainder - it is nearly flat and cannot support an attribution. This profiles THIS endpoint at THIS row count instead of naming a share from a profile that does not carry one."
+}

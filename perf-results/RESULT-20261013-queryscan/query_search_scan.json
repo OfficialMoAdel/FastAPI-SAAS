@@ -1,0 +1,74 @@
+{
+  "schema": "perf-query-search-scan/1",
+  "endpoint": "GET /api/v1/users?search=<4 KB benign>",
+  "why_a_get_pays": "The body scan is method-gated to POST/PUT/PATCH (nrgi.3), so a GET has no body to scan. The QUERY STRING is scanned for every method above that gate, because a GET carrying SQLi in its query must still be detected. This is the read-path instance of the EM-9/EM-10 regime finding.",
+  "prefilter_property": {
+    "prefilter_hit": true,
+    "asserted_hit": true,
+    "asserted_before_timing": true,
+    "statement": "Asserted against the EXACT byte string sent, not assumed from the choice of words. The literal set's shortest entry is b\"or\" - TWO bytes - so an entirely benign search term containing \"reports\" is admitted and the full regex runs."
+  },
+  "scan_cost": {
+    "ceiling_us": 2000.0,
+    "ceiling_basis": "absolute, chosen BEFORE measurement, never relaxed",
+    "query_bytes": 5373,
+    "query_kb": 4,
+    "best_us": 1659.584,
+    "median_us": 1848.895,
+    "us_per_kb": 414.896,
+    "under_ceiling": true,
+    "protocol": "best-of-N with gc.collect(), per 4.4's microbenchmark protocol"
+  },
+  "transfer_from_body_scan": {
+    "em10_expensive_us_per_kb": 331.21,
+    "predicted_query_us_at_that_rate": 1324.8,
+    "measured_query_us": 1659.584,
+    "note": "Carrying EM-10's per-KB rate across to a GET would OVER-PREDICT by a wide margin, because a 4 KB query string is small in absolute terms. The two regimes are the same code but different magnitudes, so a rate does not transfer and this measures it."
+  },
+  "excluded": "No 6.7 us figure appears anywhere in this artefact. That number came from a stale audit and S-7 (m1gm) exists to correct it.",
+  "endpoint_latency": {
+    "repetitions": [
+      {
+        "repetition": 1,
+        "n": 250,
+        "min_ms": 12.2828,
+        "p50_ms": 14.3312
+      },
+      {
+        "repetition": 2,
+        "n": 250,
+        "min_ms": 12.125,
+        "p50_ms": 14.9583
+      },
+      {
+        "repetition": 3,
+        "n": 250,
+        "min_ms": 12.4516,
+        "p50_ms": 14.6097
+      },
+      {
+        "repetition": 4,
+        "n": 250,
+        "min_ms": 13.3694,
+        "p50_ms": 15.7635
+      },
+      {
+        "repetition": 5,
+        "n": 250,
+        "min_ms": 13.5555,
+        "p50_ms": 15.5928
+      }
+    ],
+    "n_measured": 1250,
+    "status_distribution": {
+      "200": 1250
+    },
+    "min_ms": 12.125,
+    "p50_ms": 15.1206,
+    "p95_ms": 21.135,
+    "p99_ms": 26.7408,
+    "server_p50_ms": 13.873,
+    "p50_reportable": true,
+    "p99_reportable": false
+  }
+}

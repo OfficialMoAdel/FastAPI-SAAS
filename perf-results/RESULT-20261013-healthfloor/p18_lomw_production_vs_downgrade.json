@@ -1,0 +1,96 @@
+{
+  "schema": "perf-p18-paired-arm/1",
+  "q4": "paired arm: uvloop+httptools against asyncio+h11 on /health",
+  "why_a_real_server": "The loop half was already measured in-process over ASGITransport (perf-results/RESULT-20261013-healthfloor/) at 0.13% difference. The PROTOCOL half cannot be measured that way: ASGITransport does not select an HTTP implementation, so httptools and h11 are the same code underneath it. A comparison claiming to separate them over ASGI would be comparing two identical things and reporting a delta.",
+  "transport": "real TCP over loopback, separate client process",
+  "same_window": true,
+  "same_window_note": "Both arms are measured back to back inside one window because 4.4 records 7.1x run-to-run variance on this target. Measured sequentially, the arms could differ by more than the effect being measured.",
+  "repetitions_per_arm": 5,
+  "requests_per_repetition": 400,
+  "warmup_discarded": 50,
+  "manifests": {
+    "production_auto": {
+      "requested_loop": "auto",
+      "requested_http": "auto",
+      "port": 8021,
+      "probe": {
+        "pid": 359498,
+        "argv_loop_flag": "auto",
+        "argv_http_flag": "auto",
+        "loaded_uvloop": true,
+        "loaded_httptools": true,
+        "loaded_h11_hint": false,
+        "resolved_loop": "uvloop",
+        "resolved_http": "httptools",
+        "wrapper_pid": 359493,
+        "resolved_from_listener": true
+      }
+    },
+    "forced_asyncio_h11": {
+      "requested_loop": "asyncio",
+      "requested_http": "h11",
+      "port": 8022,
+      "probe": {
+        "pid": 359499,
+        "argv_loop_flag": "asyncio",
+        "argv_http_flag": "h11",
+        "loaded_uvloop": false,
+        "loaded_httptools": false,
+        "loaded_h11_hint": false,
+        "resolved_loop": "asyncio",
+        "resolved_http": "h11",
+        "wrapper_pid": 359493,
+        "resolved_from_listener": true
+      }
+    }
+  },
+  "summaries": [
+    {
+      "arm": "production_auto",
+      "min_of_mins_ms": 0.7263,
+      "median_of_mins_ms": 0.7307,
+      "min_of_p50s_ms": 0.8706,
+      "median_of_p50s_ms": 0.9029,
+      "min_spread_x": 1.011,
+      "p50_spread_x": 1.098
+    },
+    {
+      "arm": "forced_asyncio_h11",
+      "min_of_mins_ms": 0.9147,
+      "median_of_mins_ms": 0.9175,
+      "min_of_p50s_ms": 1.129,
+      "median_of_p50s_ms": 1.1528,
+      "min_spread_x": 1.023,
+      "p50_spread_x": 1.121
+    }
+  ],
+  "delta_min_of_mins": {
+    "uvloop_httptools": 0.7263,
+    "asyncio_h11": 0.9147,
+    "delta_ms": -0.1884,
+    "delta_ratio": 0.794,
+    "within_spread": false
+  },
+  "delta_median_of_p50s": {
+    "uvloop_httptools": 0.9029,
+    "asyncio_h11": 1.1528,
+    "delta_ms": -0.2499,
+    "delta_ratio": 0.7832,
+    "within_spread": false
+  },
+  "manifest_verification": {
+    "production_auto": {
+      "requested": "auto+auto",
+      "argv_in_running_process": "auto+auto",
+      "matches_request": true
+    },
+    "forced_asyncio_h11": {
+      "requested": "asyncio+h11",
+      "argv_in_running_process": "asyncio+h11",
+      "matches_request": true
+    }
+  },
+  "q4_answered": true,
+  "q4_answer": "ANSWERED: uvloop+httptools is 0.7940x the Min of asyncio+h11 (-0.1884 ms). Repetition spread is reported per arm so the delta can be read against it.",
+  "manifests_verified": true
+}

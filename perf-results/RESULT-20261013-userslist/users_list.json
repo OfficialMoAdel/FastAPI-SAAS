@@ -1,0 +1,73 @@
+{
+  "schema": "perf-users-list/1",
+  "endpoint": "GET /api/v1/users?page=1&per_page=100",
+  "why_this_endpoint": "the only hot-path endpoint that can return a HUNDRED rows, so row serialisation is multiplied rather than paid once. Every other endpoint returns one object or a small list, which is why serialisation is a constant nobody needs to price anywhere else.",
+  "per_page_assertion": {
+    "requested_per_page": 100,
+    "observed_row_counts": [
+      100
+    ],
+    "asserted": true,
+    "statement": "The row count is READ BACK from the response rather than assumed from the request. If the endpoint capped, deduplicated or ignored per_page, the row count would not be 100 and every serialisation share below would describe a different response than the one claimed."
+  },
+  "rate_limit_state": {
+    "cleared_before_run": {
+      "cleared": true,
+      "keys_before": 10,
+      "keys_after": 0
+    },
+    "why": "Earlier probes in this series were contaminated by a stale AUTO_BAN on 127.0.0.1 from a previous run, producing 261 x 403 that measured the ban rather than the endpoint. A measurement that silently depends on session state from an earlier command is not reproducible, so the probe clears its own state."
+  },
+  "n_measured": 1250,
+  "status_distribution": {
+    "200": 1250
+  },
+  "repetitions": [
+    {
+      "repetition": 1,
+      "n": 250,
+      "min_ms": 10.5255,
+      "p50_ms": 13.361
+    },
+    {
+      "repetition": 2,
+      "n": 250,
+      "min_ms": 13.3744,
+      "p50_ms": 17.1083
+    },
+    {
+      "repetition": 3,
+      "n": 250,
+      "min_ms": 20.9536,
+      "p50_ms": 28.5934
+    },
+    {
+      "repetition": 4,
+      "n": 250,
+      "min_ms": 19.6179,
+      "p50_ms": 50.503
+    },
+    {
+      "repetition": 5,
+      "n": 250,
+      "min_ms": 12.2357,
+      "p50_ms": 16.1542
+    }
+  ],
+  "latency": {
+    "min_ms": 10.5255,
+    "p50_ms": 19.0084,
+    "p95_ms": 76.2993,
+    "p99_ms": 95.9568,
+    "median_of_repetition_p50s_ms": 17.1083,
+    "server_p50_ms": 17.908
+  },
+  "p50_reportable": true,
+  "p95_reportable": true,
+  "p99_reportable": false,
+  "serialisation_share": {
+    "source": "The Linux CPU profile has no single dominant function - the committed record reports a top-5 tottime share of 2.8% with 64% in the remainder. So serialisation is NOT attributed from that profile, because the profile cannot support an attribution. This field is populated only if a per-request profile of THIS endpoint is captured.",
+    "measured": false,
+    "reason_not_measured": "A-4's arithmetic needs a share measured against a real request. The committed profile is in-process over ASGITransport with a flat distribution, so naming a share from it would be exactly the kind of confident error this programme exists to prevent. The alternative - a per-request profile of this endpoint - is named as the next step rather than approximated here."
+  }
+}

@@ -1,0 +1,246 @@
+{
+  "schema": "perf-header-scan-cost/1",
+  "target": "_check_for_patterns over a header value",
+  "protocol": {
+    "estimator": "best_of",
+    "repeats": 1500,
+    "gc_collected_before_timing": true,
+    "per_2_3": "4.4's microbenchmark protocol: best-of-N with warmup and gc.collect(), reported with its raw distribution rather than a mean alone."
+  },
+  "ceiling": {
+    "scan_ceiling_us": 50.0,
+    "basis": "absolute, chosen BEFORE measurement, never relaxed",
+    "rationale": "50 us per header scan. Chosen against the 0.46 ms zero-I/O floor measured in EM-3: a header scan that costs more than ~10% of the entire uncontended request is not a detail."
+  },
+  "by_length": [
+    {
+      "bytes": 16,
+      "miss": {
+        "prefilter_hit": true,
+        "best_us": 0.891,
+        "median_us": 0.925,
+        "p99_us": 1.062
+      },
+      "hit": {
+        "prefilter_hit": true,
+        "best_us": 4.583,
+        "median_us": 4.961,
+        "p99_us": 18.339
+      },
+      "hit_over_miss_x": 5.14
+    },
+    {
+      "bytes": 64,
+      "miss": {
+        "prefilter_hit": true,
+        "best_us": 1.388,
+        "median_us": 1.451,
+        "p99_us": 4.992
+      },
+      "hit": {
+        "prefilter_hit": true,
+        "best_us": 3.193,
+        "median_us": 3.329,
+        "p99_us": 13.152
+      },
+      "hit_over_miss_x": 2.3
+    },
+    {
+      "bytes": 256,
+      "miss": {
+        "prefilter_hit": true,
+        "best_us": 3.333,
+        "median_us": 3.497,
+        "p99_us": 10.463
+      },
+      "hit": {
+        "prefilter_hit": true,
+        "best_us": 6.231,
+        "median_us": 6.843,
+        "p99_us": 23.683
+      },
+      "hit_over_miss_x": 1.87
+    },
+    {
+      "bytes": 1024,
+      "miss": {
+        "prefilter_hit": true,
+        "best_us": 9.378,
+        "median_us": 10.6405,
+        "p99_us": 33.266
+      },
+      "hit": {
+        "prefilter_hit": true,
+        "best_us": 11.049,
+        "median_us": 13.217,
+        "p99_us": 39.735
+      },
+      "hit_over_miss_x": 1.18
+    },
+    {
+      "bytes": 4096,
+      "miss": {
+        "prefilter_hit": true,
+        "best_us": 31.5,
+        "median_us": 32.081,
+        "p99_us": 76.983
+      },
+      "hit": {
+        "prefilter_hit": true,
+        "best_us": 33.071,
+        "median_us": 33.381,
+        "p99_us": 79.439
+      },
+      "hit_over_miss_x": 1.05
+    }
+  ],
+  "full_scan": {
+    "header_set_declared": 12,
+    "header_set_bytes": [
+      "authorization",
+      "cookie",
+      "forwarded",
+      "origin",
+      "referer",
+      "user-agent",
+      "x-forwarded-for",
+      "x-forwarded-host",
+      "x-forwarded-proto",
+      "x-originating-ip",
+      "x-real-ip",
+      "x-requested-with"
+    ],
+    "headers_sent_by_harness": 8,
+    "headers_actually_scanned": 6,
+    "scanned_names": [
+      "user-agent",
+      "referer",
+      "x-forwarded-for",
+      "x-forwarded-proto",
+      "x-requested-with",
+      "cookie"
+    ],
+    "best_us": 52.861,
+    "median_us": 53.3435,
+    "per_scanned_header_us": 8.8102,
+    "note": "This is the TOTAL for one request's header scan. Per-header figures are in the by_length table and are not derived from this total."
+  },
+  "user_agent_corpus": {
+    "entries": [
+      {
+        "corpus_entry": "desktop_chrome",
+        "os": "Windows",
+        "device": null,
+        "bytes": 111,
+        "prefilter_hit": true,
+        "attacks_detected": 0
+      },
+      {
+        "corpus_entry": "desktop_firefox",
+        "os": "Windows",
+        "device": null,
+        "bytes": 80,
+        "prefilter_hit": true,
+        "attacks_detected": 0
+      },
+      {
+        "corpus_entry": "mac_safari",
+        "os": "macOS",
+        "device": null,
+        "bytes": 117,
+        "prefilter_hit": true,
+        "attacks_detected": 0
+      },
+      {
+        "corpus_entry": "linux_android14_pixel8",
+        "os": "Android",
+        "device": "Pixel 8",
+        "bytes": 117,
+        "prefilter_hit": true,
+        "attacks_detected": 0
+      },
+      {
+        "corpus_entry": "android_chrome_generic",
+        "os": "Android",
+        "device": null,
+        "bytes": 108,
+        "prefilter_hit": true,
+        "attacks_detected": 0
+      },
+      {
+        "corpus_entry": "ios_safari",
+        "os": "iOS",
+        "device": null,
+        "bytes": 135,
+        "prefilter_hit": true,
+        "attacks_detected": 0
+      },
+      {
+        "corpus_entry": "googlebot",
+        "os": "other",
+        "device": null,
+        "bytes": 72,
+        "prefilter_hit": true,
+        "attacks_detected": 0
+      },
+      {
+        "corpus_entry": "curl",
+        "os": "other",
+        "device": null,
+        "bytes": 10,
+        "prefilter_hit": false,
+        "attacks_detected": 0
+      },
+      {
+        "corpus_entry": "python_requests",
+        "os": "other",
+        "device": null,
+        "bytes": 22,
+        "prefilter_hit": false,
+        "attacks_detected": 0
+      },
+      {
+        "corpus_entry": "wget",
+        "os": "other",
+        "device": null,
+        "bytes": 11,
+        "prefilter_hit": false,
+        "attacks_detected": 0
+      },
+      {
+        "corpus_entry": "postman",
+        "os": "other",
+        "device": null,
+        "bytes": 21,
+        "prefilter_hit": false,
+        "attacks_detected": 0
+      },
+      {
+        "corpus_entry": "empty",
+        "os": "other",
+        "device": null,
+        "bytes": 0,
+        "prefilter_hit": false,
+        "attacks_detected": 0
+      }
+    ],
+    "count": 12,
+    "tripping": 7,
+    "tripping_fraction": 0.5833,
+    "tripping_names": [
+      "desktop_chrome",
+      "desktop_firefox",
+      "mac_safari",
+      "linux_android14_pixel8",
+      "android_chrome_generic",
+      "ios_safari",
+      "googlebot"
+    ],
+    "attribution_note": "The Linux; Android 14; Pixel 8 entry is an ANDROID user-agent on a PIXEL 8 device. 'Linux' is the platform token in the UA string, not the operating system: attributing the trip to Linux would name the wrong OS and the wrong fix."
+  },
+  "verdict": {
+    "per_header_under_ceiling": true,
+    "full_scan_under_ceiling": false
+  },
+  "excluded": "No 6.7 us figure appears anywhere in this artefact. That number came from a stale audit and S-7 (m1gm) exists to correct it; quoting it here would reintroduce the error this bead exists to remove."
+}

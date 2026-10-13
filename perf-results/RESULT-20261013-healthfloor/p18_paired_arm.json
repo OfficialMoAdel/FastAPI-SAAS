@@ -1,0 +1,92 @@
+{
+  "schema": "perf-p18-paired-arm/1",
+  "q4": "paired arm: uvloop+httptools against asyncio+h11 on /health",
+  "why_a_real_server": "The loop half was already measured in-process over ASGITransport (perf-results/RESULT-20261013-healthfloor/) at 0.13% difference. The PROTOCOL half cannot be measured that way: ASGITransport does not select an HTTP implementation, so httptools and h11 are the same code underneath it. A comparison claiming to separate them over ASGI would be comparing two identical things and reporting a delta.",
+  "transport": "real TCP over loopback, separate client process",
+  "same_window": true,
+  "same_window_note": "Both arms are measured back to back inside one window because 4.4 records 7.1x run-to-run variance on this target. Measured sequentially, the arms could differ by more than the effect being measured.",
+  "repetitions_per_arm": 5,
+  "requests_per_repetition": 400,
+  "warmup_discarded": 50,
+  "manifests": {
+    "uvloop+httptools": {
+      "requested_loop": "uvloop",
+      "requested_http": "httptools",
+      "port": 8021,
+      "probe": {
+        "pid": 346970,
+        "argv_loop_flag": "uvloop",
+        "argv_http_flag": "httptools",
+        "loaded_uvloop": true,
+        "loaded_httptools": true,
+        "loaded_h11": null,
+        "wrapper_pid": 346964,
+        "resolved_from_listener": true
+      }
+    },
+    "asyncio+h11": {
+      "requested_loop": "asyncio",
+      "requested_http": "h11",
+      "port": 8022,
+      "probe": {
+        "pid": 346969,
+        "argv_loop_flag": "asyncio",
+        "argv_http_flag": "h11",
+        "loaded_uvloop": false,
+        "loaded_httptools": false,
+        "loaded_h11": null,
+        "wrapper_pid": 346964,
+        "resolved_from_listener": true
+      }
+    }
+  },
+  "summaries": [
+    {
+      "arm": "uvloop+httptools",
+      "min_of_mins_ms": 0.7646,
+      "median_of_mins_ms": 0.8076,
+      "min_of_p50s_ms": 0.8697,
+      "median_of_p50s_ms": 0.9271,
+      "min_spread_x": 1.108,
+      "p50_spread_x": 1.199
+    },
+    {
+      "arm": "asyncio+h11",
+      "min_of_mins_ms": 1.1137,
+      "median_of_mins_ms": 1.2545,
+      "min_of_p50s_ms": 1.3513,
+      "median_of_p50s_ms": 1.734,
+      "min_spread_x": 1.156,
+      "p50_spread_x": 1.392
+    }
+  ],
+  "delta_min_of_mins": {
+    "uvloop_httptools": 0.7646,
+    "asyncio_h11": 1.1137,
+    "delta_ms": -0.3491,
+    "delta_ratio": 0.6865,
+    "within_spread": false
+  },
+  "delta_median_of_p50s": {
+    "uvloop_httptools": 0.9271,
+    "asyncio_h11": 1.734,
+    "delta_ms": -0.8069,
+    "delta_ratio": 0.5347,
+    "within_spread": false
+  },
+  "manifest_verification": {
+    "uvloop+httptools": {
+      "requested": "uvloop+httptools",
+      "argv_in_running_process": "uvloop+httptools",
+      "matches_request": true
+    },
+    "asyncio+h11": {
+      "requested": "asyncio+h11",
+      "argv_in_running_process": "asyncio+h11",
+      "matches_request": true
+    }
+  },
+  "q4_answered": true,
+  "q4_answer": "ANSWERED: uvloop+httptools is 0.6865x the Min of asyncio+h11 (-0.3491 ms). Repetition spread is reported per arm so the delta can be read against it.",
+  "manifests_verified": true
+}

@@ -1,0 +1,283 @@
+{
+  "schema": "perf-endpoint-targeted-pass/1",
+  "phase": "B",
+  "phase_note": "TARGETED PASS. Phase A (perf-results/RESULT-20261012-matrix) ran production weights and is the only phase whose p99 columns are admissible. These numbers describe a DIFFERENT traffic shape and are not blended with phase A. Mixing them would be the same error as averaging RSS with tracemalloc.",
+  "why_a_second_phase": "Production weights are 80/10/10/10/5/1, so the light endpoints cannot reach n>=1,000 in a 45-minute run - a weight-1 endpoint would need about 12 hours. Re-weighting the MATRIX would make every column pass while making the traffic mix fiction, so the sizing problem is solved here instead, in a labelled phase.",
+  "cannot_fix": "p99 needs n>=10,000 per endpoint. This phase reaches n>=1,000, so p99 remains non-reportable for every endpoint here. That is a ~12-hour run at production weights, not a flag.",
+  "endpoints": [
+    {
+      "endpoint": "count",
+      "method": "GET",
+      "path": "/api/v1/account/sessions/count",
+      "phase": "B - targeted pass, NOT blended with phase A",
+      "n": 1250,
+      "status_distribution": {
+        "200": 1250
+      },
+      "repetitions": [
+        {
+          "repetition": 1,
+          "n": 250,
+          "min_ms": 7.4567,
+          "p50_ms": 11.8344
+        },
+        {
+          "repetition": 2,
+          "n": 250,
+          "min_ms": 7.3594,
+          "p50_ms": 9.3373
+        },
+        {
+          "repetition": 3,
+          "n": 250,
+          "min_ms": 5.6327,
+          "p50_ms": 7.4231
+        },
+        {
+          "repetition": 4,
+          "n": 250,
+          "min_ms": 3.7786,
+          "p50_ms": 5.4511
+        },
+        {
+          "repetition": 5,
+          "n": 250,
+          "min_ms": 3.6904,
+          "p50_ms": 5.2313
+        }
+      ],
+      "min_ms": 3.6904,
+      "p50_ms": 7.5824,
+      "p95_ms": 21.4585,
+      "p99_ms": 27.6943,
+      "server_p50_ms": 6.523,
+      "p50_reportable": true,
+      "p95_reportable": true,
+      "p99_reportable": false
+    },
+    {
+      "endpoint": "sessions",
+      "method": "GET",
+      "path": "/api/v1/account/sessions",
+      "phase": "B - targeted pass, NOT blended with phase A",
+      "n": 1250,
+      "status_distribution": {
+        "200": 1250
+      },
+      "repetitions": [
+        {
+          "repetition": 1,
+          "n": 250,
+          "min_ms": 3.8549,
+          "p50_ms": 5.4234
+        },
+        {
+          "repetition": 2,
+          "n": 250,
+          "min_ms": 5.0206,
+          "p50_ms": 6.3327
+        },
+        {
+          "repetition": 3,
+          "n": 250,
+          "min_ms": 5.3847,
+          "p50_ms": 8.1705
+        },
+        {
+          "repetition": 4,
+          "n": 250,
+          "min_ms": 4.7711,
+          "p50_ms": 6.3278
+        },
+        {
+          "repetition": 5,
+          "n": 250,
+          "min_ms": 5.5941,
+          "p50_ms": 7.3873
+        }
+      ],
+      "min_ms": 3.8549,
+      "p50_ms": 6.638,
+      "p95_ms": 10.1604,
+      "p99_ms": 11.223,
+      "server_p50_ms": 5.728,
+      "p50_reportable": true,
+      "p95_reportable": true,
+      "p99_reportable": false
+    },
+    {
+      "endpoint": "notifications",
+      "method": "GET",
+      "path": "/api/v1/notifications",
+      "phase": "B - targeted pass, NOT blended with phase A",
+      "n": 1250,
+      "status_distribution": {
+        "200": 1250
+      },
+      "repetitions": [
+        {
+          "repetition": 1,
+          "n": 250,
+          "min_ms": 9.2458,
+          "p50_ms": 26.5172
+        },
+        {
+          "repetition": 2,
+          "n": 250,
+          "min_ms": 10.1745,
+          "p50_ms": 14.3817
+        },
+        {
+          "repetition": 3,
+          "n": 250,
+          "min_ms": 5.7849,
+          "p50_ms": 9.1604
+        },
+        {
+          "repetition": 4,
+          "n": 250,
+          "min_ms": 5.9326,
+          "p50_ms": 8.6181
+        },
+        {
+          "repetition": 5,
+          "n": 250,
+          "min_ms": 6.583,
+          "p50_ms": 9.9554
+        }
+      ],
+      "min_ms": 5.7849,
+      "p50_ms": 11.0959,
+      "p95_ms": 34.4625,
+      "p99_ms": 40.2696,
+      "server_p50_ms": 9.979,
+      "p50_reportable": true,
+      "p95_reportable": true,
+      "p99_reportable": false
+    },
+    {
+      "endpoint": "users",
+      "method": "GET",
+      "path": "/api/v1/users?page=1&per_page=100",
+      "phase": "B - targeted pass, NOT blended with phase A",
+      "n": 1250,
+      "status_distribution": {
+        "200": 1250
+      },
+      "repetitions": [
+        {
+          "repetition": 1,
+          "n": 250,
+          "min_ms": 14.7676,
+          "p50_ms": 26.7082
+        },
+        {
+          "repetition": 2,
+          "n": 250,
+          "min_ms": 14.1318,
+          "p50_ms": 22.2595
+        },
+        {
+          "repetition": 3,
+          "n": 250,
+          "min_ms": 12.8818,
+          "p50_ms": 16.0999
+        },
+        {
+          "repetition": 4,
+          "n": 250,
+          "min_ms": 16.4975,
+          "p50_ms": 20.4448
+        },
+        {
+          "repetition": 5,
+          "n": 250,
+          "min_ms": 14.3248,
+          "p50_ms": 20.0448
+        }
+      ],
+      "min_ms": 12.8818,
+      "p50_ms": 20.3355,
+      "p95_ms": 38.2433,
+      "p99_ms": 72.7914,
+      "server_p50_ms": 19.332,
+      "p50_reportable": true,
+      "p95_reportable": true,
+      "p99_reportable": false
+    },
+    {
+      "endpoint": "/health/live",
+      "method": "GET",
+      "path": "/api/v1/health/live",
+      "phase": "B - targeted pass, NOT blended with phase A",
+      "n": 1250,
+      "status_distribution": {
+        "404": 1250
+      },
+      "repetitions": [
+        {
+          "repetition": 1,
+          "n": 250,
+          "min_ms": 1.8286,
+          "p50_ms": 2.38
+        },
+        {
+          "repetition": 2,
+          "n": 250,
+          "min_ms": 2.2541,
+          "p50_ms": 3.1266
+        },
+        {
+          "repetition": 3,
+          "n": 250,
+          "min_ms": 2.6927,
+          "p50_ms": 3.4308
+        },
+        {
+          "repetition": 4,
+          "n": 250,
+          "min_ms": 2.9174,
+          "p50_ms": 3.7001
+        },
+        {
+          "repetition": 5,
+          "n": 250,
+          "min_ms": 2.3027,
+          "p50_ms": 3.4783
+        }
+      ],
+      "min_ms": 1.8286,
+      "p50_ms": 3.3039,
+      "p95_ms": 5.2293,
+      "p99_ms": 6.2899,
+      "server_p50_ms": 2.054,
+      "p50_reportable": true,
+      "p95_reportable": true,
+      "p99_reportable": false
+    },
+    {
+      "endpoint": "/account/logout",
+      "method": "POST",
+      "path": "/api/v1/account/logout",
+      "phase": "B - targeted pass, NOT blended with phase A",
+      "n": 1250,
+      "status_distribution": {
+        "200": 1250
+      },
+      "min_ms": 7.5106,
+      "p50_ms": 18.8659,
+      "p95_ms": 71.4195,
+      "p99_ms": 108.9265,
+      "reauthentications": 1250,
+      "p50_reportable": true,
+      "p95_reportable": true,
+      "p99_reportable": false
+    }
+  ],
+  "summary": {
+    "endpoints_covered": 6,
+    "p50_reportable": 6,
+    "p95_reportable": 6,
+    "p99_reportable": 0
+  }
+}
