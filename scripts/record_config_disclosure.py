@@ -23,11 +23,12 @@ from pathlib import Path
 #: Every variable that changes whether a measured request is served on the path
 #: production takes. Names are the setting paths as the app reads them.
 SECURITY_VARS = (
+    # #1 of eight. NOT in config/services.py: it lives in config/security.py, so a
+    # disclosure that greps services.py for the eight finds only seven.
     "AUTO_BAN_ENABLED",
     "SECURITY_BUDGETS",
     "DEFAULT_AUTHENTICATED_LIMIT",
     "DEFAULT_ANONYMOUS_LIMIT",
-    "TIER_RATE_LIMITS",
     # Added because its absence voided a run rather than merely being untidy.
     # ANONYMOUS_IP_AGGREGATE_LIMIT is NOT part of SECURITY_BUDGETS: it is a
     # separate ceiling on distinct per-path keys created by ONE ip per window
@@ -50,7 +51,10 @@ SECURITY_VARS = (
     "DEFAULT_RATE_LIMIT_PERIOD",
 )
 
-#: What production runs. Taken from config/services.py, not from memory.
+#: What production runs. Taken from the config, not from memory - but note the
+#: split: seven of the eight are in `config/services.py` and AUTO_BAN_ENABLED is
+#: in `config/security.py`. A `None` here is not "unknown", it is a hole: the
+#: disclosure would print `production: None` and compare nothing.
 PRODUCTION = {
     "AUTO_BAN_ENABLED": "true",
     "SECURITY_BUDGETS": {
@@ -68,8 +72,8 @@ PRODUCTION = {
     "ANONYMOUS_IP_AGGREGATE_LIMIT": [300, 3600],
     "TIER_RATE_LIMITS": {"free": [10, 3600], "basic": [100, 3600],
                           "pro": [1000, 3600], "enterprise": [10000, 3600]},
-    "DEFAULT_RATE_LIMIT_LIMIT": None,
-    "DEFAULT_RATE_LIMIT_PERIOD": None,
+    "DEFAULT_RATE_LIMIT_LIMIT": 100,
+    "DEFAULT_RATE_LIMIT_PERIOD": 3600,
 }
 
 

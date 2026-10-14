@@ -19,6 +19,7 @@ from src.app.core.db.rls import restore_rls_context
 from src.app.core.logger import get_logger
 from src.app.core.observability.tracing import trace_span
 from src.app.core.tenancy.context import get_current_tenant
+from src.app.shared.exceptions import AppException
 
 logger = get_logger(__name__)
 
@@ -213,7 +214,15 @@ async def async_get_db() -> AsyncGenerator[AsyncSession]:
 
             tenant = get_current_tenant()
             tenant_context = str(tenant.id) if tenant else "None"
-            logger.error("Database transaction failed, rolling back", tenant=tenant_context, exc_info=exc)
+            # An AppException is an expected, deliberate rejection that
+            # core/errors.py turns into a response, so no transaction failed and
+            # the rollback above was routine. Logging it at error level with a
+            # rendered traceback was both wrong and, per bead FastAPI_saas-1py8,
+            # 345 us per call and 99.72% of the event loop's CPU on the 401
+            # path. A genuine driver failure is not an AppException and still
+            # reaches the log below.
+            if not isinstance(exc, AppException):
+                logger.error("Database transaction failed, rolling back", tenant=tenant_context, exc_info=exc)
             raise
         finally:
             # Always close session to prevent connection pool exhaustion
@@ -252,7 +261,15 @@ async def get_db_context() -> AsyncGenerator[AsyncSession]:
 
             tenant = get_current_tenant()
             tenant_context = str(tenant.id) if tenant else "None"
-            logger.error("Database transaction failed, rolling back", tenant=tenant_context, exc_info=exc)
+            # An AppException is an expected, deliberate rejection that
+            # core/errors.py turns into a response, so no transaction failed and
+            # the rollback above was routine. Logging it at error level with a
+            # rendered traceback was both wrong and, per bead FastAPI_saas-1py8,
+            # 345 us per call and 99.72% of the event loop's CPU on the 401
+            # path. A genuine driver failure is not an AppException and still
+            # reaches the log below.
+            if not isinstance(exc, AppException):
+                logger.error("Database transaction failed, rolling back", tenant=tenant_context, exc_info=exc)
             raise
         finally:
             # Always close session to prevent connection pool exhaustion

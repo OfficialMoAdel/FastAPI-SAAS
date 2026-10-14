@@ -47,6 +47,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from src.benchmarks.percentiles import nearest_rank
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -55,16 +57,6 @@ TENANT = "test-tenant-e2e"
 
 #: The step recorded in the pack, quoted so a reader can judge reproduction.
 RECORDED_STEP_RANGE_S = (3.17, 3.69)
-
-
-def nearest_rank(samples: list[float], p: float) -> float | None:
-    if not samples:
-        return None
-    ordered = sorted(samples)
-    if len(ordered) == 1:
-        return ordered[0]
-    idx = max(0, min(len(ordered) - 1, int(round(p * (len(ordered) - 1)))))
-    return ordered[idx]
 
 
 @contextlib.asynccontextmanager
@@ -145,9 +137,9 @@ async def main_async(args: argparse.Namespace) -> int:
                     "repetition": rep + 1,
                     "n": len(local),
                     "min_ms": round(min(local), 4),
-                    "p50_ms": round(nearest_rank(local, 0.50) or 0.0, 4),
-                    "p95_ms": round(nearest_rank(local, 0.95) or 0.0, 4),
-                    "server_p50_ms": round(nearest_rank(server, 0.50) or 0.0, 4)
+                    "p50_ms": round(nearest_rank(local, 0.50), 4),
+                    "p95_ms": round(nearest_rank(local, 0.95), 4),
+                    "server_p50_ms": round(nearest_rank(server, 0.50), 4)
                     if server
                     else None,
                 }
@@ -162,7 +154,7 @@ async def main_async(args: argparse.Namespace) -> int:
     step_lo_ms = RECORDED_STEP_RANGE_S[0] * 1000.0
     step_hi_ms = RECORDED_STEP_RANGE_S[1] * 1000.0
     in_step = sum(1 for v in latencies if step_lo_ms <= v <= step_hi_ms)
-    p50 = nearest_rank(latencies, 0.50) or 0.0
+    p50 = nearest_rank(latencies, 0.50)
 
     result = {
         "schema": "perf-logout-step/1",
@@ -193,13 +185,13 @@ async def main_async(args: argparse.Namespace) -> int:
         "latency": {
             "min_ms": round(min(latencies), 4) if latencies else None,
             "p50_ms": round(p50, 4),
-            "p95_ms": round(nearest_rank(latencies, 0.95) or 0.0, 4),
-            "p99_ms": round(nearest_rank(latencies, 0.99) or 0.0, 4),
+            "p95_ms": round(nearest_rank(latencies, 0.95), 4),
+            "p99_ms": round(nearest_rank(latencies, 0.99), 4),
             "max_ms": round(max(latencies), 4) if latencies else None,
             "median_of_repetition_p50s_ms": round(
                 statistics.median([r["p50_ms"] for r in reps]), 4
             ),
-            "server_p50_ms": round(nearest_rank(server_latencies, 0.50) or 0.0, 4)
+            "server_p50_ms": round(nearest_rank(server_latencies, 0.50), 4)
             if server_latencies
             else None,
         },

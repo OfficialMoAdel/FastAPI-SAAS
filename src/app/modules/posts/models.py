@@ -40,8 +40,19 @@ class Post(Base):
     media_url: Mapped[str | None] = mapped_column(String, default=None)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None, onupdate=lambda: datetime.now(UTC)
+    # `default_factory`, NOT `default=None`. Base is a MappedAsDataclass, so
+    # `default_factory` becomes the dataclass field default and is applied when
+    # the instance is CONSTRUCTED -- which is why Column.default reads None for
+    # this attribute and why reading Column.default is the wrong way to audit it.
+    # `default=None` means the ORM sends an explicit NULL, and
+    # 01_foundation.py declares post.updated_at NOT NULL, so every insert raised
+    # NotNullViolationError and both POST /api/v1/posts and
+    # POST /api/v1/posts/by-user/{username} answered 500 for every user.
+    # Measured on perf-local: `Post(...).updated_at` was None before flush while
+    # `User(...).updated_at` (users/models.py, same shape) carried a real
+    # timestamp and inserted fine. This is the only word that differed.
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default_factory=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     is_deleted: Mapped[bool] = mapped_column(default=False, index=True)

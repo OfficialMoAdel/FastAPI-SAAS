@@ -34,27 +34,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+from src.benchmarks.percentiles import nearest_rank
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 TENANT_HEADER = {"X-Tenant-ID": "test-tenant-e2e"}
-
-
-def nearest_rank(samples: list[float], p: float) -> float | None:
-    """Nearest-rank percentile over raw samples.
-
-    Hand-rolled rather than delegated to the shared estimator: 4.4 requires
-    percentiles from samples, and the Round-1 ``pct()`` returned literally max
-    for any n <= 20 before H-1 repaired it.
-    """
-    if not samples:
-        return None
-    ordered = sorted(samples)
-    if len(ordered) == 1:
-        return ordered[0]
-    idx = max(0, min(len(ordered) - 1, int(round(p * (len(ordered) - 1)))))
-    return ordered[idx]
 
 
 @contextlib.asynccontextmanager
@@ -125,8 +111,8 @@ async def main_async(args: argparse.Namespace) -> int:
                     "repetition": rep + 1,
                     "n": len(samples),
                     "min_ms": round(min(samples), 4),
-                    "p50_ms": round(nearest_rank(samples, 0.50) or 0.0, 4),
-                    "p95_ms": round(nearest_rank(samples, 0.95) or 0.0, 4),
+                    "p50_ms": round(nearest_rank(samples, 0.50), 4),
+                    "p95_ms": round(nearest_rank(samples, 0.95), 4),
                 }
             )
             print(

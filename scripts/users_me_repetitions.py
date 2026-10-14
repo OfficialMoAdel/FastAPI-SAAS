@@ -43,22 +43,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+from src.benchmarks.percentiles import nearest_rank
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 TENANT = "test-tenant-e2e"
-
-
-def nearest_rank(samples: list[float], p: float) -> float | None:
-    """Nearest-rank over raw samples - 4.4 forbids deriving percentiles from summaries."""
-    if not samples:
-        return None
-    ordered = sorted(samples)
-    if len(ordered) == 1:
-        return ordered[0]
-    idx = max(0, min(len(ordered) - 1, int(round(p * (len(ordered) - 1)))))
-    return ordered[idx]
 
 
 @contextlib.asynccontextmanager
@@ -149,11 +140,11 @@ async def main_async(args: argparse.Namespace) -> int:
                     "repetition": rep + 1,
                     "n": len(client),
                     "client_min_ms": round(min(client), 4),
-                    "client_p50_ms": round(nearest_rank(client, 0.50) or 0.0, 4),
-                    "client_p95_ms": round(nearest_rank(client, 0.95) or 0.0, 4),
+                    "client_p50_ms": round(nearest_rank(client, 0.50), 4),
+                    "client_p95_ms": round(nearest_rank(client, 0.95), 4),
                     "server_min_ms": round(min(server), 4) if server else None,
-                    "server_p50_ms": round(nearest_rank(server, 0.50) or 0.0, 4) if server else None,
-                    "server_p95_ms": round(nearest_rank(server, 0.95) or 0.0, 4) if server else None,
+                    "server_p50_ms": round(nearest_rank(server, 0.50), 4) if server else None,
+                    "server_p95_ms": round(nearest_rank(server, 0.95), 4) if server else None,
                     "throughput_rps": round(len(client) / wall, 2) if wall else None,
                 }
             )

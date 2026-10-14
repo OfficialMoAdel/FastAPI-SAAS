@@ -205,6 +205,71 @@ class TestRequiresPermission:
             # Should not raise
             await checker(request=None, db=mock_db, auth_context=ctx)
 
+    @pytest.mark.asyncio
+    async def test_a_prefetched_mask_that_denies_is_confirmed_against_the_db(self):
+        """A zero prefetched mask is a cache MISS, not a denial.
+
+        The composite auth prefetch (core/security/auth_prefetch.py) reads
+        perms:bitmask:{tenant}:{user}:{version} and yields 0 on a cache miss
+        rather than consulting the database, so "mask is zero" is
+        indistinguishable from "this user has no permissions" while meaning the
+        opposite -- "nobody has computed this mask yet". Before the fix, every
+        RBAC-gated endpoint failed closed on a cold key for every user in every
+        environment while the DB-backed call returned True for the same user
+        (bead FastAPI_saas-nymp). This test exists to keep that closed.
+        """
+        import types
+
+        from tests.helpers.auth import build_test_auth_context
+
+        checker = requires_permission("users:read")
+        tenant_id = uuid.uuid4()
+        ctx = build_test_auth_context(
+            {"id": 7, "is_superuser": False, "tenant_id": tenant_id},
+            {"id": tenant_id, "slug": "test-tenant"},
+        )
+        # The prefetch hands the dependency a mask it computed for this user
+        # and tenant -- which happens to be zero because nothing has been
+        # cached yet.
+        request = types.SimpleNamespace(
+            state=types.SimpleNamespace(cached_permissions_bitmask=(7, str(tenant_id), 0)),
+        )
+
+        with patch(
+            "src.app.core.rbac.dependencies.has_permission_cached",
+            return_value=True,
+        ) as mock_db_check:
+            # Must NOT raise: the mask denies, the DB grants.
+            await checker(request=request, db=AsyncMock(), auth_context=ctx)
+            mock_db_check.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_prefetched_mask_that_grants_skips_the_db(self):
+        """The allow fast path is unchanged -- no DB lookup when the mask grants."""
+        import types
+
+        from tests.helpers.auth import build_test_auth_context
+
+        checker = requires_permission("users:read")
+        tenant_id = uuid.uuid4()
+        ctx = build_test_auth_context(
+            {"id": 7, "is_superuser": False, "tenant_id": tenant_id},
+            {"id": tenant_id, "slug": "test-tenant"},
+        )
+        request = types.SimpleNamespace(
+            state=types.SimpleNamespace(
+                cached_permissions_bitmask=(7, str(tenant_id), 67108863),
+            ),
+        )
+
+        with patch(
+            "src.app.core.rbac.dependencies.has_permission_cached",
+            return_value=True,
+        ) as mock_db_check:
+            await checker(request=request, db=AsyncMock(), auth_context=ctx)
+            mock_db_check.assert_not_awaited()
+
+
 class TestCacheTTL:
     """Tests for cache TTL configuration."""
 

@@ -60,14 +60,21 @@ Credentials are resolved by `PERF_TEST_EMAILS` (comma-separated, highest priorit
 
 ### 3. Start the server under PRODUCTION limits, on its own host
 
-All of these defaults are per client IP, and every virtual user on a load host shares
-one:
+All of these defaults are per client IP or per user, and every virtual user on a
+load host shares one IP. **Eight** controls gate a measured request, not four —
+the four that were documented for years are rows 1-4 below, and rows 5-8 are
+the ones that void runs while every documented budget looks relaxed:
 
-| Setting | Default | Effect |
-|---|---|---|
-| `SECURITY_BUDGETS["auth"]` | `(5, 60)` | 5 logins/min |
-| `DEFAULT_ANONYMOUS_LIMIT` | `(10, 3600)` | 10 logins/hour (login is anonymous) |
-| `AUTO_BAN_ENABLED` | `true`, threshold 10 | bans the IP 1h, escalating to 2h |
+| # | Setting | Default | Effect |
+|---|---|---|---|
+| 1 | `SECURITY_BUDGETS["auth"]` | `(5, 60)` | 5 logins/min |
+| 2 | `DEFAULT_ANONYMOUS_LIMIT` | `(10, 3600)` | 10 logins/hour (login is anonymous) |
+| 3 | `AUTO_BAN_ENABLED` | `true`, threshold 10 | bans the IP 1h, escalating to 2h |
+| 4 | `DEFAULT_AUTHENTICATED_LIMIT` | `(50, 3600)` | 50/hour on authenticated paths |
+| 5 | `ANONYMOUS_IP_AGGREGATE_LIMIT` | `(300, 3600)` | 300 distinct per-path keys/hour from one IP — **not** part of `SECURITY_BUDGETS`, and keyed on the **peer** address, so per-user client IPs do not spread it |
+| 6 | `TIER_RATE_LIMITS` | `free` 10/h, `basic` 100/h, `pro` 1000/h, `enterprise` 10000/h | **per-USER-per-path** — spreading load across 300 accounts does not spread it; each account hits its own ceiling on the hot path |
+| 7 | `DEFAULT_RATE_LIMIT_LIMIT` | `100` | fallback when no tier and no per-path policy matches. A plain int — `"[N,S]"` is a startup error |
+| 8 | `DEFAULT_RATE_LIMIT_PERIOD` | `3600` | fallback window. Also a plain int |
 
 A capacity number measured with those limits relaxed is not a capacity number. So the
 script does **not** relax them, and it does **not** start the server. You start the app
@@ -82,13 +89,23 @@ uvicorn src.app.main:app --host 0.0.0.0 --port 8000
 If you deliberately measure a run with the limits relaxed — a rate-limit smoke test,
 not a baseline — override them in the server's process env and expect the artefact to
 say so. The app-host report records the effective values, and `AUTO_BAN_ENABLED=false`
-becomes a label in the manifest:
+becomes a label in the manifest. Relaxing only rows 1-3 is the mistake that cost two
+matrix runs: **relax all eight or the run is void**:
 
 ```bash
 export AUTO_BAN_ENABLED=false
 export SECURITY_BUDGETS='{"auth":[10000,60],"refresh":[10000,60],"ai_chat":[10000,60]}'
 export DEFAULT_ANONYMOUS_LIMIT="[100000,3600]"
+export DEFAULT_AUTHENTICATED_LIMIT="[100000,3600]"
+export ANONYMOUS_IP_AGGREGATE_LIMIT="[1000000,3600]"
+export TIER_RATE_LIMITS='{"free":[100000,3600],"basic":[100000,3600],"pro":[100000,3600],"enterprise":[100000,3600]}'
+export DEFAULT_RATE_LIMIT_LIMIT=100000
+export DEFAULT_RATE_LIMIT_PERIOD=3600
 ```
+
+Rows 7-8 are ints, so they are **not** JSON-quoted; rows 1-6 are JSON. Every one of
+these is recorded by `scripts/record_config_disclosure.py`, and §4.5 of the plan
+voids a run in which any of them was left at a load-producing value.
 
 These are process-env overrides — `src/.env` is never modified. If an IP does get
 banned, clear it in Redis: `security:ban:<ip>` and `security:ban_count:<ip>`.

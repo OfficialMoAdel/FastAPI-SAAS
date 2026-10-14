@@ -47,6 +47,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from src.benchmarks.percentiles import nearest_rank
+
 TENANT_HEADER = {"X-Tenant-ID": "test-tenant-e2e"}
 
 #: The same agent prof_request_path.py and the locust harness send.
@@ -92,22 +94,6 @@ class RoundTripCounter:
         for cls, method, original in self._originals:
             setattr(cls, method, original)
         self._originals.clear()
-
-
-def nearest_rank(samples: list[int], p: float) -> int | None:
-    """Nearest-rank percentile over the RAW sample list.
-
-    Hand-rolled rather than delegated: the point of P-12 is that the percentile
-    must be computed from samples rather than from the helper this programme has
-    already had to repair once.
-    """
-    if not samples:
-        return None
-    ordered = sorted(samples)
-    if len(ordered) == 1:
-        return ordered[0]
-    idx = max(0, min(len(ordered) - 1, int(round(p * (len(ordered) - 1)))))
-    return ordered[idx]
 
 
 @contextlib.asynccontextmanager

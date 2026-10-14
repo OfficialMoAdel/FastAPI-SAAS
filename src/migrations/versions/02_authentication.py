@@ -25,7 +25,22 @@ def upgrade() -> None:
     op.create_table(
         "token_blacklist",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("token", sa.String(length=500), nullable=False),
+        # ``token`` is TEXT, not VARCHAR(500).
+        #
+        # The 500 was too narrow for a real token pair: ``blacklist_tokens``
+        # (``src/app/core/security/jwt_service.py:556``) stores the RAW JWT as
+        # well as a ``jti:`` key, and the raw refresh token measures 547
+        # characters (access 501) for a username alone. The overflow raised
+        # ``asyncpg.exceptions.StringDataRightTruncationError``, which maps to
+        # ``sqlalchemy.exc.DataError`` -- a SIBLING of ``IntegrityError`` under
+        # ``DatabaseError`` -- so the ``except IntegrityError`` in that function
+        # never fired and the failure escaped to the client as a 500 on logout.
+        #
+        # The raw row is load-bearing and cannot simply be dropped:
+        # ``_check_db_fallback`` (``jwt_service.py:299-302``) queries it directly
+        # when a ``jti:`` lookup misses, and ``crud_token_blacklist``'s cache
+        # warmup selects every row with no ``jti`` predicate.
+        sa.Column("token", sa.Text(), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),

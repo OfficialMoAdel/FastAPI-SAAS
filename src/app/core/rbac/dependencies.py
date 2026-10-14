@@ -342,6 +342,24 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
         if cached_tuple is not None and cached_tuple[0] == user_id and str(cached_tuple[1]) == str(tenant_id):
             mask = cached_tuple[2]
             has_perm = PermissionBitmask.has_permission(mask, permission_slug)
+            if not has_perm:
+                # A mask that denies is NOT a denial. The composite auth prefetch
+                # (core/security/auth_prefetch.py) reads
+                # perms:bitmask:{tenant}:{user}:{version} and yields 0 on a cache
+                # MISS rather than consulting the database, so "mask is zero" is
+                # indistinguishable from "this user has no permissions" while
+                # meaning the opposite -- "nobody has computed this mask yet".
+                # Confirm the denial against the DB-backed path before rejecting.
+                #
+                # Measured (bead FastAPI_saas-nymp): with this fallback absent, a
+                # cold bitmask key made every RBAC-gated endpoint fail closed
+                # (403 "Permission denied: users:read") for every user in every
+                # environment, while the DB-backed call returned True for the
+                # same user and a spy recorded zero calls to it. The DB-backed
+                # path is itself cached (Redis bitmask plus an in-process L1
+                # map), so this only costs a lookup when the prefetch denies --
+                # the allow fast path above is unchanged.
+                has_perm = await has_permission_cached(user_id, tenant_id, permission_slug, db)
         else:
             has_perm = await has_permission_cached(user_id, tenant_id, permission_slug, db)
 

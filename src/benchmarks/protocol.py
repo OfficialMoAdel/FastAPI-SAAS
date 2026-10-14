@@ -99,6 +99,14 @@ MIN_REQUEST_REPETITIONS: Final[int] = 5
 #: smaller than this cannot be distinguished from the machine being busy.
 NOISE_FLOOR_RATIO: Final[float] = 2.0
 
+#: ``time.perf_counter`` reports seconds. Every figure this module publishes is
+#: documented and named in microseconds (``Ceiling.value_us``, ``best_us``,
+#: ``batch_mins_us``, ``reportable_us``), so every sample is scaled at the point
+#: it is taken. The conversion lives here, once, rather than at the call sites:
+#: a caller-side conversion is what let the un-scaled seconds leak out as
+#: ``*_us`` in the first place.
+_US_PER_SECOND: Final[float] = 1_000_000.0
+
 
 class ProtocolViolation(RuntimeError):
     """A run was configured in a way that cannot produce a sound number."""
@@ -259,7 +267,7 @@ def _collect(
         for index in range(iterations):
             call_start = time.perf_counter()
             fn()
-            samples[index] = time.perf_counter() - call_start
+            samples[index] = (time.perf_counter() - call_start) * _US_PER_SECOND
         samples.sort()
         batch_mins.append(samples[0])
         batch_medians.append(statistics.median(samples))
@@ -335,7 +343,7 @@ async def measure_async(
         for index in range(iterations):
             call_start = time.perf_counter()
             await fn()
-            samples[index] = time.perf_counter() - call_start
+            samples[index] = (time.perf_counter() - call_start) * _US_PER_SECOND
         samples.sort()
         batch_mins.append(samples[0])
         batch_medians.append(statistics.median(samples))
@@ -413,7 +421,7 @@ async def measure_request_scale(
         for index in range(iterations):
             call_start = time.perf_counter()
             await fn()
-            samples[index] = time.perf_counter() - call_start
+            samples[index] = (time.perf_counter() - call_start) * _US_PER_SECOND
         ordered = sorted(samples)
         mins.append(ordered[0])
         medians.append(statistics.median(ordered))

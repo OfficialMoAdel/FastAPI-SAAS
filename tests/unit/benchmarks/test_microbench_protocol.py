@@ -128,6 +128,16 @@ ALLOWED_RAW_TIMERS: dict[str, str] = {
         "OPERATOR HARNESS, not a test benchmark. census.py is imported by a test and must "
         "keep its own hooks; protocol adoption belongs to its own bead."
     ),
+    "src/benchmarks/loop_occupancy.py": (
+        "HALF AND HALF, and only the half that bypasses the protocol is listed here. Phase 1 "
+        "of the L-8 harness DOES route through it: all three per-call costs go through "
+        "measure(), are emitted by render() and are judged by verdict() against absolute "
+        "Ceilings. Phase 2 is a SAMPLE STORE of the same kind as linux_mechanism_probe.py: "
+        "it accumulates event-loop occupancy by summing perf_counter deltas across a whole "
+        "request and dividing by the run's wall time, which is a quantity over the run rather "
+        "than a per-call estimate, so best_of(min-of-N, median-of-M) does not express it. "
+        "Timing a per-call probe there would measure the probe."
+    ),
     "src/benchmarks/driver_count_io.py": "OPERATOR HARNESS; see census.py.",
     "src/benchmarks/prof_request_path.py": "OPERATOR HARNESS; see census.py.",
 }
@@ -228,6 +238,47 @@ class TestTheRunnerRefusesUnsoundRuns:
         assert result.best_us < cold_cost_us / 10, (
             f"a warm-up call leaked into the timed samples: best_us={result.best_us} us, "
             f"which is the {cold_cost_us:.0f} us cold-start cost rather than the steady state"
+        )
+
+    def test_the_reported_figure_is_microseconds_and_not_seconds(self):
+        """The runner reports MICROSECONDS. It used to report seconds.
+
+        Every field it publishes is named and documented in microseconds -
+        ``Ceiling.value_us``, ``best_us``, ``batch_mins_us``,
+        ``reportable_us`` ("the figure a human should quote, in
+        microseconds") - but the samples were raw ``time.perf_counter``
+        deltas, and ``perf_counter`` is in seconds. Nothing converted them,
+        so every figure this module published was understated by 10^6, and
+        because ``verdict`` compares a measurement against a ``Ceiling``
+        that IS in microseconds, every measurement passed its ceiling
+        trivially. The module's central guarantee was silently defeated.
+
+        The reason it survived is the shape of the assertions that existed:
+        they compared a measurement against another measurement, or against
+        a ceiling so far above the real cost that a value off by 10^6 still
+        fit underneath it. This one pins the unit against a cost the test
+        chooses, so a wrong unit cannot pass.
+
+        ``time.sleep`` is used deliberately. Its duration is specified by
+        the platform rather than by this code, so the assertion is a band
+        and not an equality - the point under test is the order of
+        magnitude, which a 10^6 error cannot land inside.
+        """
+        sleep_s = 0.002
+        expected_us = sleep_s * 1_000_000.0
+
+        result = measure(lambda: time.sleep(sleep_s), name="known-cost", iterations=5, warmup=2, repetitions=3)
+
+        assert 100.0 < result.reportable_us() < 20.0 * expected_us, (
+            f"a {expected_us:.0f} us sleep was reported as {result.reportable_us()} us. "
+            "The runner is emitting seconds into fields documented and named in microseconds."
+        )
+        # The same figure must clear a ceiling that is genuinely in microseconds. A
+        # 2 s ceiling is below the 2 ms cost, so this is the assertion the old
+        # seconds-valued samples could not pass.
+        assert not verdict(result, Ceiling(2_000.0, "a microsecond ceiling")).passed, (
+            f"a {expected_us:.0f} us call passed a 2000 us ceiling, so the comparison is "
+            "comparing a seconds-valued measurement against a microsecond-valued ceiling"
         )
 
 

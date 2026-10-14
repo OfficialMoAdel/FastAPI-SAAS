@@ -6,14 +6,16 @@ This file consolidates tests from:
 - test_rls_listener.py
 """
 
+from contextlib import AbstractAsyncContextManager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.db.database import async_get_db
+from src.app.core.db.database import async_get_db, get_db_context
 from src.app.core.db.rls import restore_rls_context
 from src.app.core.utils import cache
+from src.app.shared.exceptions import UnauthorizedError
 
 # =============================================================================
 # Tests from test_database.py
@@ -65,6 +67,64 @@ async def test_async_get_db_rollback_on_exception():
         # Verify session rollback and closed
         mock_session.rollback.assert_awaited_once()
         mock_session.close.assert_awaited_once()
+
+
+# =============================================================================
+# Bead FastAPI_saas-xv1b
+# =============================================================================
+
+
+@pytest.mark.parametrize("dependency", [async_get_db, get_db_context])
+@pytest.mark.parametrize(
+    ("thrown", "expect_logged"),
+    [
+        # An expected rejection: no transaction failed, so it is not an error.
+        (UnauthorizedError("Not authenticated"), False),
+        # A genuine driver failure: not an AppException, so it still logs.
+        (ValueError("driver blew up"), True),
+    ],
+    ids=["app_exception", "driver_failure"],
+)
+@pytest.mark.asyncio
+async def test_only_a_real_driver_failure_is_logged_as_a_failed_transaction(dependency, thrown, expect_logged):
+    """An AppException must not be logged as a failed database transaction.
+
+    Both session dependencies catch everything thrown into their ``yield`` and
+    used to log it at error level with a rendered traceback. On the 401 path
+    that reached the log once per unauthenticated request: bead
+    FastAPI_saas-1py8 measured it at 345 us per call and 99.72% of the event
+    loop's CPU on the Linux target. The rollback is unconditional and must
+    stay that way; only the error-level log is conditional.
+    """
+    mock_session = AsyncMock(spec=AsyncSession)
+    mock_local_session = MagicMock(return_value=mock_session)
+    fake_logger = MagicMock()
+
+    async def throw_through() -> None:
+        entered = dependency()
+        # async_get_db is a bare async generator; get_db_context is decorated
+        # with asynccontextmanager. Both reach the same except block, but they
+        # are entered differently, so the driver follows the form returned.
+        if isinstance(entered, AbstractAsyncContextManager):
+            async with entered as db:
+                assert db is mock_session
+                raise thrown
+        assert await anext(entered) is mock_session
+        await entered.athrow(thrown)
+
+    with patch("src.app.core.db.database._get_local_session", return_value=mock_local_session):
+        with patch("src.app.core.db.database.logger", fake_logger):
+            with pytest.raises(type(thrown)):
+                await throw_through()
+
+    mock_session.rollback.assert_awaited_once()
+    mock_session.close.assert_awaited_once()
+
+    message = "Database transaction failed, rolling back"
+    failed_transaction_logs = [call for call in fake_logger.error.call_args_list if call.args == (message,)]
+    assert bool(failed_transaction_logs) is expect_logged
+    if expect_logged:
+        assert failed_transaction_logs[0].kwargs["exc_info"] is thrown
 
 
 # =============================================================================

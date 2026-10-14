@@ -505,6 +505,31 @@ async def _resolve_tenant_id_for_token(payload: dict[str, Any], db: AsyncSession
     return None
 
 
+#: Postgres SQLSTATE for a unique-violation. The duplicate-token case the
+#: IntegrityError handler exists for is a 23505 on
+#: ``ix_token_blacklist_token``; an FK (23503), not-null (23502) or check
+#: (23514) violation on the same flush is a genuine fault wearing the same
+#: exception class.
+_UNIQUE_VIOLATION_SQLSTATE = "23505"
+
+
+def _is_duplicate_blacklist_violation(exc: IntegrityError) -> bool:
+    """True only when the flush failed because the blacklist row already exists.
+
+    ``IntegrityError`` is the SQLAlchemy base for EVERY constraint violation,
+    so catching it wholesale cannot tell the idempotent case from an FK or
+    not-null fault. Measured (bead FastAPI_saas-68yg): a production-shaped
+    pair whose claims named a tenant absent from the database failed with
+    ``got 0 rows`` and the log "Token already blacklisted in DB", because an
+    FK violation rolled back the savepoint and the handler called it a
+    duplicate. ``token_blacklist`` has exactly one unique index
+    (``ix_token_blacklist_token``, ``02_authentication.py``), so a unique
+    violation here is unambiguously the duplicate case.
+    """
+    original = getattr(exc, "orig", None)
+    return getattr(original, "sqlstate", None) == _UNIQUE_VIOLATION_SQLSTATE
+
+
 async def blacklist_tokens(
     access_token: str | None,
     refresh_token: str | None,
@@ -570,28 +595,51 @@ async def blacklist_tokens(
 
     if db_rows_staged:
         try:
-            async with db.begin_nested():
-                await db.flush()
-        except IntegrityError:
-            # C-2: AsyncSession.rollback() is always awaitable — the
-            # inspect.isawaitable guard was dead defensive code.
-            await db.rollback()
-            _jwt_logger.info("Token already blacklisted in DB (IntegrityError during flush)")
+            try:
+                async with db.begin_nested():
+                    await db.flush()
+            except IntegrityError as exc:
+                if _is_duplicate_blacklist_violation(exc):
+                    # C-2: AsyncSession.rollback() is always awaitable — the
+                    # inspect.isawaitable guard was dead defensive code.
+                    await db.rollback()
+                    _jwt_logger.info("Token already blacklisted in DB (IntegrityError during flush)")
+                else:
+                    # A constraint failure that is NOT the duplicate index. This
+                    # used to be swallowed as idempotency: the savepoint
+                    # rollback discarded the staged rows, the commit below had
+                    # nothing to commit, and the token was never persisted
+                    # while the caller was told the logout succeeded. Redis
+                    # still records it, so revocation works, but the missing DB
+                    # row is a real fault that must surface rather than look
+                    # like a repeat logout.
+                    await db.rollback()
+                    _jwt_logger.error(
+                        "DB blacklist flush hit a constraint that is not the duplicate-token index",
+                        error=str(exc),
+                    )
+                    raise
 
-        try:
-            await db.commit()
-        except Exception as e:
-            await db.rollback()
-            # A4 FIX: previously this early-returned BEFORE the Redis write,
-            # leaving the token blacklisted NOWHERE while the user believed
-            # they were logged out. Fall through so the cache blacklist (the
-            # hot-path check) still records it.
-            _jwt_logger.error(
-                "Failed to commit blacklisted tokens to DB; still blacklisting in cache",
-                error=str(e),
-            )
-
-    if tokens_for_cache:
+            try:
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                # A4 FIX: previously this early-returned BEFORE the Redis write,
+                # leaving the token blacklisted NOWHERE while the user believed
+                # they were logged out. Fall through so the cache blacklist (the
+                # hot-path check) still records it.
+                _jwt_logger.error(
+                    "Failed to commit blacklisted tokens to DB; still blacklisting in cache",
+                    error=str(e),
+                )
+        finally:
+            # The Redis write is the hot-path revocation oracle, so it runs on
+            # every path out of this block — including the re-raise above.
+            # Written here rather than after the block precisely so a
+            # constraint failure cannot skip it.
+            if tokens_for_cache:
+                await add_tokens_to_blacklist(tokens_for_cache)
+    elif tokens_for_cache:
         await add_tokens_to_blacklist(tokens_for_cache)
 
 
@@ -658,10 +706,20 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
                     _jwt_logger.warning(
                         "Could not determine tenant_id for token blacklisting, using Redis fallback"
                     )
-            except IntegrityError:
+            except IntegrityError as exc:
                 # C-2: AsyncSession.rollback() is always awaitable.
-                await db.rollback()
-                _jwt_logger.info("Token already blacklisted in DB (IntegrityError)")
+                if _is_duplicate_blacklist_violation(exc):
+                    await db.rollback()
+                    _jwt_logger.info("Token already blacklisted in DB (IntegrityError)")
+                else:
+                    # Same narrow as blacklist_tokens: an FK or not-null
+                    # violation is not a repeat logout.
+                    await db.rollback()
+                    _jwt_logger.error(
+                        "DB blacklist insert hit a constraint that is not the duplicate-token index",
+                        error=str(exc),
+                    )
+                    raise
             except Exception as e:
                 # S-24 FIX: the inner try caught ONLY IntegrityError, so any
                 # other DB fault (OperationalError, TimeoutError, a driver

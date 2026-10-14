@@ -42,21 +42,13 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
+from src.benchmarks.percentiles import nearest_rank
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 TENANT = "test-tenant-e2e"
-
-
-def nearest_rank(samples: list[float], p: float) -> float | None:
-    if not samples:
-        return None
-    ordered = sorted(samples)
-    if len(ordered) == 1:
-        return ordered[0]
-    idx = max(0, min(len(ordered) - 1, int(round(p * (len(ordered) - 1)))))
-    return ordered[idx]
 
 
 @contextlib.asynccontextmanager
@@ -154,7 +146,7 @@ async def main_async(args: argparse.Namespace) -> int:
                         "repetition": rep + 1,
                         "n": len(local),
                         "min_ms": round(min(local), 4),
-                        "p50_ms": round(nearest_rank(local, 0.50) or 0.0, 4),
+                        "p50_ms": round(nearest_rank(local, 0.50), 4),
                     }
                 )
             n = len(latencies)
@@ -167,10 +159,10 @@ async def main_async(args: argparse.Namespace) -> int:
                 "status_distribution": {str(s): c for s, c in sorted(statuses.items())},
                 "repetitions": reps,
                 "min_ms": round(min(latencies), 4),
-                "p50_ms": round(nearest_rank(latencies, 0.50) or 0.0, 4),
-                "p95_ms": round(nearest_rank(latencies, 0.95) or 0.0, 4),
-                "p99_ms": round(nearest_rank(latencies, 0.99) or 0.0, 4),
-                "server_p50_ms": round(nearest_rank(server, 0.50) or 0.0, 4)
+                "p50_ms": round(nearest_rank(latencies, 0.50), 4),
+                "p95_ms": round(nearest_rank(latencies, 0.95), 4),
+                "p99_ms": round(nearest_rank(latencies, 0.99), 4),
+                "server_p50_ms": round(nearest_rank(server, 0.50), 4)
                 if server
                 else None,
                 "p50_reportable": n >= 1000,
@@ -207,9 +199,9 @@ async def main_async(args: argparse.Namespace) -> int:
                     str(s): c for s, c in sorted(logout_status.items())
                 },
                 "min_ms": round(min(logout_lat), 4),
-                "p50_ms": round(nearest_rank(logout_lat, 0.50) or 0.0, 4),
-                "p95_ms": round(nearest_rank(logout_lat, 0.95) or 0.0, 4),
-                "p99_ms": round(nearest_rank(logout_lat, 0.99) or 0.0, 4),
+                "p50_ms": round(nearest_rank(logout_lat, 0.50), 4),
+                "p95_ms": round(nearest_rank(logout_lat, 0.95), 4),
+                "p99_ms": round(nearest_rank(logout_lat, 0.99), 4),
                 "reauthentications": ln,
                 "p50_reportable": ln >= 1000,
                 "p95_reportable": ln >= 1000,
