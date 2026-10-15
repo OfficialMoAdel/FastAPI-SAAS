@@ -512,6 +512,12 @@ async def _resolve_tenant_id_for_token(payload: dict[str, Any], db: AsyncSession
 #: exception class.
 _UNIQUE_VIOLATION_SQLSTATE = "23505"
 
+#: The message fragment a driver emits for a unique violation when it exposes no
+#: SQLSTATE. sqlite3 has none, so this is the only signal available there. It is
+#: deliberately narrow: SQLite's other two constraint failures read "FOREIGN KEY
+#: constraint failed" and "NOT NULL constraint failed", so neither can match.
+_UNIQUE_VIOLATION_WITHOUT_SQLSTATE = "UNIQUE constraint failed"
+
 
 def _is_duplicate_blacklist_violation(exc: IntegrityError) -> bool:
     """True only when the flush failed because the blacklist row already exists.
@@ -525,9 +531,35 @@ def _is_duplicate_blacklist_violation(exc: IntegrityError) -> bool:
     duplicate. ``token_blacklist`` has exactly one unique index
     (``ix_token_blacklist_token``, ``02_authentication.py``), so a unique
     violation here is unambiguously the duplicate case.
+
+    DIALECT PORTABILITY, and why the SQLSTATE alone was not enough. The first
+    version of this predicate read ``orig.sqlstate`` and nothing else, which is
+    a PostgreSQL-only signal: asyncpg sets it, and 23505 is the unique-violation
+    code. ``sqlite3`` has no SQLSTATE at all, so on SQLite the predicate
+    returned False for a genuine duplicate, the handler classified it as a
+    real fault, and a REPEAT LOGOUT RAISED instead of being idempotent. That
+    regression shipped and was caught by the S-2 oracle
+    (``tests/performance/test_rollback_verification.py``), whose eight failures
+    all carried the log line this branch emits. It survived my own tests
+    because they ran on Postgres while the oracle ran on SQLite -- a guard
+    exercised on one dialect says nothing about the other.
+
+    So the SQLSTATE is used when the driver supplies one, and only then. Where
+    it is absent, the driver names the violation in the message, and the only
+    message naming a constraint is the unique one: SQLite says "UNIQUE
+    constraint failed" and "FOREIGN KEY constraint failed" / "NOT NULL
+    constraint failed" for the other two, so this marker cannot match them.
     """
     original = getattr(exc, "orig", None)
-    return getattr(original, "sqlstate", None) == _UNIQUE_VIOLATION_SQLSTATE
+    if original is None:
+        return False
+    # Annotated, not inferred: getattr returns Any, and comparing two Any
+    # values yields Any, which cannot be returned from a function declared to
+    # return bool without tripping mypy's no-any-return.
+    sqlstate: str | None = getattr(original, "sqlstate", None)
+    if sqlstate is not None:
+        return sqlstate == _UNIQUE_VIOLATION_SQLSTATE
+    return _UNIQUE_VIOLATION_WITHOUT_SQLSTATE in str(original)
 
 
 async def blacklist_tokens(
@@ -600,9 +632,23 @@ async def blacklist_tokens(
                     await db.flush()
             except IntegrityError as exc:
                 if _is_duplicate_blacklist_violation(exc):
-                    # C-2: AsyncSession.rollback() is always awaitable — the
-                    # inspect.isawaitable guard was dead defensive code.
-                    await db.rollback()
+                    # No outer rollback here, and the absence is deliberate.
+                    # The savepoint opened by `async with db.begin_nested()`
+                    # above rolls ITSELF back on the IntegrityError, so the
+                    # staged rows are already undone. A further db.rollback()
+                    # unwinds the CALLER's whole transaction and expires its
+                    # identity map; the commit below then commits an empty
+                    # transaction. Bead C-32 (FastAPI_saas-m3r3) enumerated both
+                    # production callers -- logout and refresh rotation -- and
+                    # found neither holds pending work at this point, so the
+                    # old rollback was correct only by the accident that both
+                    # call sites happen to be clean, never by construction.
+                    #
+                    # What it did cost, measured: a repeat logout is a no-op by
+                    # contract, and this line made it unwind the surrounding
+                    # transaction to get there. tests/performance/
+                    # test_rollback_verification.py counts bare ROLLBACKs
+                    # against a fixed ceiling for exactly this reason.
                     _jwt_logger.info("Token already blacklisted in DB (IntegrityError during flush)")
                 else:
                     # A constraint failure that is NOT the duplicate index. This

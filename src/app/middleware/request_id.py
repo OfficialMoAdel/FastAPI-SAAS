@@ -22,6 +22,19 @@ REQUEST_ID_HEADER = "X-Request-ID"
 _REQUEST_ID_HEADER_BYTES = b"x-request-id"
 _REQUEST_ID_PATTERN = re.compile(r"^[a-zA-Z0-9\-]{1,128}$")
 
+#: Where the resolved ID is memoised on the ASGI scope. Three middleware
+#: classes each need the ID for a response they might short-circuit before
+#: ``RequestIDMiddleware`` runs (IPFilter 403, RateLimit 429/503), and each was
+#: calling ``request_id_from_scope`` unconditionally -- which meant every
+#: request drew THREE independent uuid4s and carried THREE different values
+#: through its guards. That is a correctness bug, not a cost one: the ID a
+#: guard logged and the ID it echoed could disagree with the ID the inner
+#: middleware minted, so a single request had no single identity. The scope
+#: is a mutable dict by ASGI convention (routers set ``scope["route_handler"]``,
+#: ``scope["endpoint"]`` the same way), which is what makes memoisation
+#: possible without a signature change to any of the three callers.
+_SCOPE_REQUEST_ID_KEY = "fastapi_saas.request_id"
+
 
 def resolve_request_id(incoming_id: str | None) -> str:
     """Generate-or-propagate a request ID.
@@ -35,19 +48,31 @@ def resolve_request_id(incoming_id: str | None) -> str:
 
 
 def request_id_from_scope(scope: Scope) -> str:
-    """Generate-or-propagate a request ID from raw ASGI scope headers.
+    """Resolve this request's ID, deriving it AT MOST ONCE per ASGI scope.
 
-    This middleware runs innermost (see ``core/guard/ordering.py``), so
-    outer guards (IPFilter/RateLimit) reject before it executes. Reject
-    paths call this helper to echo the SAME generate-or-propagate ID on
-    their responses instead of omitting ``X-Request-ID``.
+    Called unconditionally by three middleware (IPFilter, RateLimit, and this
+    module's own middleware), so the first caller derives and memoises on the
+    scope and the rest read the same value. Deriving once is what makes the ID
+    a property of the REQUEST rather than of whichever guard happened to run:
+    before this, a request with no inbound ``X-Request-ID`` drew three uuid4s
+    and a reject at any layer could echo an ID no log line had ever recorded.
+
+    Memoising rather than restructuring the callers is deliberate: the three
+    call sites each need the ID for a response they may short-circuit, and the
+    one place that knows how to derive it is here.
     """
+    memoised = scope.get(_SCOPE_REQUEST_ID_KEY)
+    if memoised is not None:
+        return str(memoised)
+
     incoming_id: str | None = None
     for name, value in scope.get("headers", []):
         if name.lower() == _REQUEST_ID_HEADER_BYTES:
             incoming_id = value.decode("latin-1")
             break
-    return resolve_request_id(incoming_id)
+    request_id = resolve_request_id(incoming_id)
+    scope[_SCOPE_REQUEST_ID_KEY] = request_id
+    return request_id
 
 
 def wrap_send_with_request_id(send: Send, request_id: str) -> Send:
@@ -94,7 +119,7 @@ class RequestIDMiddleware:
             "Request started",
             request_id=request_id,
             method=request.method,
-            path=request.url.path,
+            path=scope["path"],
         )
 
         await self.app(scope, receive, wrap_send_with_request_id(send, request_id))

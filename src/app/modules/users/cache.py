@@ -10,7 +10,6 @@ Handles:
 
 from __future__ import annotations
 
-import copy
 from collections.abc import Sequence
 from typing import Any
 
@@ -106,6 +105,28 @@ _auth_info_l1_seam = L1Cache(
 )
 
 
+def _two_level_copy(payload: dict[str, Any]) -> dict[str, Any]:
+    """Copy a user auth payload by value: the top level, plus ``tier``.
+
+    ``copy.deepcopy`` walks arbitrary structure; this walks exactly the shape
+    :func:`assert_user_payload_shape` admits, which is one level deep with at
+    most one nested dict (``tier``) whose own values are all scalars. That is
+    why the assertion is load-bearing rather than decorative: it is the
+    contract that makes this copy an isomorphism rather than a silent
+    shallowing. A non-dict ``tier`` (including ``None``) is carried across
+    unchanged, exactly as ``deepcopy`` would carry an immutable across.
+
+    The shape assertion is invoked at every copy site rather than here, so a
+    payload that stops conforming fails AT the store or the read, where the
+    offending value is in hand.
+    """
+    copied = dict(payload)
+    tier = payload.get("tier")
+    if isinstance(tier, dict):
+        copied["tier"] = dict(tier)
+    return copied
+
+
 def assert_user_payload_shape(payload: dict[str, Any]) -> None:
     """Fail loudly unless the auth payload is exactly one level deep plus `tier`.
 
@@ -154,12 +175,12 @@ class UserCacheInvalidator:
         if cache_key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:"):
             hit = _auth_info_l1.get(cache_key)
             if hit is not None:
-                # Deep copy: auth payloads nest dicts (tier); callers mutate
-                # the returned dict and shared nested refs would pollute L1.
+                # Copy by value: auth payloads nest a dict (tier); callers mutate
+                # the returned dict and a shared nested ref would pollute L1.
                 # S-4 oracle: the shape guard stays at every copy site so the
-                # future two-level copy cannot silently go shallow.
+                # two-level copy cannot silently go shallow.
                 assert_user_payload_shape(hit)
-                return copy.deepcopy(hit)
+                return _two_level_copy(hit)
         client = get_redis()
         if client is None:
             return None
@@ -170,7 +191,7 @@ class UserCacheInvalidator:
                 result: dict[str, Any] = json_loads(cached)
                 if cache_key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:"):
                     assert_user_payload_shape(result)
-                    _auth_info_l1[cache_key] = copy.deepcopy(result)
+                    _auth_info_l1[cache_key] = _two_level_copy(result)
                 return result
         return None
 
@@ -230,7 +251,7 @@ class UserCacheInvalidator:
         # S-4 oracle: shape-checked before it is stored, so a non-conforming
         # payload fails at the writer rather than at a later reader.
         assert_user_payload_shape(user_with_tier)
-        _auth_info_l1[cache_key] = copy.deepcopy(user_with_tier)
+        _auth_info_l1[cache_key] = _two_level_copy(user_with_tier)
         client = get_redis()
         if client is None:
             return

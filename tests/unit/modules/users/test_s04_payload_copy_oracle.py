@@ -277,3 +277,65 @@ class TestGuardIsInstalledNotJustDefined:
 
     def test_guard_is_the_production_function(self) -> None:
         assert users_cache.assert_user_payload_shape is assert_user_payload_shape
+
+    def test_production_no_longer_calls_deepcopy(self) -> None:
+        """The equivalence tests above pass whether or not S-4 landed.
+
+        ``test_deepcopy_equals_two_level_copy`` compares two LOCAL functions,
+        so it is green on HEAD, before the change, and after it. Every other
+        test in this file is the same: they pin that the fast copy is
+        equivalent and isolating, not that production stopped paying for the
+        slow one. A file of tests that all pass without the change is the
+        failure class this file exists to avoid, so the conversion itself is
+        pinned here.
+
+        AST rather than a grep on purpose: ``_two_level_copy``'s own docstring
+        names ``copy.deepcopy`` twice while explaining what it replaces, so a
+        text search would count the prose as the defect and demand that the
+        documentation be deleted. Only a ``Call`` node can be a deepcopy call.
+        """
+        tree = ast.parse(
+            (REPO_ROOT / "src" / "app" / "modules" / "users" / "cache.py").read_text(encoding="utf-8")
+        )
+        deepcopy_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "deepcopy"
+        ]
+        assert not deepcopy_calls, (
+            f"expected zero copy.deepcopy calls in cache.py, found {len(deepcopy_calls)}: "
+            f"lines {[node.lineno for node in deepcopy_calls]}"
+        )
+
+    def test_all_three_copy_sites_call_the_two_level_copy(self) -> None:
+        """Pin the conversion itself, and pin its arity.
+
+        Three sites is the count the equivalence depends on: the L1-hit read,
+        the Redis fill, and the auth-info write. Fewer would leave one path on
+        the old copy and the isolation guarantee half-applied; the two-level
+        copy takes exactly one argument, so a call with more would silently be
+        something other than the shape this file proves equivalent.
+        """
+        tree = ast.parse(
+            (REPO_ROOT / "src" / "app" / "modules" / "users" / "cache.py").read_text(encoding="utf-8")
+        )
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_two_level_copy"
+        ]
+        # One definition is an ast.FunctionDef, not a Call, so every node here
+        # is a real call site.
+        assert len(calls) == 3, (
+            f"expected three _two_level_copy call sites, found {len(calls)}: "
+            f"lines {[node.lineno for node in calls]}"
+        )
+        for call in calls:
+            assert len(call.args) == 1 and not call.keywords, (
+                f"_two_level_copy at line {call.lineno} takes one positional argument "
+                f"and no keywords; found {len(call.args)} args and {len(call.keywords)} keywords"
+            )

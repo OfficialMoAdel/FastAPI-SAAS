@@ -181,7 +181,11 @@ class TenantMiddleware:
             return
 
         request = Request(scope, receive=receive)
-        path = request.url.path
+# C-1: scope["path"] is exactly what Request(scope).url.path reads on this
+# Starlette version, and taking it directly is the cheaper form. The Request
+# is still built here because state/headers/method are still needed; only
+# the path read moves. tests/unit/middleware/test_c1_scope_path_oracle.py.
+        path = scope["path"]
 
         # Check for tenant header
         tenant_slug = request.headers.get(TENANT_HEADER)

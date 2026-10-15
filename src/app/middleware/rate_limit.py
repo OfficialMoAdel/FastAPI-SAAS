@@ -17,7 +17,6 @@ logger = get_logger(__name__)
 
 async def _reject_banned_ip(
     client_ip: str,
-    request: Request,
     ban_info: BanInfo,
     scope: Scope,
     receive: Receive,
@@ -31,7 +30,10 @@ async def _reject_banned_ip(
     security_event = SecurityEvent(
         event_type=SecurityEventType.ATTACK_DETECTED,
         client_ip=client_ip,
-        request_path=str(request.url.path),
+        # C-1: scope["path"] is exactly what request.url.path reads on this
+        # Starlette version, and scope is already a parameter of this
+        # helper -- which is what lets the Request parameter go.
+        request_path=scope["path"],
         reason="Request from banned IP",
         extra={"ban_reason": ban_info.reason, "expires_at": ban_info.expires_at},
     )
@@ -89,7 +91,7 @@ class RateLimitMiddleware:
                 response = middleware_reject("internal_error")
                 await response(scope, receive, send)
                 return
-            await _reject_banned_ip(outcome.client_ip, request, ban_info, scope, receive, send)
+            await _reject_banned_ip(outcome.client_ip, ban_info, scope, receive, send)
             return
 
         verdict = outcome.verdict

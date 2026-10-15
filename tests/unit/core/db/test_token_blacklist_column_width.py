@@ -276,6 +276,78 @@ class TestProductionShapedPairRoundTrips:
         assert len(rows) == 2, f"both raw tokens should be stored, got {len(rows)}"
 
 
+import sqlite3
+
+from sqlalchemy.exc import IntegrityError
+
+from src.app.core.security.jwt_service import _is_duplicate_blacklist_violation
+
+
+class TestTheDuplicateDiscriminatorIsDialectBlind:
+    """The duplicate-vs-real-fault predicate must work on every dialect we run.
+
+    This predicate exists because catching ``IntegrityError`` wholesale cannot
+    tell a repeat logout from a real constraint fault. Its first version read
+    ``orig.sqlstate`` and nothing else, which is a PostgreSQL-only signal:
+    asyncpg sets it and 23505 is the unique-violation code, but ``sqlite3`` has
+    no SQLSTATE at all. On SQLite a genuine duplicate therefore classified as a
+    real fault, the handler rolled back and RAISED, and a REPEAT LOGOUT STOPPED
+    BEING IDEMPOTENT. That regression shipped.
+
+    It survived the tests written alongside it because those ran on Postgres,
+    while ``tests/performance/test_rollback_verification.py`` runs on SQLite --
+    so a guard that only ever ran against one dialect had no evidence about the
+    other, which is precisely the gap these cases close.
+
+    Both dialects are asserted HERE, against the predicate directly, so neither
+    can regress without one of these going red. The shapes are constructed
+    rather than driven, because driving them needs a live database on each
+    dialect and a test that only runs where a database happens to exist is how
+    this hole opened.
+    """
+
+    @staticmethod
+    def _exc(orig: BaseException | None) -> IntegrityError:
+        return IntegrityError("statement failed", params=None, orig=orig)  # type: ignore[arg-type]
+
+    class _AsyncpgUnique(Exception):
+        """What asyncpg hands back: a driver error carrying a SQLSTATE."""
+
+        sqlstate = "23505"
+
+    class _AsyncpgForeignKey(Exception):
+        sqlstate = "23503"
+
+    def test_a_postgres_unique_violation_is_the_duplicate(self) -> None:
+        assert _is_duplicate_blacklist_violation(self._exc(self._AsyncpgUnique()))
+
+    def test_a_postgres_foreign_key_violation_is_not(self) -> None:
+        assert not _is_duplicate_blacklist_violation(self._exc(self._AsyncpgForeignKey()))
+
+    def test_a_sqlite_unique_violation_is_the_duplicate(self) -> None:
+        """The regression itself: sqlite3 exposes no sqlstate at all."""
+        assert _is_duplicate_blacklist_violation(
+            self._exc(sqlite3.IntegrityError("UNIQUE constraint failed: token_blacklist.token"))
+        )
+
+    def test_a_sqlite_foreign_key_violation_is_not(self) -> None:
+        assert not _is_duplicate_blacklist_violation(
+            self._exc(sqlite3.IntegrityError("FOREIGN KEY constraint failed"))
+        )
+
+    def test_a_sqlite_not_null_violation_is_not(self) -> None:
+        assert not _is_duplicate_blacklist_violation(
+            self._exc(sqlite3.IntegrityError("NOT NULL constraint failed: token_blacklist.tenant_id"))
+        )
+
+    def test_a_driver_error_with_no_usable_detail_is_not_the_duplicate(self) -> None:
+        """Fails SAFE: an unrecognisable failure must be treated as real."""
+        assert not _is_duplicate_blacklist_violation(self._exc(sqlite3.OperationalError("locked")))
+
+    def test_no_orig_at_all_is_not_the_duplicate(self) -> None:
+        assert not _is_duplicate_blacklist_violation(self._exc(None))
+
+
 class TestANonDuplicateConstraintFailureIsNotSwallowed:
     """A constraint failure that is NOT the duplicate-token index must surface.
 

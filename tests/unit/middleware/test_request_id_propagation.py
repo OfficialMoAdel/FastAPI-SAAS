@@ -56,9 +56,11 @@ from __future__ import annotations
 
 import ast
 import re
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from fastapi import Request
@@ -69,6 +71,7 @@ from src.app.middleware.rate_limit import RateLimitMiddleware
 from src.app.middleware.request_id import (
     REQUEST_ID_HEADER,
     RequestIDMiddleware,
+    request_id_from_scope,
     resolve_request_id,
 )
 
@@ -422,6 +425,58 @@ def test_the_oracle_reads_the_pattern_rather_than_importing_it():
         elif isinstance(node, ast.Import):
             imported.update(alias.name for alias in node.names)
     assert "_REQUEST_ID_PATTERN" not in imported, "the oracle must restate the pattern, not import it"
+
+
+class TestOneRequestOneId:
+    """S-5: the request ID is a property of the REQUEST, not of the guard.
+
+    Three middleware need the ID for a response they may short-circuit --
+    IPFilter (403), RateLimit (429/503) and RequestIDMiddleware itself -- and
+    all three called ``request_id_from_scope`` unconditionally. Before the
+    memoisation each call drew its own uuid4, so one request carried up to
+    three different identities: the ID a guard echoed on a reject was an ID no
+    other layer, and no log line, had ever recorded.
+
+    The reject path is covered by composition rather than by a second stack
+    drive: ``test_every_outer_guard_wraps_send_through_the_shared_helpers``
+    above already pins that IPFilter and RateLimit route through this exact
+    helper, and the tests here pin that the helper draws once. Those two facts
+    together mean a 403/429 carries the same value a pass-through would.
+    """
+
+    def test_three_callers_share_one_derivation(self):
+        """The whole defect, in one assertion: three asks, one uuid4."""
+        scope = _scope({})
+        with patch("src.app.middleware.request_id.uuid.uuid4", wraps=uuid.uuid4) as spy:
+            first = request_id_from_scope(scope)
+            second = request_id_from_scope(scope)
+            third = request_id_from_scope(scope)
+        assert spy.call_count == 1, (
+            "each middleware that asks for the ID before must not draw a new one; "
+            f"uuid4 was called {spy.call_count} times"
+        )
+        assert first == second == third
+
+    def test_an_inbound_id_is_propagated_unchanged_and_not_memoised_away(self):
+        """The memo must not turn a propagated id into a minted one.
+
+        Asserting only the drawn case would let a broken memo pass: if the
+        cache were consulted before the headers were read, an inbound
+        trace id would be silently replaced by a fresh uuid on the second
+        caller, which breaks distributed tracing rather than performance.
+        """
+        scope = _scope({"x-request-id": VALID_INBOUND_ID})
+        assert request_id_from_scope(scope) == VALID_INBOUND_ID
+        assert request_id_from_scope(scope) == VALID_INBOUND_ID
+
+    def test_distinct_scopes_do_not_share_an_id(self):
+        """The memo is per-scope, not global.
+
+        A module-level cache would make this fail and would also leak one
+        request's identity into every later request in the process.
+        """
+        assert request_id_from_scope(_scope({})) != request_id_from_scope(_scope({}))
+
 
     source = _module_text(Path(__file__).relative_to(REPO_ROOT).as_posix())
     assert re.search(r'DOCUMENTED_PATTERN = re\.compile\(r"\^\[a-zA-Z0-9\\-\]\{1,128\}\$"\)', source), (

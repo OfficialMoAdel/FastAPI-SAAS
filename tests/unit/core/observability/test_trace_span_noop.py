@@ -48,8 +48,8 @@ SDK_MODULE = "opentelemetry.sdk"
 #: AST scan so a new call site cannot appear without the oracle noticing.
 EXPECTED_CALL_SITES: frozenset[tuple[str, int]] = frozenset(
     {
-        ("core/db/database.py", 202),
-        ("core/db/database.py", 241),
+        ("core/db/database.py", 203),
+        ("core/db/database.py", 250),
         ("core/events/worker.py", 26),
         ("core/events/bus.py", 351),
     }
@@ -383,7 +383,8 @@ class TestSetStatusAndRecordExceptionNeverRaise:
     @pytest.mark.parametrize("key", sorted(EXPECTED_CALL_SITES))
     def test_the_error_path_records_with_a_recording_span(self, key: tuple[str, int]) -> None:
         tracer = _RecordingTracer()
-        _drive_call_site(key, tracer=tracer, close_with=ValueError("boom"))
+        with patch.object(tracing, "_SDK_INSTALLED", True):
+            _drive_call_site(key, tracer=tracer, close_with=ValueError("boom"))
         assert len(tracer.spans) == 1
         assert len(tracer.spans[0].exceptions) == 1
         assert isinstance(tracer.spans[0].exceptions[0], ValueError)
@@ -400,10 +401,18 @@ class TestSetStatusAndRecordExceptionNeverRaise:
         that the failure originates in the SPAN, at the moment the block closes,
         and not anywhere in the traced code - which is exactly the distinction a
         silent ``try/except`` around the recorder would erase.
+
+        ``_SDK_INSTALLED`` is pinned True because a ``_RecordingTracer`` is a
+        stand-in for a real SDK span: without the SDK the no-op branch never
+        enters the tracer at all, so these two assertions describe the installed
+        branch by construction. What the no-SDK branch does instead is pinned by
+        ``TestTheNoOpIsTakenAndNotJustAvailable``, which asserts the tracer is
+        never entered -- so the pair covers both branches and neither is assumed.
         """
         tracer = _RecordingTracer(fail_on=frozenset({fail_on}))
-        with pytest.raises(RuntimeError, match="cannot record"):
-            _drive_call_site(key, tracer=tracer, close_with=ValueError("boom"))
+        with patch.object(tracing, "_SDK_INSTALLED", True):
+            with pytest.raises(RuntimeError, match="cannot record"):
+                _drive_call_site(key, tracer=tracer, close_with=ValueError("boom"))
 
     def test_the_exception_still_propagates_out_of_the_block(self) -> None:
         """The context manager must not swallow the traced exception: swallowing
@@ -443,3 +452,77 @@ class TestTheOracleIsPinnedToTheRealSurface:
         for rel, _line in EXPECTED_CALL_SITES:
             module = _load_module(rel)
             assert module.__name__ == _module_for(rel)
+
+
+class TestTheNoOpIsTakenAndNotJustAvailable:
+    """Pins that ``trace_span`` actually TAKES the no-op path.
+
+    Every other test in this file is about what a caller observes, and a caller
+    could not tell the difference: ``ProxyTracer`` hands back a
+    ``NonRecordingSpan``, and ``trace.INVALID_SPAN`` is one too, so the whole
+    oracle above is green both before and after S-3 landed. A suite that passes
+    identically with and without the change is not an oracle for the change --
+    that is the same defect the S-4 oracle had, where every test passed whether
+    or not the two-level copy was ever wired in.
+
+    So this asserts on the machinery instead of the outcome: with no SDK the
+    ``start_as_current_span`` call must not happen at all. It is asserted BOTH
+    ways on purpose. Pinning only "not called" would be satisfiable by deleting
+    the real path, which would turn the guard green by breaking every future
+    deployment that installs an SDK.
+    """
+
+    def test_no_sdk_means_the_tracer_is_never_entered(self) -> None:
+        assert tracing._SDK_INSTALLED is False, (
+            "the no-SDK path is only reachable when the SDK is absent; with it "
+            "installed this whole class is vacuous and S-3 is not what runs"
+        )
+        entered: list[str] = []
+
+        class _Tripwire:
+            def start_as_current_span(self, name: str, **_: Any) -> Any:
+                entered.append(name)
+                raise AssertionError(f"the tracer was entered for {name!r}")
+
+        with patch.object(tracing, "tracer", _Tripwire()):
+            with tracing.trace_span("s3_never_entered") as span:
+                assert span is tracing.trace.INVALID_SPAN
+
+        assert entered == [], f"start_as_current_span ran for {entered}"
+
+    def test_an_installed_sdk_still_gets_real_spans(self) -> None:
+        """The mirror. Without this, the test above would also pass if the real
+        path had been deleted outright instead of made conditional."""
+        entered: list[str] = []
+
+        class _Recorder:
+            @staticmethod
+            def start_as_current_span(name: str, **_: Any) -> Any:
+                entered.append(name)
+                from contextlib import contextmanager as _cm
+
+                @_cm
+                def _span() -> Any:
+                    yield tracing.trace.INVALID_SPAN
+
+                return _span()
+
+        with patch.object(tracing, "_SDK_INSTALLED", True), patch.object(
+            tracing, "tracer", _Recorder()
+        ):
+            with tracing.trace_span("s3_sdk_present") as span:
+                assert span is tracing.trace.INVALID_SPAN
+
+        assert entered == ["s3_sdk_present"], (
+            "with an SDK installed the real tracer must be used, or the guard "
+            "above would pass by the real path having been deleted"
+        )
+
+    def test_an_exception_still_propagates_through_the_no_op(self) -> None:
+        """The no-op must not become a swallow. A bare ``yield`` in a generator
+        re-raises whatever is thrown in at the yield point; if this were ever
+        "fixed" into a try/except that returned quietly, every error path in the
+        application would stop raising and nothing else here would notice."""
+        with pytest.raises(ValueError, match="boom"):
+            with tracing.trace_span("s3_propagation"):
+                raise ValueError("boom")

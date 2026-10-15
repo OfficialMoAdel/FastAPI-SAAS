@@ -62,6 +62,23 @@ def _make_db() -> MagicMock:
     return db
 
 
+def _sqlstate_unique_violation() -> IntegrityError:
+    """An IntegrityError whose driver error actually identifies the unique
+    index, the way PostgreSQL does.
+
+    Built rather than driven against a live database on purpose: this file's
+    db is a MagicMock, so the point under test is only which signal the
+    discriminator sees. The dialect-shaped shapes themselves are pinned
+    separately, against both dialects, in
+    tests/unit/core/db/test_token_blacklist_column_width.py.
+    """
+
+    class _Orig(Exception):
+        sqlstate = "23505"
+
+    return IntegrityError("dup", None, _Orig())  # statement, params, orig
+
+
 # ---------------------------------------------------------------------------
 # Password hashing / verification
 # ---------------------------------------------------------------------------
@@ -506,9 +523,50 @@ async def test_blacklist_tokens_no_tenant_skip() -> None:
 
 
 async def test_blacklist_tokens_integrity_error() -> None:
+    """An IntegrityError whose driver error carries no usable detail must NOT
+    be absorbed as idempotency.
+
+    This used to assert the opposite -- that any IntegrityError was swallowed
+    and the commit still ran -- because that WAS the behaviour, and it was the
+    bug bead FastAPI_saas-68yg was filed for: `except IntegrityError` is the
+    base of every constraint violation, so a dangling tenant FK was
+    indistinguishable from a duplicate token and the rows were silently
+    discarded. The predicate now requires the driver to actually identify the
+    unique index, and an error that identifies nothing propagates instead.
+
+    So the mock below builds `IntegrityError("dup", None, None)`: `orig` is
+    None, which is precisely "the driver told us nothing", and the contract
+    under test is that nothing is swallowed. The genuinely-duplicate case is
+    pinned separately by TestTheDuplicateDiscriminatorIsDialectBlind in
+    tests/unit/core/db/test_token_blacklist_column_width.py, which drives the
+    predicate against constructed driver errors on BOTH dialects.
+    """
     db = _make_db()
 
     db.flush = AsyncMock(side_effect=IntegrityError("dup", None, None))
+    payload = {
+        "exp": datetime.now(UTC).timestamp() + 100,
+        "jti": "j1",
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+    }
+    with (
+        patch("src.app.core.security.jwt_service.jwt.decode", return_value=payload),
+        patch("src.app.core.security.jwt_service.add_tokens_to_blacklist", new=AsyncMock()),
+        pytest.raises(IntegrityError),
+    ):
+        await blacklist_tokens("atok", None, db, access_payload=payload)
+
+
+async def test_a_duplicate_the_driver_identifies_is_still_an_idempotent_no_op() -> None:
+    """The counterpart: when the driver DOES name the unique constraint, the
+    repeat case stays a no-op -- a second logout must not fail.
+
+    Without this, hardening the predicate would be indistinguishable from
+    breaking idempotency, and the way to tell the two apart is a test that says
+    which behaviour belongs to which signal.
+    """
+    db = _make_db()
+    db.flush = AsyncMock(side_effect=_sqlstate_unique_violation())
     payload = {
         "exp": datetime.now(UTC).timestamp() + 100,
         "jti": "j1",
