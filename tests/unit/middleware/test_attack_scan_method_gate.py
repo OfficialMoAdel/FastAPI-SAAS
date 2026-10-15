@@ -17,7 +17,8 @@ in tests/e2e/core/security/test_attack_scan_bounds_e2e.py.
 
 from __future__ import annotations
 
-from collections.abc import MutableMapping
+import logging
+from collections.abc import Iterator, MutableMapping
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -43,6 +44,65 @@ MODULE_LOGGER = "src.app.middleware.attack_detection"
 @pytest.fixture
 def middleware() -> AttackDetectionMiddleware:
     return AttackDetectionMiddleware(app=MagicMock())
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _the_repositorys_logging_configuration() -> Iterator[None]:
+    """Install this repo's REAL logging configuration for the whole module.
+
+    A-3 makes ``is_enabled_for`` consult the effective stdlib level, which is
+    only true once ``setup_logging`` has run -- nothing in a test session runs
+    it for us. Without this fixture these tests would keep exercising
+    structlog's AMBIENT default (``BoundLoggerFilteringAtNotset``, whose
+    predicate is structurally always True) and would pass for a reason that has
+    nothing to do with the code under test. So the configuration the middleware
+    sees in production is the configuration it is asserted against here.
+
+    ``setup_logging`` clears the root handlers, sets the root level, opens a
+    rotating file handler, starts a QueueListener thread and silences
+    ``uvicorn.access``/``httpx``/``httpcore``; all of it is restored here so the
+    rest of the session is unaffected.
+    """
+    from src.app.core.logger import setup_logging, shutdown_logging
+
+    root = logging.getLogger()
+    saved_level = root.level
+    saved_handlers = root.handlers[:]
+    silenced = {
+        name: logging.getLogger(name).level
+        for name in ("uvicorn.access", "httpx", "httpcore")
+    }
+    setup_logging()
+    try:
+        yield
+    finally:
+        shutdown_logging()
+        structlog.reset_defaults()
+        root.setLevel(saved_level)
+        root.handlers[:] = saved_handlers
+        for name, level in silenced.items():
+            logging.getLogger(name).setLevel(level)
+
+
+@pytest.fixture
+def module_logger_at_debug() -> Iterator[None]:
+    """Raise THIS module's stdlib logger to DEBUG for the duration.
+
+    The pre-flight for A-3, and deliberately NOT a weakening. The middleware
+    guards its skip event with ``is_enabled_for(DEBUG)``, and A-3 makes that
+    predicate delegate to the stdlib level -- so at the default level the guard
+    now (correctly) short-circuits and no event is emitted at all. A test whose
+    subject is "the skip IS logged, with these fields" has to turn DEBUG on for
+    the logger it is about; asserting ``len(calls) == 0`` instead would be
+    asserting the absence of the thing the test exists to pin.
+    """
+    logger = logging.getLogger(MODULE_LOGGER)
+    saved = logger.level
+    logger.setLevel(logging.DEBUG)
+    try:
+        yield
+    finally:
+        logger.setLevel(saved)
 
 
 
@@ -131,7 +191,9 @@ async def test_body_methods_do_drain_and_scan(method: str, middleware: AttackDet
 
 
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
-async def test_bodyless_skip_is_logged_at_debug(method: str, middleware: AttackDetectionMiddleware) -> None:
+async def test_bodyless_skip_is_logged_at_debug(
+    method: str, middleware: AttackDetectionMiddleware, module_logger_at_debug: None
+) -> None:
     """The skip emits exactly one DEBUG event carrying queryable fields.
 
     Asserted by spying on the module logger's own ``debug`` call, not via
@@ -147,9 +209,10 @@ async def test_bodyless_skip_is_logged_at_debug(method: str, middleware: AttackD
     def spy(event, *args, **kwargs):
         calls.append(((event, *args), kwargs))
 
-    # S-8 de-mock: no is_enabled_for patch — the real predicate runs.
+    # S-8 de-mock: no is_enabled_for patch — the real predicate runs, on a
+    # logger this test has configured to DEBUG (see module_logger_at_debug).
     # Which DEBUG level gated the call is now asserted by
-    # test_debug_guard_is_level_aware (KNOWN-FAILING until A-3).
+    # test_debug_guard_is_level_aware.
     with patch.object(ad.logger, "debug", side_effect=spy):
         await _scan(middleware, method)
 
@@ -163,12 +226,6 @@ async def test_bodyless_skip_is_logged_at_debug(method: str, middleware: AttackD
     assert "method=" not in str(event)
 
 
-@pytest.mark.xfail(
-    reason="KNOWN-FAILING until A-3: is_enabled_for is structurally always-True on HEAD "
-    "(structlog.configure sets no wrapper_class), so debug IS attempted and the spy fires. "
-    "strict=True so the suite goes red the day A-3 lands and this marker must come off.",
-    strict=True,
-)
 async def test_skip_is_silent_below_debug(middleware: AttackDetectionMiddleware) -> None:
     """With DEBUG disabled the log call must not even be ATTEMPTED.
 
@@ -193,12 +250,6 @@ async def test_skip_is_silent_below_debug(middleware: AttackDetectionMiddleware)
     assert called == [], "logger.debug was invoked despite DEBUG being disabled"
 
 
-@pytest.mark.xfail(
-    reason="KNOWN-FAILING until A-3: the guard predicate is structurally always-True on HEAD, "
-    "so is_enabled_for(DEBUG) is True at every level. strict=True so landing A-3 "
-    "turns this XPASS into a red suite until the marker comes off.",
-    strict=True,
-)
 def test_debug_guard_is_level_aware() -> None:
     """The DEBUG guard must actually consult the level — not return True always.
 

@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import ast
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -74,6 +75,46 @@ import structlog
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TESTS_ROOT = REPO_ROOT / "tests"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _the_repositorys_logging_configuration() -> Iterator[None]:
+    """Install this repo's REAL logging configuration for the whole module.
+
+    Without this the two configuration assertions read structlog's AMBIENT
+    DEFAULT, not what ``setup_logging`` installs here. That is a guard that
+    gates nothing: it would keep reporting the pre-A-3 state forever while
+    measuring a third party's default instead of this repo's configuration.
+    Nothing in the session calls ``setup_logging`` for us — MEASURED, not
+    assumed: ``setup_logging`` and ``structlog`` appear in no conftest and no
+    pytest plugin.
+
+    ``setup_logging`` is heavy — it rebuilds the root logger, clears its
+    handlers, opens a rotating file handler, starts a listener thread and
+    silences three third-party loggers — so the root level, the handler list
+    and those three levels are captured first and restored in the ``finally``,
+    along with ``shutdown_logging`` and a structlog ``reset_defaults``. The
+    session is left as it was found.
+    """
+    from src.app.core.logger import setup_logging, shutdown_logging
+
+    root = logging.getLogger()
+    saved_level = root.level
+    saved_handlers = root.handlers[:]
+    silenced = {
+        name: logging.getLogger(name).level
+        for name in ("uvicorn.access", "httpx", "httpcore")
+    }
+    setup_logging()
+    try:
+        yield
+    finally:
+        shutdown_logging()
+        structlog.reset_defaults()
+        root.setLevel(saved_level)
+        root.handlers[:] = saved_handlers
+        for name, level in silenced.items():
+            logging.getLogger(name).setLevel(level)
 
 #: Every test file that observes a DEBUG record, with the event it observes
 #: and the level it observes it at. A-3 updates each of these same-commit.
@@ -154,11 +195,6 @@ def _debug_observing_files() -> set[str]:
 class TestWrapperClassIsLevelAware:
     """CONFIG HALF — known-failing on HEAD, passes once A-3 lands."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="KNOWN-FAILING: default wrapper_class is BoundLoggerFilteringAtNotset "
-        "until A-3 installs the level-aware class",
-    )
     def test_wrapper_class_is_not_the_always_true_default(self) -> None:
         """`get_config()['wrapper_class']` must be level-aware, not the default."""
         from structlog._native import BoundLoggerFilteringAtNotset
@@ -170,11 +206,6 @@ class TestWrapperClassIsLevelAware:
             "A-3 has not landed"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="KNOWN-FAILING: is_enabled_for(DEBUG) is structurally True until "
-        "A-3 installs the level-aware wrapper_class",
-    )
     def test_is_enabled_for_debug_is_false(self) -> None:
         """A core logger answers False for DEBUG — the S-8 twin of this shape.
 
