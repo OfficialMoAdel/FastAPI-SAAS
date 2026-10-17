@@ -11,7 +11,6 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects import postgresql
 
 revision: str = "03_access_control"
 down_revision: str | None = "02_authentication"
@@ -52,13 +51,9 @@ def upgrade() -> None:
 
     op.get_bind().execute(
         sa.text(
-            "INSERT INTO permissions (slug, description) "
-            "VALUES (:slug, :description) ON CONFLICT (slug) DO NOTHING"
+            "INSERT INTO permissions (slug, description) VALUES (:slug, :description) ON CONFLICT (slug) DO NOTHING"
         ),
-        [
-            {"slug": p.value, "description": p.name.replace("_", " ").title()}
-            for p in _PermissionEnum
-        ],
+        [{"slug": p.value, "description": p.name.replace("_", " ").title()} for p in _PermissionEnum],
     )
 
     # ===== ROLES =====
@@ -119,7 +114,12 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("name", sa.String(length=100), nullable=False),
-        sa.Column("key_prefix", sa.String(length=10), nullable=False),
+        # api_keys.key_prefix is String(8) on the ORM
+        # (api_keys/models.py, KEY_PREFIX_LENGTH = 8). This layer said 10, so a
+        # migrated database had a wider column than the code that fills it. Every
+        # generated prefix fits both, so nothing has broken; the fix is that the
+        # schema stops claiming something the model does not (FastAPI_saas-vthy).
+        sa.Column("key_prefix", sa.String(length=8), nullable=False),
         sa.Column("hashed_key", sa.String(length=255), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column(
@@ -129,7 +129,23 @@ def upgrade() -> None:
             comment="Timestamp when key becomes valid for grace period rotation",
         ),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("scopes", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        # api_keys.scopes is Text on the ORM (api_keys/models.py), and the whole
+        # read/write path is string-shaped to match: create_api_key stores
+        # json_dumps(...) AS A STRING, rotate re-binds whatever came back
+        # verbatim, and validate_api_key reads it with json_loads. This layer
+        # declared JSONB instead (FastAPI_saas-vthy), and on a database built by
+        # `alembic upgrade head` that broke API-key AUTHENTICATION:
+        # SQLAlchemy's asyncpg dialect decodes a jsonb column to a Python list,
+        # so `json_loads(key.scopes)` (service.py:652) raises JSONDecodeError on
+        # a list, and _validate_from_db has no handler for it - every
+        # X-API-Key request fails with 500. MEASURED on a scratch database built
+        # by `alembic upgrade 03_access_control`, with the create_all database
+        # as the control: the INSERT succeeds either way (asyncpg sends untyped
+        # parameters and the server coerces the literal), but the ORM read
+        # returns `list` on jsonb and `str` on Text, and only Text keeps
+        # json_loads working. Nothing in the application queries scopes as JSON,
+        # so jsonb bought nothing and cost the read path.
+        sa.Column("scopes", sa.Text(), nullable=True),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),

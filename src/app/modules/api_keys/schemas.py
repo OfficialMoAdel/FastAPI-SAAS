@@ -35,9 +35,28 @@ class APIKeyBase(BaseModel):
 
 
 class APIKeyCreate(APIKeyBase, BaseCreate):
-    """Schema for creating an API key."""
+    """Schema for creating an API key.
+
+    `user_id` names the account the key is minted FOR. It is optional, and
+    omitted or equal to the caller means exactly what it always meant: a key for
+    yourself. Without it a tenant admin had to impersonate a user to hand them a
+    credential (found by M-7, FastAPI_saas-aepv).
+
+    The field is only a CLAIM. It is honoured only when it differs from the
+    caller, and `APIKeyService._resolve_key_owner` then verifies the target
+    exists in the caller's tenant, is not soft-deleted and is active - so a
+    target in another tenant is indistinguishable from one that does not exist,
+    rather than an oracle for which user ids are real. The gate is the route's
+    existing `users:manage` requirement, unchanged.
+    """
 
     model_config = ConfigDict(extra="forbid")
+
+    user_id: int | None = Field(
+        default=None,
+        ge=1,
+        description="Account the key is issued for. Omit (or pass your own id) to mint for yourself.",
+    )
 
 
 class APIKeyRead(BaseRead):

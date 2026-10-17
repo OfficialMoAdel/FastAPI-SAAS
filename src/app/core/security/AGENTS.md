@@ -23,6 +23,7 @@ src/app/core/security/
 ├── pending_token_store.py     # PendingTokenStore (MFA/SSO/magic-link pending tokens)
 ├── auto_ban.py                # IP auto-ban: violations, ban/unban, L1 invalidation
 ├── rate_policy.py             # resolve_rate_limits, build_rate_limit_key, build_api_key_rate_limit_key, RateLimitVerdict
+├── api_key_identity.py        # ADR-0023: the API-key cache-key format + "is this cached payload still a grant?"
 ├── budgets.py                 # the security budget seam: check/probe, BUDGETS, validate_budget_definitions
 ├── request_admission.py       # RequestAdmissionService: full admission decision (skips, identity, ban, limits)
 ├── rate_limit_cache.py        # tier rate-policy cache warm/invalidate
@@ -87,15 +88,34 @@ response.set_cookie(key="refresh_token", value=..., httponly=True, secure=True, 
 - **Token issue/verify**: `jwt_service.py::create_access_token`, `verify_token`
 - **Revocation**: `jwt_service.py::is_token_blacklisted` + `token_blacklist_cache.py`
 - **Admission**: `request_admission.py::RequestAdmissionService` (skips → identity → ban → limits)
-- **API-key budget**: a request carrying `X-API-Key` is metered on
-  `settings.rate_limit.API_KEY_LIMIT` (`build_api_key_rate_limit_key`, keyed by
-  source IP because admission runs before the key is validated), NOT on the
-  anonymous default; it is exempt from the anonymous IP aggregate ceiling and
-  its violations do not escalate to auto-ban. Owner-tier metering is still
-  outstanding. Oracle: `tests/unit/core/security/test_api_key_admission_budget.py`.
+- **API-key budget**: a request carrying `X-API-Key` and no bearer credential is
+  metered on the owner's OWN tier budget on the owner's own bucket
+  (`build_rate_limit_key`, the same bucket that owner's Bearer session spends)
+  when admission could resolve the key's identity — see ADR-0023 below.
+  Otherwise (cold key, or an owner with no tier) it is metered on
+  `settings.rate_limit.API_KEY_LIMIT` via `build_api_key_rate_limit_key`, keyed by
+  source IP because an UNRESOLVED key cannot be allowed to name a bucket. Either
+  way it is exempt from the anonymous IP aggregate ceiling and its violations do
+  not escalate to auto-ban. `api_key_metered` must mean "an API-key CREDENTIAL was
+  presented" — never "no user was resolved", or a resolved key re-enables
+  auto-ban for every caller behind a shared NAT. Oracles:
+  `tests/unit/core/security/test_api_key_admission_budget.py`,
+  `tests/unit/core/security/test_api_key_identity_admission.py`.
+- **API-key identity is resolved at the EDGE, once** (ADR-0023,
+  `FastAPI_saas-hfps`): `_get_rate_limit_config` calls
+  `api_key_identity.resolve_api_key_identity` for a presented key and binds the
+  result with `middleware_state.set_api_key_identity`; the API-key auth dep
+  passes it to `validate_api_key(api_key, identity=...)`, which then skips the
+  cache probe it would otherwise repeat. The request therefore spends the same ONE
+  Redis GET it spent before. Do not add a second resolution path, and do not let
+  `api_keys/service.py` grow its own copy of the cache-key format or the grant
+  rules — `api_key_identity.py` is their one owner, re-exported by the module.
+  `_get_cached_tenant_active`, the "not yet valid" refusal and the DB fallback
+  still run when an identity is supplied: skipping the probe skips a GET, not a
+  check.
 - **Request-state seam**: `src/app/core/middleware_state.py` (`get_client_ip_state`,
-  `is_whitelisted`, `get_request_id`, `get_token_blacklisted`) — admission and
-  rate-policy read guard-set state through it; never `getattr(request.state, ...)` directly
+  `is_whitelisted`, `get_request_id`, `get_token_blacklisted`, `get_api_key_identity`) —
+  admission and rate-policy read guard-set state through it; never `getattr(request.state, ...)` directly
 - **SSO/magic-link pending state**: `tokens.py::get_sso_state_manager`, `get_magic_link_manager`
 - **FastAPI auth deps**: `src/app/api/deps/auth.py` (consumes this package)
 - **Token blacklist DB side**: `src/app/core/db/crud_token_blacklist.py`

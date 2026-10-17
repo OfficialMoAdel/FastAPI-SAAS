@@ -10,8 +10,10 @@ from src.app.core.middleware_exempt import is_path_exempt
 from src.app.core.middleware_state import (
     get_client_ip_state,
     is_whitelisted,
+    set_api_key_identity,
     set_token_blacklisted,
 )
+from src.app.core.security.api_key_identity import ApiKeyIdentity, resolve_api_key_identity
 from src.app.core.security.auto_ban import (
     BanInfo,
     check_and_auto_ban,
@@ -80,6 +82,12 @@ class _RateLimitContext(NamedTuple):
     # selects the API-key budget, which is keyed by source IP for exactly the
     # reason an unverified credential cannot be allowed to name a bucket.
     api_key: bool = False
+    # Bead hfps / ADR-0023: the owner admission resolved for the presented key,
+    # or None when it did not resolve. Present in the context (rather than read
+    # back off request.state) so `_resolve_legacy_config` can state its budget
+    # decision without a second lookup, and so the RAW key never lives on a
+    # context that gets logged.
+    api_key_identity: ApiKeyIdentity | None = None
 
 
 class RequestAdmissionService:
@@ -143,7 +151,15 @@ class RequestAdmissionService:
         # revoked bearer token and an API-key caller are indistinguishable - and
         # they must stay distinguishable: S-17 lowers a revoked session to
         # anonymous, and that downgrade is the stricter outcome.
-        api_key_metered = bool(ctx.api_key) and ctx.token is None and ctx.user_id is None
+        #
+        # Bead hfps: `user_id is None` is deliberately NOT part of this. A
+        # resolved API-key identity populates `user_id` (that is how the owner's
+        # tier budget is reached), and a flag that went false there would
+        # re-enable auto-ban for every caller behind a shared NAT - the exact
+        # outcome g4my's oracle exists to forbid. The question this flag answers
+        # is "which CREDENTIAL was presented", and an API-key credential is not
+        # anonymous whether or not anybody has looked it up yet.
+        api_key_metered = bool(ctx.api_key) and ctx.token is None
         # The merged composite hard-codes GCRA arithmetic — that is what buys
         # its single round-trip. Taking it while the operator configured the
         # fixed-window engine would silently serve GCRA here and fixed window
@@ -399,8 +415,49 @@ class RequestAdmissionService:
         # the two agreeing on what counts as a keyed request. The key is NOT
         # validated here - it cannot be, admission precedes the auth deps - which
         # is exactly why the budget it selects is keyed by source IP.
-        api_key = request.headers.get("x-api-key") is not None
-        return _RateLimitContext(user_id, tier_name, tenant_id, tier_id_raw, token, jti, path, api_key)
+        api_key_header = request.headers.get("x-api-key")
+        api_key = api_key_header is not None
+        # Bead hfps / ADR-0023: resolve the key ONCE here, at the edge, instead
+        # of leaving the owner's identity (and therefore the owner's tier)
+        # invisible to the budget decision. One Redis GET on an entry every
+        # API-key request already reads; `get_user_by_api_key` consumes the
+        # result below instead of re-probing, so the request pays the same one
+        # GET it paid before. The binding on request.state is what makes that
+        # possible - admission runs first, so this is the only place a warm
+        # resolution can be produced for the request.
+        #
+        # An EMPTY header value is a presented-but-unusable key: it stays
+        # `api_key` (so it is metered, not served anonymously) and resolves to
+        # nothing (so it cannot name a bucket).
+        identity: ApiKeyIdentity | None = None
+        if api_key and token is None and api_key_header:
+            identity = await resolve_api_key_identity(api_key_header)
+            set_api_key_identity(request.state, identity)
+        # A bearer credential wins for metering, which is what g4my's
+        # `ctx.token is None` condition already meant and is unchanged here.
+        if identity is not None and identity.tier_name:
+            # The owner's TIER is what selects the budget, so it is also what
+            # gates the owner bucket. An identity without one (a cache entry
+            # written before ADR-0023, or an owner with no tier) deliberately
+            # leaves `user_id` None, which routes the request to g4my's
+            # per-source-IP budget below. Taking the owner bucket without a tier
+            # would land in resolve_rate_limits' authenticated fallback
+            # (50/hour) - a 20x tightening sold as a feature.
+            user_id = identity.user_id
+            tier_name = identity.tier_name
+            tier_id_raw = identity.tier_id
+            tenant_id = identity.tenant_id
+        return _RateLimitContext(
+            user_id,
+            tier_name,
+            tenant_id,
+            tier_id_raw,
+            token,
+            jti,
+            path,
+            api_key,
+            identity,
+        )
 
     async def _resolve_legacy_config(self, request: Request, ctx: _RateLimitContext) -> tuple[int, int, str, bool]:
         user_id = ctx.user_id

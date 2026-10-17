@@ -1,0 +1,150 @@
+{
+  "schema": "perf-body-scan-regimes/2",
+  "run": {
+    "same_commit_host_window_for_both_regimes": true,
+    "why": "EM-9 and EM-10 both require the same commit, host and window. Two separate runs would differ by exactly the run-to-run variance 4.4 records - 7.1x on this target - and the ratio between the regimes would be uninterpretable."
+  },
+  "prefilter_properties": {
+    "miss_body": {
+      "kb": 60,
+      "bytes": 61440,
+      "prefilter_hit": false,
+      "asserted_miss": true,
+      "statement": "60 KB of ordinary text carries no literal the Aho-Corasick prefilter can find, so the P1-7 skip FIRES and the full regex never runs. Asserted here, before any timing."
+    },
+    "hit_body": {
+      "kb": 40,
+      "bytes": 40960,
+      "prefilter_hit": true,
+      "asserted_hit": true,
+      "statement": "40 KB of ordinary text containing a SQL-shaped substring. The prefilter ADMITS it, so the full regex RUNS. Asserted here, before any timing. The substring is benign and the endpoint is expected to serve the request - the property asserted is the PREFILTER'S, not a detection."
+    },
+    "wire_bytes": {
+      "miss_bytes": 61480,
+      "hit_bytes": 41000,
+      "miss_prefilter_hit": false,
+      "hit_prefilter_hit": true,
+      "both_asserted": true,
+      "statement": "The SAME two properties asserted on the bytes the request actually carries - the JSON envelope, 41 bytes larger than the filler. The middleware scans request bytes, so this is the assertion the round-trip arm depends on. It is re-asserted rather than assumed because a body that changes class between the text and the wire would silently measure the wrong regime."
+    },
+    "both_asserted": true
+  },
+  "scan_cost": {
+    "ceiling_us": 5000.0,
+    "ceiling_basis": "absolute, chosen BEFORE measurement, never relaxed",
+    "miss_60kb": {
+      "best_us": 531.219,
+      "median_us": 562.186,
+      "us_per_kb": 8.854,
+      "under_ceiling": true
+    },
+    "hit_40kb": {
+      "best_us": 13499.658,
+      "median_us": 14662.514,
+      "us_per_kb": 337.491,
+      "under_ceiling": false
+    },
+    "ratio_best": 25.41,
+    "ratio_note": "HIT/MISS at DIFFERENT body sizes. The hit body is SMALLER, so this ratio UNDERSTATES the per-byte penalty: the hit regime costs more while scanning 33% fewer bytes. Per-KB figures are reported beside it so the per-byte story is not hidden by the size difference.",
+    "per_kb_ratio": 38.12,
+    "per_kb_ratio_note": "COST PER KILOBYTE, which removes the size confound entirely. This is the figure that describes the regime boundary; the raw ratio above is kept for completeness and is the more conservative one."
+  },
+  "post_roundtrip": {
+    "measured": true,
+    "route": "POST /api/v1/posts/by-user/{username}",
+    "route_why": "The route the user approved for EM-9/EM-10. PostBase.text caps at 63,206 chars so both the 60 KB and the 40 KB body fit. _require_post_owner (posts/router.py:30-33) means each account POSTs to its OWN username - no account can be used to write as another, which is also why the request set is spread rather than concentrated.",
+    "wire_sizes": {
+      "em9_miss_60kb": 61480,
+      "em10_hit_40kb": 41000,
+      "note": "The JSON envelope adds 41 bytes over the filler. The middleware scans the REQUEST BYTES, so every prefilter property and every per-KB figure below is against the WIRE size, not the text size."
+    },
+    "concurrency": 8,
+    "repetitions": 5,
+    "requests_per_repetition": 200,
+    "accounts": 8,
+    "tier": "Pro",
+    "tier_id": 2,
+    "tier_note": "A DECLARED CONFIGURATION, exactly like the RBAC role. The tier decides which TIER_RATE_LIMITS entry applies to these accounts: pro is (1000, 3600) per user per path, which is why 1000 requests per arm can be driven at all - the free tier's (10, 3600) would 429 the tail. The row is created if absent because step4_campaign.seed_accounts seeds the ROLE but requires the TIER to pre-exist.",
+    "security_state_cleared_before_phase": 3,
+    "ceiling_us": 7500.0,
+    "ceiling_derivation": {
+      "scan_ceiling_us": 5000.0,
+      "non_scan_allowance_us": 2500.0,
+      "formula": "SCAN_CEILING_US + NON_SCAN_ALLOWANCE_US",
+      "note": "Declared before any POST was issued. The scan half is the existing absolute ceiling; the allowance is anchored on EM-1's 2.80 ms serial figure for the cheapest authenticated DB round-trip in the programme's record, so it is not fitted to this run. It is a coarse guard on 'did the non-scan part explode', not the finding. Measured, it did: both arms breached it, because the non-scan work at concurrency 8 is roughly two orders of magnitude above the 2.80 ms serial figure this allowance was anchored on. That breach is a correct report of the endpoint, not a bad ceiling - and it is why the ceiling cannot stand in for the scan measurement."
+    },
+    "seed_info": {
+      "role": "step4-full-access",
+      "role_id": 1,
+      "permissions_in_catalog": 26,
+      "permissions_granted": 26,
+      "users_assigned": 8,
+      "note": "A DECLARED CONFIGURATION, like the tier. Full access was chosen because it is the grant a customer admin role would carry; a read-only role would measure the same endpoints under a different permission cache shape."
+    },
+    "em9_miss_60kb": {
+      "pooled_n": 1000,
+      "repetitions": 5,
+      "p50_median_of_repetitions_ms": 60.354,
+      "p50_min_of_repetitions_ms": 60.065,
+      "min_median_of_repetitions_ms": 31.246,
+      "min_min_of_repetitions_ms": 30.012,
+      "best_us": 30011.69,
+      "median_us": 60314.03,
+      "reportable_ms": {
+        "p50": 60.314,
+        "p95": 70.68,
+        "p99": null
+      },
+      "unresolvable_percentiles": [],
+      "p99_reportable": false,
+      "p99_sample_floor": 10000,
+      "p99_note": "ADR-0022 Rule 2. p99 requires pooled n >= 10000; this run reaches 1000, so the p99 figure is published as null rather than computed from a sample too small to carry it. Rule 3 still applies: the endpoint IS measured and it DOES gate - this is a reporting rule, not an exemption. The boundary between the two regimes is read from the RATIO, which neither an unresolvable tail nor a sample size can move.",
+      "ceiling_us": 7500.0,
+      "under_ceiling": false,
+      "status_counts": {
+        "201": 1000
+      },
+      "status_is_clean": true,
+      "unexpected_statuses": [],
+      "unexpected_bodies": []
+    },
+    "em10_hit_40kb": {
+      "pooled_n": 1000,
+      "repetitions": 5,
+      "p50_median_of_repetitions_ms": 182.088,
+      "p50_min_of_repetitions_ms": 177.995,
+      "min_median_of_repetitions_ms": 64.022,
+      "min_min_of_repetitions_ms": 54.459,
+      "best_us": 54459.28,
+      "median_us": 181365.31,
+      "reportable_ms": {
+        "p50": 181.362,
+        "p95": 213.263,
+        "p99": null
+      },
+      "unresolvable_percentiles": [],
+      "p99_reportable": false,
+      "p99_sample_floor": 10000,
+      "p99_note": "ADR-0022 Rule 2. p99 requires pooled n >= 10000; this run reaches 1000, so the p99 figure is published as null rather than computed from a sample too small to carry it. Rule 3 still applies: the endpoint IS measured and it DOES gate - this is a reporting rule, not an exemption. The boundary between the two regimes is read from the RATIO, which neither an unresolvable tail nor a sample size can move.",
+      "ceiling_us": 7500.0,
+      "under_ceiling": false,
+      "status_counts": {
+        "201": 1000
+      },
+      "status_is_clean": true,
+      "unexpected_statuses": [],
+      "unexpected_bodies": []
+    },
+    "cleanup": {
+      "post_rows_deleted": 2000,
+      "note": "The bodies are ~77 MB of rows at the default sizes. They are harness output, not application data, so they are removed at teardown and the count is recorded."
+    }
+  },
+  "ratios": {
+    "scan_ratio_hit_over_miss": 25.41,
+    "roundtrip_ratio_hit_over_miss": 1.81,
+    "note": "HIT over MISS on the each arm's own best_us. An additive constant leaves a DIFFERENCE invariant but not a RATIO, so the round-trip ratio is the scan ratio diluted by the non-scan work. The scan ratio is the one measuring the prefilter difference; the round-trip ratio is quoted so the dilution is a number here rather than a surprise for a reader who sees one arm and not the other.",
+    "dilution_factor": 0.071,
+    "dilution_note": "roundtrip_ratio / scan_ratio, below 1 because the round-trip denominator carries the non-scan floor."
+  }
+}

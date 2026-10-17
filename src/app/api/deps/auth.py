@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
+from src.app.core.middleware_state import get_api_key_identity
 from src.app.core.principal import (
     OPTIONAL,
     REQUIRED,
@@ -120,9 +121,7 @@ async def _enforce_token_not_revoked(
         raise denial(DenialReason.REVOKED_TOKEN)
     if probe.is_blacklisted is False:
         return  # Verified clean by composite Lua probe
-    if probe.cached_blacklist is True or await _is_token_blacklisted_with_fallback(
-        probe.token, probe.jti, db
-    ):
+    if probe.cached_blacklist is True or await _is_token_blacklisted_with_fallback(probe.token, probe.jti, db):
         raise denial(DenialReason.REVOKED_TOKEN)
 
 
@@ -468,7 +467,6 @@ async def _resolve_strict_bearer_flow(
     request: Request,
     db: AsyncSession | None,
     token: str,
-
     cached_payload: Any = None,
     current_tenant: Any = None,
 ) -> AuthContext:
@@ -503,9 +501,7 @@ async def _resolve_strict_bearer_flow(
         check_blacklist=(cached_blacklist is None),
     )
 
-    await _enforce_token_not_revoked(
-        _BlacklistProbe(token, jti, cached_blacklist, is_blacklisted), db
-    )
+    await _enforce_token_not_revoked(_BlacklistProbe(token, jti, cached_blacklist, is_blacklisted), db)
     await _enforce_session_valid(session_id, session_valid, user_id, jwt_exp)
 
     if bitmask is not None and request is not None and user_tenant_id is not None:
@@ -552,7 +548,14 @@ async def get_user_by_api_key(
     from src.app.modules.api_keys.service import APIKeyService
 
     api_key_service = APIKeyService(db)
-    key_info = await api_key_service.validate_api_key(api_key)
+    # ADR-0023 (bead hfps): admission already resolved this key's grant from
+    # the cache one call earlier, to choose this caller's rate-limit budget.
+    # Handing that result over is what keeps the request at the same ONE Redis
+    # GET it spent before: `validate_api_key` skips the probe, and still runs
+    # the tenant-liveness check and the authoritative database fallback. A
+    # miss here is not a fallback to "validate it again" — it is a fallback to
+    # the database, which is the answer that was always authoritative.
+    key_info = await api_key_service.validate_api_key(api_key, identity=get_api_key_identity(request.state))
 
     if not key_info:
         return None
@@ -589,7 +592,10 @@ async def _verify_optional_bearer_token(
 ) -> AuthContext | None:
     """Verify optional bearer token using the unified resolve_principal seam."""
     return await resolve_principal(
-        request=request, db=db, token=token_value, policy=OPTIONAL,
+        request=request,
+        db=db,
+        token=token_value,
+        policy=OPTIONAL,
         current_tenant=current_tenant,
     )
     return await resolve_principal(
@@ -675,9 +681,7 @@ async def get_current_superuser(
 # ---------------------------------------------------------------------------
 
 
-async def _principal_provider(
-    request: Request, token: str | None = None
-) -> AuthContext | None:
+async def _principal_provider(request: Request, token: str | None = None) -> AuthContext | None:
     return await resolve_principal(request, token=token, policy=REQUIRED)
 
 

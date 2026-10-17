@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -84,6 +85,12 @@ class TestAPIKeyValidationCaching:
         mock_key.id = 42
         mock_key.expires_at = None
         mock_key.valid_from = None  # Explicitly set to None for comparison
+        # ADR-0023: the DB path LEFT-JOINs user -> tier, so a real session's row
+        # carries the owner. Modelled as the tierless owner (`tier_id` is
+        # nullable and that is a valid state), because an unmodelled `.user`
+        # would inject MagicMocks into the cached payload and json_dumps refuses
+        # them - the mock models the row; the assertions are unchanged.
+        mock_key.user = SimpleNamespace(tier_id=None, tier=None)
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_key
@@ -300,6 +307,10 @@ class TestAPIKeyValidationWithoutRedis:
         mock_key.expires_at = None
         mock_key.scopes = None
         mock_key.valid_from = None  # Explicitly set to None for comparison
+        # ADR-0023: same LEFT-JOINed owner as above; tierless here too, so the
+        # cached payload carries `null` rather than a MagicMock that json_dumps
+        # would reject.
+        mock_key.user = SimpleNamespace(tier_id=None, tier=None)
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_key

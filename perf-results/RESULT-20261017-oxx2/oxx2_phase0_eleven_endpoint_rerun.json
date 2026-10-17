@@ -1,0 +1,196 @@
+{
+  "bead": "FastAPI_saas-oxx2",
+  "item": "oxx2",
+  "title": "Measure the users_me_apikey Phase-0 arm on Linux (86p9 wired it, nothing drove it) - the whole eleven-endpoint set re-run",
+  "bead_closes": "FastAPI_saas-oxx2",
+  "measured_at": "2026-10-17T13:24Z/14:33Z (16:24-17:33 host time, EEST)",
+  "artefact_kind": "phase-0-set-re-run",
+  "headline": {
+    "what_this_closes": "86p9 wired users_me_apikey into the Phase-0 set and nothing had ever driven it. It now has a socket-mode campaign artefact with status_is_clean true, and the gate reports C1 PASS over eleven of eleven required endpoints.",
+    "users_me_apikey": {
+      "requests": 500,
+      "repetitions": 5,
+      "concurrency": 8,
+      "pooled_n": 500,
+      "status_counts": { "200": 500 },
+      "status_is_clean": true,
+      "reportable_ms": { "p50": 30.8718, "p95": 38.8799, "p99": null },
+      "p99_withheld_because": "pooled n=500 is below the 10000 sample floor (ADR-0022 Rule 2); the harness states that itself in p99_note",
+      "repetition_figures_ms": {
+        "p50_median_of_repetitions": 30.7556,
+        "p50_min_of_repetitions": 30.503,
+        "min_median_of_repetitions": 18.3522,
+        "min_min_of_repetitions": 11.2163
+      },
+      "budget_in_force": { "control": "api_key", "limit": 1000, "period_seconds": 3600, "times_a_window_had_to_wait": 0 },
+      "budget_source": "settings.rate_limit.API_KEY_LIMIT, added by g4my and pinned in EXPECTED_EIGHT; a difference between the live value and the pin voids the run"
+    },
+    "gate": {
+      "criteria_met": 7,
+      "criteria_total": 10,
+      "failed_criteria": [7, 8, 9],
+      "c1": "PASS - all 11 present, every one at concurrency 8",
+      "c7_c8_c9_why_failed": "no paired-arm, CPU-profile or event-loop-occupancy artefact was supplied, and the gate refuses to assume one. oxx2's acceptance names C1; these three are a different bead's work."
+    },
+    "previous_estimate": null,
+    "why_previous_estimate_is_null": "oxx2 had no estimate to check. 86p9 was closed wiring-only and stated no Linux number for this arm, on purpose; the round-trip and command counts for the API-key seam belong to M-7 and were not re-measured here."
+  },
+  "instrument": {
+    "harnesses": [
+      "scripts/step4_campaign.py (three runs: group A, B, C) - in repo at the measured commit",
+      "scripts/body_scan_regimes.py --posts (EM-9/EM-10 round trip)",
+      "scripts/step4_gate.py (the checker; it reads artefacts and never recomputes a statistic)"
+    ],
+    "artefacts_in_this_directory": [
+      "step4_campaign_groupA_users_me_list_search_health.json",
+      "step4_campaign_groupB_anon_login_logout_refresh.json",
+      "step4_campaign_groupC_users_me_apikey.json",
+      "body_scan_regimes_em9_em10.json",
+      "step4_gate_verdict.json"
+    ],
+    "transport": "real socket. uvicorn 127.0.0.1:8100, --loop auto --http auto (uvloop + httptools), started with no --loop/--http so both resolve by auto-selection, which is the configuration Dockerfile's CMD ships. Seeding is in-process over ASGITransport and is harness setup, not measured work.",
+    "what_is_counted_where": "This re-run counts LATENCY only. Redis round trips and commands for the API-key seam are M-7's quantities, measured by a different instrument (scripts/e2e_apikey_endpoint_baseline.py) and recorded in perf-results/RESULT-20261017-m7/m7_apikey_endpoint_baseline.json. They are deliberately not restated here."
+  },
+  "protocol": {
+    "target": "perf-local, ansible@192.168.121.147",
+    "measured_tree": {
+      "commit": "af5e169c",
+      "full": "af5e169c5b7a22cd0279a800118db47628e5faf0",
+      "branch_state": "detached worktree at /home/ansible/oxx2, created from a bundle; the Linux clone never fetched it from a remote and nothing was pushed",
+      "tree_dirty": false,
+      "why_a_bundle": "the commit was never pushed, and a thin bundle was refused with 'Repository lacks these prerequisite commits: 2fc6a7e7', so a full-history bundle carrying a temporary local branch (oxx2-measure) was used"
+    },
+    "host": {
+      "virtualisation": "VMware VM (systemd-detect-virt -> vmware, product 'VMware Virtual Platform')",
+      "distro": "CentOS Stream 9, kernel 5.14.0-578.el9.x86_64",
+      "cpu": "Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz, 4 cores",
+      "python": "CPython 3.13.16",
+      "deployment_recorded_by": "PERF_ORCHESTRATOR=vmware-vm (assert_deployment_recorded aborts the run without it)"
+    },
+    "stores": {
+      "postgres": "192.168.121.147:5432/test_db",
+      "redis": "192.168.121.147:6379 (cache and queue)",
+      "locality": "SAME 4-CORE VM as both the app and the load client. The manifest's store_locality says 'remote' only because the store addresses are IP literals rather than local sockets; do not read it as a split deployment."
+    },
+    "declared_configuration": {
+      "tier": "Pro (the target's tier table holds 'Pro', capital P; 'pro' selects nothing)",
+      "users": 64,
+      "rbac_role": "step4-full-access, 26 of 26 permissions granted to 64 users - a DECLARED CONFIGURATION, like the tier",
+      "concurrency": 8,
+      "repetitions": 5,
+      "requests_per_repetition": {
+        "group A (users_me, users_list, users_search, health)": 10000,
+        "group B (users_me_anon, login, logout, refresh)": 2,
+        "group C (users_me_apikey)": 100,
+        "body scan (em9, em10)": 200
+      },
+      "why_group_b_is_two": "these four arms are charged an IP-keyed window - DEFAULT_ANONYMOUS_LIMIT (10, 3600) for users_me_anon and, for login and logout, that window PLUS SECURITY_BUDGETS['auth'] (5, 60). The BudgetGate holds every declared window at once, so five repetitions of ten requests would spend one hour of waiting per ten requests: roughly five hours per endpoint. Two per repetition is ten pooled requests, exactly what fills the window, which is also the pooled n v8qm reported for these arms.",
+      "seed_login_budget_cleared": true,
+      "auth_cache_invalidated_per_seeded_username": true,
+      "security_state_cleared_after_seeding": 3,
+      "settle_seconds": 2.0
+    },
+    "api_key_credential": {
+      "how_it_was_minted": "out of band, by scripts run against the target's database, because the campaign has no minting step and the key must outlive the campaign's own seeding",
+      "owner_account": "step4apikey (user_id 41), tenant system, tier Pro",
+      "why_a_dedicated_account": "seed_accounts runs DELETE FROM users WHERE username = $1 on every campaign invocation and api_keys.user_id is ON DELETE CASCADE, so a key owned by a seeded row would be deleted by the next campaign run that needs it",
+      "tenant": "system - the campaign sends X-Tenant-ID: system on every request, so a key in any other tenant answers API_KEY_TENANT_MISMATCH",
+      "scopes": ["read"],
+      "transport": "X-API-Key plus a rotating X-Forwarded-For over the 16-address pool API_KEY_SOURCE_IPS (127.20.0.1 .. 127.20.0.16), which the app honours because the peer is loopback and therefore a trusted proxy",
+      "live_check_before_the_campaign": "curl with the key returned 200 with x-ratelimit-limit: 1000, period 3600, remaining 999 - i.e. g4my's API_KEY_LIMIT is in force on this target, not the anonymous 10 M-7 measured"
+    }
+  },
+  "results": {
+    "all_eleven": [
+      { "endpoint": "users_me", "method": "GET", "path": "/api/v1/users/me", "pooled_n": 50000, "concurrency": 8, "repetitions": 5, "status_counts": { "200": 50000 }, "status_is_clean": true, "reportable_ms": { "p50": 47.9231, "p95": 159.2806, "p99": 191.5367 }, "repetition_figures_ms": { "p50_median": 44.4987, "p50_min": 39.4307, "min_median": 12.4367, "min_min": 11.309 } },
+      { "endpoint": "users_list", "method": "GET", "path": "/api/v1/users", "pooled_n": 50000, "concurrency": 8, "repetitions": 5, "status_counts": { "200": 50000 }, "status_is_clean": true, "reportable_ms": { "p50": 116.705, "p95": 496.9275, "p99": 668.5962 }, "repetition_figures_ms": { "p50_median": 127.2414, "p50_min": 94.3613, "min_median": 55.5068, "min_min": 39.0293 } },
+      { "endpoint": "users_search", "method": "GET", "path": "/api/v1/users/search", "pooled_n": 50000, "concurrency": 8, "repetitions": 5, "status_counts": { "200": 50000 }, "status_is_clean": true, "reportable_ms": { "p50": 132.3203, "p95": 548.0273, "p99": 835.4311 }, "repetition_figures_ms": { "p50_median": 141.1011, "p50_min": 103.6904, "min_median": 61.2082, "min_min": 52.3914 } },
+      { "endpoint": "health", "method": "GET", "path": "/api/v1/health", "pooled_n": 50000, "concurrency": 8, "repetitions": 5, "status_counts": { "200": 50000 }, "status_is_clean": true, "reportable_ms": { "p50": 14.2814, "p95": 78.9803, "p99": 149.0382 }, "repetition_figures_ms": { "p50_median": 11.9153, "p50_min": 8.3093, "min_median": 4.6135, "min_min": 3.6481 } },
+      { "endpoint": "users_me_anon", "method": "GET", "path": "/api/v1/users/me", "pooled_n": 10, "concurrency": 8, "repetitions": 5, "status_counts": { "401": 10 }, "status_is_clean": true, "expected_statuses": [401], "reportable_ms": { "p50": 3.9563, "p95": 6.963, "p99": null }, "repetition_figures_ms": { "p50_median": 3.4931, "p50_min": 3.2793, "min_median": 3.4931, "min_min": 3.2793 }, "pacing": { "controls_enforced": ["anonymous"], "waits": 0 } },
+      { "endpoint": "users_me_apikey", "method": "GET", "path": "/api/v1/users/me", "pooled_n": 500, "concurrency": 8, "repetitions": 5, "status_counts": { "200": 500 }, "status_is_clean": true, "reportable_ms": { "p50": 30.8718, "p95": 38.8799, "p99": null }, "repetition_figures_ms": { "p50_median": 30.7556, "p50_min": 30.503, "min_median": 18.3522, "min_min": 11.2163 }, "pacing": { "controls_enforced": ["api_key"], "waits": 0 } },
+      { "endpoint": "login", "method": "POST", "path": "/api/v1/account/login", "pooled_n": 10, "concurrency": 8, "repetitions": 5, "status_counts": { "200": 10 }, "status_is_clean": true, "reportable_ms": { "p50": 241.7223, "p95": 244.8053, "p99": null }, "repetition_figures_ms": { "p50_median": 241.3734, "p50_min": 237.008, "min_median": 241.3734, "min_min": 237.008 }, "pacing": { "controls_enforced": ["auth", "anonymous"], "waits": 1, "seconds_spent_waiting": 59.514, "which_window_bound": { "5 per 60s": 1 } } },
+      { "endpoint": "logout", "method": "POST", "path": "/api/v1/account/logout", "pooled_n": 10, "concurrency": 8, "repetitions": 5, "status_counts": { "200": 10 }, "status_is_clean": true, "reportable_ms": { "p50": 20.8224, "p95": 44.1336, "p99": null }, "repetition_figures_ms": { "p50_median": 16.3281, "p50_min": 9.3388, "min_median": 16.3281, "min_min": 9.3388 }, "pacing": { "controls_enforced": ["auth", "anonymous"], "waits": 1, "seconds_spent_waiting": 59.961, "which_window_bound": { "5 per 60s": 1 } } },
+      { "endpoint": "refresh", "method": "POST", "path": "/api/v1/account/refresh", "pooled_n": 10, "concurrency": 8, "repetitions": 5, "status_counts": { "200": 10 }, "status_is_clean": true, "reportable_ms": { "p50": 18.1661, "p95": 45.7455, "p99": null }, "repetition_figures_ms": { "p50_median": 16.8787, "p50_min": 12.0923, "min_median": 16.8787, "min_min": 12.0923 }, "refresh_rotations": 10, "pacing": { "controls_enforced": ["auth"], "waits": 1, "seconds_spent_waiting": 59.928, "which_window_bound": { "5 per 60s": 1 } } },
+      { "endpoint": "em9_miss_60kb", "method": "POST", "path": "/api/v1/posts/by-user/{username}", "pooled_n": 1000, "concurrency": 8, "repetitions": 5, "status_counts": { "201": 1000 }, "status_is_clean": true, "wire_bytes": 61480, "reportable_ms": { "p50": 60.314, "p95": 70.68, "p99": null }, "repetition_figures_ms": { "p50_median": 60.354, "p50_min": 60.065, "min_median": 31.246, "min_min": 30.012 } },
+      { "endpoint": "em10_hit_40kb", "method": "POST", "path": "/api/v1/posts/by-user/{username}", "pooled_n": 1000, "concurrency": 8, "repetitions": 5, "status_counts": { "201": 1000 }, "status_is_clean": true, "wire_bytes": 41000, "reportable_ms": { "p50": 181.362, "p95": 213.263, "p99": null }, "repetition_figures_ms": { "p50_median": 182.088, "p50_min": 177.995, "min_median": 64.022, "min_min": 54.459 } }
+    ],
+    "no_unexpected_response_anywhere": "status_is_clean true on all eleven, unexpected_statuses empty, unexpected_bodies empty (0 on every arm). users_me_anon returned only 401, which is its EXPECTED status, declared in the endpoint table before the run.",
+    "limits_in_force_throughout": "every arm's declared rate budget was enforced by the harness pacer and none was relaxed. controls_unchanged true and control_differences_at_end [] on all three campaign artefacts; a difference would have voided the run."
+  },
+  "gate": {
+    "command": "python scripts/step4_gate.py --campaign groupA.json --campaign groupB.json --campaign groupC.json --post-roundtrip bodyscan.json --out verdict.json",
+    "header": "Step 4 gate: 11 endpoints of 11 required",
+    "checks": [
+      { "n": 1, "name": "every required endpoint measured at the degrading concurrency", "passed": true, "detail": "all 11 present, every one at concurrency 8" },
+      { "n": 2, "name": "4.4 verbatim; p99 needs n >= 10,000", "passed": true, "detail": "p99 resolved for 4 at n >= 10000 (health, users_list, users_me, users_search); withheld-as-null for 7 (em10_hit_40kb, em9_miss_60kb, login, logout, refresh, users_me_anon, users_me_apikey), none fabricated" },
+      { "n": 3, "name": ">=5 reps, median-of-medians and min-of-medians", "passed": true, "detail": "every endpoint reports repetitions >= 5 and all four per-repetition figures" },
+      { "n": 4, "name": "4.5 void conditions asserted start and end", "passed": true, "detail": "all 3 campaign artefacts assert the eight controls unchanged, start to end" },
+      { "n": 5, "name": "100% success, EM-2's 401 declared in advance", "passed": true, "detail": "no unexpected status anywhere; users_me_anon returned only ['401'] because its expected status is 401, declared in the endpoint table before the run" },
+      { "n": 6, "name": "full manifest, representative runtime", "passed": true, "detail": "3 campaign artefacts carry a representative manifest" },
+      { "n": 7, "name": "/health paired arm", "passed": false, "detail": "no artefact supplied for the paired arm; not assumed" },
+      { "n": 8, "name": "Linux CPU profile, top-5 tottime share", "passed": false, "detail": "no profile artefact supplied; not assumed" },
+      { "n": 9, "name": "blocking-work attribution vs the T-1 histogram", "passed": false, "detail": "no occupancy artefact supplied; not assumed" },
+      { "n": 10, "name": "no Windows arm, no cross-shape comparison", "passed": true, "detail": "every manifest reports Linux; every run is one shape" }
+    ],
+    "verdict_line": "GATE FAILED: 3 of 10 criteria unmet -> 7, 8, 9",
+    "read_this_honestly": "C1 is the criterion oxx2's acceptance names, and C1 PASSES over eleven of eleven. The run is reported as a whole-gate FAILURE rather than dressed up, because the checker is the authority and it declines to assume the three artefacts it was not given. C7/C8/C9 are separate pieces of work with their own scope."
+  },
+  "comparison_to_v8qm": {
+    "why": "v8qm (FastAPI_saas-v8qm) is the closed ten-endpoint gate PASS this set replaces; its artefacts live only on the Linux target and were never committed, so C1 could not be assembled from the repo without a re-run.",
+    "same_target": true,
+    "not_the_same_commit": "v8qm predates af5e169c",
+    "not_the_same_sample_size": "users_me, users_list, users_search and health were driven at 10000 per repetition here (50000 pooled) against a pooled n of 10000 in v8qm",
+    "p50_ms": {
+      "users_me": { "v8qm": 30.7745, "now": 47.9231 },
+      "users_list": { "v8qm": 153.4766, "now": 116.705 },
+      "users_search": { "v8qm": 166.8831, "now": 132.3203 },
+      "health": { "v8qm": 10.9164, "now": 14.2814 },
+      "em9_miss_60kb": { "v8qm": 92.013, "now": 60.314 },
+      "em10_hit_40kb": { "v8qm": 297.387, "now": 181.362 }
+    },
+    "p99_ms": {
+      "users_me": { "v8qm": 50.5043, "now": 191.5367 },
+      "users_list": { "v8qm": 693.1907, "now": 668.5962 },
+      "users_search": { "v8qm": 921.8966, "now": 835.4311 },
+      "health": { "v8qm": 55.5206, "now": 149.0382 }
+    },
+    "verdict": "NOT ATTRIBUTED. The p50s move in both directions and every published p99 except users_list and users_search is higher here. Three differences are live at once - a different commit, five times the pooled sample, and the same co-located 4-core VM - and this run measures none of them separately. [Inference] the larger, longer sustained load is the likeliest carrier of the higher tails, because a tail is what a five-times-longer steady pressure changes first; that is a hypothesis, not a finding. Calling any of it a regression needs a controlled A/B at one commit and one n, which this bead does not have and did not claim."
+  },
+  "measured_vs_inferred": {
+    "measured": [
+      "all eleven endpoints' pooled n, concurrency, repetitions, the four per-repetition figures and the p50/p95/p99 the harness resolved, over a real socket",
+      "every response status, with the four IP-keyed arms' 401 and the body arms' 201 as declared expected statuses",
+      "the pacing record: which control bounded each arm and how long it waited",
+      "the eight rate-limit controls, asserted unchanged from the start of each run to its end",
+      "gate criteria 1-6 and 10, and the reasons 7-9 could not be met",
+      "the API-key budget in force on the target: x-ratelimit-limit 1000, period 3600"
+    ],
+    "inferred": [
+      "the cause of the tail difference against v8qm (three candidates, none isolated)"
+    ],
+    "explicitly_not_measured": [
+      "Redis round trips and commands for any arm in this re-run; M-7 owns those for the API-key seam and this run does not restate them",
+      "SQL statement counts per request",
+      "the CPU profile C8 asks for and the event-loop occupancy C9 asks for",
+      "the /health paired arm C7 asks for",
+      "any single-deployment latency claim: client, app, Postgres and Redis all shared one 4-core VM"
+    ]
+  },
+  "limits": [
+    "CO-LOCATED. The load client, uvicorn, Postgres and Redis all ran on one 4-core VMware VM. These latencies are a co-location figure, not a deployment figure, and must not be quoted as what a customer sees. They ARE comparable with v8qm, which used the same topology.",
+    "C7, C8 and C9 fail because their artefacts were not supplied. The gate refuses to assume one, and oxx2's acceptance names C1 only.",
+    "p99 is withheld on seven of eleven arms because their pooled n is below the 10000 sample floor. Only users_me, users_list, users_search and health published a p99.",
+    "users_me_apikey pooled n is 500. It is the honest maximum under API_KEY_LIMIT (1000, 3600) that fits in one run without the run itself becoming the load; at five repetitions of 100 the p50 is stable to four figures across repetitions but the tail is not resolvable.",
+    "The four IP-keyed arms were driven at two requests per repetition (pooled n=10, matching v8qm's n for those arms) because the (10, 3600) anonymous window costs an hour of waiting per ten requests. Their samples are small and their p99s are withheld for that reason.",
+    "The api-key arm rotates sixteen X-Forwarded-For addresses and therefore spreads across sixteen buckets of (1000, 3600) rather than filling one; the figure is per-source-IP admission cost, not the ceiling of a single source.",
+    "The API-key credential is a synthetic in-band key on a dedicated account. No claim is made here about how a real customer's key volume or source distribution would meter."
+  ],
+  "cross_reference": {
+    "86p9": "wired users_me_apikey into ENDPOINTS and REQUIRED_ENDPOINTS and pinned API_KEY_LIMIT; closed wiring-only with no Linux number. This artefact is that number.",
+    "g4my": "added settings.rate_limit.API_KEY_LIMIT = (1000, 3600) and rate_policy.build_api_key_rate_limit_key; live-checked on this target before the campaign (x-ratelimit-limit: 1000).",
+    "M-7 / FastAPI_saas-o0fg": "perf-results/RESULT-20261017-m7/m7_apikey_endpoint_baseline.json - the round-trip and command counts for the API-key seam, plus the four defects M-7 found while measuring (anonymous-per-IP metering, the scopeless key, APIKeyCreate with no user_id, the scopes migration mismatch).",
+    "v8qm / FastAPI_saas-v8qm": "the closed ten-endpoint C1 PASS these artefacts replace; not in the repo, which is why a re-run was needed.",
+    "gate_a / FastAPI_saas-p90o": "Phase 0. Its checkbox 4 asked for an API-key endpoint in the Phase-0 set; this is the measurement that answers it."
+  },
+  "closed": true
+}

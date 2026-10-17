@@ -240,6 +240,41 @@ def downgrade() -> None:
 
 ❌ DON'T: Create migrations that cannot be safely rolled back
 
+### Column types are a contract, and the WRITE may still succeed (FastAPI_saas-vthy)
+✅ DO: Declare the type the ORM maps. The application reads and writes through
+the ORM, so the migration is the one that must conform, not the model.
+
+Nothing in the tree catches a type drift today, for two concrete reasons:
+
+- `create_all` derives the schema FROM the ORM, so a dev database built that way
+  can never show this class of bug. Only a database built by `alembic upgrade
+  head` can.
+- `scripts/check_schema_parity.py` compares column NAMES only, and the `alembic
+  check` step in CI carries `continue-on-error: true`.
+
+Measured example — `api_keys.scopes` was `postgresql.JSONB` in layer 03 while the
+model maps `Text`, and `key_prefix` was `String(10)` against `String(8)`:
+
+- The INSERT still SUCCEEDED on the jsonb column: asyncpg sends untyped
+  parameters, so the server coerces the literal. A "type mismatch breaks writes"
+  story would have looked harmless.
+- The READ is what broke: SQLAlchemy's asyncpg dialect decodes a jsonb column to
+  a Python **list**, and the service read that value with `json_loads`, which
+  raises on a list. Every `X-API-Key` request would have 500'd on a
+  migration-built database — while `POST /api/v1/api-keys` kept working, which is
+  why the defect was so hard to place.
+- A raw asyncpg read returns json as raw text and HIDES this. Measure a type
+  drift by reading the column through the ORM (`select(Model)`), never through
+  the raw driver, and re-verify the read path after the fix.
+- A wider string than the model asks for (`String(10)` vs `String(8)`) is
+  cosmetic here, but it is still the schema claiming something the code does not.
+- An already-created database keeps its old column type: fixing the migration does
+  NOT rewrite it. That needs an explicit
+  `op.alter_column("scopes", type_=sa.Text(), postgresql_using="scopes::text")`
+  in a NEW revision, which was deliberately out of scope for vthy.
+
+Oracle: `tests/unit/migrations/test_api_keys_column_type_parity.py`.
+
 ## Pre-PR Checks
 
 ### Migration Testing

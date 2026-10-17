@@ -28,9 +28,26 @@ __all__ = ["APIKeyService", "MAX_GRACE_PERIOD_DAYS"]
 # (TODO: REMOVE once tests/unit/modules/api_keys no longer patch this module attribute)
 event_bus = event_bus
 
-# Cache configuration for API key validation
-API_KEY_CACHE_PREFIX = "api_key"
-API_KEY_CACHE_TTL = 300  # 5 minutes
+# Cache configuration for API key validation.
+# ADR-0023 (bead hfps): the cache-key FORMAT and the "is this cached payload
+# still a grant?" rules now have ONE owner in core, because admission reads
+# this cache before the auth deps do and the two must never disagree about
+# which entry belongs to which key.
+#
+# `X as X` is the explicit re-export marker, not redundancy: these names used to
+# be DEFINED here, and importers (and tests) still read them off this module.
+# Written as a bare import, ruff's F401 would delete the binding as "unused"
+# the first time it ran - which is exactly the kind of silent removal that
+# turns a compatibility surface into a broken one.
+from src.app.core.security.api_key_identity import (
+    API_KEY_CACHE_PREFIX as API_KEY_CACHE_PREFIX,
+)
+from src.app.core.security.api_key_identity import (
+    API_KEY_CACHE_TTL,
+    ApiKeyIdentity,
+    api_key_cache_key,
+    read_cached_grant,
+)
 
 
 class APIKeyService(BaseService[APIKey, APIKeyRead]):
@@ -73,6 +90,57 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
 
         return _ht(key)
 
+    async def _resolve_key_owner(
+        self,
+        target_user_id: int | None,
+        *,
+        caller_user_id: int,
+        tenant_id: UUID,
+    ) -> int:
+        """The account a key is being minted for.
+
+        Minting for yourself - the case every pre-aepv request took - returns the
+        caller immediately and issues NO query. That is deliberate: key creation
+        is not a hot path in the way admission is, but a capability that costs a
+        users-table read on every ordinary self-service key is a capability
+        people will work around, and `target_user_id == caller_user_id` would
+        otherwise buy nothing the caller did not already have.
+
+        A DIFFERENT target is a claim about another account, so it is verified:
+        the row must exist, belong to the caller's tenant and not be
+        soft-deleted. Absence - whether it is another tenant, a deleted row or a
+        user id nobody ever had - raises `ModelNotFoundError`, so this endpoint
+        never becomes an oracle for which user ids are real. An INACTIVE row is
+        a different answer, because the row is visible to this tenant already:
+        `ForbiddenError` says the account exists and cannot hold a credential,
+        which is more actionable than a 404 and leaks nothing extra.
+
+        The lookup reads `users.models.User` directly rather than importing
+        `users.UserDirectory`: a model read is a data cell, which
+        `scripts/check_cross_module_seams.py` explicitly does not govern, while
+        the behaviour layer would need a sanctioned seam to be added.
+        """
+        if target_user_id is None or target_user_id == caller_user_id:
+            return caller_user_id
+
+        from sqlalchemy import select
+
+        from src.app.modules.users.models import User
+
+        result = await self.db.execute(
+            select(User.id, User.is_active).where(
+                User.id == target_user_id,
+                User.tenant_id == tenant_id,
+                User.is_deleted.is_(False),
+            )
+        )
+        row = result.first()
+        if row is None:
+            raise ModelNotFoundError("User", target_user_id)
+        if not row[1]:
+            raise ForbiddenError(f"User {target_user_id} is not active and cannot hold an API key")
+        return int(row[0])
+
     async def create_api_key(
         self,
         api_key_data: APIKeyCreate,
@@ -84,9 +152,12 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
         Parameters
         ----------
         api_key_data : APIKeyCreate
-            API key creation data
+            API key creation data. `api_key_data.user_id` may name ANOTHER
+            account in this tenant to issue the key on their behalf; it is
+            resolved by `_resolve_key_owner` before anything is written.
         user_id : int
-            ID of the user creating the key
+            ID of the user creating the key (the caller). This parameter is the
+            CALLER and stays the caller: the target arrives on the schema.
         tenant_id : int
             ID of the tenant
 
@@ -98,10 +169,20 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
         # SECURITY FIX: Prevent duplicate API key names within the same tenant
         from sqlalchemy import select
 
+        # Resolved BEFORE the write so a bad target costs one read and no row.
+        # Everything below this line is about the OWNER, not the caller.
+        owner_user_id = await self._resolve_key_owner(
+            api_key_data.user_id,
+            caller_user_id=user_id,
+            tenant_id=tenant_id,
+        )
+
         stmt = select(APIKey).where(APIKey.name == api_key_data.name)
         existing_result = await execute_scoped(
-            stmt, db=self.db, model=APIKey,
-            scope=ExplicitTenant(tenant_id, reason='legacy-criterion:APIKey'),
+            stmt,
+            db=self.db,
+            model=APIKey,
+            scope=ExplicitTenant(tenant_id, reason="legacy-criterion:APIKey"),
         )
         if existing_result.scalar_one_or_none():
             raise DuplicateError("name", api_key_data.name)
@@ -120,7 +201,7 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
             name=api_key_data.name,
             key_prefix=prefix,
             hashed_key=hashed_key,
-            user_id=user_id,
+            user_id=owner_user_id,
             tenant_id=tenant_id,
             scopes=scopes_json,
             expires_at=api_key_data.expires_at,
@@ -138,23 +219,26 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
             raise DuplicateError("name", api_key_data.name) from None
         await self.db.refresh(key_record)
 
-        # Audit log the creation
+        # Audit log the creation. The OWNER is the subject, because the row
+        # belongs to them; `issued_for_user_id` is recorded alongside so an audit
+        # reader can still tell "admin issued this" from "user issued this".
         await audit(
             action="api_key.created",
             entity_type="api_key",
             entity_id=key_record.id,
             tenant_id=tenant_id,
-            user_id=user_id,
+            user_id=owner_user_id,
             details={
                 "key_name": key_record.name,
                 "key_prefix": key_record.key_prefix,
                 "expires_at": key_record.expires_at.isoformat() if key_record.expires_at else None,
                 "scopes": api_key_data.scopes,
+                "issued_for_user_id": owner_user_id,
             },
         )
 
         logger.info(
-            f"API key created | user={user_id} | tenant={tenant_id} | "
+            f"API key created | user={owner_user_id} | tenant={tenant_id} | "
             f"key_id={key_record.id} | key_name={key_record.name}"
         )
 
@@ -240,8 +324,10 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
             APIKey.user_id == user_id,
         )
         key_result = await execute_scoped(
-            key_stmt, db=self.db, model=APIKey,
-            scope=ExplicitTenant(tenant_id, reason='legacy-criterion:APIKey'),
+            key_stmt,
+            db=self.db,
+            model=APIKey,
+            scope=ExplicitTenant(tenant_id, reason="legacy-criterion:APIKey"),
         )
         key = key_result.scalar_one_or_none()
 
@@ -304,7 +390,7 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
         Uses full hash to prevent any theoretical collision risk.
         """
         # S7 FIX: Use full hash instead of truncating to 16 chars
-        return f"{API_KEY_CACHE_PREFIX}:{api_key_hash}"
+        return api_key_cache_key(api_key_hash)
 
     async def _get_cached_tenant_active(self, tenant_id: Any) -> bool | None:
         """Probe the shared L2 tenant cache for liveness (T8).
@@ -369,10 +455,7 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
                 )
                 return is_active
 
-            logger.info(
-                f"API key tenant liveness probe MISS | tenant_id={tenant_id} | "
-                f"keys={','.join(keys)}"
-            )
+            logger.info(f"API key tenant liveness probe MISS | tenant_id={tenant_id} | keys={','.join(keys)}")
             return None
         except Exception as e:  # noqa: BLE001 - probe must never break validation
             logger.debug("tenant_liveness_probe_failed", error=str(e))
@@ -381,6 +464,8 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
     async def validate_api_key(
         self,
         api_key: str,
+        *,
+        identity: ApiKeyIdentity | None = None,
     ) -> dict[str, Any] | None:
         """Validate an API key and return the associated user info.
 
@@ -391,12 +476,34 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
         ----------
         api_key : str
             The API key to validate
+        identity : ApiKeyIdentity | None
+            ADR-0023 (bead hfps): a grant admission ALREADY resolved from this
+            same cache, one call earlier in the request. When it is present the
+            cache probe below is skipped — the entry was read a moment ago, so
+            probing again would be the second read of the same line item. The
+            tenant-liveness probe, the "not yet valid" refusal and the
+            authoritative database fallback are all still performed: skipping
+            the probe skips a GET, not a check.
 
         Returns
         -------
         dict | None
             User info if valid, None otherwise
         """
+        if identity is not None:
+            # The resolution admission performed. `read_cached_grant` has
+            # already applied the revoked/expired/not-yet-valid rules to get
+            # here, so this is the same state the loop below would have found —
+            # only the GET is elided.
+            tenant_state = await self._get_cached_tenant_active(identity.tenant_id)
+            if tenant_state is False:
+                return None
+            if tenant_state is not None:
+                return identity.as_key_info()
+            # The tenant entry was invalidated, so distrust the key cache and
+            # take the authoritative DB path below. `api_key` is still needed
+            # there to recompute the digests.
+
         # I2 bridge: the stored digest changed from bare SHA-256 to peppered
         # HMAC, so keys created before that change are invisible to a
         # single-digest lookup — the row never matches and the key silently
@@ -409,64 +516,45 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
         cache_key = self._get_cache_key(current_digest)
         legacy_cache_key = self._get_cache_key(legacy_digest)
 
-        # Check cache first (O(1) lookup; adapter is None-safe)
-        for candidate_cache_key in (cache_key, legacy_cache_key):
-            cached = await cache_client.get(candidate_cache_key)
-            if cached is None:
-                continue
-            result = json_loads(cached)
-            # A REVOKED KEY IS CACHED AS A TOMBSTONE, not deleted.
-            #
-            # The previous version deleted the entry on revoke and expected
-            # this guard to catch anything that slipped through. It could not:
-            # the only writer of this payload hard-coded ``is_active: True``,
-            # so `is_active is False` was unreachable and a revoked key kept
-            # authenticating for the full API_KEY_CACHE_TTL (300s).
-            # ``revoke`` now writes ``{"is_active": false, ...}`` here, which
-            # makes this branch the thing it was written to be.
-            #
-            # A MISSING `is_active` (an entry written by an older deploy) is
-            # treated as active so it keeps working; those all carry a 300s
-            # TTL, so the exposure is bounded by one TTL from deploy.
-            #
-            # Residual race, stated rather than papered over: a validate that
-            # read the row as active microseconds BEFORE the revoke committed
-            # can still write its grant over this tombstone afterwards. That
-            # window is sub-millisecond and needs a lock to close; the
-            # 300-second window this fixes was not.
-            if result.get("is_active") is False:
-                # Stale grant for a revoked key — drop it and refuse.
-                await cache_client.delete(candidate_cache_key)
-                return None
-            # Check expiration on cached data
-            if result.get("expires_at"):
-                expires_at = datetime.fromisoformat(result["expires_at"])
-                if expires_at < datetime.now(UTC):
-                    # Expired - delete from cache and return None
-                    await cache_client.delete(candidate_cache_key)
+        # Check cache first (O(1) lookup; adapter is None-safe).
+        #
+        # Skipped entirely when an identity was supplied: that entry was read
+        # moments ago and its grant rules already applied. Re-reading it would
+        # be a second GET of a line item already in hand, and the one case that
+        # reaches here (the tenant cache entry was invalidated) is precisely a
+        # reason to distrust that entry, not to fetch it again.
+        if identity is None:
+            for candidate_cache_key in (cache_key, legacy_cache_key):
+                cached = await cache_client.get(candidate_cache_key)
+                if cached is None:
+                    continue
+                grant = read_cached_grant(json_loads(cached))
+                # The three rules below used to be inline here. They now live in
+                # `read_cached_grant` (ADR-0023) so that admission, which reads
+                # the same cache BEFORE this function runs, cannot drift into a
+                # different answer about the same entry. A refusal carries no
+                # identity by construction, so this is the single branch that
+                # decides "not a grant".
+                identity_hit = grant.identity
+                if identity_hit is None:
+                    # `revoked` and `expired` mean the entry is STALE — drop it,
+                    # so the next request is answered from the database.
+                    # `not_yet_valid` means the entry is not wrong, it is EARLY:
+                    # refuse, keep it.
+                    if grant.refusal != "not_yet_valid":
+                        await cache_client.delete(candidate_cache_key)
                     return None
-            # BUG FIX: Also check valid_from. Without this, a rotated key that was
-            # cached before its valid_from time could be used prematurely (up to 5 min).
-            if result.get("valid_from"):
-                valid_from = datetime.fromisoformat(result["valid_from"])
-                if valid_from > datetime.now(UTC):
+                # T8 FIX: cached key entries previously outlived tenant/key
+                # suspension because nothing evicted them. Probe the shared L2
+                # tenant cache: False => suspended (reject); missing => the
+                # tenant entry was invalidated, so distrust the key cache and
+                # take the authoritative DB path below.
+                tenant_state = await self._get_cached_tenant_active(identity_hit.tenant_id)
+                if tenant_state is False:
                     return None
-            # T8 FIX: cached key entries previously outlived tenant/key
-            # suspension because nothing evicted them. Probe the shared L2
-            # tenant cache: False => suspended (reject); missing => the
-            # tenant entry was invalidated, so distrust the key cache and
-            # take the authoritative DB path below.
-            tenant_state = await self._get_cached_tenant_active(result["tenant_id"])
-            if tenant_state is False:
-                return None
-            if tenant_state is None:
-                break  # fall through to DB validation
-            return {
-                "user_id": result["user_id"],
-                "tenant_id": result["tenant_id"],
-                "scopes": result["scopes"],
-                "key_id": result["key_id"],
-            }
+                if tenant_state is None:
+                    break  # fall through to DB validation
+                return identity_hit.as_key_info()
 
         # Cache miss - query database under BOTH digests
         result = await self._validate_from_db(current_digest, legacy_digest)
@@ -476,9 +564,7 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
         if result.pop("_legacy_digest", False):
             # Migrate the stored digest forward so future lookups hit the
             # current single-digest path. Both cache keys are written below.
-            await self.crud.update(
-                db=self.db, id=result["key_id"], object={"hashed_key": current_digest}, commit=False
-            )
+            await self.crud.update(db=self.db, id=result["key_id"], object={"hashed_key": current_digest}, commit=False)
 
         # Cache the result (adapter noops when Redis is down).
         #
@@ -505,6 +591,11 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
             # entry is only ever written for a live key; stating it lets the hit
             # path above detect a revoke that raced the write.
             "is_active": True,
+            # ADR-0023: the owner's TIER rides along. Admission needs it to
+            # choose the owner's own budget, and it costs nothing here because
+            # the database read below already joined the user for it.
+            "tier_id": result.get("tier_id"),
+            "tier_name": result.get("tier_name"),
         }
         payload = json_dumps(cache_data, as_str=True)
         await cache_client.set(cache_key, payload, ttl=API_KEY_CACHE_TTL)
@@ -516,9 +607,7 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
             "key_id": result["key_id"],
         }
 
-    async def _validate_from_db(
-        self, current_digest: str, legacy_digest: str | None = None
-    ) -> dict[str, Any] | None:
+    async def _validate_from_db(self, current_digest: str, legacy_digest: str | None = None) -> dict[str, Any] | None:
         """Validate API key from database.
 
         I2 bridge: accepts the legacy digest too, so keys stored under the
@@ -538,15 +627,26 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
             ``_legacy_digest`` marker for the caller's re-hash step.
         """
         from sqlalchemy import select
+        from sqlalchemy.orm import joinedload
 
         from src.app.modules.api_keys.models import APIKey
         from src.app.modules.tenants.models import Tenant
+        from src.app.modules.users.models import User
 
         # JOIN with tenant to check tenant.is_active
+        #
+        # ADR-0023: the owner's TIER comes along on the SAME round trip. It is
+        # a LEFT OUTER JOIN chain (key -> user -> tier) because `tier_id` is
+        # nullable and an owner with no tier must still authenticate; `outerjoin`
+        # is therefore mandatory, not an optimisation. The loader option is
+        # equally mandatory: `User.tier` and `APIKey.user` are both
+        # `lazy="noload"`, so without it these reads would silently return
+        # `None` on a real session and the tier would look absent forever.
         digests = (current_digest,) if legacy_digest is None else (current_digest, legacy_digest)
         stmt = (
             select(APIKey)
             .join(Tenant, APIKey.tenant_id == Tenant.id)
+            .options(joinedload(APIKey.user).joinedload(User.tier))
             .where(
                 APIKey.hashed_key.in_(digests),
                 APIKey.is_active.is_(True),
@@ -592,6 +692,12 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
             "expires_at": key.expires_at,
             # Include valid_from so cache can enforce it on hits
             "valid_from": key.valid_from if hasattr(key, "valid_from") else None,
+            # ADR-0023: the owner's tier, so admission can meter this key
+            # against its owner's budget instead of the per-source-IP default.
+            # Absent for an owner with no tier — which is a real, valid state,
+            # and admission treats it as "no identity yet" by design.
+            "tier_id": key.user.tier_id if key.user is not None else None,
+            "tier_name": key.user.tier.name if key.user is not None and key.user.tier is not None else None,
             # I2 bridge: tells the caller to re-hash this row forward.
             "_legacy_digest": is_legacy,
         }
@@ -648,8 +754,10 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
             APIKey.user_id == user_id,
         )
         old_key_result = await execute_scoped(
-            old_key_stmt, db=self.db, model=APIKey,
-            scope=ExplicitTenant(tenant_id, reason='legacy-criterion:APIKey'),
+            old_key_stmt,
+            db=self.db,
+            model=APIKey,
+            scope=ExplicitTenant(tenant_id, reason="legacy-criterion:APIKey"),
         )
         old_key = old_key_result.scalar_one_or_none()
 
@@ -698,8 +806,9 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
         # instead of a 500.
         name_taken = await execute_scoped(
             select(APIKey).where(APIKey.name == new_name),
-            db=self.db, model=APIKey,
-            scope=ExplicitTenant(tenant_id, reason='legacy-criterion:APIKey'),
+            db=self.db,
+            model=APIKey,
+            scope=ExplicitTenant(tenant_id, reason="legacy-criterion:APIKey"),
         )
         if name_taken.scalar_one_or_none() is not None:
             logger.warning(

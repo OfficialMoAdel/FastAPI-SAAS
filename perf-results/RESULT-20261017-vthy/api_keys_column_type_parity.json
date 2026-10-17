@@ -1,0 +1,168 @@
+{
+  "bead": "FastAPI_saas-vthy",
+  "item": "vthy",
+  "title": "api_keys.scopes / api_keys.key_prefix: the migration and the ORM declare different types",
+  "bead_closes": "FastAPI_saas-vthy asked for this to be verified against an alembic-built database, because the drift had never been observed anywhere: the only database in use was built by create_all, which derives the schema FROM the ORM and therefore cannot disagree with it.",
+  "measured_at": "2026-10-17T18:52Z",
+  "artefact_kind": "schema_parity_measurement",
+  "headline": {
+    "verdict": "REPRODUCED, and the impact is WORSE than the bead claimed",
+    "drift": "03_access_control created api_keys.scopes as JSONB and key_prefix as varchar(10); the ORM declares Text and String(8)",
+    "bead_claim_refuted": "'every POST /api/v1/api-keys 500s' does NOT reproduce: the INSERT is accepted, because asyncpg sends untyped parameters and the server coerces the JSON literal",
+    "actual_failure": "the READ breaks instead: SQLAlchemy's asyncpg dialect decodes a jsonb column to a Python list, so json_loads(key.scopes) at service.py:652 raises JSONDecodeError (Input must be bytes, bytearray, memoryview, or str) and _validate_from_db has no handler for it - every X-API-Key request returns 500 on a migrated database",
+    "why_it_was_never_seen": "the create_all database matches the ORM by construction, and the blocking parity gate (scripts/check_schema_parity.py) compares column NAMES only; the CI alembic check that does see types is continue-on-error: true",
+    "fix": "03_access_control now declares sa.Text() and sa.String(length=8), so a migrated database and a create_all database are identical"
+  },
+  "instrument": {
+    "probe": "vthy_repro.py (throwaway, NOT committed - it builds and drops a scratch database)",
+    "method": [
+      "drop and recreate a scratch database, then `alembic -c src/alembic.ini upgrade 03_access_control` against it",
+      "stop at layer 03 on purpose: it is the layer that creates api_keys, and it keeps layer 08's FORCE ROW LEVEL SECURITY out of the picture",
+      "drop the two api_keys FOREIGN KEY constraints in the PROBE database only, so a row can exist; they are orthogonal to the column type",
+      "read the value back twice: once with raw asyncpg, once through the application's own ORM (select(APIKey) via src.app.core.db.database)",
+      "feed what came back to the two application read paths that treat scopes as a string: json_loads, and rotation's verbatim re-bind"
+    ],
+    "one_arm_per_process": "the application's engine is a module-level singleton, so re-pointing the environment between two binds in one process silently runs both arms against the same database; an earlier revision of this probe did exactly that and reported the subject schema for the control arm",
+    "control_arm": "the same questions against the create_all database, so 'the value is fine, the column type is not' is evidence and not an assertion"
+  },
+  "protocol": {
+    "target": "perf-local (ansible@192.168.121.147), the same Linux measurement target used by the Phase-0 and M-7 runs",
+    "repository_state": "detached checkout of the Linux clone; the migration file was swapped between the pre-fix and post-fix copy for the before/after arms",
+    "probe_databases": {
+      "subject": "vthy_probe (created by alembic)",
+      "control": "the .env POSTGRES_DB, built by create_all"
+    },
+    "cleanup": "the probe database was dropped; every probe row was deleted; the target's original migration file was restored"
+  },
+  "arms": {
+    "before_fix": {
+      "migrated_alembic": {
+        "database": "vthy_probe",
+        "built_by": "alembic",
+        "columns": {
+          "scopes": "jsonb",
+          "key_prefix": "varchar(10)"
+        },
+        "insert_of_the_value_the_service_binds": {
+          "value": "[\"read\"]",
+          "accepted": true
+        },
+        "raw_asyncpg_read_python_type": "str",
+        "orm_read_python_type": "list",
+        "orm_read_key_prefix_length": 8,
+        "json_loads_on_the_raw_read_value": true
+      },
+      "control_create_all": {
+        "database": "test_db",
+        "built_by": "create_all",
+        "columns": {
+          "scopes": "text",
+          "key_prefix": "varchar(8)"
+        },
+        "insert_of_the_value_the_service_binds": {
+          "value": "[\"read\"]",
+          "accepted": true
+        },
+        "raw_asyncpg_read_python_type": "str",
+        "orm_read_python_type": "str",
+        "orm_read_key_prefix_length": 8,
+        "json_loads_on_the_raw_read_value": true
+      }
+    },
+    "after_fix": {
+      "migrated_alembic": {
+        "database": "vthy_probe",
+        "built_by": "alembic",
+        "columns": {
+          "scopes": "text",
+          "key_prefix": "varchar(8)"
+        },
+        "insert_of_the_value_the_service_binds": {
+          "value": "[\"read\"]",
+          "accepted": true
+        },
+        "raw_asyncpg_read_python_type": "str",
+        "orm_read_python_type": "str",
+        "orm_read_key_prefix_length": 8,
+        "json_loads_on_the_raw_read_value": true
+      },
+      "control_create_all": {
+        "database": "test_db",
+        "built_by": "create_all",
+        "columns": {
+          "scopes": "text",
+          "key_prefix": "varchar(8)"
+        },
+        "insert_of_the_value_the_service_binds": {
+          "value": "[\"read\"]",
+          "accepted": true
+        },
+        "raw_asyncpg_read_python_type": "str",
+        "orm_read_python_type": "str",
+        "orm_read_key_prefix_length": 8,
+        "json_loads_on_the_raw_read_value": true
+      }
+    }
+  },
+  "the_three_observations_that_decide_it": {
+    "1_the_insert": "accepted on both schemas - asyncpg sends untyped parameters and Postgres coerces the literal, so the write path never surfaces the drift",
+    "2_the_read": "raw asyncpg returns the JSON as text on BOTH schemas; only the ORM read differs (list on jsonb, str on Text). The application only ever reads through the ORM, so the raw read is not evidence about the application",
+    "3_the_consequence": "json_loads(['read']) raises JSONDecodeError - verified against src.app.core.json_utils, not inferred. service.py:652 calls it unguarded inside _validate_from_db, and validate_api_key calls _validate_from_db unguarded, so the exception reaches the request"
+  },
+  "why_text_and_not_jsonb": {
+    "the_model": "api_keys/models.py maps scopes as Mapped[str | None] -> Text",
+    "the_code": "create_api_key stores json_dumps(scopes, as_str=True); rotate re-binds api_key.scopes verbatim; validate_api_key parses with json_loads",
+    "jsonb_would_buy": "nothing the application uses: there is no containment query, no index and no JSON operator on scopes anywhere in the tree",
+    "jsonb_would_cost": "the read path, as measured above",
+    "key_prefix": "varchar(10) vs String(8) is cosmetic - an 8-character value reads back 8 characters - and is aligned anyway so the schema stops asserting a width the code never produces"
+  },
+  "guards_and_assertions": {
+    "oracle": "tests/unit/migrations/test_api_keys_column_type_parity.py",
+    "red_before_the_fix": "4 failed / 3 passed against the pre-fix migration (scopes JSONB, key_prefix length 10)",
+    "green_after_the_fix": "7 passed",
+    "cases": [
+      "the api_keys table really is created by migration 03 (so the other assertions are not vacuous)",
+      "api_keys.scopes is sa.Text() in the migration and Text on the model, with no JSONB",
+      "api_keys.key_prefix is String(length=8) in the migration and String(8) on the model",
+      "the migration's prefix width equals APIKeyService.KEY_PREFIX_LENGTH - the constant that generates a prefix, so constant -> model -> migration cannot drift apart silently",
+      "no column of api_keys declares a JSON type in that layer",
+      "the service still stores and parses scopes as a string, which is what makes Text the correct target rather than a preference",
+      "json_loads accepts the string shape and rejects the list shape a jsonb column would deliver"
+    ]
+  },
+  "measured_vs_inferred": {
+    "measured": [
+      "the four column-type readings (jsonb/varchar(10) before, text/varchar(8) after, in both the migrated and the create_all database)",
+      "the INSERT being accepted on the jsonb schema",
+      "the ORM read returning list on jsonb and str on Text",
+      "json_loads raising on a list, against the real src.app.core.json_utils",
+      "rotation's verbatim re-bind succeeding on both schemas"
+    ],
+    "inferred": [
+      "that the exception surfaces to the client as 500: the unguarded call chain is read from the source (service.py:652 inside _validate_from_db, called unguarded at service.py:538) and NOT driven end to end over HTTP against a migrated database",
+      "that no other column in the tree is read as JSON - established by grepping the tree for scopes/JSON operators, not by exhausting every query path"
+    ],
+    "explicitly_not_measured": [
+      "an end-to-end POST /api-keys then GET with X-API-Key against a fully migrated database (layer 08 RLS was not applied)"
+    ]
+  },
+  "decision_on_the_general_gate": {
+    "not_extended": "check_schema_parity.py was NOT changed to compare types. A throwaway AST pass over the tree reported 40 tables, 353 comparable columns and 116 raw type differences, of which most are benign (the migration is wider than the ORM, BYTEA vs LargeBinary, JSON vs JSONB, Enum(native_enum=False, 20) vs String(20), SmallInteger vs Integer) and a majority are parser artefacts. Filtering to the json/string cross-family leaves exactly three rows: ai_token_usage.usage_metadata (JSON vs JSONB, benign), passkey_credentials.transports (JSON vs JSONB, benign), and this one.",
+    "why": "a 116-item list is a different and larger design decision than this bead; it is filed as its own bead with the measured list attached"
+  },
+  "limits": [
+    "the subject database stopped at migration 03, so this says nothing about whether api_keys survives layer 08's FORCE ROW LEVEL SECURITY policies",
+    "the probe dropped the api_keys foreign keys so a row could exist; a real migrated deployment keeps them, which cannot change the column-type outcome",
+    "no row in a real deployment was migrated: this fixes the CREATE TABLE for fresh databases. A database created BEFORE this fix keeps its jsonb column until an explicit ALTER TABLE ... TYPE text USING scopes::text is run, and the artefact does not claim that has been done anywhere.",
+    "the CI alembic check remains non-blocking, so this class of drift is still not caught automatically outside this one table's test"
+  ],
+  "cross_reference": {
+    "sibling_defects": [
+      "FastAPI_saas-ns82 - the default scopes value (fixed)",
+      "FastAPI_saas-aepv - issuing a key for another user (fixed)",
+      "FastAPI_saas-g4my - API-key requests metered as anonymous traffic (fixed)"
+    ],
+    "why_this_bead_existed": "filed off M-7's measurement, which found no API-key baseline anywhere and therefore never exercised this path against a migrated database"
+  },
+  "closed": true
+}

@@ -1,0 +1,194 @@
+{
+  "criteria_met": 7,
+  "criteria_total": 10,
+  "failed_criteria": [
+    7,
+    8,
+    9
+  ],
+  "checks": [
+    {
+      "number": 1,
+      "name": "every required endpoint measured at the degrading concurrency",
+      "passed": true,
+      "detail": "all 11 present, every one at concurrency 8"
+    },
+    {
+      "number": 2,
+      "name": "4.4 verbatim; p99 needs n >= 10,000",
+      "passed": true,
+      "detail": "p99 resolved for 4 at n >= 10000 (['health', 'users_list', 'users_me', 'users_search']); withheld-as-null for 7 (['em10_hit_40kb', 'em9_miss_60kb', 'login', 'logout', 'refresh', 'users_me_anon', 'users_me_apikey']), none fabricated"
+    },
+    {
+      "number": 3,
+      "name": ">=5 reps, median-of-medians and min-of-medians",
+      "passed": true,
+      "detail": "every endpoint reports repetitions >= 5 and all four per-repetition figures"
+    },
+    {
+      "number": 4,
+      "name": "4.5 void conditions asserted start and end",
+      "passed": true,
+      "detail": "all 3 campaign artefacts assert the eight controls unchanged, start to end"
+    },
+    {
+      "number": 5,
+      "name": "100% success, EM-2's 401 declared in advance",
+      "passed": true,
+      "detail": "no unexpected status anywhere; users_me_anon returned only ['401'] because its expected status is 401, declared in the endpoint table before the run"
+    },
+    {
+      "number": 6,
+      "name": "full manifest, representative runtime",
+      "passed": true,
+      "detail": "3 campaign artefacts carry a representative manifest"
+    },
+    {
+      "number": 7,
+      "name": "/health paired arm",
+      "passed": false,
+      "detail": "no artefact supplied for the paired arm; not assumed"
+    },
+    {
+      "number": 8,
+      "name": "Linux CPU profile, top-5 tottime share",
+      "passed": false,
+      "detail": "no profile artefact supplied; not assumed"
+    },
+    {
+      "number": 9,
+      "name": "blocking-work attribution vs the T-1 histogram",
+      "passed": false,
+      "detail": "no occupancy artefact supplied; not assumed"
+    },
+    {
+      "number": 10,
+      "name": "no Windows arm, no cross-shape comparison",
+      "passed": true,
+      "detail": "every manifest reports Linux; every run is one shape"
+    }
+  ],
+  "endpoints": {
+    "users_me": {
+      "pooled_n": 50000,
+      "concurrency": 8,
+      "repetitions": 5,
+      "status_counts": {
+        "200": 50000
+      },
+      "p99": 191.5367,
+      "p99_reportable": true,
+      "source": "/home/ansible/oxx2_out/groupA.json"
+    },
+    "users_list": {
+      "pooled_n": 50000,
+      "concurrency": 8,
+      "repetitions": 5,
+      "status_counts": {
+        "200": 50000
+      },
+      "p99": 668.5962,
+      "p99_reportable": true,
+      "source": "/home/ansible/oxx2_out/groupA.json"
+    },
+    "health": {
+      "pooled_n": 50000,
+      "concurrency": 8,
+      "repetitions": 5,
+      "status_counts": {
+        "200": 50000
+      },
+      "p99": 149.0382,
+      "p99_reportable": true,
+      "source": "/home/ansible/oxx2_out/groupA.json"
+    },
+    "users_search": {
+      "pooled_n": 50000,
+      "concurrency": 8,
+      "repetitions": 5,
+      "status_counts": {
+        "200": 50000
+      },
+      "p99": 835.4311,
+      "p99_reportable": true,
+      "source": "/home/ansible/oxx2_out/groupA.json"
+    },
+    "users_me_anon": {
+      "pooled_n": 10,
+      "concurrency": 8,
+      "repetitions": 5,
+      "status_counts": {
+        "401": 10
+      },
+      "p99": null,
+      "p99_reportable": false,
+      "source": "/home/ansible/oxx2_out/groupB.json"
+    },
+    "login": {
+      "pooled_n": 10,
+      "concurrency": 8,
+      "repetitions": 5,
+      "status_counts": {
+        "200": 10
+      },
+      "p99": null,
+      "p99_reportable": false,
+      "source": "/home/ansible/oxx2_out/groupB.json"
+    },
+    "logout": {
+      "pooled_n": 10,
+      "concurrency": 8,
+      "repetitions": 5,
+      "status_counts": {
+        "200": 10
+      },
+      "p99": null,
+      "p99_reportable": false,
+      "source": "/home/ansible/oxx2_out/groupB.json"
+    },
+    "refresh": {
+      "pooled_n": 10,
+      "concurrency": 8,
+      "repetitions": 5,
+      "status_counts": {
+        "200": 10
+      },
+      "p99": null,
+      "p99_reportable": false,
+      "source": "/home/ansible/oxx2_out/groupB.json"
+    },
+    "users_me_apikey": {
+      "pooled_n": 500,
+      "concurrency": 8,
+      "repetitions": 5,
+      "status_counts": {
+        "200": 500
+      },
+      "p99": null,
+      "p99_reportable": false,
+      "source": "/home/ansible/oxx2_out/groupC.json"
+    },
+    "em9_miss_60kb": {
+      "pooled_n": 1000,
+      "concurrency": 8,
+      "repetitions": 5,
+      "status_counts": {
+        "201": 1000
+      },
+      "p99": null,
+      "p99_reportable": false,
+      "source": "/home/ansible/oxx2_out/bodyscan.json"
+    },
+    "em10_hit_40kb": {
+      "pooled_n": 1000,
+      "concurrency": 8,
+      "repetitions": 5,
+      "status_counts": {
+        "201": 1000
+      },
+      "p99": null,
+      "p99_reportable": false,
+      "source": "/home/ansible/oxx2_out/bodyscan.json"
+    }
+  }
+}

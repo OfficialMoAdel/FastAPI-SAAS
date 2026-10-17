@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -106,6 +107,12 @@ class TestNoUnreclaimableOrphanEntry:
         mock_key.valid_from = None
         mock_key.is_active = True
         mock_key.hashed_key = "h"
+        # ADR-0023: the DB path now LEFT-JOINs user -> tier, so the row a real
+        # session returns carries the owner. Mock it as the tierless owner this
+        # row represents: `tier_id = NULL` is a real, valid state and it is the
+        # one that must survive JSON encoding (a bare MagicMock here would be
+        # injected into the cached payload and json_dumps would refuse it).
+        mock_key.user = SimpleNamespace(tier_id=None, tier=None)
 
         result = MagicMock()
         result.scalar_one_or_none.return_value = mock_key

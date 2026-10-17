@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -153,6 +154,13 @@ class TestLegacyRowResolution:
             hashed_key=legacy_token_digest(raw_key),
             valid_from=None,
             expires_at=None,
+            # ADR-0023: `_validate_from_db` now joins user -> tier on the same
+            # query (a LEFT OUTER JOIN, because `tier_id` is nullable), so the
+            # row a real session hands it carries the owner. Without this the
+            # MagicMock injects MagicMocks into the cached payload and
+            # json_dumps refuses them - the mock has to model the row, the
+            # assertion stays as it is.
+            user=SimpleNamespace(tier_id=2, tier=SimpleNamespace(name="pro")),
         )
 
         async def _execute(stmt: Any) -> Any:
