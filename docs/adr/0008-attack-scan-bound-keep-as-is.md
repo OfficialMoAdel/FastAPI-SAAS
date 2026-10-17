@@ -43,6 +43,11 @@ helpers), best-of-N over a warm loop, `gc.collect()` between batches.
 | POST 40 KB benign, prefilter **HIT** | 16,015 µs |
 | POST 128 KB benign, prefilter **HIT** | 49,621 µs |
 
+The bodyless-GET row did not reproduce: `scripts/s7_scan_cost_probe.py`
+measures the same shape in the tens-to-hundreds of microseconds. The rows are
+kept as the record of the run that produced this decision; see
+[The one change made](#the-one-change-made) for the correction.
+
 **End-to-end request latency (µs, in-process `TestClient`):**
 
 | request | p50 | p90 | p99 |
@@ -122,11 +127,31 @@ option (b). **Reported, not fixed.**
 Add the debug log the acceptance criteria ask for on the method-gated skip —
 the only skip path in the scan that is currently silent.
 
-It is guarded by `logger.is_enabled_for(logging.DEBUG)`, and that guard is not
-incidental: a bare `logger.debug(...)` through this repo's structlog stack
-measures **44.6 µs**, which is **6.7× the cost of the entire GET scan it would
-announce**. Unguarded, the "fix" would have made the hot path slower than the
-work it reports on. Guarded, the check costs **1.9 µs**.
+It is guarded by `logger.is_enabled_for(logging.DEBUG)`. **That guard does not
+work on this repo's logging stack**, which this record previously got wrong: it
+claimed a bare `logger.debug(...)` measures 44.6 µs — 6.7× the 6.7 µs GET scan it
+would announce — and that guarded, the check costs 1.9 µs. Neither figure
+reproduces, and the premise is false. `structlog`'s
+`BoundLoggerLazyProxy.is_enabled_for(logging.DEBUG)` returns `True`
+unconditionally, whatever the stdlib root level is (verified with the root
+logger at `WARNING`), so the predicate gates nothing: the debug line is emitted
+on every bodyless GET.
+
+Corrected, by `scripts/s7_scan_cost_probe.py` (drives this middleware over
+HTTP, prints median/min/p95/max and spread):
+
+| shape | measured cost |
+|---|---|
+| bodyless GET scan, log firing | hundreds of µs |
+| bodyless GET scan, log suppressed | tens to hundreds of µs |
+| the debug call itself | same order as the scan it announces |
+| `is_enabled_for(DEBUG)` predicate | single-digit µs, and returns `True` |
+
+The conclusion of this ADR is unchanged — the log line stays, it is the
+acceptance criterion's requirement, and it is a small fraction of the ~4 ms
+request floor. Only the justification was wrong. The figures in the tables
+above are host-specific and do not re-measure here; re-run the probe rather
+than quoting a constant.
 
 ## Consequences
 

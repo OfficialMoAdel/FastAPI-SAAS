@@ -3,6 +3,7 @@ import os
 import sys
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
+from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -461,6 +462,26 @@ async def override_get_db() -> AsyncGenerator[AsyncSession]:
         yield session
 
 
+@asynccontextmanager
+async def test_get_db_context() -> AsyncGenerator[AsyncSession]:
+    """Serve the test session to code that opens its own session.
+
+    ``dependency_overrides`` only reaches FastAPI's ``Depends()`` seam, so it
+    does NOT cover ``database.get_db_context()`` - the plain async context
+    manager the auth seams open when they need a session and were not handed
+    one. In production both seams resolve to the same session maker, so the
+    divergence is a test-harness artefact: without this, an authenticated
+    request resolves its user against the real engine, finds nobody, and the
+    endpoint answers 401 "User not authenticated." even though the route's own
+    ``db:`` parameter is on the test database.
+
+    Patching the module attribute works because production imports it inside
+    the function body, so the lookup happens at call time.
+    """
+    async with get_testing_session_local()() as session:
+        yield session
+
+
 @pytest.fixture
 def client(get_test_app) -> Generator[TestClient, Any]:
     """Sync TestClient fixture with standard mocking for general API tests."""
@@ -878,12 +899,15 @@ async def async_client(get_test_app) -> AsyncGenerator[AsyncClient]:
 
     app.dependency_overrides[async_get_db] = override_get_db
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-        headers={"User-Agent": "TestClient/1.0", "X-Tenant-ID": "test-tenant-e2e"},
-    ) as ac:
-        yield ac
+    # This fixture installs no test principal, so requests run the real auth
+    # seam, which opens its own session through get_db_context().
+    with patch("src.app.core.db.database.get_db_context", test_get_db_context):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"User-Agent": "TestClient/1.0", "X-Tenant-ID": "test-tenant-e2e"},
+        ) as ac:
+            yield ac
 
     app.dependency_overrides.clear()
 

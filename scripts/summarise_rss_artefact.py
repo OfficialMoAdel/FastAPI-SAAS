@@ -18,18 +18,19 @@ print("  growth : %+.3f MB" % (d["rss_growth_bytes"] / mb))
 vals = [v["value"] for v in d["rss_series_bytes"]["samples"]]
 n = len(vals)
 k = n // 3
-avg = lambda xs: sum(xs) / float(len(xs))
+def avg(xs: list[float]) -> float:
+    return sum(xs) / float(len(xs))
+
+
 print(
-    "  thirds : %.2f -> %.2f -> %.2f MB"
-    % (avg(vals[:k]) / mb, avg(vals[k : 2 * k]) / mb, avg(vals[2 * k :]) / mb)
+    f"  thirds : {avg(vals[:k]) / mb:.2f} -> {avg(vals[k : 2 * k]) / mb:.2f} -> {avg(vals[2 * k :]) / mb:.2f} MB"
 )
-print("  drift  : %+.3f MB" % ((avg(vals[2 * k :]) - avg(vals[:k])) / mb))
+print(f"  drift  : {(avg(vals[2 * k :]) - avg(vals[:k])) / mb:+.3f} MB")
 print()
 print("=== CPU cost ===")
 c = d["cpu_summary_seconds"]
 print(
-    "  median %.1f us  max %.1f us  (ceiling %s us)"
-    % (c["median"] * 1e6, c["max"] * 1e6, d["cost_ceiling_us"])
+    f"  median {c['median'] * 1e6:.1f} us  max {c['max'] * 1e6:.1f} us  (ceiling {d['cost_ceiling_us']} us)"
 )
 print()
 print("=== WORKLOAD ===")

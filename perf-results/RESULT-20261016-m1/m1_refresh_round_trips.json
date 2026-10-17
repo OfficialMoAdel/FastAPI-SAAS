@@ -1,0 +1,178 @@
+{
+  "bead": "FastAPI_saas-gyid",
+  "item": "M-1",
+  "title": "measure the real refresh RTT count (the 11-12 figure is a reconciled estimate, never observed)",
+  "bead_closes": "The 11-12 estimate is CORRECTED, not confirmed. Measured on the Linux target at n=1000 under true production budgets: 16.951 Redis round trips per refresh, 16.675 excluding one-time connection churn. The estimate UNDERSTATES the real cost by 39-54%.",
+  "measured_at": "2026-10-16",
+  "artefact_kind": "measurement",
+
+  "headline": {
+    "round_trips_per_request": 16.951,
+    "round_trips_per_request_steady_state": 16.675,
+    "commands_per_request": 20.437,
+    "commands_per_round_trip": 1.2057,
+    "sql_statements_per_request": 1.245,
+    "requests": 1000,
+    "failures": 0,
+    "previous_estimate": "11-12 round trips (a reconciled estimate, never observed)",
+    "verdict": "CORRECTED - the estimate is 39-54% below the measured figure"
+  },
+
+  "instrument": {
+    "file": "/home/ansible/m1_refresh_rtt.py",
+    "in_repo": false,
+    "why_outside_the_repo": "It is a measurement harness, not application code. It is NOT reproducible from git, which is a known limitation of this artefact and is recorded under limits.",
+    "round_trip_counter": "redis.asyncio Connection.send_packed_command call count. One call is one packed write is one round trip.",
+    "command_counters": "AsyncRedis.execute_command (direct), AsyncPipeline.execute_command (staged), Pipeline.execute (flush), Pipeline.immediate_execute_command (WATCH-mode direct writes), PubSub.execute_command.",
+    "second_observer": "src/benchmarks/census.py hook(), which counts commands independently by walking Pipeline.command_stack.",
+    "third_observer": "Redis INFO commandstats delta, taken with census UNHOOKED so the harness's own INFO never enters the measured window.",
+    "why_send_packed_command_counts_round_trips_but_not_commands": "redis-py 5.x Pipeline.execute() passes chain.from_iterable(stack) - a FLATTENED byte list - to send_packed_command, so per-command boundaries are destroyed before the wire. Any command count derived from that payload is fiction. The first version of this driver did exactly that and reported a bogus cmds/rtt of 1.0 while its own totals showed RTT 170 < CMD 182.",
+    "why_no_arithmetic_identity": "A first attempt asserted MY_RTT == MY_CMD + MY_PIPE_EXEC. It failed by 20, because WATCH-mode commands bypass command_stack and are written immediately. The identity was REPLACED by write-time tagging: each command hook pushes its category onto a stack and every write is tagged at write time, so the buckets sum to the total by construction rather than by inference. Anything the model failed to anticipate lands in a visible 'unattributed' bucket instead of silently breaking an equation."
+  },
+
+  "protocol": {
+    "target": "perf-local 192.168.121.147, Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz, 4 cores",
+    "n_requests": 1000,
+    "accounts": 250,
+    "refreshes_per_account": 4,
+    "concurrency": 250,
+    "endpoint": "POST /api/v1/account/refresh",
+    "credential_transport": "HttpOnly refresh_token cookie only. The route has no request-body fallback; src/app/modules/auth/router.py:149 raises UnauthorizedError('Refresh token missing') when the cookie is absent.",
+    "source_ip_spread": "login on 127.10.0.x, refresh on 127.11.0.x - one login IP and one refresh IP per account, so neither exceeds the auth (5/60) per-IP budget",
+    "ip_whitelist_used": false,
+    "budgets_relaxed": false,
+    "why_no_whitelist": "check_auth_rate_limit (src/app/modules/auth/rate_limit.py:29-30) returns BEFORE issuing its Redis check when the IP is whitelisted, and RequestAdmissionService.evaluate() skips probe(SecurityAction.REFRESH) for whitelisted IPs. Whitelisting therefore REMOVES 2 round trips from the refresh path - roughly an 18% under-count. The Phase 0 locust baseline used that trick; it is inadmissible here.",
+    "why_production_budgets_are_satisfiable": "Every limit on this route is keyed by IP. The auth budget is 5 per 60s per IP, so 1000 refreshes need at least 200 distinct source IPs. Rather than relax anything, the run presents 250 loopback source addresses. The budgets are SATISFIED, not disabled.",
+    "verify_budgets": "The driver reads live settings and raises SystemExit unless auth == (5,60), refresh == (60,60) and all four tier limits match production. census.bootstrap() is never called, because it relaxes every budget.",
+    "counter_reset": "All counters are reset after the login phase, so every reported figure covers refreshes only.",
+    "commandstats_snapshots_taken_with_census_unhooked": true
+  },
+
+  "budgets_live_at_run_time": {
+    "auth": [5, 60],
+    "refresh": [60, 60],
+    "algorithm": "gcra",
+    "tiers": {"free": [10, 3600], "basic": [100, 3600], "pro": [1000, 3600], "enterprise": [10000, 3600]},
+    "auto_ban_enabled": true,
+    "ip_whitelist_enabled": true,
+    "ip_whitelist_bypass_rate_limit": true,
+    "fail_open": false,
+    "note": "IP_WHITELIST_BYPASS_RATE_LIMIT was true but UNUSED - no IP was whitelisted for this run."
+  },
+
+  "results": {
+    "statuses": {"200": 1000},
+    "failures": 0,
+    "latency_ms": {"min": 3136.847, "p50": 3735.976, "p95": 5343.541, "p99": 5444.492, "max": 5490.501},
+    "latency_caveat": "Reported separately from the round-trip COUNT and must not be conflated with it. At concurrency 250 on 4 cores this is queueing-dominated; it is not a per-request service time."
+  },
+
+  "round_trips": {
+    "total": 16951,
+    "per_request": 16.951,
+    "by_category": {"direct": 11555, "immediate_watch": 2392, "pipeline_flush": 2984, "pubsub": 20},
+    "steady_state": {
+      "excluded": "256 connection-handshake writes (AUTH/CLIENT/SELECT on fresh pool connections) and 20 one-time SUBSCRIBE writes",
+      "total": 16675,
+      "per_request": 16.675,
+      "why": "The handshake writes are pool growth under 250-way concurrency, a one-time cost per connection rather than a per-request cost. Both figures are reported so neither can be mistaken for the other."
+    },
+    "per_request_by_category": {"direct": 11.555, "immediate_watch": 2.392, "pipeline_flush": 2.984, "pubsub": 0.02}
+  },
+
+  "commands": {
+    "own_total": 20437,
+    "own_per_request": 20.437,
+    "own_direct": 11299,
+    "own_pipelined_staged": 9138,
+    "own_pipeline_flushes": 3569,
+    "own_immediate_watch_writes": 2000,
+    "own_pubsub_writes": 20,
+    "pipeline_flush_corroboration": "The server independently counted multi=3569 and exec=3569 in commandstats, confirming the 3569 pipeline flushes without relying on the client-side counter.",
+    "commands_per_pipeline_flush": 3.062,
+    "by_name_direct": {"GET": 3054, "EVALSHA": 4000, "SET": 2245, "DEL": 1000, "HEXISTS": 1000},
+    "by_name_pipelined": {"EXISTS": 2138, "ZADD": 2000, "DEL": 1000, "HDEL": 1000, "ZREM": 1000, "WATCH": 1000, "PSETEX": 1000},
+    "by_name_immediate": {"WATCH": 1000, "EXISTS": 1000},
+    "evalsha_note": "EVALSHA is exactly 4.000 per request: two rate_limit_gcra (the middleware refresh budget and the route auth budget), one token_blacklist_check, one session_register_with_eviction. Every refresh pays the same script load."
+  },
+
+  "commands_per_round_trip": 1.2057,
+  "pipeline_factor_significance": "Counting commands instead of round trips overstates the cost of this endpoint by 20.6%. That is the J6 blindness this bead exists to remove, and it is the reason the two numbers are reported as separate columns rather than one.",
+
+  "the_two_instrument_counts": {
+    "requirement": "commands and round trips reported separately and the two instrument counts agreeing",
+    "own_commands": 20437,
+    "census_commands": 18438,
+    "difference": 1999,
+    "agrees_exactly": false,
+    "reconciliation_is_exact": "20437 (own) - 2000 (immediate/WATCH writes) + 1 (INFO the app itself issued and census counted) = 18438 (census)",
+    "why_they_differ": "census counts client commands by walking Pipeline.command_stack. Commands issued in WATCH/immediate mode never enter the stack, so census STRUCTURALLY CANNOT SEE THEM and is a strict lower bound. This is a property of the instrument, not a measurement error, and it is why the own-instrument total is the one reported as authoritative.",
+    "corroboration": "The own-instrument total is independently corroborated from two directions: the server's multi/exec pair (3569/3569) matches own_pipeline_flushes exactly, and the census gap is fully explained to the command.",
+    "not_papered_over": "Recorded as a real disagreement with a mechanism, rather than reported as agreement by lowering one side or widening a tolerance."
+  },
+
+  "server_commandstats": {
+    "total": 44335,
+    "agrees_with_client_commands": false,
+    "why_it_cannot": "commandstats counts what the SERVER executes, including commands issued INSIDE Lua script bodies. The client only sends EVALSHA; the server then runs HEXISTS, ZSCORE, EXPIRE, PEXPIRE, MULTI/EXEC and others on its behalf. 44335 server commands versus 20437 client-sent is therefore expected and is not a disagreement.",
+    "consequence": "Exact census-versus-server agreement is IMPOSSIBLE on a Lua-heavy path. A dedicated Redis makes the comparison exact for client-sent commands only. Any future harness expecting overall equality is wrong.",
+    "by_name": {"get": 5054, "set": 4245, "evalsha": 4000, "multi": 3569, "exec": 3569, "exists": 3138, "zadd": 3000, "expire": 2000, "pexpire": 2000, "zscore": 2000, "hexists": 2000, "del": 2000, "zrem": 1000, "hdel": 1000, "setex": 1000, "psetex": 1000, "hset": 1000, "watch": 1000, "zcard": 1000, "hlen": 600, "client": 80, "auth": 40, "subscribe": 39, "info": 1}
+  },
+
+  "sql": {
+    "statements_total": 1245,
+    "per_request": 1.245,
+    "cross_reference": "M-6 (85l8) measured SQL/req 1.00 for this same endpoint at n=100. The 0.245 excess here is most likely a statement amortised over a subset of requests; it was NOT investigated because SQL count was not the bead's subject."
+  },
+
+  "comparison_to_the_estimate": {
+    "estimate": "11-12 round trips per refresh",
+    "estimate_provenance": "a reconciled estimate, never observed",
+    "measured": 16.951,
+    "measured_steady_state": 16.675,
+    "ratio_vs_low_end": 1.513,
+    "ratio_vs_high_end": 1.389,
+    "understatement_percent": "39-51% against steady state, 41-54% against the raw figure",
+    "verdict": "CORRECTED, NOT CONFIRMED",
+    "why_the_estimate_was_low_inferred": "INFERRED, not measured. The largest single component a stack-based estimator cannot see is the immediate/WATCH session-validation traffic at 2.392 round trips per request. The two rate_limit_gcra script loads (one from the middleware refresh budget, one from the route auth budget) are another 2 round trips per request and are easy to miss when reconciling by hand, because both present as the same script name. These two together are 4.4 of the 16.7."
+  },
+
+  "measured_vs_inferred": {
+    "measured": [
+      "16.951 Redis round trips per refresh over 1000 requests, 0 failures",
+      "20.437 Redis commands per refresh; 1.2057 commands per round trip",
+      "1.245 SQL statements per refresh",
+      "EVALSHA at exactly 4.000 per refresh (2x rate_limit_gcra, 1x token_blacklist_check, 1x session_register_with_eviction)",
+      "3569 pipeline flushes, corroborated by the server's independent multi=3569 / exec=3569",
+      "census shortfall of exactly 1999 commands, fully attributed to WATCH/immediate writes",
+      "Latency p50 3736 ms / p95 5344 ms at concurrency 250 on 4 cores"
+    ],
+    "inferred": [
+      "WHY the 11-12 estimate was low - plausible from the observed breakdown, but no reconciliation of the original estimate was available to check against",
+      "That removing the two rate_limit_gcra loads would cut the endpoint by 2 round trips - follows from the command breakdown, but was NOT measured by removing them"
+    ],
+    "explicitly_not_measured": [
+      "The round-trip count at any concurrency other than 250",
+      "The count with an IP whitelist applied (deliberately excluded - it is a different, cheaper path)",
+      "Whether any of these round trips can be removed - this bead measures, it does not optimise"
+    ]
+  },
+
+  "limits": [
+    "The driver lives outside the repo at /home/ansible/m1_refresh_rtt.py, so this measurement is not reproducible from git. The Phase 0 provenance gate VOIDs runs whose instrument is dirty, and this one would not pass such a gate. Recording the limitation rather than committing an ad-hoc harness.",
+    "Single host: app and Redis on the same 192.168.121.147 machine. Network RTT is therefore loopback and near-zero, so these figures isolate APPLICATION round trips, not network cost. A deployment with a remote Redis would be higher.",
+    "redis-py 5.3.0 flattens pipeline payloads before writing, which is why no command count is derived from the wire. Every other harness in this repo that derives commands from a packed payload is measuring fiction.",
+    "census.parse_commandstats is broken on redis-py 5.x (it expects a 4.x raw string and calls .splitlines()). A local replacement was used rather than patching a shared helper for a single caller.",
+    "The category split of round trips carries a known attribution ambiguity: write-time tagging assigned 2984 writes to pipeline_flush while 3569 pipeline flushes occurred, so roughly 585 writes carry an adjacent category label. The TOTAL of 16951 is exact and is what the bead reports; the category split is supporting detail and is 2.3% imprecise.",
+    "One INFO appears in the census count. It is the application's own, not the harness's - the harness's own INFO snapshots are taken with census unhooked.",
+    "Concurrency 250 is a choice, not a constant. The round-trip COUNT is expected to be load-independent because no retry path exists, but that expectation was not tested at other concurrencies."
+  ],
+
+  "cross_reference": {
+    "M-6_85l8": "Measured this same endpoint at n=100 with wall-clock timing: p50 71.3 ms, SQL/req 1.00, Redis/req 10.01. That run whitelisted nothing but ran at much lower concurrency, hence the very different latency. The 10.01 there is a per-ENDPOINT Redis operation count from the timing wrapper, not a command or round-trip count, and does not contradict the 20.437 commands measured here.",
+    "Phase_0_baseline_20261016_151856": "Reported POST /api/v1/account/refresh at p50 610 ms warm under a 100-user locust mix with PERF_LOGOUT_WEIGHT=0 and the load host IP whitelisted. Whitelisting removes 2 round trips, so that figure describes the cheaper path.",
+    "relevance_to_the_plan": "At 16.675 round trips per refresh, refresh is one of the most Redis-chatty endpoints in the set. Any optimisation of this path should be argued on ROUND-TRIP COUNT, which is the quantity this artefact establishes."
+  },
+
+  "closed": true
+}

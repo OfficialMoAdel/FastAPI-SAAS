@@ -85,7 +85,16 @@ import count_broad_excepts as counter  # noqa: E402
 #:     Guessing the exception type would defeat the point of the guard.
 #:   * benchmarks/prof_request_path.py:288 (1) - the RSS sampler thread. A
 #:     failed sample must cost one sample, not the sampler.
-BROAD_EXCEPT_BASELINE = 367
+#:
+#: 367 -> 366. The baseline had drifted one ABOVE the tree it was supposed to
+#: measure: ``scripts/count_broad_excepts.py`` reports 366 against a declared
+#: 367, so ``test_baseline_matches_the_measured_tree`` failed on a clean
+#: checkout, before any change in this round. Re-measured, not estimated, and
+#: moved in the only direction this ratchet sanctions - DOWN - which tightens
+#: it by one. Both handlers added in the round above are still present
+#: (``benchmarks/protocol.py:163`` and ``benchmarks/prof_request_path.py:288``),
+#: so the shortfall is elsewhere in the tree, not a silent loss of either.
+BROAD_EXCEPT_BASELINE = 366
 
 #: The files muse 22 triaged. BLE001 is enforced on each (the per-file-ignores
 #: in pyproject.toml no longer blanket-exempt them), so these are also the

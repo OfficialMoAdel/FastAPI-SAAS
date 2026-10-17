@@ -44,8 +44,8 @@ if token:
         )
         try:
             with urllib.request.urlopen(r2, timeout=15) as r:
-                print("  %-28s %s" % (path, r.status))
+                    print(f"  {path:<28} {r.status}")
         except urllib.error.HTTPError as e:
-            print("  %-28s %s" % (path, e.code))
+            print(f"  {path:<28} {e.code}")
         except Exception as e:
-            print("  %-28s ERR %s" % (path, e))
+            print(f"  {path:<28} ERR {e}")

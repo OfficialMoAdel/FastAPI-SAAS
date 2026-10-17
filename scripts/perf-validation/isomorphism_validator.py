@@ -103,26 +103,47 @@ async def test_u22_slug_isomorphism() -> bool:
 # C-1 (f9ug): topology gate + path-equality gate.
 #
 # The routing-relevant middlewares read the request path through two
-# different spellings: `request.url.path` (ip_filter, tenant,
-# request_admission twice) and `scope.get("path", "")` (attack_detection,
-# which feeds the exempt check AND the attack scan). These are only the
-# same string while the deployment has no sub-path mount, so the oracle
-# has two legs: (1) the deployed topology really has root_path == "",
-# read from the real construction path and the real framework default,
-# and (2) Request(scope, receive).url.path == scope["path"] for every
-# real path shape, with and without a root_path set.
+# different spellings: `request.url.path` (request_admission twice) and
+# `scope["path"]` (ip_filter, tenant, rate_limit, request_id,
+# attack_detection). These are only the same string while the deployment
+# has no sub-path mount, so the oracle has two legs: (1) the deployed
+# topology really has root_path == "", read from the real construction
+# path and the real framework default, and (2) Request(scope,
+# receive).url.path == scope["path"] for every real path shape, with and
+# without a root_path set.
+#
+# ADDENDUM A-10 (uu5p): three shapes were missing and are the ones a
+# proxy or a scanner actually produces. Nested resources exercise the
+# multi-segment split; a repeated slash is the shape where a router that
+# collapsed `//` and one that did not would silently disagree; and the
+# traversal-like shape is a NEGATIVE case -- neither spelling may
+# normalise it, or the equivalence would hold only because both were
+# rewritten the same way. The negative shape is deliberately a raw
+# `..` segment: it must arrive byte-identical or a path-traversal filter
+# reading one spelling and a tenant resolver reading the other would
+# diverge on exactly the request class that matters most.
 # ---------------------------------------------------------------------------
 
 #: Path shapes the behavioural gate exercises. Percent-encoding,
-#: trailing slashes and non-ASCII are the shapes where two path
-#: spellings would diverge if they ever did.
+#: trailing slashes, nested segments, repeated slashes, non-ASCII and a
+#: raw traversal-like segment are the shapes where two path spellings
+#: would diverge if they ever did.
 C1_PATH_SHAPES = (
     "/api/v1/users/me",
     "/api/v1/users/me/",
+    # Nested resources: more than one segment after the router prefix.
+    "/api/v1/users/me/sessions/active",
+    # Repeated slash: must survive both spellings uncollapsed.
+    "/api/v1//users//me",
     "/api/v1/search%20x",
     "/api/v1/a%2Fb",
     "/api/v1/%E2%9C%93",
     "/api/v1/items/ABC123",
+    # NEGATIVE: raw traversal-like segments, unnormalised by either
+    # spelling. Asserted present verbatim so a future normaliser in
+    # either path fails here instead of quietly agreeing with itself.
+    "/api/v1/users/../../admin",
+    "/api/v1/%2e%2e/%2e%2e/admin",
     "/health",
     "/",
 )
@@ -217,10 +238,16 @@ async def test_c1_request_url_path_equals_scope_path() -> bool:
 #: (relpath, enclosing function) pairs that may read `request.url.path`
 #: because they ROUTE on it. A fifth routing reader fails this gate
 #: until it is classified here with a reason.
+#:
+#: ip_filter, tenant, rate_limit and request_id were listed here before
+#: addendum A-10 and have been REMOVED, because they no longer read
+#: `request.url.path` at all -- the C-1 conversion moved each of them to
+#: `scope["path"]`, and they are now classified below by whether they
+#: ROUTE on the path or only LOG it. Leaving them here would have been a
+#: silent permission: the set is an allow-list, so a stale entry keeps
+#: passing whether or not the code still reads that form.
 C1_URL_PATH_ROUTING = frozenset(
     {
-        ("src/app/middleware/ip_filter.py", "__call__"),
-        ("src/app/middleware/tenant.py", "__call__"),
         ("src/app/core/security/request_admission.py", "evaluate"),
         ("src/app/core/security/request_admission.py", "_get_rate_limit_config"),
     }
@@ -234,28 +261,51 @@ C1_URL_PATH_LOGGING = frozenset(
         ("src/app/core/errors.py", "_register_framework_handlers.db_timeout_exception_handler"),
         ("src/app/core/errors.py", "_make_app_exception_handler._handler"),
         ("src/app/core/errors.py", "_register_global_handler.global_exception_handler"),
-        ("src/app/middleware/rate_limit.py", "_reject_banned_ip"),
         ("src/app/middleware/query_profiler.py", "_log_results"),
-        ("src/app/middleware/request_id.py", "__call__"),
     }
 )
 
 #: Pairs that may read the raw `scope["path"]` because they ROUTE on
-#: it. Today exactly one: attack_detection feeds it to the exempt
-#: check AND the attack scan, which is why gate (2) above must hold
-#: for the shapes it scans.
-C1_SCOPE_PATH_READERS = frozenset({("src/app/middleware/attack_detection.py", "__call__")})
+#: it. The equivalence gate above is load-bearing for exactly these: each
+#: one feeds the path into a decision, so a spelling that disagreed with
+#: the rest of the app would be a tenant-resolution or IP-filter bypass
+#: rather than a slow log line.
+C1_SCOPE_PATH_READERS = frozenset(
+    {
+        # feeds `_is_exempt_path` -- the exempt check decides whether the
+        # IP filter runs at all.
+        ("src/app/middleware/ip_filter.py", "__call__"),
+        # feeds `is_path_exempt` twice -- with no tenant header and with
+        # an unresolvable slug. This is the C-1 bypass surface the bead
+        # is about: a path the tenant middleware treats as exempt while
+        # the rest of the app does not would run under NO_TENANT.
+        ("src/app/middleware/tenant.py", "__call__"),
+        # feeds the exempt check AND the attack scan.
+        ("src/app/middleware/attack_detection.py", "__call__"),
+    }
+)
 
 #: Pairs that may read the raw `scope["path"]` because they only LOG
 #: it. body_limit passes `path=scope.get("path", "")` as a log kwarg
 #: at four sites (the 413 worker reads the body, not the path); like
 #: the errors.py entries these must stay logging reads. Found by the
 #: lint gate itself, which flagged them as unclassified on its first
-#: run — the survey before it had only enumerated `request.url.path`.
+#: run -- the survey before it had only enumerated `request.url.path`.
 C1_SCOPE_PATH_LOGGING = frozenset(
     {
         ("src/app/middleware/body_limit.py", "__call__"),
         ("src/app/middleware/body_limit.py", "__call__.limited_receive"),
+        # `path=scope["path"]` is a `logger.debug` kwarg. The response
+        # never depends on it, so a disagreement here would cost a
+        # trace field, not a decision.
+        ("src/app/middleware/request_id.py", "__call__"),
+        # `request_path=scope["path"]` fills a SecurityEvent field on a
+        # path that is ALREADY rejecting the request on the ban lookup.
+        # The decision is made by the ban record; the path is the
+        # report. Classified as logging, deliberately, so the routing
+        # set above stays exactly the set of sites where the path
+        # selects an outcome.
+        ("src/app/middleware/rate_limit.py", "_reject_banned_ip"),
     }
 )
 

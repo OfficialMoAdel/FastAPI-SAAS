@@ -287,9 +287,9 @@ class ProcessSeriesSampler:
         with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
             raw = fh.read()
         rest = raw[raw.rindex(")") + 1 :].split()
-        ticks = os.sysconf("SC_CLK_TCK")
+        ticks = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
         # rest[0] is state (field 3), so utime (14) and stime (15) are 11 and 12.
-        return (int(rest[11]) + int(rest[12])) / ticks
+        return float(int(rest[11]) + int(rest[12])) / ticks
 
     @staticmethod
     def _target_cpu_scope() -> str:
@@ -507,7 +507,7 @@ class ProcessSeriesSampler:
         self._request_count = int(request_count)
         self._concurrency = int(concurrency)
 
-    def _rss_growth_bytes(self) -> int | None:
+    def _rss_growth_bytes(self) -> float | None:
         values = self._rss.values()
         if not values or self._first_rss_bytes is None:
             return None

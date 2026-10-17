@@ -80,7 +80,7 @@ async def test_case_1_valid_jwt_token(mock_request, mock_db, mock_tenant):
         mock_directory.auth_info.return_value = _dumpable(user_dict)
         MockUserDirectory.return_value = mock_directory
 
-        result = await get_optional_auth_context(mock_request, db=mock_db)
+        result = await get_optional_auth_context(mock_request, None)
 
         assert isinstance(result, AuthContext)
         assert result.user.id == 123
@@ -118,7 +118,7 @@ async def test_case_2_suspended_user_token(mock_request, mock_db, mock_tenant):
         MockUserDirectory.return_value = mock_directory
 
         with pytest.raises((UnauthorizedError, ForbiddenError)):
-            await get_optional_auth_context(mock_request, db=mock_db)
+            await get_optional_auth_context(mock_request, None)
 
 
 @pytest.mark.asyncio
@@ -151,7 +151,7 @@ async def test_case_3_deleted_user_token(mock_request, mock_db, mock_tenant):
         MockUserDirectory.return_value = mock_directory
 
         with pytest.raises((UnauthorizedError, ForbiddenError)):
-            await get_optional_auth_context(mock_request, db=mock_db)
+            await get_optional_auth_context(mock_request, None)
 
 
 @pytest.mark.asyncio
@@ -185,7 +185,7 @@ async def test_case_4_expired_token_version(mock_request, mock_db, mock_tenant):
         MockUserDirectory.return_value = mock_directory
 
         with pytest.raises((UnauthorizedError, ForbiddenError)):
-            await get_optional_auth_context(mock_request, db=mock_db)
+            await get_optional_auth_context(mock_request, None)
 
 
 @pytest.mark.asyncio
@@ -218,4 +218,4 @@ async def test_case_5_tenant_mismatch(mock_request, mock_db, mock_tenant):
         MockUserDirectory.return_value = mock_directory
 
         with pytest.raises((UnauthorizedError, ForbiddenError)):
-            await get_optional_auth_context(mock_request, db=mock_db)
+            await get_optional_auth_context(mock_request, None)

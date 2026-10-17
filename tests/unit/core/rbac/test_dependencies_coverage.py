@@ -1,7 +1,7 @@
 """Unit tests for RBAC permission dependencies (core/rbac/dependencies.py)."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
 import pytest
@@ -209,16 +209,92 @@ async def test_invalidate_users_permissions_cache_batch_empty():
     await rbac_deps.invalidate_users_permissions_cache_batch([], TENANT_ID)
 
 
+def _fake_pipeline() -> MagicMock:
+    """A pipeline whose only awaitable is ``execute``, and whose commands record.
+
+    ``AsyncMock`` is deliberately not used here: it makes every attribute a child
+    ``AsyncMock``, so a plain recording spy on ``publish`` cannot be substituted
+    without it becoming awaitable - and the code under test calls ``publish``
+    synchronously while awaiting only ``execute``.
+    """
+    pipe = MagicMock()
+    pipe.execute = AsyncMock()
+    pipe.__aenter__ = AsyncMock(return_value=pipe)
+    pipe.__aexit__ = AsyncMock(return_value=None)
+    return pipe
+
+
+def _fake_pipeline_cm(pipe: MagicMock) -> MagicMock:
+    """The context manager ``redis.pipeline()`` hands back for ``async with``."""
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=pipe)
+    cm.__aexit__ = AsyncMock(return_value=None)
+    return cm
+
+
 async def test_invalidate_users_permissions_cache_batch_with_redis():
+    """S-6: local L1 first, then ONE delete pipeline, then ONE publish pipeline.
+
+    Two pipelines, not one: the local L1 drops must lead the fan-out so this
+    process cannot serve a stale mask, and the publishes have to travel together
+    so a role change on a wide audience is two round trips rather than two per
+    user. Both statements are load-bearing, so both are asserted.
+    """
     fake_redis = AsyncMock()
-    pipe = AsyncMock()
-    pipe_cm = AsyncMock()
-    pipe_cm.__aenter__.return_value = pipe
-    fake_redis.pipeline = MagicMock(return_value=pipe_cm)
+    delete_pipe, publish_pipe = _fake_pipeline(), _fake_pipeline()
+    fake_redis.pipeline = MagicMock(side_effect=[_fake_pipeline_cm(delete_pipe), _fake_pipeline_cm(publish_pipe)])
+
     with patch.object(cache_module, "client", fake_redis):
         await rbac_deps.invalidate_users_permissions_cache_batch([1, 2], TENANT_ID)
-    assert pipe.delete.called
-    pipe.execute.assert_awaited_once()
+
+    # Exactly two round trips: one to drop the Redis bitmask keys, one to fan the
+    # L1 invalidations out. Not one per user.
+    assert fake_redis.pipeline.call_args_list == [call(transaction=False), call(transaction=False)]
+
+    delete_pipe.execute.assert_awaited_once()
+    deleted = [c.args[0] for c in delete_pipe.delete.call_args_list]
+    assert deleted == [
+        rbac_deps._get_bitmask_cache_key(1, TENANT_ID),
+        rbac_deps._get_bitmask_cache_key(2, TENANT_ID),
+    ]
+    # The publish round trip must preserve the caller's ordering so subscribers
+    # observe the payloads in the order the users were passed.
+    assert delete_pipe.publish.call_count == 0
+    published = [c.args[1] for c in publish_pipe.publish.call_args_list]
+    assert published == [f"1:{TENANT_ID}", f"2:{TENANT_ID}"]
+    publish_pipe.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_invalidate_users_permissions_cache_batch_drops_local_l1_first():
+    """The local L1 must be empty BEFORE the cross-process fan-out starts.
+
+    Pub/sub is not an echo: a subscriber does not receive its own message, so
+    if the local drop happened after the publish, this process could serve a
+    stale mask until its own message came back around.
+    """
+    fake_redis = AsyncMock()
+    delete_pipe, publish_pipe = _fake_pipeline(), _fake_pipeline()
+    l1_at_publish: list[dict] = []
+
+    def _publish(*_args, **_kwargs):
+        # Snapshot what the local L1 looks like at the moment of the fan-out.
+        l1_at_publish.append(dict(rbac_deps._bitmask_l1))
+
+    publish_pipe.publish.side_effect = _publish
+    fake_redis.pipeline = MagicMock(side_effect=[_fake_pipeline_cm(delete_pipe), _fake_pipeline_cm(publish_pipe)])
+
+    with patch.object(cache_module, "client", fake_redis):
+        for user_id in (1, 2):
+            rbac_deps._bitmask_l1[rbac_deps._bitmask_l1_key(user_id, TENANT_ID)] = 1
+        try:
+            await rbac_deps.invalidate_users_permissions_cache_batch([1, 2], TENANT_ID)
+        finally:
+            rbac_deps._bitmask_l1.clear()
+
+    assert len(l1_at_publish) == 2
+    # Both users' entries were already gone when the first publish was issued.
+    assert l1_at_publish[0] == {}
 
 
 def test_get_bitmask_cache_key():

@@ -444,15 +444,29 @@ class AttackDetectionMiddleware:
                 )
 
         # nrgi.3: the body scan is method-gated, and this is the only skip in
-        # the scan that was silent. The guard is load-bearing, not stylistic:
-        # a bare logger.debug() through this structlog stack costs ~44.6us,
-        # 6.7x the ENTIRE bodyless-GET scan it would announce (6.7us), so
-        # unguarded this would make the hot path slower than the work it
-        # reports on. Guarded, the check costs ~1.9us.
+        # the scan that was silent. Path, query string and headers are scanned
+        # ABOVE, for every method: a GET carrying SQLi in its query string is
+        # still detected, so this skip removes no attack coverage.
+        # See docs/adr/0008.
         #
-        # Path, query string and headers are scanned ABOVE, for every method:
-        # a GET carrying SQLi in its query string is still detected, so this
-        # skip removes no attack coverage. See docs/adr/0008.
+        # The guard below is the correct shape -- ask the logging stack whether
+        # DEBUG is wanted instead of assuming -- but it is NOT the cheap
+        # short-circuit it was documented as. This comment previously claimed a
+        # bare logger.debug() cost ~44.6us against a 6.7us scan and that the
+        # guard cost ~1.9us. None of those figures reproduce, and the
+        # arithmetic that justified the guard was wrong: structlog's
+        # BoundLoggerLazyProxy.is_enabled_for(logging.DEBUG) returns True
+        # whatever the stdlib root level is (checked with the root logger at
+        # WARNING), so on this stack the predicate gates nothing and the debug
+        # call is made on every bodyless GET.
+        #
+        # Measured by scripts/s7_scan_cost_probe.py, which drives this
+        # middleware over HTTP and reports the figures: the scan and the debug
+        # call it announces are both tens-to-hundreds of microseconds, the same
+        # order of magnitude as each other. Neither decides whether to keep the
+        # log line, and both are a small fraction of the ~4ms request floor. Do
+        # not restore microsecond constants here -- they go stale per host.
+        # Cite the probe instead.
         if method not in _BODY_METHODS:
             if logger.is_enabled_for(logging.DEBUG):
                 logger.debug(
@@ -559,7 +573,7 @@ class AttackDetectionMiddleware:
         """Check content against all attack patterns using combined bytes regex.
 
         Uses a single compiled regex with named groups instead of iterating
-        over 16 individual patterns. The named group identifies the attack type.
+        over 17 individual patterns. The named group identifies the attack type.
 
         P1-7: a necessary-literal prefilter (Aho-Corasick, str.find fallback)
         skips the regex entirely when no group can possibly match.

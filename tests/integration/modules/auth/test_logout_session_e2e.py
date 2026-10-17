@@ -96,6 +96,25 @@ class _StatefulRedis:
         entries = self.zsets.get(key, {})
         return sum(1 for m in members if entries.pop(m, None) is not None)
 
+    async def evalsha(self, sha1, num_keys, *keys_and_args):
+        """Emulate the ``session_invalidate`` Lua script.
+
+        ``invalidate_session`` no longer issues HEXISTS/HDEL/ZREM itself; it
+        hands the three operations to one atomic script, so a double that only
+        implements the individual commands makes that call raise AttributeError
+        and the manager honestly report the invalidation as failed. The script
+        checks existence first and writes nothing when the session is absent,
+        which is exactly what these tests assert.
+        """
+        hash_key, zset_key = keys_and_args[:2]
+        (session_id,) = keys_and_args[2:]
+        entries = self.hashes.get(hash_key, {})
+        if session_id not in entries:
+            return 0
+        del entries[session_id]
+        self.zsets.get(zset_key, {}).pop(session_id, None)
+        return 1
+
     def pipeline(self, transaction=True):
         return _StatefulPipeline(self)
 

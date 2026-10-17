@@ -13,6 +13,7 @@ class MockRedis:
         self.data = {}  # Key -> Value (for strings)
         self.hashes = {}  # Key -> Dict
         self.lists = {}  # Key -> List
+        self.pipeline_transactions = []
 
     def _get_key(self, key: str | bytes) -> str:
         if isinstance(key, bytes):
@@ -51,7 +52,11 @@ class MockRedis:
 
         return 0, keys
 
-    def pipeline(self):
+    def pipeline(self, transaction: bool = True):
+        # C-4 opens the read pipeline with transaction=False. Accept the keyword
+        # and record it so a pipeline opened without it is visible rather than
+        # silently equivalent to one opened with it.
+        self.pipeline_transactions.append(transaction)
         return MockPipeline(self)
 
     async def lrange(self, key: str | bytes, start: int, end: int) -> List[bytes]:
@@ -117,6 +122,10 @@ class MockPipeline:
         self.commands.append(("ltrim", key, start, end))
         return self
 
+    def hgetall(self, key: str):
+        self.commands.append(("hgetall", key))
+        return self
+
     async def execute(self):
         results = []
         for cmd in self.commands:
@@ -143,6 +152,9 @@ class MockPipeline:
                     self.redis.lists[key] = []
                 self.redis.lists[key].insert(0, value)
                 results.append(len(self.redis.lists[key]))
+
+            elif op == "hgetall":
+                results.append(await self.redis.hgetall(cmd[1]))
 
             elif op == "ltrim":
                 key, start, end = cmd[1], cmd[2], cmd[3]

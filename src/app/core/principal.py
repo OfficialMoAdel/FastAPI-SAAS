@@ -44,10 +44,8 @@ from uuid import UUID
 
 from fastapi import Depends, Request
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import EnvironmentOption, settings
-from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
 from src.app.core.schemas import TokenData
 from src.app.core.security.jwt_service import oauth2_scheme
@@ -238,7 +236,7 @@ class PrincipalProvider(Protocol):
     """
 
     async def __call__(
-        self, request: Request, db: AsyncSession, token: str | None = None
+        self, request: Request, token: str | None = None
     ) -> AuthContext | None: ...
 
 
@@ -276,7 +274,6 @@ def ensure_principal_provider_registered() -> None:
 
 async def get_auth_context(
     request: Request,
-    db: AsyncSession = Depends(async_get_db),
     token: str = Depends(oauth2_scheme),
 ) -> AuthContext:
     """Resolve the required principal, or refuse.
@@ -293,7 +290,8 @@ async def get_auth_context(
     provider = _principal_provider
     if provider is None:
         raise denial(DenialReason.PROVIDER_UNWIRED)
-    ctx = await provider(request, db, token)
+    ctx = await provider(request, token)
+
     if ctx is None:
         raise denial(DenialReason.NO_CREDENTIAL)
     return ctx

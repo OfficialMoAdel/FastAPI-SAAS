@@ -410,9 +410,12 @@ async def invalidate_users_permissions_cache_batch(user_ids: list[int], tenant_i
 
     from src.app.core.redis_provider import get_redis
 
+    # Drop every local L1 entry FIRST, so this process never serves a
+    # stale cached mask for any of the users it is invalidating. Pub/sub
+    # is cross-process and would not echo back to us, so the local drops
+    # have to lead the fan-out below.
     for user_id in user_ids:
         _bitmask_l1.pop(_bitmask_l1_key(user_id, tenant_id), None)
-        await _publish_bitmask_l1_invalidation(user_id, tenant_id)
 
     redis_client = get_redis()
 
@@ -420,13 +423,28 @@ async def invalidate_users_permissions_cache_batch(user_ids: list[int], tenant_i
         return
 
     try:
-        async with redis_client.pipeline() as pipe:
+        # Invalidate the per-user Redis bitmask keys in a single pipeline
+        # round-trip (one RTT for all users).
+        async with redis_client.pipeline(transaction=False) as pipe:
             for user_id in user_ids:
                 bitmask_cache_key = _get_bitmask_cache_key(user_id, tenant_id)
                 pipe.delete(bitmask_cache_key)
+            await pipe.execute()
 
-            # Execute all deletions in one round-trip
-            await pipe.execute()  # type: ignore[union-attr]
+        # Fan the L1 invalidation messages out as a SINGLE publish round-trip
+        # (one execute()), while preserving input order so subscribers see the
+        # payloads in the same order the caller passed the users. Dropping
+        # locally first and publishing afterwards keeps the cross-worker L1
+        # invalidation invariant (invalidate.py docstring) and makes the L1
+        # seam's per-message wiring a pure fan-out instead of a per-user
+        # serialize/publish loop.
+        async with redis_client.pipeline(transaction=False) as pipe:
+            for user_id in user_ids:
+                pipe.publish(
+                    _BITMASK_L1_INVALIDATION_CHANNEL,
+                    f"{int(user_id)}:{tenant_id}",
+                )
+            await pipe.execute()
     except Exception as e:
         logger.warning(
             "Failed to batch invalidate permissions cache",

@@ -18,7 +18,7 @@ async def e2e_client(get_test_app):
 
     # Ensure we use test async engine for everything to match DB setup
     from src.app.core.db.database import async_get_db
-    from tests.conftest import override_get_db, test_async_engine
+    from tests.conftest import override_get_db, test_async_engine, test_get_db_context
 
     app.dependency_overrides[async_get_db] = override_get_db
 
@@ -28,6 +28,9 @@ async def e2e_client(get_test_app):
     with (
         patch("src.app.middleware.tenant.local_session", new=TestingSessionLocal),
         patch("src.app.core.db.database.async_engine", new=test_async_engine),
+        # These tests run the real auth seam, which opens its own session
+        # through get_db_context(); dependency_overrides cannot reach it.
+        patch("src.app.core.db.database.get_db_context", test_get_db_context),
         patch(
             "src.app.core.utils.rate_limit.RateLimiter.check_rate_limit",
             new_callable=AsyncMock,

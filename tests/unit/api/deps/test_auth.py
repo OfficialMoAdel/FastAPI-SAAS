@@ -7,6 +7,7 @@ API key service) are mocked.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -57,6 +58,25 @@ def _make_request(headers: dict[str, str] | None = None, state: Any = None) -> M
 
 def _make_db() -> MagicMock:
     return MagicMock()
+
+
+@asynccontextmanager
+async def _stub_db_context() -> Any:
+    yield _make_db()
+
+
+@pytest.fixture(autouse=True)
+def _serve_lazily_acquired_db() -> Any:
+    """Serve the session the auth seams now open for themselves.
+
+    S-1 moved session acquisition out of the dependency signature and into
+    ``get_db_context()`` at the point of use, so these tests can no longer
+    inject a session by passing one in. Everything that touches the session in
+    this module is mocked (``UserDirectory`` and friends), so a stub context
+    is enough to reach it.
+    """
+    with patch("src.app.core.db.database.get_db_context", _stub_db_context):
+        yield
 
 
 def _bound_tenant(tenant_id: Any = 5) -> MagicMock:
@@ -179,7 +199,7 @@ async def test_get_auth_context_no_token_from_header() -> None:
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=None)),
     ):
         with pytest.raises(UnauthorizedException):
-            await get_auth_context(request, _make_db(), "")
+            await get_auth_context(request, "")
 
 
 async def test_get_auth_context_cached_revoked() -> None:
@@ -190,7 +210,7 @@ async def test_get_auth_context_cached_revoked() -> None:
         return_value={"jti": "j1", "token_type": "access", "sub": "u"},
     ):
         with pytest.raises(UnauthorizedException):
-            await get_auth_context(request, _make_db(), "tok")
+            await get_auth_context(request, "tok")
 
 
 async def test_get_auth_context_cached_wrong_type() -> None:
@@ -202,7 +222,7 @@ async def test_get_auth_context_cached_wrong_type() -> None:
         return_value={"jti": "j1", "token_type": "refresh", "sub": "u"},
     ):
         with pytest.raises(UnauthorizedException):
-            await get_auth_context(request, _make_db(), "tok")
+            await get_auth_context(request, "tok")
 
 
 async def test_get_auth_context_cached_no_sub() -> None:
@@ -214,7 +234,7 @@ async def test_get_auth_context_cached_no_sub() -> None:
         return_value={"jti": "j1", "token_type": "access"},
     ):
         with pytest.raises(UnauthorizedException):
-            await get_auth_context(request, _make_db(), "tok")
+            await get_auth_context(request, "tok")
 
 
 async def test_get_auth_context_cached_success() -> None:
@@ -239,7 +259,7 @@ async def test_get_auth_context_cached_success() -> None:
     ):
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(return_value=_dumpable(user))
-        ctx = await get_auth_context(request, _make_db(), "tok")
+        ctx = await get_auth_context(request, "tok")
     assert ctx.user.id == 1
 
 
@@ -255,7 +275,7 @@ async def test_get_auth_context_verify_token_success() -> None:
     ):
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(return_value=_dumpable(user))
-        ctx = await get_auth_context(request, _make_db(), "tok")
+        ctx = await get_auth_context(request, "tok")
     assert ctx.user.id == 2
 
 
@@ -271,7 +291,7 @@ async def test_get_auth_context_user_not_found() -> None:
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(return_value=None)
         with pytest.raises(UnauthorizedException):
-            await get_auth_context(request, _make_db(), "tok")
+            await get_auth_context(request, "tok")
 
 
 async def test_get_auth_context_inactive() -> None:
@@ -287,7 +307,7 @@ async def test_get_auth_context_inactive() -> None:
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(UnauthorizedException):
-            await get_auth_context(request, _make_db(), "tok")
+            await get_auth_context(request, "tok")
 
 
 async def test_get_auth_context_deleted() -> None:
@@ -303,7 +323,7 @@ async def test_get_auth_context_deleted() -> None:
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(UnauthorizedException):
-            await get_auth_context(request, _make_db(), "tok")
+            await get_auth_context(request, "tok")
 
 
 async def test_get_auth_context_version_mismatch() -> None:
@@ -319,7 +339,7 @@ async def test_get_auth_context_version_mismatch() -> None:
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(UnauthorizedException):
-            await get_auth_context(request, _make_db(), "tok")
+            await get_auth_context(request, "tok")
 
 
 async def test_get_auth_context_tenant_mismatch() -> None:
@@ -336,7 +356,7 @@ async def test_get_auth_context_tenant_mismatch() -> None:
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(ForbiddenException):
-            await get_auth_context(request, _make_db(), "tok")
+            await get_auth_context(request, "tok")
 
 
 async def test_get_auth_context_superuser_tenant_ok() -> None:
@@ -359,7 +379,7 @@ async def test_get_auth_context_superuser_tenant_ok() -> None:
     ):
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(return_value=_dumpable(user))
-        ctx = await get_auth_context(request, _make_db(), "tok")
+        ctx = await get_auth_context(request, "tok")
     assert ctx.user.id == 2
 
 
@@ -371,7 +391,7 @@ async def test_get_auth_context_superuser_tenant_ok() -> None:
 async def test_get_current_user_from_context() -> None:
     request = _make_request()
     ctx = AuthContext(user=AuthenticatedUser(id=1, email="a@b.com"), token_data=None, tenant=None)
-    result = await get_current_user(request, "tok", _make_db(), ctx)
+    result = await get_current_user(request, "tok", ctx)
     assert result.id == 1
 
 
@@ -380,7 +400,7 @@ async def test_get_current_user_rebuild() -> None:
     with patch("src.app.api.deps.auth.get_auth_context", new=AsyncMock()) as mock_gac:
         user = AuthenticatedUser(id=3, email="c@d.com")
         mock_gac.return_value = AuthContext(user=user, token_data=None, tenant=None)
-        result = await get_current_user(request, "", _make_db(), auth_context=None)
+        result = await get_current_user(request, "", auth_context=None)
     assert result.id == 3
 
 
@@ -525,7 +545,7 @@ async def test_get_auth_context_no_token_no_header() -> None:
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=None)),
     ):
         with pytest.raises(UnauthorizedException):
-            await get_auth_context(request, _make_db(), "")
+            await get_auth_context(request, "")
 
 
 async def test_get_current_user_no_token_no_header() -> None:
@@ -533,7 +553,7 @@ async def test_get_current_user_no_token_no_header() -> None:
     with patch("src.app.api.deps.auth.get_auth_context", new=AsyncMock()) as mock_gac:
         user = AuthenticatedUser(id=4, email="c@d.com")
         mock_gac.return_value = AuthContext(user=user, token_data=None, tenant=None)
-        result = await get_current_user(request, "", _make_db(), auth_context=None)
+        result = await get_current_user(request, "", auth_context=None)
     assert result.id == 4
 
 
@@ -555,7 +575,7 @@ async def test_get_auth_context_cached_email_user() -> None:
     ):
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(return_value=_dumpable(user))
-        ctx = await get_auth_context(request, _make_db(), "tok")
+        ctx = await get_auth_context(request, "tok")
     assert ctx.user.id == 1
 
 
@@ -572,7 +592,7 @@ async def test_get_auth_context_cached_no_user() -> None:
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(return_value=None)
         with pytest.raises(UnauthorizedException):
-            await get_auth_context(request, _make_db(), "tok")
+            await get_auth_context(request, "tok")
 
 
 async def test_get_auth_context_cached_deleted() -> None:
@@ -589,7 +609,7 @@ async def test_get_auth_context_cached_deleted() -> None:
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(UnauthorizedException):
-            await get_auth_context(request, _make_db(), "tok")
+            await get_auth_context(request, "tok")
 
 
 async def test_get_auth_context_cached_version_mismatch() -> None:
@@ -606,7 +626,7 @@ async def test_get_auth_context_cached_version_mismatch() -> None:
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(return_value=_dumpable(user))
         with pytest.raises(UnauthorizedException):
-            await get_auth_context(request, _make_db(), "tok")
+            await get_auth_context(request, "tok")
 
 
 async def test_get_optional_auth_context_exception() -> None:
@@ -621,7 +641,7 @@ async def test_get_optional_auth_context_exception() -> None:
         ),
     ):
         with pytest.raises(UnauthorizedException):
-            await get_optional_auth_context(request, _make_db())
+            await get_optional_auth_context(request, None)
 
 
 async def test_get_optional_auth_context_user_lookup_exception() -> None:
@@ -638,7 +658,7 @@ async def test_get_optional_auth_context_user_lookup_exception() -> None:
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(side_effect=RuntimeError("db down"))
         with pytest.raises(UnauthorizedException):
-            await get_optional_auth_context(request, _make_db())
+            await get_optional_auth_context(request, None)
 
 
 # ---------------------------------------------------------------------------
@@ -849,7 +869,7 @@ async def test_verify_optional_state_none_runs_db_fallback() -> None:
 
 async def test_get_optional_no_header() -> None:
     request = _make_request()
-    result = await get_optional_auth_context(request, _make_db(), None)
+    result = await get_optional_auth_context(request, None)
     assert result is None
 
 
@@ -858,14 +878,14 @@ async def test_get_optional_non_bearer() -> None:
     anonymous — only an absent credential yields None."""
     request = _make_request(headers={"Authorization": "Basic abc"})
     with pytest.raises(UnauthorizedException):
-        await get_optional_auth_context(request, _make_db(), None)
+        await get_optional_auth_context(request, None)
 
 
 async def test_get_optional_api_key_invalid() -> None:
     request = _make_request(headers={"X-API-Key": "key"})
     with patch("src.app.api.deps.auth.get_user_by_api_key", new=AsyncMock(return_value=None)):
         with pytest.raises(UnauthorizedException):
-            await get_optional_auth_context(request, _make_db(), None)
+            await get_optional_auth_context(request, None)
 
 
 async def test_get_optional_api_key_valid() -> None:
@@ -875,7 +895,7 @@ async def test_get_optional_api_key_valid() -> None:
         patch("src.app.api.deps.auth.get_user_by_api_key", new=AsyncMock(return_value=api_user)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
     ):
-        ctx = await get_optional_auth_context(request, _make_db(), None)
+        ctx = await get_optional_auth_context(request, None)
     assert ctx is not None
     assert ctx.user.id == 1
 
@@ -892,7 +912,7 @@ async def test_get_optional_bearer_success() -> None:
     ):
         directory = mock_ud.return_value
         directory.auth_info = AsyncMock(return_value=_dumpable(user))
-        ctx = await get_optional_auth_context(request, _make_db(), None)
+        ctx = await get_optional_auth_context(request, None)
     assert ctx is not None
     assert ctx.user.id == 2
 
@@ -905,7 +925,7 @@ async def test_get_optional_bearer_exception() -> None:
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(side_effect=ValueError("x"))),
     ):
         with pytest.raises(UnauthorizedException):
-            await get_optional_auth_context(request, _make_db(), None)
+            await get_optional_auth_context(request, None)
 
 
 # ---------------------------------------------------------------------------
@@ -915,14 +935,14 @@ async def test_get_optional_bearer_exception() -> None:
 
 async def test_get_optional_user_none() -> None:
     request = _make_request()
-    result = await get_optional_user(request, _make_db())
+    result = await get_optional_user(request)
     assert result is None
 
 
 async def test_get_optional_user_from_context() -> None:
     request = _make_request()
     ctx = AuthContext(user=AuthenticatedUser(id=1, email="a@b.com"), token_data=None, tenant=None)
-    result = await get_optional_user(request, _make_db(), None, ctx)
+    result = await get_optional_user(request, None, ctx)
     assert result is not None
     assert result.id == 1
 
@@ -932,7 +952,7 @@ async def test_get_optional_user_rebuild() -> None:
     with patch("src.app.api.deps.auth.get_optional_auth_context", new=AsyncMock()) as mock_g:
         user = AuthenticatedUser(id=5, email="e@f.com")
         mock_g.return_value = AuthContext(user=user, token_data=None, tenant=None)
-        result = await get_optional_user(request, _make_db())
+        result = await get_optional_user(request)
     assert result is not None
     assert result.id == 5
 
@@ -1094,7 +1114,7 @@ async def test_seam_denies_unscoped_key_even_on_get() -> None:
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
     ):
         with pytest.raises(ForbiddenException, match="missing required scope"):
-            await get_optional_auth_context(request, _make_db(), None)
+            await get_optional_auth_context(request, None)
 
 
 async def test_seam_denies_read_key_on_write() -> None:
@@ -1106,7 +1126,7 @@ async def test_seam_denies_read_key_on_write() -> None:
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
     ):
         with pytest.raises(ForbiddenException, match="missing required scope"):
-            await get_optional_auth_context(request, _make_db(), None)
+            await get_optional_auth_context(request, None)
 
 
 async def test_seam_allows_scoped_key() -> None:
@@ -1119,7 +1139,7 @@ async def test_seam_allows_scoped_key() -> None:
         patch("src.app.api.deps.auth.get_user_by_api_key", new=AsyncMock(return_value=api_user)),
         patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
     ):
-        ctx = await get_optional_auth_context(request, _make_db(), None)
+        ctx = await get_optional_auth_context(request, None)
     assert ctx is not None
     assert ctx.user.id == 1
 

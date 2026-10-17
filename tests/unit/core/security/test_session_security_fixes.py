@@ -12,7 +12,9 @@ A1: blacklist tri-state — None (Redis down) triggers DB fallback in deps/auth
 import asyncio
 import base64
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -320,7 +322,7 @@ class TestTriStateBlacklist:
             svc.auth_info = AsyncMock(return_value=_dumpable(user))
 
             with pytest.raises(Exception) as exc_info:
-                await get_auth_context(request, _make_db(), "tok")
+                await get_auth_context(request, "tok")
 
             # DB fallback ran despite state being None...
             mock_fb.assert_awaited_once()
@@ -357,7 +359,7 @@ class TestTriStateBlacklist:
         ):
             svc = mock_us.return_value
             svc.auth_info = AsyncMock(return_value=_dumpable(user))
-            ctx = await get_auth_context(request, _make_db(), "tok")
+            ctx = await get_auth_context(request, "tok")
             assert ctx.user.id == 1
             mock_fb.assert_not_awaited()
 
@@ -388,7 +390,7 @@ class TestTriStateBlacklist:
             svc = mock_us.return_value
             svc.auth_info = AsyncMock(return_value=_dumpable(user))
             with pytest.raises(Exception) as exc_info:
-                await get_auth_context(request, _make_db(), "tok")
+                await get_auth_context(request, "tok")
             mock_fb.assert_awaited_once()
             assert "revoked" in str(exc_info.value.detail).lower()
 
@@ -452,6 +454,23 @@ class TestTriStateBlacklist:
 
 def _make_db() -> MagicMock:
     return MagicMock()
+
+
+@asynccontextmanager
+async def _stub_db_context() -> Any:
+    yield _make_db()
+
+
+@pytest.fixture(autouse=True)
+def _serve_lazily_acquired_db() -> Any:
+    """Serve the session ``get_auth_context`` now opens for itself.
+
+    S-1 moved session acquisition out of the dependency signature and into
+    ``get_db_context()`` at the point of use. The collaborators that touch the
+    session are mocked in these tests, so a stub context is enough.
+    """
+    with patch("src.app.core.db.database.get_db_context", _stub_db_context):
+        yield
 
 
 def _patch_setting(name, value):

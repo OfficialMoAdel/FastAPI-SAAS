@@ -22,6 +22,22 @@ def _dumpable(payload):
     return m
 
 
+def _session_returning(slugs: list[str]) -> AsyncMock:
+    """Shape a db so ``execute`` models ``AsyncSession.execute``.
+
+    ``await db.execute(stmt)`` returns a ``Result`` whose ``.scalars().all()``
+    is SYNCHRONOUS. A bare ``AsyncMock()`` db breaks that: every attribute of
+    an unspeced ``AsyncMock`` is itself an ``AsyncMock``, so ``.scalars()``
+    returns a coroutine and ``.all()`` lands on it
+    (``AttributeError: 'coroutine' object has no attribute 'all'``).
+    """
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = slugs
+    db = AsyncMock()
+    db.execute.return_value = result
+    return db
+
+
 
 class TestCompositeAuthPrefetch:
     """Test suite for composite auth prefetch and sequential fallbacks."""
@@ -160,7 +176,6 @@ class TestCompositeAuthPrefetch:
         mock_request = MagicMock()
         mock_request.state = MagicMock()
         mock_request.state.is_token_blacklisted = None
-        mock_db = AsyncMock()
 
         mock_payload = {
             "sub": "testuser",
@@ -191,7 +206,7 @@ class TestCompositeAuthPrefetch:
             ),
         ):
             with pytest.raises(UnauthorizedException) as exc_info:
-                await get_auth_context(request=mock_request, db=mock_db, token="sample_token")
+                await get_auth_context(request=mock_request, token="sample_token")
 
             assert "revoked" in str(exc_info.value.detail).lower()
     @pytest.mark.asyncio
@@ -202,7 +217,6 @@ class TestCompositeAuthPrefetch:
         mock_request = MagicMock()
         mock_request.state = MagicMock()
         mock_request.state.is_token_blacklisted = None
-        mock_db = AsyncMock()
 
         mock_payload = {
             "sub": "testuser",
@@ -233,7 +247,7 @@ class TestCompositeAuthPrefetch:
             ),
         ):
             with pytest.raises(UnauthorizedException) as exc_info:
-                await get_auth_context(request=mock_request, db=mock_db, token="sample_token")
+                await get_auth_context(request=mock_request, token="sample_token")
 
             assert "revoked" in str(exc_info.value.detail).lower()
     async def test_requires_permission_denied_with_prefetched_bitmask(self) -> None:
@@ -252,7 +266,7 @@ class TestCompositeAuthPrefetch:
         mask = PermissionBitmask.encode({Permission.USERS_READ.value})
 
         checker = requires_permission(Permission.ROLES_MANAGE)
-        mock_db = AsyncMock()
+        mock_db = _session_returning([])
         mock_request = MagicMock()
         mock_request.state.cached_permissions_bitmask = (user_id, str(tenant_id), mask)
         with pytest.raises(ForbiddenError) as exc_info:
@@ -263,3 +277,37 @@ class TestCompositeAuthPrefetch:
             )
 
         assert "roles:manage" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_requires_permission_allowed_by_db_when_prefetch_denies(self) -> None:
+        """A prefetched mask that denies is NOT a denial: the DB-backed path grants roles:manage.
+
+        The other half of the fallback regression test — the composite prefetch
+        reads the bitmask key and yields 0 on a cache MISS, so a prefetched
+        mask that denies must be confirmed against the DB before rejecting.
+        Here the DB grants the role, so no exception may be raised.
+        """
+        tenant_id = uuid4()
+        user_id = 42
+
+        from tests.helpers.auth import build_test_auth_context
+
+        mock_auth_context = build_test_auth_context(
+            {"id": user_id, "tenant_id": tenant_id, "is_superuser": False},
+            {"id": tenant_id, "slug": "test-tenant"},
+        )
+
+        # Prefetched mask includes USERS_READ only — ROLES_MANAGE denied at 0 RTTs...
+        mask = PermissionBitmask.encode({Permission.USERS_READ.value})
+        # ...but the DB-backed confirmation grants roles:manage.
+        mock_db = _session_returning([Permission.ROLES_MANAGE.value])
+
+        checker = requires_permission(Permission.ROLES_MANAGE)
+        mock_request = MagicMock()
+        mock_request.state.cached_permissions_bitmask = (user_id, str(tenant_id), mask)
+
+        await checker(
+            request=mock_request,
+            db=mock_db,
+            auth_context=mock_auth_context,
+        )

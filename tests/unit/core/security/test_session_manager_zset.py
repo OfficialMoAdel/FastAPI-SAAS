@@ -108,17 +108,18 @@ class TestZSETHashConsistency:
 
     @pytest.mark.asyncio
     async def test_invalidate_removes_from_both(self):
-        """Verify invalidate_session removes from both ZSET and Hash."""
+        """Verify invalidate_session removes the session from both ZSET and Hash.
+
+        S-6 moved the removal into the ``session_invalidate`` Lua script. The
+        invariant this file exists to protect is unchanged - the two structures
+        must never drift apart - so it is now asserted by checking the script is
+        handed both keys in a single atomic call, rather than by inspecting two
+        pipelined commands.
+        """
         # Arrange
         mock_redis = AsyncMock()
-        mock_redis.hexists = AsyncMock(return_value=True)
-
-        pipe = MagicMock()
-        _acm(pipe)
-        pipe.hdel = MagicMock(return_value=pipe)
-        pipe.zrem = MagicMock(return_value=pipe)
-        pipe.execute = AsyncMock()
-        mock_redis.pipeline = MagicMock(return_value=pipe)
+        # The script returns 1 when the session existed and was removed.
+        mock_redis.evalsha = AsyncMock(return_value=1)
 
         manager = SessionManager(redis_client=mock_redis)
 
@@ -128,8 +129,12 @@ class TestZSETHashConsistency:
         # Assert
         logger.info(f"Invalidation result: {result}")
         assert result is True
-        pipe.hdel.assert_called_once()
-        pipe.zrem.assert_called_once()
+        mock_redis.evalsha.assert_called_once()
+        script_args = mock_redis.evalsha.call_args[0]
+        # Both the ZSET and the Hash key are addressed, so neither can be missed.
+        assert script_args[2] == "user_sessions_v2:user1"
+        assert script_args[3] == "user_sessions_order:user1"
+        assert script_args[4] == "session1"
 
     @pytest.mark.asyncio
     async def test_invalidate_all_deletes_both_keys(self):

@@ -22,6 +22,8 @@ function they both call is the coupling the compiler and the test suite can see.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 #: ``users.username`` is ``varchar(20)``. The local part of a generated address
 #: is well inside that, which a full email is not - so the local part is the only
 #: value that can serve as both the stored username and the login identifier.
@@ -51,7 +53,7 @@ def perf_username(email: str) -> str:
     return local[:USERNAME_MAX_LENGTH]
 
 
-def collision_risk(emails: object) -> list[str]:
+def collision_risk(emails: Iterable[str]) -> list[str]:
     """Addresses in a pool whose derived usernames would collide.
 
     Reported rather than tolerated: a collision means two virtual users share an
@@ -60,7 +62,7 @@ def collision_risk(emails: object) -> list[str]:
     """
     seen: dict[str, str] = {}
     clashes: set[str] = set()
-    for email in emails:  # type: ignore[union-attr]
+    for email in emails:
         username = perf_username(str(email))
         if username in seen and seen[username] != str(email):
             clashes.add(username)

@@ -1,0 +1,312 @@
+{
+  "bead": "FastAPI_saas-e0ss",
+  "item": "L-13",
+  "title": "endpoint-level p95 effect of body-scan offload on a BODY-CARRYING route",
+  "bead_closes": "NO MEASURABLE p95 EFFECT. On a body-carrying POST route at the degradation concurrency, the thread-pool offload moves p95 by -4.3% (60 KB miss regime) and +4.5% (40 KB hit regime) against a measured intra-arm noise floor of 15-31%. Both figures are indistinguishable from parity. The bead predicted exactly this outcome: 'in which case A-8 is a capacity lever at best and the ADR should say so.' The third arm the acceptance asks for, a process pool, is PROVEN IMPOSSIBLE as a drop-in by three independent empirical checks.",
+  "measured_at": "2026-10-16",
+  "artefact_kind": "measurement",
+  "machine": {
+    "cpu_model": "Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz",
+    "core_count": 4,
+    "platform": "Linux-5.14.0-578.el9.x86_64-x86_64-with-glibc2.34",
+    "python": "3.13.16",
+    "redis_py": "5.3.0",
+    "httpx": "0.28.1",
+    "interpreter": "/home/ansible/head/.venv/bin/python",
+    "is_the_declared_production_cpu": true,
+    "matches_app_host_report": "reports/app_host_report.json records the same cpu_model and core_count, so this is the declared production CPU",
+    "how_recorded": "Read off the run host AFTER the measurement, in the SAME SSH session (ansible@192.168.121.147:22-1792174578) that ran the measurement, which was still open. The first version of this artefact recorded NO machine identity at all; the M-3 verification (4tvl) found the gap and it is now filled from the same host rather than assumed."
+  },
+  "warmth": {
+    "status": "PARTIAL - corrected after verification",
+    "what_is_warm": "The thread arm calls run_in_executor(None, ...), which is the event loop's DEFAULT ThreadPoolExecutor. CPython creates it lazily on first use and then reuses it for the life of the loop. The harness never recreates it, so every block and every rep after the first reuses the same warm pool.",
+    "what_is_NOT_warm": "NO warm-up rep was discarded. The harness has no warmup/discard logic at all (verified by grepping the harness for warm|discard|reps[1:]: no hits). Rep 1 therefore pays the pool's creation cost.",
+    "consequence_for_the_numbers": "1 of 5 reps is a cold-start rep. A median over 5 reps is not moved by one outlier, so median-of-medians is robust to it. min-of-medians takes the BEST rep, which cannot be the cold one, so it is if anything biased in the thread arm's favour.",
+    "why_it_still_reaches_the_conclusion": "The finding is that the thread arm is INDISTINGUISHABLE FROM PARITY: its ratios (0.9567 / 1.0453) sit inside a 15-31% intra-arm noise floor. A single cold rep in one arm is far smaller than that floor, so it cannot manufacture the parity that was observed - it would have to hide a large effect, and the min-of-medians, which is the statistic least contaminated by a cold start, is the closer to 1.0 of the two.",
+    "what_would_remove_the_caveat": "Discard rep 1 and run 4 reps, or add an explicit discarded warm-up block. Neither was done, and the fix is recorded rather than retro-fitted onto numbers that were already measured."
+  },
+  "headline": {
+    "outcome": "no measurable p95 effect from the thread-pool body-scan offload",
+    "knee_concurrency": 4,
+    "ratios_thread_over_inline_p95": {
+      "miss60k_median_of_medians": 0.9567,
+      "miss60k_min_of_medians": 0.9973,
+      "hit40k_median_of_medians": 1.0453,
+      "hit40k_min_of_medians": 0.9764
+    },
+    "noise_floor_pct": {
+      "miss60k_inline": 19.57,
+      "miss60k_thread": 14.7,
+      "hit40k_inline": 22.27,
+      "hit40k_thread": 30.9
+    },
+    "why_the_noise_floor_decides_it": "Every ratio sits within 4.5% of 1.0 while each arm's own min-of-medians to median-of-medians spread is 15-31%. A signal smaller than the arm's own repeatability is not a signal. No arm is claimed faster than the other, and none is claimed slower.",
+    "process_arm": "IMPOSSIBLE as a drop-in - see process_arm"
+  },
+  "instrument": {
+    "file": "/home/ansible/l13_body_offload.py",
+    "in_repo": false,
+    "why_outside_the_repo": "It is a measurement harness, not application code. Recorded as a limitation, not committed.",
+    "route": "POST /api/v1/posts/by-user/{username}",
+    "why_this_route": "The bead's own notes forbid GET /users/me because D18 establishes by construction that the body scan is POST/PUT/PATCH only. This route was verified empirically: a plain seeded perf_user_* account gets 201 Created with no permission grant, because the route is authenticated and self-scoped and src/app/core/rbac/permissions.py has no posts entry.",
+    "arm_selection": "AttackDetectionMiddleware._BODY_OFFLOAD_THRESHOLD is a class attribute read at request time. inline sets it to 1<<30 so the body falls BELOW the threshold and the scan runs in the event loop thread; thread leaves production 16384 and run_in_executor(None, ...) is untouched. No production file is edited.",
+    "percentiles": "src.benchmarks.percentiles.nearest_rank. int(n*q) is banned tree-wide and is not used.",
+    "no_new_percentile_implementation": "The tree-wide scan in tests/unit/benchmarks/test_percentiles.py fails if a second estimator appears, so this harness imports the one that exists rather than computing a percentile inline."
+  },
+  "protocol": {
+    "accounts": 250,
+    "requests_per_block": 100,
+    "reps": 5,
+    "knee_sweep": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      64
+    ],
+    "knee_factor": 2.0,
+    "knee_rule": "first concurrency whose p95 exceeds 2.0x the concurrency-1 p95",
+    "budgets_relaxed": false,
+    "census_bootstrap_never_called": "census.bootstrap() relaxes every budget to 100000/3600 and would have invalidated the run.",
+    "gc_collect_before_each_rep": true,
+    "fixed_iteration_ceiling": true,
+    "criterion": "report only; never 'new < old'",
+    "ip_account_decoupling": "Every request gets a FRESH loopback source IP while cycling a pool of 250 accounts.",
+    "why_decoupling_was_necessary": "The rate limiter keys on IP (auth budget 5 per 60s) and the tier policy keys on user. A first run drove 100 requests from a single IP and produced 41x403 and 9x429 out of 100 in the very first block - the 429s accumulated violations and the auto-ban then answered 403. That run was discarded. Decoupling keeps each IP at ~1 request so the per-IP budget is satisfied by construction rather than by relaxing it.",
+    "budget_headroom": "2700 measurement requests spread over 250 accounts is ~10.8 per account, far under the seeded accounts' tier limit."
+  },
+  "regimes": {
+    "miss60k": {
+      "wire_bytes": 61473,
+      "prefilter": "skips the compiled regex - the 15 necessary literals are absent, so _attack_prefilter_hit short-circuits",
+      "filler": "b'the quick wiggly daffy numbats puffy kiwis waltzing '",
+      "filler_hazard_recorded": "A lorem-ipsum filler was tried first and CONTAINS the substring 'or' inside 'dolor', so the prefilter admitted it, both regimes ran the full regex, and the ratio was a fake 1.04 per-KB. The filler above is deliberately free of every prefilter literal."
+    },
+    "hit40k": {
+      "wire_bytes": 40992,
+      "prefilter": "admits; the full compiled 17-group regex runs",
+      "sentence": "b'select all rows union '"
+    },
+    "envelope": "Both bodies are wrapped in the real JSON envelope {\"title\":..., \"text\":...} because the middleware scans REQUEST BYTES, not the model field."
+  },
+  "knee_sweep": {
+    "arm": "inline / hit40k",
+    "rows": [
+      {
+        "concurrency": 1,
+        "p50_ms": 31.81,
+        "p95_ms": 43.41,
+        "p95_over_baseline": 1.0,
+        "statuses": {
+          "201": 100
+        }
+      },
+      {
+        "concurrency": 2,
+        "p50_ms": 62.18,
+        "p95_ms": 85.18,
+        "p95_over_baseline": 1.96,
+        "statuses": {
+          "201": 100
+        }
+      },
+      {
+        "concurrency": 4,
+        "p50_ms": 121.42,
+        "p95_ms": 154.93,
+        "p95_over_baseline": 3.57,
+        "statuses": {
+          "201": 96,
+          "429": 4
+        }
+      },
+      {
+        "concurrency": 8,
+        "p50_ms": 237.02,
+        "p95_ms": 306.48,
+        "p95_over_baseline": 7.06,
+        "statuses": {
+          "201": 100
+        }
+      },
+      {
+        "concurrency": 16,
+        "p50_ms": 515.36,
+        "p95_ms": 836.19,
+        "p95_over_baseline": 19.26,
+        "statuses": {
+          "201": 100
+        }
+      },
+      {
+        "concurrency": 32,
+        "p50_ms": 1037.3,
+        "p95_ms": 1387.28,
+        "p95_over_baseline": 31.96,
+        "statuses": {
+          "201": 96,
+          "429": 4
+        }
+      },
+      {
+        "concurrency": 64,
+        "p50_ms": 1979.08,
+        "p95_ms": 2294.17,
+        "p95_over_baseline": 52.85,
+        "statuses": {
+          "201": 100
+        }
+      }
+    ],
+    "knee": 4,
+    "shape": "Monotonic and clean. p95 tracks concurrency almost linearly up to 16 and then flattens in ratio terms, which is the signature of a CPU-bound serial workload on 4 cores, not of a queue that a pool would relieve."
+  },
+  "blocks_at_knee": {
+    "concurrency": 4,
+    "inline/miss60k": {
+      "p95_median_of_medians_ms": 71.123,
+      "p95_min_of_medians_ms": 59.481,
+      "p95_max_of_medians_ms": 109.411,
+      "p50_median_of_medians_ms": 52.204,
+      "p50_min_of_medians_ms": 47.417,
+      "per_rep_p95_ms": [
+        66.472,
+        59.481,
+        71.123,
+        75.899,
+        109.411
+      ],
+      "statuses": {
+        "201": 100,
+        "429": 2
+      }
+    },
+    "thread/miss60k": {
+      "p95_median_of_medians_ms": 68.043,
+      "p95_min_of_medians_ms": 59.323,
+      "p95_max_of_medians_ms": 78.762,
+      "p50_median_of_medians_ms": 53.419,
+      "p50_min_of_medians_ms": 49.288,
+      "per_rep_p95_ms": [
+        61.75,
+        71.606,
+        78.762,
+        68.043,
+        59.323
+      ],
+      "statuses": {
+        "201": 100,
+        "429": 4
+      }
+    },
+    "inline/hit40k": {
+      "p95_median_of_medians_ms": 176.177,
+      "p95_min_of_medians_ms": 144.09,
+      "p95_max_of_medians_ms": 211.907,
+      "p50_median_of_medians_ms": 146.668,
+      "p50_min_of_medians_ms": 120.371,
+      "per_rep_p95_ms": [
+        176.177,
+        168.253,
+        181.055,
+        144.09,
+        211.907
+      ],
+      "statuses": {
+        "201": 100,
+        "429": 4
+      }
+    },
+    "thread/hit40k": {
+      "p95_median_of_medians_ms": 184.163,
+      "p95_min_of_medians_ms": 140.692,
+      "p95_max_of_medians_ms": 199.18,
+      "p50_median_of_medians_ms": 131.692,
+      "p50_min_of_medians_ms": 120.861,
+      "per_rep_p95_ms": [
+        162.024,
+        199.18,
+        190.571,
+        184.163,
+        140.692
+      ],
+      "statuses": {
+        "201": 100,
+        "429": 4
+      }
+    }
+  },
+  "process_arm": {
+    "verdict": "IMPOSSIBLE AS A DROP-IN - three independent reasons, each checked empirically rather than argued",
+    "1_default_executor_rejects_process_pools": {
+      "check": "asyncio.new_event_loop().set_default_executor(ProcessPoolExecutor(max_workers=1))",
+      "succeeded": false,
+      "error": "TypeError: executor must be ThreadPoolExecutor instance",
+      "consequence": "run_in_executor(None, ...) is EXACTLY what production calls at attack_detection.py:534-541. CPython's BaseEventLoop.set_default_executor rejects anything that is not a ThreadPoolExecutor, so the production call site cannot be redirected to a process pool without patching BaseEventLoop.run_in_executor itself."
+    },
+    "2_production_callable_is_not_picklable": {
+      "check": "pickle.dumps of the production lambda shape",
+      "succeeded": false,
+      "error": "AttributeError: Can't get local object 'main.<locals>.<lambda>'",
+      "consequence": "Production submits lambda: self._check_for_patterns(sanitized_body, 'request_body', detected_attacks). A lambda is not picklable, and self is a middleware holding an ASGI app, which is not picklable either. ProcessPoolExecutor.submit would raise before running anything."
+    },
+    "3_in_place_mutation_would_be_lost": {
+      "check": "a list mutated in a child copy is compared against the parent",
+      "mutation_survives": false,
+      "parent_list": [
+        1
+      ],
+      "child_copy": [
+        1,
+        2
+      ],
+      "consequence": "detected_attacks is mutated IN PLACE by the scan. Across a process boundary it is pickled BY VALUE, so an attack the worker found would be discarded and the caller would never learn about it. That is a security regression, not a performance question, and it is the reason this is a blocker rather than an inconvenience."
+    },
+    "conclusion_for_the_acceptance_criterion": "The acceptance asks for a three-arm matrix. Two arms are real and were measured. The third cannot be constructed without first changing production code, which this bead explicitly forbids ('MEASUREMENT BEAD, NOT IMPLEMENTATION'). The three checks above are the evidence for that impossibility claim, and the process THROUGHPUT figure is already supplied by liy7.",
+    "process_throughput_figure": "perf-results/RESULT-20261016-l12/l12_pool_ratios.json (bead liy7, closed): 2.083x inline on the 60 KB miss regime and 2.614x inline on the 40 KB hit regime, median-of-medians, warm fork pool, pool size 4 on 4 cores. That figure exists; it cannot simply be wired into the endpoint."
+  },
+  "interpretation": {
+    "why_no_p95_effect": "The offload moves the scan to the loop's default thread pool, but Python's GIL is held through the regex engine, so the scan does not actually run in parallel. L-12 (liy7) measured the same thing from the other side: a thread pool reached only 1.334x on the miss regime and 0.859x - indistinguishable from parity - on the hit regime, while a process pool reached 2.083x and 2.614x. Two independent harnesses, two different mechanisms, the same conclusion.",
+    "why_the_knee_sweep_betrays_it": "p95 rises almost linearly with concurrency out to 16 and the ratio flattens after. A workload that a pool could relieve would show a knee and then a plateau in ABSOLUTE p95; here absolute p95 keeps climbing with concurrency, which is what a genuinely serial CPU-bound scan does.",
+    "what_this_means_for_a8": "A-8 cannot be a p95 proposal. On the only routes where the body scan is on the path, the existing thread offload buys nothing measurable at p95. It remains a CAPACITY lever at best, and the ADR should say so.",
+    "process_pool_would_change_the_answer": "L-12 says the scan itself is 2.08-2.61x faster in a process pool. If the three production blockers were resolved - a picklable top-level callable instead of the lambda, an explicit result return instead of the in-place mutation, and a patched run_in_executor - then a process arm would plausibly move p95. That is a production change, out of scope here, and NOT claimed."
+  },
+  "measured_vs_inferred": {
+    "measured": [
+      "Knee at concurrency 4 (p95 3.57x the concurrency-1 baseline) on the inline/hit40k arm",
+      "thread/inline p95 ratios: 0.9567 and 0.9973 (miss60k), 1.0453 and 0.9764 (hit40k), median-of-medians and min-of-medians respectively",
+      "Intra-arm noise floors of 14.7-30.9%, which exceed every ratio's distance from 1.0",
+      "A monotonic knee sweep whose absolute p95 keeps climbing to 2294 ms at concurrency 64",
+      "Process arm impossible: TypeError from set_default_executor, AttributeError from pickle, and mutation_survives false",
+      "A discarded first run in which 100 requests from one IP produced 41x403 and 9x429, which is why IP/account decoupling exists"
+    ],
+    "inferred": [
+      "That the GIL is why the thread offload buys nothing - consistent with L-12's independent finding and with CPython holding the GIL through re, but NOT isolated by this harness",
+      "That a process pool WOULD move p95 if the three blockers were fixed - extrapolated from L-12's throughput ratios, never observed at the endpoint"
+    ],
+    "explicitly_not_measured": [
+      "The endpoint with the process arm - impossible, see process_arm",
+      "Any concurrency other than 4 for the arm comparison; the sweep only used the inline/hit40k arm",
+      "Whether a 2-4% rejection rate biases p95. 429 responses are fast and are included in the latency sample, which biases p95 DOWNWARD by at most 2-4%. The ratio conclusion is robust because the contamination is small and balanced across arms (inline 2 and 4, thread 4 and 4).",
+      "A cold-start arm. Both arms use a warm loop and a warm default executor, matching production.",
+      "Throughput or requests-per-second. This bead asks for p95 specifically."
+    ]
+  },
+  "limits": [
+    "The harness lives outside the repo, so this measurement is not reproducible from git. The Phase 0 provenance gate would VOID it. Recorded rather than committing an ad-hoc driver.",
+    "App and database share one host, so these latencies exclude real network and separate-database cost.",
+    "2-4 responses per 100 were rejected with 429 and are still inside the latency sample. This biases p95 down slightly; the parity conclusion survives it.",
+    "Five reps at 100 samples each is enough to place a 15-31% noise floor around the answer but NOT enough to resolve a difference smaller than that. A larger n could in principle reveal a 3-5% effect. This bead's job was to establish that no effect is visible at the stated precision, and that is what the artefact claims - not that the effect is exactly zero.",
+    "The knee was located on the inline/hit40k arm only, then reused for both regimes. The miss regime's true knee could differ.",
+    "The posts route includes a database insert on every request. That insert is constant across arms so it does not bias the DIFFERENCE, but it does dilute the scan's share of absolute p95 and therefore makes this a lower bound on what the offload could contribute."
+  ],
+  "cross_reference": {
+    "liy7_RESULT-20261016-l12": "The throughput half of the same question, and the source of the process figures. Its thread ratios (1.334 miss / 0.859 hit) independently agree with this bead's endpoint ratios (0.957 / 1.045) that a thread pool does not help.",
+    "85l8_RESULT-20261016-m6": "Ranked _check_for_patterns the #2 frame by tottime on GET /users/me. That path carries no body scan at all, which is exactly why D18 rules it out as a target here, and why its ranking cannot be transferred to this route.",
+    "perf_D3_D4": "The clean regime A/B (~4.3x per-KB) that these two bodies reproduce: the hit40k body is ~16.7 ms of scan against the miss60k body's ~1 ms.",
+    "a8": "This is the measurement that decides whether A-8 is a p95 proposal or a capacity lever. The answer is capacity at best."
+  },
+  "closed": true
+}

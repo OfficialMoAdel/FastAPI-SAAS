@@ -51,7 +51,9 @@ def mock_redis():
     # Lua eval - default: success with 1 active session, no evictions
     redis.evalsha = _mock_eval_success(final_count=1)
 
-    # Setup pipeline mock - still needed for invalidate_session, invalidate_all_sessions
+    # Setup pipeline mock - still needed for invalidate_all_sessions. S-6 moved
+    # invalidate_session onto the session_invalidate Lua script, so it no longer
+    # pipelines, but a miss must still be provably unable to delete anything.
     pipe_mock = MagicMock()
     pipe_mock.hset = MagicMock(return_value=pipe_mock)
     pipe_mock.hdel = MagicMock(return_value=pipe_mock)
@@ -120,24 +122,35 @@ class TestSessionManagerHashOperations:
         assert "user_sessions_v2:" in call_args
 
     @pytest.mark.asyncio
-    async def test_invalidate_session_uses_hdel_and_zrem(self, session_manager, mock_redis):
-        """Verify invalidate_session uses HDEL and ZREM via pipeline."""
+    async def test_invalidate_session_removes_from_hash_and_zset_atomically(self, session_manager, mock_redis):
+        """Verify invalidate_session drops the hash field and the zset member in one Lua call.
+
+        S-6 replaced the HEXISTS-then-pipelined-HDEL/ZREM sequence with a single
+        ``session_invalidate`` script. The behaviour under test is unchanged - the
+        session leaves both structures, or neither - but the round-trip count is
+        now one, and that is the property worth pinning.
+        """
         # Arrange
         user_id = "user123"
         session_id = "session_abc"
-        mock_redis.hexists.return_value = True
+        # The script returns 1 when the session existed and was removed.
+        mock_redis.evalsha = AsyncMock(return_value=1)
 
         # Act
         result = await session_manager.invalidate_session(user_id, session_id)
 
         # Assert
         assert result is True
-        mock_redis.hexists.assert_called_once()
-        # Verify pipeline was used for atomic HDEL + ZREM
-        pipe = mock_redis.pipeline.return_value
-        pipe.hdel.assert_called()
-        pipe.zrem.assert_called()
-        pipe.execute.assert_called()
+        mock_redis.evalsha.assert_called_once()
+        # Both keys must reach the script so it can drop the hash field and the
+        # zset member together, and the session id is the only argument.
+        script_args = mock_redis.evalsha.call_args[0]
+        assert script_args[1] == 2
+        assert script_args[2] == f"user_sessions_v2:{user_id}"
+        assert script_args[3] == f"user_sessions_order:{user_id}"
+        assert script_args[4] == session_id
+        # The removal is no longer a separate pipelined step.
+        mock_redis.pipeline.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_count_sessions_uses_zcard_with_hlen_fallback(self, session_manager, mock_redis):
@@ -322,20 +335,27 @@ class TestSessionManagerInvalidation:
 
     @pytest.mark.asyncio
     async def test_invalidate_nonexistent_session_returns_false(self, session_manager, mock_redis):
-        """Verify invalidating non-existent session returns False."""
+        """Verify invalidating non-existent session returns False.
+
+        The existence guard moved inside the ``session_invalidate`` script, so a
+        miss is still answered in a single round trip - it simply reports 0 and
+        removes nothing.
+        """
         # Arrange
         user_id = "user123"
         session_id = "nonexistent"
-        mock_redis.hexists.return_value = False
+        mock_redis.evalsha = AsyncMock(return_value=0)
 
         # Act
         result = await session_manager.invalidate_session(user_id, session_id)
 
         # Assert
         assert result is False
-        # Verify pipeline was not used (early return)
+        mock_redis.evalsha.assert_called_once()
+        # A miss must not touch the structures.
         pipe = mock_redis.pipeline.return_value
-        pipe.execute.assert_not_called()
+        pipe.hdel.assert_not_called()
+        pipe.zrem.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_invalidate_all_sessions_deletes_both_keys(self, session_manager, mock_redis):

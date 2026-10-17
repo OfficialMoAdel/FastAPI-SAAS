@@ -1,0 +1,143 @@
+{
+  "bead": "FastAPI_saas-levg",
+  "item": "C-4 e2e",
+  "title": "prove the job-monitoring pipeline returns the same list in the same order",
+  "bead_closes": "Script committed and green. All 16 assertions pass (outcome PASS). The returned mapping is identical element-for-element to both an independently computed expectation and the pre-C-4 serial loop, in the same key order. MULTI/EXEC are asserted ABSENT on both the client side (the pipeline transaction kwarg is [False]) and the server side (INFO commandstats delta carries no multi and no exec). Redis round trips are asserted against a derived ceiling: 2 observed against 9 for the serial loop.",
+  "measured_at": "2026-10-16",
+  "artefact_kind": "e2e-verification",
+
+  "headline": {
+    "outcome": "PASS",
+    "assertions_total": 16,
+    "assertions_failed": 0,
+    "fixture_size": 8,
+    "in_process_round_trips": 2,
+    "serial_loop_round_trips": 9,
+    "round_trips_saved": 7,
+    "pipeline_flushes": 1,
+    "scan_calls": 1,
+    "pipeline_transaction_kwargs": [false],
+    "server_commandstats_delta": {"info": 1, "hgetall": 8, "scan": 1},
+    "production_source_sha256": "f43f52113cb87857",
+    "endpoint_round_trip_ms": 6.017,
+    "endpoint_request_id": "14d8cdd1-1dc6-4d83-9a78-9d296398d937"
+  },
+
+  "instrument": {
+    "file": "scripts/e2e_job_metrics_pipeline.py",
+    "committed": true,
+    "lines": 699,
+    "route_under_test": "GET /api/v1/admin/jobs/metrics",
+    "route_requires_superuser": true,
+    "why_two_parts": "Three of the four required assertions are not observable over HTTP. MULTI/EXEC absence, the Redis command and round-trip counts, and the exact input _parse_metrics receives are all in-process facts. The HTTP layer can only prove the endpoint's observable contract, so the script carries both halves rather than pretending one suffices.",
+    "exit_codes": "0 success, 1 AssertionFailure, 2 any other exception (precondition failure)",
+    "helpers": {
+      "_step": "the avpc logging spec: request id, method, path, status, the assertion, expected, observed, and both clocks",
+      "_check": "logs and RETURNS the comparison without raising - this is how a non-gating observation is recorded",
+      "_require": "raises AssertionFailure - this is how a gate is enforced",
+      "_serial_reference": "the pre-C-4 serial loop (one awaited HGETALL per key) reimplemented in the script as the equivalence reference, appending order in RAW SCAN order and never sorting",
+      "_digest": "the assertion-(d) mechanism: digests the structure handed to _parse_metrics and compares against digests computed from the script's own fixture"
+    },
+    "observation_vs_gate_mechanism": "The file distinguishes _check (records, never fails the run) from _require (fails the run). That distinction is what lets a fact be published without it becoming a flaky gate."
+  },
+
+  "the_four_required_assertions": {
+    "a_element_for_element_and_in_order": {
+      "gate": "three assertions",
+      "a_production_matches_independent_expectation": "production == a mapping the script computed from its own fixture, never read back out of production",
+      "a_production_matches_serial_loop": "production == _serial_reference, so the pipelined form and the loop C-4 replaced agree exactly",
+      "a_key_order_matches_serial_loop": "list(production) == list(serial_reference), and this run is a REAL test because scan_order_is_sorted is False and scan_order_distinguishable_from_sorted is True"
+    },
+    "b_no_multi_or_exec": {
+      "gate": "three assertions, checked on BOTH sides",
+      "b_production_under_test_is_the_pipelined_form": "greps the LOADED module for client.pipeline(transaction=False), so a run can never certify a different build. This assertion was added because the first green run was vacuous - see failures_below.",
+      "b_pipeline_opened_without_transaction": "the recorded transaction kwargs are exactly [False]; a transactional pipeline would record [True]",
+      "b_no_multi_or_exec_server_side": "INFO commandstats delta across the call is {info: 1, hgetall: 8, scan: 1} - eight HGETALLs executed with NO multi and NO exec, proving transaction=False reached the server. The comparison is exact because this Redis instance is dedicated to perf."
+    },
+    "c_command_count_against_a_fixed_ceiling": {
+      "ceiling_rule": "scan_calls + 1, versus scan_calls + fixture_size before C-4",
+      "observed_round_trips": 2,
+      "serial_loop_round_trips": 9,
+      "scan_calls": 1,
+      "pipeline_flushes": 1,
+      "derived_not_fitted": "The rule is stated in the script as scan_calls + 1 and never as a literal, so it stays honest when the fixture size changes. The pre-C-4 figure is computed by RUNNING the serial loop, not asserted from memory.",
+      "c_round_trips_equal_scans_plus_one_flush_per_batch": "one flush regardless of how many keys the batch held",
+      "c_never_one_flush_per_key": "the failure mode C-4 exists to prevent",
+      "c_strictly_fewer_round_trips_than_the_serial_loop": "2 observed against 9 serial, 7 saved"
+    },
+    "d_parse_metrics_input_unchanged": {
+      "gate": "d_parse_inputs_are_exactly_the_fixture",
+      "method": "the script patches JobMonitoringService._parse_metrics to digest each input, then compares those digests against digests it computed independently from its own fixture",
+      "observed": "8 digests, expected == observed: 15f5e0d41e25847b, 1f301da179b55274, 4f3091a5cca1c5c8, 510d46de38f4a701, 691df39ae67ba74d, b6c9c309ff728175, ea7482fa984ec735, fc1b3c9e1853afbc",
+      "why_digests": "The per-function label in the fixture is what makes mis-pairing visible here. The HTTP response model exposes only five numeric fields, so pairing cannot be proven through the endpoint - only in-process."
+    }
+  },
+
+  "the_e2e_layer": {
+    "e2e_login": "200, request id faeb1ae3-9fc3-4ce3-bf92-16246291ec64, client clock 258.089 ms",
+    "e2e_metrics_endpoint_authorized": "200, request id 20c38c78-034c-4628-889b-1a9fb5dab00c, client clock 4.77 ms",
+    "e2e_metrics_match_independent_expectation": "all 8 functions match the script's independently derived mapping exactly, including bravo with success=0 and therefore avg_duration=0.0, which exercises the division guard in _parse_metrics",
+    "e2e_metrics_key_set_matches_keyspace": "the endpoint returns exactly the functions present in the keyspace and nothing else",
+    "e2e_metrics_key_order_difference": "a NON-GATING observation. orders_match is true: the in-process scan order and the endpoint's order are both [delta, echo, tango, zulu, mike, alpha, yankee, bravo]"
+  },
+
+  "why_the_order_gate_is_a_set_and_not_a_list": {
+    "decision": "The bead asks that the returned list be identical in the same order as the serial loop. That requirement is discharged in-process by a_key_order_matches_serial_loop, where production and the reference are driven by the SAME SCAN on the SAME connection, so the comparison is well-defined.",
+    "why_part_two_gates_the_set": "Part 2 reads over HTTP, on a different connection, from a different SCAN invocation. Redis does not contract SCAN's return order at all, so gating on it would produce a test that can fail for reasons having nothing to do with the code under test. A flaky gate is worse than no gate.",
+    "important_correction": "I initially believed the two orders had DIFFERED, and wrote that down. That was wrong. The apparent mismatch was caused by a bug in my own script (see failures_below), not by Redis. Once fixed, the orders matched exactly. So there is NO evidence here that SCAN order varies across connections, and none is claimed.",
+    "probe_evidence": "A standalone probe inserted 8 scrambled arq:stats:* hashes and ran the production SCAN loop 8 times on ONE connection: 8/8 identical orders, keyspace stable, order stable, and no scan ever returned sorted order. SCAN order was stable and never sorted."
+  },
+
+  "the_avpc_logging_spec": {
+    "required": "each step logs request id, HTTP method and path, response status code, the assertion being evaluated and its expected value, the observed value, and the resolved latency from BOTH clocks",
+    "implemented": true,
+    "server_clock_is_absent": "X-Response-Time is absent from this codebase, so the second clock is unavailable. The script records the header name and reports the server clock as \"absent\" on every HTTP step rather than substituting the client clock and calling it both. A missing clock is recorded as missing.",
+    "client_clock": "measured around each request with time.perf_counter_ns"
+  },
+
+  "failures_below": {
+    "note": "Every one of these was found by RUNNING the script, not by reading it. They are recorded because a green run is only meaningful if the runs that were not green are on the record.",
+    "1_bad_bot_403": "Part 2's login was rejected with \"Forbidden - Bad bot detected\". src/app/middleware/ip_filter.py:186-210 matches the user-agent against _get_bad_bot_regex() and rejects, and httpx's default User-Agent python-httpx/<version> matches. Fixed by presenting a browser UA, the same convention tests/performance/locustfile.py and src/benchmarks/prof_request_path.py already use.",
+    "2_null_profile_image_url": "Login returned 422 VALIDATION_ERROR on profile_image_url. My superuser seed had written NULL into a column that UserAuthInfo.profile_image_url: str declares required and non-optional. Fixed in the seed, then the cached auth payload had to be cleared AND uvicorn restarted - without both, the 422 persisted.",
+    "3_dead_get_fallback_hid_a_missing_value": "Part 2 asserted the endpoint's key order against result.get(\"scan_order\", sorted(comparable)). main() called part_one() and part_two() as two independent functions each building their own result dict, so Part 2 never had Part 1's dict, the key was always absent, and the .get() fallback ALWAYS fired - substituting a sorted list as the expectation while presenting it as a recorded one. The expected value printed as alphabetically sorted, which is what first exposed it. Fixed by passing Part 1's dict into part_two and INDEXING scan_order rather than .get()-ing it, so a future absence fails loudly instead of inventing a value.",
+    "4_the_first_green_run_was_vacuous": "The most serious one. With the fixes in place the script produced a fully green Part 1 - and the equality assertions were MEANINGLESS, because the copy of job_monitoring.py on the Linux target was still the PRE-C-4 serial loop. The serial reference was being compared against serial production, which agree trivially and prove nothing. Only b_pipeline_opened_without_transaction exposed it: the recorded transaction kwargs were [] because production never opened a pipeline at all. Two standalone probes isolated it further - one proved the hook mechanism works in isolation, the other proved the jm.get_redis patch took effect yet the hook still never fired. Fixed by uploading the post-C-4 file to the target, restarting the app, and adding the PERMANENT assertion b_production_under_test_is_the_pipelined_form, which greps the loaded module for client.pipeline(transaction=False) and records production_source_sha256 in the summary. Without that assertion this bead would have been closed on a green run that proved nothing.",
+    "5_a_wrong_precondition_name": "An assertion asserting the fixture fits one SCAN batch was FALSE ADVICE and was renamed to precondition_fixture_is_small_enough_for_one_scan_hint. count=100 is a hint, not a guarantee, and an earlier run had scattered the 8 keys across 7 separate batches."
+  },
+
+  "measured_vs_inferred": {
+    "measured": [
+      "16 assertions pass; outcome PASS; zero failures",
+      "Production returns a mapping identical element-for-element to both an independent expectation and the serial loop",
+      "Key order matches the serial loop, and the scan order was genuinely unsorted so the comparison is not vacuous",
+      "MULTI and EXEC are absent from the server commandstats delta; 8 HGETALLs executed inside 1 flush",
+      "The pipeline was opened with transaction=False",
+      "2 round trips against 9 for the serial loop",
+      "_parse_metrics received exactly the fixture, proven by 8 matching digests",
+      "The endpoint returns exactly the 8 keyspace functions and nothing else"
+    ],
+    "inferred": [
+      "That the same result holds at other keyspace densities. SCAN batch count depends on Redis's internal table layout, so the SAVING varies run to run - an earlier run scattered the keys across 7 batches and saved only 1 round trip. The saving is a property of the keyspace, not a constant."
+    ],
+    "explicitly_not_measured": [
+      "Any endpoint latency claim. 6.017 ms for one admin metrics call is recorded as an observation for the logging spec, not as a performance result.",
+      "Behaviour under a large keyspace, concurrent writers, or key expiry.",
+      "The X-Response-Time server clock, which does not exist in this codebase"
+    ]
+  },
+
+  "limits": [
+    "Low priority by design: this is an admin observability path, not a hot path. The bead says so explicitly.",
+    "The fixture is 8 keys, so the SCAN cost is 1 round trip and the batching win is nearly the whole call. That flatters the saving. It is reported as a measurement of THIS keyspace, not as the saving in general.",
+    "The round-trip saving is density-dependent and was observed to range from 1 to 7 across runs. Any capacity claim needs a stated keyspace size.",
+    "The script requires a superuser and a dedicated Redis, so it is an operator-run e2e, not a unit test. It belongs to the e2e layer, not to pytest.",
+    "Only the metrics route is covered. No other admin observability route was exercised."
+  ],
+
+  "cross_reference": {
+    "vmv0": "The C-4 implementation this verifies. Its acceptance criteria required labelling the item capacity-only, and this artefact confirms the mechanism (one flush per batch) without claiming a throughput number.",
+    "ynxl": "The oracle, tests/unit/core/test_job_monitoring_pipeline.py. This e2e is deliberately independent of it: it re-derives the expected mapping from the script's own fixture rather than sharing code, so a bug in the oracle cannot make both agree.",
+    "avpc": "The e2e layer epic whose logging spec this script implements."
+  },
+
+  "closed": true
+}

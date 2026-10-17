@@ -7,7 +7,7 @@ further — is recorded in docs/adr/0008; these values are the evidence.
 Measured on CPython 3.13.7 / Windows / .venv, reusing the harness helpers in
 test_r5_micros.py (warmup, gc.collect() between batches, min-of-N):
 
-    _scan_request, bodyless GET ....................   6.7 us
+    _scan_request, bodyless GET ....................   6.7 us  [did not reproduce]
     _scan_request, POST 77 B JSON ..................  47.8 us
     _scan_request, POST 60 KB clean (prefilter miss)  1087 us
     _scan_request, POST 40 KB benign 'or' (hit) .... 16015 us
@@ -19,10 +19,17 @@ test_r5_micros.py (warmup, gc.collect() between batches, min-of-N):
 
 Two conclusions this file pins:
 
-1. **A bodyless request is not the cost.** GET costs 6.7 us because the body
-   scan is already method-gated (attack_detection.py, ``_BODY_METHODS``). The
-   added DEBUG log is guarded for exactly this reason: an unguarded structlog
-   ``debug()`` measured 44.6 us, i.e. 6.7x the scan it announces.
+1. **A bodyless request is not the cost.** GET costs almost nothing because the
+   body scan is already method-gated (attack_detection.py, ``_BODY_METHODS``).
+   The DEBUG log on that skip was documented as needing its guard because an
+   unguarded structlog ``debug()`` was measured at 44.6 us -- 6.7x the 6.7 us
+   scan it announces. Both figures did not reproduce, and the premise is
+   false: ``logger.is_enabled_for(logging.DEBUG)`` on this repo's structlog
+   stack returns ``True`` whatever the stdlib root level is, so the guard gates
+   nothing and the log line is emitted on every bodyless GET.
+   ``scripts/s7_scan_cost_probe.py`` re-measures the shape over HTTP; see
+   docs/adr/0008 and the comment at that call site. The conclusion survives
+   because the scan is method-gated, not because of any microsecond constant.
 2. **The cost is the prefilter literal, not the method gate.** ``b"or"`` is a
    necessary literal for ``sql_or`` but is also a substring of color/for/
    order, so ordinary JSON reaches the full 17-group regex.

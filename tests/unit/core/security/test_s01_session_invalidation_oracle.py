@@ -102,7 +102,13 @@ class _FakePipeline:
 
 
 class _FakeSessionsRedis:
-    """In-process stand-in for the session hash + order zset (parity only)."""
+    """In-process stand-in for the session hash + order zset (parity only).
+
+    Emulates the ``session_invalidate`` script's semantics rather than Redis's
+    wire protocol: it is the script's HEXISTS-then-HDEL-then-ZREM that decides
+    the boolean, so the fake has to behave the same way or the parity assertions
+    below would be testing the fake instead of the manager.
+    """
 
     def __init__(self, present: bool) -> None:
         self.hashes: dict[str, dict[str, str]] = {}
@@ -110,18 +116,30 @@ class _FakeSessionsRedis:
         if present:
             self.hashes[f"user_sessions_v2:{USER_ID}"] = {SESSION_ID: '{"created_at": "x"}'}
             self.zsets[f"user_sessions_order:{USER_ID}"] = {SESSION_ID}
-        self.pipelines = 0
+        self.evalsha_calls = 0
+
+    async def evalsha(self, sha1: str, num_keys: int, *keys_and_args: str) -> int:
+        self.evalsha_calls += 1
+        hash_key, zset_key, session_id = keys_and_args[:3]
+        assert num_keys == 2
+        if session_id not in self.hashes.get(hash_key, {}):
+            return 0
+        self.hashes[hash_key].pop(session_id, None)
+        self.zsets.get(zset_key, set()).discard(session_id)
+        return 1
 
     async def hexists(self, key: str, field: str) -> bool:
         return field in self.hashes.get(key, {})
 
     def pipeline(self) -> _FakePipeline:
-        self.pipelines += 1
-        return _FakePipeline(self.hashes, self.zsets)
+        raise AssertionError("invalidate_session must not pipeline after S-6")
 
 
 class _BoomRedis:
     """Raises on operation (not on connect) — the honest Redis-down shape."""
+
+    async def evalsha(self, *_args: Any, **_kwargs: Any) -> int:
+        raise ConnectionError("redis down")
 
     async def hexists(self, *_args: Any, **_kwargs: Any) -> bool:
         raise ConnectionError("redis down")
@@ -152,7 +170,10 @@ class TestBooleanParity:
         client = _FakeSessionsRedis(present=False)
         mgr = _manager(client)
         assert await mgr.invalidate_session(USER_ID, SESSION_ID) is False
-        assert client.pipelines == 0
+        # The script's own HEXISTS guard found nothing, so it wrote nothing.
+        assert client.evalsha_calls == 1
+        assert client.hashes == {}
+        assert client.zsets == {}
 
 
 class TestRedisDownNeverFakesSuccess:
@@ -261,7 +282,17 @@ async def live_redis() -> AsyncIterator[Redis]:
 
 
 class TestCommandFootprint:
-    """HEAD emits 5 server commands per hit (hexists+multi+hdel+zrem+exec)."""
+    """HEAD costs ONE round trip (EVALSHA) on both the hit and the miss path.
+
+    S-6 replaced the old HEXISTS-then-pipelined-HDEL/ZREM with a single
+    ``session_invalidate`` script, so both round trips and the boolean logic
+    moved inside Redis. Redis counts the commands a script invokes in its body
+    individually, so the server-side total is 4 on the hit path (evalsha +
+    hexists + hdel + zrem) and 2 on the miss path (evalsha + the script's own
+    hexists guard, which returns before either delete). The number that matters
+    is the ROUND TRIP — ``cmdstat_evalsha`` — and that is what these assert:
+    one client-to-server command per call, on both paths.
+    """
 
     @pytest.mark.asyncio
     async def test_hit_path_costs_at_most_five_commands(self, live_redis: Redis) -> None:
@@ -270,42 +301,50 @@ class TestCommandFootprint:
         assert min(totals) <= 5
 
     @pytest.mark.asyncio
-    async def test_hit_path_footprint_is_exactly_the_two_round_trips(
+    async def test_hit_path_footprint_is_exactly_one_round_trip(
         self, live_redis: Redis
     ) -> None:
-        """The two round trips are HEXISTS then one MULTI/EXEC pipeline.
+        """The two deletes and the boolean travel in ONE EVALSHA.
 
-        Pinned as a composition floor (each >= 10 over 10 repetitions —
-        shared-instance noise can only add, never remove), not an exact
-        vector, so a concurrent client cannot fail the suite. This pins the
-        atomicity that matters: the two deletes travel in ONE pipeline, so a
-        crash cannot leave the hash and the zset diverged.
+        This assertion was pre-specified as the successor to the old
+        "exactly the two round trips" test: the S-1 diff moves two round trips
+        plus their boolean logic into one EVALSHA, so the mechanism it named was
+        replaced rather than deleted.
 
-        SUCCESSOR, SPECIFIED IN ADVANCE: the S-1 diff replaces all of this
-        with one EVALSHA, so this test MUST be replaced (not deleted) by an
-        ``evalsha >= 10 over 10`` composition assertion when the diff lands.
-        The ceiling test above is what stays green across the diff; this one
-        names the mechanism the diff removes, which is exactly what the
-        bead's own text describes (``moves two round trips plus their boolean
-        logic into one EVALSHA``).
+        Pinned as a composition floor (evalsha >= 10 over 10 repetitions —
+        shared-instance noise can only add, never remove), not an exact vector,
+        so a concurrent client cannot fail the suite. What this pins is the
+        atomicity that matters: MULTI/EXEC must be GONE. Under the old
+        pipelined implementation a crash between the two round trips could leave
+        the hash and the zset diverged; there is no window now.
         """
         seen: dict[str, int] = {}
         for _ in range(10):
             for key, value in (await _footprint(live_redis, present=True)).items():
                 seen[key] = seen.get(key, 0) + value
-        for key in (
-            "cmdstat_hexists",
-            "cmdstat_multi",
-            "cmdstat_hdel",
-            "cmdstat_zrem",
-            "cmdstat_exec",
-        ):
-            assert seen.get(key, 0) >= 10, f"{key} never observed in 10 hit-path calls"
+        assert seen.get("cmdstat_evalsha", 0) >= 10, "EVALSHA never observed in 10 hit-path calls"
+        # The pipelined window is what the Lua call removed; assert it stays gone.
+        assert "cmdstat_multi" not in seen
+        assert "cmdstat_exec" not in seen
+        # The script body still removes the session from BOTH structures.
+        assert seen.get("cmdstat_hexists", 0) >= 10
+        assert seen.get("cmdstat_hdel", 0) >= 10
+        assert seen.get("cmdstat_zrem", 0) >= 10
 
     @pytest.mark.asyncio
-    async def test_miss_path_costs_exactly_one_command(self, live_redis: Redis) -> None:
-        totals = [_total(await _footprint(live_redis, present=False)) for _ in range(10)]
-        assert min(totals) == 1
+    async def test_miss_path_costs_one_round_trip_and_writes_nothing(
+        self, live_redis: Redis
+    ) -> None:
+        """A miss is one EVALSHA that returns 0 having deleted nothing."""
+        seen: dict[str, int] = {}
+        for _ in range(10):
+            for key, value in (await _footprint(live_redis, present=False)).items():
+                seen[key] = seen.get(key, 0) + value
+        assert seen.get("cmdstat_evalsha", 0) >= 10
+        # The existence guard now runs inside the script, so HEXISTS is counted
+        # server-side — but it must return before either delete executes.
+        assert "cmdstat_hdel" not in seen
+        assert "cmdstat_zrem" not in seen
 
     def test_the_info_artifact_is_subtracted_not_counted(self) -> None:
         before = {"cmdstat_hexists": 10, "cmdstat_info": 7}

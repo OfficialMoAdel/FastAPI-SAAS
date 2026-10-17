@@ -273,7 +273,7 @@ def _enforce_user_tenant_match(
 
 async def _resolve_optional_bearer_flow(
     request: Request,
-    db: AsyncSession,
+    db: AsyncSession | None,
     token: str,
     cached_payload: dict[str, Any] | None,
     current_tenant: Any,
@@ -289,6 +289,11 @@ async def _resolve_optional_bearer_flow(
     a garbage/revoked token. API keys follow the same rule in
     ``resolve_principal`` (invalid presented key → 401).
     """
+    if db is None:
+        from src.app.core.db.database import get_db_context
+
+        async with get_db_context() as _db:
+            return await _resolve_optional_bearer_flow(request, _db, token, cached_payload, current_tenant)
     try:
         resolved = await _resolve_token_data(request, token, cached_payload, db)
         token_data, username_or_email, payload_version, _jti, jwt_exp, session_id = resolved
@@ -382,7 +387,7 @@ def enforce_api_key_scope(user: AuthenticatedUser, request: Request | None) -> N
 
 async def resolve_principal(
     request: Request,
-    db: AsyncSession,
+    db: AsyncSession | None = None,
     token: str | None = None,
     api_key_user: AuthenticatedUser | None = None,
     *,
@@ -417,20 +422,26 @@ async def resolve_principal(
     # 1. API-Key flavor
     has_api_key = "X-API-Key" in request.headers if request is not None else False
     if has_api_key:
+        if db is None:
+            from src.app.core.db.database import get_db_context
+
+            async with get_db_context() as _db:
+                if api_key_user is None or not isinstance(api_key_user, AuthenticatedUser):
+                    api_key = request.headers.get("X-API-Key") if request is not None else None
+                    if api_key:
+                        api_key_user = await get_user_by_api_key(api_key, _db, request)
+                if api_key_user is None:
+                    raise denial(DenialReason.INVALID_API_KEY)
+                enforce_api_key_scope(api_key_user, request)
+                return _create_auth_context(api_key_user, None, current_tenant, _db)
         if api_key_user is None or not isinstance(api_key_user, AuthenticatedUser):
             api_key = request.headers.get("X-API-Key") if request is not None else None
             if api_key:
-                api_key_user = await get_user_by_api_key(api_key, db, request)
+                api_key_user = await get_user_by_api_key(api_key, db, request)  # type: ignore[arg-type]
         if api_key_user is None:
-            # C3: an invalid PRESENTED API key is fail-loud (401), never
-            # anonymous — anonymous is only for "no credential presented".
             raise denial(DenialReason.INVALID_API_KEY)
-        # P1-1: scope gate — a valid key with insufficient scopes is an
-        # authorization failure (403), not anonymous, in both required and
-        # optional modes. Never degrade to anonymous here.
         enforce_api_key_scope(api_key_user, request)
-        return _create_auth_context(api_key_user, None, current_tenant, db)
-
+        return _create_auth_context(api_key_user, None, current_tenant, db)  # type: ignore[arg-type]
     # 2. Bearer Token extraction & length check
     if token is None or not token:
         token = await _resolve_bearer_token(request, token or "")
@@ -455,12 +466,17 @@ async def resolve_principal(
 
 async def _resolve_strict_bearer_flow(
     request: Request,
-    db: AsyncSession,
+    db: AsyncSession | None,
     token: str,
-    cached_payload: dict[str, Any] | None,
-    current_tenant: Any,
+
+    cached_payload: Any = None,
+    current_tenant: Any = None,
 ) -> AuthContext:
-    """Strict bearer flow, symmetric with _resolve_optional_bearer_flow."""
+    if db is None:
+        from src.app.core.db.database import get_db_context
+
+        async with get_db_context() as _db:
+            return await _resolve_strict_bearer_flow(request, _db, token, cached_payload, current_tenant)
     resolved = await _resolve_token_data(request, token, cached_payload, db)
     token_data, username_or_email, payload_version, jti, jwt_exp, session_id = resolved
 
@@ -504,15 +520,14 @@ async def _resolve_strict_bearer_flow(
 async def get_current_user(
     request: Request,
     token: Annotated[str, Depends(oauth2_scheme)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
-    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
+    auth_context: Annotated[AuthContext | None, Depends(get_auth_context)] = None,
 ) -> AuthenticatedUser:
     """Get current authenticated user by consuming get_auth_context."""
     if not token or not isinstance(token, str):
         token = await _resolve_bearer_token(request, token or "")
 
     if not auth_context or not isinstance(auth_context, AuthContext):
-        auth_context = await get_auth_context(request, db, token)
+        auth_context = await get_auth_context(request, token=token)
     return auth_context.user
 
 
@@ -568,11 +583,15 @@ async def get_user_by_api_key(
 
 async def _verify_optional_bearer_token(
     token_value: str,
-    db: AsyncSession,
     request: Request,
+    db: AsyncSession | None = None,
     current_tenant: Any = None,
 ) -> AuthContext | None:
     """Verify optional bearer token using the unified resolve_principal seam."""
+    return await resolve_principal(
+        request=request, db=db, token=token_value, policy=OPTIONAL,
+        current_tenant=current_tenant,
+    )
     return await resolve_principal(
         request=request,
         db=db,
@@ -584,22 +603,20 @@ async def _verify_optional_bearer_token(
 
 async def get_optional_auth_context(
     request: Request,
-    db: AsyncSession = Depends(async_get_db),
     api_key_user: AuthenticatedUser | None = Depends(get_user_by_api_key),
 ) -> AuthContext | None:
     """Get optional auth context from API key or token, validating credentials if provided."""
-    return await resolve_principal(request, db, api_key_user=api_key_user, policy=OPTIONAL)
+    return await resolve_principal(request, api_key_user=api_key_user, policy=OPTIONAL)
 
 
 async def get_optional_user(
     request: Request,
-    db: Annotated[AsyncSession, Depends(async_get_db)],
     api_key_user: Annotated[AuthenticatedUser | None, Depends(get_user_by_api_key)] = None,
     auth_context: Annotated[AuthContext | None, Depends(get_optional_auth_context)] = None,
 ) -> AuthenticatedUser | None:
     """Get optional user from Bearer token or API Key by consuming get_optional_auth_context."""
     if not isinstance(auth_context, AuthContext):
-        auth_context = await get_optional_auth_context(request, db, api_key_user)
+        auth_context = await get_optional_auth_context(request, api_key_user=api_key_user)
     if auth_context:
         return auth_context.user
     return None
@@ -659,10 +676,9 @@ async def get_current_superuser(
 
 
 async def _principal_provider(
-    request: Request, db: AsyncSession, token: str | None = None
+    request: Request, token: str | None = None
 ) -> AuthContext | None:
-    """The production ``PrincipalProvider`` consumed by ``core.principal``."""
-    return await resolve_principal(request, db, token=token, policy=REQUIRED)
+    return await resolve_principal(request, token=token, policy=REQUIRED)
 
 
 register_principal_provider(_principal_provider)

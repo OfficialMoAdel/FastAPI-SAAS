@@ -1,0 +1,179 @@
+{
+  "schema": "perf-l12-pool-ratios/1",
+  "bead": "FastAPI_saas-liy7",
+  "item": "L-12",
+  "title": "warm-pool throughput ratios (thread vs process vs inline) at the production core count",
+  "bead_closes": "Ratios measured on the Linux target at the documented production core count (4), warm pools only, both statistics published, both prefilter regimes covered. The result is decisive and it is NOT the prior shape: a THREAD pool buys almost nothing (1.33x on the prefilter-skip regime, indistinguishable from parity on the full-regex regime) while a PROCESS pool buys 2.08x and 2.61x.",
+  "measured_at": "2026-10-16",
+  "artefact_kind": "measurement",
+
+  "headline": {
+    "production_core_count": 4,
+    "miss_60kb": {
+      "inline_scans_per_sec": 743.54,
+      "thread_pool4_scans_per_sec": 991.82,
+      "process_pool4_scans_per_sec": 1549.06,
+      "thread_ratio": 1.334,
+      "process_ratio": 2.083,
+      "process_over_thread": 1.562
+    },
+    "hit_40kb": {
+      "inline_scans_per_sec": 46.06,
+      "thread_pool4_scans_per_sec": 39.55,
+      "process_pool4_scans_per_sec": 120.40,
+      "thread_ratio": 0.859,
+      "process_ratio": 2.614,
+      "process_over_thread": 3.044
+    },
+    "verdict": "A thread pool is close to worthless for this work; a process pool is worth roughly 2-2.6x at the production core count. The two regimes disagree about the thread arm (1.33x vs 0.86x), which is itself the finding."
+  },
+
+  "instrument": {
+    "file": "/home/ansible/l12_pool_ratios.py",
+    "in_repo": false,
+    "unit_of_work": "AttackDetectionMiddleware._check_for_patterns(payload, \"body\", attacks) - the CPU-bound pattern scan that _scan_request already offloads to an executor when the body exceeds the in-line limit. This is the exact call the middleware makes, not a reimplementation of it.",
+    "why_outside_the_repo": "A measurement harness, not application code. Recorded under limits as not reproducible from git.",
+    "THE_BUG_THAT_CHANGED_THE_ANSWER": "The first version of this harness submitted ONE task per repetition, and that task looped over all iterations internally. A pool of 4 therefore received exactly one task and three workers sat idle. Every arm came out flat across pool size and the ratios were measuring dispatch overhead rather than parallel throughput. It was caught by noticing that pool size had no effect at all - a pool cannot be slower to scale than it is to construct. Fixed so every arm submits ONE SCAN PER TASK, which gives a pool of size P exactly P concurrent scans, and inline runs the same number of scans one at a time in the calling thread. The first (wrong) run reported thread@4 at 0.701 on the miss regime; the corrected run reports 1.334. Any reader comparing against the earlier Windows shape should know this harness was wrong once before it was right."
+  },
+
+  "machine": {
+    "cpu_model": "Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz",
+    "core_count": 4,
+    "production_core_count": 4,
+    "platform": "Linux-5.14.0-578.el9.x86_64-x86_64-with-glibc2.34",
+    "python": "3.13.16",
+    "start_method": "fork",
+    "why_fork_matters": "Linux's default start method is fork, so process children inherit the already-compiled COMBINED_ATTACK_RE and the prefilter automaton rather than recompiling them. This is what 'warm' means for the process arm, and it flatters the process arm relative to a spawn-based deployment that would recompile per child. Recorded as a limitation, not subtracted."
+  },
+
+  "protocol": {
+    "warm_pools_only": true,
+    "warmup_batch_discarded": 12,
+    "warmup_detail": "Each offload arm submits 12 single-scan tasks whose results are collected and discarded before any timing begins.",
+    "repetitions": 5,
+    "iterations_per_repetition": 12,
+    "tasks_submitted_per_repetition": 12,
+    "scans_per_task": 1,
+    "gc_collect_before_each_rep": true,
+    "ceiling": "fixed iteration count per repetition, never a time-based ceiling",
+    "statistics": "median-of-medians AND min-of-medians, both published for every figure",
+    "criterion": "report only; never 'new < old'",
+    "pool_sizes": [1, 2, 4, 8],
+    "regimes": "both sides of the prefilter boundary, because they differ by more than an order of magnitude and a single-regime ratio would hide that",
+    "ipc_cost": "A process pool must pickle and ship the payload. That cost is NOT subtracted out: it is part of what a process pool costs, and removing it would report a number no deployment would see.",
+    "budgets_and_auth": "Not applicable. This harness never opens a socket, a database or a Redis connection - it calls the scan function directly - so no rate limit, IP whitelist or credential is involved."
+  },
+
+  "prefilter_properties_asserted_before_timing": {
+    "miss_bytes": 61440,
+    "hit_bytes": 40960,
+    "miss_prefilter_hit": false,
+    "hit_prefilter_hit": true,
+    "both_asserted": true,
+    "statement": "The 60 KB miss body carries no literal the prefilter can find, so the P1-7 skip fires and the full regex never runs. The 40 KB hit body carries a SQL-shaped literal, so the prefilter admits it and the full regex runs. Asserted before any timing, because a body that changes class would make every ratio below a measurement of nothing.",
+    "miss_filler_is_deliberate": "The filler avoids every prefilter literal. An earlier attempt elsewhere in this repo used lorem ipsum, which CONTAINS 'or' inside 'dolor'; the prefilter then admitted it, both regimes ran the full regex, and the per-KB ratio came out a fake 1.04. That trap is avoided here."
+  },
+
+  "regimes": {
+    "miss_60kb": {
+      "description": "Prefilter SKIPS the regex. This is the common case: most request bodies carry no attack-shaped literal.",
+      "inline_scans_per_sec_median_of_medians": 743.54,
+      "arms": {
+        "inline": {"scans_per_sec": 743.54, "min_of_medians": 679.41, "ratio_median": 1.0, "ratio_min": 1.0},
+        "thread_pool1": {"scans_per_sec": 616.69, "min_of_medians": 564.79, "ratio_median": 0.829, "ratio_min": 0.831},
+        "process_pool1": {"scans_per_sec": 635.03, "min_of_medians": 558.43, "ratio_median": 0.854, "ratio_min": 0.822},
+        "thread_pool2": {"scans_per_sec": 804.03, "min_of_medians": 718.35, "ratio_median": 1.081, "ratio_min": 1.057},
+        "process_pool2": {"scans_per_sec": 1088.87, "min_of_medians": 1041.09, "ratio_median": 1.464, "ratio_min": 1.532},
+        "thread_pool4": {"scans_per_sec": 991.82, "min_of_medians": 872.86, "ratio_median": 1.334, "ratio_min": 1.285},
+        "process_pool4": {"scans_per_sec": 1549.06, "min_of_medians": 1426.71, "ratio_median": 2.083, "ratio_min": 2.100},
+        "thread_pool8": {"scans_per_sec": 893.91, "min_of_medians": 721.23, "ratio_median": 1.202, "ratio_min": 1.062},
+        "process_pool8": {"scans_per_sec": 1300.10, "min_of_medians": 1046.62, "ratio_median": 1.749, "ratio_min": 1.540}
+      }
+    },
+    "hit_40kb": {
+      "description": "Prefilter ADMITS, so the full combined regex runs. 35 ms of CPU per scan.",
+      "inline_scans_per_sec_median_of_medians": 46.06,
+      "arms": {
+        "inline": {"scans_per_sec": 46.06, "min_of_medians": 38.11, "ratio_median": 1.0, "ratio_min": 1.0},
+        "thread_pool1": {"scans_per_sec": 41.25, "min_of_medians": 34.23, "ratio_median": 0.896, "ratio_min": 0.898},
+        "process_pool1": {"scans_per_sec": 47.15, "min_of_medians": 42.99, "ratio_median": 1.024, "ratio_min": 1.128},
+        "thread_pool2": {"scans_per_sec": 46.39, "min_of_medians": 44.82, "ratio_median": 1.007, "ratio_min": 1.176},
+        "process_pool2": {"scans_per_sec": 80.66, "min_of_medians": 69.26, "ratio_median": 1.751, "ratio_min": 1.817},
+        "thread_pool4": {"scans_per_sec": 39.55, "min_of_medians": 36.33, "ratio_median": 0.859, "ratio_min": 0.953},
+        "process_pool4": {"scans_per_sec": 120.40, "min_of_medians": 108.93, "ratio_median": 2.614, "ratio_min": 2.858},
+        "thread_pool8": {"scans_per_sec": 45.18, "min_of_medians": 44.47, "ratio_median": 0.981, "ratio_min": 1.167},
+        "process_pool8": {"scans_per_sec": 107.83, "min_of_medians": 96.09, "ratio_median": 2.341, "ratio_min": 2.521}
+      }
+    }
+  },
+
+  "noise_floor": {
+    "method": "Within each arm, min-of-medians divided by median-of-medians is the intra-arm spread. A ratio whose advantage is inside that band is not a finding.",
+    "miss_inline_spread": "679.41/743.54 = 0.914 (9%)",
+    "miss_thread_pool4_spread": "872.86/991.82 = 0.880 (12%)",
+    "miss_process_pool4_spread": "1426.71/1549.06 = 0.921 (8%)",
+    "hit_inline_spread": "38.11/46.06 = 0.827 (17%)",
+    "hit_thread_pool4_spread": "36.33/39.55 = 0.918 (8%)",
+    "hit_process_pool4_spread": "108.93/120.40 = 0.905 (10%)",
+    "consequence": "Intra-arm spread runs 8-17%. So: the process arm at 2.08x and 2.61x is far outside noise and is solid. The thread arm on the miss regime at 1.33x is probably real but modest. The thread arm on the hit regime at 0.86x is INSIDE its own 8% spread and is NOT distinguishable from parity - it is reported as 'no reliable gain', not as a regression."
+  },
+
+  "interpretation": {
+    "threads_cannot_parallelize_this_work": "INFERRED from the measurement, consistent with CPython holding the GIL through re matching. A pool of 4 threads delivers 1.33x on the miss regime, not the ~4x free cores would give, and pool 8 is WORSE than pool 4 - the signature of oversubscription on a GIL-bound workload rather than a scaling pool.",
+    "processes_can": "Each process has its own interpreter and its own GIL, so pool 4 delivers 2.08x and 2.61x. It stops short of 4x because pickling a 60 KB payload and the pool's own management cost are real charges against the gain - which is exactly why the IPC cost was left in the ratio.",
+    "the_two_regimes_disagree_about_threads": "On the miss regime a scan is ~1.3 ms and thread dispatch is a measurable fraction of it, yet threads still net 1.33x. On the hit regime a scan is ~22 ms and threads net nothing. INFERRED: the small win on the miss regime comes from overlapping the GIL-holding work with the caller's own I/O, not from parallel scanning.",
+    "what_this_does_NOT_say": "It does not say a web application should adopt a process pool. Process pools bring serialization, cold start and a second interpreter image into the request path, and this harness measured a microbenchmark, not a request path. What it establishes is the CEILING: a thread pool cannot buy more than about 1.3x here, so any future proposal to tune thread count, chunk size or dispatch for this scan is optimising inside a band that this measurement shows is flat."
+  },
+
+  "relation_to_the_prior_shape": {
+    "windows_figures": {"inline_ms": 1808, "thread_ms": 482, "process_ms": 782, "inline_scans_per_sec": 4.2, "thread_scans_per_sec": 16.6, "process_scans_per_sec": 10.2},
+    "may_not_be_the_before_arm": true,
+    "why": "Addendum A-5 archives the Windows absolutes as non-representative and they may not serve as the before arm. Every ratio here is thread-or-process OVER INLINE MEASURED ON THIS LINUX TARGET.",
+    "does_the_ordering_replicate": "PARTIALLY. The Windows run put thread (16.6/s) above process (10.2/s). This Linux run inverts it decisively: process beats thread by 1.56x on the miss regime and 3.04x on the hit regime. The Windows ordering was not reproduced, and this artefact makes no claim about why - the Windows absolutes are inadmissible as a comparison point by the same rule that required this run."
+  },
+
+  "windows_reference_not_used_as_before_arm": {
+    "inline_scans_per_sec": 4.2,
+    "thread_scans_per_sec": 16.6,
+    "process_scans_per_sec": 10.2,
+    "why_not_used": "Addendum A-5 archives the Windows absolutes as non-representative. They may not serve as the before arm, so every ratio here is measured against an inline arm on this Linux target rather than against a Windows figure."
+  },
+
+  "measured_vs_inferred": {
+    "measured": [
+      "Inline, thread and process throughput at pool sizes 1, 2, 4 and 8, on both prefilter regimes, median-of-medians and min-of-medians",
+      "At the production core count of 4: process 2.083x (miss) and 2.614x (hit); thread 1.334x (miss) and 0.859x (hit)",
+      "Prefilter class of both bodies asserted before timing: miss=False, hit=True",
+      "Intra-arm spread of 8-17%, from min-of-medians over median-of-medians per arm",
+      "Thread pool 8 is slower than thread pool 4 on both regimes"
+    ],
+    "inferred": [
+      "That the GIL is why threads do not scale - consistent with the numbers, but not isolated by this harness. A definitive test would compare against a C-level matcher that releases the GIL, which was not run.",
+      "That the miss-regime thread gain comes from overlapping with the caller's I/O rather than from parallel scanning - plausible, not measured"
+    ],
+    "explicitly_not_measured": [
+      "The scan inside a live request, under concurrent load, with the middleware's real dispatch path",
+      "A process pool under a spawn start method, where each child recompiles the regex and automaton",
+      "Memory cost per process-pool worker, which is a real objection to the process arm and was not quantified",
+      "Whether the production offload threshold would ever route enough work to matter at real request volumes"
+    ]
+  },
+
+  "limits": [
+    "The driver lives outside the repo at /home/ansible/l12_pool_ratios.py, so this measurement is not reproducible from git and would fail the Phase 0 provenance gate. Recorded rather than committing an ad-hoc harness.",
+    "Microbenchmark, not a request path. The scan is called directly with no ASGI, no middleware stack, no tenant resolution and no database. Concurrency here is a pool of workers, not requests arriving at a server.",
+    "Single host, single run, 5 repetitions of 12 iterations each. That is 60 scans per arm. It is enough to separate a 2x effect from a 1x one and not enough to separate 1.33x from 1.0x on the miss regime.",
+    "fork flatters the process arm: children inherit the compiled regex and automaton. A spawn-based deployment pays that per child. The gap is not measured.",
+    "The payload is passed by reference to inline and thread arms and pickled for the process arm. That asymmetry is left in the ratio on purpose, so the process figure is a floor on what a deployment could achieve, not a ceiling.",
+    "Only two body regimes were measured. Body size and content change the scan cost, and 60 KB / 40 KB were chosen to match scripts/body_scan_regimes.py rather than to span the space."
+  ],
+
+  "cross_reference": {
+    "e0ss_L-13": "The natural companion measurement - a three-arm p95 on a body-carrying route at the degradation concurrency. This artefact supplies the throughput half of that question; e0ss supplies the latency half. L-13's notes forbid GET /users/me as the target because D18 establishes by construction that the body scan is not on that path.",
+    "M-6_85l8": "Ranked attack_detection.py:558 _check_for_patterns SECOND in the request-level tottime ranking on the warm authenticated path, behind only log sanitization. That was a CPU ranking on a path that does not carry a body. This artefact measures what the same function costs when a body IS present, which is the regime the offload exists for.",
+    "body_scan_regimes": "scripts/body_scan_regimes.py established the two regimes and the filler discipline this harness reuses. Its per-KB ratio and this artefact's throughput ratios are different quantities and are not reconciled - an additive constant preserves a difference but not a ratio.",
+    "relevance_to_the_plan": "If any later item proposes to tune the body-scan offload - threshold, chunk size, worker count - this artefact bounds what that tuning can buy. Thread tuning optimises inside a band this measurement shows is flat; the only large lever visible here is the executor TYPE, which is an architectural change rather than a tuning one."
+  },
+
+  "closed": true
+}

@@ -1,18 +1,22 @@
 """C-4 oracle: one pipeline with ``transaction=False`` replaces N serial HGETALLs.
 
 Bead ``FastAPI_saas-ynxl``. ``JobMonitoringService.get_job_metrics``
-(``src/app/core/job_monitoring.py:120-145``) scans ``arq:stats:*`` and then
-issues one ``hgetall`` per key — N serial round trips. The C-4 diff batches
-them into a single pipeline. This oracle pins the equivalence the diff must
-preserve, BEFORE the diff:
+(``src/app/core/job_monitoring.py:120-145``) scans ``arq:stats:*`` and issued
+one ``hgetall`` per key — N serial round trips. C-4 batches them into a single
+pipeline, and that diff HAS LANDED, so these tests pin PRODUCTION directly
+rather than an in-test copy of the intended shape: a helper that merely
+mirrors what production does proves nothing about production.
 
-1. ``pipeline(transaction=False)`` is used EXACTLY ONCE — the keyword is
+Three properties, all asserted against ``monitor.get_job_metrics()``:
+
+1. ``pipeline(transaction=False)`` is opened EXACTLY ONCE — the keyword is
    asserted, not just pipeline use, because ``transaction=False`` (no
    MULTI/EXEC) is the load-bearing part of the change.
-2. ``execute()`` returns the SAME LIST IN THE SAME ORDER as the serial loop
-   for a fixed fixture — order, not just set (per-subscriber FIFO is not the
-   issue here; key-order stability of the metrics mapping is).
-3. Command count goes N -> 1 (plus the scan both paths share).
+2. The returned mapping matches the PRE-C-4 serial loop exactly, including
+   key order — order, not just set (key-order stability of the metrics
+   mapping is the point).
+3. Command count goes N -> 1 (plus the scan both paths share), with the
+   HGETALLs observed zero times outside the pipeline.
 
 Harness note (the bead's "confirm first" requirement): ``fakeredis`` is NOT
 installed, and the repo's shared ``FakeRedisPipeline`` accepts the
@@ -98,24 +102,23 @@ def _fresh_fake() -> _FakeMonitorRedis:
     return _FakeMonitorRedis({name: dict(values) for name, values in _FIXTURE_HASHES})
 
 
-async def _pipelined_snapshot(
+async def _serial_snapshot(
     monitor: JobMonitoringService, client: _FakeMonitorRedis
 ) -> dict[str, dict[str, Any]]:
-    """The shape the C-4 diff will take: one pipeline, N buffered HGETALLs.
+    """The PRE-C-4 shape: N serial HGETALLs, one round trip per key.
 
-    Lives in the test (not production) until the diff lands; the equality
-    test below is the contract the diff must satisfy. ``transaction=False``
-    is load-bearing — without it the pipeline wraps reads in MULTI/EXEC.
+    Kept as the equivalence reference now that production is pipelined. If the
+    batching ever changed which keys are returned, in what order, or how their
+    values are parsed, production would drift from this and the equality test
+    below would bite. Reading it through the same fake keeps the two paths
+    comparable command-for-command.
     """
     _, keys = await client.scan(0, match=f"{JOB_STATS_PREFIX}*", count=100)
-    pipe = client.pipeline(transaction=False)
-    for key in keys:
-        pipe.hgetall(key)
-    datas = await pipe.execute()
     stats: dict[str, dict[str, Any]] = {}
-    for key, data in zip(keys, datas):
+    for key in keys:
         key_str = key.decode("utf-8") if isinstance(key, bytes) else key
         func_name = key_str.replace(JOB_STATS_PREFIX, "")
+        data = await client.hgetall(key)
         if data:
             stats[func_name] = monitor._parse_metrics(data)
     return stats
@@ -123,6 +126,10 @@ async def _pipelined_snapshot(
 
 def _hgetall_count(client: _FakeMonitorRedis) -> int:
     return sum(1 for entry in client.commands if entry[0] == "HGETALL")
+
+
+def _executes(client: _FakeMonitorRedis) -> list[tuple[str, Any]]:
+    return [entry for entry in client.commands if entry[0] == "EXECUTE"]
 
 
 class TestTheFakeSupportsWhatTheOracleNeeds:
@@ -141,39 +148,44 @@ class TestTheFakeSupportsWhatTheOracleNeeds:
         assert keys == [name for name, _ in _FIXTURE_HASHES]
 
 
-class TestSerialAndPipelinedAgree:
-    async def test_execute_returns_the_same_ordered_mapping_as_the_serial_loop(
+class TestProductionBatchesAndStillAgreesWithTheSerialLoop:
+    async def test_production_returns_the_same_ordered_mapping_as_the_serial_loop(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monitor = JobMonitoringService()
         serial_client = _fresh_fake()
-        monkeypatch.setattr("src.app.core.job_monitoring.get_redis", lambda: serial_client)
-        serial_stats = await monitor.get_job_metrics()
+        serial_stats = await _serial_snapshot(monitor, serial_client)
         assert serial_stats, "an empty serial result would make the equality vacuous"
-        assert list(serial_stats.keys()) == list(_FIXTURE_ORDER)
 
         pipelined_client = _fresh_fake()
-        pipelined_stats = await _pipelined_snapshot(monitor, pipelined_client)
-        assert pipelined_stats == serial_stats
-        assert list(pipelined_stats.keys()) == list(serial_stats.keys())
+        monkeypatch.setattr("src.app.core.job_monitoring.get_redis", lambda: pipelined_client)
+        production_stats = await monitor.get_job_metrics()
 
-    async def test_pipeline_is_opened_with_transaction_false_exactly_once(self) -> None:
+        assert production_stats == serial_stats
+        assert list(production_stats.keys()) == list(serial_stats.keys())
+        assert list(production_stats.keys()) == list(_FIXTURE_ORDER)
+
+    async def test_production_opens_one_non_transactional_pipeline_and_never_pipelines_twice(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monitor = JobMonitoringService()
         client = _fresh_fake()
-        await _pipelined_snapshot(monitor, client)
+        monkeypatch.setattr("src.app.core.job_monitoring.get_redis", lambda: client)
+        await monitor.get_job_metrics()
+
         pipeline_opens = [entry for entry in client.commands if entry[0] == "PIPELINE"]
         assert pipeline_opens == [("PIPELINE", False)]
 
-    async def test_command_count_goes_from_n_to_one(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_production_command_count_goes_from_n_to_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monitor = JobMonitoringService()
+
         serial_client = _fresh_fake()
-        monkeypatch.setattr("src.app.core.job_monitoring.get_redis", lambda: serial_client)
-        await monitor.get_job_metrics()
+        await _serial_snapshot(monitor, serial_client)
         assert _hgetall_count(serial_client) == len(_FIXTURE_HASHES)
 
-        pipelined_client = _fresh_fake()
-        await _pipelined_snapshot(monitor, pipelined_client)
-        assert _hgetall_count(pipelined_client) == 0
-        assert ("EXECUTE", len(_FIXTURE_HASHES)) in pipelined_client.commands
+        production_client = _fresh_fake()
+        monkeypatch.setattr("src.app.core.job_monitoring.get_redis", lambda: production_client)
+        await monitor.get_job_metrics()
+
+        assert _hgetall_count(production_client) == 0
+        assert _executes(production_client) == [("EXECUTE", len(_FIXTURE_HASHES))]

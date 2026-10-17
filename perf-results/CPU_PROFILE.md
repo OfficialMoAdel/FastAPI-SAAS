@@ -51,3 +51,41 @@ as present and irrelevant as *sole* explanations.
 
 Any plan revision must therefore not assume a profile will name the hot spot.
 This record is the discharge.
+
+## Independent replication, and the `rate_limit_gcra` correction (M-6 / `85l8`)
+
+`perf-results/RESULT-20261016-m6/m6_linux_request_profile.json` re-ran this same
+harness on the same host and **replicates the conclusion on a different date, a
+different request count, and a 3.6x different absolute window**:
+
+| | `cekt` (2026-10-12) | M-6 replicate | M-6 primary |
+|---|---|---|---|
+| requests profiled | 25 | 300 | 300 |
+| profiled window | 0.205 s | 7.326 s | 26.340 s |
+| **top-5 tottime share** | **2.8 %** | **2.62 %** | **2.64 %** |
+
+The ranking replicates too: `log_sanitizer.py:192(<genexpr>)` and
+`attack_detection.py:558(_check_for_patterns)` are #1 and #2 in all three, and the
+same five-frame set occupies the top-5. Three independent runs, one verdict.
+
+**What M-6 adds that this record does not contain:**
+
+1. **The `rate_limit_gcra` mis-attribution is corrected.** The pack's census named
+   it at **6 624 us / 37.7 %**. Measured: `EVALSHA(rate_limit_gcra)` runs at
+   **1.00/req** on this warm authenticated path (so the premise that it "does not
+   execute there" is false), and its CPU share is **0.28 %** — the census figure was
+   overstated by **~135x**. Both M-6 runs agree to three significant figures.
+2. **Admissible wall-clock, because this record is CPU-only.** The same run timed
+   each middleware to `http.response.start`: the guard stack is **5 028.5 us = 42.2 %**
+   of GET `/users/me` but **6 529.2 us = 9.6 %** of POST `/account/refresh` (whose
+   handler grew to 61 656.6 us). Round-trips: GET issues **0.00 SQL / 3.00 Redis**,
+   refresh **1.00 SQL / 10.01 Redis**.
+3. **Why a CPU profile of this request is flat.** Idle is 0.00 %, and Redis work is
+   awaited on an event loop, so round-trip *wait* is recorded as neither CPU nor
+   idle. That is the whole gap: GCRA is 0.28 % of CPU but `RateLimitMiddleware` is
+   3 539.9 us of a 16 829 us mean request. The CPU profile cannot see the dominant
+   cost, which is why the top-5 lands at 2.6 %.
+
+So the "wins are in breadth, not depth" conclusion above stands and is now
+**explained**: the breadth is Redis round-trips, not a flat spread of CPU. Any
+revision should be argued from round-trip counts, not from cProfile shares.

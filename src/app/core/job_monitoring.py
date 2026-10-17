@@ -131,13 +131,18 @@ class JobMonitoringService:
 
         while True:
             cursor, keys = await client.scan(cursor, match=f"{JOB_STATS_PREFIX}*", count=100)  # type: ignore[no-any-return]
-            for key in keys:
-                key_str = key.decode("utf-8") if isinstance(key, bytes) else key
-                func_name = key_str.replace(JOB_STATS_PREFIX, "")
+            if keys:
+                async with client.pipeline(transaction=False) as pipe:  # type: ignore[no-any-return]
+                    for key in keys:
+                        pipe.hgetall(key)
+                    datas = await pipe.execute()  # type: ignore[misc]
 
-                data = await client.hgetall(key)  # type: ignore[misc]
-                if data:
-                    stats[func_name] = self._parse_metrics(data)
+                for key, data in zip(keys, datas, strict=True):
+                    key_str = key.decode("utf-8") if isinstance(key, bytes) else key
+                    func_name = key_str.replace(JOB_STATS_PREFIX, "")
+
+                    if data:
+                        stats[func_name] = self._parse_metrics(data)
 
             if cursor == 0:
                 break

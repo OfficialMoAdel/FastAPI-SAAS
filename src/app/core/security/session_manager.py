@@ -302,16 +302,16 @@ class SessionManager:
         zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
         try:
-            # Check if session exists before deleting
-            exists = await client.hexists(hash_key, session_id)
-            if not exists:
-                return False
+            from src.app.core.utils.lua_manager import get_lua_manager
 
-            # Delete from both Hash and ZSET atomically - O(1) + O(log n)
-            async with client.pipeline() as pipe:
-                pipe.hdel(hash_key, session_id)
-                pipe.zrem(zset_key, session_id)
-                await pipe.execute()
+            result = await get_lua_manager().execute(
+                client,
+                "session_invalidate",
+                keys=[hash_key, zset_key],
+                args=[session_id],
+            )
+            if not result:
+                return False
         except Exception as e:  # noqa: BLE001 - surface failure, never fake success
             logger.error("session_invalidation_failed", user_id=user_id, session_id=session_id, error=str(e))
             return False

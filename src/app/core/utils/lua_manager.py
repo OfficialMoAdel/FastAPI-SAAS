@@ -335,6 +335,20 @@ class LuaScriptManager:
             end
             return result
         """,
+        # Session invalidate: check-exists + HDEL + ZREM in a single atomic
+        # operation so commandstats on Redis sees ONE EVALSHA per invalidate
+        # call (S-1, dxra-adjacent). Returns 1 if the session existed and was
+        # removed, 0 when it was absent.
+        "session_invalidate": """
+            -- KEYS[1]: session hash key, KEYS[2]: session order zset key
+            -- ARGV[1]: session_id
+            if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then
+                return 0
+            end
+            redis.call('HDEL', KEYS[1], ARGV[1])
+            redis.call('ZREM', KEYS[2], ARGV[1])
+            return 1
+        """,
         # MFA lockout: atomic check + increment
         # (migrated from mfa/service._MFA_CHECK_LUA)
         "mfa_lockout_check": """

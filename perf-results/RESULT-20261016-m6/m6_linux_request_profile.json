@@ -1,0 +1,250 @@
+{
+  "bead": "FastAPI_saas-85l8",
+  "item": "M-6",
+  "title": "M-6: replace the inadmissible cProfile decomposition with a Linux profile that keeps only the RANKING",
+  "bead_closes": "M-6 (85l8)",
+  "measured_at": "2026-10-16T19:45:59Z/2026-10-16T19:48Z",
+  "artefact_kind": "perf-results/RESULT-<YYYYMMDD>-<slug>/<name>.json",
+
+  "instrument": {
+    "path": "src/benchmarks/prof_request_path.py",
+    "provenance": "promoted out of the gitignored scratch dir reports/perf_review_2026-10-04/ specifically so the instrument is recoverable from git",
+    "invocation": "cd ~/head && .venv/bin/python src/benchmarks/prof_request_path.py --n 300 --n-post 100",
+    "invocation_pyi": "same, plus --pyinstrument (attempt 1 only; see failures_below)",
+    "writes_under_src": false,
+    "driver": "in-process asyncio (httpx ASGITransport + asgi_lifespan). cProfile is THREAD-LOCAL and Starlette's TestClient drives the app on a blocking-portal thread, so a profile taken from the main thread under TestClient sees nothing.",
+    "fixture": {
+      "tenant": "test-tenant-e2e",
+      "email": "e2e_test@example.com",
+      "password": "TestPassword123!",
+      "note": "created on the app host for this run; the repo's own e2e suite had never been executed there, and perf-local's perf_db holds only the seeded perf_user_* accounts (password Str1ngst!). Verified: 'LOGIN FAIL' count = 0 in both runs."
+    },
+    "bcrypt": "paid once during login, OUTSIDE every measured window (see perf-results/RESULT-20261016-bcrypt/l15_bcrypt_cost.json for the cost factor: 271.395 ms median-of-rep-medians at rounds=12 on this CPU)"
+  },
+
+  "machine": {
+    "cpu_model": "Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz",
+    "core_count": 4,
+    "platform": "Linux-5.14.0-578.el9.x86_64-x86_64-with-glibc2.34",
+    "python": "3.13.16",
+    "app_host": "192.168.121.147 (perf-local)",
+    "repo_root": "/home/ansible/head",
+    "is_declared_production_cpu": true,
+    "why": "matches the certified reports/app_host_report.json cpu_model/cpu_count used for Phase 0 Step 4"
+  },
+
+  "runs": {
+    "primary": "run 2 (exit 0, JSON written)",
+    "replicate": "run 1 (exit 1 at the final line only; every phase printed)",
+    "note_on_absolute_windows": "The two runs used the SAME command and the SAME request count, yet their cProfile windows differ by 3.6x (7.326 s vs 26.340 s). That swing is itself the strongest evidence that cProfile absolutes are not comparable, and it is why only the FRACTION is reported as the finding. The FRACTION is the stable quantity: 2.62% vs 2.64%."
+  },
+
+  "cprofile_measurement": {
+    "cpu_denominator_ms": 26339.80,
+    "profiled_window_s": 26.340,
+    "function_calls": 2541726,
+    "primitive_calls": 2467956,
+    "idle_ms": 0.0,
+    "idle_pct": 0.0,
+    "idle_note": "0.00% idle: this is a single-threaded CPU-bound in-process profile, so top-5 tottime / CPU denominator is a valid fraction of the profiled window.",
+    "caveat": "the window also contains the harness's own driver (prof_request_path.py:141 __call__) and the httpx client, because client and server share one process. A server-only figure would differ.",
+    "replicate_cpu_denominator_ms": 7326.48,
+    "replicate_profiled_window_s": 7.326
+  },
+
+  "acceptance_criterion": {
+    "requirement_verbatim": "A Linux request-level profile whose top-5 tottime accounts for a stated fraction of the request, with the fraction written down; if it does not, the plan is rewritten rather than the profile accepted; the rate_limit_gcra mis-attribution explicitly corrected.",
+    "stated_fraction_pct": 2.64,
+    "stated_fraction_ms": 695.50,
+    "stated_fraction_pct_replicate": 2.62,
+    "stated_fraction_ms_replicate": 191.67,
+    "verdict": "FAILS THE CONCENTRATION CRITERION. The top-5 accounts for 2.64% of the profiled window, not a dominant fraction. Per the bead's own conditional, THE PLAN IS REWRITTEN AND THE PROFILE IS NOT ACCEPTED as a decomposition of the request.",
+    "not_fudged": "The fraction was not rescued by choosing a flattering denominator. `other` is 65.33% of the window and the httpx client 7.76%; using either, or the per-request cumtime (~11.9 ms), would have manufactured concentration that does not exist."
+  },
+
+  "top5_tottime_primary_run": [
+    { "rank": 1, "frame": "src/app/core/observability/log_sanitizer.py:192(<genexpr>)", "tottime_ms": 233.34, "cumtime_ms": 233.34, "pct_of_cpu": 0.89 },
+    { "rank": 2, "frame": "src/app/middleware/attack_detection.py:558(_check_for_patterns)", "tottime_ms": 175.60, "cumtime_ms": 282.35, "pct_of_cpu": 0.67 },
+    { "rank": 3, "frame": "src/app/core/observability/log_sanitizer.py:182(_maybe_sensitive)", "tottime_ms": 112.97, "cumtime_ms": 666.05, "pct_of_cpu": 0.43 },
+    { "rank": 4, "frame": "src/app/core/observability/log_sanitizer.py:333(__call__)", "tottime_ms": 87.59, "cumtime_ms": 943.59, "pct_of_cpu": 0.33 },
+    { "rank": 5, "frame": "src/app/core/observability/log_sanitizer.py:252(sanitize_value)", "tottime_ms": 86.00, "cumtime_ms": 848.31, "pct_of_cpu": 0.33 }
+  ],
+  "top5_ranking_replicates": true,
+  "top5_ranking_note": "Ranks 1,2,3 are identical across both runs. Ranks 4 and 5 swap, but both are log_sanitizer frames. The SET of five frames is identical across runs. The ranking is what the bead says survives cProfile, and it replicates.",
+
+  "ranking_interpretation": {
+    "log_sanitizer_frames_in_top5": 4,
+    "reading": "Taken at face value, the surviving ranking points at LOG SANITIZATION, not at request serving. Only _check_for_patterns (attack_detection) is on the request path; the other four frames are log scrubbing. A plan that followed this ranking would optimise logging, which the wall-clock evidence below shows is not where the request's time goes.",
+    "cross_reference": "perf-results/CPU_PROFILE.md is the inadmissible decomposition M-6 exists to replace. It is NOT superseded by an accepted profile, because the profile does not pass the concentration criterion. See plan_rewrite below."
+  },
+
+  "owner_buckets_primary_run": {
+    "note": "harness section 'tottime by owner (% of profiled window; CPU% excludes idle)'; idle is 0.00% so these are shares of the CPU denominator",
+    "other": { "tottime_ms": 17207.02, "pct": 65.33 },
+    "httpx": { "tottime_ms": 2045.00, "pct": 7.76 },
+    "starlette": { "tottime_ms": 1652.87, "pct": 6.28 },
+    "redis": { "tottime_ms": 1300.88, "pct": 4.94 },
+    "fastapi": { "tottime_ms": 1083.95, "pct": 4.12 },
+    "idna": { "tottime_ms": 651.84, "pct": 2.47 },
+    "anyio": { "tottime_ms": 581.23, "pct": 2.21 },
+    "email_validator": { "tottime_ms": 492.71, "pct": 1.87 },
+    "structlog": { "tottime_ms": 386.96, "pct": 1.47 },
+    "sqlalchemy": { "tottime_ms": 201.84, "pct": 0.77 },
+    "cachetools": { "tottime_ms": 200.47, "pct": 0.76 },
+    "jwt": { "tottime_ms": 148.69, "pct": 0.56 },
+    "builtin_C": { "tottime_ms": 146.89, "pct": 0.56 },
+    "sniffio": { "tottime_ms": 106.48, "pct": 0.40 },
+    "pydantic": { "tottime_ms": 98.73, "pct": 0.37 },
+    "opentelemetry": { "tottime_ms": 34.23, "pct": 0.13 },
+    "replicate_other_pct": 63.82,
+    "replicate_httpx_pct": 8.34,
+    "structural_finding": "other + httpx is 73.09% of the primary run's window (72.16% of the replicate). The request is not CPU-bound in application code. All src.app frames together are a minority of the window. This is the direct cause of the 2.64% top-5 fraction."
+  },
+
+  "rate_limit_gcra_mis_attribution": {
+    "census_claim": { "figure_us": 6624, "pct": 37.7 },
+    "census_premise_is_wrong": "The bead states rate_limit_gcra 'does not execute on the warm authenticated path'. THAT PREMISE IS FALSE. The harness's A1 Redis census records EVALSHA(rate_limit_gcra) at exactly 1.00/req on GET /api/v1/users/me, and gcra_rate_limit.py frames appear in the cProfile ranking at ranks 30-31. It executes.",
+    "measured_tottime_ms": 72.85,
+    "measured_tottime_components": [
+      { "frame": "src/app/core/utils/gcra_rate_limit.py:53(_execute_gcra_script)", "tottime_ms": 37.84, "cumtime_ms": 349.15, "pct_of_cpu": 0.14 },
+      { "frame": "src/app/core/utils/gcra_rate_limit.py:93(check_rate_limit)", "tottime_ms": 35.01, "cumtime_ms": 390.67, "pct_of_cpu": 0.13 }
+    ],
+    "measured_pct_of_window": 0.28,
+    "replicate_measured_pct_of_window": 0.277,
+    "overstatement_factor": 135,
+    "correction": "The census figure of 6624 us / 37.7% is a cProfile artefact and is VOID. The true CPU share is 0.28% (both runs agree to 3 significant figures). GCRA executes once per request and costs ~0.3% of CPU.",
+    "important_qualifier": "GCRA being cheap in CPU does NOT mean the rate limiter is free. See wall_clock below: RateLimitMiddleware is 3539.9 us/req EXCLUSIVE on GET. The gap between 0.28% of CPU and 3.54 ms of wall time is Redis round-trip WAIT, which the in-process cProfile window records as neither CPU nor idle. This is the mechanism that makes the CPU profile blind to where the request actually spends its time."
+  },
+
+  "wall_clock_admissible": {
+    "why_admissible": "these are measured by the harness's per-middleware timing wrapper against http.response.start, i.e. real elapsed time, NOT cProfile tottime. They are not inflated by profiling overhead.",
+    "caveat_verbatim_from_harness": "[Unverified] 'incl' is measured to http.response.start, so any body streaming/compression after the head is outside these windows."
+  },
+
+  "get_users_me": {
+    "n": 300,
+    "failures": 0,
+    "latency_ms": { "min": 8.882, "p50": 16.439, "p95": 22.944, "p99": 25.775, "max": 27.606, "mean": 16.829 },
+    "percentile_estimator": "nearest_rank from src/benchmarks/percentiles.py (the tree's single percentile implementation; int(n*q) percentiles are inadmissible under 2.3)",
+    "io_per_req": { "sql_round_trips": 0.00, "redis_round_trips": 3.00, "pool_checkouts": 0.00 },
+    "redis_calls_per_req": [
+      "EVALSHA(token_blacklist_check) 1.00",
+      "EVALSHA(rate_limit_gcra) 1.00",
+      "EVALSHA(composite_auth_prefetch) 1.00"
+    ],
+    "middleware_exclusive_us_per_req": {
+      "CORSMiddleware": 38.6,
+      "RequestTimer": 14.9,
+      "GZipFilterMiddleware": 221.6,
+      "QueryProfilerMiddleware": 65.3,
+      "IPFilterMiddleware": 353.9,
+      "RequestBodyLimitMiddleware": 21.1,
+      "SecurityHeadersMiddleware": 28.8,
+      "RateLimitMiddleware": 3539.9,
+      "TenantMiddleware": 156.7,
+      "AttackDetectionMiddleware": 587.5,
+      "RequestIDMiddleware_which_wraps_the_handler": 6892.7
+    },
+    "router_handler_us_per_req": 6892.7,
+    "guard_stack_total_us_per_req": 5028.5,
+    "guard_stack_pct_of_request": 42.2,
+    "reading": "GET /users/me performs ZERO SQL round-trips and zero pool checkouts. The handler itself is 6892.7 us of an 11921.2 us wrapped window; the nine guard layers add 5028.5 us (42.2%). RateLimitMiddleware alone is 3539.9 us exclusive, by far the largest single middleware."
+  },
+
+  "post_account_refresh": {
+    "n": 100,
+    "failures": 0,
+    "latency_ms": { "min": 26.002, "p50": 71.336, "p95": 162.140, "p99": 198.436, "max": 222.064, "mean": 78.362 },
+    "io_per_req": { "sql_round_trips": 1.00, "redis_round_trips": 10.01 },
+    "middleware_exclusive_us_per_req": {
+      "RateLimitMiddleware": 3774.2,
+      "AttackDetectionMiddleware": 822.4,
+      "TenantMiddleware": 246.5
+    },
+    "router_handler_us_per_req": 61656.6,
+    "guard_stack_total_us_per_req": 6529.2,
+    "guard_stack_pct_of_request": 9.6,
+    "reading": "refresh costs 4.6x the mean of GET and issues 10.01 Redis round-trips against GET's 3.00. The guard stack is 6529.2 us in absolute terms (comparable to GET's 5028.5 us) but only 9.6% of the request against GET's 42.2%, because the handler grew to 61656.6 us."
+  },
+
+  "why_the_profile_does_not_account_for_the_request": {
+    "mechanism": "The cProfile window is a single-threaded CPU profile with 0.00% idle, and it contains the httpx client and the harness driver alongside the server. Redis work is awaited on an event loop, so round-trip WAIT is recorded as neither CPU nor idle. The CPU profile therefore sees the CPU the request spends, while the wall-clock middleware table sees the CPU plus the Redis wait. The two disagree by more than an order of magnitude for the rate limiter (0.28% of CPU vs 3539.9 us of a 16829 us mean request).",
+    "consequence": "A cProfile-guided optimisation programme pointed at this profile would target log_sanitizer, because that is what the surviving ranking names. The admissible wall-clock evidence says the request is dominated by Redis round-trips (3/req on GET, 10.01/req on refresh) and by the handler body itself. Those are different targets."
+  },
+
+  "plan_rewrite": {
+    "required_by": "M-6 acceptance criteria: 'if it does not, the plan is rewritten rather than the profile accepted'",
+    "status": "REQUIRED. The top-5 fraction of 2.64% does not satisfy the criterion, so the Round-1 plan's profiling premise is withdrawn, not accepted.",
+    "what_must_change": [
+      "The optimisation targets may NOT be drawn from the cProfile ranking. It names log sanitization; the wall-clock evidence does not support log sanitization as a request-latency lever.",
+      "Round-1's security-guard work should be justified on the GET path only, where the guard stack is 42.2% of the request. On refresh the same nine layers are 9.6%, because the handler dominates. A single 'shrink the nine-layer guard stack' goal would be misdirected for the refresh path.",
+      "The dominant admissible cost is Redis round-trips: 3.00/req on GET, 10.01/req on refresh. Any Round-1 item claiming a guard-stack or prefilter win must show its effect on the ROUND-TRIP COUNT, not on a cProfile share.",
+      "GET /users/me issues 0.00 SQL round-trips and 0.00 pool checkouts. Any proposal that claims a database saving on this path is measuring something that is not there, and should be sent back."
+    ],
+    "not_claimed": "This artefact does NOT propose the replacement plan. It withdraws the premise the plan was built on and records the admissible evidence the replacement must be argued from."
+  },
+
+  "measured_vs_inferred": {
+    "measured": [
+      "cProfile CPU denominator 26339.80 ms (primary) / 7326.48 ms (replicate), idle 0.00% both runs",
+      "top-5 src.app tottime = 695.50 ms = 2.64% of that window (replicate 191.67 ms = 2.62%)",
+      "the same five frames occupy the top-5 in both runs",
+      "owner buckets: other 65.33%, httpx 7.76%, starlette 6.28%, redis 4.94%, fastapi 4.12% (replicate 63.82 / 8.34)",
+      "gcra_rate_limit.py tottime 72.85 ms = 0.28% of the window (replicate 0.277%)",
+      "EVALSHA(rate_limit_gcra) at 1.00/req on the warm authenticated GET path",
+      "GET /api/v1/users/me n=300, 0 failures: p50 16.439 ms, p95 22.944 ms, p99 25.775 ms, mean 16.829 ms",
+      "GET per-req: 0.00 SQL round-trips, 3.00 Redis round-trips, 0.00 pool checkouts",
+      "GET guard stack 5028.5 us exclusive = 42.2%; RateLimitMiddleware 3539.9 us exclusive",
+      "POST /api/v1/account/refresh n=100, 0 failures: p50 71.336 ms, p95 162.140 ms, p99 198.436 ms, mean 78.362 ms",
+      "refresh per-req: 1.00 SQL round-trip, 10.01 Redis round-trips; guard stack 6529.2 us = 9.6%"
+    ],
+    "inferred": [
+      "INFERRED, not measured: that the gap between GCRA's 0.28% of CPU and RateLimitMiddleware's 3539.9 us of wall time is Redis round-trip WAIT rather than CPU. It is the only explanation consistent with 0.00% idle and with an async event loop, and the 1.00/req Redis census line supports it, but no run isolated the wait directly.",
+      "INFERRED, not measured: that a server-only profile would show a materially higher src.app fraction, because 73.09% of the window is the httpx client and the unclassified `other` bucket. This was NOT tested; it would require profiling the server in a separate process from the client."
+    ],
+    "explicitly_not_measured": [
+      "No concurrency. n=1 user, sequential requests. Nothing here supports a claim about behaviour at 100 users.",
+      "No end-to-end live run. The Phase 0 baseline's 100-user numbers are a different instrument on a different harness and are NOT reproduced here.",
+      "No pyinstrument wall-clock phase. The module is not installed on the app host and the venv was not mutated to add it; see failures_below."
+    ]
+  },
+
+  "failures_below": {
+    "attempt_1_exit": 1,
+    "attempt_1_cause": "src/benchmarks/prof_request_path.py:717 phase_async does 'from pyinstrument import Profiler' -> ModuleNotFoundError: No module named 'pyinstrument'. Every other phase (A1, A2, A3, B cProfile, C tracemalloc, D peak RSS) completed and printed; the crash only aborted writing result['async'], so no JSON was produced.",
+    "decision": "pyinstrument was NOT pip-installed. It is an optional nice-to-have and mutating the measured environment's venv mid-measurement is not justified by a supplementary output. The consequence is recorded under measured_vs_inferred.explicitly_not_measured.",
+    "fixture_setup_failures": [
+      "ORM attempt -> InvalidRequestError: Mapper[Tenant(tenants)] expression 'Notification' failed to locate a name. SQLAlchemy resolves relationship targets against the registry, so 'import src.app.models' (the repo's model-discovery registry) must precede any concrete model import.",
+      "app get_db_context() -> MissingGreenlet: greenlet_spawn has not been called. src/app/core/db/rls.py:157 runs _do_restore on pool checkout and re-raises the no-tenant branch's failure for non-SQLite (L142 catch, L154 raise). A script running outside a tenant context therefore hard-fails. The app never hits this because TenantMiddleware always establishes a tenant context first.",
+      "WORKED: mirror scripts/setup_locust_test_data.py - bare 'app.core.db.database' imports with ~/head/src on sys.path, raw text() SQL, and 'async with async_session_maker() as session:'."
+    ]
+  },
+
+  "misc_observations": {
+    "rls_set_config_n_plus_1": "query_tracker_n_plus_1_detected count=3 pattern=\"SELECT set_config('?', '?', false)\" - PostgreSQL RLS session setup being counted as an N+1. PRE-EXISTING and unrelated to this bead; recorded so it is not re-discovered.",
+    "token_blacklist_insert_n_plus_1": "query_tracker_n_plus_1_detected count=3 pattern='INSERT INTO token_blacklist ...' during the refresh phase. PRE-EXISTING.",
+    "expected_log_noise": "restore_rls_context 'no tenant context at pool checkout ... (fail-closed)' warnings and 'RLS bypass enabled ... reason=Tenant resolution via resolver' are expected from the in-process driver.",
+    "peak_rss_primary": { "start_mb": 188.9, "peak_mb": 196.7, "delta_mb": 7.8, "window_s": 5.42, "requests": 400 },
+    "peak_rss_replicate": { "start_mb": 189.0, "peak_mb": 199.9, "delta_mb": 10.9, "window_s": 6.12, "requests": 400 },
+    "rss_note": "peak-minus-start differs 1.4x between two runs of the same workload, consistent with the 3.6x cProfile window swing. Same conclusion: report deltas as orders of magnitude, never as point values."
+  },
+
+  "limits": {
+    "cprofile_absolutes_inadmissible": "Under 2.3 only the ranking survives. This artefact reports the top-5 as a FRACTION and as a ranking, and reports absolute tottime only so the fraction is auditable. The 3.6x window swing between two identical runs is direct evidence for the rule.",
+    "no_concurrency": "sequential, n=1 user. Not a load profile.",
+    "client_and_server_in_one_process": "73.09% of the window is httpx plus an unclassified `other` bucket, so this is a request-HANDLING window, not a server-only window.",
+    "single_host": "one app host, one run pair. No cross-host confirmation.",
+    "body_after_head_excluded": "the middleware wrapper times to http.response.start, so body streaming and post-head compression are outside the reported windows. The harness labels this [Unverified] and so does this artefact.",
+    "docker_execution_prohibited": "per AGENTS.md; no container was run, built, or composed.",
+    "windows_artefacts_non_representative": "A-5. All figures here are Linux-only."
+  },
+
+  "cross_reference": {
+    "phase_0_step_4": "reports/baseline_20261016_151856_* on the load host, harness sha 9154c486. Warm medians at 100 users: /users/me (readonly) 180 ms, /users/me 250 ms, /account/refresh 610 ms. Those are 100-user network figures from a separate instrument; they are NOT comparable to this profile's sequential in-process numbers and are not used to support any claim here.",
+    "L15_bcrypt": "perf-results/RESULT-20261016-bcrypt/l15_bcrypt_cost.json - bcrypt is 271.395 ms per hash at rounds=12 on this CPU, paid once during login OUTSIDE every window measured here.",
+    "supersedes": "perf-results/CPU_PROFILE.md - the inadmissible cProfile decomposition. NOT replaced by an accepted profile, because this profile does not pass the concentration criterion. See plan_rewrite."
+  },
+
+  "closed": true,
+  "closure_note": "M-6 closes with an honest NEGATIVE on its concentration criterion and a REQUIRED PLAN REWRITE, plus the explicit correction of the rate_limit_gcra mis-attribution (it executes at 1.00/req; its 37.7% / 6624 us figure was ~135x overstated; true share 0.28%). Both obligations in the acceptance criteria are discharged."
+}
