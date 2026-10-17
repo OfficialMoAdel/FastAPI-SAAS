@@ -143,6 +143,11 @@ def read_eight_controls() -> dict[str, Any]:
         "default_authenticated_limit": list(rate_limit.DEFAULT_AUTHENTICATED_LIMIT),
         "default_anonymous_limit": list(rate_limit.DEFAULT_ANONYMOUS_LIMIT),
         "anonymous_ip_aggregate_limit": list(rate_limit.ANONYMOUS_IP_AGGREGATE_LIMIT),
+        # Bead FastAPI_saas-86p9. The API-key arm is only honest if the budget it
+        # paces against is PINNED here like the other controls: an api_key
+        # rate_budget read from a settings object nobody asserted would pace
+        # against whatever the environment happened to say.
+        "api_key_limit": list(rate_limit.API_KEY_LIMIT),
         "tier_rate_limits": {k: list(v) for k, v in rate_limit.TIER_RATE_LIMITS.items()},
         "default_rate_limit_limit": int(rate_limit.DEFAULT_RATE_LIMIT_LIMIT),
         "default_rate_limit_period": int(rate_limit.DEFAULT_RATE_LIMIT_PERIOD),
@@ -166,6 +171,7 @@ EXPECTED_EIGHT: Final[dict[str, Any]] = {
     "default_authenticated_limit": [50, 3600],
     "default_anonymous_limit": [10, 3600],
     "anonymous_ip_aggregate_limit": [300, 3600],
+    "api_key_limit": [1000, 3600],
     "tier_rate_limits": {
         "free": [10, 3600],
         "basic": [100, 3600],
@@ -266,9 +272,7 @@ async def _tenant_id() -> Any:
         database=postgres.POSTGRES_DB,
     )
     try:
-        tenant_id = await connection.fetchval(
-            "select id from tenants where slug = $1", PROBE_TENANT
-        )
+        tenant_id = await connection.fetchval("select id from tenants where slug = $1", PROBE_TENANT)
     finally:
         await connection.close()
     if tenant_id is None:
@@ -518,12 +522,12 @@ async def seed_accounts(count: int, tier: str, application: Any) -> tuple[list[S
                     LOGIN_PATH,
                     content=_login_form(row["username"]),
                     # X-Tenant-ID is required on every non-exempt path; without it the
-                # tenant middleware answers 400 before the login is even read.
-                headers={
-                    **PROBE_HEADERS,
-                    "X-Tenant-ID": PROBE_TENANT,
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
+                    # tenant middleware answers 400 before the login is even read.
+                    headers={
+                        **PROBE_HEADERS,
+                        "X-Tenant-ID": PROBE_TENANT,
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
                 )
             if response.status_code != 200:
                 raise RuntimeError(
@@ -678,7 +682,7 @@ class Endpoint:
     name: str
     method: str
     path: str
-    #: "authed" | "anon" | "none"
+    #: "authed" | "anon" | "none" | "api_key"
     auth: str
     #: Status codes that are a SUCCESS for this endpoint. Anything else voids the phase.
     expected_statuses: frozenset[int]
@@ -713,6 +717,7 @@ class Endpoint:
     #: endpoint.
     #:   "auth"      -> SECURITY_BUDGETS["auth"]           (5, 60)
     #:   "anonymous" -> DEFAULT_ANONYMOUS_LIMIT            (10, 3600)
+    #:   "api_key"   -> API_KEY_LIMIT                     (1000, 3600)
     rate_budget: tuple[str, ...] = ()
 
 
@@ -751,8 +756,10 @@ def _resolve_rate_budget(
             pair = controls["security_budgets"]["auth"]
         elif name == "anonymous":
             pair = controls["default_anonymous_limit"]
+        elif name == "api_key":
+            pair = controls["api_key_limit"]
         else:
-            raise ValueError(f"unknown rate_budget {name!r}; the selectors are 'auth' and 'anonymous'")
+            raise ValueError(f"unknown rate_budget {name!r}; the selectors are 'auth', 'anonymous' and 'api_key'")
         limit, period = int(pair[0]), int(pair[1])
         if limit <= 0 or period <= 0:
             raise ValueError(f"rate_budget {name!r} resolved to a non-positive ({limit}, {period})")
@@ -912,9 +919,7 @@ def _resolve_login_bodies(endpoints: tuple[Endpoint, ...]) -> tuple[Endpoint, ..
     the seeding phase, which is where the operator needs the error.
     """
     return tuple(
-        dataclasses.replace(ep, body=_login_form(ep.login_username))
-        if ep.login_username is not None
-        else ep
+        dataclasses.replace(ep, body=_login_form(ep.login_username)) if ep.login_username is not None else ep
         for ep in endpoints
     )
 
@@ -942,11 +947,40 @@ def _seed_password() -> str:
     return value
 
 
+#: Bead FastAPI_saas-86p9. The api_key arm authenticates with a key minted OUT OF
+#: BAND, exactly as the seed password comes from the environment: the campaign's
+#: job is to measure the endpoint, and minting a key is a setup concern. Mint it
+#: with ``POST /api/v1/api-keys`` on the target and export the plaintext once.
+API_KEY_ENV_VAR: Final[str] = "STEP4_API_KEY"
+
+#: One source IP per element, asserted distinct below. The api_key budget is keyed
+#: by SOURCE IP, so a phase that wants more than API_KEY_LIMIT requests needs more
+#: than one source. The campaign drives 127.0.0.1, which ``is_trusted_proxy``
+#: treats as a trusted proxy (src/app/core/utils/ip_utils.py:88-110), so
+#: ``get_client_ip`` honours X-Forwarded-For from it -- which is what a real
+#: deployment behind an edge looks like.
+API_KEY_SOURCE_IPS: Final[tuple[str, ...]] = tuple(f"127.20.0.{i}" for i in range(1, 17))
+assert len(set(API_KEY_SOURCE_IPS)) == len(API_KEY_SOURCE_IPS), "source IP pool must be distinct"
+
+
+def api_key() -> str:
+    """The plaintext API key, read from the environment.
+
+    Fails fast and loudly, like ``_seed_password``: a missing credential that
+    defaulted to something would publish 401s under an endpoint's name.
+    """
+    value = os.environ.get(API_KEY_ENV_VAR)
+    if not value:
+        raise RuntimeError(
+            f"{API_KEY_ENV_VAR} is not set. The api_key arm measures an authenticated "
+            "key; mint one with POST /api/v1/api-keys on the target and export its "
+            "plaintext once."
+        )
+    return value
+
+
 def _login_form(username: str) -> str:
-    return (
-        f"username={urllib.parse.quote_plus(username)}"
-        f"&password={urllib.parse.quote_plus(_seed_password())}"
-    )
+    return f"username={urllib.parse.quote_plus(username)}&password={urllib.parse.quote_plus(_seed_password())}"
 
 
 ENDPOINTS: Final[tuple[Endpoint, ...]] = (
@@ -996,6 +1030,34 @@ ENDPOINTS: Final[tuple[Endpoint, ...]] = (
             "branch and publish it under this name. Carries no rate_budget: it is "
             "user-keyed, bounded by TIER_RATE_LIMITS, the same as users_list."
         ),
+    ),
+    Endpoint(
+        "users_me_apikey",
+        "GET",
+        "/api/v1/users/me",
+        "api_key",
+        frozenset({200}),
+        (
+            "EM-11, added by bead FastAPI_saas-86p9. The same path and handler as "
+            "users_me, reached with `X-API-Key` instead of a Bearer token, so the "
+            "difference between the two numbers is the credential seam and nothing "
+            "else. The arm exists because no API-key endpoint appeared in v8qm's "
+            "set at all, which left MGET's 0.90 priority score with no denominator. "
+            "Carries rate_budget=('api_key',): since g4my the request is charged "
+            "API_KEY_LIMIT (1000, 3600) per SOURCE IP on "
+            "rate_limit:api_key:ip:<ip>:<path> -- an admission-time bucket, because "
+            "admission runs before the key can be validated -- and is exempt from "
+            "the anonymous IP aggregate ceiling and from auto-ban. The pacing is "
+            "therefore the production one, and n per repetition stays under 10,000 "
+            "so p99 is WITHHELD rather than estimated (ADR-0022 Rule 2), the same "
+            "shape users_me_anon carries. Requests rotate X-Forwarded-For over "
+            "API_KEY_SOURCE_IPS because the bucket is IP-keyed and one address "
+            "cannot carry a whole phase. The deeper per-request counts (round trips "
+            "against commands) are M-7's, in "
+            "perf-results/RESULT-20261017-m7/m7_apikey_endpoint_baseline.json; this "
+            "arm measures the path over a real socket, as the other arms do."
+        ),
+        rate_budget=("api_key",),
     ),
     Endpoint(
         "users_me_anon",
@@ -1255,7 +1317,14 @@ async def drive_phase(
             "X-Tenant-ID": PROBE_TENANT,
         }
         cookies: dict[str, str] = {}
-        if endpoint.auth == "authed" and account is not None:
+        if endpoint.auth == "api_key":
+            headers["X-API-Key"] = api_key()
+            # Rotated per request over a pool asserted distinct at module scope:
+            # the api_key bucket is keyed by this value, so a pool that silently
+            # collapsed to one address would charge a whole phase to one budget
+            # and turn the phase's refusals into a pacing artefact.
+            headers["X-Forwarded-For"] = API_KEY_SOURCE_IPS[index % len(API_KEY_SOURCE_IPS)]
+        elif endpoint.auth == "authed" and account is not None:
             headers["Authorization"] = f"Bearer {account.access_token}"
             if endpoint.name == "refresh":
                 # The refresh token arrives as an http-only cookie, not as a
@@ -1314,9 +1383,7 @@ async def drive_phase(
 
     try:
         for _ in range(repetitions):
-            latencies = await asyncio.gather(
-                *(one(index) for index in range(requests_per_repetition))
-            )
+            latencies = await asyncio.gather(*(one(index) for index in range(requests_per_repetition)))
             result.per_repetition.append(list(latencies))
     finally:
         # One close for the whole phase, and it has to be here rather than at
@@ -1422,8 +1489,7 @@ async def campaign(args: argparse.Namespace) -> dict[str, Any]:
     if not ok:
         await close_redis_cache_pool()
         raise RuntimeError(
-            "the eight 4.5 controls are not at production values; this phase is void:\n  "
-            + "\n  ".join(differences)
+            "the eight 4.5 controls are not at production values; this phase is void:\n  " + "\n  ".join(differences)
         )
 
     cleared = await clear_security_state()
@@ -1458,9 +1524,7 @@ async def campaign(args: argparse.Namespace) -> dict[str, Any]:
 
     # Resolved here, after load_dotenv(args.env) has run in main(), because the
     # login body embeds the seed credential from the environment.
-    selected = _resolve_login_bodies(
-        tuple(e for e in ENDPOINTS if not args.only or e.name in args.only)
-    )
+    selected = _resolve_login_bodies(tuple(e for e in ENDPOINTS if not args.only or e.name in args.only))
 
     # Assert EM-8's premise before anything is timed, not after. A term that
     # stopped matching the prefilter would otherwise produce a clean-looking
@@ -1537,7 +1601,7 @@ async def campaign(args: argparse.Namespace) -> dict[str, Any]:
         "controls_at_end": controls_end,
         "controls_unchanged": ok_end,
         "control_differences_at_end": differences_end,
-"endpoints": [result.summary() for result in results],
+        "endpoints": [result.summary() for result in results],
         # The topology is the FIRST thing a reader needs, because every latency
         # in this artefact is only meaningful against the shape that produced
         # it. A real socket adds a hop that ASGITransport does not have, so the

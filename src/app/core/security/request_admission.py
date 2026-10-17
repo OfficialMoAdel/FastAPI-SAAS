@@ -24,6 +24,7 @@ from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cac
 from src.app.core.security.rate_policy import (
     RateLimitVerdict,
     build_anonymous_aggregate_key,
+    build_api_key_rate_limit_key,
     build_rate_limit_key,
     build_verdict,
     consume,
@@ -74,6 +75,11 @@ class _RateLimitContext(NamedTuple):
     token: str | None
     jti: str | None
     path: str
+    # An X-API-Key header was PRESENT. Not "the key is valid": admission runs
+    # before the key is verified (bead g4my). Presence is all this needs - it
+    # selects the API-key budget, which is keyed by source IP for exactly the
+    # reason an unverified credential cannot be allowed to name a bucket.
+    api_key: bool = False
 
 
 class RequestAdmissionService:
@@ -129,6 +135,15 @@ class RequestAdmissionService:
 
         ctx = await self._get_rate_limit_config(request)
         degraded = False
+        # Bead g4my. A caller presenting X-API-Key and no bearer credential is
+        # on the API-key budget, not the anonymous one, and is therefore not
+        # ANONYMOUS traffic: it must not spend the anonymous aggregate ceiling
+        # and its violation must not earn an auto-ban. Recorded HERE, before the
+        # S-17 rebind below clears `ctx.user_id`, because after that rebind a
+        # revoked bearer token and an API-key caller are indistinguishable - and
+        # they must stay distinguishable: S-17 lowers a revoked session to
+        # anonymous, and that downgrade is the stricter outcome.
+        api_key_metered = bool(ctx.api_key) and ctx.token is None and ctx.user_id is None
         # The merged composite hard-codes GCRA arithmetic — that is what buys
         # its single round-trip. Taking it while the operator configured the
         # fixed-window engine would silently serve GCRA here and fixed window
@@ -224,7 +239,7 @@ class RequestAdmissionService:
         # Its key uses a constant path token, so this check cannot itself be
         # rotated around. Authenticated callers are unaffected: they are already
         # keyed by user id and covered by their tier budget.
-        if not is_limited and not ctx.user_id:
+        if not is_limited and not ctx.user_id and not api_key_metered:
             aggregate = await self._check_anonymous_aggregate(client_ip)
             if aggregate is not None and aggregate[0]:
                 # Only the REJECTION is taken from the aggregate ceiling. The
@@ -246,6 +261,14 @@ class RequestAdmissionService:
             degraded=degraded,
         )
         if is_limited:
+            if api_key_metered:
+                # Deliberately NOT auto-ban eligible, for the reason
+                # _evaluate_refresh_budget gives: an integration's traffic
+                # typically egresses from ONE shared NAT, so one over-budget
+                # caller would otherwise ban that address - and with it every
+                # other integration behind it - for AUTO_BAN_DURATION. 429 +
+                # Retry-After is the answer; a ban is the wrong tool.
+                return AdmissionOutcome("limited", client_ip, verdict)
             return await self._handle_violation(client_ip, verdict)
         return AdmissionOutcome("admit", client_ip, verdict)
 
@@ -370,7 +393,14 @@ class RequestAdmissionService:
         # the bucket key must use the same normalization or /API/V1/X and
         # /api/v1/x mint separate buckets (and dodge tier-policy matching).
         path = sanitize_path(request.url.path.lower())
-        return _RateLimitContext(user_id, tier_name, tenant_id, tier_id_raw, token, jti, path)
+        # Bead g4my: presence of the API-key header, nothing more. The same
+        # `"X-API-Key" in request.headers` seam decides authentication in
+        # src/app/api/deps/auth.py::resolve_principal, and reading it here keeps
+        # the two agreeing on what counts as a keyed request. The key is NOT
+        # validated here - it cannot be, admission precedes the auth deps - which
+        # is exactly why the budget it selects is keyed by source IP.
+        api_key = request.headers.get("x-api-key") is not None
+        return _RateLimitContext(user_id, tier_name, tenant_id, tier_id_raw, token, jti, path, api_key)
 
     async def _resolve_legacy_config(self, request: Request, ctx: _RateLimitContext) -> tuple[int, int, str, bool]:
         user_id = ctx.user_id
@@ -401,6 +431,22 @@ class RequestAdmissionService:
         # one explicit "unknown" bucket instead of colliding with (or
         # fragmenting around) a literal IP-looking string.
         anonymous_ip = raw_ip if isinstance(raw_ip, str) and raw_ip and raw_ip != "unknown" else None
+        # Bead g4my. A caller with an X-API-Key and NO bearer credential has an
+        # authenticated credential, so resolve_rate_limits must not be asked to
+        # guess for it: with no tier identity it lands on DEFAULT_ANONYMOUS_LIMIT
+        # (10 per 3600s), which is what M-7 measured against a Pro account that
+        # answers 1000 with its Bearer token. Same shape as the defaults in
+        # resolve_rate_limits' own fallback chain - a named budget applied
+        # directly, no DB lookup.
+        #
+        # The condition is deliberately narrow. `ctx.token is None` keeps a
+        # request that ALSO presents a bearer credential on the JWT path, and
+        # `user_id is None` keeps a revoked token's S-17 downgrade - which has
+        # just cleared the tier identity above - anonymous, because revoking a
+        # token must never RAISE the caller's budget.
+        if ctx.api_key and ctx.token is None and user_id is None:
+            api_key_limit, api_key_period = settings.rate_limit.API_KEY_LIMIT
+            return api_key_limit, api_key_period, build_api_key_rate_limit_key(ctx.path, anonymous_ip), False
         key = build_rate_limit_key(ctx.path, user_id=user_id, tenant_id=ctx.tenant_id, anonymous_ip=anonymous_ip)
         # S-17: tell the caller the caller was downgraded, so the anonymous
         # aggregate ceiling is not skipped for a caller who is now anonymous.

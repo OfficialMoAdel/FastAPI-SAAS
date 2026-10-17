@@ -168,9 +168,7 @@ async def consume(
                 )
                 degraded = True
 
-    is_limited, current_count = await default_rate_limiter.check_rate_limit(
-        key, limit, period, fail_closed=fail_closed
-    )
+    is_limited, current_count = await default_rate_limiter.check_rate_limit(key, limit, period, fail_closed=fail_closed)
     return is_limited, max(0, limit - current_count), 0, degraded
 
 
@@ -330,10 +328,32 @@ def build_anonymous_aggregate_key(anonymous_ip: str | None) -> str:
     return f"rate_limit:anonymous:ip:{ip_str}:{AGGREGATE_PATH_TOKEN}"
 
 
+def build_api_key_rate_limit_key(path: str, api_key_ip: str | None) -> str:
+    """Per-IP bucket for a caller presenting ``X-API-Key`` (bead g4my).
+
+    Its own namespace, not the anonymous one, for the same reason the budget is
+    its own (see ``settings.rate_limit.API_KEY_LIMIT``): sharing
+    ``rate_limit:anonymous:ip:*`` would make a keyed integration share - and
+    exhaust - the browser budget, and would pull it into the anonymous
+    aggregate ceiling, which exists to bound UNAUTHENTICATED traffic.
+
+    Keyed by source IP rather than by key: admission runs before the key is
+    validated, so a bucket per presented key would let a brute-forcer mint an
+    unlimited number of buckets by guessing.
+
+    No tenant scoping, matching ``build_rate_limit_key``'s anonymous form and
+    for the same reason - scoping either anonymous-style key needs a coordinated
+    migration of the buckets already in Redis.
+    """
+    ip_str = api_key_ip if api_key_ip and api_key_ip != "unknown" else "unknown"
+    return f"rate_limit:api_key:ip:{ip_str}:{path}"
+
+
 __all__ = [
     "AGGREGATE_PATH_TOKEN",
     "RateLimitVerdict",
     "build_anonymous_aggregate_key",
+    "build_api_key_rate_limit_key",
     "build_rate_limit_key",
     "build_verdict",
     "consume",

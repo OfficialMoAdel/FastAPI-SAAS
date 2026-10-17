@@ -1,0 +1,293 @@
+{
+  "bead": "FastAPI_saas-o0fg",
+  "item": "M-7",
+  "title": "API-key endpoint baseline - the first one that exists",
+  "bead_closes": "M-7 establishes the baseline its own title says is missing everywhere in the pack: an API-key endpoint measured on Linux under production budgets, with round trips reported separately from commands (T-6), and core/cache/client.py:89-95 re-confirmed on the measured commit.",
+  "measured_at": "2026-10-17T13:51Z",
+  "artefact_kind": "endpoint-baseline",
+  "headline": {
+    "endpoint": "GET /api/v1/users/me with X-API-Key",
+    "requests": 50,
+    "repetitions": 5,
+    "failures": 0,
+    "round_trips_per_request": 5.38,
+    "commands_per_request": 5.52,
+    "commands_per_round_trip": 1.026,
+    "server_commands_per_request": 11.62,
+    "latency_p50_ms": 5.1586,
+    "latency_p95_ms": 9.8237,
+    "observed_budget": "10 per 3600s per source IP",
+    "previous_estimate": null,
+    "why_previous_estimate_is_null": "There was none. That is the bead: no measured API-key baseline existed anywhere in the pack, so MGET's 0.90 priority score had no denominator. Nothing here is being compared against a prior number, and the three defects below are the reason a baseline could not previously be taken at all.",
+    "verdict": "BASELINE ESTABLISHED. 50 of 50 requests answered 200 under live production budgets; all 14 assertions passed. Three defects surfaced along the way and are filed as follow-ups, not fixed here."
+  },
+  "instrument": {
+    "file": "scripts/e2e_apikey_endpoint_baseline.py",
+    "in_repo": true,
+    "copied_to": "/home/ansible/m7/scripts/e2e_apikey_endpoint_baseline.py",
+    "why_in_process": "Round trips are only observable by instrumenting the Redis client INSIDE the serving process. The in-process transport (asgi_lifespan + httpx ASGITransport) is what makes the send_packed_command hook possible at all; over a socket the same count would need server-side shimming.",
+    "round_trip_counter": "Connection.send_packed_command calls. redis-py flattens pipeline payloads, so wire bytes carry no per-command boundaries - the write is the only unambiguous boundary.",
+    "command_counters": [
+      "Redis.execute_command (direct)",
+      "Pipeline.execute_command (staged)",
+      "Pipeline.immediate_execute_command (WATCH)",
+      "PubSub.execute_command"
+    ],
+    "why_the_two_counters_differ": "A command is a unit of work; a round trip is a write to the socket. One pipeline turn carries many commands in one write, so the two counts are not the same quantity and neither is derivable from the other. They are reported as separate columns throughout (T-6).",
+    "second_observer": "per-repetition delta of redis-py INFO commandstats, read from an independent connection outside the serving process",
+    "third_observer": "the same INFO commandstats delta, reported separately as the authoritative command total",
+    "why_both_observers_are_kept": "The in-process hook counts what THIS client issued; INFO commandstats counts what the SERVER executed. They disagree (276 against 581) because the server also counts the commands its own rate limiter, session and cache layers issue over separate pooled connections. The higher number is the real cost per request; the lower is a floor.",
+    "attribution": "Each command hook pushes a category onto a stack and send_packed_command tags the write with the current category, so the buckets sum by construction and anything unanticipated surfaces as unattributed. unattributed_round_trips = 0 on this run, asserted.",
+    "why_census_bootstrap_was_not_called": "scripts/perf-validation/census.bootstrap() relaxes every budget to 100000/3600. This bead measures under PRODUCTION budgets, so calling it would void the measurement.",
+    "latency_estimator": "src/benchmarks/percentiles.py (nearest_rank) - the one estimator in the tree; tests/unit/benchmarks/test_percentiles.py exists to fail a second implementation"
+  },
+  "protocol": {
+    "target": "perf-local, 192.168.121.147 (i7-8850H, 4 cores, Linux)",
+    "why_not_the_dev_box": "A-5: Windows artefacts are not representative. Every number here comes from the Linux target.",
+    "measured_commit": "93750647ddbac6edd1e9d5bf5f4d44161f627569",
+    "measured_commit_subject": "feat(perf): restore /users and /notifications now the fixture carries a role",
+    "worktree": "a detached clean worktree at /home/ansible/m7, because the main checkout's tree is dirty in files that touch the measured path (rbac/dependencies.py, db/database.py and others)",
+    "tree_dirty": true,
+    "tree_dirty_paths": ["scripts/e2e_apikey_endpoint_baseline.py"],
+    "why_the_only_dirty_path_is_the_instrument": "The harness is the instrument and is not committed yet; every line of application code under test was clean.",
+    "import_provenance": {
+      "src.app.main": "/home/ansible/m7/src/app/main.py",
+      "src.app.core.cache.client": "/home/ansible/m7/src/app/core/cache/client.py",
+      "src.app.modules.api_keys.models": "/home/ansible/m7/src/app/modules/api_keys/models.py",
+      "why_this_is_asserted": "The venv can carry an editable install of a DIFFERENT checkout on sys.path. Without this check the run would happily import, time and report another working tree's code."
+    },
+    "endpoint": "GET /api/v1/users/me, credential in X-API-Key",
+    "credential_transport": "X-API-Key header. All three keys were minted through the PUBLIC route POST /api/v1/api-keys by a superuser, with scopes [\"read\"].",
+    "n": "5 repetitions x 10 requests = 50",
+    "why_10_per_repetition": "Derived from the live settings, not hardcoded: an API-key request is metered as anonymous traffic, so DEFAULT_ANONYMOUS_LIMIT[0] = 10 is exactly one hour of budget. Ten fresh IPs therefore yield 50 successful requests with every request inside a production budget and no relaxation.",
+    "source_ip_spread": "one fresh loopback source IP per repetition, asserted distinct: 127.141.232.32 through 127.141.232.36",
+    "concurrency": "1 (sequential by construction; there is no concurrency arm, and limits says so)",
+    "accounts": "one provisioned account, m7admin (superuser, tier Pro), in tenant test-tenant-e2e",
+    "why_one_account": "APIKeyCreate has no user_id, so POST /api/v1/api-keys can only mint for the caller; and metering is anonymous-per-IP, so spreading keys across owners would have changed nothing. One account makes the bearer control a true control: arms 1 and 3 differ only in the credential.",
+    "budgets_relaxed": false,
+    "verify_budgets": "the harness refuses to run unless auth=(5,60), refresh=(60,60), free/basic/pro/enterprise=(10,100,1000,10000)/3600, default_anonymous=(10,3600), anonymous_ip_aggregate=(300,3600) and algorithm=gcra all hold at run time",
+    "counter_reset": "per repetition, immediately before its requests, so each repetition's counts are its own",
+    "state_reset": "the anonymous per-path bucket, the __ip_aggregate__ bucket and any auto-ban state were deleted for every source IP before measuring (17 keys), by names built with production code - build_rate_limit_key, build_anonymous_aggregate_key, sanitize_path. This is a state reset, not a budget relaxation.",
+    "why_reset_by_built_name": "An earlier version globbed a pattern that matched nothing and reported a successful reset. The earlier reset also passed the raw path where production passes sanitize_path(path), so it built a key that exists nowhere. Both bugs deleted zero keys while claiming success."
+  },
+  "budgets_live_at_run_time": {
+    "auth": [5, 60],
+    "refresh": [60, 60],
+    "tier_free": [10, 3600],
+    "tier_basic": [100, 3600],
+    "tier_pro": [1000, 3600],
+    "tier_enterprise": [10000, 3600],
+    "default_anonymous": [10, 3600],
+    "anonymous_ip_aggregate": [300, 3600],
+    "algorithm": "gcra",
+    "budget_that_actually_metered_this_endpoint": "default_anonymous = 10 per 3600s per source IP",
+    "budget_that_did_not_apply": "tier_pro = 1000 per 3600s. The key owner's Pro budget was never consulted for an API-key request."
+  },
+  "results": {
+    "statuses": {"200": 50},
+    "failures": 0,
+    "authenticated_usernames": ["m7admin"],
+    "latency_ms": {
+      "n": 50,
+      "min": 3.9501,
+      "p50": 5.1586,
+      "p95": 9.8237,
+      "p99": 21.7283,
+      "max": 21.7283,
+      "mean": 5.9074,
+      "estimator": "nearest_rank (src/benchmarks/percentiles.py)",
+      "unresolvable_percentiles": [0.99]
+    },
+    "latency_caveat": "In-process and sequential: timed with perf_counter around the awaited ASGITransport call, so no socket and no uvicorn are involved. NOT comparable with step-4's over-the-wire users_me p50 30.7745 ms at concurrency 8 - it is expected to be LOWER here because there is no socket, no serialisation and no HTTP parser in the path. This is a THIRD quantity: neither the round-trip count nor the command count can be derived from it, nor it from them. The sample is one hour's budget per source IP (10 requests x 5 fresh IPs), which is what the metering defect allows - it is not a throughput sample, and p99 at n=50 does not meet step4_gate.P99_SAMPLE_FLOOR of 10000.",
+    "repetition_figures": {
+      "p50_median_of_repetitions_ms": 4.9024,
+      "p50_min_of_repetitions_ms": 4.6381,
+      "min_median_of_repetitions_ms": 4.0812,
+      "min_min_of_repetitions_ms": 3.9501
+    },
+    "per_repetition": [
+      {"repetition": 1, "source_ip": "127.141.232.32", "requests": 10, "round_trips": 57, "commands": 60, "round_trips_per_request": 5.7, "commands_per_request": 6.0, "server_commands_total": 121, "latency_p50_ms": 4.9024, "latency_min_ms": 4.2531, "latency_max_ms": 21.7283, "round_trips_by_category": {"direct": 55, "pipeline_flush": 2}},
+      {"repetition": 2, "source_ip": "127.141.232.33", "requests": 10, "round_trips": 53, "commands": 54, "round_trips_per_request": 5.3, "commands_per_request": 5.4, "server_commands_total": 115, "latency_p50_ms": 4.8922, "latency_min_ms": 3.9501, "latency_max_ms": 6.5945, "round_trips_by_category": {"direct": 52, "pipeline_flush": 1}},
+      {"repetition": 3, "source_ip": "127.141.232.34", "requests": 10, "round_trips": 53, "commands": 54, "round_trips_per_request": 5.3, "commands_per_request": 5.4, "server_commands_total": 115, "latency_p50_ms": 5.7488, "latency_min_ms": 4.6827, "latency_max_ms": 9.3919, "round_trips_by_category": {"direct": 52, "pipeline_flush": 1}},
+      {"repetition": 4, "source_ip": "127.141.232.35", "requests": 10, "round_trips": 53, "commands": 54, "round_trips_per_request": 5.3, "commands_per_request": 5.4, "server_commands_total": 115, "latency_p50_ms": 5.1586, "latency_min_ms": 4.0396, "latency_max_ms": 6.0359, "round_trips_by_category": {"direct": 52, "pipeline_flush": 1}},
+      {"repetition": 5, "source_ip": "127.141.232.36", "requests": 10, "round_trips": 53, "commands": 54, "round_trips_per_request": 5.3, "commands_per_request": 5.4, "server_commands_total": 115, "latency_p50_ms": 4.6381, "latency_min_ms": 4.0812, "latency_max_ms": 7.1742, "round_trips_by_category": {"direct": 52, "pipeline_flush": 1}}
+    ],
+    "cold_first_repetition": {
+      "note": "Repetition 1 is the cold one: the Lua scripts in the GCRA limiter are compiled and cached on first use, so it issues extra EVALSHA/GET commands and its slowest request sets the pooled tail. It is reported rather than dropped, because a baseline that discards the cold start is not what a customer's first request sees.",
+      "first_repetition_commands_per_request": 6.0,
+      "later_repetitions_commands_per_request": [5.4],
+      "later_repetitions_count": 4,
+      "first_repetition_server_commands": 121,
+      "later_repetitions_server_commands": [115]
+    },
+    "observed_rate_limit_budgets": [{"limit": 10, "period": 3600}],
+    "min_rate_limit_remaining_by_owner": {"m7admin": 0},
+    "why_remaining_is_zero": "Each repetition spent exactly one hour of its source IP's anonymous budget. Nothing was over budget and nothing was left over."
+  },
+  "round_trips": {
+    "total": 269,
+    "per_request": 5.38,
+    "why_not_one": "The static reading that this seam needs 0-1 round trips is wrong on the request path, and this run is the measurement that says so. The path spends 5.38 round trips per request: the API-key validation (cache read), the rate limiter's own Redis work, and the user directory lookup behind the 200."
+  },
+  "commands": {
+    "total": 276,
+    "per_request": 5.52,
+    "per_round_trip": 1.026,
+    "by_category": {"direct": 263, "pipeline_staged": 13, "pipeline_flush": 6, "immediate_watch": 0, "pubsub": 0},
+    "round_trips_by_category": {"direct": 263, "pipeline_flush": 6},
+    "unattributed_round_trips": 0
+  },
+  "commands_per_round_trip": 1.026,
+  "the_two_instrument_counts": {
+    "in_process_hook": "276 commands, 269 round trips",
+    "server_commandstats": "581 commands",
+    "they_disagree_because": "The server counts its own limiter, session and cache traffic over pooled connections the hook does not wrap. 581 is the real per-request cost; 276 is a floor.",
+    "server_commands_total": 581,
+    "server_commands_per_request": 11.62
+  },
+  "server_commandstats": {
+    "delta": {"get": 255, "evalsha": 100, "pexpire": 100, "set": 103, "exists": 10, "multi": 5, "exec": 5, "setex": 3},
+    "total": 581,
+    "read_this_way": "Taken per repetition as the delta between two INFO commandstats reads from an independent connection, then summed. Reading the counters once after the last repetition is what produced a wrong total in an earlier run of this same harness - the per-repetition counters had been cleared in between.",
+    "what_dominates": "evalsha 100 and pexpire 100 are the GCRA limiter: two per request, one to check the bucket and one to rewrite its TTL. get 255 and set 103 are the API-key validation cache and the user directory behind the 200."
+  },
+  "sql": {
+    "measured": false,
+    "why_not_measured": "The fixture is provisioned and the key is cached, so an API-key GET /users/me is served from cache and issues no SQL. An uncached variant would need a different fixture and a fresh key per request, which the 10-per-hour budget makes expensive.",
+    "inferred": "None stated. A statement about the SQL cost of this endpoint would be a guess, and this artefact does not carry guesses in a measured field."
+  },
+  "comparison_to_the_estimate": {
+    "prior_estimate": null,
+    "verdict": "Nothing to compare against - there was no prior estimate and no prior measurement. The static reading that this seam needs 0-1 round trips is refuted by the measurement: 5.38 round trips and 11.62 server commands per request.",
+    "cross_reference_to_l16": "L-16 (bead FastAPI_saas-wxqr) measured RedisCacheAdapter.get in isolation on the same class of hardware: 1.015 commands per read across 203 round trips. That is the ONE read this path performs, not the path. The path is 5.38 round trips per request - roughly 5x the single read, because authentication, admission and directory lookup are separate round trips."
+  },
+  "measured_vs_inferred": {
+    "measured": [
+      "50 of 50 requests answered 200, authenticated as the key's owner",
+      "269 round trips and 276 commands in-process; 581 server commands",
+      "latency min/p50/p95/p99/max/mean at n=50, plus the four repetition figures",
+      "the API-key path is metered at 10 per 3600s per source IP, observed on the response headers",
+      "the 11th request on a fresh IP is refused 429 RATE_LIMITED with retry_after 360",
+      "a Bearer request from the same account on the same path is metered at 1000 per 3600s",
+      "no per-USER bucket exists for this path after 50 API-key requests",
+      "core/cache/client.py carries no try/except on the measured commit"
+    ],
+    "inferred": [
+      "that the extra round trips are the API-key cache read, the limiter and the user directory - consistent with the commandstats breakdown (evalsha/pexpire dominate), but not isolated one at a time"
+    ],
+    "explicitly_not_measured": [
+      "SQL statement count for this endpoint",
+      "any concurrency above 1",
+      "over-the-wire latency (no socket is in the path)",
+      "the endpoint's behaviour when the API-key cache is cold across fresh keys"
+    ]
+  },
+  "premise_reconfirmation": {
+    "requirement": "core/cache/client.py:89-95 re-confirmed to have no try/except on the measured commit, with the finding recorded.",
+    "file": "/home/ansible/m7/src/app/core/cache/client.py",
+    "starts_at_line": 90,
+    "ends_at_line": 96,
+    "swallows_outage": false,
+    "cited_range_still_exact": false,
+    "drift": "The bead cites 89-95; on commit 93750647 the method occupies 90-96. The cited range has drifted by one line at each end, and L-16 already reported the same drift.",
+    "finding": "RedisCacheAdapter.get still carries no try/except on the measured commit: it resolves the client, returns None when there is no client, and awaits client.get(key). A Redis outage therefore still PROPAGATES out of this adapter rather than degrading to a cache miss. The A-5 analysis that depends on this is unchanged, and the harness treats a swallowed outage as a fatal precondition so a future change here cannot pass unnoticed.",
+    "body": "    async def get(self, key: str) -> str | None:\n        client = get_redis()\n        if client is None:\n            return None\n        return cast(\"str | None\", await client.get(key))\n"
+  },
+  "defects_found_while_measuring": [
+    {
+      "severity": "high",
+      "finding": "API-key requests are admitted as ANONYMOUS and metered on the anonymous per-IP budget, never on the key owner's tier budget.",
+      "where": "src/app/core/security/request_admission.py:349-373 (_get_rate_limit_config) and 227 (_check_anonymous_aggregate)",
+      "mechanism": "Admission resolves identity only from the Authorization: Bearer JWT payload. It never reads X-API-Key, and its own comment records that admission runs before routing and the endpoint auth dependencies. user_id is therefore None, the anonymous default limit is used, and the bucket is keyed by source IP.",
+      "measured_effect": "10 requests per 3600s per IP with an API key, against 1000 per 3600s for the same account with a Bearer token. A hundred-fold gap, measured on the same endpoint with the same account.",
+      "evidence": "Zero gcra:*rate_limit:user:* buckets existed for any account after 50 successful API-key requests, while the Bearer control created one with the Pro budget.",
+      "not_fixed_here": "This is a measure-first bead. The number is reported as the endpoint behaves today, and the fix is filed as a follow-up."
+    },
+    {
+      "severity": "medium",
+      "finding": "A key minted with the documented default body cannot call anything.",
+      "where": "src/app/modules/api_keys/schemas.py:17 (scopes defaults to None) and src/app/api/deps/auth.py:345-357 (api_key_scope_allows)",
+      "mechanism": "api_key_scope_allows returns False for an empty scope set - fail-closed, by design - so a scopeless key is refused on every endpoint including GETs.",
+      "measured_effect": "An early run of this harness minted keys with the default body and every measured request answered 403 'API key missing required scope: read'.",
+      "not_fixed_here": "Filed as a follow-up. The keys for this baseline carry scopes [\"read\"] so the endpoint can be measured at all."
+    },
+    {
+      "severity": "medium",
+      "finding": "POST /api/v1/api-keys cannot mint a key for anyone but the caller.",
+      "where": "src/app/modules/api_keys/schemas.py:21-24 (APIKeyCreate, extra=forbid, no user_id)",
+      "measured_effect": "The three keys in this run all belong to the superuser that minted them, so the measured requests authenticate as that superuser.",
+      "not_fixed_here": "Filed as a follow-up. It is why this baseline uses one account."
+    },
+    {
+      "severity": "not reproduced here, real on an alembic-built database",
+      "finding": "src/migrations/versions/03_access_control.py:132 creates api_keys.scopes as postgresql.JSONB while src/app/modules/api_keys/models.py:55 maps it as Text. On this target the database was built by create_all, has no alembic_version table, and api_keys.scopes is text - so the route mints fine (201) here and the defect does not reproduce.",
+      "implication": "A database built by alembic would answer 500 on POST /api/v1/api-keys. It must be verified against an alembic-built schema before being claimed either way. Filed as a follow-up, NOT reported as the reason no API-key baseline existed."
+    }
+  ],
+  "guards_and_assertions": [
+    {"name": "guard_bogus_api_key_is_rejected", "expected": 401, "observed": 401, "passed": true, "assertion": "a bogus X-API-Key is refused, so the good-key runs below are really authenticated"},
+    {"name": "guard_bogus_api_key_body", "expected": "UNAUTHORIZED", "observed": "UNAUTHORIZED", "passed": true, "assertion": "the refusal is an auth failure, not a 500"},
+    {"name": "creation_route_probed_once", "expected": 3, "observed": 3, "passed": true, "assertion": "the public minting route was exercised for every key, to demonstrate rather than assume"},
+    {"name": "measured_source_ips_are_distinct", "expected": 12, "observed": 12, "passed": true, "assertion": "each arm and repetition spends its own source IP, so no bucket is shared"},
+    {"name": "endpoint_requests_all_succeeded", "expected": {"200": 50}, "observed": {"200": 50}, "passed": true, "assertion": "every measured request answered 200"},
+    {"name": "endpoint_authenticated_as_the_key_owner", "expected": "m7admin", "observed": "m7admin", "passed": true, "assertion": "every request authenticated as the account that owns its key"},
+    {"name": "api_key_traffic_never_reached_the_tier_budget", "passed": true, "assertion": "no per-USER bucket exists for the measured path after 50 API-key requests, because admission resolves identity only from a Bearer token"},
+    {"name": "anonymous_ceiling_is_the_configured_budget", "expected": {"limit": 10, "first_refused_index": 10, "error_code": "RATE_LIMITED"}, "observed": {"limit": 10, "first_refused_index": 10, "error_code": "RATE_LIMITED"}, "passed": true, "assertion": "the 11th request on a fresh source IP is refused, so the enforced budget is the configured one"},
+    {"name": "bearer_control_is_metered_on_the_owner_tier", "expected": "1000 3600", "observed": "1000 3600", "passed": true, "assertion": "the same account with a Bearer token is metered on its tier budget, which is what makes the API-key number a defect rather than a setting"},
+    {"name": "commands_and_round_trips_reported_separately", "expected": true, "observed": true, "passed": true, "assertion": "T-6: the two quantities are distinct columns, not one number"},
+    {"name": "round_trip_buckets_sum_to_total", "expected": 269, "observed": 269, "passed": true, "assertion": "write-time tagging makes the buckets sum by construction"},
+    {"name": "every_round_trip_is_attributed_to_a_command", "expected": 0, "observed": 0, "passed": true, "assertion": "no write escaped attribution, so the round-trip total cannot be undercounted"},
+    {"name": "latency_sample_is_not_a_count", "expected": true, "observed": true, "passed": true, "assertion": "the latency sample is reported separately from both Redis counts"},
+    {"name": "per_repetition_round_trips_sum_to_the_run_total", "expected": true, "observed": true, "passed": true, "assertion": "the pooled totals are sums over the per-repetition records, not the last repetition's counters"}
+  ],
+  "control_arms": {
+    "ceiling": {
+      "what_it_measures": "The enforced anonymous budget on this endpoint, from below. One fresh source IP issues 11 API-key requests.",
+      "source_ip": "127.143.110.192",
+      "requests": 11,
+      "successes": 10,
+      "first_refused_index": 10,
+      "refused_status": 429,
+      "refused_error_code": "RATE_LIMITED",
+      "retry_after": "360",
+      "auto_ban_key_present_after": false,
+      "auto_ban_violation_count_after": "b'1'",
+      "excluded_from_baseline": true,
+      "why_excluded": "Its 429 is deliberate and its traffic would consume a source IP's whole hourly budget. Its latency and Redis counts are NOT part of the baseline above."
+    },
+    "bearer": {
+      "what_it_measures": "The same account, the same path, the same tier, one credential different. This is what turns the anonymous metering into a number instead of an interpretation.",
+      "source_ip": "127.143.110.193",
+      "account": "m7admin",
+      "tier": "Pro",
+      "tier_budget_from_settings": [1000, 3600],
+      "requests": 3,
+      "statuses": {"200": 3},
+      "latency_ms": [8.8683, 8.0761, 10.2089],
+      "observed_budgets": [{"limit": 1000, "period": 3600}],
+      "excluded_from_baseline": true,
+      "why_excluded": "A different credential on the same account is a control, not part of the API-key baseline."
+    }
+  },
+  "limits": [
+    "In-process and sequential: no socket, no uvicorn, no HTTP parser. The latency figures are NOT comparable with step-4's over-the-wire users_me p50 30.7745 ms, and are expected to be lower.",
+    "n=50 is one hour of anonymous budget on five fresh IPs. It is not a throughput sample and p99 does not meet step4_gate.P99_SAMPLE_FLOOR of 10000.",
+    "Concurrency is 1. Nothing here says what this endpoint does under load.",
+    "The cache state is warm for repetition 1 onwards: three keys are cached after the first request each, so the later repetitions measure the cached path.",
+    "The source IPs are loopback addresses in 127.0.0.0/8. Real clients arrive over a real NIC, and the metering that dominates this endpoint is IP-keyed, so the per-IP numbers here are the cleanest available form of the same budget.",
+    "The measured commit is 93750647 on branch security/remediate-run3-findings, not the dev HEAD: the Linux clone does not contain the dev HEAD commit.",
+    "SQL statement count is not measured for this endpoint.",
+    "This baseline does NOT fold the API-key endpoint into scripts/step4_campaign.py's matrix or scripts/step4_gate.py's REQUIRED_ENDPOINTS. That fold-in is outstanding and filed as a follow-up: it would mutate the harness and the gate that a CLOSED bead's PASS rests on, and would need a full 10,000-request re-run."
+  ],
+  "cross_reference": {
+    "closes": "FastAPI_saas-o0fg (M-7)",
+    "related": [
+      "FastAPI_saas-wxqr (L-16) - measured RedisCacheAdapter.get in isolation at 1.015 commands per read; the single read this path performs, not the path",
+      "FastAPI_saas-v8qm (step-4 gate) - the ten-endpoint over-the-wire matrix this bead deliberately did not mutate",
+      "FastAPI_saas-p90o (GATE-A) - checkbox 4, the pre-existing measurement defect this bead closes",
+      "perf-results/RESULT-20261016-m1/m1_refresh_round_trips.json - the artefact format followed here"
+    ],
+    "bead_closes_list": ["FastAPI_saas-o0fg"]
+  },
+  "closed": true
+}

@@ -14,7 +14,23 @@ class APIKeyBase(BaseModel):
     """Base schema for API key."""
 
     name: Annotated[str, Field(min_length=1, max_length=100, examples=["Production API Key"])]
-    scopes: list[str] | None = Field(default=None, examples=[["read:posts", "write:posts"]])
+    # FastAPI_saas-ns82: the default was `None`, and `create_api_key` only
+    # persists a truthy value, so omitting `scopes` stored NULL - which
+    # `api_key_scope_allows` denies everywhere by design ("Keys with no scopes
+    # are denied everywhere"). The endpoint's own default therefore minted a
+    # key that could call nothing at all: M-7 measured exactly that, a 403
+    # "API key missing required scope: read" on its first GET
+    # (perf-results/RESULT-20261017-m7/m7_apikey_endpoint_baseline.json).
+    #
+    # The default is now the LEAST privilege that makes a key usable, not the
+    # `admin` wildcard and not `None`. Explicitly supplied values are never
+    # touched: `"scopes": []` or `"scopes": null` still yields a key that is
+    # denied everywhere, because that is a statement rather than an omission,
+    # and the fail-closed policy is pinned by tests/unit/api/deps/test_auth.py.
+    scopes: list[str] | None = Field(
+        default_factory=lambda: ["read"],
+        examples=[["read:posts", "write:posts"]],
+    )
     expires_at: datetime | None = Field(default=None, description="Optional expiration date")
 
 

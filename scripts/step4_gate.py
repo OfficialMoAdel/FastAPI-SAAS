@@ -36,14 +36,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
-#: v8qm's ten endpoints. The two body arms are EM-9 and EM-10, measured by
+#: v8qm's endpoints. The two body arms are EM-9 and EM-10, measured by
 #: scripts/body_scan_regimes.py rather than the campaign, so they arrive under
 #: their own names and are held to the same criteria.
+#:
+#: `users_me_apikey` is EM-11 (bead 86p9): the same handler as `users_me`, reached
+#: with `X-API-Key` instead of a bearer token, so the delta between the two arms
+#: is the credential seam and nothing else. It was added AFTER v8qm closed, which
+#: is why the count below is eleven while that bead's close reason says ten — the
+#: C1 name follows this tuple, and a gate that kept the old count would state a
+#: number no longer derived from anything.
 REQUIRED_ENDPOINTS: Final[tuple[str, ...]] = (
     "users_me",
     "users_list",
     "users_search",
     "users_me_anon",
+    "users_me_apikey",
     "login",
     "logout",
     "refresh",
@@ -76,7 +84,7 @@ REPETITION_FIGURES: Final[tuple[str, ...]] = (
 #: The criteria names, held once. They appear in a record() call and again in
 #: the summary, and keeping two spellings of a criterion's name is how a gate
 #: ends up reporting "5/10" for a set of ten it can no longer name.
-C1: Final[str] = "ten endpoints measured at the degrading concurrency"
+C1: Final[str] = "every required endpoint measured at the degrading concurrency"
 C2: Final[str] = "4.4 verbatim; p99 needs n >= 10,000"
 C3: Final[str] = ">=5 reps, median-of-medians and min-of-medians"
 C4: Final[str] = "4.5 void conditions asserted start and end"
@@ -234,7 +242,12 @@ def _endpoints_from_post_roundtrip(artefact: dict[str, Any], source: str) -> lis
 
 
 def criterion_1(evidence: dict[str, Evidence], gate: Gate) -> None:
-    """Ten endpoints, each measured AT the degrading concurrency."""
+    """Every required endpoint, each measured AT the degrading concurrency.
+
+    The count is read from ``REQUIRED_ENDPOINTS`` rather than spelled out, so an
+    arm added after v8qm closed cannot leave this criterion asserting a count no
+    artefact can produce.
+    """
     missing = [n for n in REQUIRED_ENDPOINTS if n not in evidence]
     off_conc = [f"{e.name}@{e.concurrency}" for e in evidence.values() if e.concurrency != DEGRADING_CONCURRENCY]
     if missing:
@@ -510,8 +523,7 @@ def criterion_8(profile_path: str | None, gate: Gate) -> None:
             8,
             C8,
             True,
-            f"top-5 tottime share {share} of {total:.6f}s over {len(rows)} parsed rows; "
-            f"top five: {named}",
+            f"top-5 tottime share {share} of {total:.6f}s over {len(rows)} parsed rows; top five: {named}",
         )
         return
 
@@ -533,7 +545,7 @@ def criterion_9(occupancy_path: str | None, gate: Gate) -> None:
         gate.record(9, C9, False, "no occupancy artefact supplied; not assumed")
         return
     artefact = _load(occupancy_path)
-    sources = (artefact.get("sources") or artefact.get("occupancy") or {})
+    sources = artefact.get("sources") or artefact.get("occupancy") or {}
     cross = artefact.get("cross_check")
     if not sources:
         gate.record(9, C9, False, f"{occupancy_path}: no per-source occupancy block")

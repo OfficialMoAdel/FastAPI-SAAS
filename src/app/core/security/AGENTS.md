@@ -22,7 +22,7 @@ src/app/core/security/
 ├── login_helpers.py           # refresh-cookie helpers (set/get/clear, cookie names)
 ├── pending_token_store.py     # PendingTokenStore (MFA/SSO/magic-link pending tokens)
 ├── auto_ban.py                # IP auto-ban: violations, ban/unban, L1 invalidation
-├── rate_policy.py             # resolve_rate_limits, build_rate_limit_key, RateLimitVerdict
+├── rate_policy.py             # resolve_rate_limits, build_rate_limit_key, build_api_key_rate_limit_key, RateLimitVerdict
 ├── budgets.py                 # the security budget seam: check/probe, BUDGETS, validate_budget_definitions
 ├── request_admission.py       # RequestAdmissionService: full admission decision (skips, identity, ban, limits)
 ├── rate_limit_cache.py        # tier rate-policy cache warm/invalidate
@@ -87,6 +87,12 @@ response.set_cookie(key="refresh_token", value=..., httponly=True, secure=True, 
 - **Token issue/verify**: `jwt_service.py::create_access_token`, `verify_token`
 - **Revocation**: `jwt_service.py::is_token_blacklisted` + `token_blacklist_cache.py`
 - **Admission**: `request_admission.py::RequestAdmissionService` (skips → identity → ban → limits)
+- **API-key budget**: a request carrying `X-API-Key` is metered on
+  `settings.rate_limit.API_KEY_LIMIT` (`build_api_key_rate_limit_key`, keyed by
+  source IP because admission runs before the key is validated), NOT on the
+  anonymous default; it is exempt from the anonymous IP aggregate ceiling and
+  its violations do not escalate to auto-ban. Owner-tier metering is still
+  outstanding. Oracle: `tests/unit/core/security/test_api_key_admission_budget.py`.
 - **Request-state seam**: `src/app/core/middleware_state.py` (`get_client_ip_state`,
   `is_whitelisted`, `get_request_id`, `get_token_blacklisted`) — admission and
   rate-policy read guard-set state through it; never `getattr(request.state, ...)` directly

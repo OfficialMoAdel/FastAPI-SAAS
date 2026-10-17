@@ -43,6 +43,27 @@ class DefaultRateLimitSettings(BaseSettings):
     # keys per window, and each key expires with its period. Before this ceiling
     # that number was unbounded, because nothing capped total request rate.
     ANONYMOUS_IP_AGGREGATE_LIMIT: tuple[int, int] = (300, 3600)
+    # Budget for a caller presenting X-API-Key and NO bearer credential.
+    #
+    # Such a caller used to fall through to DEFAULT_ANONYMOUS_LIMIT (10 per
+    # 3600s), which billed a server-to-server integration as if it were a
+    # browser: M-7 measured 50 API-key calls to GET /api/v1/users/me answered
+    # `X-RateLimit-Limit: 10` while the same account's Bearer token answered
+    # 1000 - a 100x gap between the two credentials of one principal. Found by
+    # bead FastAPI_saas-g4my.
+    #
+    # It is a NAMED budget, not the owner's tier, on purpose: admission runs
+    # before API-key validation (core/guard/ordering.py puts RateLimit ahead of
+    # the auth dependencies), so the owner's tier is not knowable here without a
+    # Redis+DB lookup on the hot path of every keyed request. Metering the owner
+    # is tracked separately; until then this budget must not be the anonymous
+    # one, because the anonymous one is also the brute-force defence and the
+    # aggregate ceiling, neither of which belongs to an authenticated caller.
+    #
+    # Keyed by SOURCE IP (see build_api_key_rate_limit_key): the presented key
+    # is unverified at this point in the pipeline, so a per-key bucket would
+    # hand an attacker a fresh bucket per guess.
+    API_KEY_LIMIT: tuple[int, int] = (1000, 3600)
     # If True, allow requests when Redis is unavailable (fail-open)
     # If False, block requests when Redis is unavailable (fail-closed, more secure)
     RATE_LIMIT_FAIL_OPEN: bool = False
@@ -103,6 +124,7 @@ class DefaultRateLimitSettings(BaseSettings):
 class CRUDAdminSettings(BaseSettings):
     CRUD_ADMIN_ENABLED: bool = False
     CRUD_ADMIN_MOUNT_PATH: str = "/admin"
+
     # S-26: this path becomes TENANT_EXEMPT_PREFIXES (middleware/tenant.py),
     # and _TENANT_EXEMPT_MATCHES keeps a bare "/" when the prefix normalises to
     # "/". `path.startswith(("/",))` is true for EVERY absolute path, so "/"

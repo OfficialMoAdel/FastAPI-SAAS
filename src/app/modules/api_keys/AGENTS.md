@@ -66,6 +66,18 @@ def _hash_api_key(self, api_key: str) -> str:
 - Keys are tenant-scoped via `tenant_id`
 - Revoked keys cannot be reactivated - create new instead
 - Rate limiting applies to API key authentication
+- **Scopes are fail-closed, and the default is `["read"]`**:
+  `api_key_scope_allows` (`src/app/api/deps/auth.py:345`) denies a key with
+  an empty scope set everywhere, so `APIKeyBase.scopes`
+  (`schemas.py:17`) defaults to `["read"]` — an omitted field mints a
+  READ-ONLY key, not a dead one. `create_api_key` only persists a TRUTHY
+  `scopes` (`service.py:113`), so an explicit `scopes: []` or `scopes: null`
+  in the request body is a STATEMENT, not an omission: it still yields a key
+  that is denied everywhere (403 `SCOPE_MISSING`). Pass `["admin"]` for the
+  wildcard, or `read:<resource>` / `write:<resource>` to qualify. Rotate
+  copies the old key's scopes verbatim (`service.py:716`), so a scoped key
+  stays scoped across rotation. Oracle:
+  `tests/unit/modules/api_keys/test_default_scopes.py`.
 - **Grace Period**: During rotation, both old and new keys work for the grace period (default 7 days)
 - **valid_from column**: New keys have valid_from = now + grace_period, allowing overlap
 - **Audit Logging**: All key operations (create, revoke, rotate) are logged to audit trail
