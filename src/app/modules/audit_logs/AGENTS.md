@@ -200,6 +200,12 @@ details = {
 }
 ```
 
+### Column widths are enforced by the column, not by the ORM
+
+`user_agent` is declared `Text` in the model, which is a statement that there is **no cap** — and the migration adds one: `String(500)`. MEASURED on a migrated database (`perf-results/RESULT-20261018-9cmn/`, bead `FastAPI_saas-9cmn`): the column accepts 500 characters, refuses 501 with an untranslated `StringDataRightTruncationError`, and the ORM has no width to probe against because `Text` declares none. On a `create_all` database the column really is `text` and the declaration is honoured exactly.
+
+The consequence for this module: a long `User-Agent` header is truncated by **nothing** on the model side and rejected by the **database**, so a write can fail with a 500 rather than a sanitized-away value. `sanitize` runs before the insert, so a header that long has to arrive from a client that got past it. Fixed in `FastAPI_saas-auz2`.
+
 ## Delivery Policy (AuditGuarantee)
 
 Route feature audit writes through `await audit()` — it validates, sanitizes,

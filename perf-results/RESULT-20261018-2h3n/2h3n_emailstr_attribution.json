@@ -1,0 +1,253 @@
+{
+  "bead": "FastAPI_saas-2h3n",
+  "item": "M-4",
+  "title": "The EmailStr dispute (974 us vs 75-150 us) is BOUNDED at 172.5 us, measured inside the request that pays it",
+  "bead_closes": "FastAPI_saas-2h3n",
+  "measured_at": "2026-10-18T13:54:26.237395+00:00",
+  "artefact_kind": "measurement-artefact",
+  "headline": {
+    "status": "BOUNDED",
+    "measured_us_per_request": 172.507,
+    "share_of_that_request": 0.041801,
+    "verdict": "Both published claims are wrong about this code path, in opposite directions, and the figure is now measured where it is paid. One warm authenticated GET /api/v1/users/me pays TWO email validations (the same string, twice) at a median of 83.299 us per call, 172.507 us per request, which is 4.18 % of that request's own median latency of 4225.224 us. email_validator's own work is 160.88 us of it and idna is 11.399 us. The 974 us claim is 5.646147763188912x the measured figure; the 75-150 us band does not contain it either, so the 6-13x disagreement is not a measurement defect any more: it is two claims that are both wrong.",
+    "the_double_validation": "The response path validates the same email TWICE per request. src/app/modules/users/service.py:356 returns UserRead.model_validate(current_user).model_dump(mode=\"json\") - validation #1 - and the route's response_model=UserReadPublic (src/app/modules/users/router.py:93) validates the dumped dict again - validation #2. Both are EmailStr, and the instrument sees exactly 2 calls on every one of the 1250 measured requests (min 2, max 2) for a single distinct value.",
+    "what_p17_premise_follows": "P-17 (bunny_pi item 1c) proposes dropping EmailStr from the /users/me response model because 'response models need no re-validation'. The measurement says the response model is HALF the cost: removing EmailStr from it leaves validation #1, the service-side validation of the ORM row, still in place. The saving is bounded by half of the measured figure unless the service-side validation goes too.",
+    "previous_p17_figure_us": 34.263,
+    "why_the_previous_p17_figure_was_not_evidence": "P-17's perf-results/RESULT-20261013-emailstr/emailstr_cost.json reported 'RESOLVED: NEITHER: 34.3 us, below the 75 us low claim'. That 34.3 us is the BEST-CASE single call in a warm loop (this run's layer view measures the same arm at 34.109 us) divided by a request latency taken from a DIFFERENT measurement. Two things were wrong with it at once: the numerator is a best case, not the typical in-request case (the in-request per-call median is 83.299 us, 2.44x the warm best case), and the denominator was not the request that paid the cost."
+  },
+  "instrument": {
+    "harness": "scripts/emailstr_cost.py",
+    "in_repo": true,
+    "artefact_schema": "perf-emailstr-cost/2",
+    "why_the_harness_was_rewritten": "The old harness timed two microbenchmark layers and divided one of them by a request latency from a separate measurement. It also timed idna.encode, a call the installed email_validator never makes (it calls idna.uts46_remap for every domain and idna.alabel per non-ASCII label), it computed three percentiles inline against the repo's one-estimator rule, and it emptied Redis with flushall().",
+    "functions_wrapped": [
+      "email_validator.validate_email",
+      "idna.uts46_remap",
+      "idna.alabel"
+    ],
+    "why_these": "all three are resolved as module attributes at CALL time by the code that uses them, so wrapping the module attribute is the only patch point that reaches a real validation",
+    "instrument_overhead_us": {
+      "email_wrapper_us": 0.52,
+      "idna_wrapper_us": 0.489,
+      "one_wrapper_call_us": 1.009
+    },
+    "overhead_is_subtracted_explicitly": true,
+    "overhead_note": "measured with the same wrapper bodies around a no-op, so it is the bookkeeping a real call pays. The bookkeeping is paid PER CALL, so a request's overhead is its call count times the per-call cost, and it is subtracted from the gross figure EXPLICITLY, never folded in silently.",
+    "percentile_estimator": "src.benchmarks.percentiles.nearest_rank (the ONE estimator)",
+    "micro_arm_estimator": "src.benchmarks.protocol.measure (warm-up, gc.collect(), min-of-N, median-of-M)",
+    "security_state_cleared_with": "src.benchmarks.security_state.clear_security_state (rate-limit and ban key families only)",
+    "oracle": "tests/unit/scripts/test_emailstr_attribution.py (27 cases; RED 20 failed / 5 passed on the pre-rewrite harness, then 5 failed / 20 passed for the contamination cases against the pre-fix harness, then 27 passed)",
+    "library_boundary": {
+      "named": "pydantic EmailStr + email_validator 2.2.0 pydantic 2.11.5 + idna 3.10",
+      "why_named": "Whether pydantic routes EmailStr through email_validator is a property of the INSTALLED versions, so it is read from the environment rather than assumed. Assuming either answer is how a boundary dispute begins."
+    }
+  },
+  "protocol": {
+    "target": "perf-local (192.168.121.147), Linux 5.14.0-578.el9.x86_64, VMware VM, i7-8850H, 4 cores, CPython 3.13.16",
+    "commit": "6925ee6b21aa88c25b26e1f1a5349901e5443152",
+    "commit_short": "6925ee6b",
+    "provenance_recorded_by_the_run": {
+      "measured_at": "2026-10-18T13:54:26.237395+00:00",
+      "commit": "6925ee6b21aa88c25b26e1f1a5349901e5443152",
+      "host": "ansible1",
+      "platform": "Linux 5.14.0-578.el9.x86_64; python 3.13.16"
+    },
+    "endpoint": "GET /api/v1/users/me (authenticated, warm)",
+    "why_this_endpoint": "the same endpoint used throughout this series, and the one whose response model carries the EmailStr field, so the cost is paid inside the request being measured",
+    "driver": "in-process ASGI (httpx.ASGITransport + asgi_lifespan.LifespanManager); the cost is attributed inside the request that pays it",
+    "authentication": "POST /api/v1/account/login as the fixture user qa0@e.io in tenant test-tenant-e2e, then a warm GET with the bearer token",
+    "n": 1250,
+    "repetitions": 5,
+    "requests_per_repetition": 250,
+    "warmup": 25,
+    "rate_limit_state_cleared_before_each_repetition": true,
+    "budgets_relaxed": false,
+    "why_no_budget_was_relaxed": "The first run spent the Pro tier's hourly budget inside the run, the IP earned an auto-ban, and the last repetition measured nothing (a NEGATIVE cost, because the instrument's overhead was subtracted from requests that never validated). The state is now cleared before every repetition and the run EXITS 2 if any request was refused, so a contaminated artefact cannot be published as clean.",
+    "validity": {
+      "requests_attempted": 1250,
+      "requests_served_200": 1250,
+      "requests_refused": 0,
+      "requests_served_but_not_validated": 0,
+      "requests_measured": 1250,
+      "every_measured_request_was_served": true,
+      "why_this_block_exists": "A refused request is not a slower request, it is a request that never reached the validation. Counting it as a sample of the cost, or subtracting the instrument's overhead from a request that never validated, produces a negative cost. The first run of this harness did exactly that: the hourly rate-limit budget ran out inside the run, the IP earned an auto-ban, and the last repetition measured nothing at all."
+    }
+  },
+  "the_request_level_attribution": {
+    "n_measured": 1250,
+    "request_us": {
+      "min": 2784.773,
+      "p50": 4225.224,
+      "p95": 6142.217
+    },
+    "email_us_net": {
+      "min": 127.952,
+      "p50": 172.507,
+      "p95": 259.508
+    },
+    "email_validator_own_us": {
+      "p50": 160.88
+    },
+    "idna_us": {
+      "p50": 11.399
+    },
+    "share_of_request": {
+      "p50": 0.041801,
+      "max": 0.11375,
+      "unit": "fraction of THAT request's latency"
+    },
+    "email_calls_per_request": {
+      "min": 2,
+      "max": 2,
+      "note": "more than one means the response path validates the same email more than once per request"
+    },
+    "idna_calls_per_request": {
+      "min": 2,
+      "max": 2
+    },
+    "per_validation_call_us": {
+      "n": 2500,
+      "min": 55.364,
+      "p50": 83.299,
+      "p95": 150.552,
+      "note": "one sample per call, not per request, so a request that validates twice contributes two samples"
+    },
+    "per_idna_call_us": {
+      "n": 2500,
+      "p50": 5.529
+    },
+    "distinct_validated_values": [
+      "qa0@e.io"
+    ],
+    "the_split_is_additive": "email_validator_own_us + idna_us == email_us_net, both net of the instrument overhead"
+  },
+  "the_layer_view": {
+    "purpose": "what the SAME work costs as a best case, in a warm loop, with the instrument not installed",
+    "layers": {
+      "baseline_str_no_validation": {
+        "library": "pydantic-core str validation (no email rule)",
+        "calls": "TypeAdapter(str).validate_python",
+        "best_us": 0.322,
+        "batch_mins_us": [
+          0.322,
+          0.323,
+          0.313,
+          0.318,
+          0.322
+        ],
+        "spread_ratio": 1.032,
+        "inside_noise_floor": true
+      },
+      "emailstr_as_pydantic_wires_it": {
+        "library": "pydantic EmailStr + email_validator 2.2.0 pydantic 2.11.5 + idna 3.10",
+        "calls": "TypeAdapter(EmailStr).validate_python",
+        "best_us": 34.109,
+        "batch_mins_us": [
+          34.162,
+          34.109,
+          33.825,
+          33.954,
+          39.963
+        ],
+        "spread_ratio": 1.1815,
+        "inside_noise_floor": true
+      },
+      "idna_uts46_remap_on_the_domains_domain": {
+        "library": "idna.uts46_remap(domain, std3_rules=False, transitional=False)",
+        "domain": "subdomain.example.co.uk",
+        "why_this_call": "this is the call the installed email_validator makes for EVERY domain, so it is the idna work the application actually pays",
+        "best_us": 3.763,
+        "batch_mins_us": [
+          3.769,
+          3.744,
+          3.771,
+          3.648,
+          3.763
+        ],
+        "spread_ratio": 1.0337,
+        "inside_noise_floor": true
+      },
+      "idna_alabel_on_a_non_ascii_label": {
+        "library": "idna.alabel(label)",
+        "label": "münchen",
+        "why_this_call": "email_validator calls this PER LABEL only for non-ASCII domains; the ASCII fast path skips it, so pricing it on an ASCII label would price a call the application never makes",
+        "best_us": 10.048,
+        "batch_mins_us": [
+          10.037,
+          9.966,
+          10.048,
+          10.054,
+          11.654
+        ],
+        "spread_ratio": 1.1694,
+        "inside_noise_floor": true
+      }
+    },
+    "marginal_email_over_baseline_us": 33.787,
+    "note": "These arms are a LAYER view, measured with the instrument not installed. The figure the bead needs is the request-level attribution below, where the cost is taken from the request that paid it.",
+    "how_it_compares_with_the_request_level_figure": "the layer view's best case for one validation is 34.109 us; the in-request per-call median is 83.299 us. The layer view is not wrong - it is a best case, and it was quoted as if it were the cost of a request."
+  },
+  "the_dispute": {
+    "status": "BOUNDED",
+    "measured_us": 172.50699784199242,
+    "band_us": [
+      75.0,
+      150.0
+    ],
+    "high_claim_us": 974.0,
+    "share_of_request": 0.040827894057318875,
+    "high_claim_share_if_true": 0.23052032270744485,
+    "factor_below_the_high_claim": 5.646147763188912,
+    "low_claim_us": 75.0,
+    "which_claim_is_supported": "neither of them",
+    "reasoning": "The measured cost is 172.51 us of validation inside one warm authenticated GET /users/me, against a request whose own median latency is 4225.22 us. That is 4.0828 % of the request that paid it. The band the low claim occupies is 75-150 us and the high claim is 974 us, so the measured figure sits above the low band. The high claim would be 5.6x this figure if it were true of this code path. The cost is BOUNDED at the measured figure, which is inside neither claim: the 6-13x disagreement is not a measurement defect any more, it is two claims that are both wrong about this code path."
+  },
+  "measured_vs_inferred": {
+    "measured": [
+      "the per-request validation cost (median, min, p95) and its share of THAT request's latency",
+      "the number of validations and idna calls per request (2 and 2, on all 1250 requests)",
+      "the per-call distribution (n = 2500 calls)",
+      "the instrument's own overhead, measured and subtracted explicitly",
+      "the layer view for the calls the installed email_validator actually makes",
+      "the fact that all 1250 measured requests were served and validated"
+    ],
+    "inferred": [
+      "that the second validation comes from the route's response_model and the first from the service (read from the source; the COUNT of two is measured, the attribution to those two call sites is read)",
+      "that the first run's contamination came from the hourly budget and the auto-ban (read from the run's own log, which names both)"
+    ],
+    "explicitly_not_measured": [
+      "the cost of the same validation on the REGISTRATION path (the bead names login and registration; only the response-model path was measured)",
+      "whether dropping EmailStr from the response model recovers exactly half of the figure (no code was changed, so nothing was re-measured after a change)",
+      "the cost of the 801 domain and the 974 us claim as a cProfile-attributed CPU share (the 974 us figure came from a contaminated cProfile run and is not re-derived here)"
+    ]
+  },
+  "limits": [
+    "One interpreter, one commit, one machine, one tenant, one email value ('qa0@e.io'). The string is short and ASCII, so the per-label idna.alabel arm never runs on this path; a long internationalised address would cost more and the idna share would rise.",
+    "The measurement is in-process (ASGI transport), so the request latency here (p50 4225.2 us) is NOT the over-the-wire figure Phase-0 recorded for the same endpoint (users_me p50 40.5 ms) and the two must not be compared directly. The SHARE (4.18 %) is the transferable part.",
+    "Run-to-run spread, measured on the same target and the same endpoint one commit earlier (a4e2c162, before the provenance block existed): request p50 4582.547 us, email net p50 189.598 us, per-call p50 93.908 us, share p50 0.041863, factor 5.137. The published run therefore reports a figure 9 % BELOW the previous one, and the two must not be averaged: the published run is the one that carries its own provenance. The SHARE is stable to within 0.2 % across both runs, which is the part that transfers.",
+    "The figure is for the response-model path only. P-17 also names registration, and a registration request validates the request BODY, which this run did not measure.",
+    "The first run of this harness is not admissible and is not published: its budget ran out mid-run and the IP was auto-banned, so the last repetition measured nothing. The published run cleared the state before every repetition and refused to exit 0 with any refused request.",
+    "The instrument's overhead (1.009 us per validation call, 2 calls per request) is subtracted EXPLICITLY rather than ignored; the published figure is therefore a slight UNDER-estimate of the true cost, by at most ~2 us per request.",
+    "This bead is measurement-only. No production code was changed, so nothing here says what any optimisation would actually save.",
+    "The old P-17 artefact is not invalidated by this one; it measured something different (a warm best case) and reported it against a denominator that was not the request that paid the cost."
+  ],
+  "cross_reference": {
+    "bead_closed_by_this_artefact": "FastAPI_saas-2h3n",
+    "beads_referenced": [
+      "FastAPI_saas-yi4n (P-17, the EmailStr item this bead exists to measure)",
+      "FastAPI_saas-9baq (P-19, the span-cost figure whose method this bead's harness corrects)"
+    ],
+    "documents_referenced": [
+      "AUDIT_PERF_MEASUREMENT.md row G5 (the 974 us claim and the 75-150 us counter-claim)",
+      "PLAN_FOR_ADVANCED_OPTIMIZATIONS_ROUND_1_UNIFIED.md:374 (P-17, [Contested]) and :435 (M-4)"
+    ],
+    "previous_artefact": "perf-results/RESULT-20261013-emailstr/emailstr_cost.json",
+    "raw_artefact_in_this_directory": "perf-results/RESULT-20261018-2h3n/emailstr_cost.json",
+    "source_sites": [
+      "src/app/modules/users/service.py:356 (validation #1)",
+      "src/app/modules/users/router.py:93 (validation #2)",
+      "src/app/modules/users/schemas.py:127 (the EmailStr field on UserReadPublic)"
+    ]
+  },
+  "closed": true
+}

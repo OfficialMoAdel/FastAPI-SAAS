@@ -23,8 +23,35 @@ gives the total wall-clock the loop was unavailable. If the three sources'
 occupancy is a negligible share of that sum, the hypothesis is REFUTED and this
 artefact reports it as a refutation.
 
-Instrumentation is runtime monkeypatching of three precise seams, installed and
-removed in-process. No production file is modified.
+Phase 1 is measured with NO instrumentation installed, and phase 2 with it.
+The order is load-bearing, not stylistic: the meter charges two ``perf_counter``
+reads, two ``process_time`` reads and three writes per call, so a per-call cost
+taken through it is a statement about the harness. ``amain`` used to install
+the instruments on the line above phase 1, and the span figure it reported was
+the span PLUS the meter -- which is why this file's ceiling label and P-19's
+artefact disagreed by 6x and neither could check the other. Each phase-1
+measurement now REFUSES to report a figure if its own source charged the meter
+during the run, so that defect fails loudly instead of quietly.
+
+Instrumentation is runtime monkeypatching of three precise seams, installed in
+-process for phase 2. No production file is modified.
+
+Why the span is measured twice
+------------------------------
+S-3 (``FastAPI_saas-ztwf``) landed a guard in
+``src/app/core/observability/tracing.py``: when no SDK is installed,
+``trace_span`` returns ``trace.INVALID_SPAN`` instead of letting a ``ProxyTracer``
+build a ``NonRecordingSpan`` and discard it. So there are two paths, and they
+cost different amounts:
+
+* ``guarded`` -- the path production is in. Short-circuits before the tracer.
+* ``proxy_tracer`` -- the DEAD path S-3 removed, forced by flipping the
+  module-level ``_SDK_INSTALLED`` flag for the duration of the measurement.
+
+Measuring only the live path would price an optimisation that already landed and
+leave "what does a dead span cost per DB request" -- the question M-5 asks --
+unanswered. The flag is restored in a ``finally``, so a phase that aborts cannot
+leave the process believing an SDK is installed.
 
 Usage (Linux only; T-1 is representative only on uvloop):
 
@@ -93,9 +120,15 @@ SAMPLER_UNUSABLE: Final[str] = (
 #:   derived from the total, yet its ``per_scanned_header_us: 8.8102`` IS
 #:   total/6 -- the misleading average this bead exists to stop quoting.
 #: * otel_span was 10 us, taken from reports/span_cost.json's best_us 3.123 on
-#:   a different host. The target measures 19.486 us for the same call: a 6x
-#:   cross-host gap, inside the 7.1x run-to-run spread protocol.py records, so
-#:   neither box's best figure is a portable ceiling.
+#:   a different host. The target was then said to measure 19.486 us for the
+#:   same call, and the 6x gap was attributed to the host. It was not a host
+#:   difference: 19.486 was measured THROUGH THIS HARNESS'S OWN METER (phase 1
+#:   ran with the instruments already installed), and 3.123 was not. The two
+#:   figures were never the same quantity, so neither could check the other.
+#:   FastAPI_saas-7zwp fixed the ordering and dropped the 19.486 citation. The
+#:   VALUE is deliberately unchanged: a ceiling is a specification, and editing
+#:   it to fit a fresh measurement is the `new < old` form protocol.py bans,
+#:   whichever direction the new number moves.
 HEADER_SCAN_CEILING_US: Final[Ceiling] = Ceiling(
     100.0,
     "T-1's SAMPLER_COST_CEILING_US: one eighth of one 8 ms sampling interval, "
@@ -115,8 +148,10 @@ SPAN_CEILING_US: Final[Ceiling] = Ceiling(
     50.0,
     "half of T-1's SAMPLER_COST_CEILING_US: a DEAD span is optional "
     "instrumentation that produces nothing, so it may not occupy more than "
-    "half the loop budget the repo calls noticeable. Measured 19.486 us on the "
-    "target, i.e. 0.39 of this",
+    "half the loop budget the repo calls noticeable. The value is unchanged "
+    "by bead FastAPI_saas-7zwp; what changed is that this label no longer "
+    "quotes a per-call measurement, because the one it used to quote was taken "
+    "through this harness's own meter and was never a measurement of the span",
 )
 
 #: The 401 endpoint, per reports/unauth_401.json.
@@ -150,7 +185,28 @@ def probe_headers(tenant: str) -> dict[str, str]:
 SOURCE_LABELS: Final[dict[str, str]] = {
     "header_scan": "per-header attack scan (prefilter + combined regex)",
     "exc_info": "exc_info traceback formatting on the 401 path",
-    "otel_span": "dead OTel span per DB request",
+    "otel_span": "OTel span construction per DB request, in the state production is in (guarded)",
+}
+
+#: The two paths `trace_span` can take, and the flag that selects between them.
+#:
+#: ``tracing._SDK_INSTALLED`` is resolved once at import, so it is a module
+#: constant in production and can only be moved by assignment. Forcing it is
+#: how the harness prices the path S-3 removed without installing an SDK, which
+#: would change what is being measured.
+GUARDED: Final[str] = "guarded"
+PROXY_TRACER: Final[str] = "proxy_tracer"
+GUARD_STATES: Final[tuple[str, ...]] = (GUARDED, PROXY_TRACER)
+
+SPAN_ARM_LABELS: Final[dict[str, str]] = {
+    GUARDED: (
+        "S-3's guard: trace_span returns trace.INVALID_SPAN before the tracer is "
+        "touched. This is the path production is in."
+    ),
+    PROXY_TRACER: (
+        "the DEAD path S-3 removed: tracing builds a ProxyTracer NonRecordingSpan "
+        "and discards it, once per DB session per request."
+    ),
 }
 
 #: Below this share of measured loop lag the three sources are not the
@@ -185,9 +241,7 @@ RELAXED_LIMITS: Final[dict[str, str]] = {
             )
         }
     ),
-    "TIER_RATE_LIMITS": json.dumps(
-        {key: [100000, 3600] for key in ("free", "basic", "pro", "enterprise")}
-    ),
+    "TIER_RATE_LIMITS": json.dumps({key: [100000, 3600] for key in ("free", "basic", "pro", "enterprise")}),
     "DEFAULT_AUTHENTICATED_LIMIT": "[100000,3600]",
     "DEFAULT_ANONYMOUS_LIMIT": "[100000,3600]",
     "ANONYMOUS_IP_AGGREGATE_LIMIT": "[100000,3600]",
@@ -199,6 +253,52 @@ RELAXED_LIMITS: Final[dict[str, str]] = {
 # --------------------------------------------------------------------------- #
 # phase 1: per-call cost, section 4.4 protocol
 # --------------------------------------------------------------------------- #
+
+
+@contextlib.contextmanager
+def span_guard(state: str) -> Iterator[None]:
+    """Force ``tracing._SDK_INSTALLED`` for the duration of the block.
+
+    ``tracing.py`` resolves that flag ONCE at import: when it is false,
+    ``trace_span`` returns ``trace.INVALID_SPAN`` without touching the tracer
+    (S-3's guard). When it is true, the tracer is a ``ProxyTracer`` because no
+    SDK is installed, and the span is built and thrown away.
+
+    The flag is restored in a ``finally`` even when the block raises, because a
+    phase that aborts must not leave the process believing an SDK is installed:
+    that would silently change every later span in the same interpreter.
+    """
+    if state not in GUARD_STATES:
+        msg = f"unknown guard state {state!r}; the states are {GUARD_STATES}"
+        raise ValueError(msg)
+
+    from src.app.core.observability import tracing
+
+    saved = tracing._SDK_INSTALLED
+    tracing._SDK_INSTALLED = state == PROXY_TRACER
+    try:
+        yield
+    finally:
+        tracing._SDK_INSTALLED = saved
+
+
+def _refuse_a_metered_site(source_key: str, charges_before: int) -> None:
+    """Fail loudly when a site charged its own meter while it was measured.
+
+    The meter is not free: each charge is two ``perf_counter`` reads, two
+    ``process_time`` reads and three writes, and it sits INSIDE the call being
+    timed. A per-call cost that includes the instrument is a statement about
+    the harness, and it used to be reported as a statement about the app.
+    """
+    charged = METER.sources[source_key].count - charges_before
+    if not charged:
+        return
+    msg = (
+        f"{source_key} charged its own meter {charged} times while it was being measured, so the "
+        "figure would be the cost of the site PLUS the instrument. Phase 1 must run BEFORE "
+        "install_instruments(); a per-call cost taken through the meter is not a per-call cost."
+    )
+    raise ProtocolViolation(msg)
 
 
 def measure_header_scan() -> MicroResult:
@@ -222,28 +322,97 @@ def measure_header_scan() -> MicroResult:
     def scan_once() -> None:
         middleware._check_for_patterns(user_agent, "header", attacks)
 
+    charges_before = METER.sources["header_scan"].count
     result = measure(scan_once, name="header_scan_per_header", iterations=2000, warmup=100, repetitions=5)
+    _refuse_a_metered_site("header_scan", charges_before)
     if not middleware._branch_prune:
         msg = "ATTACK_DETECTION_BRANCH_PRUNE is off; the scan is not the one L-8 names"
         raise ProtocolViolation(msg)
     return result
 
 
-def measure_otel_span() -> MicroResult:
-    """Enter and exit one `trace_span`. No SDK is installed, so this is the
-    dead ProxyTracer path -- the span is built and discarded, which is
-    exactly the cost L-8 names."""
+def probe_span_path(state: str) -> dict[str, Any]:
+    """One UNTIMED probe of what a guard state actually does.
+
+    The timed measurement must not carry a spy: a counter inside the measured
+    region would inflate the arm that calls it and flatter the delta. So the
+    validity check lives here, outside any measurement.
+
+    What the tracer YIELDS is version-dependent -- on opentelemetry-api 1.39.1
+    the ProxyTracer yields the module-level INVALID_SPAN and allocates nothing
+    per call -- so what is recorded is whether the tracer's span machinery was
+    ENTERED, which is stable across the declared pin (>=1.20.0).
+    """
+    from opentelemetry import trace as otel_trace
+
+    from src.app.core.observability import tracing
+    from src.app.core.observability.tracing import trace_span
+
+    entered = 0
+    original = tracing.tracer.start_as_current_span
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        nonlocal entered
+        entered += 1
+        return original(*args, **kwargs)
+
+    tracing.tracer.start_as_current_span = counting  # type: ignore[method-assign]
+    try:
+        with span_guard(state):
+            with trace_span("l8_probe") as span:
+                observed = span
+    finally:
+        tracing.tracer.start_as_current_span = original  # type: ignore[method-assign]
+
+    return {
+        "state": state,
+        "tracer_machinery_entries": entered,
+        "entered_the_tracer": entered > 0,
+        "yielded_span_type": type(observed).__name__,
+        "yielded_is_invalid_span": observed is otel_trace.INVALID_SPAN,
+        "is_recording": bool(observed.is_recording()),
+        "note": (
+            "The two arms yield the same object on the installed API version; what differs is "
+            "whether the tracer's span machinery was entered. The delta prices THAT difference, "
+            "not a span allocation."
+        ),
+    }
+
+
+def measure_otel_span(state: str = GUARDED) -> MicroResult:
+    """Enter and exit one `trace_span`, in the given guard state.
+
+    With the guard on (the state production is in) the span is short-circuited.
+    With it forced off, the tracer is a ``ProxyTracer``: the span is built and
+    discarded, which is the dead cost L-8 names and the one S-3 removed.
+    """
     from src.app.core.observability.tracing import trace_span
 
     def span_once() -> None:
         with trace_span("l8_probe"):
             pass
 
-    return measure(span_once, name="otel_span_per_invocation", iterations=20000, warmup=1000, repetitions=5)
+    charges_before = METER.sources["otel_span"].count
+    with span_guard(state):
+        result = measure(
+            span_once,
+            name=f"otel_span_per_invocation_{state}",
+            iterations=20000,
+            warmup=1000,
+            repetitions=5,
+        )
+    _refuse_a_metered_site("otel_span", charges_before)
+    return result
 
 
 def measure_exc_info(exc: BaseException, exc_info: Any) -> MicroResult:
-    """One structlog error carrying an exc_info payload."""
+    """One structlog error carrying an exc_info payload.
+
+    This one builds its OWN logger, so the patched ``database.logger`` never
+    sees its records and it is not contaminated by the meter. That asymmetry is
+    why the refusal in ``_refuse_a_metered_site`` is applied per source rather
+    than to the whole phase.
+    """
     logger = structlog.get_logger("l8.probe")
 
     def log_once() -> None:
@@ -272,9 +441,7 @@ class Source:
 class Meter:
     """Wall-clock and CPU time charged to the process while inside each site."""
 
-    sources: dict[str, Source] = field(
-        default_factory=lambda: {key: Source(key) for key in SOURCE_LABELS}
-    )
+    sources: dict[str, Source] = field(default_factory=lambda: {key: Source(key) for key in SOURCE_LABELS})
 
     @contextlib.contextmanager
     def charge(self, key: str) -> Iterator[None]:
@@ -347,9 +514,7 @@ def install_instruments() -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-async def drive_401(
-    count: int, concurrency: int, tenant: str = PROBE_TENANT
-) -> dict[int, int]:
+async def drive_401(count: int, concurrency: int, tenant: str = PROBE_TENANT) -> dict[int, int]:
     """Fire `count` unauthenticated GETs at the DB-dependent route.
 
     The 401 is raised by the auth dependency and thrown back into
@@ -367,9 +532,7 @@ async def drive_401(
 
     async def one() -> None:
         async with semaphore:
-            async with httpx.AsyncClient(
-                transport=transport, base_url="http://l8.invalid", timeout=30.0
-            ) as client:
+            async with httpx.AsyncClient(transport=transport, base_url="http://l8.invalid", timeout=30.0) as client:
                 response = await client.get(PROBE_PATH, headers=probe_headers(tenant))
                 statuses[response.status_code] = statuses.get(response.status_code, 0) + 1
 
@@ -498,8 +661,7 @@ async def _occupancy_run_within_lifespan(
             "requested_interval_s": export["requested_interval_s"],
             "sampler_usable": sampler_usable,
             "sampler_cost_note": (
-                "the sampler's own cost is inside total_s and is bounded per "
-                "sample by SAMPLER_COST_CEILING_US (100 us)"
+                "the sampler's own cost is inside total_s and is bounded per sample by SAMPLER_COST_CEILING_US (100 us)"
             ),
             "summary_ms": export["summary_ms"],
             "achieved_rate_hz": achieved_hz,
@@ -516,9 +678,7 @@ async def _occupancy_run_within_lifespan(
 # --------------------------------------------------------------------------- #
 
 
-def occupancy_from_counts(
-    per_call_us: float | None, count: int, wall_s: float
-) -> float | None:
+def occupancy_from_counts(per_call_us: float | None, count: int, wall_s: float) -> float | None:
     """Occupancy the source would occupy at its measured per-call cost."""
     if per_call_us is None or wall_s <= 0:
         return None
@@ -572,6 +732,71 @@ def cross_check(occupancy: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def span_guard_ab(arms: dict[str, MicroResult], ceiling: Ceiling) -> dict[str, Any]:
+    """Price the DEAD span against the path that ships, under ONE ceiling.
+
+    The separation rule is arithmetic on data the protocol already produces:
+    the two arms are separated only when the DEAD arm's FASTEST batch minimum
+    exceeds the GUARDED arm's SLOWEST one, i.e. when their batch minima do not
+    overlap at all. Below that, the arms' own spread overlaps and the delta is
+    not a result -- ``protocol.py`` records the noise floor for this workload as
+    2x intra-arm and 7.1x run-to-run, so a delta smaller than the arms' own
+    spread is the machine being busy.
+
+    The delta is deliberately NOT scored against the ceiling. A ceiling is an
+    absolute bound on a cost, not on a difference; scoring a difference against
+    one is the ``new < old`` reasoning ``protocol.py`` bans.
+    """
+
+    guarded = arms[GUARDED]
+    proxy = arms[PROXY_TRACER]
+
+    out: dict[str, Any] = {}
+    for state, result in ((GUARDED, guarded), (PROXY_TRACER, proxy)):
+        arm_verdict = verdict(result, ceiling)
+        out[state] = {
+            "path": SPAN_ARM_LABELS[state],
+            "per_call_us": result.reportable_us(),
+            "spread_ratio": result.spread_ratio,
+            "inside_noise_floor": result.is_inside_noise,
+            "batch_mins_us": list(result.batch_mins_us),
+            "verdict_passed": arm_verdict.passed,
+            "verdict": arm_verdict.message,
+        }
+
+    guarded_max = max(guarded.batch_mins_us)
+    proxy_min = min(proxy.batch_mins_us)
+    separated = proxy_min > guarded_max
+    delta = proxy.reportable_us() - guarded.reportable_us()
+    if separated:
+        delta_verdict = (
+            f"RESOLVABLE: the dead arm's fastest batch minimum ({proxy_min:.4f} us) exceeds the "
+            f"guarded arm's slowest ({guarded_max:.4f} us), so the arms do not overlap."
+        )
+    else:
+        delta_verdict = (
+            f"NOT RESOLVABLE: the arms' batch minima overlap (guarded slowest {guarded_max:.4f} us, "
+            f"dead fastest {proxy_min:.4f} us), so the delta is inside the noise and is not a result."
+        )
+
+    out["ceiling_us"] = ceiling.value_us
+    out["ceiling_basis"] = ceiling.label
+    out["dead_minus_guarded_us"] = delta
+    out["arms_separated"] = separated
+    out["delta_verdict"] = delta_verdict
+    out["separation_rule"] = (
+        "the two arms are separated only when the dead arm's FASTEST batch minimum exceeds the "
+        "guarded arm's SLOWEST one, i.e. when their batch minima do not overlap at all; the delta "
+        "is reported but is not a result unless they are"
+    )
+    out["arms_forced_not_installed"] = True
+    out["arms_forced_not_installed_note"] = (
+        "The guard flag was FORCED for each arm. No SDK was installed and none was needed: the "
+        "dead arm is the ProxyTracer path a missing SDK already produces."
+    )
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # entrypoint
 # --------------------------------------------------------------------------- #
@@ -581,12 +806,22 @@ def build_artifact(
     stamp_payload: Any,
     scans: dict[str, MicroResult],
     ceilings: dict[str, Ceiling],
-    occupancy: dict[str, Any],
+    arms: dict[str, MicroResult],
+    occupancy_by_state: dict[str, dict[str, Any]],
     verdicts: dict[str, Any],
     tracer_class: str,
     otel_sdk_present: bool,
     host: str,
+    span_paths: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Assemble the artefact.
+
+    ``occupancy_by_state`` carries one load run per guard state. The live one
+    -- ``guarded`` -- is the profile the bead and the P-19 artefacts quote, so
+    ``per_source`` and ``cross_check`` are built from it; the dead state is
+    reported beside it, never in place of it.
+    """
+    occupancy = occupancy_by_state[GUARDED]
     per_source_out: dict[str, Any] = {}
     measured = occupancy["per_source"]
     for key, label in SOURCE_LABELS.items():
@@ -609,9 +844,7 @@ def build_artifact(
             "measured_cpu_s_in_load": src["cpu_s"],
             "occupancy_injected_in_load": occupancy_from_counts(per_call, src["count"], occupancy["wall_s"]),
             "occupancy_accounted_in_load": (
-                src["cpu_s"] / occupancy["process_cpu_s"]
-                if occupancy["process_cpu_s"] > 0
-                else None
+                src["cpu_s"] / occupancy["process_cpu_s"] if occupancy["process_cpu_s"] > 0 else None
             ),
         }
 
@@ -630,6 +863,13 @@ def build_artifact(
             "relaxed, because at production limits the probe's own requests are "
             "answered 429 by the limiter and 403 by auto-ban before reaching any "
             "of the three sites."
+        ),
+        "phase1_was_uninstrumented": True,
+        "phase1_was_uninstrumented_note": (
+            "Phase 1 ran BEFORE install_instruments(). Each phase-1 measurement "
+            "also refuses to report a figure if its own source charged the meter "
+            "during the run, so this cannot silently regress into a figure that "
+            "includes the instrument."
         ),
         "stamp": {
             "platform": stamp_payload.platform,
@@ -651,7 +891,20 @@ def build_artifact(
         ),
         "tracer_class": tracer_class,
         "otel_sdk_present": otel_sdk_present,
+        "live_guard_state": GUARDED,
+        "span_paths": span_paths,
         "per_source": per_source_out,
+        "span_guard_ab": {
+            **span_guard_ab(arms, ceilings["otel_span"]),
+            "occupancy_by_state": {
+                state: {
+                    "per_source": occ["per_source"],
+                    "three_sources": occ["three_sources"],
+                    "cross_check": cross_check(occ),
+                }
+                for state, occ in occupancy_by_state.items()
+            },
+        },
         "occupancy": occupancy,
         "cross_check": cross_check(occupancy),
     }
@@ -710,21 +963,34 @@ async def amain(args: argparse.Namespace) -> int:
     except ImportError:
         sdk = False
 
-    install_instruments()
+    if sdk:
+        msg = (
+            "an OpenTelemetry SDK is installed, so the tracer records for real and the two arms of "
+            "this harness are not the two paths it names. The dead arm only exists while no SDK is "
+            "present. Refusing to report a figure that would describe something else."
+        )
+        raise RuntimeError(msg)
 
     exc = RuntimeError("l8 synthetic probe exception")
     exc_info = (type(exc), exc, exc.__traceback__)
+
+    # PHASE 1 FIRST, with NO instruments installed. The meter charges two
+    # perf_counter reads, two process_time reads and three writes per call, so
+    # a per-call cost taken through it is a statement about the harness. Each
+    # measurement below also refuses to report if its own source charged the
+    # meter during the run.
     with quiet_stdout():
         scan = measure_header_scan()
-        span = measure_otel_span()
+        arms: dict[str, MicroResult] = {state: measure_otel_span(state=state) for state in GUARD_STATES}
         exc_result = measure_exc_info(exc, exc_info)
         render(scan)
-        render(span)
+        for state in GUARD_STATES:
+            render(arms[state])
         render(exc_result)
 
     scans: dict[str, MicroResult] = {
         "header_scan": scan,
-        "otel_span": span,
+        "otel_span": arms[GUARDED],
         "exc_info": exc_result,
     }
     ceilings = {
@@ -739,17 +1005,43 @@ async def amain(args: argparse.Namespace) -> int:
         except ProtocolViolation as exc:  # pragma: no cover - defensive
             verdicts[key] = f"protocol violation: {exc}"
 
+    install_instruments()
+
+    # One load run per guard state, so the per-call figure is attributed to the
+    # load in the state it was measured in. The guarded run is the live one and
+    # is what `per_source` reports.
+    occupancy_by_state: dict[str, dict[str, Any]] = {}
     with quiet_stdout():
-        occupancy = await occupancy_run(args.requests, args.concurrency, args.tenant)
+        for state in GUARD_STATES:
+            with span_guard(state):
+                occupancy_by_state[state] = await occupancy_run(args.requests, args.concurrency, args.tenant)
+
+    span_paths = {state: probe_span_path(state) for state in GUARD_STATES}
+    if not span_paths[PROXY_TRACER]["entered_the_tracer"]:
+        msg = (
+            "the forced arm did not enter the tracer's span machinery, so the two arms are the same "
+            "path under two names and the delta between them would be noise wearing a conclusion"
+        )
+        raise RuntimeError(msg)
 
     artifact = build_artifact(
-        stamp(), scans, ceilings, occupancy, verdicts, tracer_class, sdk, socket.gethostname()
+        stamp(),
+        scans,
+        ceilings,
+        arms,
+        occupancy_by_state,
+        verdicts,
+        tracer_class,
+        sdk,
+        socket.gethostname(),
+        span_paths,
     )
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(artifact, indent=2, sort_keys=False), encoding="utf-8")
     print(f"\nwrote {out}")
+    print(json.dumps(artifact["span_guard_ab"], indent=2))
     print(json.dumps(artifact["cross_check"], indent=2))
     return 0
 

@@ -42,12 +42,14 @@ class TestCredentialTenantColumns:
                 user_id=1,
                 credential_id=b"cid",
                 public_key=b"pk",
+                credential_id_hash="h",
             )
         ok = PasskeyCredentialCreate(
             user_id=1,
             tenant_id=OWNER_TENANT,
             credential_id=b"cid",
             public_key=b"pk",
+            credential_id_hash="h",
         )
         assert ok.tenant_id == OWNER_TENANT
 

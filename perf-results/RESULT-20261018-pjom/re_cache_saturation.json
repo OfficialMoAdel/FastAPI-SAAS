@@ -1,0 +1,181 @@
+{
+  "bead": "FastAPI_saas-pjom",
+  "item": "M-10",
+  "title": "settle whether re._cache is saturated at 512 after import (Contested) with a one-line startup probe",
+  "bead_closes": "FastAPI_saas-pjom",
+  "measured_at": "2026-10-18T03:33Z",
+  "artefact_kind": "measurement",
+  "headline": {
+    "statement": "The literal claim is TRUE and it means nothing. len(re._cache) == 512 after `import src.app.main` because 512 is the stdlib ceiling and the import chain saturates it on its own - and every single pattern the request path compiles at import time is evicted on the way there.",
+    "len_re_cache_after_import": 512,
+    "equals_512": true,
+    "re_maxcache": 512,
+    "saturated": true,
+    "request_path_patterns_compiled_at_import": 16,
+    "of_those_still_resident_after_the_import": 0,
+    "evicted_fraction": 1.0,
+    "the_one_line_answer": "Yes, it is 512, and the number is a property of CPython rather than of this application: re._MAXCACHE is 512, and 512 distinct patterns fit.",
+    "urgency_implied": "URGENT rather than optional. re._cache is already full of 512 THIRD-PARTY patterns before the app serves a single request, so it provides zero reuse for the application's own patterns - all 16 of them recompile on first use. The design conclusion (memoize the attack-scan and log-sanitizer patterns at module level) holds either way, as the bead said; what changes is that it is the only cache available."
+  },
+  "instrument": {
+    "file": "/home/ansible/pjom_re_cache.py",
+    "in_repo": false,
+    "why_outside_the_repo": "It is an operator probe that must run as its own process: it measures the state of re._cache immediately after an import, so anything else in the process - a test session, conftest, a plugin that imports something - would change the answer. Committed under src/benchmarks/ it would also become importable by a test, and src/AGENTS.md forbids a harness on an import path a test imports.",
+    "counted_before_anything_else_touches_the_cache": "len(re._cache) is read immediately after `import src.app.main` and before the residency pass, so no later step can be blamed for the number.",
+    "two_arms": "steady: the cache as the interpreter leaves it. purge: re.purge() first. The purge arm exists to separate 'the application uses 512 patterns' from 'the ceiling is full'; it reports how many patterns were already cached before the purge, which is how the two readings are told apart.",
+    "residency_rule": "A pattern is resident iff (type(p), p.pattern, p.flags) is still a key of re._cache.",
+    "no_pattern_is_built_by_the_probe": "ip_filter._BAD_BOT_REGEX is excluded on purpose: it is built lazily on the first request, and calling its builder here would insert a freshly compiled pattern into the very cache being measured."
+  },
+  "protocol": {
+    "target": "perf-local (192.168.121.147), VMware VM, CentOS Stream 9",
+    "python": "3.13.16",
+    "platform": "Linux-5.14.0-578.el9.x86_64-x86_64-with-glibc2.34",
+    "commit": "1feceab21",
+    "worktree": "/home/ansible/pjom, detached, created from a bundle because nothing is pushed",
+    "one_arm_per_process": true,
+    "why_one_arm_per_process": "re._cache is process-global, so the two arms must not share an interpreter. The purge arm runs in its own process.",
+    "settings_source": "src/.env copied from the target checkout; the probe never opens a DB or Redis connection",
+    "budgets_relaxed": false,
+    "no_windows_number_used": "A-5 holds: this is a Linux measurement. The Windows interpreter cannot import the app anyway, because its venv is absent."
+  },
+  "the_contested_claim": {
+    "as_stated": "len(re._cache) == 512 after `import src.app.main`, [Contested], import-order dependent",
+    "steady_arm": {
+      "purged_before_import": 0,
+      "len_re_cache_after_import": 512,
+      "what_that_zero_means": "Nothing else in the interpreter had compiled a pattern before the app import, so the steady state is not an accumulation carried in from startup: it is produced entirely by the import chain."
+    },
+    "purge_arm": {
+      "purged_before_import": 35,
+      "len_re_cache_after_import": 512,
+      "what_those_35_mean": "The `re` module's own import compiled 35 patterns. After purging them the app import again lands on exactly 512, which is the whole answer: the import chain alone drives the cache to its ceiling."
+    },
+    "verdict": "CONFIRMED as a number, REFUTED as a count. 512 is re._MAXCACHE, so a reading of 512 is a tautology about the ceiling. The 'import-order dependent' half is also wrong in the direction that matters: the saturation is caused by the import itself, not by what happened to run before it."
+  },
+  "residency_after_import": {
+    "checked": 16,
+    "resident": 0,
+    "evicted": [
+      "attack_detection.COMBINED_ATTACK_RE",
+      "attack_detection._ZERO_WIDTH_RE",
+      "auth._BACKUP_CODE_PATTERN",
+      "auth._TOTP_TOKEN_PATTERN",
+      "cache._BRACKET_PATTERN",
+      "log_sanitizer.LogSanitizer._DIGIT_SHAPES",
+      "log_sanitizer.LogSanitizer._SENSITIVE_KEY_RE",
+      "path_utils._SANITIZE_UUID_RE",
+      "path_utils._SANITIZE_VERSION_RE",
+      "request_id._REQUEST_ID_PATTERN",
+      "tenancy.resolver._SLUG_RE",
+      "tenants.schemas.SLUG_PATTERN",
+      "users._PASSWORD_DIGIT_RE",
+      "users._PASSWORD_LOWERCASE_RE",
+      "users._PASSWORD_SPECIAL_RE",
+      "users._PASSWORD_UPPERCASE_RE"
+    ],
+    "evicted_fraction": 1.0,
+    "per_pattern": {
+      "attack_detection.COMBINED_ATTACK_RE": false,
+      "attack_detection._ZERO_WIDTH_RE": false,
+      "request_id._REQUEST_ID_PATTERN": false,
+      "tenancy.resolver._SLUG_RE": false,
+      "tenants.schemas.SLUG_PATTERN": false,
+      "path_utils._SANITIZE_UUID_RE": false,
+      "path_utils._SANITIZE_VERSION_RE": false,
+      "users._PASSWORD_LOWERCASE_RE": false,
+      "users._PASSWORD_UPPERCASE_RE": false,
+      "users._PASSWORD_DIGIT_RE": false,
+      "users._PASSWORD_SPECIAL_RE": false,
+      "auth._TOTP_TOKEN_PATTERN": false,
+      "auth._BACKUP_CODE_PATTERN": false,
+      "cache._BRACKET_PATTERN": false,
+      "log_sanitizer.LogSanitizer._SENSITIVE_KEY_RE": false,
+      "log_sanitizer.LogSanitizer._DIGIT_SHAPES": false
+    },
+    "how_they_were_chosen": "Named explicitly, module by module, from a grep of re.compile across src/: the middleware attack patterns, the log sanitizer, the path sanitizer, the tenant slug patterns, the password validators, the TOTP and backup-code patterns, the cache-key bracket pattern and the request-id pattern. A glob would have produced a denominator nobody chose, and this bead is about a specific set.",
+    "consequence": "Each of these is compiled at import, then evicted before the import finishes, so the stdlib cache gives them nothing. The first request that touches one pays the full compile."
+  },
+  "what_occupies_the_cache": {
+    "sample": [
+      "^/billing/subscriptions/(?P<subscription_id>[^/]+)/cancel$",
+      "^/billing/checkout$",
+      "^/billing/portal$",
+      "^/billing/records$",
+      "^/billing/records/(?P<record_id>[^/]+)$",
+      "^/checkouts$",
+      "^/checkouts/current$",
+      "^/checkouts/cancel$",
+      "^/invoices$",
+      "^/invoices/(?P<invoice_id>[^/]+)$",
+      "^/prices$",
+      "^/prices/(?P<price_id>[^/]+)$",
+      "^/products$",
+      "^/products/(?P<product_id>[0-9]+)$",
+      "^/products/(?P<product_id>[0-9]+)/pricing$"
+    ],
+    "longest_pattern_lengths": [
+      1154,
+      1059,
+      1055,
+      951,
+      847
+    ],
+    "observation": "The entries that displaced the application's patterns are route patterns from billing and checkout libraries, compiled at their own import time - `^/billing/...and `^/checkouts/...` and `^/invoices/...`. The application's patterns lose their slots to a third party that imported later.",
+    "implication": "Nothing in this repository can reclaim those slots at runtime, because eviction is FIFO and the cache is shared process-wide. Only holding the compiled objects in a module global - which the code already does - keeps them."
+  },
+  "compiled_on_first_call_not_at_import": {
+    "patterns": [
+      "src/app/core/config/auth.py:31-37 - re.search(r'[a-z]'/'[A-Z]'/'\\d'/'[@$!%*?&]', password)",
+      "src/app/core/env_validator.py:93 - re.match(rules['pattern'], value), a DYNAMIC pattern",
+      "src/app/core/db/rls.py:32 - re.match(r'^[a-zA-Z0-9_.]+$', _var)"
+    ],
+    "why_they_cannot_be_tested_for_residency": "They are not in the cache at import time, so asking whether they survived eviction has no answer.",
+    "why_they_matter_more": "Every call re-enters re._compile against a cache that is already at its ceiling, so each such call takes the full compile path and then evicts something else. core/config/auth.py:31-37 runs four such lookups per password validation."
+  },
+  "relation_to_the_confirmed_perf_fact": {
+    "confirmed_fact": "Cold 17-branch compile costs 3 917 us (one branch 692 us, three branches 1 133 us) while a warm compile from the module cache costs 5.9 us (perf D13).",
+    "what_this_adds": "D13 measured the prize: 5.9 us versus 3 917 us is a 663x difference, and it is only reachable if the compiled object is held in a module-level global. This measurement shows the stdlib cache is NOT a route to it - the cache is full before the app serves anything, and all 16 application patterns are evicted. The prize is reachable only through the module global the code already uses.",
+    "therefore": "The bead's stated conclusion - memoize the attack-scan patterns ourselves rather than relying on re._cache - holds, and it is not merely a good idea: relying on re._cache was never going to work at all."
+  },
+  "decision": {
+    "conclusion": "Keep every application pattern as a module-level compiled object. Do not rely on re._cache for any of them.",
+    "already_true_for_the_named_16": "All 16 are module-level or class-level globals compiled once at import, which is the correct shape. Nothing in this measurement requires a code change.",
+    "what_it_does_not_settle": "The three inline-literal call sites listed under compiled_on_first_call_not_at_import. Hoisting them to module level is a one-line-each change with a measured prize, but it is not this bead: M-10 is a probe that informs urgency, and the urgency is now established.",
+    "no_code_change_made": "This bead asked for a measurement, not a change. Nothing under src/ was edited."
+  },
+  "measured_vs_inferred": {
+    "measured": [
+      "len(re._cache) == 512 in both arms, on Linux, at 1feceab21",
+      "the purge arm shows 35 patterns cached before the purge, so the app import alone re-saturates to 512",
+      "0 of the 16 named request-path patterns are resident after the import",
+      "the cache is occupied by third-party billing and checkout route patterns"
+    ],
+    "inferred": [
+      "FIFO eviction is what displaced them: the stdlib evicts the oldest entry when the cache is full, and the displacers imported after the application did. [Inference] - the observation is which patterns remain; the eviction ORDER is the documented CPython behaviour, not something this probe observed directly."
+    ],
+    "explicitly_not_measured": [
+      "The wall-clock cost of the recompiles on the request path. D13's 5.9 us warm figure is quoted from perf, not re-measured here.",
+      "Whether any single request actually hits a recompile. That needs a request-path profile, which is what the settled design would be measured against, not this probe.",
+      "The pre-3.7 behaviour, and any other interpreter. The ceiling has been 512 since CPython 3.7; the repository's floor is higher, but it was not exercised here."
+    ]
+  },
+  "limits": [
+    "One interpreter, one commit, one platform: CPython 3.13.16 on Linux at 1feceab21. The saturation is a property of CPython's ceiling plus this import graph; a different interpreter version with a different _MAXCACHE would report a different 512.",
+    "The pattern set is the 16 named in the probe, chosen by reading the grep of re.compile across src/. A pattern compiled by a dependency and used on our request path would not appear in the list, and there is no way to enumerate those from inside the process.",
+    "Residency is sampled ONCE, immediately after the import. The cache keeps filling as the process runs, so a pattern resident at this instant could be evicted later; 0 of 16 resident here is a statement about import time only.",
+    "The probe cannot distinguish 'evicted' from 'never compiled' for a pattern that was compiled lazily. That is why ip_filter._BAD_BOT_REGEX is excluded rather than reported as evicted.",
+    "Windows is not represented: A-5 holds and the Windows interpreter cannot import the app.",
+    "This artefact does not claim the recompiles are a measurable cost on any endpoint. It claims the stdlib cache cannot be the thing that avoids them, which is a structural fact."
+  ],
+  "cross_reference": {
+    "bead_closed_by_this_artefact": "FastAPI_saas-pjom",
+    "beads_referenced": {
+      "FastAPI_saas-gj3z": "Lane E, measure-first: no code until a Phase-0 measurement exists",
+      "FastAPI_saas-o0fg": "M-7, the first measured API-key baseline; the perf work whose pattern-memoization question M-10 is",
+      "FastAPI_saas-hfps": "the commit this was measured at"
+    },
+    "perf_fact_quoted": "D13 in the perf pack - cold 17-branch compile 3 917 us, warm compile from the module cache 5.9 us",
+    "design_conclusion_it_informs": "memoize the attack-scan patterns ourselves rather than relying on re._cache"
+  },
+  "closed": true
+}

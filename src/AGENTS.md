@@ -108,6 +108,20 @@ src/
 ❌ DON'T: compute a percentile inline. `sorted(v)[int(len(v) * q)]` truncates, so
    `int(20 * 0.95) == int(20 * 0.99)` and p95 and p99 both return the maximum —
    the arithmetic that produced the unusable "208.47 ms logout p95".
+❌ DON'T: measure a per-call cost THROUGH your own instrument. A meter that
+   charges two `perf_counter` reads, two `process_time` reads and three writes
+   per call is itself the dominant cost at the scale being measured, so the
+   figure comes out as a statement about the harness. L-8's phase 1 used to run
+   with its own instruments installed, which is why the 19.486 us span figure
+   it carried and P-19's 3.123 us figure (no meter) disagreed by 6x, and the
+   ceiling's own text blamed the host for it (FastAPI_saas-7zwp). Take a
+   per-call figure with the instrument NOT installed, price the instrument's
+   own cost as its own arm, and let the measurement REFUSE to report a figure
+   whose site charged the meter during the run.
+❌ DON'T: retune a declared ceiling to fit a fresh measurement. A `Ceiling` is
+   a specification chosen in advance; editing it so the new number passes is
+   the `new < old` form `src/benchmarks/protocol.py` bans, whichever direction
+   the new number moves.
 
 ### Script Organization
 ✅ DO: Use async patterns for all database scripts

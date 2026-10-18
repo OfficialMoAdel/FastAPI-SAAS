@@ -275,6 +275,92 @@ model maps `Text`, and `key_prefix` was `String(10)` against `String(8)`:
 
 Oracle: `tests/unit/migrations/test_api_keys_column_type_parity.py`.
 
+### The gate now compares types too, and only where a difference is observable (FastAPI_saas-d201)
+
+`scripts/check_schema_parity.py` used to compare column NAMES only, which is
+why `api_keys.scopes` got through. It now also compares declared TYPES, and the
+scope was chosen deliberately:
+
+- **different SQL family** -> FAIL. The driver hands the application a
+  different Python object than the ORM promised. `api_keys.scopes`
+  (`Text` vs `JSONB`) is this class; so are `user_preferences.quiet_hours_*`
+  (`String(5)` vs `sa.Time(timezone=True)`), which are allowlisted and owned by
+  `FastAPI_saas-nqk6` because they were MEASURED — and measured worse than
+  allowlisting suggests: the ORM cannot insert the row at all.
+- **a column narrower than the ORM** -> FAIL. `String(1024)` against
+  `String(length=500)` is a value the ORM accepts and the database rejects.
+  `Text` against `String(500)` is the same thing: `Text` states "no cap"
+  outright, whereas a bare `String` states nothing at all.
+- **a bare `String` against `String(n)`** -> REPORTED, not failed. The ORM made
+  no width claim, so the column contradicts nothing. Eleven columns are in this
+  bucket and the gate lists them so the caps stay deliberate.
+- **a wider column, or a different spelling of the same shape** -> not drift.
+  `BYTEA`/`LargeBinary`, `DateTime`/`DateTime(True)`, `JSON`/`JSONB`,
+  `BigInteger`/`Integer`, `SmallInteger`/`Integer`.
+
+Two traps that cost real time, both now pinned by the oracle:
+
+- the two sides spell a width differently (`String(255)` on a model,
+  `sa.String(length=255)` in a migration). Reading only the positional form
+  makes every migration column look unbounded, which silently downgrades every
+  narrowed column to benign - the gate would have passed with the bug it exists
+  to catch;
+- do NOT split a migration on the text `op.create_table(` to find its columns. A
+  comment between two column declarations containing an unbalanced bracket ends
+  the scan early and the remaining columns look absent - which is what happened
+  to `api_keys.key_prefix` and `api_keys.scopes` while vthy's own explanatory
+  comments sat inside layer 03's `create_table` call. Both sides are parsed with
+  `ast`.
+
+An allowlisted row is printed on every successful run with its reason, and an
+entry that no longer corresponds to real drift FAILS the gate. A `benign:` entry
+is a triaged claim; anything else must name the bead that owns the open question,
+because an allowlist whose entries cannot be re-checked reads as a clean bill of
+health.
+
+Oracle: `tests/unit/scripts/test_check_schema_parity.py`.
+
+### `alembic check` stays non-blocking, and that is a decision
+
+CI already runs a real `alembic check`, the only tool here that can see types at
+all. It keeps `continue-on-error: true`. Making it blocking would fail the build
+on ~395 unexamined diffs and train people to ignore red; what it still sees that
+AST cannot is policies, constraints and server defaults, which is the part worth
+keeping visible. Its type coverage is no longer the gap -
+`scripts/check_schema_parity.py` covers that now. The comment in
+`.github/workflows/tests.yml` says so, and a test fails if that comment stops
+naming the gate.
+
+### The type rows are measured now, and NULLABILITY is still uncovered (FastAPI_saas-9cmn)
+
+Every row the type gate suppresses has been MEASURED on a real migrated database (`perf-results/RESULT-20261018-9cmn/`, two arms: an `alembic upgrade 07_observability` database against the `create_all` database, read through `select(Model)` and never the raw driver). Four of the six are real defects and two are benign; each `TYPE_ALLOWLIST` entry now names the bead that owns it.
+
+Two results change how a type drift should be read:
+
+1. **A family mismatch can refuse the write, not only the read.** `user_preferences.quiet_hours_start/_end` are `sa.Time(timezone=True)` in layer 05 while the model declares `String(5)`: the ORM's own `INSERT` is refused with `asyncpg.DatatypeMismatchError` **even when both columns are bound NULL**, so `get_or_create` cannot create the row — a stronger failure than `api_keys.scopes`, where the write survived and only the read broke. Fixed in `FastAPI_saas-nqk6` (see the next subsection).
+2. **A narrowed column refuses the width the ORM declares.** `files.storage_path` (ORM 1024, column 500), `files.mime_type` (128 / 100), `audit_logs.user_agent` (`Text` / 500) and `passkey_credentials.device_type` (100 / 50) all refuse a value the model considers legal, and the refusal is an untranslated `DBAPIError`. Filed as `FastAPI_saas-auz2`.
+
+**NULLABILITY is compared by no gate.** `passkey_credentials.credential_id_hash` is nullable in the ORM and `NOT NULL` in migration 02 — found only because a probe insert that omitted it failed on that column. `scripts/check_schema_parity.py` compares names and types; it has no third axis, and that is the next hole rather than a solved one.
+
+The method these two facts came from is worth reusing: a scratch database migrated to the layer that creates the table, foreign keys dropped **in that database only**, one arm per process (the application's engine is a module-level singleton, so re-pointing the environment between two binds silently runs both arms against the same database), and the value read through the application's own ORM. `create_all` derives the schema FROM the ORM, so a development database can never show a migration drift and is not a control — it is the thing that hides them.
+
+### Correcting an applied `create_table` takes TWO files, and only one of them is forced (FastAPI_saas-nqk6)
+
+When the finding is "layer N declares the wrong type", the rule for a schema that has not shipped yet is:
+
+1. **Correct layer N's `create_table`** so a database built from scratch is right and `scripts/check_schema_parity.py` stops reporting the row.
+2. **Drop and rebuild the database** (`DROP SCHEMA public CASCADE; CREATE SCHEMA public`, then `uv run alembic -c src/alembic.ini upgrade head`) rather than adding a new revision. Per Package Identity: new schema changes extend the relevant layer's `upgrade()`/`downgrade()` rather than stacking a new dated revision, **unless the layer is already applied in production**. In that case the rule reverses and the fix becomes a correction to layer N **plus** a NEW revision that `ALTER`s the existing column — a corrected `create_table` does **not** rewrite a column that an applied revision already created, so every database that ran layer N keeps the old type forever, silently.
+
+`user_preferences.quiet_hours_start/_end` is the worked example. Layer 05 now declares `sa.String(length=5)` and the database is rebuilt.
+
+Record the decision of **which side moves** in the new revision, not only in the diff. Here the model, the schemas and the consumer were all left alone because a quiet-hours window ("22:00 to 07:00") is not an instant: it has no date, and crossing midnight is the ordinary case, so the string is the right domain shape. Converting the ORM to `Mapped[datetime.time]` would have been the larger change for no gain.
+
+Write `op.execute` statements **literally, not in a loop**. A migration is read by a human during an incident and grepped by the oracle; a loop hides both the table and the cast.
+
+**Revision ids must fit alembic's `alembic_version.version_num VARCHAR(32)`.** A 41-character id made the entire `alembic upgrade head` **roll back** (not just fail the head) because alembic runs the chain in a single transaction — measured in a discarded first attempt, recorded in `tests/unit/migrations/`. Keep ids at 32 characters or shorter; `09_passkey_and_quiet_hours` (27) is the precedent.
+
+`device_type` on `passkey_credentials` was tightened from nullable to NOT NULL in layer 02's `create_table` (not by a new revision) per the same extend-the-layer rule. The ORM already declared it `nullable=False`; the database was the loose side.
+
 ## Pre-PR Checks
 
 ### Migration Testing

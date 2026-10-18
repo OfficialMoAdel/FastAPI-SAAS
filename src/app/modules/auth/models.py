@@ -315,11 +315,20 @@ class PasskeyCredential(Base, kw_only=True):
         String(100),
         nullable=False,
     )
-    credential_id_hash: Mapped[str | None] = mapped_column(
+    # FastAPI_saas-nqk6, settled against a measurement rather than a preference:
+    # layer 02 declares this NOT NULL with a unique index, the only writer
+    # (`auth/services/passkey.py:206-221`) always computes the digest, and the
+    # read path looks a credential up BY it (`:624`). The ORM used to declare it
+    # nullable, which permitted a state the database refuses - measured as a
+    # `NotNullViolationError` on the Linux target (bead FastAPI_saas-9cmn,
+    # artefact perf-results/RESULT-20261018-9cmn/). Loosening the database was
+    # rejected: a unique index permits unlimited NULLs, so the hash could stop
+    # being a lookup key. `device_type` is the mirror image of this column
+    # (NOT NULL here, nullable in layer 02) and is tightened by FastAPI_saas-nqk6.
+    credential_id_hash: Mapped[str] = mapped_column(
         String(64),
-        nullable=True,
+        nullable=False,
         index=True,
-        default=None,
     )
     counter: Mapped[int] = mapped_column(
         BigInteger,
@@ -424,16 +433,12 @@ class MFAMethod(Base, kw_only=True):
     """MFA Method model for TOTP and backup codes."""
 
     __tablename__ = "mfa_methods"
-    __table_args__ = (
-        UniqueConstraint("user_id", "type", name="uq_mfa_methods_user_type"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "type", name="uq_mfa_methods_user_type"),)
 
     id: Mapped[uuid_pkg.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, insert_default=uuid_pkg.uuid4, init=False
     )
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("tenants.id", ondelete="CASCADE"),
@@ -443,16 +448,10 @@ class MFAMethod(Base, kw_only=True):
     secret: Mapped[str] = mapped_column(String, nullable=False)
     name: Mapped[str | None] = mapped_column(String(50), nullable=True, init=False)
     type: Mapped[str] = mapped_column(String(20), default="totp", nullable=False, init=False)
-    backup_codes: Mapped[list[str] | None] = mapped_column(
-        JSONB, nullable=True, insert_default=list, init=False
-    )
+    backup_codes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True, insert_default=list, init=False)
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, init=False)
-    last_used_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, init=False
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), insert_default=func.now(), init=False
-    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, init=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), insert_default=func.now(), init=False)
 
     # Relationships
     user: Mapped[User] = relationship(back_populates="mfa_methods", init=False, lazy="noload")

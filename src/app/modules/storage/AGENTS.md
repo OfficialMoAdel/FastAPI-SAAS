@@ -116,6 +116,7 @@ only object crossing between them).
 - S3 credentials should use IAM roles when possible
 - Upload failures should rollback database transaction
 - Large files require multipart upload (not implemented)
+- **`storage_path` is `String(1024)` in the ORM but `String(500)` in the migration** (`migrations/versions/05_content_storage.py`), and MEASURED on a migrated database (`perf-results/RESULT-20261018-9cmn/`, bead `FastAPI_saas-9cmn`): the column accepts 500 characters, refuses 501, and **refuses 1024 — the width the ORM declares**. The refusal is an untranslated `asyncpg.StringDataRightTruncationError`, which reaches a caller as a 500, not as a validation message. `mime_type` is the same shape (ORM `String(128)`, column 100) but stays benign because no MIME type this application writes exceeds 100 characters. Fixed in `FastAPI_saas-auz2`. A key longer than 500 characters is rejected by the database, not by Pydantic, so nothing upstream of the INSERT can catch it.
 
 ## Pre-PR Checks
 

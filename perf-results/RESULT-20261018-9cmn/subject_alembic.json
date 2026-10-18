@@ -1,0 +1,424 @@
+{
+  "bead": "FastAPI_saas-9cmn",
+  "item": "9cmn",
+  "schema": "perf-type-row-probe/1",
+  "method": {
+    "read_through": "the application's own ORM (select(Model))",
+    "why_not_the_raw_driver": "vthy's raw asyncpg read reported str for a jsonb column while SQLAlchemy's asyncpg dialect handed the service a list; the raw read hid the defect",
+    "raw_driver_used_for": "information_schema only: the declared type and width",
+    "one_arm_per_process": "the app engine is a module-level singleton resolved at import, so POSTGRES_DB is set from argv before the first src import",
+    "database": "9cmn_probe",
+    "database_built_by": "alembic",
+    "foreign_keys_dropped": true,
+    "foreign_keys_note": "with --drop-fks the probe tables' FKs are dropped so a row can exist without a parent; that is a PROBE database, dropped afterwards rather than repaired",
+    "dropped_foreign_keys": [
+      "audit_logs.fk_audit_logs_tenant_id",
+      "audit_logs.fk_audit_logs_user_id",
+      "files.fk_files_tenant_id",
+      "files.fk_files_user_id",
+      "passkey_credentials.fk_passkey_credentials_tenant_id",
+      "passkey_credentials.fk_passkey_credentials_user_id",
+      "user_preferences.fk_user_preferences_user_id"
+    ]
+  },
+  "provenance": {
+    "measured_at": "2026-10-18T15:02:26Z",
+    "commit": "ff65663cdb0eb18cfeb2e5a299e60bfe9ec053e1",
+    "host": "ansible1",
+    "platform": "Linux 5.14.0-578.el9.x86_64; python 3.13.16",
+    "pid": 7952,
+    "user_id_sentinel": 911431152
+  },
+  "rows": {
+    "user_preferences.quiet_hours": {
+      "row": "user_preferences.quiet_hours_start / .quiet_hours_end",
+      "orm_declaration": "String(5) on both columns (models.py:90,95)",
+      "migration_declaration": "sa.Time(timezone=True) on both columns (05_content_storage.py)",
+      "live_columns": [
+        {
+          "table": "user_preferences",
+          "column": "quiet_hours_start",
+          "found": true,
+          "data_type": "time with time zone",
+          "character_maximum_length": null,
+          "udt_name": "timetz",
+          "is_text": false
+        },
+        {
+          "table": "user_preferences",
+          "column": "quiet_hours_end",
+          "found": true,
+          "data_type": "time with time zone",
+          "character_maximum_length": null,
+          "udt_name": "timetz",
+          "is_text": false
+        }
+      ],
+      "value_the_application_writes": {
+        "quiet_hours_start": "22:00",
+        "quiet_hours_end": "07:00"
+      },
+      "user_id_used": 911431152,
+      "free_user_ids": [
+        911431152,
+        911431153,
+        911431154
+      ],
+      "write_attempts": [
+        {
+          "attempt": "A1 the create the application performs (crud get_or_create), defaults only - no quiet-hours value is supplied at all",
+          "supplied_value": null,
+          "skipped_reason": null,
+          "accepted": false,
+          "error_type": "ProgrammingError",
+          "error": "(sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.DatatypeMismatchError'>: column \"quiet_hours_start\" is of type time with time zone but expression is of type character varying\nHINT:  You will need to rewrite or cast the expression.\n[SQL: INSERT INTO user_preferences (user_id, preferences, email_notifications_enabled, push_notifications_enabled, disabled_notification_types, quiet_hours_enabled, quiet_hours_start, quiet_hours_end) VALUES ($1::INTEGER, $2::JSONB, $3::BOOLEAN, $4::BOOLEAN, $5::JSONB, $6::BOOLEAN, $7::VARCHAR, $8::VARCHAR) RETURNING user_preferences.id, user_preferences.created_at, user_preferences.updated_at]\n[parameters: (911431152, '{}', True, True, '[]', False, None, None)]\n(Background on this error at: https://sqlalche.me/e/20/f405)"
+        },
+        {
+          "attempt": "A2 the same create with both quiet-hours columns bound to NULL, to separate 'the value is wrong' from 'the bind type is wrong'",
+          "supplied_value": null,
+          "skipped_reason": null,
+          "accepted": false,
+          "error_type": "ProgrammingError",
+          "error": "(sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.DatatypeMismatchError'>: column \"quiet_hours_start\" is of type time with time zone but expression is of type character varying\nHINT:  You will need to rewrite or cast the expression.\n[SQL: INSERT INTO user_preferences (user_id, preferences, email_notifications_enabled, push_notifications_enabled, disabled_notification_types, quiet_hours_enabled, quiet_hours_start, quiet_hours_end) VALUES ($1::INTEGER, $2::JSONB, $3::BOOLEAN, $4::BOOLEAN, $5::JSONB, $6::BOOLEAN, $7::VARCHAR, $8::VARCHAR) RETURNING user_preferences.id, user_preferences.created_at, user_preferences.updated_at]\n[parameters: (911431153, '{}', True, True, '[]', False, None, None)]\n(Background on this error at: https://sqlalche.me/e/20/f405)"
+        },
+        {
+          "attempt": "A3 the update the application performs (crud.py:113 setattr of '22:00' and '07:00' plus quiet_hours_enabled=True), committed",
+          "supplied_value": {
+            "quiet_hours_start": "22:00",
+            "quiet_hours_end": "07:00"
+          },
+          "skipped_reason": "A1 did not create a row, so there is nothing for the application's update path to update - which is itself the finding"
+        }
+      ],
+      "fixture_row": {
+        "created_outside_the_orm": true,
+        "why": "the ORM cannot insert this table on a migrated database, so the row the read is performed on was created with an explicit CAST; the read question is about the dialect's result type and does not depend on who wrote the row",
+        "row_id": 1
+      },
+      "orm_read": {
+        "python_type_start": "time",
+        "python_type_end": "time",
+        "repr_start": "datetime.time(22, 0, tzinfo=datetime.timezone.utc)",
+        "repr_end": "datetime.time(7, 0, tzinfo=datetime.timezone.utc)",
+        "is_a_string": false,
+        "read_through": "select(UserPreferences) - the application's own ORM"
+      },
+      "application_consumer": {
+        "call": "time.fromisoformat(prefs.quiet_hours_start)",
+        "outcome": "raised",
+        "error_type": "TypeError",
+        "error": "fromisoformat: argument must be str",
+        "caught_by_the_applications_except_value_error": false,
+        "what_the_application_does_instead": "nothing catches it: the exception escapes should_send_notification, so the caller gets an error instead of a notification",
+        "end_column": {
+          "call": "time.fromisoformat(prefs.quiet_hours_end)",
+          "python_type": "time"
+        }
+      },
+      "response_model": {
+        "call": "UserPreferencesRead.model_validate(row)",
+        "outcome": "accepted"
+      },
+      "cleanup": {
+        "row_ids_removed": [
+          1
+        ]
+      }
+    },
+    "files.storage_path": {
+      "row": "files.storage_path",
+      "table": "files",
+      "model": "src.app.modules.storage.models.File",
+      "column": "storage_path",
+      "orm_claim": "a tenant/user-scoped storage key, declared at 1024 characters",
+      "orm_declared": "String(1024)",
+      "live_column": {
+        "table": "files",
+        "column": "storage_path",
+        "found": true,
+        "data_type": "character varying",
+        "character_maximum_length": 500,
+        "udt_name": "varchar",
+        "is_text": false
+      },
+      "column_is_text": false,
+      "write_attempts": [
+        {
+          "length": 500,
+          "within_the_orm_declaration": true,
+          "at_the_columns_own_width": true,
+          "is_the_orms_declared_width": false,
+          "accepted": true,
+          "read_back_length": 500
+        },
+        {
+          "length": 501,
+          "within_the_orm_declaration": true,
+          "at_the_columns_own_width": false,
+          "is_the_orms_declared_width": false,
+          "accepted": false,
+          "error_type": "DBAPIError",
+          "error": "(sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.StringDataRightTruncationError'>: value too long for type character varying(500)\n[SQL: INSERT INTO files (tenant_id, user_id, original_name, storage_path, mime_type, size_bytes, is_public, description, created_at, updated_at) "
+        },
+        {
+          "length": 1024,
+          "within_the_orm_declaration": true,
+          "at_the_columns_own_width": false,
+          "is_the_orms_declared_width": true,
+          "accepted": false,
+          "error_type": "DBAPIError",
+          "error": "(sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.StringDataRightTruncationError'>: value too long for type character varying(500)\n[SQL: INSERT INTO files (tenant_id, user_id, original_name, storage_path, mime_type, size_bytes, is_public, description, created_at, updated_at) "
+        }
+      ],
+      "verdict": {
+        "column_width": 500,
+        "orm_width": 1024,
+        "accepts_its_own_width": true,
+        "rejects_one_more": true,
+        "rejects_one_more_error_type": "DBAPIError",
+        "accepts_the_width_the_orm_declares": false,
+        "readable_summary": "the column enforces 500 characters; the ORM declares 1024"
+      }
+    },
+    "files.mime_type": {
+      "row": "files.mime_type",
+      "table": "files",
+      "model": "src.app.modules.storage.models.File",
+      "column": "mime_type",
+      "orm_claim": "an IANA media type, declared at 128 characters",
+      "orm_declared": "String(128)",
+      "live_column": {
+        "table": "files",
+        "column": "mime_type",
+        "found": true,
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "udt_name": "varchar",
+        "is_text": false
+      },
+      "column_is_text": false,
+      "write_attempts": [
+        {
+          "length": 100,
+          "within_the_orm_declaration": true,
+          "at_the_columns_own_width": true,
+          "is_the_orms_declared_width": false,
+          "accepted": true,
+          "read_back_length": 100
+        },
+        {
+          "length": 101,
+          "within_the_orm_declaration": true,
+          "at_the_columns_own_width": false,
+          "is_the_orms_declared_width": false,
+          "accepted": false,
+          "error_type": "DBAPIError",
+          "error": "(sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.StringDataRightTruncationError'>: value too long for type character varying(100)\n[SQL: INSERT INTO files (tenant_id, user_id, original_name, storage_path, mime_type, size_bytes, is_public, description, created_at, updated_at) "
+        },
+        {
+          "length": 128,
+          "within_the_orm_declaration": true,
+          "at_the_columns_own_width": false,
+          "is_the_orms_declared_width": true,
+          "accepted": false,
+          "error_type": "DBAPIError",
+          "error": "(sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.StringDataRightTruncationError'>: value too long for type character varying(100)\n[SQL: INSERT INTO files (tenant_id, user_id, original_name, storage_path, mime_type, size_bytes, is_public, description, created_at, updated_at) "
+        }
+      ],
+      "verdict": {
+        "column_width": 100,
+        "orm_width": 128,
+        "accepts_its_own_width": true,
+        "rejects_one_more": true,
+        "rejects_one_more_error_type": "DBAPIError",
+        "accepts_the_width_the_orm_declares": false,
+        "readable_summary": "the column enforces 100 characters; the ORM declares 128"
+      }
+    },
+    "audit_logs.user_agent": {
+      "row": "audit_logs.user_agent",
+      "table": "audit_logs",
+      "model": "src.app.modules.audit_logs.models.AuditLog",
+      "column": "user_agent",
+      "orm_claim": "the caller's User-Agent; the ORM declares Text, which claims no cap",
+      "orm_declared": "Text (no cap)",
+      "live_column": {
+        "table": "audit_logs",
+        "column": "user_agent",
+        "found": true,
+        "data_type": "character varying",
+        "character_maximum_length": 500,
+        "udt_name": "varchar",
+        "is_text": false
+      },
+      "column_is_text": false,
+      "write_attempts": [
+        {
+          "length": 500,
+          "within_the_orm_declaration": true,
+          "at_the_columns_own_width": true,
+          "is_the_orms_declared_width": false,
+          "accepted": true,
+          "read_back_length": 500
+        },
+        {
+          "length": 501,
+          "within_the_orm_declaration": true,
+          "at_the_columns_own_width": false,
+          "is_the_orms_declared_width": false,
+          "accepted": false,
+          "error_type": "DBAPIError",
+          "error": "(sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.StringDataRightTruncationError'>: value too long for type character varying(500)\n[SQL: INSERT INTO audit_logs (id, tenant_id, user_id, action, entity_type, entity_id, ip_address, user_agent, details, created_at) VALUES ($1::UU"
+        }
+      ],
+      "verdict": {
+        "column_width": 500,
+        "orm_width": null,
+        "accepts_its_own_width": true,
+        "rejects_one_more": true,
+        "rejects_one_more_error_type": "DBAPIError",
+        "accepts_the_width_the_orm_declares": null,
+        "readable_summary": "the column enforces 500 characters; the ORM declares no cap"
+      }
+    },
+    "passkey_credentials.device_type": {
+      "row": "passkey_credentials.device_type",
+      "table": "passkey_credentials",
+      "model": "src.app.modules.auth.models.PasskeyCredential",
+      "column": "device_type",
+      "orm_claim": "a WebAuthn device type, declared at 100 characters",
+      "orm_declared": "String(100)",
+      "live_column": {
+        "table": "passkey_credentials",
+        "column": "device_type",
+        "found": true,
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "udt_name": "varchar",
+        "is_text": false
+      },
+      "column_is_text": false,
+      "write_attempts": [
+        {
+          "length": 50,
+          "within_the_orm_declaration": true,
+          "at_the_columns_own_width": true,
+          "is_the_orms_declared_width": false,
+          "accepted": true,
+          "read_back_length": 50
+        },
+        {
+          "length": 51,
+          "within_the_orm_declaration": true,
+          "at_the_columns_own_width": false,
+          "is_the_orms_declared_width": false,
+          "accepted": false,
+          "error_type": "DBAPIError",
+          "error": "(sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.StringDataRightTruncationError'>: value too long for type character varying(50)\n[SQL: INSERT INTO passkey_credentials (tenant_id, user_id, credential_id, public_key, device_type, credential_id_hash, counter, aaguid, transports"
+        },
+        {
+          "length": 100,
+          "within_the_orm_declaration": true,
+          "at_the_columns_own_width": false,
+          "is_the_orms_declared_width": true,
+          "accepted": false,
+          "error_type": "DBAPIError",
+          "error": "(sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.StringDataRightTruncationError'>: value too long for type character varying(50)\n[SQL: INSERT INTO passkey_credentials (tenant_id, user_id, credential_id, public_key, device_type, credential_id_hash, counter, aaguid, transports"
+        }
+      ],
+      "verdict": {
+        "column_width": 50,
+        "orm_width": 100,
+        "accepts_its_own_width": true,
+        "rejects_one_more": true,
+        "rejects_one_more_error_type": "DBAPIError",
+        "accepts_the_width_the_orm_declares": false,
+        "readable_summary": "the column enforces 50 characters; the ORM declares 100"
+      }
+    }
+  },
+  "database_is_reachable": true,
+  "alembic_version_table_present": true,
+  "alembic_version": "07_observability",
+  "parents_used": {
+    "tenant_id": "00000000-0000-0000-0000-000000000000",
+    "user_id": 911431152,
+    "free_user_ids": [
+      911431152,
+      911431153,
+      911431154
+    ],
+    "tenant_resolved_from_real_rows": true,
+    "user_id_source": "sentinels (no free user id in this database)"
+  },
+  "summary": {
+    "user_preferences.quiet_hours_start/_end": {
+      "kind": "family_mismatch",
+      "live_column_type": [
+        "timetz",
+        "timetz"
+      ],
+      "writes": [
+        {
+          "attempt": "A1",
+          "accepted": false,
+          "error_type": "ProgrammingError",
+          "skipped_reason": null
+        },
+        {
+          "attempt": "A2",
+          "accepted": false,
+          "error_type": "ProgrammingError",
+          "skipped_reason": null
+        },
+        {
+          "attempt": "A3",
+          "accepted": null,
+          "error_type": null,
+          "skipped_reason": "A1 did not create a row, so there is nothing for the application's update path to update - which is itself the finding"
+        }
+      ],
+      "python_type_read_back": "time",
+      "application_consumer_outcome": "raised",
+      "consumer_error_type": "TypeError",
+      "consumer_error_caught_by_the_app": false,
+      "response_model_outcome": "accepted"
+    },
+    "files.storage_path": {
+      "kind": "narrower_in_migration",
+      "orm_declared": "String(1024)",
+      "column_width": 500,
+      "accepts_its_own_width": true,
+      "rejects_one_more": true,
+      "rejects_one_more_error_type": "DBAPIError",
+      "accepts_the_width_the_orm_declares": false
+    },
+    "files.mime_type": {
+      "kind": "narrower_in_migration",
+      "orm_declared": "String(128)",
+      "column_width": 100,
+      "accepts_its_own_width": true,
+      "rejects_one_more": true,
+      "rejects_one_more_error_type": "DBAPIError",
+      "accepts_the_width_the_orm_declares": false
+    },
+    "audit_logs.user_agent": {
+      "kind": "narrower_in_migration",
+      "orm_declared": "Text (no cap)",
+      "column_width": 500,
+      "accepts_its_own_width": true,
+      "rejects_one_more": true,
+      "rejects_one_more_error_type": "DBAPIError",
+      "accepts_the_width_the_orm_declares": null
+    },
+    "passkey_credentials.device_type": {
+      "kind": "narrower_in_migration",
+      "orm_declared": "String(100)",
+      "column_width": 50,
+      "accepts_its_own_width": true,
+      "rejects_one_more": true,
+      "rejects_one_more_error_type": "DBAPIError",
+      "accepts_the_width_the_orm_declares": false
+    }
+  }
+}

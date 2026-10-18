@@ -1,0 +1,179 @@
+{
+  "bead": "FastAPI_saas-7zwp",
+  "item": "M-5",
+  "title": "The cost of the dead OTel span, per DB request, on the Linux target",
+  "bead_closes": "FastAPI_saas-7zwp",
+  "measured_at": "2026-10-18T12:38:58.553219+00:00",
+  "artefact_kind": "measured",
+  "headline": {
+    "question": "How much does the dead span cost, per DB request?",
+    "answer": "2.147 us per DB-touching request, and 0 us on a request that opens no database session.",
+    "guarded_per_call_us": 0.897,
+    "dead_path_per_call_us": 3.044,
+    "delta_us": 2.147,
+    "delta_verdict": "RESOLVABLE: the dead arm's fastest batch minimum (3.0170 us) exceeds the guarded arm's slowest (0.9260 us), so the arms do not overlap.",
+    "ceiling_us": 50.0,
+    "both_arms_under_the_ceiling": true,
+    "span_constructions_per_db_touching_request": 1.0,
+    "span_constructions_per_non_db_request": 0.0,
+    "share_of_a_measured_request": "the dead path costs 2.147 us on a request whose measured p50 is 40.4653 ms (users_me, RESULT-20261017-oxx2), i.e. about 0.005 % of the request",
+    "previous_estimate": null,
+    "why_previous_estimate_is_null": "The bead claimed there was no microsecond figure anywhere in the pack. That was true of the FIGURE and false of the evidence: P-19 (FastAPI_saas-9baq) published 3.123 us in perf-results/RESULT-20261013-span/span_cost.json, but its per-DB-request denominator was ASSUMED (avg_queries_per_request came back 0 because X-Query-Count was absent, so the multiplier collapsed to 1), and it was taken with a harness that had no meter installed. L-8's own 19.486 us, quoted in the SPAN_CEILING_US label, was taken THROUGH the L-8 meter. Neither number was the quantity this bead asks for."
+  },
+  "instrument": {
+    "phase_1_and_2": {
+      "file": "src/benchmarks/loop_occupancy.py",
+      "in_repo": true,
+      "why_this_one": "The acceptance names the section 4.4 protocol, and this is the harness that implements it (src/benchmarks/protocol.py: min-of-N batches, median-of-M, warm-up, gc.collect(), an absolute ceiling). A second estimator would be the bug tests/unit/benchmarks/test_percentiles.py exists to fail.",
+      "what_changed_in_it": "FastAPI_saas-7zwp fixed the ORDERING: phase 1 (the per-call figures) now runs BEFORE install_instruments(), so no per-call figure is taken through the meter, and each phase-1 measurement REFUSES to report a figure whose own site charged the meter during the run. The span is measured in BOTH guard states by forcing tracing._SDK_INSTALLED."
+    },
+    "the_denominator": {
+      "file": "l8_span_multiplier.py",
+      "in_repo": false,
+      "why_outside_the_repo": "src/AGENTS.md forbids a committed harness on a test's import path, and this probe patches application modules at runtime.",
+      "what_it_does": "Counts database.trace_span calls BY NAME over 50 requests on each of two paths, using the L-8 harness's own relaxed limits, the same Redis pool and the same browser User-Agent, in the production (guarded) state."
+    },
+    "the_validity_probe": {
+      "name": "probe_span_path",
+      "why": "The two arms yield the SAME object on the installed opentelemetry-api 1.39.1: ProxyTracer.start_as_current_span yields the module-level INVALID_SPAN and allocates nothing. So the arms cannot be told apart by the span they produce, and the probe counts entries into the tracer's span machinery instead -- a version-independent condition."
+    }
+  },
+  "protocol": {
+    "target": "ansible1",
+    "commit": "4ea2c2a8a",
+    "harness_version": "src/benchmarks/loop_occupancy.py at 4ea2c2a8a",
+    "phase_1_limits": "PRODUCTION limits (only phase 2 was relaxed, and the relaxations are listed in the raw artefact)",
+    "estimator": "section 4.4: min-of-N batches, median-of-M, warm-up, gc.collect(), absolute ceiling",
+    "repetition_figures": "5 batches of 20000 (span) / 2000 (header scan) calls; min-of-N within a batch, median-of-M across batches",
+    "guard_states": [
+      "guarded",
+      "proxy_tracer"
+    ],
+    "load": "2000 unauthenticated GETs at concurrency 16 against /api/v1/users/me, all 401",
+    "why_a_fixed_ceiling": "src/benchmarks/protocol.py bans the negative form: 'new < old' passes on noise. Each arm is judged against the absolute 50.0 us SPAN_CEILING_US, and the DELTA is not scored against any ceiling, because a ceiling bounds a cost and not a difference."
+  },
+  "the_two_arms": {
+    "guarded": {
+      "what_it_is": "S-3's guard: trace_span returns trace.INVALID_SPAN before the tracer is touched. This is the path production is in.",
+      "per_call_us": 0.897,
+      "batch_mins_us": [
+        0.845,
+        0.839,
+        0.926,
+        0.926,
+        0.897
+      ],
+      "spread_ratio": 1.1037,
+      "inside_noise_floor": true,
+      "verdict": "otel_span_per_invocation_guarded 0.90us is under the half of T-1's SAMPLER_COST_CEILING_US: a DEAD span is optional instrumentation that produces nothing, so it may not occupy more than half the loop budget the repo calls noticeable. The value is unchanged by bead FastAPI_saas-7zwp; what changed is that this label no longer quotes a per-call measurement, because the one it used to quote was taken through this harness's own meter and was never a measurement of the span ceiling 50.00us; spread is inside the noise floor, so any comparison against another arm is not a result",
+      "tracer_machinery_entries": 0
+    },
+    "proxy_tracer": {
+      "what_it_is": "the DEAD path S-3 removed: tracing builds a ProxyTracer NonRecordingSpan and discards it, once per DB session per request.",
+      "per_call_us": 3.044,
+      "batch_mins_us": [
+        3.077,
+        3.078,
+        3.044,
+        3.041,
+        3.017
+      ],
+      "spread_ratio": 1.0202,
+      "inside_noise_floor": true,
+      "verdict": "otel_span_per_invocation_proxy_tracer 3.04us is under the half of T-1's SAMPLER_COST_CEILING_US: a DEAD span is optional instrumentation that produces nothing, so it may not occupy more than half the loop budget the repo calls noticeable. The value is unchanged by bead FastAPI_saas-7zwp; what changed is that this label no longer quotes a per-call measurement, because the one it used to quote was taken through this harness's own meter and was never a measurement of the span ceiling 50.00us; spread is inside the noise floor, so any comparison against another arm is not a result",
+      "tracer_machinery_entries": 1
+    },
+    "delta": {
+      "dead_minus_guarded_us": 2.147,
+      "arms_separated": true,
+      "separation_rule": "the two arms are separated only when the dead arm's FASTEST batch minimum exceeds the guarded arm's SLOWEST one, i.e. when their batch minima do not overlap at all; the delta is reported but is not a result unless they are",
+      "delta_verdict": "RESOLVABLE: the dead arm's fastest batch minimum (3.0170 us) exceeds the guarded arm's slowest (0.9260 us), so the arms do not overlap.",
+      "why_the_delta_is_not_scored_against_the_ceiling": "A ceiling is an absolute bound on a cost. Scoring a DIFFERENCE against one is the 'new < old' reasoning protocol.py bans, and it would also let a change of the ceiling change the finding."
+    },
+    "ceiling": {
+      "value_us": 50.0,
+      "basis": "half of T-1's SAMPLER_COST_CEILING_US: a DEAD span is optional instrumentation that produces nothing, so it may not occupy more than half the loop budget the repo calls noticeable. The value is unchanged by bead FastAPI_saas-7zwp; what changed is that this label no longer quotes a per-call measurement, because the one it used to quote was taken through this harness's own meter and was never a measurement of the span"
+    }
+  },
+  "the_per_db_request_denominator": {
+    "question": "How many span constructions does one request pay?",
+    "answer": "One, on a request that opens a database session. Zero on a request that does not.",
+    "measured": {
+      "login_path": {
+        "path": "/api/v1/account/login",
+        "method": "POST",
+        "requests": 50,
+        "status_counts": {
+          "401": 50
+        },
+        "span_calls_total": 50,
+        "span_calls_per_request": 1.0,
+        "span_calls_by_name": {
+          "database_session": 50
+        }
+      },
+      "no_session_path": {
+        "path": "/api/v1/users/me",
+        "method": "GET",
+        "requests": 50,
+        "status_counts": {
+          "401": 50
+        },
+        "span_calls_total": 0,
+        "span_calls_per_request": 0.0,
+        "span_calls_by_name": {}
+      },
+      "guard_state": "guarded (production)",
+      "tenant": "test-tenant-e2e"
+    },
+    "where_the_site_is": "async_get_db opens the session and the span is trace_span('database_session') at src/app/core/db/database.py:203. The other site, trace_span('database_session_context') at database.py:250, belongs to the imperative get_db_context and is not on the FastAPI request path.",
+    "the_dead_cost_per_db_request_us": 2.147
+  },
+  "measured_vs_inferred": {
+    "measured": [
+      "the guarded arm's per-call cost (5 batches of 20000 calls, min-of-N, median-of-M)",
+      "the dead ProxyTracer arm's per-call cost, on the same machine, in the same run",
+      "the tracer-machinery entry count for each arm (0 and 1)",
+      "the span construction count per request on two paths (1.0 and 0.0)",
+      "the load-phase counts: header_scan 4000 calls observed, otel_span 0, exc_info 0"
+    ],
+    "inferred": [
+      "that the 2.147 us delta is what S-3 removed: the two arms differ ONLY in whether the tracer's span machinery is entered, which the probe confirms entry by entry",
+      "that the per-DB-request figure for any other request is 2.147 us if it opens a session and 0 if it does not"
+    ],
+    "explicitly_not_measured": [
+      "the cost of the span on a path that opens MORE than one database session per request",
+      "the cost under an installed OTel SDK, where the span would be a real one (the harness REFUSES to run when a SDK is present, because the dead arm only exists while none is)",
+      "the cost on a WARMED application with the span cache populated, which is the state production is in: the 2.147 us is therefore an UPPER bound on the live cost, because the guarded arm in this run never entered the machinery at all",
+      "any end-to-end request-latency effect: the delta is 0.005 % of a measured request p50, which is far below the noise floor of the request measurement itself"
+    ]
+  },
+  "limits": [
+    "The load phase drove unauthenticated GETs at /api/v1/users/me, which on this commit do NOT open a database session: the auth dependency raises before async_get_db. So the load's otel_span count is 0, and L-8's own docstring claim that a 401 request 'pays all three sites' is false on this commit. The same claim is repeated in src/app/core/db/database.py:220-223. Correcting it is production documentation and is NOT this bead's job; it is recorded in FastAPI_saas-a7ce.",
+    "The two arms are separated by a wide margin, but the arms' own run-to-run variation is not zero: a second run of the same harness on the same commit gave 0.8440 us and 3.0320 us (delta 2.1880 us) against this run's 0.8970 us and 3.0440 us (delta 2.1470 us). The finding is the ORDER OF MAGNITUDE, and the separation rule is satisfied in both runs by a margin of about 3.5x.",
+    "The per-call figures were taken with NO instrumentation installed. That is the point of the fix, and it means the figures are not comparable with any pre-7zwp figure from this harness.",
+    "The header_scan figure moved from 38.267 us (pre-fix run, taken through the meter) to 38.229 us (this run, taken with the meter not installed). The 56.2 us anchor quoted in HEADER_SCAN_CEILING_US was itself taken through the meter and is therefore not a clean comparison; the ceiling VALUE was left untouched and the anchor was left as it was, because editing a declared ceiling to fit a measurement is the form protocol.py bans.",
+    "The live production cost of the span is at or below 0.897 us, because the guarded arm never enters the tracer's machinery at all: the figure S-3 removed is an upper bound.",
+    "The denominator probe is not a committed harness and does not travel with the repository; it is recorded by this artefact and its output is included verbatim.",
+    "One interpreter, one commit, one machine (4 cores, VMware VM, Linux 5.14.0-578.el9)."
+  ],
+  "cross_reference": {
+    "bead_closed_by_this_artefact": "FastAPI_saas-7zwp",
+    "raw_artefacts": [
+      "perf-results/RESULT-20261018-7zwp/l8_loop_occupancy.json",
+      "perf-results/RESULT-20261018-7zwp/span_multiplier.json"
+    ],
+    "note_on_the_raw_l8_artefact": "l8_loop_occupancy.json carries 'bead': 'FastAPI_saas-1py8'. That is L-8's own bead, and it is correct: the file is L-8's artefact, produced by the harness as it stands after 7zwp's fix. It was not edited to name 7zwp, because a raw run record is a record of what ran.",
+    "beads_referenced": [
+      "FastAPI_saas-9baq (P-19) - the 3.123 us figure whose denominator was assumed",
+      "FastAPI_saas-1py8 (L-8) - the harness this measurement runs on",
+      "FastAPI_saas-ztwf (S-3) - the guard that is live, whose cost this bead prices",
+      "FastAPI_saas-a7ce - the follow-up bead for the false production claim about ProxyTracer"
+    ],
+    "artefacts_referenced": [
+      "perf-results/RESULT-20261013-span/span_cost.json (P-19's figure, and its assumed multiplier)",
+      "perf-results/RESULT-20261017-oxx2/ (the measured request p50s this cost is compared against)"
+    ]
+  },
+  "closed": true
+}

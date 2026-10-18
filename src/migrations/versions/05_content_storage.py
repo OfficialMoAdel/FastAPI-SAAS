@@ -100,8 +100,40 @@ def upgrade() -> None:
             server_default=sa.text("'[]'"),
         ),
         sa.Column("quiet_hours_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
-        sa.Column("quiet_hours_start", sa.Time(timezone=True), nullable=True),
-        sa.Column("quiet_hours_end", sa.Time(timezone=True), nullable=True),
+        # FastAPI_saas-nqk6. These two columns were created as
+        # `sa.Time(timezone=True)`, which no part of this application ever used:
+        # the ORM maps String(5) (user_preferences/models.py:90,95), crud.py:113
+        # writes an "HH:MM" string, notifications/service.py:611-612 parses it
+        # with time.fromisoformat, and the schemas type it `str | None` with a
+        # `^(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$` pattern. MEASURED on the Linux
+        # target (perf-local, a scratch database migrated with alembic against a
+        # create_all database as control; artefact
+        # perf-results/RESULT-20261018-9cmn/, bead FastAPI_saas-9cmn): on a
+        # migrated database the INSERT is refused outright with
+        # `DatatypeMismatchError: column "quiet_hours_start" is of type time with
+        # time zone but expression is of type character varying`, and it is
+        # refused with both columns bound to NULL as well, so the failure is the
+        # BIND TYPE and no quiet-hours value could ever have been written. A row
+        # that does exist reads back as datetime.time, and time.fromisoformat
+        # then raises TypeError, which the consumer's `except ValueError` does not
+        # catch. The create_all control accepted every write and read, which is
+        # why development never sees it.
+        #
+        # Correcting this declaration is the whole fix HERE, because this project
+        # is pre-release: `src/migrations/AGENTS.md` says a schema change should
+        # extend the relevant layer's upgrade() rather than stack a new revision,
+        # "unless the layer is already applied in production", and it is not.
+        # Alembic will not re-run a create_table against an existing database, so
+        # a database built before this correction keeps its timetz columns until
+        # it is dropped and rebuilt - `DROP SCHEMA public CASCADE` then
+        # `alembic upgrade head` is the supported way to get one, and it is what
+        # development should do rather than accumulate a repair revision for a
+        # schema nobody has shipped. If a layer ever IS applied in production,
+        # this becomes the two-part fix: keep this correction AND add a revision
+        # that ALTERs the column, because a corrected create_table does not
+        # rewrite one that already exists.
+        sa.Column("quiet_hours_start", sa.String(length=5), nullable=True),
+        sa.Column("quiet_hours_end", sa.String(length=5), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_user_preferences")),

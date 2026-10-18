@@ -1,0 +1,333 @@
+{
+  "bead": "FastAPI_saas-1py8",
+  "what": "L-8 event-loop occupancy attribution for the three named blocking sources",
+  "protocol": "section 4.4: min-of-N batches, median-of-M, warm-up, gc.collect(), absolute ceiling",
+  "measured_at": "2026-10-18T12:38:58.553219+00:00",
+  "host": "ansible1",
+  "limits_relaxed": true,
+  "relaxed_limits": {
+    "AUTO_BAN_ENABLED": "false",
+    "SECURITY_BUDGETS": "{\"auth\": [5000, 60], \"mfa_verify\": [5000, 60], \"mfa_verify_global\": [5000, 60], \"mfa_mutate\": [5000, 60], \"magic_link_send\": [5000, 60], \"passkey_login\": [5000, 60], \"refresh\": [5000, 60], \"ai_chat\": [5000, 60]}",
+    "TIER_RATE_LIMITS": "{\"free\": [100000, 3600], \"basic\": [100000, 3600], \"pro\": [100000, 3600], \"enterprise\": [100000, 3600]}",
+    "DEFAULT_AUTHENTICATED_LIMIT": "[100000,3600]",
+    "DEFAULT_ANONYMOUS_LIMIT": "[100000,3600]",
+    "ANONYMOUS_IP_AGGREGATE_LIMIT": "[100000,3600]",
+    "DEFAULT_RATE_LIMIT_LIMIT": "100000",
+    "DEFAULT_RATE_LIMIT_PERIOD": "3600"
+  },
+  "limits_relaxed_note": "Phase 1 (the three per-call costs) ran with NO app and therefore at production limits; it is the phase-1 numbers alone that carry a production-limit claim. Phase 2 ran with the eight rate limits relaxed, because at production limits the probe's own requests are answered 429 by the limiter and 403 by auto-ban before reaching any of the three sites.",
+  "phase1_was_uninstrumented": true,
+  "phase1_was_uninstrumented_note": "Phase 1 ran BEFORE install_instruments(). Each phase-1 measurement also refuses to report a figure if its own source charged the meter during the run, so this cannot silently regress into a figure that includes the instrument.",
+  "stamp": {
+    "platform": "Linux",
+    "release": "5.14.0-578.el9.x86_64",
+    "machine": "x86_64",
+    "cpu_count": 4,
+    "event_loop": "Loop",
+    "python": "3.13.16"
+  },
+  "stdout_redirected_to_devnull": true,
+  "stdout_redirect_note": "Both phases run with fd 1 pointed at /dev/null. structlog still runs every record through ConsoleRenderer, so the exc_info formatting this harness is measuring stays inside the measurement; what is excluded is the terminal write, which is not the application's work. Unredirected, the ~10 000 phase-1 renders alone cost ~620 s of CPU and buried the number they were measuring. stderr is never redirected.",
+  "tracer_class": "ProxyTracer",
+  "otel_sdk_present": false,
+  "live_guard_state": "guarded",
+  "span_paths": {
+    "guarded": {
+      "state": "guarded",
+      "tracer_machinery_entries": 0,
+      "entered_the_tracer": false,
+      "yielded_span_type": "NonRecordingSpan",
+      "yielded_is_invalid_span": true,
+      "is_recording": false,
+      "note": "The two arms yield the same object on the installed API version; what differs is whether the tracer's span machinery was entered. The delta prices THAT difference, not a span allocation."
+    },
+    "proxy_tracer": {
+      "state": "proxy_tracer",
+      "tracer_machinery_entries": 1,
+      "entered_the_tracer": true,
+      "yielded_span_type": "NonRecordingSpan",
+      "yielded_is_invalid_span": true,
+      "is_recording": false,
+      "note": "The two arms yield the same object on the installed API version; what differs is whether the tracer's span machinery was entered. The delta prices THAT difference, not a span allocation."
+    }
+  },
+  "per_source": {
+    "header_scan": {
+      "label": "per-header attack scan (prefilter + combined regex)",
+      "per_call_us": 38.2289999834029,
+      "spread_ratio": 1.0134087869249053,
+      "inside_noise_floor": true,
+      "batch_mins_us": [
+        38.2289999834029,
+        37.81099985644687,
+        37.93500036408659,
+        38.31799949693959,
+        38.28699846053496
+      ],
+      "batch_medians_us": [
+        40.15800004708581,
+        40.06000017398037,
+        39.86899992014514,
+        39.77650067099603,
+        40.22250050184084
+      ],
+      "ceiling_us": 100.0,
+      "ceiling_basis": "T-1's SAMPLER_COST_CEILING_US: one eighth of one 8 ms sampling interval, so the whole request's header scan may never cost more of the loop than the repo already declares noticeable. Measured 56.2 us on the target (l8_probe_scan.py), i.e. 0.56 of this; a 1.8x regression trips it",
+      "verdict": "header_scan_per_header 38.23us is under the T-1's SAMPLER_COST_CEILING_US: one eighth of one 8 ms sampling interval, so the whole request's header scan may never cost more of the loop than the repo already declares noticeable. Measured 56.2 us on the target (l8_probe_scan.py), i.e. 0.56 of this; a 1.8x regression trips it ceiling 100.00us; spread is inside the noise floor, so any comparison against another arm is not a result",
+      "calls_observed_in_load": 4000,
+      "measured_wall_s_in_load": 0.1562933549776062,
+      "measured_cpu_s_in_load": 0.15086477900007544,
+      "occupancy_injected_in_load": 0.03638414395614256,
+      "occupancy_accounted_in_load": 0.037615197024435915
+    },
+    "exc_info": {
+      "label": "exc_info traceback formatting on the 401 path",
+      "per_call_us": 291.7040001193527,
+      "spread_ratio": 1.3887565597410252,
+      "inside_noise_floor": true,
+      "batch_mins_us": [
+        291.35400109225884,
+        290.5159999500029,
+        291.7040001193527,
+        403.45600064028986,
+        338.54700086521916
+      ],
+      "batch_medians_us": [
+        326.45500050421106,
+        334.4169999763835,
+        386.36650060652755,
+        597.3684992568451,
+        462.71199971670285
+      ],
+      "ceiling_us": 1000.0,
+      "ceiling_basis": "no prior measurement exists; 1000 us is 2x the p50 of a whole 401 (3.29 ms) and 0.2x EM-3's 0.46 ms floor, so anything above this is material to the request rather than noise within it. Bead FastAPI_saas-xv1b removed the 401 path's call entirely, so this ceiling no longer has a live site to gate and is retained only so the harness still measures it",
+      "verdict": "exc_info_error_call 291.70us is under the no prior measurement exists; 1000 us is 2x the p50 of a whole 401 (3.29 ms) and 0.2x EM-3's 0.46 ms floor, so anything above this is material to the request rather than noise within it. Bead FastAPI_saas-xv1b removed the 401 path's call entirely, so this ceiling no longer has a live site to gate and is retained only so the harness still measures it ceiling 1000.00us; spread is inside the noise floor, so any comparison against another arm is not a result",
+      "calls_observed_in_load": 0,
+      "measured_wall_s_in_load": 0.0,
+      "measured_cpu_s_in_load": 0.0,
+      "occupancy_injected_in_load": 0.0,
+      "occupancy_accounted_in_load": 0.0
+    },
+    "otel_span": {
+      "label": "OTel span construction per DB request, in the state production is in (guarded)",
+      "per_call_us": 0.8970000635599717,
+      "spread_ratio": 1.103695433012824,
+      "inside_noise_floor": true,
+      "batch_mins_us": [
+        0.8450006134808064,
+        0.8389997674385086,
+        0.9259983926312998,
+        0.9260002116207033,
+        0.8970000635599717
+      ],
+      "batch_medians_us": [
+        1.0769999789772555,
+        1.0490002750884742,
+        1.1129995982628316,
+        1.184000211651437,
+        1.0730000212788582
+      ],
+      "ceiling_us": 50.0,
+      "ceiling_basis": "half of T-1's SAMPLER_COST_CEILING_US: a DEAD span is optional instrumentation that produces nothing, so it may not occupy more than half the loop budget the repo calls noticeable. The value is unchanged by bead FastAPI_saas-7zwp; what changed is that this label no longer quotes a per-call measurement, because the one it used to quote was taken through this harness's own meter and was never a measurement of the span",
+      "verdict": "otel_span_per_invocation_guarded 0.90us is under the half of T-1's SAMPLER_COST_CEILING_US: a DEAD span is optional instrumentation that produces nothing, so it may not occupy more than half the loop budget the repo calls noticeable. The value is unchanged by bead FastAPI_saas-7zwp; what changed is that this label no longer quotes a per-call measurement, because the one it used to quote was taken through this harness's own meter and was never a measurement of the span ceiling 50.00us; spread is inside the noise floor, so any comparison against another arm is not a result",
+      "calls_observed_in_load": 0,
+      "measured_wall_s_in_load": 0.0,
+      "measured_cpu_s_in_load": 0.0,
+      "occupancy_injected_in_load": 0.0,
+      "occupancy_accounted_in_load": 0.0
+    }
+  },
+  "span_guard_ab": {
+    "guarded": {
+      "path": "S-3's guard: trace_span returns trace.INVALID_SPAN before the tracer is touched. This is the path production is in.",
+      "per_call_us": 0.8970000635599717,
+      "spread_ratio": 1.103695433012824,
+      "inside_noise_floor": true,
+      "batch_mins_us": [
+        0.8450006134808064,
+        0.8389997674385086,
+        0.9259983926312998,
+        0.9260002116207033,
+        0.8970000635599717
+      ],
+      "verdict_passed": true,
+      "verdict": "otel_span_per_invocation_guarded 0.90us is under the half of T-1's SAMPLER_COST_CEILING_US: a DEAD span is optional instrumentation that produces nothing, so it may not occupy more than half the loop budget the repo calls noticeable. The value is unchanged by bead FastAPI_saas-7zwp; what changed is that this label no longer quotes a per-call measurement, because the one it used to quote was taken through this harness's own meter and was never a measurement of the span ceiling 50.00us; spread is inside the noise floor, so any comparison against another arm is not a result"
+    },
+    "proxy_tracer": {
+      "path": "the DEAD path S-3 removed: tracing builds a ProxyTracer NonRecordingSpan and discards it, once per DB session per request.",
+      "per_call_us": 3.0440005502896383,
+      "spread_ratio": 1.0202193037194331,
+      "inside_noise_floor": true,
+      "batch_mins_us": [
+        3.0769988370593637,
+        3.0780011002207175,
+        3.0440005502896383,
+        3.0409992177737877,
+        3.0169994715834036
+      ],
+      "verdict_passed": true,
+      "verdict": "otel_span_per_invocation_proxy_tracer 3.04us is under the half of T-1's SAMPLER_COST_CEILING_US: a DEAD span is optional instrumentation that produces nothing, so it may not occupy more than half the loop budget the repo calls noticeable. The value is unchanged by bead FastAPI_saas-7zwp; what changed is that this label no longer quotes a per-call measurement, because the one it used to quote was taken through this harness's own meter and was never a measurement of the span ceiling 50.00us; spread is inside the noise floor, so any comparison against another arm is not a result"
+    },
+    "ceiling_us": 50.0,
+    "ceiling_basis": "half of T-1's SAMPLER_COST_CEILING_US: a DEAD span is optional instrumentation that produces nothing, so it may not occupy more than half the loop budget the repo calls noticeable. The value is unchanged by bead FastAPI_saas-7zwp; what changed is that this label no longer quotes a per-call measurement, because the one it used to quote was taken through this harness's own meter and was never a measurement of the span",
+    "dead_minus_guarded_us": 2.1470004867296666,
+    "arms_separated": true,
+    "delta_verdict": "RESOLVABLE: the dead arm's fastest batch minimum (3.0170 us) exceeds the guarded arm's slowest (0.9260 us), so the arms do not overlap.",
+    "separation_rule": "the two arms are separated only when the dead arm's FASTEST batch minimum exceeds the guarded arm's SLOWEST one, i.e. when their batch minima do not overlap at all; the delta is reported but is not a result unless they are",
+    "arms_forced_not_installed": true,
+    "arms_forced_not_installed_note": "The guard flag was FORCED for each arm. No SDK was installed and none was needed: the dead arm is the ProxyTracer path a missing SDK already produces.",
+    "occupancy_by_state": {
+      "guarded": {
+        "per_source": {
+          "header_scan": {
+            "wall_s": 0.1562933549776062,
+            "cpu_s": 0.15086477900007544,
+            "count": 4000
+          },
+          "exc_info": {
+            "wall_s": 0.0,
+            "cpu_s": 0.0,
+            "count": 0
+          },
+          "otel_span": {
+            "wall_s": 0.0,
+            "cpu_s": 0.0,
+            "count": 0
+          }
+        },
+        "three_sources": {
+          "wall_s": 0.1562933549776062,
+          "cpu_s": 0.15086477900007544,
+          "occupancy_injected": 0.037187736596317904,
+          "occupancy_accounted": 0.037615197024435915
+        },
+        "cross_check": {
+          "observed_loop_lag_occupancy": -0.0012325579659298155,
+          "observed_loop_lag_occupancy_basis": "grid: 1 - (samples * sample_interval) / wall_s",
+          "sampler_usable": true,
+          "achieved_rate_hz": 125.13,
+          "minimum_rate_hz": 100.0,
+          "three_source_occupancy_injected": 0.037187736596317904,
+          "three_source_occupancy_accounted": 0.037615197024435915,
+          "share_of_lag_injected": -30.17118677113434,
+          "share_of_lag_accounted": -30.517994337134326,
+          "negligible_share_threshold": 0.02,
+          "verdict": "REFUTED: the three sources are a negligible share of observed loop lag",
+          "note": "accounted is the load-bearing number: it is CPU time charged to the process inside the three sites, divided by CPU time the thread actually consumed. injected extrapolates the microbenchmark per-call cost and therefore also counts time the sites did not block the loop (sockets, syscalls). A large gap between them is itself a finding: it means the three sites are called often but rarely block. The denominator is the grid occupancy, not sum(lag): see occupancy_naive_lag_sum_note."
+        }
+      },
+      "proxy_tracer": {
+        "per_source": {
+          "header_scan": {
+            "wall_s": 0.19956418605033832,
+            "cpu_s": 0.19070742299996013,
+            "count": 4000
+          },
+          "exc_info": {
+            "wall_s": 0.0,
+            "cpu_s": 0.0,
+            "count": 0
+          },
+          "otel_span": {
+            "wall_s": 0.0,
+            "cpu_s": 0.0,
+            "count": 0
+          }
+        },
+        "three_sources": {
+          "wall_s": 0.19956418605033832,
+          "cpu_s": 0.19070742299996013,
+          "occupancy_injected": 0.035500461081450635,
+          "occupancy_accounted": 0.03567182391411466
+        },
+        "cross_check": {
+          "observed_loop_lag_occupancy": -0.00045302252638282066,
+          "observed_loop_lag_occupancy_basis": "grid: 1 - (samples * sample_interval) / wall_s",
+          "sampler_usable": true,
+          "achieved_rate_hz": 125.03,
+          "minimum_rate_hz": 100.0,
+          "three_source_occupancy_injected": 0.035500461081450635,
+          "three_source_occupancy_accounted": 0.03567182391411466,
+          "share_of_lag_injected": -78.363566961903,
+          "share_of_lag_accounted": -78.74183255066362,
+          "negligible_share_threshold": 0.02,
+          "verdict": "REFUTED: the three sources are a negligible share of observed loop lag",
+          "note": "accounted is the load-bearing number: it is CPU time charged to the process inside the three sites, divided by CPU time the thread actually consumed. injected extrapolates the microbenchmark per-call cost and therefore also counts time the sites did not block the loop (sockets, syscalls). A large gap between them is itself a finding: it means the three sites are called often but rarely block. The denominator is the grid occupancy, not sum(lag): see occupancy_naive_lag_sum_note."
+        }
+      }
+    }
+  },
+  "occupancy": {
+    "requests": {
+      "issued": 2000,
+      "unauthorized": 2000,
+      "warmup": 50,
+      "warmup_unauthorized": 50
+    },
+    "warmup_unauthorized": 50,
+    "concurrency": 16,
+    "wall_s": 4.202819780999562,
+    "process_cpu_s": 4.010740098000001,
+    "per_source": {
+      "header_scan": {
+        "wall_s": 0.1562933549776062,
+        "cpu_s": 0.15086477900007544,
+        "count": 4000
+      },
+      "exc_info": {
+        "wall_s": 0.0,
+        "cpu_s": 0.0,
+        "count": 0
+      },
+      "otel_span": {
+        "wall_s": 0.0,
+        "cpu_s": 0.0,
+        "count": 0
+      }
+    },
+    "three_sources": {
+      "wall_s": 0.1562933549776062,
+      "cpu_s": 0.15086477900007544,
+      "occupancy_injected": 0.037187736596317904,
+      "occupancy_accounted": 0.037615197024435915
+    },
+    "loop_lag": {
+      "occupancy_observed": -0.0012325579659298155,
+      "occupancy_observed_basis": "grid: 1 - (samples * sample_interval) / wall_s",
+      "occupancy_naive_lag_sum": 0.16717436166383925,
+      "occupancy_naive_lag_sum_note": "sum(lag) over an absolute-grid sampler double-counts any block longer than one interval, so it exceeds 1.0 and even exceeds the wall clock under starvation. Recorded unclamped as evidence of that degeneracy, never used as a denominator.",
+      "lag_sum_s": 0.7026037140767585,
+      "samples": 526,
+      "requested_interval_s": 0.008,
+      "sampler_usable": true,
+      "sampler_cost_note": "the sampler's own cost is inside total_s and is bounded per sample by SAMPLER_COST_CEILING_US (100 us)",
+      "summary_ms": {
+        "count": 526,
+        "min": -2.432422999845585,
+        "max": 64.76972400014347,
+        "mean": 1.3357485058493508,
+        "median": 0.597181499870203
+      },
+      "achieved_rate_hz": 125.13,
+      "meets_minimum_rate": true,
+      "minimum_rate_hz": 100.0,
+      "loop_module": "uvloop",
+      "representativeness": "representative"
+    },
+    "security_keys_cleared": 0
+  },
+  "cross_check": {
+    "observed_loop_lag_occupancy": -0.0012325579659298155,
+    "observed_loop_lag_occupancy_basis": "grid: 1 - (samples * sample_interval) / wall_s",
+    "sampler_usable": true,
+    "achieved_rate_hz": 125.13,
+    "minimum_rate_hz": 100.0,
+    "three_source_occupancy_injected": 0.037187736596317904,
+    "three_source_occupancy_accounted": 0.037615197024435915,
+    "share_of_lag_injected": -30.17118677113434,
+    "share_of_lag_accounted": -30.517994337134326,
+    "negligible_share_threshold": 0.02,
+    "verdict": "REFUTED: the three sources are a negligible share of observed loop lag",
+    "note": "accounted is the load-bearing number: it is CPU time charged to the process inside the three sites, divided by CPU time the thread actually consumed. injected extrapolates the microbenchmark per-call cost and therefore also counts time the sites did not block the loop (sockets, syscalls). A large gap between them is itself a finding: it means the three sites are called often but rarely block. The denominator is the grid occupancy, not sum(lag): see occupancy_naive_lag_sum_note."
+  }
+}

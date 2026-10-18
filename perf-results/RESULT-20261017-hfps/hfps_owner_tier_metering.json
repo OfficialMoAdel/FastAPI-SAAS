@@ -1,0 +1,594 @@
+{
+  "bead": "FastAPI_saas-hfps",
+  "item": "hfps",
+  "title": "An API key is metered on its owner's tier budget, and resolving it costs no extra Redis round trip",
+  "bead_closes": true,
+  "measured_at": "2026-10-18T00:56Z",
+  "artefact_kind": "a change measured against the defect it replaces, on Linux, over a real socket",
+  "headline": {
+    "statement": "Before this change an X-API-Key request was admitted on API_KEY_LIMIT (1000/3600) keyed by SOURCE IP, so two integrations behind one NAT shared a bucket and the owner's tier was never consulted. After it, a request whose key resolves is metered on build_rate_limit_key - the bucket that owner's Bearer session spends - and 1300 requests spread over 16 distinct source addresses are refused at request 1002, which is the owner's hourly budget and not sixteen times it.",
+    "observed_budget_before": {
+      "limit": 10,
+      "period": 3600
+    },
+    "observed_budget_after": {
+      "limit": 1000,
+      "period": 3600
+    },
+    "round_trips_per_request_before": 5.38,
+    "round_trips_per_request_after": 4.5,
+    "commands_per_request_before": 5.52,
+    "commands_per_request_after": 4.64,
+    "why_the_header_alone_could_not_show_this": "API_KEY_LIMIT and the Pro tier budget are both (1000, 3600), so x-ratelimit-limit reads 1000 under either regime. What distinguishes them is the bucket NAME, exhaustion across source addresses, and the ban state - all three are measured here."
+  },
+  "instrument": {
+    "criterion_2_and_4": {
+      "file": "/home/ansible/hfps_owner_bucket_probe.py",
+      "in_repo": false,
+      "why_outside_the_repo": "It answers one question and prints one JSON. Committing it would add a probe whose only reader is this artefact; the committed coverage for the behaviour is tests/unit/core/security/test_api_key_identity_admission.py.",
+      "how_it_measures": "1300 sequential requests to GET /api/v1/users/me over a real socket with a real X-API-Key, rotating X-Forwarded-For over 16 distinct loopback addresses, then reads the surviving GCRA keys and the ban keys straight out of Redis.",
+      "budget_reset": {
+        "patterns": [
+          "gcra:tenant:01a145a9-36fb-7bc6-a2b6-c68369abdbec:rate_limit:user:254:*",
+          "gcra:rate_limit:api_key:ip:*",
+          "gcra:*__ip_aggregate__",
+          "security:violations:*",
+          "security:ban:*",
+          "security:ban_count:*",
+          "ban:*"
+        ],
+        "deleted": {
+          "gcra:tenant:01a145a9-36fb-7bc6-a2b6-c68369abdbec:rate_limit:user:254:*": [
+            "gcra:tenant:01a145a9-36fb-7bc6-a2b6-c68369abdbec:rate_limit:user:254:users_me"
+          ],
+          "gcra:rate_limit:api_key:ip:*": [
+            "gcra:rate_limit:api_key:ip:127.20.0.1:users_me"
+          ],
+          "gcra:*__ip_aggregate__": [],
+          "security:violations:*": [],
+          "security:ban:*": [],
+          "security:ban_count:*": [],
+          "ban:*": []
+        },
+        "deleted_count": 2
+      },
+      "reset_is_state_not_a_relaxation": "The budgets themselves are read from live settings and asserted equal to the pinned (1000, 3600) before a single request is issued; budgets_relaxed is false. The reset clears spend only, and the keys it deleted are listed."
+    },
+    "criterion_3": {
+      "file": "scripts/e2e_apikey_endpoint_baseline.py",
+      "in_repo": true,
+      "why_this_instrument": "M-7's harness already counts round trips and commands separately via T-6, hooking Connection.send_packed_command and Redis.execute_command. Reusing it is what makes the before and after comparable at all: a different counter would be a different quantity.",
+      "before_run": "perf-results/RESULT-20261017-m7/m7_apikey_endpoint_baseline.json",
+      "before_commit": "93750647",
+      "after_run": "/home/ansible/hfps_out/m7_on_hfps.json",
+      "after_commit": "1feceab21",
+      "outcome_of_the_after_run": "FAIL",
+      "the_after_run_is_expected_to_fail_and_here_is_why": {
+        "failures": [
+          "anonymous_ceiling_is_the_configured_budget"
+        ],
+        "error": "anonymous_ceiling_is_the_configured_budget: expected {'limit': 10, 'first_refused_index': 10, 'error_code': 'RATE_LIMITED'}, observed {'limit': 11, 'first_refused_index': None, 'error_code': None}",
+        "assertion_that_flipped": "anonymous_ceiling_is_the_configured_budget",
+        "what_it_asserted": "That the 11th API-key request from a fresh address is refused at DEFAULT_ANONYMOUS_LIMIT (10, 3600) - i.e. that an API key IS metered as an anonymous caller. That was the defect M-7 measured.",
+        "what_happened_instead": "All 11 requests of that arm were served, on the owner's budget. The assertion is a faithful record of the old contract and was NOT edited to pass; it lives in a closed bead's measurement instrument and its flip is the evidence."
+      }
+    },
+    "criterion_5": {
+      "file": "scripts/step4_campaign.py over a real uvicorn socket, read by scripts/step4_gate.py",
+      "in_repo": true,
+      "why_the_whole_set": "No step-4 campaign artefact existed anywhere, so none could be reused, and spending two commits in one gate run would put two code revisions behind one verdict. The set was re-measured in full on this commit."
+    }
+  },
+  "protocol": {
+    "target": "perf-local (ansible@192.168.121.147), VMware VM, CentOS Stream 9, i7-8850H, 4 cores",
+    "why_not_a_second_host": "Phase-0 co-location rules; the comparison is against the same box as before",
+    "commit": "1feceab21abdc18846f9c63610b4ec4074a7c2d0",
+    "commit_subject": "fix(security): meter an API key on its owner's tier, and align its schema with the ORM",
+    "tree_dirty": false,
+    "delivered_by": "git bundle (full history) - nothing was pushed",
+    "server": "uvicorn on 127.0.0.1:8100 from a clean worktree at the commit above",
+    "path_measured": "/api/v1/users/me",
+    "credential": "one API key minted out of band, owner on the Pro tier, scopes ['read']",
+    "why_the_owner_is_a_dedicated_account": "seed_accounts deletes seeded users before every campaign invocation and api_keys.user_id is ON DELETE CASCADE, so a key owned by a seeded row is deleted by the next run of the campaign that needs it.",
+    "budgets_relaxed": false,
+    "budgets_live_at_run_time": {
+      "api_key_limit": [
+        1000,
+        3600
+      ],
+      "pro_tier_limit": [
+        1000,
+        3600
+      ],
+      "default_anonymous_limit": [
+        10,
+        3600
+      ],
+      "anonymous_ip_aggregate": [
+        300,
+        3600
+      ]
+    }
+  },
+  "criterion_2_owner_bucket": {
+    "question": "Is an X-API-Key request metered on its owner's bucket, and is that bucket shared across source addresses?",
+    "requests_issued": 1300,
+    "source_addresses": 16,
+    "source_addresses_are_distinct": true,
+    "statuses": {
+      "200": 1002,
+      "429": 298
+    },
+    "first_429_at_request_index": 1002,
+    "what_that_index_proves": "g4my's per-source-IP budget gives EVERY address its own 1000, so 16 rotating addresses yield 16,000 and no address would be refused inside 1300 requests. The refusal at index 1002 is the owner's single hourly budget, spent across all 16 addresses.",
+    "headers_at_request_index": {
+      "0": {
+        "limit": "1000",
+        "period": "3600",
+        "remaining": "999"
+      },
+      "1": {
+        "limit": "1000",
+        "period": "3600",
+        "remaining": "998"
+      },
+      "999": {
+        "limit": "1000",
+        "period": "3600",
+        "remaining": "2"
+      },
+      "1000": {
+        "limit": "1000",
+        "period": "3600",
+        "remaining": "1"
+      },
+      "1299": {
+        "limit": "1000",
+        "period": "3600",
+        "remaining": "0"
+      }
+    },
+    "wall_seconds": 9.014,
+    "requests_per_second_sequential": 144.22,
+    "owner_buckets_found": [
+      "gcra:tenant:01a145a9-36fb-7bc6-a2b6-c68369abdbec:rate_limit:user:254:users_me"
+    ],
+    "owner_bucket_reads_as": "gcra:tenant:<tenant_id>:rate_limit:user:<owner_id>:<path> - byte-for-byte the form a Bearer session of the same account spends (build_rate_limit_key)",
+    "api_key_source_ip_buckets_found": [],
+    "the_cold_first_request": "On the first run after provisioning, exactly one source-IP bucket appeared, keyed on the peer address: the first request resolves no identity (the cache is cold) and is therefore admitted on g4my's per-source-IP budget. Once the key is cached, NO request reaches that budget at all - the third run found zero.",
+    "verdict": {
+      "metered_on_owner_bucket": true,
+      "the_only_source_ip_bucket_is_the_cold_first_request": true,
+      "exhausted_at_the_owner_budget_not_per_address": true,
+      "no_ban_after_refusals": true,
+      "never_spent_the_anonymous_aggregate": true
+    },
+    "the_four_arms_of_this_evidence": [
+      "the owner bucket exists and carries the spend",
+      "no per-source-IP bucket is created once the key is warm",
+      "exhaustion lands on the owner's budget, not on sixteen budgets",
+      "the run is served by the same Redis the campaign will measure against, over a socket"
+    ]
+  },
+  "criterion_3_round_trips": {
+    "question": "Does resolving the identity at the edge add a Redis round trip?",
+    "why_this_had_to_be_measured": "The bead says it must be measured rather than asserted: admission now performs a cache probe that /users/me would have performed anyway, and the claim under test is that the probe is MOVED, not added.",
+    "requests_each": 50,
+    "before": {
+      "commit": "93750647",
+      "round_trips_total": 269,
+      "round_trips_per_request": 5.38,
+      "commands_total": 276,
+      "commands_per_request": 5.52,
+      "server_commands_total": 581,
+      "server_commandstats_delta": {
+        "get": 255,
+        "evalsha": 100,
+        "pexpire": 100,
+        "set": 103,
+        "exists": 10,
+        "multi": 5,
+        "exec": 5,
+        "setex": 3
+      }
+    },
+    "after": {
+      "commit": "1feceab21",
+      "round_trips_total": 225,
+      "round_trips_per_request": 4.5,
+      "commands_total": 232,
+      "commands_per_request": 4.64,
+      "server_commands_total": 387,
+      "server_commandstats_delta": {
+        "multi": 5,
+        "get": 211,
+        "evalsha": 50,
+        "exists": 10,
+        "setex": 3,
+        "exec": 5,
+        "pexpire": 50,
+        "set": 53
+      }
+    },
+    "delta_round_trips_per_request": 0.88,
+    "verdict": "FEWER, not more. The identity probe costs one GET that the response path no longer performs, so the net change on a warm key is zero; what makes the count DROP is that a resolved identity is exempt from the anonymous IP aggregate, which was a second GCRA evaluation (evalsha + pexpire + set) on every single request before. The server-side counters show the same thing: evalsha 100 -> 50, pexpire 100 -> 50, set 103 -> 53 over the same 50 requests.",
+    "what_is_not_claimed": "Nothing about throughput. These are 50 in-process sequential requests, the counts are an instrument's floor rather than a wire capture, and the latency figures in the after run are not comparable with the before run's (different commit, and the before figure is recorded here only for context)."
+  },
+  "criterion_4_aggregate_and_auto_ban": {
+    "question": "Does the anonymous IP aggregate still bound unauthenticated traffic, and does an API-key violation still avoid auto-ban?",
+    "anonymous_aggregate_buckets_created_by_1300_api_key_requests": 0,
+    "ban_keys_after_298_refusals": [],
+    "violation_keys_after_298_refusals": [],
+    "x_banned_headers_observed": [],
+    "why_this_is_the_part_that_most_needed_checking": "api_key_metered used to be `ctx.api_key and ctx.token is None and ctx.user_id is None`. A resolved identity SETS user_id, so the flag would have gone false and a resolved key's violation would have escalated to auto-ban - the exact behaviour g4my introduced the flag to prevent, and 298 refusals from one address is three times the auto-ban threshold. It now means only that an API-key credential was presented.",
+    "verdict": "both preserved, measured rather than asserted"
+  },
+  "criterion_5_phase0_rerun": {
+    "question": "Does the eleven-endpoint Phase-0 set still pass its gate on this commit?",
+    "why_a_full_rerun": "The api-key arm is the arm this change moves, but the other ten were measured on the previous commit. Running only the api-key arm and re-using the rest would put two code revisions behind one verdict, and the gate's own criteria are about the set being coherent.",
+    "concurrency": 8,
+    "repetitions": 5,
+    "mode": "socket (uvicorn on 127.0.0.1:8100)",
+    "arms": {
+      "group_a": {
+        "endpoints": [
+          "users_me",
+          "users_list",
+          "health",
+          "users_search"
+        ],
+        "requests_per_repetition": 10000
+      },
+      "group_b1": {
+        "endpoints": [
+          "users_me_anon"
+        ],
+        "requests_per_repetition": 2,
+        "why_two": "The anonymous budget is (10, 3600) per IP and the pacer holds the whole window, so five repetitions of ten would spend four hours asleep. Two per repetition fills the window exactly (pooled n = 10, as in v8qm) and the reduction is stated rather than hidden."
+      },
+      "group_b2": {
+        "endpoints": [
+          "login",
+          "logout",
+          "refresh"
+        ],
+        "requests_per_repetition": 2,
+        "why_two": "The SAME reason as group B1, and it was learned the expensive way. login and logout declare ('auth','anonymous'), so the anonymous (10, 3600) window applies to them too, and BudgetGate is created once per drive_phase holding every declared window across all five repetitions. The first attempt at this stage used --requests-per-rep 10, which is fifty requests against a ten-per-hour window: after 68 minutes it had issued a handful of them (31 s of CPU across 33 minutes elapsed - it was sleeping, not hung) and was heading for roughly five hours PER ARM. It was killed, not waited out. Two per repetition gives pooled n = 10 for each arm, which is exactly what oxx2 and v8qm measured, and it fills the window exactly so nothing waits.",
+        "abandoned_attempt": "--requests-per-rep 10, killed after 68 minutes. No artefact was written and no number from it is used here; the abandoned run did spend part of the anonymous window, which is why the re-run's own clear_security_state matters."
+      },
+      "group_c": {
+        "endpoints": [
+          "users_me_apikey"
+        ],
+        "requests_per_repetition": 100,
+        "why_100": "500 requests against a 1000/hour budget, so the campaign never waits and the arm stays inside production budgets. n stays below the 10,000 sample floor, so p99 is withheld (ADR-0022 rule 2), exactly as for users_me_anon."
+      },
+      "body_scan": {
+        "endpoints": [
+          "em9_miss_60kb",
+          "em10_hit_40kb"
+        ],
+        "measured": true,
+        "wire_sizes": {
+          "em9_miss_60kb": 61480,
+          "em10_hit_40kb": 41000,
+          "note": "The JSON envelope adds 41 bytes over the filler. The middleware scans the REQUEST BYTES, so every prefilter property and every per-KB figure below is against the WIRE size, not the text size."
+        }
+      }
+    },
+    "api_key_arm": {
+      "endpoint": "users_me_apikey",
+      "method": "GET",
+      "path": "/api/v1/users/me",
+      "note": "EM-11, added by bead FastAPI_saas-86p9. The same path and handler as users_me, reached with `X-API-Key` instead of a Bearer token, so the difference between the two numbers is the credential seam and nothing else. The arm exists because no API-key endpoint appeared in v8qm's set at all, which left MGET's 0.90 priority score with no denominator. Carries rate_budget=('api_key',): since g4my the request is charged API_KEY_LIMIT (1000, 3600) per SOURCE IP on rate_limit:api_key:ip:<ip>:<path> -- an admission-time bucket, because admission runs before the key can be validated -- and is exempt from the anonymous IP aggregate ceiling and from auto-ban. The pacing is therefore the production one, and n per repetition stays under 10,000 so p99 is WITHHELD rather than estimated (ADR-0022 Rule 2), the same shape users_me_anon carries. Requests rotate X-Forwarded-For over API_KEY_SOURCE_IPS because the bucket is IP-keyed and one address cannot carry a whole phase. The deeper per-request counts (round trips against commands) are M-7's, in perf-results/RESULT-20261017-m7/m7_apikey_endpoint_baseline.json; this arm measures the path over a real socket, as the other arms do.",
+      "repetitions": 5,
+      "concurrency": 8,
+      "pooled_n": 500,
+      "p50_median_of_repetitions_ms": 32.3132,
+      "p50_min_of_repetitions_ms": 30.9172,
+      "min_median_of_repetitions_ms": 16.9393,
+      "min_min_of_repetitions_ms": 13.5966,
+      "reportable_ms": {
+        "p50": 32.9446,
+        "p95": 42.4646,
+        "p99": null
+      },
+      "unresolvable_percentiles": [],
+      "p99_reportable": false,
+      "p99_note": "withheld: pooled n=500 is below the 10000 sample floor (ADR-0022 Rule 2). A tail quantile read off a sample this size is a number with no estimate behind it. The p50 and p95 above did resolve and are the ones to quote.",
+      "status_counts": {
+        "200": 500
+      },
+      "expected_statuses": [
+        200
+      ],
+      "status_is_clean": true,
+      "unexpected_statuses": [],
+      "unexpected_bodies": [],
+      "unexpected_body_count": 0,
+      "pacing": {
+        "budgets_enforced": [
+          {
+            "limit_per_window": 1000,
+            "window_seconds": 3600.0
+          }
+        ],
+        "times_a_window_had_to_wait": 0,
+        "seconds_spent_waiting": 0.0,
+        "which_window_bound": {},
+        "note": "Pacing is how the run RESPECTS the production limit. 4.5 voids a run in which a control was in force at a load-producing value; pacing is the opposite of raising one. Every window named by the endpoint is enforced at once, because no single rate respects (5, 60) and (10, 3600) together -- measured, both ways, in two runs.",
+        "controls_enforced": [
+          "api_key"
+        ]
+      },
+      "refresh_rotations": null
+    },
+    "gate": {
+      "criteria_met": 7,
+      "criteria_total": 10,
+      "failed_criteria": [
+        7,
+        8,
+        9
+      ],
+      "checks": [
+        {
+          "number": 1,
+          "name": "every required endpoint measured at the degrading concurrency",
+          "passed": true,
+          "detail": "all 11 present, every one at concurrency 8"
+        },
+        {
+          "number": 2,
+          "name": "4.4 verbatim; p99 needs n >= 10,000",
+          "passed": true,
+          "detail": "p99 resolved for 4 at n >= 10000 (['health', 'users_list', 'users_me', 'users_search']); withheld-as-null for 7 (['em10_hit_40kb', 'em9_miss_60kb', 'login', 'logout', 'refresh', 'users_me_anon', 'users_me_apikey']), none fabricated"
+        },
+        {
+          "number": 3,
+          "name": ">=5 reps, median-of-medians and min-of-medians",
+          "passed": true,
+          "detail": "every endpoint reports repetitions >= 5 and all four per-repetition figures"
+        },
+        {
+          "number": 4,
+          "name": "4.5 void conditions asserted start and end",
+          "passed": true,
+          "detail": "all 4 campaign artefacts assert the eight controls unchanged, start to end"
+        },
+        {
+          "number": 5,
+          "name": "100% success, EM-2's 401 declared in advance",
+          "passed": true,
+          "detail": "no unexpected status anywhere; users_me_anon returned only ['401'] because its expected status is 401, declared in the endpoint table before the run"
+        },
+        {
+          "number": 6,
+          "name": "full manifest, representative runtime",
+          "passed": true,
+          "detail": "4 campaign artefacts carry a representative manifest"
+        },
+        {
+          "number": 7,
+          "name": "/health paired arm",
+          "passed": false,
+          "detail": "no artefact supplied for the paired arm; not assumed"
+        },
+        {
+          "number": 8,
+          "name": "Linux CPU profile, top-5 tottime share",
+          "passed": false,
+          "detail": "no profile artefact supplied; not assumed"
+        },
+        {
+          "number": 9,
+          "name": "blocking-work attribution vs the T-1 histogram",
+          "passed": false,
+          "detail": "no occupancy artefact supplied; not assumed"
+        },
+        {
+          "number": 10,
+          "name": "no Windows arm, no cross-shape comparison",
+          "passed": true,
+          "detail": "every manifest reports Linux; every run is one shape"
+        }
+      ],
+      "endpoints": {
+        "users_me": {
+          "pooled_n": 50000,
+          "concurrency": 8,
+          "repetitions": 5,
+          "status_counts": {
+            "200": 50000
+          },
+          "p99": 168.0827,
+          "p99_reportable": true,
+          "source": "/home/ansible/hfps_out/groupA.json"
+        },
+        "users_list": {
+          "pooled_n": 50000,
+          "concurrency": 8,
+          "repetitions": 5,
+          "status_counts": {
+            "200": 50000
+          },
+          "p99": 575.6793,
+          "p99_reportable": true,
+          "source": "/home/ansible/hfps_out/groupA.json"
+        },
+        "health": {
+          "pooled_n": 50000,
+          "concurrency": 8,
+          "repetitions": 5,
+          "status_counts": {
+            "200": 50000
+          },
+          "p99": 83.2487,
+          "p99_reportable": true,
+          "source": "/home/ansible/hfps_out/groupA.json"
+        },
+        "users_search": {
+          "pooled_n": 50000,
+          "concurrency": 8,
+          "repetitions": 5,
+          "status_counts": {
+            "200": 50000
+          },
+          "p99": 710.4298,
+          "p99_reportable": true,
+          "source": "/home/ansible/hfps_out/groupA.json"
+        },
+        "users_me_anon": {
+          "pooled_n": 10,
+          "concurrency": 8,
+          "repetitions": 5,
+          "status_counts": {
+            "401": 10
+          },
+          "p99": null,
+          "p99_reportable": false,
+          "source": "/home/ansible/hfps_out/groupB1.json"
+        },
+        "login": {
+          "pooled_n": 10,
+          "concurrency": 8,
+          "repetitions": 5,
+          "status_counts": {
+            "200": 10
+          },
+          "p99": null,
+          "p99_reportable": false,
+          "source": "/home/ansible/hfps_out/groupB2.json"
+        },
+        "logout": {
+          "pooled_n": 10,
+          "concurrency": 8,
+          "repetitions": 5,
+          "status_counts": {
+            "200": 10
+          },
+          "p99": null,
+          "p99_reportable": false,
+          "source": "/home/ansible/hfps_out/groupB2.json"
+        },
+        "refresh": {
+          "pooled_n": 10,
+          "concurrency": 8,
+          "repetitions": 5,
+          "status_counts": {
+            "200": 10
+          },
+          "p99": null,
+          "p99_reportable": false,
+          "source": "/home/ansible/hfps_out/groupB2.json"
+        },
+        "users_me_apikey": {
+          "pooled_n": 500,
+          "concurrency": 8,
+          "repetitions": 5,
+          "status_counts": {
+            "200": 500
+          },
+          "p99": null,
+          "p99_reportable": false,
+          "source": "/home/ansible/hfps_out/groupC.json"
+        },
+        "em9_miss_60kb": {
+          "pooled_n": 1000,
+          "concurrency": 8,
+          "repetitions": 5,
+          "status_counts": {
+            "201": 1000
+          },
+          "p99": null,
+          "p99_reportable": false,
+          "source": "/home/ansible/hfps_out/bodyscan.json"
+        },
+        "em10_hit_40kb": {
+          "pooled_n": 1000,
+          "concurrency": 8,
+          "repetitions": 5,
+          "status_counts": {
+            "201": 1000
+          },
+          "p99": null,
+          "p99_reportable": false,
+          "source": "/home/ansible/hfps_out/bodyscan.json"
+        }
+      }
+    },
+    "criteria_met": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      10
+    ],
+    "criteria_unmet": [
+      7,
+      8,
+      9
+    ],
+    "c1": {
+      "number": 1,
+      "name": "every required endpoint measured at the degrading concurrency",
+      "passed": true,
+      "detail": "all 11 present, every one at concurrency 8"
+    },
+    "the_unmet_criteria": "(7)(8)(9) fail because their paired-arm, profile and occupancy artefacts were not supplied - the gate refuses to assume them. They are out of this bead's scope, which names C1, and the verdict line is reported as the gate wrote it rather than reformatted into a pass."
+  },
+  "measured_vs_inferred": {
+    "measured": [
+      "the observed X-RateLimit-Limit on an API-key request moved from 10/3600 to 1000/3600",
+      "the owner bucket gcra:tenant:<tid>:rate_limit:user:<uid>:users_me exists and carries the spend",
+      "zero per-source-IP buckets once the key is warm",
+      "1300 requests over 16 source addresses are refused at index 1002",
+      "round trips per request fell from 5.38 to 4.50 and commands from 5.52 to 4.64 over the same 50 requests",
+      "zero anonymous-aggregate buckets and zero ban keys after 298 refusals",
+      "the eleven-endpoint gate result on this commit"
+    ],
+    "inferred": [
+      "that the drop is caused by the aggregate exemption rather than by a colder or warmer cache: the server-side counters (evalsha 100 -> 50, pexpire 100 -> 50, set 103 -> 53) are the same shape as the client-side count, and one GCRA evaluation per request rather than two accounts for it exactly",
+      "that on a NAT-shared production egress the two integrations now contend for one budget instead of one each - that is the point of the change, and it is not separately measured"
+    ],
+    "explicitly_not_measured": [
+      "throughput or latency under concurrency: these runs are sequential, and the Phase-0 numbers are latency percentiles from a different sample size than the before commit",
+      "the DB path for a cold key beyond the single first request: the identity is cached for API_KEY_CACHE_TTL (300s), and a run longer than that with a colder key was not performed",
+      "any multi-process or multi-worker arrangement"
+    ]
+  },
+  "limits": [
+    "The before/after latency figures are NOT comparable: different commits, and the before figure is recorded for context only. The comparable quantities here are the round-trip and command COUNTS, which T-6 requires be reported separately from latency.",
+    "The api-key arm was measured at n=500, below the gate's 10,000 sample floor, so its p99 is withheld. That is the same shape as users_me_anon and it is a deliberate consequence of the production budget, not a sample chosen for convenience.",
+    "The probe answers 'is the bucket the owner's' and 'is it shared'. It does not measure the DB cost of a cold resolution: one joined read per key per 300s, which this run observed only as the cold first request.",
+    "The M-7 harness's own `key_owner_rule` string now reads that APIKeyCreate has no user_id. That became false when FastAPI_saas-aepv landed user_id in the same commit as this one. The harness's BEHAVIOUR is unaffected - it never passes user_id - but the string is stale and is quoted nowhere in this artefact.",
+    "The gate's (7)(8)(9) are unmet for want of artefacts that are out of scope, not because this change moved anything. Nothing here is evidence about those three criteria either way.",
+    "perf-local is a VMware VM, not bare metal, and the comparison against v8qm is NOT ATTRIBUTED: different commit, different pooled sample, same co-located box.",
+    "Wall clock for this re-run is dominated by BUDGET PACING on the credential arms, not by the work. login and logout declare the anonymous (10, 3600) budget as well as the auth one, and BudgetGate is created once per drive_phase holding every declared window across all five repetitions, so a naive --requests-per-rep 10 on those arms is fifty requests against a ten-per-hour window - about five hours of enforced sleeping per arm. The first attempt did exactly that and was killed after 68 minutes; the re-run uses --requests-per-rep 2, which fills the window exactly and matches oxx2's pooled n of 10 per arm. That cost belongs to the measurement protocol and would be paid identically on the previous commit; none of it is attributable to this change."
+  ],
+  "cross_reference": {
+    "bead_closed_by_this_artefact": "FastAPI_saas-hfps",
+    "beads_referenced": {
+      "FastAPI_saas-o0fg": "M-7, the measurement this one is compared against; its harness is the instrument for criterion 3",
+      "FastAPI_saas-g4my": "gave API-key traffic its own budget and made it IP-keyed and auto-ban-ineligible; hfps is the deferred half of that bead",
+      "FastAPI_saas-u69m": "closed as a documented contract on the grounds that no option survives the API-key cache cold; ADR-0023 changes the ordering instead, and hfps is where that is paid for",
+      "FastAPI_saas-aepv": "landed in the same commit; it is what makes APIKeyCreate able to name an owner at all",
+      "FastAPI_saas-vthy": "landed in the same commit; on an alembic-built database every X-API-Key request used to 500, which is why the re-run is on a create_all database and the migration defect is a separate finding",
+      "FastAPI_saas-oxx2": "measured the api-key arm on the previous commit; the Phase-0 set it produced is re-measured here rather than reused"
+    },
+    "adr": "docs/adr/0023-admission-owns-api-key-identity.md",
+    "oracle": "tests/unit/core/security/test_api_key_identity_admission.py",
+    "previous_phase0_artefact": "perf-results/RESULT-20261017-oxx2/",
+    "phase0_rerun_artefacts": [
+      "perf-results/RESULT-20261017-hfps/step4_campaign_groupA_users_me_list_search_health.json",
+      "perf-results/RESULT-20261017-hfps/step4_campaign_groupB1_users_me_anon.json",
+      "perf-results/RESULT-20261017-hfps/step4_campaign_groupB2_login_logout_refresh.json",
+      "perf-results/RESULT-20261017-hfps/step4_campaign_groupC_users_me_apikey.json",
+      "perf-results/RESULT-20261017-hfps/body_scan_regimes_em9_em10.json",
+      "perf-results/RESULT-20261017-hfps/step4_gate_verdict.json"
+    ]
+  },
+  "closed": true
+}

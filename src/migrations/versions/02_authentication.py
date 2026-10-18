@@ -64,7 +64,24 @@ def upgrade() -> None:
         sa.Column("public_key", sa.LargeBinary(), nullable=False),
         sa.Column("credential_id_hash", sa.String(length=64), nullable=False),
         sa.Column("counter", sa.Integer(), nullable=False, server_default=sa.text("0")),
-        sa.Column("device_type", sa.String(length=50), nullable=True),
+        # FastAPI_saas-nqk6. The ORM declares `device_type`
+        # `Mapped[str] = mapped_column(String(100), nullable=False)`
+        # (auth/models.py:314) and the only writer always supplies one
+        # (auth/services/passkey.py:206-221 passes it into
+        # PasskeyCredentialCreate, whose default is the string "passkey"), yet
+        # this column was nullable. That is the LOOSE direction: the database
+        # could only ever admit a row the application would refuse, never refuse
+        # one it would accept, so the divergence could not surface as a failed
+        # request - it just made the schema claim less than the code requires.
+        # Nullability is compared by no gate (scripts/check_schema_parity.py
+        # compares names and types), and it was found only because a probe
+        # INSERT that omitted `credential_id_hash` failed on THAT column first.
+        # Its WIDTH (50 here vs the ORM's 100) is deliberately left alone:
+        # FastAPI_saas-9cmn MEASURED the 50-character boundary
+        # (perf-results/RESULT-20261018-9cmn/) and found it benign, because
+        # WebAuthn device types are the four single-token values in the
+        # specification. That row is owned by FastAPI_saas-auz2.
+        sa.Column("device_type", sa.String(length=50), nullable=False),
         sa.Column("device_name", sa.String(length=100), nullable=True),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
         # WebAuthn authenticator metadata. Both are mapped on the ORM

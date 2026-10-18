@@ -146,6 +146,10 @@ rg -n "class .*Provider" src/app/modules/auth/providers/
 - **MFA**: login may return a challenge (`LoginMFAResponse`), not tokens — handle both response shapes
 - **Secrets**: never log or return tokens; log sanitization strips JWTs automatically
 - **SSO state**: pending OAuth/SSO state lives in `core/security/tokens.py::PendingTokenStore`, not in the session
+- **`passkey_credentials` nullability: the ORM moved for `credential_id_hash`, the DATABASE moved for `device_type` — and NULLABILITY is still the one column kind no gate compares.** Both were MEASURED (`perf-results/RESULT-20261018-9cmn/`, bead `FastAPI_saas-9cmn`) and settled in `FastAPI_saas-nqk6`, on the rule that the side which can refuse a legitimate write must be the one that moves:
+  - `credential_id_hash` — **the ORM moved.** It was nullable in the model (`models.py:318`) and `NOT NULL` + unique-indexed in `migrations/versions/02_authentication.py:65,88`, and a row omitting it failed with `NotNullViolationError`. It is now `Mapped[str]` with `nullable=False`, and `PasskeyCredentialCreate.credential_id_hash` is a required `str`. Loosening the database was rejected: a unique index permits unlimited NULLs, so the hash would stop being a lookup key, and `services/passkey.py` reads credentials back BY it. The only writer (`services/passkey.py:206-221`) always computes the digest, so nothing had to change there.
+  - `device_type` — **the database moved.** It was NOT NULL in the ORM and nullable in the migration — the loose direction, which can only admit a bad row, never refuse a good one. The fix is in the layer that creates the table: `src/migrations/versions/02_authentication.py` now declares it `nullable=False`. Its **width** (50 in the migration vs 100 in the ORM) is deliberately NOT touched — measured benign in 9cmn and owned by `FastAPI_saas-auz2`.
+  - `scripts/check_schema_parity.py` still compares names and types only; it has no nullability column. That hole is recorded, not fixed.
 
 ## Pre-PR Checks
 

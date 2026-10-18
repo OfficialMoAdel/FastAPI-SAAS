@@ -253,9 +253,17 @@ jobs:
       #
       # As a BLOCKING gate this would be red on day one and stay red, which
       # trains people to ignore red. It runs so drift is VISIBLE and
-      # reviewable in the job log; the blocking gate for missing columns is
-      # `Run schema parity gate` in the lint job. Flip continue-on-error to
-      # false only after the noise is reconciled.
+      # reviewable in the job log.
+      #
+      # Its type coverage is NOT what is missing:
+      # `scripts/check_schema_parity.py` (`Run schema parity gate`, the lint
+      # job) now compares column TYPES as well as names, and fails on the
+      # differences that are observable at runtime — a jsonb column behind a
+      # non-JSON ORM type, a column narrower than the model, the api_keys.scopes
+      # class. What alembic still sees and AST cannot is the part worth keeping
+      # non-blocking-and-visible: policies, constraints and server defaults. Do
+      # not flip continue-on-error to false until that residue is triaged; doing
+      # so re-fails the build on ~395 diffs nobody has read.
       # Step-level env is NOT inherited from the service block or from the
       # "Run tests" step, so every step here declares what it needs.
       - name: Create parity check database

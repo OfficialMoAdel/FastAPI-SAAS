@@ -1,0 +1,164 @@
+{
+  "bead": "FastAPI_saas-nqk6",
+  "item": "nqk6",
+  "title": "user_preferences.quiet_hours is unusable on an alembic-built database - the ORM cannot insert the row, and the consumer raises an uncaught TypeError",
+  "bead_closes": "FastAPI_saas-nqk6",
+  "measured_at": "2026-10-18T18:13:09Z",
+  "artefact_kind": "type-row measurement",
+  "headline": {
+    "defect": "ORM declares String(5); migration 05_content_storage declares sa.Time(timezone=True); live column is timetz",
+    "consequence": "the ORM cannot insert a user_preferences row; the consumer's time.fromisoformat raises an uncaught TypeError",
+    "fix": "extend layer 05 (the project is pre-release, so the creating layer is corrected directly)",
+    "verification": "the ORM can insert the row, read back is str, consumer accepts, response model accepts",
+    "before": {
+      "source": "perf-results/RESULT-20261018-9cmn/",
+      "live_column_type": "timetz",
+      "write": "refused (DatatypeMismatchError)",
+      "read_back": "datetime.time(22, 0, tzinfo=utc)",
+      "consumer": "uncaught TypeError"
+    },
+    "after": {
+      "source": "perf-results/RESULT-20261018-nqk6/",
+      "live_column_type": "varchar",
+      "write": "accepted (all three shapes)",
+      "read_back": "str",
+      "consumer": "accepted"
+    }
+  },
+  "instrument": {
+    "probe": "throwaway, outside the repo",
+    "read_through": "the application's own ORM (select(Model))",
+    "why_not_the_raw_driver": "vthy's raw asyncpg read hid the jsonb defect",
+    "one_arm_per_process": "the app engine is a module-level singleton"
+  },
+  "protocol": {
+    "target": "perf-local (192.168.121.147)",
+    "commit": "c1430c42531856c0c0c12df03e06e37e17631f74",
+    "host": "ansible1",
+    "platform": "Linux 5.14.0-578.el9.x86_64; python 3.13.16"
+  },
+  "the_measurement": {
+    "subject_arm": {
+      "database": "nqk6_probe2",
+      "built_by": "alembic",
+      "migrated_to": "08_enable_rls_policies",
+      "foreign_keys_dropped": true,
+      "quiet_hours": {
+        "live_columns": [
+          "varchar",
+          "varchar"
+        ],
+        "live_widths": [
+          5,
+          5
+        ],
+        "every_write_accepted": true,
+        "writes": [
+          "A1",
+          "A2",
+          "A3"
+        ],
+        "read_back_type": "str",
+        "consumer_outcome": "accepted",
+        "response_model_outcome": "accepted"
+      },
+      "width_rows": {
+        "files.storage_path": {
+          "column": 500,
+          "orm": 1024,
+          "accepts_orm_width": false
+        },
+        "files.mime_type": {
+          "column": 100,
+          "orm": 128,
+          "accepts_orm_width": false
+        },
+        "audit_logs.user_agent": {
+          "column": 500,
+          "orm": null,
+          "accepts_orm_width": null
+        },
+        "passkey_credentials.device_type": {
+          "column": 50,
+          "orm": 100,
+          "accepts_orm_width": false
+        }
+      }
+    },
+    "control_arm": {
+      "database": "test_db",
+      "built_by": "create_all",
+      "note": "test_db already existed (alembic-built), so create_all did not alter it; both arms measured the same schema",
+      "quiet_hours": {
+        "live_columns": [
+          "varchar",
+          "varchar"
+        ],
+        "live_widths": [
+          5,
+          5
+        ],
+        "writes": "rejected (FK violations - sentinel users without FK drops)"
+      },
+      "width_rows": "same as subject arm (same database)"
+    }
+  },
+  "the_discarded_attempt": {
+    "what": "a new revision 09_quiet_hours_text_and_passkey_not_null (41 characters)",
+    "why_discarded": "the user reversed the design: extend the layer, not stack a revision; the project is pre-release",
+    "measured_defect": "the 41-character revision id exceeded alembic's VARCHAR(32) alembic_version.version_num, causing the entire upgrade to roll back",
+    "user_quote": "Why did you create a new file? I want you to edit its existing file."
+  },
+  "the_user_reversal": {
+    "direction": "extend the creating layer",
+    "rule": "src/migrations/AGENTS.md: New schema changes should extend the relevant layer's upgrade()/downgrade() rather than stacking a new dated revision, unless the layer is already applied in production",
+    "reversal_condition": "if layer 05 is ever applied in production, the rule reverses and a new revision is required"
+  },
+  "the_nullability_pair": {
+    "credential_id_hash": {
+      "orm": "Mapped[str], nullable=False (moved)",
+      "migration_02": "NOT NULL, unique index",
+      "rationale": "the read path looks a credential up BY that hash; a unique index permits unlimited NULLs"
+    },
+    "device_type": {
+      "orm": "Mapped[str], nullable=False, String(100)",
+      "migration_02": "String(50), nullable=True -> corrected to nullable=False",
+      "rationale": "the ORM declares NOT NULL and the only writer always supplies one; the old nullable DB was the loose direction",
+      "width": "50 vs 100 deliberately untouched (owned by auz2)"
+    }
+  },
+  "measured_vs_inferred": {
+    "measured": [
+      "the fix works: the ORM can insert the row, read back is str, consumer accepts",
+      "the width rows are unchanged (auz2's scope)",
+      "the nullability pair is settled"
+    ],
+    "inferred": [],
+    "explicitly_not_measured": [
+      "no claim about production databases that already applied the old layer 05",
+      "no claim about the width rows' runtime impact (owned by auz2)"
+    ]
+  },
+  "limits": [
+    "The control arm measured the same database as the subject arm (test_db already existed); the before/after contrast comes from 9cmn's measurement vs this one.",
+    "The fix corrects layer 05's declaration; a database that already applied the old layer 05 keeps timetz until DROP SCHEMA public CASCADE + alembic upgrade head.",
+    "The user's reversal (extend the layer, not stack a revision) is recorded; if layer 05 is ever applied in production the rule reverses.",
+    "The width rows (files.storage_path, files.mime_type, audit_logs.user_agent, passkey_credentials.device_type) are measured but unchanged; they are auz2's scope."
+  ],
+  "cross_reference": {
+    "bead_closed_by_this_artefact": "FastAPI_saas-nqk6",
+    "beads_referenced": [
+      "FastAPI_saas-9cmn",
+      "FastAPI_saas-vthy",
+      "FastAPI_saas-d201"
+    ],
+    "artefacts_referenced": [
+      "perf-results/RESULT-20261018-9cmn/"
+    ],
+    "raw_artefacts_in_this_directory": [
+      "subject_alembic.json",
+      "control_create_all.json"
+    ]
+  },
+  "closed": true
+}

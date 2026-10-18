@@ -1,0 +1,34 @@
+{
+  "what": "how many dead-span constructions one request pays, by path",
+  "bead": "FastAPI_saas-7zwp",
+  "guard_state": "guarded (production)",
+  "tenant": "test-tenant-e2e",
+  "requests_per_path": 50,
+  "user_agent_is_the_browser_one": true,
+  "results": [
+    {
+      "path": "/api/v1/account/login",
+      "method": "POST",
+      "requests": 50,
+      "status_counts": {
+        "401": 50
+      },
+      "span_calls_total": 50,
+      "span_calls_per_request": 1.0,
+      "span_calls_by_name": {
+        "database_session": 50
+      }
+    },
+    {
+      "path": "/api/v1/users/me",
+      "method": "GET",
+      "requests": 50,
+      "status_counts": {
+        "401": 50
+      },
+      "span_calls_total": 0,
+      "span_calls_per_request": 0.0,
+      "span_calls_by_name": {}
+    }
+  ]
+}

@@ -1,0 +1,329 @@
+{
+  "artefact": "step4_campaign",
+  "generated_by": "scripts/step4_campaign.py",
+  "tier": "Pro",
+  "declared_configuration": {
+    "tier": "Pro",
+    "users": 64,
+    "concurrency": 8,
+    "repetitions": 5,
+    "requests_per_repetition": 2,
+    "p99_sample_floor": 10000,
+    "composition": ">=5 repetitions feed median-of-medians and min-of-medians for MIN and p50; p99 is computed once on the POOLED sample (ADR-0022, accepted)"
+  },
+  "security_state_cleared": 64,
+  "security_state_cleared_after_seeding": 3,
+  "seed_login_budget_cleared": true,
+  "auth_cache_invalidated_per_seeded_username": true,
+  "rbac": {
+    "role": "step4-full-access",
+    "role_id": 1,
+    "permissions_in_catalog": 26,
+    "permissions_granted": 26,
+    "users_assigned": 64,
+    "note": "A DECLARED CONFIGURATION, like the tier. Full access was chosen because it is the grant a customer admin role would carry; a read-only role would measure the same endpoints under a different permission cache shape."
+  },
+  "settle_seconds": 2.0,
+  "controls_at_start": {
+    "auto_ban_enabled": true,
+    "security_budgets": {
+      "auth": [
+        5,
+        60
+      ],
+      "mfa_verify": [
+        5,
+        60
+      ],
+      "mfa_verify_global": [
+        15,
+        60
+      ],
+      "mfa_mutate": [
+        5,
+        60
+      ],
+      "magic_link_send": [
+        3,
+        60
+      ],
+      "passkey_login": [
+        10,
+        60
+      ],
+      "refresh": [
+        60,
+        60
+      ],
+      "ai_chat": [
+        60,
+        60
+      ]
+    },
+    "default_authenticated_limit": [
+      50,
+      3600
+    ],
+    "default_anonymous_limit": [
+      10,
+      3600
+    ],
+    "anonymous_ip_aggregate_limit": [
+      300,
+      3600
+    ],
+    "api_key_limit": [
+      1000,
+      3600
+    ],
+    "tier_rate_limits": {
+      "free": [
+        10,
+        3600
+      ],
+      "basic": [
+        100,
+        3600
+      ],
+      "pro": [
+        1000,
+        3600
+      ],
+      "enterprise": [
+        10000,
+        3600
+      ]
+    },
+    "default_rate_limit_limit": 100,
+    "default_rate_limit_period": 3600
+  },
+  "controls_at_end": {
+    "auto_ban_enabled": true,
+    "security_budgets": {
+      "auth": [
+        5,
+        60
+      ],
+      "mfa_verify": [
+        5,
+        60
+      ],
+      "mfa_verify_global": [
+        15,
+        60
+      ],
+      "mfa_mutate": [
+        5,
+        60
+      ],
+      "magic_link_send": [
+        3,
+        60
+      ],
+      "passkey_login": [
+        10,
+        60
+      ],
+      "refresh": [
+        60,
+        60
+      ],
+      "ai_chat": [
+        60,
+        60
+      ]
+    },
+    "default_authenticated_limit": [
+      50,
+      3600
+    ],
+    "default_anonymous_limit": [
+      10,
+      3600
+    ],
+    "anonymous_ip_aggregate_limit": [
+      300,
+      3600
+    ],
+    "api_key_limit": [
+      1000,
+      3600
+    ],
+    "tier_rate_limits": {
+      "free": [
+        10,
+        3600
+      ],
+      "basic": [
+        100,
+        3600
+      ],
+      "pro": [
+        1000,
+        3600
+      ],
+      "enterprise": [
+        10000,
+        3600
+      ]
+    },
+    "default_rate_limit_limit": 100,
+    "default_rate_limit_period": 3600
+  },
+  "controls_unchanged": true,
+  "control_differences_at_end": [],
+  "endpoints": [
+    {
+      "endpoint": "users_me_anon",
+      "method": "GET",
+      "path": "/api/v1/users/me",
+      "note": "EM-2; 401 is the expected rejection, not a void. Bound by DEFAULT_ANONYMOUS_LIMIT (10, 3600) per source IP, so n<10,000 -- ADR-0022 rule 2.",
+      "repetitions": 5,
+      "concurrency": 8,
+      "pooled_n": 10,
+      "p50_median_of_repetitions_ms": 5.1646,
+      "p50_min_of_repetitions_ms": 4.8863,
+      "min_median_of_repetitions_ms": 5.1646,
+      "min_min_of_repetitions_ms": 4.8863,
+      "reportable_ms": {
+        "p50": 5.7187,
+        "p95": 8.7762,
+        "p99": null
+      },
+      "unresolvable_percentiles": [
+        0.95,
+        0.99
+      ],
+      "p99_reportable": false,
+      "p99_note": "withheld: pooled n=10 is below the 10000 sample floor (ADR-0022 Rule 2). A tail quantile read off a sample this size is a number with no estimate behind it. The p50 and p95 above did resolve and are the ones to quote.",
+      "status_counts": {
+        "401": 10
+      },
+      "expected_statuses": [
+        401
+      ],
+      "status_is_clean": true,
+      "unexpected_statuses": [],
+      "unexpected_bodies": [],
+      "unexpected_body_count": 0,
+      "pacing": {
+        "budgets_enforced": [
+          {
+            "limit_per_window": 10,
+            "window_seconds": 3600.0
+          }
+        ],
+        "times_a_window_had_to_wait": 0,
+        "seconds_spent_waiting": 0.0,
+        "which_window_bound": {},
+        "note": "Pacing is how the run RESPECTS the production limit. 4.5 voids a run in which a control was in force at a load-producing value; pacing is the opposite of raising one. Every window named by the endpoint is enforced at once, because no single rate respects (5, 60) and (10, 3600) together -- measured, both ways, in two runs.",
+        "controls_enforced": [
+          "anonymous"
+        ]
+      },
+      "refresh_rotations": null
+    }
+  ],
+  "topology": {
+    "mode": "socket",
+    "base_url": "http://127.0.0.1:8100",
+    "http_server": "uvicorn, started with no --loop and no --http so both resolve by auto-selection, which is the configuration Dockerfile's CMD ships",
+    "seeding": "IN-PROCESS over ASGITransport. Seeding is harness setup, not measured work; only the phases above go over the socket."
+  },
+  "manifest": {
+    "present": true,
+    "served_by": "http://127.0.0.1:8100",
+    "report": {
+      "schema": "perf-app-host-report/1",
+      "event_loop": "uvloop",
+      "http": "httptools",
+      "image_digest": null,
+      "uvicorn": {
+        "version": "0.34.3",
+        "loop_arg": "auto",
+        "http_arg": "auto"
+      },
+      "python": {
+        "version": "3.13.16 (main, Oct  9 2026, 15:23:36) [Clang 22.1.3 ]",
+        "implementation": "CPython",
+        "executable": "/home/ansible/FastAPI-Saas/.venv/bin/python"
+      },
+      "host": {
+        "platform": "Linux",
+        "release": "5.14.0-578.el9.x86_64",
+        "machine": "x86_64",
+        "cpu_count": 4
+      },
+      "limits": {
+        "algorithm": "gcra",
+        "security_budgets": {
+          "ai_chat": [
+            60,
+            60
+          ],
+          "auth": [
+            5,
+            60
+          ],
+          "magic_link_send": [
+            3,
+            60
+          ],
+          "mfa_mutate": [
+            5,
+            60
+          ],
+          "mfa_verify": [
+            5,
+            60
+          ],
+          "mfa_verify_global": [
+            15,
+            60
+          ],
+          "passkey_login": [
+            10,
+            60
+          ],
+          "refresh": [
+            60,
+            60
+          ]
+        },
+        "default_anonymous_limit": [
+          10,
+          3600
+        ],
+        "default_authenticated_limit": [
+          50,
+          3600
+        ],
+        "auto_ban_enabled": true,
+        "auto_ban_threshold": 10,
+        "auto_ban_violation_window": 86400,
+        "ip_whitelist_bypass_rate_limit": true,
+        "ip_whitelist_enabled": true
+      },
+      "stores": {
+        "postgres": "192.168.121.147:5432/test_db",
+        "redis_cache": "192.168.121.147:6379",
+        "redis_queue": "192.168.121.147:6379"
+      },
+      "deployment": {
+        "orchestrator": "vmware-vm",
+        "distro": "CentOS Stream 9",
+        "cpu_model": "Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz",
+        "core_count": 4,
+        "store_locality": "remote",
+        "image_digest": null,
+        "store_addresses": {
+          "postgres": "192.168.121.147:5432/test_db",
+          "redis_cache": "192.168.121.147:6379",
+          "redis_queue": "192.168.121.147:6379"
+        }
+      },
+      "representative": true,
+      "non_representative_reasons": []
+    }
+  }
+}

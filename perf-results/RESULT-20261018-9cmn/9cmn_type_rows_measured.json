@@ -1,0 +1,305 @@
+{
+  "bead": "FastAPI_saas-9cmn",
+  "item": "9cmn",
+  "title": "The six observable ORM/migration type rows the type gate reported, MEASURED",
+  "bead_closes": "FastAPI_saas-9cmn",
+  "measured_at": "2026-10-18T15:02:26Z",
+  "artefact_kind": "two-arm schema measurement (migrated database against create_all database)",
+  "headline": {
+    "status": "MEASURED: 4 of the 6 rows are real defects, 2 are benign with a measured boundary",
+    "the_finding": "On a database built by alembic, user_preferences.quiet_hours_start/_end cannot be written at all through the ORM - the INSERT is refused with a DatatypeMismatchError on the BIND TYPE, and a row that does exist reads back as datetime.time, which makes the application's own consumer time.fromisoformat() raise a TypeError its except ValueError cannot catch. On a database built by create_all every write and every read behaves. The four width rows refuse the ORM's OWN declared width on the migrated database only.",
+    "rows_measured": 5,
+    "rows_refusing_the_orm_declaration": 4,
+    "rows_unusable_in_both_directions": 1,
+    "beads_filed": [
+      "FastAPI_saas-nqk6",
+      "FastAPI_saas-auz2"
+    ]
+  },
+  "instrument": {
+    "probe": "9cmn_type_probe.py",
+    "in_repo": false,
+    "why_outside_the_repo": "it is a throwaway diagnostic for one bead, and src/AGENTS.md forbids a committed harness on a test's import path",
+    "read_through": "the application's own ORM (select(Model))",
+    "why_not_the_raw_driver": "vthy's raw asyncpg read reported str for a jsonb column while SQLAlchemy's asyncpg dialect handed the service a list; the raw read hid the defect",
+    "raw_driver_used_for": "information_schema only: the declared type and width",
+    "one_arm_per_process": "the app engine is a module-level singleton resolved at import, so POSTGRES_DB is set from argv before the first src import",
+    "the_control_arm": "the same probe against test_db, which was built by create_all and has no alembic_version table - so it reads the schema the ORM itself declared",
+    "oracle": "scripts/check_schema_parity.py is the gate this bead measures the rows FOR; its TYPE_ALLOWLIST was updated in the same change and a stale entry fails the gate",
+    "harness_bugs_found_while_measuring": [
+      "the fixture-row insert bound strings to CAST(... AS time with time zone) and died inside asyncpg's encoder, which says nothing about the schema; fixed by binding real datetime.time objects",
+      "passkey_credentials rows omitted credential_id_hash, which the MIGRATION declares NOT NULL, so the boundary attempt failed on a different column and reported a false boundary; fixed by supplying it",
+      "the DDL that dropped the probe's own foreign keys was in the same transaction as the experiments and deadlocked against the probe's own INSERTs",
+      "quiet_hours_enabled is init=False, so the only write shape the application has is the setattr on a persisted row at user_preferences/crud.py:113, which the probe now mirrors",
+      "the first pair of runs recorded an empty dropped_foreign_keys list because an earlier run had already dropped them on the same database, so the database was dropped, rebuilt and re-measured rather than published with a record that could not account for its own changes"
+    ]
+  },
+  "protocol": {
+    "target": "ansible1 (perf-local: 192.168.121.147)",
+    "platform": "Linux 5.14.0-578.el9.x86_64; python 3.13.16",
+    "commit": "ff65663cdb0eb18cfeb2e5a299e60bfe9ec053e1",
+    "commit_short": "ff65663c",
+    "subject_arm": {
+      "database": "9cmn_probe",
+      "built_by": "alembic",
+      "alembic_version": "07_observability",
+      "foreign_keys_dropped": 7,
+      "foreign_keys_note": "with --drop-fks the probe tables' FKs are dropped so a row can exist without a parent; that is a PROBE database, dropped afterwards rather than repaired",
+      "why": "every layer up to 07_observability, which is the last one that creates any of the four tables; layer 08 forces RLS and would have obscured the result",
+      "pid": 7952
+    },
+    "control_arm": {
+      "database": "test_db",
+      "built_by": "create_all",
+      "alembic_version_table_present": false,
+      "foreign_keys_dropped": false,
+      "pid": 7956,
+      "why_it_exists": "create_all derives the schema FROM the ORM, so a development database can never show a migration drift - the control arm is the only way to show that the drift is the migration's"
+    },
+    "parents_used": {
+      "subject": {
+        "tenant_id": "00000000-0000-0000-0000-000000000000",
+        "user_id": 911431152,
+        "free_user_ids": [
+          911431152,
+          911431153,
+          911431154
+        ],
+        "tenant_resolved_from_real_rows": true,
+        "user_id_source": "sentinels (no free user id in this database)"
+      },
+      "control": {
+        "tenant_id": "8d7cf4ea-72a4-4076-a133-aaef414c1a13",
+        "user_id": 1,
+        "free_user_ids": [
+          1,
+          33,
+          34
+        ],
+        "tenant_resolved_from_real_rows": true,
+        "user_id_source": "real user rows with no preferences row yet"
+      }
+    },
+    "budgets_relaxed": false,
+    "budgets_why": "nothing here consumes a rate limit; every row is a direct database write in a scratch database"
+  },
+  "the_quiet_hours_family_mismatch": {
+    "orm_declaration": "String(5) on both columns (models.py:90,95)",
+    "migration_declaration": "sa.Time(timezone=True) on both columns (05_content_storage.py)",
+    "orm_source": "src/app/modules/user_preferences/models.py:90,95",
+    "migration_source": "src/migrations/versions/05_content_storage.py:103,104",
+    "value_the_application_writes": {
+      "quiet_hours_start": "22:00",
+      "quiet_hours_end": "07:00"
+    },
+    "live_column_type_on_the_migrated_database": [
+      "timetz",
+      "timetz"
+    ],
+    "live_column_type_on_the_create_all_database": [
+      "varchar",
+      "varchar"
+    ],
+    "writes": {
+      "A1_the_create_the_application_performs": {
+        "supplied": "defaults only - no quiet-hours value at all",
+        "accepted_on_the_migrated_database": false,
+        "accepted_on_the_create_all_database": true,
+        "error_type": "ProgrammingError",
+        "error_headline": "(sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.DatatypeMismatchError'>: column \"quiet_hours_start\" is of type time with time zone but expression is of type character varying"
+      },
+      "A2_the_same_create_with_both_columns_bound_to_null": {
+        "why": "to separate 'the value is wrong' from 'the bind type is wrong'",
+        "accepted_on_the_migrated_database": false,
+        "accepted_on_the_create_all_database": true,
+        "error_type": "ProgrammingError",
+        "same_error_as_A1": true,
+        "what_that_proves": "supplying no value changes nothing, so the refusal is the column's TYPE and not the value the application sends"
+      },
+      "A3_the_update_the_application_performs": {
+        "shape": "user_preferences/crud.py:113 setattr of '22:00' and '07:00' plus quiet_hours_enabled=True, committed",
+        "accepted_on_the_create_all_database": true,
+        "skipped_on_the_migrated_database": "A1 did not create a row, so there is nothing for the application's update path to update - which is itself the finding"
+      }
+    },
+    "the_read": {
+      "row_used": "the ORM cannot insert this table on a migrated database, so the row the read is performed on was created with an explicit CAST; the read question is about the dialect's result type and does not depend on who wrote the row",
+      "python_type_start": "time",
+      "python_type_end": "time",
+      "repr_start": "datetime.time(22, 0, tzinfo=datetime.timezone.utc)",
+      "is_a_string": false,
+      "read_through": "select(UserPreferences) - the application's own ORM",
+      "on_the_create_all_database": {
+        "python_type_start": "str",
+        "repr_start": "'22:00'",
+        "is_a_string": true
+      }
+    },
+    "the_application_consumer": {
+      "call": "time.fromisoformat(prefs.quiet_hours_start)",
+      "source": "src/app/modules/notifications/service.py:611-612",
+      "outcome_on_the_migrated_database": "raised",
+      "error_type": "TypeError",
+      "error": "fromisoformat: argument must be str",
+      "caught_by_the_applications_except_value_error": false,
+      "what_the_application_does_instead": "nothing catches it: the exception escapes should_send_notification, so the caller gets an error instead of a notification",
+      "outcome_on_the_create_all_database": "accepted"
+    },
+    "the_response_model": {
+      "call": "UserPreferencesRead.model_validate(row)",
+      "outcome_on_the_migrated_database": "accepted",
+      "why_that_does_not_catch_it": "Pydantic coerces a datetime.time into the str it declares, so the API serialises a value the notification path cannot parse - the mismatch is invisible at the boundary"
+    },
+    "verdict": "unusable in both directions on a migrated database: the row cannot be written, and a row that exists cannot be read by the application's own consumer",
+    "bead_filed": "FastAPI_saas-nqk6"
+  },
+  "the_four_width_boundaries": {
+    "how_each_was_measured": "insert a row at the column's own width, one character more, and at the width the ORM declares; the row reports which attempts were accepted",
+    "on_the_migrated_database": {
+      "files.storage_path": {
+        "orm_declared": "String(1024)",
+        "column_width_on_the_migrated_database": 500,
+        "accepts_the_columns_own_width": true,
+        "refuses_the_next_character": true,
+        "refusal_error_type": "DBAPIError",
+        "accepts_the_width_the_orm_declares": false,
+        "refusal_at_the_orm_width": "1024 characters is refused"
+      },
+      "files.mime_type": {
+        "orm_declared": "String(128)",
+        "column_width_on_the_migrated_database": 100,
+        "accepts_the_columns_own_width": true,
+        "refuses_the_next_character": true,
+        "refusal_error_type": "DBAPIError",
+        "accepts_the_width_the_orm_declares": false,
+        "refusal_at_the_orm_width": "128 characters is refused"
+      },
+      "audit_logs.user_agent": {
+        "orm_declared": "Text (no cap)",
+        "column_width_on_the_migrated_database": 500,
+        "accepts_the_columns_own_width": true,
+        "refuses_the_next_character": true,
+        "refusal_error_type": "DBAPIError",
+        "accepts_the_width_the_orm_declares": null,
+        "why_null": "Text declares no width, so there is no ORM-declared length to insert at; the drift is that the column adds a cap the ORM never claimed"
+      },
+      "passkey_credentials.device_type": {
+        "orm_declared": "String(100)",
+        "column_width_on_the_migrated_database": 50,
+        "accepts_the_columns_own_width": true,
+        "refuses_the_next_character": true,
+        "refusal_error_type": "DBAPIError",
+        "accepts_the_width_the_orm_declares": false,
+        "refusal_at_the_orm_width": "100 characters is refused"
+      }
+    },
+    "what_it_means": "a value the ORM accepts is refused by the column, and the refusal is an untranslated DBAPIError - which reaches a caller as a 500, not as a validation message",
+    "bead_filed": "FastAPI_saas-auz2",
+    "why_two_of_them_stay_benign": "files.mime_type (128 vs 100) and passkey_credentials.device_type (100 vs 50) are narrowed on a domain where the longer value has never been legal: a MIME type over 100 characters or a device type over 50 is not a value this application writes. files.storage_path and audit_logs.user_agent have no such bound, which is why they are filed."
+  },
+  "the_control_arm": {
+    "database": "test_db",
+    "built_by": "create_all",
+    "alembic_version_table_present": false,
+    "quiet_hours": {
+      "live_column_type": [
+        "varchar",
+        "varchar"
+      ],
+      "A1_accepted": true,
+      "A2_accepted": true,
+      "A3_accepted": true,
+      "python_type_read_back": "str",
+      "consumer_outcome": "accepted",
+      "consumer_value": "22:00:00"
+    },
+    "widths": {
+      "files.storage_path": {
+        "column_width_on_the_create_all_database": 1024,
+        "accepts_the_width_the_orm_declares": true
+      },
+      "files.mime_type": {
+        "column_width_on_the_create_all_database": 128,
+        "accepts_the_width_the_orm_declares": true
+      },
+      "audit_logs.user_agent": {
+        "kind": "orm_claims_no_cap",
+        "verdict": "NOT A NARROWING",
+        "why": "the live column is postgres text, which has no character limit, so the ORM's Text declaration is honoured exactly and there is no boundary to probe"
+      },
+      "passkey_credentials.device_type": {
+        "column_width_on_the_create_all_database": 100,
+        "accepts_the_width_the_orm_declares": true
+      }
+    },
+    "conclusion": "every write and every read behaves on the create_all database, which is why the defect has never been seen in development and why create_all can never be used to find it"
+  },
+  "an_incidental_finding_no_gate_compares": {
+    "column": "passkey_credentials.credential_id_hash",
+    "orm": "nullable (src/app/modules/auth/models.py:318)",
+    "migration": "NOT NULL (src/migrations/versions/02_authentication.py:65, unique index at :88)",
+    "how_it_was_found": "an insert that omitted it failed with NotNullViolationError on a different column",
+    "the_harmless_mirror_image": "passkey_credentials.device_type is NOT NULL in the ORM and nullable in the migration - that direction cannot fail a write",
+    "nullability_is_compared_by": "no gate - scripts/check_schema_parity.py compares names and types only",
+    "filed_in": "FastAPI_saas-nqk6"
+  },
+  "measured_vs_inferred": {
+    "measured": [
+      "the live column type of every row, from information_schema on the probe database",
+      "whether each INSERT attempt was accepted, and the driver's error type and message",
+      "the Python type the application's own dialect hands back for each column",
+      "whether time.fromisoformat() accepts what the application's consumer is handed",
+      "whether UserPreferencesRead.model_validate() accepts the row",
+      "the same five questions against the create_all control database"
+    ],
+    "inferred": [
+      "that a production database built by alembic would carry these types: the probe database was built the same way with the same migration files, but no production database was inspected",
+      "that the notification path is reachable with quiet hours enabled: no notification was sent"
+    ],
+    "explicitly_not_measured": [
+      "how many rows in any real database hold a quiet-hours value (the probe database is empty)",
+      "the HTTP status a caller sees for the uncaught TypeError (no request was driven)",
+      "the latent-string case: whether any existing timetz column holds a value that reads as a string"
+    ]
+  },
+  "limits": [
+    "The FIRST pair of runs was DISCARDED and the probe database was dropped and rebuilt from scratch. On that first pair the subject arm recorded an empty dropped_foreign_keys list, because an earlier probe run against the same database had already dropped the seven constraints; the schema state was right but the record could not say who changed it, and a summary that claimed seven drops while the raw file claimed none is exactly the kind of claim this bead exists to prevent. The published run dropped them itself, on a database created by this run's own alembic upgrade.",
+    "The probe database is empty: the parents are resolved from a seed row in the subject arm and from real users in the control arm, and the probe records which. Foreign keys were dropped in the PROBE database only; no other database on the target was altered.",
+    "The migration files were NOT edited on the target, and the probe restores anything it changes. The subject database is dropped at cleanup.",
+    "This is a schema measurement, not a performance measurement: no latency, no throughput, no percentile estimator is involved and none of those rules apply.",
+    "The width rows are measured by inserting synthetic values. A real 501-character storage_path was not produced by the application; only the column's refusal of one was measured.",
+    "One commit, one host, one interpreter. The boundary numbers are schema facts and are expected to hold on any PostgreSQL of the same major version."
+  ],
+  "cross_reference": {
+    "bead_closed_by_this_artefact": "FastAPI_saas-9cmn",
+    "beads_referenced": {
+      "FastAPI_saas-d201": "the ORM/migration TYPE parity gate whose six suppressed rows this artefact measures",
+      "FastAPI_saas-vthy": "the same class of defect, measured first there: a text column the model reads as JSON",
+      "FastAPI_saas-9cmn": "this bead"
+    },
+    "beads_filed_here": {
+      "FastAPI_saas-nqk6": "user_preferences.quiet_hours is unusable on an alembic-built database (P1)",
+      "FastAPI_saas-auz2": "files.storage_path and audit_logs.user_agent are narrower in the migrations (P2)"
+    },
+    "source_sites": [
+      "src/app/modules/user_preferences/models.py:90,95",
+      "src/migrations/versions/05_content_storage.py:103,104",
+      "src/app/modules/notifications/service.py:611-612",
+      "src/app/modules/user_preferences/crud.py:113",
+      "src/app/modules/user_preferences/schemas.py:99,104,201,205",
+      "src/app/modules/storage/models.py",
+      "src/app/modules/audit_logs/models.py",
+      "src/app/modules/auth/models.py:318",
+      "src/migrations/versions/02_authentication.py:65,88"
+    ],
+    "gate": "scripts/check_schema_parity.py",
+    "raw_artefacts_in_this_directory": [
+      "subject_alembic.json",
+      "control_create_all.json"
+    ],
+    "oracle_tests": [
+      "tests/unit/scripts/test_check_schema_parity.py"
+    ]
+  },
+  "closed": true
+}

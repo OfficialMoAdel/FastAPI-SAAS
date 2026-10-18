@@ -8,11 +8,18 @@ Tests the PasskeyCredential SQLAlchemy model structure, constraints,
 and field specifications.
 """
 
+import hashlib
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 # H1: passkey credentials are tenant-stamped; every constructor site pins it.
 TEST_TENANT_ID = UUID("11111111-1111-4111-8111-111111111111")
+
+# FastAPI_saas-nqk6: credential_id_hash is NOT NULL on the model, in migration 02 and
+# in PasskeyCredentialCreate, because the read path looks a credential up BY that hash
+# and a unique index permits unlimited NULLs. Every constructor site below therefore
+# supplies one, exactly as the application's only writer does.
+TEST_CREDENTIAL_HASH = hashlib.sha256(b"test-credential-id").hexdigest()
 
 
 class TestPasskeyCredentialModel:
@@ -172,6 +179,7 @@ class TestPasskeyCredentialInstantiation:
             tenant_id=TEST_TENANT_ID,
             credential_id=b"test-credential-id",
             public_key=b"test-public-key",
+            credential_id_hash=TEST_CREDENTIAL_HASH,
             device_type="Security Key",
         )
 
@@ -192,6 +200,7 @@ class TestPasskeyCredentialInstantiation:
             tenant_id=TEST_TENANT_ID,
             credential_id=b"test-credential-id",
             public_key=b"test-public-key",
+            credential_id_hash=TEST_CREDENTIAL_HASH,
             counter=5,
             device_type="Touch ID",
             aaguid=test_uuid,
@@ -215,6 +224,7 @@ class TestPasskeyCredentialInstantiation:
             tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
+            credential_id_hash=TEST_CREDENTIAL_HASH,
             device_type="Test",
         )
 
@@ -230,6 +240,7 @@ class TestPasskeyCredentialInstantiation:
             tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
+            credential_id_hash=TEST_CREDENTIAL_HASH,
             device_type="Test",
         )
 
@@ -250,6 +261,7 @@ class TestPasskeyCredentialValidTransports:
             tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
+            credential_id_hash=TEST_CREDENTIAL_HASH,
             device_type="YubiKey",
             transports=["usb"],
         )
@@ -264,6 +276,7 @@ class TestPasskeyCredentialValidTransports:
             tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
+            credential_id_hash=TEST_CREDENTIAL_HASH,
             device_type="YubiKey NFC",
             transports=["nfc"],
         )
@@ -278,6 +291,7 @@ class TestPasskeyCredentialValidTransports:
             tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
+            credential_id_hash=TEST_CREDENTIAL_HASH,
             device_type="Bluetooth Key",
             transports=["ble"],
         )
@@ -292,6 +306,7 @@ class TestPasskeyCredentialValidTransports:
             tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
+            credential_id_hash=TEST_CREDENTIAL_HASH,
             device_type="Touch ID",
             transports=["internal"],
         )
@@ -306,6 +321,7 @@ class TestPasskeyCredentialValidTransports:
             tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
+            credential_id_hash=TEST_CREDENTIAL_HASH,
             device_type="iPhone Passkey",
             transports=["hybrid"],
         )
@@ -320,6 +336,7 @@ class TestPasskeyCredentialValidTransports:
             tenant_id=TEST_TENANT_ID,
             credential_id=b"test-id",
             public_key=b"test-key",
+            credential_id_hash=TEST_CREDENTIAL_HASH,
             device_type="YubiKey 5",
             transports=["usb", "nfc"],
         )

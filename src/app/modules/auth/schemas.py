@@ -414,7 +414,12 @@ class PasskeyCredentialCreate(BaseCreate):
     counter: int = 0
     aaguid: UUID | None = None
     transports: list[str] | None = None
-    credential_id_hash: str | None = None
+    # FastAPI_saas-nqk6. The column is NOT NULL in the database and on the model,
+    # so offering None here meant a caller could build a credential that fails at
+    # flush instead of at the boundary. The only construction site
+    # (`auth/services/passkey.py:214-221`) always supplies it, so nothing that
+    # works today stops working.
+    credential_id_hash: str
 
 
 class PasskeyCredentialUpdate(BaseUpdate):
