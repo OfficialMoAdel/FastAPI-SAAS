@@ -130,26 +130,19 @@ TYPE_ALLOWLIST: dict[tuple[str, str], str] = {
     # says a schema change extends the relevant layer rather than stacking a new
     # revision "unless the layer is already applied in production". The reversal
     # condition is stated in that file.
-    (
-        "files",
-        "storage_path",
-    ): (
-        "pending FastAPI_saas-auz2: MEASURED on the same alembic-built database by "
-        "FastAPI_saas-9cmn (perf-results/RESULT-20261018-9cmn/). The ORM allows 1024 "
-        "characters (storage/models.py) and the column allows 500: it accepts 500, rejects "
-        "501, and rejects 1024 - the ORM's own declared width. So this is not a declaration "
-        "nobody has exercised; it is a contract the database refuses."
-    ),
-    (
-        "audit_logs",
-        "user_agent",
-    ): (
-        "pending FastAPI_saas-auz2: MEASURED on the same alembic-built database by "
-        "FastAPI_saas-9cmn (perf-results/RESULT-20261018-9cmn/). The ORM maps Text, which "
-        "claims no cap, and the live column is character varying(500): it accepts 500 and "
-        "rejects 501. A User-Agent over 500 characters is ordinary, not exotic, so the cap "
-        "is invisible in the model and enforced only by the schema."
-    ),
+    #
+    # files.storage_path and audit_logs.user_agent were here until
+    # FastAPI_saas-auz2 (2026-10-19), and both were fixed the same way the quiet
+    # hours were: the COLUMN widened to what the ORM already declared, and the
+    # ORM was left alone. Layer 05 now declares storage_path String(1024) (it was
+    # 500, and the column refused the ORM's own width) and layer 07 declares
+    # user_agent sa.Text() (it was String(500) behind a model that maps Text, i.e.
+    # a model that says "no cap" outright). Narrowing the model to 500 instead was
+    # rejected rather than merely declined: a String(500) model still accepts a
+    # 501-character value and still gets refused by the database, which is the same
+    # untranslated DBAPIError - it silences this gate without fixing the failure.
+    # Measured evidence for both: perf-results/RESULT-20261018-9cmn/.
+    # Oracle: tests/unit/migrations/test_width_parity_storage_and_audit.py.
     (
         "files",
         "mime_type",

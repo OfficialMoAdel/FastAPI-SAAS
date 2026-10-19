@@ -53,7 +53,14 @@ def upgrade() -> None:
         sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=True),
         sa.Column("original_name", sa.String(length=255), nullable=False),
-        sa.Column("storage_path", sa.String(length=500), nullable=False),
+        # FastAPI_saas-auz2: was sa.String(length=500) against the ORM's
+        # String(1024). The narrower column refused the width the ORM itself
+        # declares, as an untranslated StringDataRightTruncationError, so a key
+        # the model accepted became a 500 rather than a validation message.
+        # MEASURED on an alembic-built database (perf-results/RESULT-20261018-9cmn/).
+        # 1024 is also Azure Blob's maximum blob name, so it is the portable
+        # maximum rather than an invented width.
+        sa.Column("storage_path", sa.String(length=1024), nullable=False),
         sa.Column("mime_type", sa.String(length=100), nullable=False),
         sa.Column("size_bytes", sa.BigInteger(), nullable=False),
         sa.Column("checksum", sa.String(length=64), nullable=True),

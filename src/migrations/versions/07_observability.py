@@ -31,7 +31,14 @@ def upgrade() -> None:
         sa.Column("entity_id", sa.String(length=255), nullable=True),
         sa.Column("details", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("ip_address", postgresql.INET(), nullable=True),
-        sa.Column("user_agent", sa.String(length=500), nullable=True),
+        # FastAPI_saas-auz2: was sa.String(length=500) against the ORM's Text.
+        # Text states "no cap" outright, so a capped column contradicts a claim
+        # the model made; MEASURED, the column accepted 500 characters and
+        # refused 501 (perf-results/RESULT-20261018-9cmn/). A User-Agent over 500
+        # characters is ordinary, and the value arrives verbatim from the request
+        # header, so nothing upstream of the INSERT can shorten it. Layer 02
+        # already declares magic-link user_agent as sa.Text() for the same reason.
+        sa.Column("user_agent", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_audit_logs")),
         sa.ForeignKeyConstraint(

@@ -202,9 +202,11 @@ details = {
 
 ### Column widths are enforced by the column, not by the ORM
 
-`user_agent` is declared `Text` in the model, which is a statement that there is **no cap** — and the migration adds one: `String(500)`. MEASURED on a migrated database (`perf-results/RESULT-20261018-9cmn/`, bead `FastAPI_saas-9cmn`): the column accepts 500 characters, refuses 501 with an untranslated `StringDataRightTruncationError`, and the ORM has no width to probe against because `Text` declares none. On a `create_all` database the column really is `text` and the declaration is honoured exactly.
+`user_agent` is declared `Text` in the model, which is a statement that there is **no cap** — and the migration added one: `String(500)`. MEASURED on a migrated database (`perf-results/RESULT-20261018-9cmn/`, bead `FastAPI_saas-9cmn`): the column accepted 500 characters, refused 501 with an untranslated `StringDataRightTruncationError`, and the ORM had no width to probe against because `Text` declares none. On a `create_all` database the column really was `text` and the declaration was honoured exactly, so a development database could not have shown the defect.
 
-The consequence for this module: a long `User-Agent` header is truncated by **nothing** on the model side and rejected by the **database**, so a write can fail with a 500 rather than a sanitized-away value. `sanitize` runs before the insert, so a header that long has to arrive from a client that got past it. Fixed in `FastAPI_saas-auz2`.
+The consequence for this module: a long `User-Agent` header was truncated by **nothing** on the model side and rejected by the **database**, so a write could fail with a 500 rather than a sanitized-away value. `sanitize` runs before the insert, so a header that long has to arrive from a client that got past it.
+
+**Fixed in `FastAPI_saas-auz2`: the column was widened to `sa.Text()`, the model was not narrowed to `String(500)`.** Narrowing the model would have turned the parity gate green while leaving PostgreSQL refusing exactly the same values, which is a quieter defect rather than a smaller one. `src/migrations/versions/07_observability.py` now declares the column unbounded, matching layer 02, which has always declared the magic-link table's `user_agent` as `sa.Text()`. `tests/unit/migrations/test_width_parity_storage_and_audit.py` pins it: a `User-Agent` of 501 and of 4096 characters must both be accepted, and no `ALTER`/`alter_column` may reintroduce a cap.
 
 ## Delivery Policy (AuditGuarantee)
 
