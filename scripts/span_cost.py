@@ -8,7 +8,10 @@ WHY THE TWO LAYERS MUST BE SEPARATED
 -------------------------------------
 ``trace_span`` is a context manager around ``tracer.start_as_current_span``. With
 no OTel SDK installed the tracer is a real ``ProxyTracer`` and every call still
-constructs and enters a NonRecordingSpan plus a context - dead work, per S-3.
+enters the ``NoOpTracer`` context manager protocol - dead work, per S-3. On the
+installed ``opentelemetry-api`` that protocol yields the module-level
+``INVALID_SPAN`` singleton, so the dead work is the protocol and NOT a
+NonRecordingSpan allocation.
 
 The asyncpg/SQLAlchemy layer is a DIFFERENT cost: the engine's
 ``before_cursor_execute`` listener, cursor setup, result conversion. Quoting the

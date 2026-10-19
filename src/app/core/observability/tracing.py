@@ -54,13 +54,25 @@ def trace_span(
     """Create and manage a trace span.
 
     With no OTel SDK installed this is a genuine no-op rather than a cheap
-    stand-in. ``ProxyTracer`` does not skip the work, it does it and throws the
-    result away: every call allocates a ``NonRecordingSpan``, runs the context
-    manager protocol, and exports to nobody -- once per database session, on
-    every request. The object it yields is ``trace.INVALID_SPAN``, which is
-    itself a ``NonRecordingSpan``, so yielding it directly is the SAME span a
-    caller would have received; the only difference is that the machinery to
-    build it is never entered.
+    stand-in. ``ProxyTracer`` delegates to a ``NoOpTracer`` whose
+    ``start_as_current_span`` is a generator that yields ``INVALID_SPAN`` -- a
+    module-level singleton built once at import time -- and allocates NOTHING
+    per call. What the dead path costs is therefore the context manager
+    protocol it enters and throws away, once per database session on every
+    request, NOT a span allocation. It exports to nobody either way.
+
+    ``trace.INVALID_SPAN`` is itself a ``NonRecordingSpan``, so yielding it
+    directly is the SAME span a caller would have received.
+
+    Both of those are properties of the INSTALLED ``opentelemetry-api``, not of
+    this repository. The declared pin is ``>=1.20.0``, a floor rather than an
+    exact version, so "what the dead path does" is only ever a statement about
+    the release that happens to be resolved. Verified against
+    ``opentelemetry-api`` 1.39.1, where ``trace.get_tracer`` returns a
+    ``ProxyTracer`` whose inner tracer is a ``NoOpTracer``.
+    ``tests/unit/core/observability/test_tracing_noop_allocates_nothing.py``
+    pins the behaviour, so a dependency bump that changes it fails loudly
+    instead of leaving this paragraph quietly wrong.
 
     That equivalence is why the error path below is skipped rather than
     reimplemented: ``NonRecordingSpan.set_status`` and ``record_exception`` are

@@ -40,9 +40,10 @@ Why the span is measured twice
 ------------------------------
 S-3 (``FastAPI_saas-ztwf``) landed a guard in
 ``src/app/core/observability/tracing.py``: when no SDK is installed,
-``trace_span`` returns ``trace.INVALID_SPAN`` instead of letting a ``ProxyTracer``
-build a ``NonRecordingSpan`` and discard it. So there are two paths, and they
-cost different amounts:
+``trace_span`` returns ``trace.INVALID_SPAN`` instead of letting a
+``ProxyTracer`` enter its ``NoOpTracer``'s context manager protocol -- which
+yields the module-level ``INVALID_SPAN`` singleton and allocates nothing per
+call. So there are two paths, and they cost different amounts:
 
 * ``guarded`` -- the path production is in. Short-circuits before the tracer.
 * ``proxy_tracer`` -- the DEAD path S-3 removed, forced by flipping the
@@ -204,8 +205,10 @@ SPAN_ARM_LABELS: Final[dict[str, str]] = {
         "touched. This is the path production is in."
     ),
     PROXY_TRACER: (
-        "the DEAD path S-3 removed: tracing builds a ProxyTracer NonRecordingSpan "
-        "and discards it, once per DB session per request."
+        "the DEAD path S-3 removed: the ProxyTracer's NoOpTracer enters its "
+        "context manager protocol and yields the shared NonRecordingSpan "
+        "singleton INVALID_SPAN, once per DB session per request. It "
+        "allocates nothing per call."
     ),
 }
 

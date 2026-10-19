@@ -118,6 +118,17 @@ src/
    per-call figure with the instrument NOT installed, price the instrument's
    own cost as its own arm, and let the measurement REFUSE to report a figure
    whose site charged the meter during the run.
+❌ DON'T: assert a MECHANISM you have not executed. A harness docstring, and
+   especially an arm label copied into the measurement artefact, is a stored
+   result: three of them claimed every no-SDK `trace_span` call allocates a
+   `NonRecordingSpan`, while on the installed `opentelemetry-api` 1.39.1
+   `NoOpTracer.start_as_current_span` just yields the module-level
+   `INVALID_SPAN` singleton and allocates nothing (FastAPI_saas-a7ce). The dead
+   work is real — the context manager protocol is still entered and thrown away
+   once per DB session — but it is not an allocation, and the same file already
+   said so in one place and not the other. Run the API before describing it, and
+   remember a `>=` pin is a FLOOR: the behaviour you measured is the behaviour
+   of the version that happened to be installed, so say which one.
 ❌ DON'T: retune a declared ceiling to fit a fresh measurement. A `Ceiling` is
    a specification chosen in advance; editing it so the new number passes is
    the `new < old` form `src/benchmarks/protocol.py` bans, whichever direction
