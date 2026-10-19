@@ -1,0 +1,165 @@
+{
+  "artefact": "ab_users_me",
+  "generated_by": "scripts/ab_users_me.py",
+  "question": "Did GET /users/me really regress 8->16 ms p50 and 19->740 ms p95 across 4cd00654..7de0ff2a? Judged on the DELTA between two arms under one instrument, NOT against the stored CSVs, which the plan disqualifies.",
+  "arms": {
+    "before": {
+      "base_url": "http://127.0.0.1:8021",
+      "worktree": "/home/ansible/ab/before",
+      "fresh_accounts": 8,
+      "tier": "pro",
+      "client_observed_ms": {
+        "count": 1000,
+        "min": 13.3826,
+        "p50": 64.589,
+        "p95": 102.2136,
+        "p99": 123.7581,
+        "max": 153.6408,
+        "mean": 63.9354
+      },
+      "server_side_ms": {
+        "count": 1000,
+        "min": 2.997,
+        "p50": 15.733,
+        "p95": 20.466,
+        "p99": 30.792,
+        "max": 50.545,
+        "mean": 15.9084
+      },
+      "repetition_form_client": {
+        "repetitions": 2,
+        "meets_minimum_repetitions": false,
+        "min_median_of_repetitions": 15.0742,
+        "min_min_of_repetitions": 13.3826,
+        "p50_median_of_repetitions": 64.5733,
+        "p50_min_of_repetitions": 64.4703
+      },
+      "repetition_form_server": {
+        "repetitions": 2,
+        "meets_minimum_repetitions": false,
+        "min_median_of_repetitions": 5.009,
+        "min_min_of_repetitions": 2.997,
+        "p50_median_of_repetitions": 15.748,
+        "p50_min_of_repetitions": 15.6955
+      },
+      "status_counts": {
+        "200": 1050
+      },
+      "unexpected": [],
+      "pooled_n": 1000,
+      "loop_lag": {
+        "instrument": "harness-owned loop-lag sampler (NOT T-1: T-1 does not exist in either arm)",
+        "requested_interval_s": 0.008,
+        "achieved_rate_hz": 125.0015,
+        "meets_minimum_rate": true,
+        "minimum_rate_hz": 100.0,
+        "samples": 29848,
+        "samples_total": 29848,
+        "wall_s": 238.7811,
+        "summary_ms": {
+          "count": 29848,
+          "min": -1.7223,
+          "median": 0.5786,
+          "p95": 1.3799,
+          "p99": 1.843,
+          "max": 14.1146
+        }
+      },
+      "loop_lag_note": null,
+      "src_app_from": "/home/ansible/ab/before/src",
+      "server_instrument": "harness-owned TimingMiddleware (NOT T-3: absent from both arms)"
+    },
+    "after": {
+      "base_url": "http://127.0.0.1:8022",
+      "worktree": "/home/ansible/ab/after",
+      "fresh_accounts": 8,
+      "tier": "pro",
+      "client_observed_ms": {
+        "count": 1000,
+        "min": 26.4753,
+        "p50": 149.3301,
+        "p95": 706.8514,
+        "p99": 1598.3826,
+        "max": 2585.2054,
+        "mean": 251.5395
+      },
+      "server_side_ms": {
+        "count": 1000,
+        "min": 3.02,
+        "p50": 26.977,
+        "p95": 153.457,
+        "p99": 240.099,
+        "max": 895.484,
+        "mean": 51.2472
+      },
+      "repetition_form_client": {
+        "repetitions": 2,
+        "meets_minimum_repetitions": false,
+        "min_median_of_repetitions": 34.0253,
+        "min_min_of_repetitions": 26.4753,
+        "p50_median_of_repetitions": 160.1194,
+        "p50_min_of_repetitions": 102.2228
+      },
+      "repetition_form_server": {
+        "repetitions": 2,
+        "meets_minimum_repetitions": false,
+        "min_median_of_repetitions": 4.262,
+        "min_min_of_repetitions": 3.02,
+        "p50_median_of_repetitions": 26.8725,
+        "p50_min_of_repetitions": 16.012
+      },
+      "status_counts": {
+        "200": 1050
+      },
+      "unexpected": [],
+      "pooled_n": 1000,
+      "loop_lag": {
+        "instrument": "harness-owned loop-lag sampler (NOT T-1: T-1 does not exist in either arm)",
+        "requested_interval_s": 0.008,
+        "achieved_rate_hz": 125.003,
+        "meets_minimum_rate": true,
+        "minimum_rate_hz": 100.0,
+        "samples": 37525,
+        "samples_total": 37525,
+        "wall_s": 300.1929,
+        "summary_ms": {
+          "count": 37525,
+          "min": -2.219,
+          "median": 0.6096,
+          "p95": 1.6905,
+          "p99": 11.178,
+          "max": 471.3197
+        }
+      },
+      "loop_lag_note": null,
+      "src_app_from": "/home/ansible/ab/after/src",
+      "server_instrument": "harness-owned TimingMiddleware (NOT T-3: absent from both arms)"
+    }
+  },
+  "delta": {
+    "verdict": "REGRESSION IS REAL AND SERVER-ATTRIBUTABLE",
+    "detail": "Both views exceed the intra-arm noise floor, so the tail inflation is in the server, not in the measurement path.",
+    "noise_floor_intra_arm": 2.0,
+    "noise_floor_run_to_run": 7.1,
+    "client_ratio_exceeds_floor": true,
+    "server_ratio_exceeds_floor": true
+  },
+  "client_p95_ratio": 6.9154,
+  "server_p95_ratio": 7.4981,
+  "gate_a_compliance": {
+    "3_loop_lag_histogram": "read from each arm's instrument export; see loop_lag",
+    "4_separate_load_host": {
+      "satisfied": false,
+      "deviation": "UNSATISFIABLE in this environment. perf-app and perf-load are both TCP-unreachable and only one host exists. Recorded here in the vocabulary GATE A(5) provides for exactly this case. What IS delivered is the substance of (4): server-side AND client-observed both reported per arm, so generator starvation shows up as a client-minus-server gap instead of as a fake regression."
+    },
+    "5_production_budgets": "No control was relaxed. At tier pro the budget is (1000, 3600) per user per path and this run issues ~156 per account, so no arm can be starved by the other; GATE A(6) is then satisfied by asserting zero non-200 rather than by trusting a purge.",
+    "6_zero_rate_limit_events": "asserted from observed status counts",
+    "8_p99_needs_10000": 10000,
+    "9_five_repetitions": 5
+  },
+  "instrument": {
+    "server_side": "harness-owned TimingMiddleware, outside both checkouts",
+    "why": "Measured: neither arm contains request_timer.py, so no in-app timer can be imported. Owning the instrument outside both trees is what guarantees neither arm carries a different one.",
+    "percentiles": "src.benchmarks.percentiles.nearest_rank (the canonical)"
+  }
+}

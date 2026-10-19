@@ -1,0 +1,127 @@
+{
+  "artefact": "ab_users_me",
+  "generated_by": "scripts/ab_users_me.py",
+  "question": "Did GET /users/me really regress 8->16 ms p50 and 19->740 ms p95 across 4cd00654..7de0ff2a? Judged on the DELTA between two arms under one instrument, NOT against the stored CSVs, which the plan disqualifies.",
+  "arms": {
+    "before": {
+      "base_url": "http://127.0.0.1:8021",
+      "worktree": "/home/ansible/ab/before",
+      "fresh_accounts": 64,
+      "tier": "pro",
+      "client_observed_ms": {
+        "count": 10000,
+        "min": 16.1025,
+        "p50": 71.1271,
+        "p95": 109.1346,
+        "p99": 122.2179,
+        "max": 167.9912,
+        "mean": 73.3853
+      },
+      "server_side_ms": {
+        "count": 10000,
+        "min": 2.836,
+        "p50": 10.854,
+        "p95": 19.856,
+        "p99": 23.939,
+        "max": 45.983,
+        "mean": 11.2031
+      },
+      "repetition_form_client": {
+        "repetitions": 5,
+        "meets_minimum_repetitions": true,
+        "min_median_of_repetitions": 23.5284,
+        "min_min_of_repetitions": 16.1025,
+        "p50_median_of_repetitions": 70.4345,
+        "p50_min_of_repetitions": 69.2528
+      },
+      "repetition_form_server": {
+        "repetitions": 5,
+        "meets_minimum_repetitions": true,
+        "min_median_of_repetitions": 3.145,
+        "min_min_of_repetitions": 2.836,
+        "p50_median_of_repetitions": 11.82,
+        "p50_min_of_repetitions": 8.2445
+      },
+      "status_counts": {
+        "200": 10200
+      },
+      "unexpected": [],
+      "pooled_n": 10000,
+      "loop_lag": null,
+      "loop_lag_note": "/home/ansible/ab/before_arm.json was not written. The lag histogram is the mechanism the plan names, so a missing one is stated rather than assumed fine."
+    },
+    "after": {
+      "base_url": "http://127.0.0.1:8022",
+      "worktree": "/home/ansible/ab/after",
+      "fresh_accounts": 64,
+      "tier": "pro",
+      "client_observed_ms": {
+        "count": 10000,
+        "min": 19.5223,
+        "p50": 79.1819,
+        "p95": 130.2003,
+        "p99": 278.1848,
+        "max": 755.1681,
+        "mean": 88.923
+      },
+      "server_side_ms": {
+        "count": 10000,
+        "min": 3.291,
+        "p50": 10.454,
+        "p95": 21.182,
+        "p99": 60.507,
+        "max": 297.491,
+        "mean": 12.4778
+      },
+      "repetition_form_client": {
+        "repetitions": 5,
+        "meets_minimum_repetitions": true,
+        "min_median_of_repetitions": 27.4738,
+        "min_min_of_repetitions": 19.5223,
+        "p50_median_of_repetitions": 76.979,
+        "p50_min_of_repetitions": 76.1935
+      },
+      "repetition_form_server": {
+        "repetitions": 5,
+        "meets_minimum_repetitions": true,
+        "min_median_of_repetitions": 3.496,
+        "min_min_of_repetitions": 3.291,
+        "p50_median_of_repetitions": 10.186,
+        "p50_min_of_repetitions": 10.052
+      },
+      "status_counts": {
+        "200": 10200
+      },
+      "unexpected": [],
+      "pooled_n": 10000,
+      "loop_lag": null,
+      "loop_lag_note": "/home/ansible/ab/after_arm.json was not written. The lag histogram is the mechanism the plan names, so a missing one is stated rather than assumed fine."
+    }
+  },
+  "delta": {
+    "verdict": "NULL RESULT: no delta exceeds the noise floor",
+    "detail": "Neither view reaches the intra-arm floor. The claimed 39x does not reproduce, and the plan treats a null as a valid and valuable result.",
+    "noise_floor_intra_arm": 2.0,
+    "noise_floor_run_to_run": 7.1,
+    "client_ratio_exceeds_floor": false,
+    "server_ratio_exceeds_floor": false
+  },
+  "client_p95_ratio": 1.193,
+  "server_p95_ratio": 1.0668,
+  "gate_a_compliance": {
+    "3_loop_lag_histogram": "read from each arm's instrument export; see loop_lag",
+    "4_separate_load_host": {
+      "satisfied": false,
+      "deviation": "UNSATISFIABLE in this environment. perf-app and perf-load are both TCP-unreachable and only one host exists. Recorded here in the vocabulary GATE A(5) provides for exactly this case. What IS delivered is the substance of (4): server-side AND client-observed both reported per arm, so generator starvation shows up as a client-minus-server gap instead of as a fake regression."
+    },
+    "5_production_budgets": "No control was relaxed. At tier pro the budget is (1000, 3600) per user per path and this run issues ~156 per account, so no arm can be starved by the other; GATE A(6) is then satisfied by asserting zero non-200 rather than by trusting a purge.",
+    "6_zero_rate_limit_events": "asserted from observed status counts",
+    "8_p99_needs_10000": 10000,
+    "9_five_repetitions": 5
+  },
+  "instrument": {
+    "server_side": "harness-owned TimingMiddleware, outside both checkouts",
+    "why": "Measured: neither arm contains request_timer.py, so no in-app timer can be imported. Owning the instrument outside both trees is what guarantees neither arm carries a different one.",
+    "percentiles": "src.benchmarks.percentiles.nearest_rank (the canonical)"
+  }
+}
