@@ -127,14 +127,14 @@ option (b). **Reported, not fixed.**
 Add the debug log the acceptance criteria ask for on the method-gated skip —
 the only skip path in the scan that is currently silent.
 
-It is guarded by `logger.is_enabled_for(logging.DEBUG)`. **That guard does not
+It is guarded by `logger.is_enabled_for(logging.DEBUG)`. **That guard did not
 work on this repo's logging stack**, which this record previously got wrong: it
 claimed a bare `logger.debug(...)` measures 44.6 µs — 6.7× the 6.7 µs GET scan it
 would announce — and that guarded, the check costs 1.9 µs. Neither figure
-reproduces, and the premise is false. `structlog`'s
-`BoundLoggerLazyProxy.is_enabled_for(logging.DEBUG)` returns `True`
-unconditionally, whatever the stdlib root level is (verified with the root
-logger at `WARNING`), so the predicate gates nothing: the debug line is emitted
+reproduces, and the premise was false. `structlog`'s
+`BoundLoggerLazyProxy.is_enabled_for(logging.DEBUG)` returned `True`
+unconditionally, whatever the stdlib root level was (verified with the root
+logger at `WARNING`), so the predicate gated nothing: the debug line was emitted
 on every bodyless GET.
 
 Corrected, by `scripts/s7_scan_cost_probe.py` (drives this middleware over
@@ -145,13 +145,33 @@ HTTP, prints median/min/p95/max and spread):
 | bodyless GET scan, log firing | hundreds of µs |
 | bodyless GET scan, log suppressed | tens to hundreds of µs |
 | the debug call itself | same order as the scan it announces |
-| `is_enabled_for(DEBUG)` predicate | single-digit µs, and returns `True` |
+| `is_enabled_for(DEBUG)` predicate | single-digit µs, and returned `True` |
+
+**Amended 2026-10-19 (A-3, `FastAPI_saas-49yx`).** The diagnosis above was
+right and the cause has since been fixed, so the last two rows no longer describe
+this repository. `core/logger.py::LevelAwareBoundLogger` sets structlog's
+`wrapper_class` so `is_enabled_for` **delegates** to the wrapped stdlib logger
+instead of comparing against a minimum frozen at configure time. Re-measured on
+this stack after landing it: the predicate returns `False` at INFO, `True` once
+`src.app.middleware.attack_detection` is raised to DEBUG, and `False` again at
+INFO. The guard therefore now closes at the default level and the debug line is
+not emitted at all on a bodyless GET — which is what this ADR's guard was always
+for, and what the "log suppressed" row was measuring the absence of.
+
+Two things are deliberately **not** restated here. No new per-call microsecond
+constant is written into this record or into the guard's comment: those go stale
+per host, and the wrapper's own docstring carries A-3's figure with its
+derivation. And the "log firing" / "log suppressed" rows above are not
+re-measured, because doing so on this stack would now measure a *different*
+configuration than the one they were taken from — re-run
+`scripts/s7_scan_cost_probe.py` and read `predicate_enabled` first, since it
+tells you which of the two behaviours the host is running.
 
 The conclusion of this ADR is unchanged — the log line stays, it is the
 acceptance criterion's requirement, and it is a small fraction of the ~4 ms
-request floor. Only the justification was wrong. The figures in the tables
-above are host-specific and do not re-measure here; re-run the probe rather
-than quoting a constant.
+request floor. Only the justification was wrong, and the predicate that
+justification indicted now works. The figures in the tables above are
+host-specific; re-run the probe rather than quoting a constant.
 
 ## Consequences
 

@@ -23,13 +23,19 @@ Two conclusions this file pins:
    body scan is already method-gated (attack_detection.py, ``_BODY_METHODS``).
    The DEBUG log on that skip was documented as needing its guard because an
    unguarded structlog ``debug()`` was measured at 44.6 us -- 6.7x the 6.7 us
-   scan it announces. Both figures did not reproduce, and the premise is
-   false: ``logger.is_enabled_for(logging.DEBUG)`` on this repo's structlog
-   stack returns ``True`` whatever the stdlib root level is, so the guard gates
-   nothing and the log line is emitted on every bodyless GET.
+   scan it announces. Both figures did not reproduce, and the premise behind
+   them was false AT THE TIME: ``logger.is_enabled_for(logging.DEBUG)`` on this
+   repo's structlog stack returned ``True`` whatever the stdlib root level was,
+   so the guard gated nothing and the log line was emitted on every bodyless
+   GET. ``core/logger.py::LevelAwareBoundLogger`` (A-3, FastAPI_saas-49yx) has
+   since made the predicate delegate to the wrapped stdlib logger, so it is now
+   ``False`` above DEBUG and the guard does short-circuit; the benchmark's
+   ``nrgi.3_is_enabled_for`` figure below therefore measures a predicate whose
+   value changed, not one that was always in this state.
    ``scripts/s7_scan_cost_probe.py`` re-measures the shape over HTTP; see
-   docs/adr/0008 and the comment at that call site. The conclusion survives
-   because the scan is method-gated, not because of any microsecond constant.
+   docs/adr/0008 (amended 2026-10-19) and the comment at that call site. The
+   conclusion survives because the scan is method-gated, not because of any
+   microsecond constant.
 2. **The cost is the prefilter literal, not the method gate.** ``b"or"`` is a
    necessary literal for ``sql_or`` but is also a substring of color/for/
    order, so ordinary JSON reaches the full 17-group regex.

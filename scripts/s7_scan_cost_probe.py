@@ -12,14 +12,27 @@ plus the two figures behind the guard the same comment justifies: the guard
 predicate (``logger.is_enabled_for(logging.DEBUG)``) and the bare
 ``logger.debug()`` it wraps.
 
-The comments claim the guard turns a 44.6us log call into 1.9us. That framing
-is wrong in a way this probe makes visible: the predicate does not
-short-circuit, because ``logger`` here is a structlog ``BoundLoggerLazyProxy``
-whose ``is_enabled_for`` returns True whatever the stdlib root level is. The
-skipped-body-scan line is therefore emitted on EVERY bodyless GET, and what the
-guard costs is the predicate on top of a log call that is paid either way. Both
-numbers are printed so the claim can be judged against measurement rather than
-arithmetic.
+The comments claimed the guard turns a 44.6us log call into 1.9us. That framing
+was wrong, and this probe is what made it visible -- but the reason it was
+wrong has since been FIXED, so read the history before reading the numbers.
+
+WHAT THE PROBE FOUND, AND WHAT WAS DONE ABOUT IT. ``logger`` here is a
+structlog ``BoundLoggerLazyProxy``. While ``structlog.configure`` set no
+``wrapper_class`` the bound logger was ``BoundLoggerFilteringAtNotset`` and
+``is_enabled_for(logging.DEBUG)`` returned True whatever the stdlib root level
+was: the predicate did not short-circuit, the skipped-body-scan line was emitted
+on EVERY bodyless GET, and what the guard cost was the predicate on top of a log
+call that was paid either way. ``core/logger.py::LevelAwareBoundLogger`` (A-3,
+FastAPI_saas-49yx) makes the predicate DELEGATE to the wrapped stdlib logger, so
+at a level above DEBUG the guard now closes and the log call is not made at all.
+Re-measured on this stack after landing it: False at INFO, True once
+``src.app.middleware.attack_detection`` is raised to DEBUG, False again at INFO.
+
+So ``predicate_enabled`` printed by ``measure_guard`` is now the load-bearing
+field of this probe, not an incidental one: it tells you which of the two
+behaviours the host is running, and the guarded and unguarded figures only
+describe a suppression when it is ``False``. Both are printed either way so the
+claim is judged against measurement rather than arithmetic.
 
 The payloads are not invented here. Stage A drives real requests through the
 PRODUCTION middleware over HTTP and records what the scan actually received
@@ -419,11 +432,19 @@ def measure_guard(
 ) -> tuple[Figure, Figure, bool]:
     """The two figures behind the guard comment: the predicate, and the log.
 
-    The comment argues the guard converts 44.6us into 1.9us. These are the
-    numbers that argument is made of, measured rather than quoted. The
-    predicate's VALUE is returned as well as its cost: whether the log call is
-    paid at all depends on the configured level, so a cost figure without the
-    value beside it describes a configuration nobody can tell from the number.
+    The comment once argued the guard converts 44.6us into 1.9us; that claim is
+    retracted there, and these are the numbers any replacement claim has to be
+    measured against rather than quoted from.
+
+    The predicate's VALUE is returned as well as its cost, and it is the part to
+    read first. Whether the guarded log call is paid at all depends on the
+    configured level, so a cost figure without the value beside it describes a
+    configuration nobody can tell from the number. Since A-3
+    (``core/logger.py::LevelAwareBoundLogger``) the value also discriminates
+    between two genuinely different stacks rather than two timings of the same
+    one: ``False`` means the guard closes and the unguarded figure below is the
+    cost being AVOIDED, ``True`` means the predicate gates nothing and that
+    figure is what production actually pays on every bodyless GET.
     """
     from src.app.middleware.attack_detection import logger
 

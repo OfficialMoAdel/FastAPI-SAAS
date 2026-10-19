@@ -450,23 +450,35 @@ class AttackDetectionMiddleware:
         # See docs/adr/0008.
         #
         # The guard below is the correct shape -- ask the logging stack whether
-        # DEBUG is wanted instead of assuming -- but it is NOT the cheap
-        # short-circuit it was documented as. This comment previously claimed a
-        # bare logger.debug() cost ~44.6us against a 6.7us scan and that the
-        # guard cost ~1.9us. None of those figures reproduce, and the
-        # arithmetic that justified the guard was wrong: structlog's
-        # BoundLoggerLazyProxy.is_enabled_for(logging.DEBUG) returns True
-        # whatever the stdlib root level is (checked with the root logger at
-        # WARNING), so on this stack the predicate gates nothing and the debug
-        # call is made on every bodyless GET.
+        # DEBUG is wanted instead of assuming -- and it is now, finally, the
+        # cheap short-circuit it used to be documented as.
         #
-        # Measured by scripts/s7_scan_cost_probe.py, which drives this
-        # middleware over HTTP and reports the figures: the scan and the debug
-        # call it announces are both tens-to-hundreds of microseconds, the same
-        # order of magnitude as each other. Neither decides whether to keep the
-        # log line, and both are a small fraction of the ~4ms request floor. Do
-        # not restore microsecond constants here -- they go stale per host.
-        # Cite the probe instead.
+        # HISTORY, because the two halves of this comment have been wrong at
+        # different times and only the first one was retracted. This block
+        # previously claimed a bare logger.debug() cost ~44.6us against a 6.7us
+        # scan and that the guard cost ~1.9us. Those figures did not reproduce,
+        # and the reason was real: structlog.configure set no wrapper_class, so
+        # the bound logger was BoundLoggerFilteringAtNotset and
+        # is_enabled_for(logging.DEBUG) returned True whatever the stdlib root
+        # level was. The predicate genuinely gated nothing, and the debug call
+        # WAS made on every bodyless GET.
+        #
+        # That is no longer true. core/logger.py::LevelAwareBoundLogger (A-3,
+        # FastAPI_saas-49yx) makes is_enabled_for DELEGATE to the wrapped stdlib
+        # logger instead of comparing against a minimum frozen at configure
+        # time. Re-measured on this stack after landing it, at INFO:
+        # ad.logger.is_enabled_for(logging.DEBUG) is False; with
+        # logging.getLogger("src.app.middleware.attack_detection") raised to
+        # DEBUG it is True; back at INFO it is False again. So the guard below
+        # now closes at the default level and the skip event is not emitted at
+        # all -- which is what the guard was always for. The debug call the
+        # guard suppresses is the one scripts/s7_scan_cost_probe.py measures,
+        # which drives this middleware over HTTP.
+        #
+        # Do NOT paste a new per-call microsecond constant here. The wrapper's
+        # own docstring carries A-3's figure and explains why the two stock
+        # structlog wrappers cannot serve this; the per-host cost goes stale,
+        # so cite the probe instead.
         if method not in _BODY_METHODS:
             if logger.is_enabled_for(logging.DEBUG):
                 logger.debug(
