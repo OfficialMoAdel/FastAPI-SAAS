@@ -393,9 +393,14 @@ C2_SEMICOLON_COMPANION: dict[str, bytes] = {
 }
 C2_CMD_INJ_GROUP = "cmd_inj"
 
-#: The differential UA. "Linux; Android 14; Pixel 8" trips the
-#: prefilter (it carries ";") but the full regex clears it. The
-#: corrected attribution, recorded so the next reader does not "fix"
+#: The differential UA. "Linux; Android 14; Pixel 8" carries ";" and so
+#: USED TO trip the prefilter (it carried ";") while the full regex cleared
+#: it. Since C-2 (FastAPI_saas-niix) the cmd_inj gate is a CONJUNCTION --
+#: a separator AND a command word -- so this UA no longer trips the
+#: prefilter either, and the benign verdict is reached for a stronger
+#: reason than before.
+#:
+#: The corrected attribution, recorded so the next reader does not "fix"
 #: the wrong token: `Pixel` contains no `id`; `Android` does
 #: (A-n-d-r-o-i-d). The `id` inside "Android" is mid-word, never at
 #: `;` + command position, and no command word follows any ";" at a
@@ -405,10 +410,64 @@ C2_PIXEL_UA = (
     b"Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36"
     b" (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
 )
+#: The same UA shape with the command in COMMAND position. It must still
+#: trip: a gate that stopped admitting this would have cost a detection,
+#: which is the one thing the prefilter is not allowed to do.
+C2_TRIPPING_UA = b"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ; id"
+#: The command words the cmd_inj branch accepts, in the regex's own order.
+C2_CMD_INJ_COMMANDS: tuple[bytes, ...] = (
+    b"cat",
+    b"ls",
+    b"id",
+    b"whoami",
+    b"ping",
+    b"curl",
+    b"wget",
+)
 #: Payload whose ONLY covering literal is b"--": if "--" ever leaves
 #: the set, the prefilter goes blind on exactly this shape and the
 #: sql_comment verdict is missed, not merely slowed.
 C2_DASHDASH_ONLY_PAYLOAD = b"admin'--"
+
+
+def _c2_is_word_byte(char: int) -> bool:
+    """True for a byte that can be part of an identifier."""
+    return chr(char).isalnum() or char == 0x5F
+
+
+def _c2_id_occurrences_are_mid_word(payload: bytes) -> list[int]:
+    """The offsets of every "id" in `payload` that is NOT inside a word.
+
+    An "id" at a word boundary is a candidate command word; one that is
+    mid-word (as in "Android") can never be the token a `;` introduces.
+    """
+    lowered = payload.lower()
+    offsets: list[int] = []
+    start = 0
+    while True:
+        index = lowered.find(b"id", start)
+        if index < 0:
+            return offsets
+        before = lowered[index - 1] if index > 0 else -1
+        if before < 0 or not _c2_is_word_byte(before):
+            offsets.append(index)
+        start = index + 1
+
+
+def _c2_command_word_after_separator(payload: bytes) -> list[bytes]:
+    """The command word that follows each ";" at a word boundary, if any."""
+    lowered = payload.lower()
+    found: list[bytes] = []
+    start = 0
+    while True:
+        index = lowered.find(b";", start)
+        if index < 0:
+            return found
+        rest = lowered[index + 1 :].lstrip()
+        token = rest.split(b" ")[0].split(b"\t")[0].split(b"\n")[0]
+        if token in C2_CMD_INJ_COMMANDS:
+            found.append(token)
+        start = index + 1
 
 
 def _c2_attack_source() -> tuple[dict[str, str], set[bytes]]:
@@ -488,18 +547,28 @@ async def test_c2_semicolon_groups_need_dashdash() -> bool:
         if companion not in literals:
             logger.error("c2_companion_missing_from_set", group=name)
             return False
+    # STRENGTHENED (C-2, FastAPI_saas-niix): the GLOBAL set is what the AST
+    # above reads, but since C-2 the code consults the EFFECTIVE set -- the
+    # global set minus the cmd_inj separators. A companion that is in the
+    # global set but not in the effective one would be registered but not
+    # consulted, which is the failure mode this gate exists to prevent.
+    effective = _c2_effective_literals()
+    if effective is None:
+        logger.error("c2_effective_set_unreadable")
+        return False
+    for name, companion in C2_SEMICOLON_COMPANION.items():
+        if companion not in effective:
+            logger.error("c2_companion_missing_from_effective_set", group=name)
+            return False
     logger.info("c2_semicolon_ok", groups=sorted(semicolon_groups))
     return True
 
 
-async def test_c2_pixel_ua_differential() -> bool:
-    """Gate C-2 (corpus): the Pixel 8 UA trips prefilter, clears regex.
+def _c2_effective_literals() -> set[bytes] | None:
+    """The literal set the prefilter ACTUALLY consults, from the real module.
 
-    Prefilter HIT (it carries ";") with a None full-regex verdict is
-    the benign-but-costly shape the D10 caveat is about. The admin'--
-    probe pins b"--" as load-bearing: it is that payload's only
-    covering literal. Imports the REAL module, so a regex/literal
-    edit that breaks the conjunction fails here, not in production.
+    None when the module cannot be imported, so a gate that needs it fails
+    rather than passing on an empty set.
     """
     import sys
 
@@ -508,36 +577,134 @@ async def test_c2_pixel_ua_differential() -> bool:
         from app.middleware import attack_detection as ad
     finally:
         sys.path.remove(str(REPO_ROOT / "src"))
-    if not ad._attack_prefilter_hit(C2_PIXEL_UA):
-        logger.error("c2_pixel_ua_prefilter_miss")
-        return False
+    effective = getattr(ad, "_PREFILTER_SINGLE_LITERALS", None)
+    if effective is None:
+        return None
+    return set(effective)
+
+
+async def test_c2_pixel_ua_differential() -> bool:
+    """Gate C-2 (corpus): the Pixel 8 UA misses the prefilter, clears the
+    regex, and is benign by POSITION.
+
+    Since C-2 (FastAPI_saas-niix) the cmd_inj gate is a CONJUNCTION -- a
+    separator AND a command word -- so this UA no longer trips the
+    prefilter. That is the point of the change: a browser user-agent
+    carries ";" on nearly every request, and a bare separator made the full
+    17-group regex run on all of them.
+
+    The gate is STRICTLY STRONGER than the one it replaces. It asserts:
+    (a) the full regex still clears the UA;
+    (b) the UA DOES carry the "id" substring -- so the verdict is not the
+        absence of "id";
+    (c) every "id" in it is mid-word, and no command word follows any ";"
+        at a word boundary -- the POSITION is the reason;
+    (d) the UA with a command in command position still trips, so the
+        change cost no detection;
+    (e) the bare ";" is STILL in the global literal set, so what makes
+        this UA miss is the conjunction and not something else;
+    (f) the admin'-- probe still pins b"--" as load-bearing, now in the
+        EFFECTIVE set as well as the global one.
+
+    Imports the REAL module, so a regex/literal edit that breaks the
+    conjunction fails here, not in production.
+    """
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    try:
+        from app.middleware import attack_detection as ad
+    finally:
+        sys.path.remove(str(REPO_ROOT / "src"))
+    # (a) the regex must clear it
     match = ad.COMBINED_ATTACK_RE.search(C2_PIXEL_UA)
     if match is not None:
         logger.error("c2_pixel_ua_regex_hit", group=match.lastgroup)
         return False
+    # (b) the "id" IS there -- inside "Android"
+    if b"id" not in C2_PIXEL_UA.lower():
+        logger.error("c2_pixel_ua_has_no_id")
+        return False
+    if b"id" in b"pixel":
+        logger.error("c2_pixel_name_carries_id")
+        return False
+    # (c) the position is the reason: no "id" at a word boundary, and no
+    # command word after any ";"
+    at_boundary = _c2_id_occurrences_are_mid_word(C2_PIXEL_UA)
+    if at_boundary:
+        logger.error("c2_pixel_ua_id_at_word_boundary", offsets=at_boundary)
+        return False
+    after_separator = _c2_command_word_after_separator(C2_PIXEL_UA)
+    if after_separator:
+        logger.error("c2_pixel_ua_command_after_separator", words=after_separator)
+        return False
+    # (d) the command position must still trip
+    if not ad.COMBINED_ATTACK_RE.search(C2_TRIPPING_UA):
+        logger.error("c2_tripping_ua_regex_miss")
+        return False
+    if not ad._attack_prefilter_hit(C2_TRIPPING_UA):
+        logger.error("c2_tripping_ua_prefilter_miss")
+        return False
+    # (e) the conjunction is what makes the benign UA miss, not an
+    # unrelated edit to the literal set
+    if b";" not in ad._PREFILTER_LITERALS_BYTES:
+        logger.error("c2_separator_left_the_global_set")
+        return False
+    # the benign UA must now MISS the prefilter
+    if ad._attack_prefilter_hit(C2_PIXEL_UA):
+        logger.error("c2_pixel_ua_prefilter_hit")
+        return False
+    # (f) the dash-dash probe: b"--" is that payload's only covering
+    # literal, in the global set AND in the effective one
     covering = [lite for lite in ad._PREFILTER_LITERALS_BYTES if lite in C2_DASHDASH_ONLY_PAYLOAD.lower()]
     if covering != [b"--"]:
         logger.error("c2_dashdash_not_sole_literal", covering=covering)
+        return False
+    effective = _c2_effective_literals()
+    if effective is None:
+        logger.error("c2_effective_set_unreadable")
+        return False
+    if b"--" not in effective:
+        logger.error("c2_dashdash_missing_from_effective_set")
         return False
     logger.info("c2_pixel_ua_ok", reason="android_not_pixel")
     return True
 
 
-# --- C-3: async_get_db caller enumeration + no handler reads -----------------
+# --- C-3: session-holder enumeration + no handler reads ---------------------
 # The plan's "27 callers" is [Unverified]: a raw grep returns ~100 hits
-# including imports, docstrings and comments. The enumeration below finds
-# Depends(async_get_db) in parameter defaults AND in Annotated metadata,
-# which is the complete caller set by construction (FastAPI resolves the
-# session only through Depends). A new caller fails the closed world
-# until it is classified here with its 401-path analysis.
+# including imports, docstrings and comments. This section enumerates the
+# COMPLETE set of functions that can end up holding a database session, as
+# TWO closed worlds -- one per acquisition mechanism:
+#
+#   1. HOLDERS -- the session arrives as a parameter resolved by FastAPI:
+#      `db: Annotated[AsyncSession, Depends(async_get_db)]` (or the same
+#      spelled in a default). Enumerated by C3_DB_CALLERS.
+#   2. OPENERS -- the function opens the session itself:
+#      `async with get_db_context() as session:`. Enumerated by
+#      C3_SESSION_OPENERS.
+#
+# HISTORY (2026-10-19, FastAPI_saas-tpbs): the original comment here
+# claimed the Depends-parameter form was "the complete caller set by
+# construction (FastAPI resolves the session only through Depends)". That
+# was true until commit ec632f29 (2026-10-17) refactored the auth path:
+# `get_current_user`, `get_optional_auth_context`, `get_optional_user` and
+# `core.principal.get_auth_context` stopped taking a session parameter and
+# became pure delegators -- the session is now opened inside the shared
+# resolver `resolve_principal` through `get_db_context()`. `get_db_context`
+# is the `async with` form of the SAME session lifecycle as
+# `async_get_db` (both call session_maker(), roll back on exception and
+# close in finally; src/app/core/db/database.py:184 and :232), so the
+# auth path still opens a session -- it just no longer does so through a
+# parameter. The four delegators were therefore removed from
+# C3_DB_CALLERS (they hold no session to be classified) and the
+# `get_db_context` class was ADDED as its own closed world, which this
+# gate did not check at all before. A new holder or a new opener fails
+# its enumeration gate until it is classified with its 401-path analysis.
 C3_DB_CALLERS: frozenset[tuple[str, str]] = frozenset(
     {
-        ("src/app/api/deps/auth.py", "get_current_user"),
         ("src/app/api/deps/auth.py", "get_user_by_api_key"),
-        ("src/app/api/deps/auth.py", "get_optional_auth_context"),
-        ("src/app/api/deps/auth.py", "get_optional_user"),
         ("src/app/api/deps/request_context.py", "get_request_context"),
-        ("src/app/core/principal.py", "get_auth_context"),
         ("src/app/core/rbac/dependencies.py", "_check_permission"),
         ("src/app/modules/ai/router.py", "get_chat_session_service"),
         ("src/app/modules/ai/router.py", "get_chat_message_service"),
@@ -599,6 +766,53 @@ C3_DB_CALLERS: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
+# The second closed world: functions that OPEN a session themselves with
+# `async with get_db_context() as <name>:`. Before 2026-10-19 this class
+# was enumerated nowhere, so eight functions -- including the auth path's
+# own `resolve_principal` -- could open a session without failing any
+# gate. Every one of them is now pinned, and a ninth fails
+# test_c3_session_opener_enumeration_complete until it is classified.
+C3_SESSION_OPENERS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("src/app/admin/initialize.py", "_get_db_session"),
+        ("src/app/api/deps/auth.py", "_resolve_optional_bearer_flow"),
+        ("src/app/api/deps/auth.py", "_resolve_strict_bearer_flow"),
+        ("src/app/api/deps/auth.py", "resolve_principal"),
+        ("src/app/modules/audit_logs/service.py", "flush_audit_log_buffer"),
+        ("src/app/modules/audit_logs/service.py", "get_audit_logs_for_tenant_async"),
+        ("src/app/modules/notifications/service.py", "recover_stuck_notifications"),
+        ("src/app/modules/webhooks/delivery.py", "recover_stuck_deliveries"),
+    }
+)
+
+
+# The session calls a handler is ALLOWED to make. A rollback ends a
+# transaction; it does not read from one.
+#
+# MEASURED (2026-10-19, FastAPI_saas-tpbs) against the real engine, with
+# the same instrument the C-3 e2e uses (an `engine.sync_engine` "checkout"
+# listener plus a "before_cursor_execute" listener):
+#   `await session.rollback()` on a session that has never connected  ->
+#       checkout=0, stmt=0
+#   `await session.execute(text("SELECT 1"))` on a fresh session       ->
+#       checkout=1, stmt=1
+#   `await session.execute(...)` then `await session.rollback()`      ->
+#       checkout=1, stmt=1  (the rollback added no checkout)
+# So a rollback cannot put a request on the database -- which is the
+# entire subject of C-3 ("defer the DB session on the 401 path"). Any
+# OTHER use of the session inside a handler does check a connection out
+# and is a violation.
+#
+# The two sites this rule permits are the ones the extension to
+# self-opened sessions exposed, and both are correct code:
+# `audit_logs/service.py::flush_audit_log_buffer` (a background buffer
+# flush that rolls the bulk insert back) and
+# `webhooks/delivery.py::recover_stuck_deliveries` (an ARQ job that rolls
+# one failed row back and continues with the batch). Both are permitted
+# uses, and both are LOGGED by the gate rather than hidden -- a permitted
+# use that is really a read would show up here in every CI run.
+C3_ALLOWED_HANDLER_SESSION_CALLS: frozenset[str] = frozenset({"rollback"})
+
 
 def _c3_depends_on_db(node: ast.AST) -> bool:
     """True if the expression contains Depends(async_get_db)."""
@@ -617,11 +831,11 @@ def _c3_depends_on_db(node: ast.AST) -> bool:
 
 
 def _c3_db_caller_functions() -> dict[tuple[str, str], tuple[int, str]]:
-    """Map (relpath, funcname) to (lineno, db_param) for every caller.
+    """Map (relpath, funcname) to (lineno, db_param) for every HOLDER.
 
     Checks parameter defaults AND Annotated metadata: `db: Annotated[…,
     Depends(async_get_db)]` carries no default, so a defaults-only scan
-    misses most of the tree (it found 24 of 64).
+    misses most of the tree (it found 24 of the original 64).
     """
     found: dict[tuple[str, str], tuple[int, str]] = {}
     for path in sorted((REPO_ROOT / "src").rglob("*.py")):
@@ -653,23 +867,111 @@ def _c3_db_caller_functions() -> dict[tuple[str, str], tuple[int, str]]:
     return found
 
 
-def _c3_handler_reads(fn: ast.FunctionDef | ast.AsyncFunctionDef, name: str) -> list[int]:
-    """Line numbers of except-handler bodies that name the session."""
-    lines: list[int] = []
+def _c3_session_opener_functions() -> dict[tuple[str, str], tuple[int, str]]:
+    """Map (relpath, funcname) to (lineno, bound_session_name) for every OPENER.
+
+    An opener is a function that opens a session itself with
+    `async with get_db_context() as <name>:`. The bound name is the
+    session variable, because THAT is the name the 401-path analysis has
+    to look for in an except handler -- a handler that reads the bound
+    session is the defect, and a handler that reads some other variable
+    is not.
+
+    The call is matched on the callee NAME (`get_db_context`), so it is
+    found whether the helper was imported at module level or inside the
+    function body (`from src.app.core.db.database import get_db_context`).
+    The definition of `get_db_context` itself is a decorated function
+    definition, not a call, so it is not matched.
+    """
+    found: dict[tuple[str, str], tuple[int, str]] = {}
+    for path in sorted((REPO_ROOT / "src").rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for child in ast.walk(node):
+                if not isinstance(child, ast.AsyncWith):
+                    continue
+                for item in child.items:
+                    call = item.context_expr
+                    if not isinstance(call, ast.Call):
+                        continue
+                    func = call.func
+                    name = None
+                    if isinstance(func, ast.Name):
+                        name = func.id
+                    elif isinstance(func, ast.Attribute):
+                        name = func.attr
+                    if name != "get_db_context":
+                        continue
+                    bound = item.optional_vars
+                    if isinstance(bound, ast.Name):
+                        found[(rel, node.name)] = (node.lineno, bound.id)
+                    break
+    return found
+
+
+def _c3_handler_session_uses(
+    fn: ast.FunctionDef | ast.AsyncFunctionDef, name: str
+) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]:
+    """The uses of `name` inside an except handler: (violations, permitted).
+
+    A use is PERMITTED only when the session is the receiver of one of
+    C3_ALLOWED_HANDLER_SESSION_CALLS. The check is name-based: it does not
+    resolve shadowing, so a nested helper that takes its own parameter of
+    the same name is reported as the outer function's use. That is the
+    conservative direction -- a false positive is read and classified by a
+    human, a false negative is not noticed.
+    """
+    violations: list[tuple[int, str]] = []
+    permitted: list[tuple[int, str]] = []
     for node in ast.walk(fn):
-        if isinstance(node, ast.Try):
-            for handler in node.handlers:
-                for n in ast.walk(handler):
-                    if isinstance(n, ast.Name) and n.id == name:
-                        lines.append(handler.lineno)
-    return lines
+        if not isinstance(node, ast.Try):
+            continue
+        for handler in node.handlers:
+            parents = _c3_parent_map(handler)
+            for n in ast.walk(handler):
+                if not (isinstance(n, ast.Name) and n.id == name):
+                    continue
+                parent = parents.get(id(n))
+                if isinstance(parent, ast.Attribute) and parent.value is n:
+                    call = parents.get(id(parent))
+                    what = f".{parent.attr}"
+                    if (
+                        isinstance(call, ast.Call)
+                        and call.func is parent
+                        and parent.attr in C3_ALLOWED_HANDLER_SESSION_CALLS
+                    ):
+                        permitted.append((n.lineno, what))
+                        continue
+                    violations.append((n.lineno, what))
+                else:
+                    violations.append((n.lineno, "bare reference"))
+    return violations, permitted
+
+
+def _c3_parent_map(node: ast.AST) -> dict[int, ast.AST]:
+    """Map id(child) -> parent for every node under `node`."""
+    parents: dict[int, ast.AST] = {}
+    for child in ast.iter_child_nodes(node):
+        parents[id(child)] = node
+        parents.update(_c3_parent_map(child))
+    return parents
 
 
 async def test_c3_caller_enumeration_complete() -> bool:
-    """Gate C-3 (enumeration): the caller set is exactly the pinned 64.
+    """Gate C-3 (holders): the holder set is exactly the pinned 60.
 
     A new Depends(async_get_db) fails here until it is classified with
     its 401-path analysis. An empty scan fails rather than passing.
+
+    The holders are only HALF the closed world: a function that opens its
+    own session with `get_db_context()` is covered by
+    test_c3_session_opener_enumeration_complete instead.
     """
     found = _c3_db_caller_functions()
     if not found:
@@ -686,20 +988,75 @@ async def test_c3_caller_enumeration_complete() -> bool:
     return True
 
 
+async def test_c3_session_opener_enumeration_complete() -> bool:
+    """Gate C-3 (openers): the `get_db_context` opener set is exactly pinned.
+
+    A function that opens its own session is a session holder in every
+    sense that matters for the 401 path, and until this gate existed
+    eight of them -- including the auth path's own `resolve_principal` --
+    opened a session without any gate noticing. A ninth opener fails
+    here until it is classified.
+
+    An empty scan fails rather than passing, for the same reason the
+    holder gate fails on an empty scan: a scan that finds nothing is
+    indistinguishable from a scan that is broken.
+    """
+    found = _c3_session_opener_functions()
+    if not found:
+        logger.error("c3_opener_scan_empty")
+        return False
+    if set(found) != set(C3_SESSION_OPENERS):
+        logger.error(
+            "c3_opener_set_diverged",
+            missing=sorted(set(C3_SESSION_OPENERS) - set(found)),
+            extra=sorted(set(found) - set(C3_SESSION_OPENERS)),
+        )
+        return False
+    logger.info("c3_opener_enumeration_ok", openers=len(found))
+    return True
+
+
+def _c3_session_names() -> dict[tuple[str, str], list[str]]:
+    """Every (relpath, funcname) that can hold a session, and the names.
+
+    A holder names its session through the parameter FastAPI injected; an
+    opener names it through the `as` target of its own `async with`. Both
+    names are the ones the 401-path analysis has to look for, and a
+    function can be in both classes, so the values are lists.
+    """
+    names: dict[tuple[str, str], list[str]] = {}
+    for key, (_lineno, param) in _c3_db_caller_functions().items():
+        names.setdefault(key, []).append(param)
+    for key, (_lineno, bound) in _c3_session_opener_functions().items():
+        names.setdefault(key, []).append(bound)
+    return names
+
+
 async def test_c3_no_caller_reads_session_in_handler() -> bool:
-    """Gate C-3 (401 path): no caller names its session in an except body.
+    """Gate C-3 (401 path): no session holder names its session in a handler.
 
     A caller that reads the session inside an exception handler is
     exactly the case that breaks session deferral on the rejection
-    path, and handlers are the least-read code — so the property is
+    path, and handlers are the least-read code -- so the property is
     asserted per caller, not argued in prose. The log-severity half
     (A-12) is explicitly out of scope and asserted nowhere here.
+
+    The property is asserted over BOTH closed worlds: the holders
+    (session injected as a parameter) and the openers (session opened
+    with `get_db_context()`), because a session read inside a handler is
+    the same defect whichever way the session was obtained.
+
+    A handler may name the session to ROLL IT BACK and nothing else --
+    see C3_ALLOWED_HANDLER_SESSION_CALLS for the measurement that makes
+    that distinction a fact rather than a preference. Permitted uses are
+    logged, not hidden.
     """
-    found = _c3_db_caller_functions()
-    if not found:
+    names = _c3_session_names()
+    if not names:
         logger.error("c3_scan_empty")
         return False
-    bad: dict[str, list[int]] = {}
+    bad: dict[str, list[str]] = {}
+    permitted: dict[str, list[str]] = {}
     for path in sorted((REPO_ROOT / "src").rglob("*.py")):
         rel = path.relative_to(REPO_ROOT).as_posix()
         try:
@@ -710,15 +1067,27 @@ async def test_c3_no_caller_reads_session_in_handler() -> bool:
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             key = (rel, node.name)
-            if key not in found:
+            if key not in names:
                 continue
-            reads = _c3_handler_reads(node, found[key][1])
-            if reads:
-                bad[f"{rel}:{node.lineno} {node.name}"] = reads
+            uses: list[tuple[int, str]] = []
+            allowed: list[tuple[int, str]] = []
+            for session_name in names[key]:
+                found, ok = _c3_handler_session_uses(node, session_name)
+                uses.extend(found)
+                allowed.extend(ok)
+            if not uses and not allowed:
+                continue
+            site = f"{rel}:{node.lineno} {node.name}"
+            if uses:
+                bad[site] = [f"{line} {what}" for line, what in uses]
+            if allowed:
+                permitted[site] = [f"{line} {what}" for line, what in allowed]
     if bad:
-        logger.error("c3_handler_reads_session", callers=bad)
+        logger.error("c3_handler_uses_session", callers=bad)
         return False
-    logger.info("c3_handlers_ok", callers=len(found))
+    if permitted:
+        logger.info("c3_handler_permitted_uses", callers=permitted)
+    logger.info("c3_handlers_ok", callers=len(names))
     return True
 
 
@@ -822,16 +1191,23 @@ ISOMORPHISM_TESTS = [
         "C2_semicolon_gate", "C-2: every ';' group but cmd_inj holds via b'--'", test_c2_semicolon_groups_need_dashdash
     ),
     IsomorphismTest(
-        "C2_pixel_ua", "C-2: Pixel 8 UA trips prefilter, clears regex", test_c2_pixel_ua_differential
+        "C2_pixel_ua",
+        "C-2: Pixel 8 UA misses the prefilter, clears the regex, benign by position",
+        test_c2_pixel_ua_differential,
     ),
     IsomorphismTest(
         "C3_enumeration",
-        "C-3: async_get_db caller set is exactly the pinned 64",
+        "C-3: async_get_db holder set is exactly the pinned 60",
         test_c3_caller_enumeration_complete,
     ),
     IsomorphismTest(
+        "C3_opener_enumeration",
+        "C-3: get_db_context opener set is exactly the pinned 8",
+        test_c3_session_opener_enumeration_complete,
+    ),
+    IsomorphismTest(
         "C3_no_handler_reads",
-        "C-3: no caller names its session in an except body",
+        "C-3: no session is READ in an except body (a rollback is the one permitted use)",
         test_c3_no_caller_reads_session_in_handler,
     ),
     IsomorphismTest(

@@ -1,0 +1,167 @@
+{
+  "artefact": "ab_users_me",
+  "generated_by": "scripts/ab_users_me.py",
+  "question": "Did GET /users/me really regress 8->16 ms p50 and 19->740 ms p95 across 4cd00654..7de0ff2a? Judged on the DELTA between two arms under one instrument, NOT against the stored CSVs, which the plan disqualifies.",
+  "arms": {
+    "before": {
+      "base_url": "http://127.0.0.1:8021",
+      "worktree": "/home/ansible/ab/before",
+      "fresh_accounts": 64,
+      "tier": "pro",
+      "tenant": "test-tenant-e2e",
+      "client_observed_ms": {
+        "count": 10000,
+        "min": 15.4506,
+        "p50": 121.1016,
+        "p95": 412.5502,
+        "p99": 569.9778,
+        "max": 1010.5826,
+        "mean": 154.3441
+      },
+      "server_side_ms": {
+        "count": 10000,
+        "min": 3.158,
+        "p50": 15.603,
+        "p95": 59.279,
+        "p99": 101.586,
+        "max": 215.12,
+        "mean": 22.1728
+      },
+      "repetition_form_client": {
+        "repetitions": 5,
+        "meets_minimum_repetitions": true,
+        "min_median_of_repetitions": 31.6328,
+        "min_min_of_repetitions": 15.4506,
+        "p50_median_of_repetitions": 111.7825,
+        "p50_min_of_repetitions": 101.677
+      },
+      "repetition_form_server": {
+        "repetitions": 5,
+        "meets_minimum_repetitions": true,
+        "min_median_of_repetitions": 3.543,
+        "min_min_of_repetitions": 3.158,
+        "p50_median_of_repetitions": 15.295,
+        "p50_min_of_repetitions": 11.745
+      },
+      "status_counts": {
+        "200": 10200
+      },
+      "unexpected": [],
+      "pooled_n": 10000,
+      "loop_lag": {
+        "instrument": "harness-owned loop-lag sampler (NOT T-1: T-1 does not exist in either arm)",
+        "requested_interval_s": 0.008,
+        "achieved_rate_hz": 125.0003,
+        "meets_minimum_rate": true,
+        "minimum_rate_hz": 100.0,
+        "samples": 65536,
+        "samples_total": 334312,
+        "wall_s": 2674.489,
+        "summary_ms": {
+          "count": 65536,
+          "min": -6.3155,
+          "median": 3.129,
+          "p95": 13.3078,
+          "p99": 15.8734,
+          "max": 130.5355
+        }
+      },
+      "loop_lag_note": null,
+      "src_app_from": "/home/ansible/ab/before/src",
+      "server_instrument": "harness-owned TimingMiddleware (NOT T-3: absent from both arms)"
+    },
+    "after": {
+      "base_url": "http://127.0.0.1:8022",
+      "worktree": "/home/ansible/ab/after",
+      "fresh_accounts": 64,
+      "tier": "pro",
+      "tenant": "test-tenant-e2e",
+      "client_observed_ms": {
+        "count": 10000,
+        "min": 20.9504,
+        "p50": 120.2332,
+        "p95": 358.447,
+        "p99": 564.4998,
+        "max": 1017.58,
+        "mean": 147.6508
+      },
+      "server_side_ms": {
+        "count": 10000,
+        "min": 3.516,
+        "p50": 16.078,
+        "p95": 51.301,
+        "p99": 82.721,
+        "max": 263.737,
+        "mean": 21.2396
+      },
+      "repetition_form_client": {
+        "repetitions": 5,
+        "meets_minimum_repetitions": true,
+        "min_median_of_repetitions": 34.9644,
+        "min_min_of_repetitions": 20.9504,
+        "p50_median_of_repetitions": 114.9101,
+        "p50_min_of_repetitions": 103.4827
+      },
+      "repetition_form_server": {
+        "repetitions": 5,
+        "meets_minimum_repetitions": true,
+        "min_median_of_repetitions": 3.765,
+        "min_min_of_repetitions": 3.516,
+        "p50_median_of_repetitions": 15.563,
+        "p50_min_of_repetitions": 12.0055
+      },
+      "status_counts": {
+        "200": 10200
+      },
+      "unexpected": [],
+      "pooled_n": 10000,
+      "loop_lag": {
+        "instrument": "harness-owned loop-lag sampler (NOT T-1: T-1 does not exist in either arm)",
+        "requested_interval_s": 0.008,
+        "achieved_rate_hz": 125.0003,
+        "meets_minimum_rate": true,
+        "minimum_rate_hz": 100.0,
+        "samples": 65536,
+        "samples_total": 334121,
+        "wall_s": 2672.9623,
+        "summary_ms": {
+          "count": 65536,
+          "min": -5.7796,
+          "median": 3.0107,
+          "p95": 13.1949,
+          "p99": 15.6866,
+          "max": 86.6136
+        }
+      },
+      "loop_lag_note": null,
+      "src_app_from": "/home/ansible/ab/after/src",
+      "server_instrument": "harness-owned TimingMiddleware (NOT T-3: absent from both arms)"
+    }
+  },
+  "delta": {
+    "verdict": "NULL RESULT: no delta exceeds the noise floor",
+    "detail": "Neither view reaches the intra-arm floor. The claimed 39x does not reproduce, and the plan treats a null as a valid and valuable result.",
+    "noise_floor_intra_arm": 2.0,
+    "noise_floor_run_to_run": 7.1,
+    "client_ratio_exceeds_floor": false,
+    "server_ratio_exceeds_floor": false
+  },
+  "client_p95_ratio": 0.8689,
+  "server_p95_ratio": 0.8654,
+  "gate_a_compliance": {
+    "3_loop_lag_histogram": "read from each arm's instrument export; see loop_lag",
+    "4_separate_load_host": {
+      "satisfied": false,
+      "deviation": "UNSATISFIABLE in this environment. perf-app and perf-load are both TCP-unreachable and only one host exists. Recorded here in the vocabulary GATE A(5) provides for exactly this case. What IS delivered is the substance of (4): server-side AND client-observed both reported per arm, so generator starvation shows up as a client-minus-server gap instead of as a fake regression."
+    },
+    "5_production_budgets": "No control was relaxed. At tier pro the budget is (1000, 3600) per user per path and this run issues ~156 per account, so no arm can be starved by the other; GATE A(6) is then satisfied by asserting zero non-200 rather than by trusting a purge.",
+    "6_zero_rate_limit_events": "asserted from observed status counts",
+    "8_p99_needs_10000": 10000,
+    "9_five_repetitions": 5
+  },
+  "instrument": {
+    "server_side": "harness-owned TimingMiddleware, outside both checkouts",
+    "why": "Measured: neither arm contains request_timer.py, so no in-app timer can be imported. Owning the instrument outside both trees is what guarantees neither arm carries a different one.",
+    "percentiles": "src.benchmarks.percentiles.nearest_rank (the canonical)"
+  }
+}

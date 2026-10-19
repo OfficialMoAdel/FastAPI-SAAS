@@ -1,0 +1,417 @@
+{
+  "schema": "s8_attack_scan_gate_e2e/1",
+  "bead": "FastAPI_saas-xfpt",
+  "item": "S-8",
+  "title": "The attack-scan method gate is driven over the real ASGI stack and the real logging stack: the predicate is False at INFO and True at DEBUG, a bodyless GET does not enter the body-scan gate while a POST with a body does, and the tripping user-agent trips for the recorded reason.",
+  "quantity": "Behaviour, not latency. S-8's own arithmetic is 0 us, 0.00 % of the 4.09 ms uncontended floor and 0.00 % of the 740 ms p95, so this moves capacity, not p95.",
+  "method": {
+    "driver": "tests/e2e/feature_validation/test_s8_attack_scan_gate_e2e.py",
+    "in_repo": true,
+    "stack": "the real application over ASGITransport, with the real middleware stack",
+    "logging_configuration": "src/app/core/logger.py::setup_logging, installed by the script",
+    "hard_gate": "the bound logger is asserted to be a LevelAwareBoundLogger (A-3 landed)",
+    "levels": "each case is driven twice: the module logger at INFO, then at DEBUG",
+    "records": "the REAL log records, captured on the module's own stdlib logger",
+    "server_clock": {
+      "header": "X-Response-Time",
+      "enabled_in_this_run": false,
+      "note": "the flag is read once, when the guard-ordering module is imported, so a run that sets it after the application was constructed still sees no header; the absence is recorded per request with that reason"
+    }
+  },
+  "machine": {
+    "platform": "Windows-11-10.0.26300-SP0",
+    "python": "3.13.7",
+    "host_relevant": false,
+    "host_relevant_why": "the quantity is a behaviour -- which branch the gate selected and whether an event was emitted -- and not a duration"
+  },
+  "cases": [
+    {
+      "case": "get_bodyless",
+      "method": "GET",
+      "path": "/api/v1/users/me",
+      "has_body": false,
+      "user_agent": null,
+      "arms": {
+        "info": {
+          "level": "INFO",
+          "predicate": false,
+          "status_code": 200,
+          "request_id": "d1d9404c-4122-49ba-85a0-4ddfea1567dc",
+          "client_observed_ms": 220.112,
+          "server_observed_ms": null,
+          "server_observed_note": "absent: the RequestTimer is off unless REQUEST_TIMER_ENABLED was set when the application was CONSTRUCTED (the flag is read once, at import of the guard-ordering module), and the header is never written on the disabled path",
+          "events": []
+        },
+        "debug": {
+          "level": "DEBUG",
+          "predicate": true,
+          "status_code": 200,
+          "request_id": "c350bf29-a274-4a04-a528-959303a62e98",
+          "client_observed_ms": 12.734,
+          "server_observed_ms": null,
+          "server_observed_note": "absent: the RequestTimer is off unless REQUEST_TIMER_ENABLED was set when the application was CONSTRUCTED (the flag is read once, at import of the guard-ordering module), and the header is never written on the disabled path",
+          "events": [
+            {
+              "method": "GET",
+              "path": "/api/v1/users/me",
+              "event": "attack_detection_skipped_body_scan_for_method",
+              "level": "debug",
+              "logger": "src.app.middleware.attack_detection",
+              "timestamp": "2026-10-19T15:15:33.338330Z"
+            }
+          ]
+        }
+      },
+      "body_scan_branch": "skipped",
+      "selected_branch": "no_attack",
+      "detected": []
+    },
+    {
+      "case": "post_body_benign",
+      "method": "POST",
+      "path": "/api/v1/posts/by-user/e2etestuser",
+      "has_body": true,
+      "user_agent": null,
+      "arms": {
+        "info": {
+          "level": "INFO",
+          "predicate": false,
+          "status_code": 201,
+          "request_id": "ecd2aa8c-ef5a-4193-ba37-e0920d527dbe",
+          "client_observed_ms": 400.037,
+          "server_observed_ms": null,
+          "server_observed_note": "absent: the RequestTimer is off unless REQUEST_TIMER_ENABLED was set when the application was CONSTRUCTED (the flag is read once, at import of the guard-ordering module), and the header is never written on the disabled path",
+          "events": []
+        },
+        "debug": {
+          "level": "DEBUG",
+          "predicate": true,
+          "status_code": 201,
+          "request_id": "cde081b6-310a-4114-befa-60ffef787fae",
+          "client_observed_ms": 472.671,
+          "server_observed_ms": null,
+          "server_observed_note": "absent: the RequestTimer is off unless REQUEST_TIMER_ENABLED was set when the application was CONSTRUCTED (the flag is read once, at import of the guard-ordering module), and the header is never written on the disabled path",
+          "events": []
+        }
+      },
+      "body_scan_branch": "entered",
+      "selected_branch": "no_attack",
+      "detected": []
+    },
+    {
+      "case": "post_body_sqli",
+      "method": "POST",
+      "path": "/api/v1/posts/by-user/e2etestuser",
+      "has_body": true,
+      "user_agent": null,
+      "arms": {
+        "info": {
+          "level": "INFO",
+          "predicate": false,
+          "status_code": 400,
+          "request_id": "ad827d17-d220-43f6-9574-5bdae8c30876",
+          "client_observed_ms": 11.366,
+          "server_observed_ms": null,
+          "server_observed_note": "absent: the RequestTimer is off unless REQUEST_TIMER_ENABLED was set when the application was CONSTRUCTED (the flag is read once, at import of the guard-ordering module), and the header is never written on the disabled path",
+          "events": [
+            {
+              "type": "sql_injection",
+              "pattern": "sql_union_select",
+              "location": "request_body",
+              "ip": "127.0.0.1",
+              "path": "/api/v1/posts/by-user/e2etestuser",
+              "mode": "block",
+              "event": "attack_detected",
+              "level": "warning",
+              "logger": "src.app.middleware.attack_detection",
+              "timestamp": "2026-10-19T15:15:34.230014Z"
+            }
+          ]
+        },
+        "debug": {
+          "level": "DEBUG",
+          "predicate": true,
+          "status_code": 400,
+          "request_id": "2059161b-eec0-441f-8974-c654ff2ea3dd",
+          "client_observed_ms": 11.567,
+          "server_observed_ms": null,
+          "server_observed_note": "absent: the RequestTimer is off unless REQUEST_TIMER_ENABLED was set when the application was CONSTRUCTED (the flag is read once, at import of the guard-ordering module), and the header is never written on the disabled path",
+          "events": [
+            {
+              "type": "sql_injection",
+              "pattern": "sql_union_select",
+              "location": "request_body",
+              "ip": "127.0.0.1",
+              "path": "/api/v1/posts/by-user/e2etestuser",
+              "mode": "block",
+              "event": "attack_detected",
+              "level": "warning",
+              "logger": "src.app.middleware.attack_detection",
+              "timestamp": "2026-10-19T15:15:34.242420Z"
+            }
+          ]
+        }
+      },
+      "body_scan_branch": "entered",
+      "selected_branch": "request_body",
+      "detected": [
+        {
+          "type": "sql_injection",
+          "pattern": "sql_union_select",
+          "location": "request_body"
+        }
+      ]
+    },
+    {
+      "case": "get_user_agent_benign_pixel",
+      "method": "GET",
+      "path": "/api/v1/users/me",
+      "has_body": false,
+      "user_agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
+      "arms": {
+        "info": {
+          "level": "INFO",
+          "predicate": false,
+          "status_code": 200,
+          "request_id": "32190efc-c210-490b-b4da-fe9eadd4074d",
+          "client_observed_ms": 16.557,
+          "server_observed_ms": null,
+          "server_observed_note": "absent: the RequestTimer is off unless REQUEST_TIMER_ENABLED was set when the application was CONSTRUCTED (the flag is read once, at import of the guard-ordering module), and the header is never written on the disabled path",
+          "events": []
+        },
+        "debug": {
+          "level": "DEBUG",
+          "predicate": true,
+          "status_code": 200,
+          "request_id": "e9a40c52-a381-4546-b86b-6f33693aa330",
+          "client_observed_ms": 18.208,
+          "server_observed_ms": null,
+          "server_observed_note": "absent: the RequestTimer is off unless REQUEST_TIMER_ENABLED was set when the application was CONSTRUCTED (the flag is read once, at import of the guard-ordering module), and the header is never written on the disabled path",
+          "events": [
+            {
+              "method": "GET",
+              "path": "/api/v1/users/me",
+              "event": "attack_detection_skipped_body_scan_for_method",
+              "level": "debug",
+              "logger": "src.app.middleware.attack_detection",
+              "timestamp": "2026-10-19T15:15:34.269086Z"
+            }
+          ]
+        }
+      },
+      "body_scan_branch": "skipped",
+      "selected_branch": "no_attack",
+      "detected": []
+    },
+    {
+      "case": "get_user_agent_command",
+      "method": "GET",
+      "path": "/api/v1/users/me",
+      "has_body": false,
+      "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ; id",
+      "arms": {
+        "info": {
+          "level": "INFO",
+          "predicate": false,
+          "status_code": 400,
+          "request_id": "cc56bde2-af34-40ea-93c8-aa7c76fa42c0",
+          "client_observed_ms": 12.711,
+          "server_observed_ms": null,
+          "server_observed_note": "absent: the RequestTimer is off unless REQUEST_TIMER_ENABLED was set when the application was CONSTRUCTED (the flag is read once, at import of the guard-ordering module), and the header is never written on the disabled path",
+          "events": [
+            {
+              "type": "command_injection",
+              "pattern": "command_injection",
+              "location": "header:user-agent",
+              "ip": "127.0.0.1",
+              "path": "/api/v1/users/me",
+              "mode": "block",
+              "event": "attack_detected",
+              "level": "warning",
+              "logger": "src.app.middleware.attack_detection",
+              "timestamp": "2026-10-19T15:15:34.289972Z"
+            }
+          ]
+        },
+        "debug": {
+          "level": "DEBUG",
+          "predicate": true,
+          "status_code": 400,
+          "request_id": "083d6116-d8ea-4612-b497-e1d814cbdb9b",
+          "client_observed_ms": 12.887,
+          "server_observed_ms": null,
+          "server_observed_note": "absent: the RequestTimer is off unless REQUEST_TIMER_ENABLED was set when the application was CONSTRUCTED (the flag is read once, at import of the guard-ordering module), and the header is never written on the disabled path",
+          "events": [
+            {
+              "method": "GET",
+              "path": "/api/v1/users/me",
+              "event": "attack_detection_skipped_body_scan_for_method",
+              "level": "debug",
+              "logger": "src.app.middleware.attack_detection",
+              "timestamp": "2026-10-19T15:15:34.302704Z"
+            },
+            {
+              "type": "command_injection",
+              "pattern": "command_injection",
+              "location": "header:user-agent",
+              "ip": "127.0.0.1",
+              "path": "/api/v1/users/me",
+              "mode": "block",
+              "event": "attack_detected",
+              "level": "warning",
+              "logger": "src.app.middleware.attack_detection",
+              "timestamp": "2026-10-19T15:15:34.304584Z"
+            }
+          ]
+        }
+      },
+      "body_scan_branch": "skipped",
+      "selected_branch": "header:user-agent",
+      "detected": [
+        {
+          "type": "command_injection",
+          "pattern": "command_injection",
+          "location": "header:user-agent"
+        }
+      ]
+    }
+  ],
+  "stable_facts": [
+    {
+      "case": "get_bodyless",
+      "method": "GET",
+      "path": "/api/v1/users/me",
+      "body_scan_branch": "skipped",
+      "selected_branch": "no_attack",
+      "detected": [],
+      "predicate_at_info": false,
+      "predicate_at_debug": true,
+      "status_at_info": 200,
+      "status_at_debug": 200,
+      "events_at_info": [],
+      "events_at_debug": [
+        "attack_detection_skipped_body_scan_for_method"
+      ]
+    },
+    {
+      "case": "post_body_benign",
+      "method": "POST",
+      "path": "/api/v1/posts/by-user/e2etestuser",
+      "body_scan_branch": "entered",
+      "selected_branch": "no_attack",
+      "detected": [],
+      "predicate_at_info": false,
+      "predicate_at_debug": true,
+      "status_at_info": 201,
+      "status_at_debug": 201,
+      "events_at_info": [],
+      "events_at_debug": []
+    },
+    {
+      "case": "post_body_sqli",
+      "method": "POST",
+      "path": "/api/v1/posts/by-user/e2etestuser",
+      "body_scan_branch": "entered",
+      "selected_branch": "request_body",
+      "detected": [
+        {
+          "type": "sql_injection",
+          "pattern": "sql_union_select",
+          "location": "request_body"
+        }
+      ],
+      "predicate_at_info": false,
+      "predicate_at_debug": true,
+      "status_at_info": 400,
+      "status_at_debug": 400,
+      "events_at_info": [
+        "attack_detected"
+      ],
+      "events_at_debug": [
+        "attack_detected"
+      ]
+    },
+    {
+      "case": "get_user_agent_benign_pixel",
+      "method": "GET",
+      "path": "/api/v1/users/me",
+      "body_scan_branch": "skipped",
+      "selected_branch": "no_attack",
+      "detected": [],
+      "predicate_at_info": false,
+      "predicate_at_debug": true,
+      "status_at_info": 200,
+      "status_at_debug": 200,
+      "events_at_info": [],
+      "events_at_debug": [
+        "attack_detection_skipped_body_scan_for_method"
+      ]
+    },
+    {
+      "case": "get_user_agent_command",
+      "method": "GET",
+      "path": "/api/v1/users/me",
+      "body_scan_branch": "skipped",
+      "selected_branch": "header:user-agent",
+      "detected": [
+        {
+          "type": "command_injection",
+          "pattern": "command_injection",
+          "location": "header:user-agent"
+        }
+      ],
+      "predicate_at_info": false,
+      "predicate_at_debug": true,
+      "status_at_info": 400,
+      "status_at_debug": 400,
+      "events_at_info": [
+        "attack_detected"
+      ],
+      "events_at_debug": [
+        "attack_detected",
+        "attack_detection_skipped_body_scan_for_method"
+      ]
+    }
+  ],
+  "verdict": {
+    "statement": "The guard is evaluated on the real stack and closes at INFO: the bodyless GET emits the skip event at DEBUG and none at INFO, the POST's body is scanned and a SQLi body is detected in request_body, and the user-agent that carries the command in command position is detected in header:user-agent while the one that carries the same substring mid-word is not detected at all.",
+    "body_scan_branch": {
+      "get_bodyless": "skipped",
+      "post_body_benign": "entered",
+      "post_body_sqli": "entered",
+      "get_user_agent_benign_pixel": "skipped",
+      "get_user_agent_command": "skipped"
+    },
+    "selected_branch": {
+      "get_bodyless": "no_attack",
+      "post_body_benign": "no_attack",
+      "post_body_sqli": "request_body",
+      "get_user_agent_benign_pixel": "no_attack",
+      "get_user_agent_command": "header:user-agent"
+    },
+    "detected": {
+      "get_bodyless": [],
+      "post_body_benign": [],
+      "post_body_sqli": [
+        {
+          "type": "sql_injection",
+          "pattern": "sql_union_select",
+          "location": "request_body"
+        }
+      ],
+      "get_user_agent_benign_pixel": [],
+      "get_user_agent_command": [
+        {
+          "type": "command_injection",
+          "pattern": "command_injection",
+          "location": "header:user-agent"
+        }
+      ]
+    }
+  },
+  "limits": [
+    "The requests are driven in-process over ASGITransport, so the application's lifespan never runs. The script therefore installs the logging configuration itself, and asserts that the bound logger is a LevelAwareBoundLogger -- without that the predicate would be structurally always True and every assertion here would be vacuous.",
+    "The server-side clock is absent unless REQUEST_TIMER_ENABLED was set when the application was constructed; the reason for its absence is recorded per request rather than papered over. No latency threshold is applied to either clock.",
+    "The attack-detection mode is read from the running configuration, so a deployment configured for 'log' or 'ban' is reported on its own terms rather than being forced into 'block'."
+  ]
+}

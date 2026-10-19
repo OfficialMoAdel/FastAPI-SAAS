@@ -68,8 +68,48 @@ Two fairness controls that are load-bearing, not hygiene
    reintroduce the cross-arm leak that (1) exists to prevent: that leak is in
    the USER CACHE (`user:*`), and `SECURITY_KEY_PATTERNS` deliberately does not
    match it. The two are orthogonal key families. An earlier version of this
-    file claimed the harness "needs no Redis access at all"; that was true of the
-    measured requests and false of the logins, and the login is what fails first.
+     file claimed the harness "needs no Redis access at all"; that was true of the
+     measured requests and false of the logins, and the login is what fails first.
+4. THE TENANT IS A FIXTURE, AND IT IS RECORDED. `--tenant` names the tenant
+   slug the requests address and the seeded accounts belong to; both arms MUST
+   use the same one, because the question is whether one commit serves the
+   request faster than the other, not whether two different tenants do. The
+   value is recorded per arm in the artefact, so the environment a figure was
+   taken in is part of the figure.
+
+   Why it is a parameter rather than a constant: the tenant that existed when
+   the earlier attempts ran (slug `system`) is no longer in the database. The
+   environment changed underneath that evidence -- the `system` tenant is gone,
+   the seeded accounts are gone, and the tier rows are now named `Free`/`Pro`
+   where they were `free`/`pro` -- so a new run is NOT a reproduction of the
+   earlier attempts and is not offered as one. It is a new measurement, in the
+   environment that exists now, of the same question.
+
+
+How the arms are driven: INTERLEAVED
+----------------------------------
+The arms are never in flight at the same time -- one host, 4 CPUs, one database
+pool, and running them together would CREATE the confounder this design exists
+to measure rather than create. But they are also not measured in blocks. A
+block -- the whole of the before arm's repetitions, then the whole of the
+after arm's -- makes every millisecond of host drift between the two blocks
+indistinguishable from the difference between the two arms.
+
+The failure is not hypothetical. A separate measurement session on this same
+host recorded a monotonic inflation across the repetitions of a single
+non-interleaved run (149 us -> 529 us), and that run had to be discarded as
+host drift rather than published as a result.
+
+So the arms ALTERNATE: repetition 1 of before, repetition 1 of after,
+repetition 2 of before, and so on. Host drift now moves both arms together
+instead of moving one arm relative to the other. Both arms are also PREPARED
+(seed, log in, warm) before EITHER is measured, because an arm measured while
+the other is still cold is measured under different conditions -- the same
+confound as measuring in blocks, in a smaller window.
+
+The report's key set is unchanged by this, so a new run stays comparable with
+the preserved reports of the earlier attempts in
+`perf-results/RESULT-20261015-vpbi/`.
 
 How the loop-lag quadrant is folded in
 --------------------------------------
@@ -173,6 +213,13 @@ class Arm:
     base_url: str
     worktree: str
     arm_json: str
+    #: The tenant the arm's requests address, and the tenant its seeded
+    #: accounts belong to. It is a FIXTURE choice, not a measurement knob: both
+    #: arms must address the SAME tenant, because the question is whether one
+    #: commit serves the request faster than the other, not whether two
+    #: different tenants do. It is recorded in the artefact so the environment
+    #: a figure was taken in is part of the figure.
+    tenant: str = PROBE_TENANT
     accounts: list[str] = field(default_factory=list)
     #: One token PER ACCOUNT, not one token for the arm. Tier pro is
     #: (1000, 3600) PER USER PER PATH, so 10000 requests driven by a single
@@ -202,8 +249,8 @@ class Arm:
         return _dist(self.client_ms)
 
 
-def _headers(*, token: str = "") -> dict[str, str]:
-    headers = {"User-Agent": PROBE_USER_AGENT, "X-Tenant-ID": PROBE_TENANT}
+def _headers(*, token: str = "", tenant: str = PROBE_TENANT) -> dict[str, str]:
+    headers = {"User-Agent": PROBE_USER_AGENT, "X-Tenant-ID": tenant}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
@@ -229,7 +276,7 @@ async def _connect() -> Any:
     return connection
 
 
-async def seed_accounts(*, arm: str, count: int, tier: str) -> list[str]:
+async def seed_accounts(*, arm: str, count: int, tier: str, tenant: str = PROBE_TENANT) -> list[str]:
     """Insert FRESH users, so neither arm inherits the other's cache.
 
     Every Python-side column default is set explicitly. The ORM supplies them at
@@ -243,10 +290,18 @@ async def seed_accounts(*, arm: str, count: int, tier: str) -> list[str]:
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode()
     connection = await _connect()
     try:
-        tenant_id = await connection.fetchval("SELECT id FROM tenants WHERE slug = $1", PROBE_TENANT)
+        tenant_id = await connection.fetchval("SELECT id FROM tenants WHERE slug = $1", tenant)
         if tenant_id is None:
-            raise RuntimeError(f"no tenant with slug {PROBE_TENANT!r} exists; cannot seed")
-        tier_id = await connection.fetchval("SELECT id FROM tier WHERE name = $1", tier)
+            raise RuntimeError(f"no tenant with slug {tenant!r} exists; cannot seed")
+        # Case-insensitive, because the app resolves the tier the same way:
+        # `rate_policy.py` lowercases the tier name before looking it up in
+        # TIER_RATE_LIMITS, and `resolve_entitlement` lowercases it too. A
+        # tier row named `Pro` and one named `pro` are the same tier to the
+        # application, so they must be the same tier to the fixture. The rows
+        # in this database are named `Free`/`Pro`.
+        tier_id = await connection.fetchval(
+            "SELECT id FROM tier WHERE lower(name) = lower($1)", tier
+        )
         if tier_id is None:
             raise RuntimeError(
                 f"tier {tier!r} does not exist. Both arms must run at the SAME "
@@ -319,7 +374,7 @@ async def login(arm: Arm) -> None:
                 "/api/v1/account/login",
                 content=f"username={username}&password={password}",
                 headers={
-                    **_headers(),
+                    **_headers(tenant=arm.tenant),
                     "Content-Type": "application/x-www-form-urlencoded",
                 },
             )
@@ -346,7 +401,7 @@ async def _drive_once(arm: Arm, *, count: int, concurrency: int, collect: bool) 
             async with httpx.AsyncClient(base_url=arm.base_url, timeout=120.0) as client:
                 started = time.perf_counter()
                 response = await client.get(
-                    "/api/v1/users/me", headers=_headers(token=token)
+                    "/api/v1/users/me", headers=_headers(token=token, tenant=arm.tenant)
                 )
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
         status = response.status_code
@@ -371,14 +426,51 @@ async def _drive_once(arm: Arm, *, count: int, concurrency: int, collect: bool) 
     await asyncio.gather(*(one() for _ in range(count)))
 
 
-async def measure(arm: Arm, *, requests_per_rep: int, repetitions: int, concurrency: int) -> None:
-    for _ in range(repetitions):
-        c0, s0 = len(arm.client_ms), len(arm.server_ms)
-        await _drive_once(
-            arm, count=requests_per_rep, concurrency=concurrency, collect=True
-        )
-        arm.per_rep_client.append(arm.client_ms[c0:])
-        arm.per_rep_server.append(arm.server_ms[s0:])
+async def measure_one_rep(arm: Arm, *, requests_per_rep: int, concurrency: int) -> None:
+    """One repetition of one arm: drive it, and keep its samples as a block.
+
+    The block is what GATE A(9) reads -- the repetition form is computed from
+    the per-repetition lists -- so a repetition has to stay separable.
+    """
+    c0, s0 = len(arm.client_ms), len(arm.server_ms)
+    await _drive_once(
+        arm, count=requests_per_rep, concurrency=concurrency, collect=True
+    )
+    arm.per_rep_client.append(arm.client_ms[c0:])
+    arm.per_rep_server.append(arm.server_ms[s0:])
+
+
+async def measure_interleaved(
+    arms: list[Arm], *, requests_per_rep: int, repetitions: int, concurrency: int
+) -> None:
+    """Drive the arms ALTERNATELY: one repetition each, in lockstep.
+
+    The arms are never in flight at the same time -- one host, one database
+    pool, and running them together would CREATE the confounder this design
+    exists to measure rather than create. But they are also not measured in
+    blocks: a block makes every millisecond of host drift between the two
+    blocks indistinguishable from the difference between the two arms.
+
+    The failure is not hypothetical. A separate measurement session on this
+    same host recorded a monotonic inflation across the repetitions of a
+    single NON-interleaved run (149 us -> 529 us), and that run had to be
+    discarded as host drift rather than published as a result. Interleaving
+    is the fix: host drift now moves both arms together instead of moving
+    one arm relative to the other.
+
+    Alternating, not overlapping: repetition 1 of before, repetition 1 of
+    after, repetition 2 of before, and so on.
+    """
+    for repetition in range(repetitions):
+        for arm in arms:
+            await measure_one_rep(
+                arm, requests_per_rep=requests_per_rep, concurrency=concurrency
+            )
+            print(
+                f"AB {arm.name}: repetition {repetition + 1}/{repetitions} done "
+                f"(pooled_n={len(arm.client_ms)})",
+                flush=True,
+            )
 
 
 def _dist(samples: list[float]) -> dict[str, Any]:
@@ -478,8 +570,17 @@ def _classify(client_ratio: float | None, server_ratio: float | None) -> dict[st
     }
 
 
-async def run_arm(arm: Arm, args: argparse.Namespace) -> None:
-    arm.accounts = await seed_accounts(arm=arm.name, count=args.users, tier=args.tier)
+async def prepare_arm(arm: Arm, args: argparse.Namespace) -> None:
+    """Get one arm ready to be measured: fresh identities, a token, a warm cache.
+
+    Preparation is SEPARATE from measurement so that both arms can be prepared
+    before either is measured. An arm measured while the other arm is still
+    cold is measured under different conditions, which is the same confound as
+    measuring the arms in blocks, in a smaller window.
+    """
+    arm.accounts = await seed_accounts(
+        arm=arm.name, count=args.users, tier=args.tier, tenant=arm.tenant
+    )
     print(f"AB {arm.name}: seeded {len(arm.accounts)} fresh accounts at tier {args.tier}", flush=True)
     await login(arm)
     print(f"AB {arm.name}: minted its own token", flush=True)
@@ -488,17 +589,6 @@ async def run_arm(arm: Arm, args: argparse.Namespace) -> None:
     # for having no warm-up exclusion.
     await _drive_once(arm, count=args.warmup, concurrency=args.concurrency, collect=False)
     print(f"AB {arm.name}: warmed {args.warmup} requests (not collected)", flush=True)
-    await measure(
-        arm,
-        requests_per_rep=args.requests_per_rep,
-        repetitions=args.repetitions,
-        concurrency=args.concurrency,
-    )
-    print(
-        f"AB {arm.name}: measured pooled_n={len(arm.client_ms)} "
-        f"reps={len(arm.per_rep_client)} statuses={arm.status_counts}",
-        flush=True,
-    )
 
 
 def build_artefact(arms: list[Arm], args: argparse.Namespace) -> dict[str, Any]:
@@ -540,6 +630,7 @@ def build_artefact(arms: list[Arm], args: argparse.Namespace) -> dict[str, Any]:
                 "worktree": arm.worktree,
                 "fresh_accounts": len(arm.accounts),
                 "tier": args.tier,
+                "tenant": arm.tenant,
                 "client_observed_ms": arm.stats(),
                 "server_side_ms": _dist(arm.server_ms),
                 "repetition_form_client": _repetition_form(arm.per_rep_client),
@@ -603,6 +694,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--before-arm-json", required=True)
     parser.add_argument("--after-arm-json", required=True)
     parser.add_argument("--tier", default="pro")
+    parser.add_argument(
+        "--tenant",
+        default=PROBE_TENANT,
+        help=(
+            "The tenant slug the requests address and the seeded accounts "
+            "belong to. Both arms MUST use the same one: the question is "
+            "whether one commit serves the request faster than the other, "
+            "not whether two different tenants do."
+        ),
+    )
     parser.add_argument("--users", type=int, default=64)
     parser.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
     parser.add_argument("--repetitions", type=int, default=MIN_REPETITIONS)
@@ -657,17 +758,38 @@ def _fold_arm_export(arm: Arm, export: dict[str, Any]) -> None:
 
 async def amain(args: argparse.Namespace) -> dict[str, Any]:
     load_dotenv(args.env, override=True)
-    before = Arm("before", args.before_url, args.before_worktree, args.before_arm_json)
-    after = Arm("after", args.after_url, args.after_worktree, args.after_arm_json)
-    # SEQUENTIAL, never concurrent: one host, 4 CPUs, one database pool. Running
-    # the arms together would have them fight for all three, which is the
-    # confounder this whole design exists to measure rather than create.
+    before = Arm("before", args.before_url, args.before_worktree, args.before_arm_json, tenant=args.tenant)
+    after = Arm("after", args.after_url, args.after_worktree, args.after_arm_json, tenant=args.tenant)
+    # INTERLEAVED, never concurrent. The two arms are never in flight at the
+    # same time: one host, 4 CPUs, one database pool, and running the arms
+    # together would have them fight for all three, which is the confounder
+    # this whole design exists to measure rather than create. But they are
+    # also not measured in blocks: a block makes host drift between the two
+    # blocks indistinguishable from the difference between the two arms.
+    # The arms alternate -- one repetition each, in lockstep.
+    #
+    # Both arms are PREPARED first, so neither is measured while the other is
+    # still cold.
     for arm in (before, after):
-        await run_arm(arm, args)
-        # The export is folded immediately after THIS arm's run. The old order
-        # read the file after BOTH arms, which was already after the harness had
-        # written its output -- and the arm file was written on SIGTERM after
-        # that, so the loop-lag quadrant was null by construction.
+        await prepare_arm(arm, args)
+    await measure_interleaved(
+        [before, after],
+        requests_per_rep=args.requests_per_rep,
+        repetitions=args.repetitions,
+        concurrency=args.concurrency,
+    )
+    for arm in (before, after):
+        print(
+            f"AB {arm.name}: measured pooled_n={len(arm.client_ms)} "
+            f"reps={len(arm.per_rep_client)} statuses={arm.status_counts}",
+            flush=True,
+        )
+        # The export is folded after the measurement, per arm. The old order
+        # read the file after BOTH arms, which was already after the harness
+        # had written its output -- and the arm file was written on SIGTERM
+        # after that, so the loop-lag quadrant was null by construction. The
+        # serving script now also writes the export LIVE every 5 s, so the
+        # file is readable without a SIGTERM at all.
         export = await _read_arm_export(arm)
         _fold_arm_export(arm, export)
         print(

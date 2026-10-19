@@ -57,6 +57,34 @@ src/
 # `__main__`: a developer `.env` in `src/` is gitignored by design, so a
 # module-level load_dotenv(override=True) would clobber the environment
 # tests/conftest.py sets for the WHOLE session.
+# src/benchmarks/l12_pool_ratios.py, src/benchmarks/l13_body_offload.py —
+# operator-run harnesses RECOVERED from one machine's home directory into the
+# tree, because the artefacts they produced recorded about themselves that the
+# driver lived OFF-repo ("this measurement is not reproducible from git and
+# would fail the Phase 0 provenance gate"). A measurement whose instrument
+# exists only on one box's disk cannot be re-checked by anyone else, so the
+# DRIVER is the fix, not the prose. Their published reports keep
+# `instrument.in_repo: false` UNCHANGED: that was true of the run, and
+# rewriting a recorded fact to match the present is how a stored result stops
+# being a record. The raw driver output now sits beside each report under
+# `raw/`, and tests/unit/benchmarks/test_l12_l13_harnesses.py proves the
+# PUBLISHED figures are the HARNESS's figures — a curated report that cannot
+# be re-derived from the instrument that produced it is a story, not evidence.
+# src/benchmarks/s8_logger_call_counter.py — operator-run COUNTER, not a
+# microbenchmark: it counts how many times the attack-scan method gate
+# evaluates its logging predicate and how many times it calls logger.debug,
+# on a bodyless GET, at DEBUG / INFO / NOTSET. It exists because S-8's own
+# arithmetic is 0 us (0.00 % of the 4.09 ms uncontended floor, 0.00 % of the
+# 740 ms p95), and a claim whose quantity is not a duration has to be
+# measured with an instrument that measures THAT quantity — a microbenchmark
+# would have produced a statement about the harness. Two things make the
+# counts mean something, and both are asserted rather than assumed: the GUARD
+# is evaluated once per request in every arm (otherwise a difference in the
+# debug count could be explained by the call site being reached a different
+# number of times), and the counter is run against setup_logging(), because
+# structlog's ambient default has a structurally always-True predicate and
+# would make every arm report a debug call. It calls NO clock, so it is
+# deliberately absent from the microbenchmark gate's ALLOWED_RAW_TIMERS.
 # src/benchmarks/run_manifest.py — the perf run provenance gate, invoked as
 # `python -m src.benchmarks.run_manifest` by scripts/run_perf_baseline.sh. It
 # REFUSES to write a manifest unless every file in HARNESS_FILES is tracked and
@@ -129,6 +157,25 @@ src/
    said so in one place and not the other. Run the API before describing it, and
    remember a `>=` pin is a FLOOR: the behaviour you measured is the behaviour
    of the version that happened to be installed, so say which one.
+❌ DON'T: publish a curated report whose figures cannot be re-derived from the
+   instrument that produced it. A report may be a readable summary, but the
+   chain raw driver output -> published figure -> verdict has to be
+   EXECUTABLE, or the summary is the only copy of the measurement — and a
+   summary is precisely what a later reader cannot check. L-12 and L-13 were
+   published as curated reports whose drivers were off-repo, so nothing could
+   re-derive them; the drivers are now in the tree and the chain is pinned by
+   an oracle, and the two reports' `instrument.in_repo: false` are still
+    `false` because that is what the run was.
+❌ DON'T: substantiate a claim whose quantity is not a duration with a
+   duration. S-8's "moves capacity, not p95" arithmetic is 0 us — 0.00 % of
+   the 4.09 ms uncontended floor and 0.00 % of the 740 ms p95 — so a
+   microbenchmark asked to confirm it produces a number about the HARNESS,
+   and a number about the harness is how a zero claim grows a false
+   non-zero. Measure the quantity the claim is actually about: S-8's is a
+   COUNT of guard evaluations and logger.debug calls, and
+   `src/benchmarks/s8_logger_call_counter.py` measures exactly that, against
+   the real logging stack, refusing to publish a run whose arms disagree.
+
 ❌ DON'T: retune a declared ceiling to fit a fresh measurement. A `Ceiling` is
    a specification chosen in advance; editing it so the new number passes is
    the `new < old` form `src/benchmarks/protocol.py` bans, whichever direction

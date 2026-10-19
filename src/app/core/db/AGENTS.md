@@ -41,6 +41,35 @@ async def bad_example():
         session.execute(...)
 ```
 
+### Two ways to obtain a session — both are pinned by a gate
+
+There are TWO session constructors in this package, and they are the
+same lifecycle in two shapes:
+
+```python
+# core/db/database.py
+async_get_db()                     # a FastAPI dependency: `Depends(async_get_db)`
+get_db_context()                   # an async context manager: `async with get_db_context() as db:`
+```
+
+`get_db_context()` exists because the auth path stopped taking a
+session as a dependency parameter: `get_current_user` is now a pure
+delegator and the shared resolver (`src/app/api/deps/auth.py::resolve_principal`)
+opens the session itself. That refactor left the C-3 gate in
+`scripts/perf-validation/isomorphism_validator.py` modelling only ONE of
+the two shapes, so its pinned caller set drifted and the other shape was
+never checked at all.
+
+The gate now enumerates both — `C3_DB_CALLERS` (holders) and
+`C3_SESSION_OPENERS` (openers) — and both are closed worlds: a new
+member of either class fails a gate until it is classified.
+
+❌ DON'T: add a session to an except handler. The 401 path must not
+touch the database. A `rollback` is the one permitted use (a rollback on
+a session that never connected performs zero pool checkouts, where a
+query performs one) and it is permitted because that was measured, not
+because it is convenient.
+
 ### DO: Use declarative base pattern
 
 ```python

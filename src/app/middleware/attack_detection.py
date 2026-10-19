@@ -117,6 +117,17 @@ COMBINED_ATTACK_RE: re.Pattern[bytes] = re.compile(
 #   xss_jsuri->"javascript" | path_dotdot->"../" | path_enc->"%2e%2e%2f" |
 #   path_penc->"%2e%2e/" | cmd_inj->";"/"||"/"&&" (one separator is required) |
 #   ssrf_cloud->"169.254.169.254".
+#
+# C-2 (FastAPI_saas-niix): the cmd_inj entry is a CONJUNCTION, not a single
+# literal.  The group matches a separator FOLLOWED BY a command word, so a
+# separator alone is necessary but far from sufficient — and a browser
+# user-agent carries ";" on nearly every request ("Linux; Android 14").  A
+# prefilter that admitted on the bare separator therefore ran the full
+# 17-group regex over ordinary traffic.  The three separators stay in the
+# global set above (they remain NECESSARY for cmd_inj, and the global set is
+# what the cross-group oracle `LC-C2-OR` reads); what changes is that they
+# no longer admit content ON THEIR OWN.  The group's own gate below decides.
+_CMD_INJ_SEPARATORS: frozenset[bytes] = frozenset({b";", b"||", b"&&"})
 _PREFILTER_LITERALS_BYTES: frozenset[bytes] = frozenset(
     [
         b"union",
@@ -137,6 +148,76 @@ _PREFILTER_LITERALS_BYTES: frozenset[bytes] = frozenset(
     ]
 )
 
+
+def _extract_named_group(pattern: bytes, name: bytes) -> bytes | None:
+    """The sub-pattern of the named group `name` inside `pattern`.
+
+    Counts parentheses to find the group's end.  It does not understand
+    character classes or escaped parentheses; it is used for the cmd_inj
+    group, whose sub-pattern contains neither, and it returns None rather
+    than guessing when the shape is not what it expects.
+    """
+    marker = b"(?P<" + name + b">"
+    start = pattern.find(marker)
+    if start < 0:
+        return None
+    body_start = start + len(marker)
+    depth = 1
+    index = body_start
+    while index < len(pattern):
+        char = pattern[index : index + 1]
+        if char == b"(":
+            depth += 1
+        elif char == b")":
+            depth -= 1
+            if depth == 0:
+                return pattern[body_start:index]
+        index += 1
+    return None
+
+
+def _build_cmd_inj_gate() -> re.Pattern[bytes] | None:
+    """Compile the cmd_inj group's own conjunction as a standalone pattern.
+
+    It is EXTRACTED from the production regex rather than written out again
+    here, so it cannot drift from the group it mirrors.  A second regex is
+    used instead of a hand-written byte scan because the regex tries every
+    POSITION: "|||cat" matches (the "||" at index 1), and a non-overlapping
+    search for "||" would not find that occurrence — a missed verdict.
+    """
+    sub = _extract_named_group(COMBINED_ATTACK_RE.pattern, b"cmd_inj")
+    if sub is None:
+        return None
+    try:
+        return re.compile(b"(?:" + sub + b")", re.IGNORECASE | re.MULTILINE)
+    except re.error:  # pragma: no cover - precaution: fail safe, never fail boot
+        return None
+
+
+_CMD_INJ_GATE: re.Pattern[bytes] | None = _build_cmd_inj_gate()
+
+# The literals that admit content on their own — the global set minus the
+# three separators, which the cmd_inj gate decides instead.  If the gate
+# could not be built, this degrades to the FULL set, so the prefilter
+# admits on the bare separator exactly as it did before: a degradation that
+# is safe, and visible here rather than silent.
+_PREFILTER_SINGLE_LITERALS: frozenset[bytes] = (
+    _PREFILTER_LITERALS_BYTES
+    if _CMD_INJ_GATE is None
+    else _PREFILTER_LITERALS_BYTES - _CMD_INJ_SEPARATORS
+)
+
+
+def _cmd_inj_gate_hit(lowered: bytes) -> bool:
+    """Does the content contain the cmd_inj conjunction (separator + command)?"""
+    gate = _CMD_INJ_GATE
+    if gate is None:  # pragma: no cover - precaution: admit and let the full regex decide
+        return True
+    try:
+        return gate.search(lowered) is not None
+    except Exception:  # pragma: no cover - precaution: admit and let the full regex decide
+        return True
+
 try:
     import ahocorasick as _ahocorasick
 except ImportError:  # pragma: no cover - precaution: stdlib fallback below
@@ -151,7 +232,7 @@ def _build_prefilter_automaton() -> object | None:
         automaton = _ahocorasick.Automaton()
         # str automaton over latin-1: pure-ASCII literals make a latin-1
         # decode of ASCII-folded bytes exactly equivalent to a bytes search.
-        for literal in _PREFILTER_LITERALS_BYTES:
+        for literal in _PREFILTER_SINGLE_LITERALS:
             automaton.add_word(literal.decode("latin-1"), literal)
         automaton.make_automaton()
         return automaton  # type: ignore[no-any-return]  # untyped C extension
@@ -169,6 +250,10 @@ def _attack_prefilter_hit(content: bytes) -> bool:
     chain when pyahocorasick is unavailable or the automaton failed to build.
     Read-only against the shared automaton, so safe from request threads and
     the scan executor.
+
+    The cmd_inj group is decided by its OWN gate (separator AND command
+    word), so a separator on its own no longer admits content — see the C-2
+    note above the literal set.
     """
     lowered = content.lower()
     automaton = _PREFILTER_AUTOMATON
@@ -176,13 +261,13 @@ def _attack_prefilter_hit(content: bytes) -> bool:
         try:
             for _ in automaton.iter(lowered.decode("latin-1")):  # type: ignore[union-attr, attr-defined]  # untyped C extension
                 return True
-            return False
+            return _cmd_inj_gate_hit(lowered)
         except Exception:  # pragma: no cover - precaution: degrade to fallback
             pass
-    for literal in _PREFILTER_LITERALS_BYTES:
+    for literal in _PREFILTER_SINGLE_LITERALS:
         if literal in lowered:
             return True
-    return False
+    return _cmd_inj_gate_hit(lowered)
 
 
 # Unicode characters commonly used to bypass regex-based detection.

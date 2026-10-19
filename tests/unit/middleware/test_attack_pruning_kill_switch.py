@@ -340,12 +340,62 @@ class TestThePrefilterCannotHideAMatchTheRegexWouldFind:
 
         Behavioural, because the automaton is an opaque object: every literal
         must be found by the real code path, not merely present in the set.
+
+        Since C-2 (FastAPI_saas-niix) the set the automaton is built from is
+        ``_PREFILTER_SINGLE_LITERALS`` -- the global set minus the three
+        command-injection separators, which moved into their own conjunction
+        gate. The intent of this test is unchanged ("the automaton is in step
+        with the set the code consults"); the set it names changed, so it
+        names the consulted one.
         """
-        for literal in sorted(ad._PREFILTER_LITERALS_BYTES):
+        for literal in sorted(ad._PREFILTER_SINGLE_LITERALS):
             assert ad._attack_prefilter_hit(literal.lower()), (
                 f"{literal!r} is registered but the prefilter does not find it; "
                 "the automaton is built at import time, so it is out of step with "
                 "the literal set"
+            )
+
+    def test_the_separators_are_not_in_the_automaton_but_the_gate_covers_them(self) -> None:
+        """C-2: the three separators are NECESSARY for the cmd_inj branch but
+        not SUFFICIENT, so they must not admit content on their own.
+
+        This is the shape the change was made for: a browser user-agent
+        carries ";" on nearly every request, and a bare separator made the
+        full 17-group regex run on all of them. The separator alone must now
+        MISS the prefilter, and the separator WITH a command word must still
+        HIT -- otherwise the change would have cost a detection.
+        """
+        for separator in sorted(ad._CMD_INJ_SEPARATORS):
+            assert separator not in ad._PREFILTER_SINGLE_LITERALS, (
+                f"{separator!r} is in the automaton's set, so it admits content on "
+                "its own -- that is the behaviour C-2 removed"
+            )
+            assert not ad._attack_prefilter_hit(separator), (
+                f"a bare {separator!r} must not admit content: it is necessary for "
+                "the cmd_inj branch but not sufficient"
+            )
+            assert ad._attack_prefilter_hit(separator + b" cat"), (
+                f"{separator!r} followed by a command word must still be admitted, "
+                "or the cmd_inj branch has lost its detection"
+            )
+
+    def test_the_effective_set_is_the_global_set_minus_the_separators(self) -> None:
+        """The effective set is DERIVED from the global set at import. Nothing
+        re-derives it later, so a future edit that adds a literal to the global
+        set without the effective set following would leave that literal
+        registered but not consulted -- the same "looks live in review and is
+        consulted by nothing" failure the automaton test above exists to
+        catch, one level up.
+
+        The degraded form is the fail-safe: if the conjunction gate could not
+        be built, the effective set is the WHOLE global set, because a gate
+        that cannot be built must not be allowed to prune anything.
+        """
+        if ad._CMD_INJ_GATE is None:
+            assert ad._PREFILTER_SINGLE_LITERALS == ad._PREFILTER_LITERALS_BYTES
+        else:
+            assert ad._PREFILTER_SINGLE_LITERALS == (
+                ad._PREFILTER_LITERALS_BYTES - ad._CMD_INJ_SEPARATORS
             )
 
     @pytest.mark.parametrize(
@@ -353,7 +403,7 @@ class TestThePrefilterCannotHideAMatchTheRegexWouldFind:
         [
             (b"<", b"javascript:"),
             (b";", b"<script>"),
-            (b"union", b";cat"),
+            (b"union", b"exec xp_cmdshell"),
         ],
     )
     def test_dropping_a_literal_loses_a_real_detection(
@@ -370,15 +420,47 @@ class TestThePrefilterCannotHideAMatchTheRegexWouldFind:
         prevent, so if this test ever stops failing, the invariant has stopped
         meaning anything.
 
-        Both the set AND the automaton are patched: the automaton is the
-        primary code path, so patching only the set would leave the original 15
-        literals in force and this test would prove nothing.
+        Both sets AND the automaton are patched. The automaton is the primary
+        code path, so patching only the sets would leave the original literals
+        in force and this test would prove nothing. Since C-2 the code consults
+        TWO sets -- the global one and the effective one the automaton is built
+        from -- so both are patched, or the reduction would not reach the code.
+
+        The third case is the sql_exec branch, not cmd_inj: after C-2 the
+        cmd_inj branch is protected by its own conjunction gate rather than by
+        a literal, so dropping a literal does NOT lose it. That branch carries
+        its own ratchet below.
         """
         monkeypatch.setattr(ad, "_PREFILTER_LITERALS_BYTES", frozenset({kept_literal}))
+        monkeypatch.setattr(ad, "_PREFILTER_SINGLE_LITERALS", frozenset({kept_literal}))
         monkeypatch.setattr(ad, "_PREFILTER_AUTOMATON", None)
 
         assert COMBINED_ATTACK_RE.search(lost_witness), "the regex still detects this payload"
         assert not ad._attack_prefilter_hit(lost_witness), (
             "the prefilter still sees this payload, so dropping a literal did not "
             "demonstrate the failure mode this test exists to show"
+        )
+
+    def test_the_cmd_inj_branch_is_protected_by_its_gate_not_by_a_literal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """C-2 moved the cmd_inj gate out of the literal set and into a
+        conjunction, so this branch is no longer protected by a literal. It has
+        its own protection, and this is the ratchet for IT: reduce the literal
+        set to nothing at all and the cmd_inj detection survives.
+
+        The previous ratchet case claimed that dropping a literal loses the
+        cmd_inj detection. After C-2 that is FALSE -- leaving it in place
+        would have been a test asserting the wrong thing -- so the branch that
+        stopped being literal-protected got its own ratchet instead, and the
+        case that was removed was replaced with one that is still true.
+        """
+        monkeypatch.setattr(ad, "_PREFILTER_LITERALS_BYTES", frozenset())
+        monkeypatch.setattr(ad, "_PREFILTER_SINGLE_LITERALS", frozenset())
+        monkeypatch.setattr(ad, "_PREFILTER_AUTOMATON", None)
+
+        assert COMBINED_ATTACK_RE.search(b";cat"), "the regex still detects this payload"
+        assert ad._attack_prefilter_hit(b";cat"), (
+            "the cmd_inj branch is protected by the conjunction gate, not by a "
+            "literal, so emptying the literal set must not lose it"
         )

@@ -586,6 +586,31 @@ _CORPUS: list[tuple[str, bytes]] = [
 ]
 
 
+# --------------------------------------------------------------------------
+# C-2 (FastAPI_saas-niix): the BENIGN user-agent whose reason was corrected
+# --------------------------------------------------------------------------
+#
+# The reason this user-agent is benign is the POSITION of "id", not its
+# absence. "Android" contains "id" (A-n-d-r-o-i-d); "Pixel" does not. The
+# "id" inside "Android" is mid-word, so it is never a token a separator
+# introduces, and no command word follows any ";" at a word boundary -- so
+# the cmd_inj branch does not match and the full regex finds nothing.
+#
+# The reason is carried HERE, as a case the corpus CHECKS, because a reason
+# written only in prose is a reason nobody checks. A future reader who
+# "fixes" the wrong token -- dropping the "id" out of Android, or appending
+# a command to the UA -- breaks these tests loudly instead of quietly
+# changing what the corpus means.
+_PIXEL_USER_AGENT = (
+    b"Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36"
+    b" (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
+)
+#: The recorded reason, as a token a test can compare against.
+_PIXEL_UA_REASON = "android_not_pixel"
+#: The command words the cmd_inj branch accepts, in the regex's own order.
+_CMD_INJ_COMMANDS: tuple[bytes, ...] = (b"cat", b"ls", b"id", b"whoami", b"ping", b"curl", b"wget")
+
+
 class TestAttackCorpusAndGap600:
     def test_corpus_covers_all_seventeen_groups(self) -> None:
         assert sorted(g for g, _ in _CORPUS) == sorted(ad._GROUP_TO_ATTACK)
@@ -645,3 +670,80 @@ class TestAttackCorpusAndGap600:
         """Even the lost payload must agree: pruned finds nothing either."""
         _assert_pruned_equals_full(monkeypatch, mw, _GAP_600)
         _assert_pruned_equals_full(monkeypatch, mw, _GAP_500_CONTROL)
+
+
+def _is_word_byte(char: int) -> bool:
+    """True for a byte that can be part of an identifier."""
+    return chr(char).isalnum() or char == 0x5F
+
+
+def _id_occurrences_at_a_word_start(payload: bytes) -> list[int]:
+    """The offsets of every "id" in `payload` that is NOT inside a word.
+
+    An "id" at a word start is a candidate command word; one that is
+    mid-word (as in "Android") can never be the token a ";" introduces.
+    """
+    lowered = payload.lower()
+    offsets: list[int] = []
+    start = 0
+    while True:
+        index = lowered.find(b"id", start)
+        if index < 0:
+            return offsets
+        before = lowered[index - 1] if index > 0 else -1
+        if before < 0 or not _is_word_byte(before):
+            offsets.append(index)
+        start = index + 1
+
+
+def _command_word_after_each_semicolon(payload: bytes) -> list[bytes]:
+    """The command word that follows each ";" at a word boundary, if any."""
+    lowered = payload.lower()
+    found: list[bytes] = []
+    start = 0
+    while True:
+        index = lowered.find(b";", start)
+        if index < 0:
+            return found
+        rest = lowered[index + 1 :].lstrip()
+        token = rest.split(b" ")[0].split(b"\t")[0].split(b"\n")[0]
+        if token in _CMD_INJ_COMMANDS:
+            found.append(token)
+        start = index + 1
+
+
+class TestTheCorrectedAndroidReasonIsInTheCorpus:
+    """C-2's acceptance: the corrected reason is a case the corpus checks.
+
+    The reason is not "Pixel has no `id`" -- it is that "Android" HAS one
+    and it sits in the wrong POSITION. These assertions are written so that
+    the wrong reason fails them.
+    """
+
+    def test_the_case_is_carried_with_its_reason(self) -> None:
+        assert _PIXEL_UA_REASON == "android_not_pixel"
+        assert b"Android" in _PIXEL_USER_AGENT
+        assert b"Pixel" in _PIXEL_USER_AGENT
+
+    def test_the_user_agent_does_carry_an_id(self) -> None:
+        """The reason is POSITION, not ABSENCE: the "id" is really there."""
+        assert b"id" in _PIXEL_USER_AGENT.lower()
+        assert b"id" not in b"pixel"
+
+    def test_every_id_in_the_user_agent_is_mid_word(self) -> None:
+        """No "id" sits at a word start, so none can be a command word."""
+        assert _id_occurrences_at_a_word_start(_PIXEL_USER_AGENT) == []
+
+    def test_no_command_word_follows_any_semicolon(self) -> None:
+        assert _command_word_after_each_semicolon(_PIXEL_USER_AGENT) == []
+
+    def test_the_user_agent_is_benign_under_the_full_regex(self, mw: Any) -> None:
+        found = [m.lastgroup for m in ad.COMBINED_ATTACK_RE.finditer(_PIXEL_USER_AGENT)]
+        assert found == [], found
+        assert _attacks(mw, _PIXEL_USER_AGENT) == []
+
+    def test_the_user_agent_pruned_agrees_with_full(
+        self, monkeypatch: pytest.MonkeyPatch, mw: Any
+    ) -> None:
+        """The differential property holds for this case too."""
+        _assert_pruned_equals_full(monkeypatch, mw, _PIXEL_USER_AGENT)

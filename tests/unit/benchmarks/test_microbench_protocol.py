@@ -140,6 +140,29 @@ ALLOWED_RAW_TIMERS: dict[str, str] = {
     ),
     "src/benchmarks/driver_count_io.py": "OPERATOR HARNESS; see census.py.",
     "src/benchmarks/prof_request_path.py": "OPERATOR HARNESS; see census.py.",
+    "src/benchmarks/l12_pool_ratios.py": (
+        "OPERATOR HARNESS measuring ARM THROUGHPUT, not a per-call cost. The quantity "
+        "is scans/second of a whole arm (inline, thread pool, process pool), so the "
+        "protocol's per-call estimator would have to be INVERTED to produce the number "
+        "under test, and an inverted estimate is a derived quantity wearing a measured "
+        "one's name. The process arm forks and runs work in a child process, which the "
+        "protocol's single in-process callable cannot express at all. The harness also "
+        "asserts the prefilter boundary BEFORE timing and refuses to report any ratio "
+        "when it does not hold - a precondition with no place in the callable model. "
+        "This is the L-12 driver recovered from /home/ansible/l12_pool_ratios.py; its "
+        "recorded artefact is perf-results/RESULT-20261016-l12/."
+    ),
+    "src/benchmarks/l13_body_offload.py": (
+        "OPERATOR HARNESS at request scale, and the protocol's request-scale runner "
+        "cannot express what this measures. measure_request_scale drives ONE client "
+        "sequentially; this harness issues each request from a FRESH loopback source IP "
+        "while cycling 250 accounts, because the rate limiter keys on IP and the "
+        "auto-ban would otherwise trip and truncate the sample. It also runs a KNEE "
+        "SWEEP over seven concurrency levels before any comparison, which needs several "
+        "requests in flight at once - sequential repetition cannot produce a knee. "
+        "This is the L-13 driver recovered from /home/ansible/l13_body_offload.py; its "
+        "recorded artefact is perf-results/RESULT-20261016-l13/."
+    ),
 }
 
 _RUNNER_CALLS = frozenset({"measure", "measure_async", "measure_request_scale"})

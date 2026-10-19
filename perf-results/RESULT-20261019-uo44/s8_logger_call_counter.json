@@ -1,0 +1,98 @@
+{
+  "schema": "s8_logger_call_counter/1",
+  "bead": "FastAPI_saas-uo44",
+  "item": "S-8",
+  "title": "The attack-scan method gate evaluates the predicate on every bodyless request and emits the skip event only above DEBUG",
+  "quantity": "COUNTS of guard evaluations and logger.debug invocations. This artefact makes NO latency claim: S-8's own arithmetic is 0 us, 0.00 % of the 4.09 ms uncontended floor and 0.00 % of the 740 ms p95, so there is no duration to report.",
+  "method": {
+    "driver": "src/benchmarks/s8_logger_call_counter.py",
+    "in_repo": true,
+    "request": "one bodyless, benign GET through the real AttackDetectionMiddleware ASGI __call__",
+    "path": "/api/v1/users/me",
+    "arms": "the module's stdlib logger at DEBUG, at INFO, and at NOTSET (inheriting the root)",
+    "guard_counter": "the bound logger's own is_enabled_for, filtered to the module logger, so the GUARD is counted and not the stdlib's internal level check",
+    "debug_counter": "the module proxy's own debug method, so the CALL SITE is counted",
+    "logging_configuration": "src/app/core/logger.py::setup_logging, the repository's real one",
+    "ip_rules": "stubbed; the rules are consulted only when an attack is detected, and none is"
+  },
+  "machine": {
+    "platform": "Windows-11-10.0.26300-SP0",
+    "python": "3.13.7",
+    "cpu_count": 12,
+    "host_relevant": false,
+    "host_relevant_why": "the quantity is a COUNT of calls, not a duration: the same code and the same configuration produce the same counts on any host"
+  },
+  "configuration": {
+    "root_level": "INFO",
+    "module_logger": "src.app.middleware.attack_detection",
+    "log_level_env": "INFO"
+  },
+  "requests_per_arm": 25,
+  "arms": {
+    "debug": {
+      "arm": "debug",
+      "requests": 25,
+      "module_logger_level": "DEBUG",
+      "effective_level": "DEBUG",
+      "predicate_value": true,
+      "guard_evaluations": 25,
+      "guard_evaluation_levels": [
+        "DEBUG"
+      ],
+      "debug_calls": 25,
+      "debug_events": [
+        "attack_detection_skipped_body_scan_for_method"
+      ]
+    },
+    "info": {
+      "arm": "info",
+      "requests": 25,
+      "module_logger_level": "INFO",
+      "effective_level": "INFO",
+      "predicate_value": false,
+      "guard_evaluations": 25,
+      "guard_evaluation_levels": [
+        "DEBUG"
+      ],
+      "debug_calls": 0,
+      "debug_events": []
+    },
+    "default": {
+      "arm": "default",
+      "requests": 25,
+      "module_logger_level": "NOTSET",
+      "effective_level": "INFO",
+      "predicate_value": false,
+      "guard_evaluations": 25,
+      "guard_evaluation_levels": [
+        "DEBUG"
+      ],
+      "debug_calls": 0,
+      "debug_events": []
+    }
+  },
+  "verdict": {
+    "statement": "The guard is evaluated once per bodyless request in EVERY arm, and the skip event is emitted only in the arm whose level permits it: one logger.debug call per request at DEBUG, none at INFO and above.",
+    "guard_evaluations_per_arm": {
+      "debug": 25,
+      "info": 25,
+      "default": 25
+    },
+    "debug_calls_per_arm": {
+      "debug": 25,
+      "info": 0,
+      "default": 0
+    },
+    "predicate_per_arm": {
+      "debug": true,
+      "info": false,
+      "default": false
+    }
+  },
+  "limits": [
+    "This is a COUNT, not a latency measurement, and it substantiates a structural property of the call site rather than a performance figure. S-8's own arithmetic stands: 0 us, 0.00 % of the 4.09 ms uncontended floor, 0.00 % of the 740 ms p95.",
+    "The requests are driven in-process through the middleware's ASGI __call__ with a stub downstream application, so the counter exercises the middleware and not the whole application stack. The END-TO-END-over-HTTP leg is a separate deliverable.",
+    "The middleware's own body scan and detection paths are not exercised: the requests are benign by construction, which is what makes the skip the only event in play.",
+    "The counter runs against this repository's logging configuration, installed by setup_logging(). Against structlog's ambient default the predicate is structurally always True and both arms would report a debug call per request."
+  ]
+}

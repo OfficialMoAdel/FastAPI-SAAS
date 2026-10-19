@@ -1,0 +1,489 @@
+{
+  "schema": "perf-l12-pool-ratios/1",
+  "item": "L-12",
+  "bead": "FastAPI_saas-liy7",
+  "machine": {
+    "cpu_model": "Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz",
+    "core_count": 4,
+    "production_core_count": 4,
+    "platform": "Linux-5.14.0-578.el9.x86_64-x86_64-with-glibc2.34",
+    "python": "3.13.16",
+    "start_method": "fork"
+  },
+  "protocol": {
+    "warm_pools_only": true,
+    "warmup_batch_discarded": 12,
+    "repetitions": 5,
+    "iterations_per_repetition": 12,
+    "gc_collect_before_each_rep": true,
+    "ceiling": "fixed iteration count, never time-based",
+    "statistics": "median-of-medians AND min-of-medians, both published",
+    "criterion": "report only; never 'new < old'",
+    "pool_sizes": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "ipc_cost": "A process pool must pickle and ship the payload. That cost is NOT subtracted out: it is part of what a process pool costs, and removing it would report a number no deployment would see."
+  },
+  "windows_reference_not_used_as_before_arm": {
+    "inline_ms": 1808,
+    "thread_ms": 482,
+    "process_ms": 782,
+    "inline_scans_per_sec": 4.2,
+    "thread_scans_per_sec": 16.6,
+    "process_scans_per_sec": 10.2,
+    "why_not_used": "Addendum A-5 archives the Windows absolutes as non-representative. They may not serve as the before arm, so every ratio here is thread-or-process OVER INLINE MEASURED ON THIS LINUX TARGET, not over a Windows figure."
+  },
+  "regimes": {
+    "miss_60kb": {
+      "properties": {
+        "miss_bytes": 61440,
+        "hit_bytes": 40960,
+        "miss_prefilter_hit": false,
+        "hit_prefilter_hit": true,
+        "miss_asserted_miss": true,
+        "hit_asserted_hit": true,
+        "both_asserted": true,
+        "statement": "The 60 KB miss body carries no literal the prefilter can find, so the skip fires and the full regex never runs. The 40 KB hit body carries a SQL-shaped literal, so the prefilter admits it and the full regex runs. Asserted before any timing, because a body that changes class between the two regimes would make every ratio below a measurement of nothing."
+      },
+      "arms": {
+        "inline": {
+          "rep_medians_scans_per_sec": [
+            679.412,
+            732.279,
+            743.545,
+            826.015,
+            860.786
+          ],
+          "median_of_medians_scans_per_sec": 743.545,
+          "min_of_medians_scans_per_sec": 679.412,
+          "max_of_medians_scans_per_sec": 860.786,
+          "all_rep_medians_equal": false,
+          "arm": "inline",
+          "pool_size": 1,
+          "concurrency": 1,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5
+        },
+        "thread_pool1": {
+          "rep_medians_scans_per_sec": [
+            564.793,
+            587.057,
+            616.693,
+            695.649,
+            905.368
+          ],
+          "median_of_medians_scans_per_sec": 616.693,
+          "min_of_medians_scans_per_sec": 564.793,
+          "max_of_medians_scans_per_sec": 905.368,
+          "all_rep_medians_equal": false,
+          "arm": "thread",
+          "pool_size": 1,
+          "concurrency": 1,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 0.829,
+          "ratio_vs_inline_min_of_medians": 0.831
+        },
+        "process_pool1": {
+          "rep_medians_scans_per_sec": [
+            663.758,
+            635.029,
+            558.427,
+            660.713,
+            614.878
+          ],
+          "median_of_medians_scans_per_sec": 635.029,
+          "min_of_medians_scans_per_sec": 558.427,
+          "max_of_medians_scans_per_sec": 663.758,
+          "all_rep_medians_equal": false,
+          "arm": "process",
+          "pool_size": 1,
+          "concurrency": 1,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 0.854,
+          "ratio_vs_inline_min_of_medians": 0.822
+        },
+        "thread_pool2": {
+          "rep_medians_scans_per_sec": [
+            891.52,
+            718.352,
+            792.781,
+            870.501,
+            804.035
+          ],
+          "median_of_medians_scans_per_sec": 804.035,
+          "min_of_medians_scans_per_sec": 718.352,
+          "max_of_medians_scans_per_sec": 891.52,
+          "all_rep_medians_equal": false,
+          "arm": "thread",
+          "pool_size": 2,
+          "concurrency": 2,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 1.081,
+          "ratio_vs_inline_min_of_medians": 1.057
+        },
+        "process_pool2": {
+          "rep_medians_scans_per_sec": [
+            1095.778,
+            1044.114,
+            1114.019,
+            1088.867,
+            1041.087
+          ],
+          "median_of_medians_scans_per_sec": 1088.867,
+          "min_of_medians_scans_per_sec": 1041.087,
+          "max_of_medians_scans_per_sec": 1114.019,
+          "all_rep_medians_equal": false,
+          "arm": "process",
+          "pool_size": 2,
+          "concurrency": 2,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 1.464,
+          "ratio_vs_inline_min_of_medians": 1.532
+        },
+        "thread_pool4": {
+          "rep_medians_scans_per_sec": [
+            884.241,
+            991.82,
+            1012.736,
+            872.856,
+            1030.505
+          ],
+          "median_of_medians_scans_per_sec": 991.82,
+          "min_of_medians_scans_per_sec": 872.856,
+          "max_of_medians_scans_per_sec": 1030.505,
+          "all_rep_medians_equal": false,
+          "arm": "thread",
+          "pool_size": 4,
+          "concurrency": 4,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 1.334,
+          "ratio_vs_inline_min_of_medians": 1.285
+        },
+        "process_pool4": {
+          "rep_medians_scans_per_sec": [
+            1549.062,
+            1559.118,
+            1519.031,
+            1426.715,
+            1586.123
+          ],
+          "median_of_medians_scans_per_sec": 1549.062,
+          "min_of_medians_scans_per_sec": 1426.715,
+          "max_of_medians_scans_per_sec": 1586.123,
+          "all_rep_medians_equal": false,
+          "arm": "process",
+          "pool_size": 4,
+          "concurrency": 4,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 2.083,
+          "ratio_vs_inline_min_of_medians": 2.1
+        },
+        "thread_pool8": {
+          "rep_medians_scans_per_sec": [
+            882.268,
+            721.229,
+            893.91,
+            895.61,
+            993.379
+          ],
+          "median_of_medians_scans_per_sec": 893.91,
+          "min_of_medians_scans_per_sec": 721.229,
+          "max_of_medians_scans_per_sec": 993.379,
+          "all_rep_medians_equal": false,
+          "arm": "thread",
+          "pool_size": 8,
+          "concurrency": 8,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 1.202,
+          "ratio_vs_inline_min_of_medians": 1.062
+        },
+        "process_pool8": {
+          "rep_medians_scans_per_sec": [
+            1046.616,
+            1300.103,
+            1284.782,
+            1346.448,
+            1403.249
+          ],
+          "median_of_medians_scans_per_sec": 1300.103,
+          "min_of_medians_scans_per_sec": 1046.616,
+          "max_of_medians_scans_per_sec": 1403.249,
+          "all_rep_medians_equal": false,
+          "arm": "process",
+          "pool_size": 8,
+          "concurrency": 8,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 1.749,
+          "ratio_vs_inline_min_of_medians": 1.54
+        }
+      },
+      "at_production_core_count": {
+        "core_count": 4,
+        "pool_size": 4,
+        "median_of_medians": {
+          "inline_scans_per_sec": 743.545,
+          "thread_scans_per_sec": 991.82,
+          "process_scans_per_sec": 1549.062
+        },
+        "ratios_vs_inline": {
+          "thread": 1.334,
+          "process": 2.083
+        },
+        "thread_over_process": 0.64
+      }
+    },
+    "hit_40kb": {
+      "properties": {
+        "miss_bytes": 61440,
+        "hit_bytes": 40960,
+        "miss_prefilter_hit": false,
+        "hit_prefilter_hit": true,
+        "miss_asserted_miss": true,
+        "hit_asserted_hit": true,
+        "both_asserted": true,
+        "statement": "The 60 KB miss body carries no literal the prefilter can find, so the skip fires and the full regex never runs. The 40 KB hit body carries a SQL-shaped literal, so the prefilter admits it and the full regex runs. Asserted before any timing, because a body that changes class between the two regimes would make every ratio below a measurement of nothing."
+      },
+      "arms": {
+        "inline": {
+          "rep_medians_scans_per_sec": [
+            49.464,
+            50.661,
+            45.913,
+            46.056,
+            38.113
+          ],
+          "median_of_medians_scans_per_sec": 46.056,
+          "min_of_medians_scans_per_sec": 38.113,
+          "max_of_medians_scans_per_sec": 50.661,
+          "all_rep_medians_equal": false,
+          "arm": "inline",
+          "pool_size": 1,
+          "concurrency": 1,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5
+        },
+        "thread_pool1": {
+          "rep_medians_scans_per_sec": [
+            34.989,
+            34.232,
+            41.248,
+            43.131,
+            45.123
+          ],
+          "median_of_medians_scans_per_sec": 41.248,
+          "min_of_medians_scans_per_sec": 34.232,
+          "max_of_medians_scans_per_sec": 45.123,
+          "all_rep_medians_equal": false,
+          "arm": "thread",
+          "pool_size": 1,
+          "concurrency": 1,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 0.896,
+          "ratio_vs_inline_min_of_medians": 0.898
+        },
+        "process_pool1": {
+          "rep_medians_scans_per_sec": [
+            51.111,
+            47.149,
+            51.707,
+            44.551,
+            42.994
+          ],
+          "median_of_medians_scans_per_sec": 47.149,
+          "min_of_medians_scans_per_sec": 42.994,
+          "max_of_medians_scans_per_sec": 51.707,
+          "all_rep_medians_equal": false,
+          "arm": "process",
+          "pool_size": 1,
+          "concurrency": 1,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 1.024,
+          "ratio_vs_inline_min_of_medians": 1.128
+        },
+        "thread_pool2": {
+          "rep_medians_scans_per_sec": [
+            46.392,
+            46.572,
+            46.92,
+            44.821,
+            46.09
+          ],
+          "median_of_medians_scans_per_sec": 46.392,
+          "min_of_medians_scans_per_sec": 44.821,
+          "max_of_medians_scans_per_sec": 46.92,
+          "all_rep_medians_equal": false,
+          "arm": "thread",
+          "pool_size": 2,
+          "concurrency": 2,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 1.007,
+          "ratio_vs_inline_min_of_medians": 1.176
+        },
+        "process_pool2": {
+          "rep_medians_scans_per_sec": [
+            88.592,
+            74.998,
+            80.655,
+            82.315,
+            69.262
+          ],
+          "median_of_medians_scans_per_sec": 80.655,
+          "min_of_medians_scans_per_sec": 69.262,
+          "max_of_medians_scans_per_sec": 88.592,
+          "all_rep_medians_equal": false,
+          "arm": "process",
+          "pool_size": 2,
+          "concurrency": 2,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 1.751,
+          "ratio_vs_inline_min_of_medians": 1.817
+        },
+        "thread_pool4": {
+          "rep_medians_scans_per_sec": [
+            43.569,
+            41.35,
+            39.55,
+            39.439,
+            36.331
+          ],
+          "median_of_medians_scans_per_sec": 39.55,
+          "min_of_medians_scans_per_sec": 36.331,
+          "max_of_medians_scans_per_sec": 43.569,
+          "all_rep_medians_equal": false,
+          "arm": "thread",
+          "pool_size": 4,
+          "concurrency": 4,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 0.859,
+          "ratio_vs_inline_min_of_medians": 0.953
+        },
+        "process_pool4": {
+          "rep_medians_scans_per_sec": [
+            108.931,
+            128.925,
+            118.486,
+            128.013,
+            120.396
+          ],
+          "median_of_medians_scans_per_sec": 120.396,
+          "min_of_medians_scans_per_sec": 108.931,
+          "max_of_medians_scans_per_sec": 128.925,
+          "all_rep_medians_equal": false,
+          "arm": "process",
+          "pool_size": 4,
+          "concurrency": 4,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 2.614,
+          "ratio_vs_inline_min_of_medians": 2.858
+        },
+        "thread_pool8": {
+          "rep_medians_scans_per_sec": [
+            44.472,
+            46.086,
+            45.909,
+            44.623,
+            45.177
+          ],
+          "median_of_medians_scans_per_sec": 45.177,
+          "min_of_medians_scans_per_sec": 44.472,
+          "max_of_medians_scans_per_sec": 46.086,
+          "all_rep_medians_equal": false,
+          "arm": "thread",
+          "pool_size": 8,
+          "concurrency": 8,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 0.981,
+          "ratio_vs_inline_min_of_medians": 1.167
+        },
+        "process_pool8": {
+          "rep_medians_scans_per_sec": [
+            107.832,
+            111.67,
+            104.453,
+            110.839,
+            96.093
+          ],
+          "median_of_medians_scans_per_sec": 107.832,
+          "min_of_medians_scans_per_sec": 96.093,
+          "max_of_medians_scans_per_sec": 111.67,
+          "all_rep_medians_equal": false,
+          "arm": "process",
+          "pool_size": 8,
+          "concurrency": 8,
+          "tasks_submitted_per_repetition": 12,
+          "scans_per_task": 1,
+          "iterations_per_repetition": 12,
+          "repetitions": 5,
+          "ratio_vs_inline_median_of_medians": 2.341,
+          "ratio_vs_inline_min_of_medians": 2.521
+        }
+      },
+      "at_production_core_count": {
+        "core_count": 4,
+        "pool_size": 4,
+        "median_of_medians": {
+          "inline_scans_per_sec": 46.056,
+          "thread_scans_per_sec": 39.55,
+          "process_scans_per_sec": 120.396
+        },
+        "ratios_vs_inline": {
+          "thread": 0.859,
+          "process": 2.614
+        },
+        "thread_over_process": 0.328
+      }
+    }
+  }
+}

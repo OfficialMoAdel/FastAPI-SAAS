@@ -350,3 +350,102 @@ the one pruning decision the code has today (the whole-scan skip) and the counte
 observes that skip. `FastAPI_saas-muro` therefore remains blocked on the subset
 compilation, which is the change this ADR approves and this mitigation set does
 not perform.
+
+## Amendment 2026-10-19 (A-1 deferral, `FastAPI_saas-3sgn`): the owner records
+the deferral
+
+The owner has answered the question this ADR left open. **A-1 is not
+re-authorised. The branch-subset compiler is deliberately not built**, and
+that is now a recorded decision rather than a silent gap.
+
+**The decision.** Keep the deferral. The three selection thresholds are
+settled as a specification (the amendment above), and the mechanism that
+would consume them is deliberately not built.
+
+**The reasons.** Each is a fact about the state of the tree, not a
+preference:
+
+1. **The soundness oracle for what A-1 proposes does not exist.** The
+   boundary section above records that the differential oracle is "adequate
+   for what has landed" but "remains inadequate for what A-1 actually
+   proposes", because a per-branch selection can be wrong while the literal
+   test still passes. That oracle has to be built *before* the change, not
+   after it.
+2. **The only implementation of the memoization contract in the tree is
+   green BY CONSTRUCTION.** `tests/benchmarks/test_attack_scan_subset.py`
+   says so in its own docstring: it "specifies the discipline the diff must
+   satisfy". A contract a harness states about itself is not evidence about
+   production behaviour -- and `FastAPI_saas-muro` closed by citing that
+   harness as proof the implementation had landed.
+3. **The un-memoized variant is a measured net loss.** 8.17 us x 14
+   buffers = 114 us/req turns a 5x win into 104.2 -> 122.5 us/req, and an
+   unbounded keyed cache reached 13 900 entries under fuzz. The pruning only
+   pays if the memoization works, and the memoization is the part that was
+   never built.
+
+**What this amendment does not change.** The fail direction ("A-1 can lose
+a detection; it cannot gain a false positive") stands. The C-1 and C-2
+gates are untouched. The two mitigations that do exist
+(`ATTACK_DETECTION_BRANCH_PRUNE`, `record_attack_subset_compiled()`) are
+untouched. The thresholds above are untouched. The routing statement above
+-- that A-1 does not exist and `FastAPI_saas-muro` remains blocked on the
+subset compilation -- remains true. Nothing above is contradicted here.
+
+**The consequence for the other lanes.** C-2 (`FastAPI_saas-niix`) is
+released. Its bead blocked it on "A-1's sign-off -- same file, same owner,
+same review", warning that landing it first guarantees "a conflict and two
+rounds of re-litigation"; a change that is not being made cannot conflict
+with it. C-2's own scope is unchanged and narrow: the `cmd_inj` group's own
+gate, with the global literal set untouched.
+
+A-8 (`FastAPI_saas-0a0u`) is **not** released by this amendment. Its own
+measurements already bound it: the body-scan offload is p95 PARITY (L-13),
+and the throughput gain is bounded at 2-2.6x only by forking, which L-13
+proved impossible as a drop-in (the production lambda is unpicklable, `self`
+is unpicklable, and `detected_attacks` is mutated in place, so a child's
+finds would vanish -- a security regression). A-8's implementation
+placeholder needs its own decision, and it is not this amendment's to make.
+
+Re-authorising A-1 later is a legitimate route. If it is taken, the first
+thing to build is the soundness oracle for per-branch selection -- and the
+thresholds above are already in executable form to be read against it.
+
+## Amendment 2026-10-19 (M-9, `FastAPI_saas-gzym`): the three thresholds are now specified executably
+
+This ADR's automatic-fallback conditions -- the yield cap, the saturation break
+and the 12-of-17 branch rule -- were prose until `FastAPI_saas-gzym` asked for
+them to be *settled*. They are now specified executably, in
+`tests/benchmarks/test_attack_scan_subset.py`, as a REFERENCE selector plus one
+test per condition. Two properties of that change matter here:
+
+- **The numbers in this ADR are the source of truth.** The harness reads them
+  back out of this file -- the yield cap, the saturation expression and the
+  branch-count pair -- and a test fails if they disagree with the constants the
+  harness uses. **Editing a number in this ADR without editing the harness turns
+  the harness red, by design.** That work changed no number here.
+- **The production mechanism still does not exist.** Nothing above this line is
+  contradicted: there is still no `select_branches`, no memoisation and no
+  compiled alternation in `src/`. What changed is that the contract a future
+  A-1 diff must satisfy is now executable rather than prose, and the house's
+  specification harness
+  (`tests/benchmarks/test_attack_scan_subset.py`, "green BY CONSTRUCTION" by
+  its own docstring) is where it lives.
+
+Two points the ADR left open were settled by the same work, and are recorded
+here so the next reader does not have to find them:
+
+1. **The yield cap's boundary.** The ADR says "the yield cap (512) is hit"
+   without saying whether exactly 512 is allowed. The harness pins it: the cap
+   is hit AT 512, so a buffer yielding 512 literal occurrences refuses to prune
+   and 511 selects.
+2. **What the branch-count rule does to ordinary JSON.** `FastAPI_saas-gzym`
+   names the risk that the 15-to-31 literal expansion (adding `on`, `'` and
+   `;`) raises `len(present)` for ordinary JSON, so the rule might fire on
+   exactly the large-benign-body class the change is meant to speed up.
+   Measured against the literal set that exists in the tree, it does not: of
+   the four benign bodies measured, ordinary JSON presents **zero or one** of
+   the 15 literals, and reaching the 12-of-17 threshold needs **eight**
+   distinct literals (`<` alone serves four branches and `--` serves two). The
+   risk is therefore a property of the EXPANDED literal set -- which does not
+   exist -- and the harness takes the literal set as a parameter, so whoever
+   adds that expansion re-runs the decision against it.

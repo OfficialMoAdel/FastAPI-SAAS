@@ -1,0 +1,248 @@
+{
+  "bead": "FastAPI_saas-e0ss",
+  "item": "L-13",
+  "protocol": {
+    "route": "POST /api/v1/posts/by-user/{username}",
+    "why_this_route": "D18: the body-scan gate is POST/PUT/PATCH only, so no GET path carries it.",
+    "accounts": 250,
+    "requests_per_block": 100,
+    "reps": 5,
+    "knee_sweep": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      64
+    ],
+    "knee_factor": 2.0,
+    "arm_selection": "AttackDetectionMiddleware._BODY_OFFLOAD_THRESHOLD read at request time",
+    "budgets_relaxed": false,
+    "ip_account_decoupling": "every request gets a fresh loopback source IP and cycles a pool of 250 accounts, so the per-IP auth budget (5/60) is satisfied ~1 request deep and no IP can accumulate violations for the auto-ban",
+    "percentile_source": "src.benchmarks.percentiles.nearest_rank",
+    "gc_collect_before_each_rep": true,
+    "fixed_iteration_ceiling": true,
+    "criterion": "report only; never 'new < old'"
+  },
+  "regimes": {
+    "miss60k": {
+      "wire_bytes": 61473,
+      "prefilter": "skips the compiled regex"
+    },
+    "hit40k": {
+      "wire_bytes": 40992,
+      "prefilter": "admits; the full compiled regex runs"
+    }
+  },
+  "knee_sweep": [
+    {
+      "requests": 100,
+      "statuses": {
+        "201": 100
+      },
+      "p50_ms": 31.807705,
+      "p95_ms": 43.41261,
+      "min_ms": 25.805038,
+      "concurrency": 1,
+      "p95_over_baseline": 1.0
+    },
+    {
+      "requests": 100,
+      "statuses": {
+        "201": 100
+      },
+      "p50_ms": 62.182597,
+      "p95_ms": 85.184882,
+      "min_ms": 33.78875,
+      "concurrency": 2,
+      "p95_over_baseline": 1.9622151720433303
+    },
+    {
+      "requests": 100,
+      "statuses": {
+        "201": 96,
+        "429": 4
+      },
+      "p50_ms": 121.417427,
+      "p95_ms": 154.929297,
+      "min_ms": 13.108553,
+      "concurrency": 4,
+      "p95_over_baseline": 3.5687625553957707
+    },
+    {
+      "requests": 100,
+      "statuses": {
+        "201": 100
+      },
+      "p50_ms": 237.016151,
+      "p95_ms": 306.483675,
+      "min_ms": 114.967145,
+      "concurrency": 8,
+      "p95_over_baseline": 7.059784587934243
+    },
+    {
+      "requests": 100,
+      "statuses": {
+        "201": 100
+      },
+      "p50_ms": 515.35746,
+      "p95_ms": 836.191518,
+      "min_ms": 179.012252,
+      "concurrency": 16,
+      "p95_over_baseline": 19.26148918482441
+    },
+    {
+      "requests": 100,
+      "statuses": {
+        "429": 4,
+        "201": 96
+      },
+      "p50_ms": 1037.301814,
+      "p95_ms": 1387.276401,
+      "min_ms": 580.961215,
+      "concurrency": 32,
+      "p95_over_baseline": 31.95560923427548
+    },
+    {
+      "requests": 100,
+      "statuses": {
+        "201": 100
+      },
+      "p50_ms": 1979.08003,
+      "p95_ms": 2294.169969,
+      "min_ms": 1787.394849,
+      "concurrency": 64,
+      "p95_over_baseline": 52.84570471574964
+    }
+  ],
+  "blocks": {
+    "inline/miss60k": {
+      "reps": 5,
+      "p95_median_of_medians_ms": 71.123007,
+      "p95_min_of_medians_ms": 59.481253,
+      "p95_max_of_medians_ms": 109.410719,
+      "p50_median_of_medians_ms": 52.204285,
+      "p50_min_of_medians_ms": 47.416966,
+      "per_rep_p95_ms": [
+        66.472348,
+        59.481253,
+        71.123007,
+        75.899235,
+        109.410719
+      ],
+      "statuses": {
+        "201": 100,
+        "429": 2
+      }
+    },
+    "thread/miss60k": {
+      "reps": 5,
+      "p95_median_of_medians_ms": 68.042878,
+      "p95_min_of_medians_ms": 59.322593,
+      "p95_max_of_medians_ms": 78.762398,
+      "p50_median_of_medians_ms": 53.418937,
+      "p50_min_of_medians_ms": 49.287828,
+      "per_rep_p95_ms": [
+        61.749643,
+        71.606107,
+        78.762398,
+        68.042878,
+        59.322593
+      ],
+      "statuses": {
+        "201": 100,
+        "429": 4
+      }
+    },
+    "inline/hit40k": {
+      "reps": 5,
+      "p95_median_of_medians_ms": 176.177403,
+      "p95_min_of_medians_ms": 144.090082,
+      "p95_max_of_medians_ms": 211.907058,
+      "p50_median_of_medians_ms": 146.667878,
+      "p50_min_of_medians_ms": 120.370619,
+      "per_rep_p95_ms": [
+        176.177403,
+        168.253198,
+        181.054709,
+        144.090082,
+        211.907058
+      ],
+      "statuses": {
+        "201": 100,
+        "429": 4
+      }
+    },
+    "thread/hit40k": {
+      "reps": 5,
+      "p95_median_of_medians_ms": 184.163376,
+      "p95_min_of_medians_ms": 140.69164,
+      "p95_max_of_medians_ms": 199.179706,
+      "p50_median_of_medians_ms": 131.692289,
+      "p50_min_of_medians_ms": 120.860559,
+      "per_rep_p95_ms": [
+        162.023843,
+        199.179706,
+        190.571301,
+        184.163376,
+        140.69164
+      ],
+      "statuses": {
+        "201": 100,
+        "429": 4
+      }
+    }
+  },
+  "ratios": {
+    "miss60k": {
+      "inline_p95_median_of_medians_ms": 71.123007,
+      "thread_p95_median_of_medians_ms": 68.042878,
+      "ratio_median_of_medians": 0.9566929306012047,
+      "ratio_min_of_medians": 0.9973326049469737,
+      "inline_spread_pct": 19.572139813530825,
+      "thread_spread_pct": 14.699770456763419
+    },
+    "hit40k": {
+      "inline_p95_median_of_medians_ms": 176.177403,
+      "thread_p95_median_of_medians_ms": 184.163376,
+      "ratio_median_of_medians": 1.0453291560893312,
+      "ratio_min_of_medians": 0.9764144627247836,
+      "inline_spread_pct": 22.26893104273478,
+      "thread_spread_pct": 30.898592126724793
+    }
+  },
+  "process_arm": {
+    "verdict": "IMPOSSIBLE AS A DROP-IN - three independent reasons",
+    "1_default_executor_rejects_process_pools": {
+      "set_default_executor_succeeded": false,
+      "error": "TypeError: executor must be ThreadPoolExecutor instance",
+      "note": "CPython's BaseEventLoop.set_default_executor rejects anything that is not a ThreadPoolExecutor, so run_in_executor(None, ...) - exactly what production calls - cannot be redirected to a process pool without patching BaseEventLoop.run_in_executor itself."
+    },
+    "2_production_callable_is_not_picklable": {
+      "lambda_pickles": false,
+      "error": "AttributeError: Can't get local object 'main.<locals>.<lambda>'",
+      "note": "Production submits lambda: self._check_for_patterns(...) and self is a middleware holding an ASGI app. Neither is picklable."
+    },
+    "3_in_place_mutation_would_be_lost": {
+      "parent_list": [
+        1
+      ],
+      "child_copy": [
+        1,
+        2
+      ],
+      "mutation_survives": false,
+      "note": "detected_attacks is mutated in place. Across a process boundary it is pickled BY VALUE, so an attack found in the worker would be discarded and the caller would never learn about it. That is a security regression, not a performance question."
+    },
+    "process_throughput_figure": "perf-results/RESULT-20261016-l12/l12_pool_ratios.json (bead liy7, closed): the process arm runs 2.083x inline on the 60 KB miss regime and 2.614x inline on the 40 KB hit regime. That figure exists; it cannot simply be wired into the endpoint."
+  },
+  "logins": {
+    "statuses": {
+      "200": 250
+    },
+    "tokens": 250
+  },
+  "knee": 4,
+  "knee_note": "first concurrency whose p95 exceeds 2.0x the concurrency-1 p95"
+}

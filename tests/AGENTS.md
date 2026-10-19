@@ -95,6 +95,45 @@ tests/unit/
 - Test both success and failure paths
 - Focus on business logic validation
 
+### The C-3 session oracle (`test_isomorphism_validator_c3.py`)
+
+`scripts/perf-validation/isomorphism_validator.py` runs in CI (the
+"Run isomorphism tests" step of `.github/workflows/tests.yml`), and
+`tests/unit/scripts/test_isomorphism_validator_c3.py` pins its C-3
+gates as a unit test so a drift is caught without waiting for CI.
+
+C-3 has TWO closed worlds of session-holders, and both are enumerated
+exhaustively:
+
+- **HOLDERS** — the session is injected as a parameter:
+  `db: Annotated[AsyncSession, Depends(async_get_db)]`. FastAPI creates
+  it before the dependency body runs. Pinned in `C3_DB_CALLERS`.
+- **OPENERS** — the session is opened by the function itself:
+  `async with get_db_context() as X:`. Pinned in `C3_SESSION_OPENERS`.
+
+A member of either class that is not pinned fails a gate, so the
+enumeration is a closed world in the C-1 sense ("no unclassified path
+reader"). The two classes are NOT interchangeable: `get_db_context` is
+the `async with` form of the same lifecycle as `async_get_db`, and a
+gate that models only one of them silently stops covering the other.
+
+The 401-path property is "no except handler READS the session". A
+`rollback` is the one permitted use, and that is a measured fact rather
+than a preference: a rollback on a session that never connected performs
+zero pool checkouts and zero statements, where a query on the same kind
+of session performs one of each (`C3_ALLOWED_HANDLER_SESSION_CALLS`).
+Permitted uses are LOGGED on every run, not hidden.
+
+❌ DON'T: read a session in an except handler. The rejection path must
+not touch the database, and the C-3 e2e
+(`tests/e2e/feature_validation/test_dxra_three_401_shapes.py`) proves it
+at the HTTP level by counting pool checkouts.
+
+❌ DON'T: treat a green C-3 enumeration as "the session handling is
+right". It proves the SET is complete and that no handler reads a
+session. It does not prove the session is deferred — the e2e does that,
+by measuring zero checkouts on the 401 path.
+
 ---
 
 ## End-to-End Tests (`tests/e2e/`)
@@ -404,6 +443,32 @@ tests/benchmarks/
 - Compare implementation alternatives
 - Track memory allocation
 - Measure microsecond-level differences
+
+### The A-1 specification harness (`test_attack_scan_subset.py`)
+
+`tests/benchmarks/test_attack_scan_subset.py` is not only a ceiling file: it is
+the house's SPECIFICATION for the A-1 attack-scan branch-pruning diff, which
+**does not exist in production** -- `docs/adr/0009-branch-pruning-proof-basis.md`
+says so in its "Routing" section (no `select_branches`, no memoisation, no
+compiled alternation in `src/`).
+
+Two things live there, and both are load-bearing:
+
+- **The anti-thrash memo contract** (hit rate at least 99 % post-warmup, zero
+  cold compiles, bounded cache) is green BY CONSTRUCTION -- the file says so
+  itself -- so it constrains a future diff, it does not certify shipped code.
+- **The selection thresholds** (ADR-0009's automatic fallback: the yield cap,
+  the saturation break, and the 12-of-17 branch rule) are specified there as
+  an executable reference selector, with one test per condition. **The numbers
+  are read back out of the ADR by a test**, so editing ADR-0009 without editing
+  the harness turns the harness red. The literal set and the group-to-literal
+  table are PARAMETERS of that selector, so the 15-to-31 literal expansion can
+  be re-run against it when it exists.
+
+❌ DON'T: treat a green `test_attack_scan_subset.py` as evidence that branch
+pruning has landed. It is the specification of a diff. The differential oracle
+(`tests/unit/middleware/test_attack_pruning_differential.py`) is what proves
+pruning SOUND.
 
 ---
 

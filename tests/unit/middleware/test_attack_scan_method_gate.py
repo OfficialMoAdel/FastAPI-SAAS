@@ -257,10 +257,38 @@ def test_debug_guard_is_level_aware() -> None:
     FAILS by design (the predicate is ``level >= min_level`` with the default
     filtering bound logger, structurally always True). A-3 lands the
     level-aware ``wrapper_class`` and this flips green.
+
+    This is the INFO half of S-8's acceptance criterion ("the real predicate
+    is asserted at DEBUG and at INFO"). The DEBUG half is
+    ``test_debug_guard_is_level_aware_at_debug``: both directions are needed,
+    because a predicate frozen at a minimum is False at DEBUG and False at
+    INFO alike, and one that is always True is True at both.
     """
     import logging as _logging
 
     assert ad.logger.is_enabled_for(_logging.DEBUG) is False
+
+
+def test_debug_guard_is_level_aware_at_debug(module_logger_at_debug: None) -> None:
+    """With THIS module's logger at DEBUG, the same predicate must be True.
+
+    The other half of S-8's acceptance criterion, and the half that
+    distinguishes a DELEGATING predicate from a frozen-minimum one:
+    ``structlog.make_filtering_bound_logger(logging.INFO)`` returns a
+    ``BoundLoggerFilteringAtInfo`` whose ``is_enabled_for(DEBUG)`` is False —
+    the same value the INFO half above asserts, for a completely different
+    reason. A predicate that is False at INFO and False at DEBUG has closed
+    the gate in both directions and would silently drop the skip event for
+    the operators who asked for it.
+
+    The logger raised here is the same stdlib logger the bound logger
+    delegates to (``LevelAwareBoundLogger.is_enabled_for`` ->
+    ``self._logger.isEnabledFor``), and the fixture restores its level
+    afterwards.
+    """
+    import logging as _logging
+
+    assert ad.logger.is_enabled_for(_logging.DEBUG) is True
 
 
 @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH"])

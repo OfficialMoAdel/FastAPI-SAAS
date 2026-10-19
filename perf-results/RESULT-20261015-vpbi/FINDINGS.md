@@ -40,21 +40,27 @@ blocker and the bytes confirm it was fixed rather than merely reported fixed.
 ## The finding: two artefact generations, and the quoted run is the weakest
 
 The directory holds two different artefact formats. The distinction matters
-because only one of them carries a verdict.
+because only one of them carries the harness's own classification.
 
-**Generation 1 — derived reports** (`short_run.json`, `qualifying_run.json`,
-`wyjb_verify.json`). Top-level keys include `arms`, `delta`, `verdict`,
-`noise_floor_intra_arm`, `noise_floor_run_to_run`, `client_p95_ratio`,
-`server_p95_ratio`, `gate_a_compliance`, and `instrument`. Per arm they record
+**Generation 1 — the harness's own reports** (`short_run.json`,
+`qualifying_run.json`, `wyjb_verify.json`). All three carry exactly the nine
+top-level keys `scripts/ab_users_me.py::build_artefact` emits today:
+`artefact`, `generated_by`, `question`, `arms`, `delta`, `client_p95_ratio`,
+`server_p95_ratio`, `gate_a_compliance`, `instrument`. Per arm they record
 `client_observed_ms`, `server_side_ms`, `status_counts`, `pooled_n`, `loop_lag`,
 `loop_lag_note`, and — from `wyjb_verify` onward — `src_app_from` and
-`server_instrument`.
+`server_instrument`. Their per-arm key sets differ (13 in
+`qualifying_run.json`, 14 in `short_run.json`'s before arm, 15 in
+`wyjb_verify.json`) because they were produced by three different versions of
+the script; the current script's 15 per-arm keys match `wyjb_verify.json`.
+There is no reducer between the harness and these files.
 
 **Generation 2 — raw instrument exports** (`before_arm.json`, `after_arm.json`,
 `final_before_arm.json`, `final_after_arm.json`). Five top-level keys only:
 `worktree`, `port`, `src_app_from`, `server_side{instrument, header, count,
-samples_ms[]}`, and `loop_lag{...}`. **No verdict, no ratios, no noise floors,
-no load configuration, and no client-side observations.**
+samples_ms[]}`, and `loop_lag{...}`. **No `delta` (the harness's
+classification), no ratios, no load configuration, and no client-side
+observations.**
 
 ### All five runs, in mtime order
 

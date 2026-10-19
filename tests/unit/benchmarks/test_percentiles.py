@@ -238,6 +238,19 @@ def test_the_scan_finds_the_functions_it_is_meant_to_find():
     assert len(found) >= 6, f"expected the five known estimators plus delegates, found {sorted(modules)}"
 
 
+def _return_annotation_admits_none(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Does the function's OWN signature say it can return None?
+
+    ``float | None`` and ``Optional[float]`` both say yes. A function
+    annotated ``-> float`` does not, and may not use ``None`` as its
+    absent-measurement sentinel.
+    """
+    if function.returns is None:
+        return False
+    text = ast.unparse(function.returns)
+    return re.search(r"\bNone\b", text) is not None or "Optional" in text
+
+
 @pytest.mark.parametrize(
     ("module", "function"),
     _percentile_functions(),
@@ -253,9 +266,18 @@ def test_every_percentile_function_delegates(module: str, function: ast.Function
     benchmark into a crashed one. That guard is an ABSENT measurement, not a
     percentile of data, and it is documented as such in the property.
 
-    So every ``return`` must be either the constant ``0.0`` or a call to a
-    known delegate. A hand-rolled ``sorted(v)[int(len(v) * q)]`` fails both
-    halves, which is the property the rule exists to guarantee.
+    There are two such guards. ``0.0`` is the historical one. ``None`` is the
+    one a function whose signature admits it should use, because ``0.0`` is a
+    value a percentile can legitimately take and reporting an absent
+    measurement as ``0.0`` makes the two indistinguishable —
+    ``scripts/emailstr_cost.py::_percentile`` is annotated ``-> float | None``
+    for that reason and every one of its callers writes ``or 0.0`` around it.
+    ``None`` is accepted only where the function's OWN signature admits it,
+    which is a tighter condition than the ``0.0`` guard gets.
+
+    So every ``return`` must be either an absent-measurement sentinel or a
+    call to a known delegate. A hand-rolled ``sorted(v)[int(len(v) * q)]``
+    fails both halves, which is the property the rule exists to guarantee.
     """
     if module == CANONICAL_MODULE:
         assert function.name in {"nearest_rank", "unresolvable_quantiles"}
@@ -267,9 +289,17 @@ def test_every_percentile_function_delegates(module: str, function: ast.Function
         value = node.value
         if isinstance(value, ast.Constant) and value.value == 0.0:
             continue
+        if (
+            isinstance(value, ast.Constant)
+            and value.value is None
+            and _return_annotation_admits_none(function)
+        ):
+            # The other absent-measurement sentinel, admitted only by a
+            # signature that says so.
+            continue
         assert isinstance(value, ast.Call), (
             f"{module}:{function.lineno} {function.name}() returns {type(value).__name__}, which is neither the "
-            f"0.0 empty-result guard nor a delegate call"
+            f"0.0/None empty-result guard nor a delegate call"
         )
         assert isinstance(value.func, ast.Name) and value.func.id in DELEGATES, (
             f"{module}:{function.lineno} {function.name}() returns a call to "
