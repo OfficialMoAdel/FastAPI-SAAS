@@ -330,12 +330,29 @@ class UserService:
             return await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
         return await self.crud.get(db=self.db, username=identifier, is_deleted=False)
 
-    async def resolve_current_profile(self, current_user: Any) -> dict[str, Any] | None:
+    async def resolve_current_profile(self, current_user: Any) -> UserRead | dict[str, Any] | None:
         """Resolve the full profile for the authenticated principal.
 
         Returns the principal directly when it already carries profile fields
         (e.g. loaded via API key or DB fallback); otherwise loads via ID or
         username. Returns None when the principal is unresolvable.
+
+        Returns the validated :class:`UserRead` MODEL, never its dump, on both
+        paths that resolve one (FastAPI_saas-wsiy). The route declares
+        ``response_model=UserReadPublic``, and a dumped dict makes that response
+        model a SECOND validation of the same address: M-4 (FastAPI_saas-2h3n)
+        measured two ``EmailStr`` validations per ``GET /users/me`` and a
+        request-level p50 of 172.507 us, against the plan's 974 us claim. FastAPI
+        serializes a response-model INSTANCE through a TypeAdapter built with
+        ``from_attributes=True``, and pydantic v2 short-circuits an input that is
+        already an instance of the model or a subclass instead of re-running field
+        validation -- so handing it the model costs the response model nothing.
+        Dropping ``EmailStr`` from ``UserReadPublic`` would save the same call and
+        delete the guarantee; this removes only the redundant pass.
+
+        The one validation that remains is the floor: a typed response has to be
+        validated once. Oracle:
+        ``tests/unit/modules/users/test_users_me_email_validated_once.py``.
         """
         if isinstance(current_user, dict):
             user_id = current_user.get("id")
@@ -351,9 +368,11 @@ class UserService:
             has_avatar = getattr(current_user, "profile_image_url", None) is not None
             if has_name and has_avatar:
                 # Attribute-bearing principal (ORM entity, API-key payload):
-                # serialize to a real dict so downstream `.get()` access is safe.
+                # validate into the real schema so downstream `.get()` access is
+                # safe. FastAPI_saas-wsiy: the MODEL, not its dump -- a dict here
+                # would be re-validated by the route's response model.
                 try:
-                    return UserRead.model_validate(current_user).model_dump(mode="json")
+                    return UserRead.model_validate(current_user)
                 except Exception as e:
                     logger.warning("Unserializable user principal in resolve_current_profile", error=str(e))
                     return None
@@ -366,16 +385,17 @@ class UserService:
             if user_id is not None:
                 user = await directory.by_id(int(user_id))
                 if user:
-                    return user.model_dump(mode="json")
+                    # FastAPI_saas-wsiy: the directory already returns a UserRead.
+                    return user
             elif username:
                 try:
-                    return (await directory.by_username(username)).model_dump(mode="json")
+                    return await directory.by_username(username)
                 except ModelNotFoundError:
                     return None
         except (ValueError, TypeError):
             if username:
                 try:
-                    return (await directory.by_username(username)).model_dump(mode="json")
+                    return await directory.by_username(username)
                 except ModelNotFoundError:
                     return None
         return None

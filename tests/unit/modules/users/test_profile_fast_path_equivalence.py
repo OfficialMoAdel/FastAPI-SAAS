@@ -11,6 +11,11 @@ payload shape ``CRUDUser.get_user_with_tier_eager`` builds (the bearer
 auth source of truth) and the exact dict shape ``UserService.get``
 returns on a cache miss (its ``UserRead`` revalidation output), then
 assert the two serialization paths agree.
+
+The comparison is on the SERIALIZED form: the fast path hands back the
+``UserRead`` itself and ``_as_json_dict`` performs the ``mode="json"``
+dump here (FastAPI_saas-wsiy), because the wire output is the contract,
+not the container the service happens to return.
 """
 
 from __future__ import annotations
@@ -83,6 +88,19 @@ def _profile_cache_miss_dict(base: dict[str, Any], **overrides: Any) -> dict[str
     return UserRead.model_validate(row).model_dump(mode="json")
 
 
+def _as_json_dict(resolved: Any) -> dict[str, Any]:
+    """The ``mode="json"`` mapping a resolved profile serializes to.
+
+    ``resolve_current_profile`` returns a ``UserRead`` on the principal fast
+    path (it used to return that model's ``mode="json"`` dump; FastAPI_saas-wsiy
+    stopped the service dumping so the response model does not validate the
+    email a second time) and a raw dict on the load path. These tests compare
+    the SERIALIZATION, which is what the oracle is about, so the container is
+    normalized here rather than inside the service.
+    """
+    return resolved.model_dump(mode="json") if isinstance(resolved, UserRead) else dict(resolved)
+
+
 # ---------------------------------------------------------------------------
 # Static contract guards (keep the isomorphism true as the code evolves)
 # ---------------------------------------------------------------------------
@@ -107,11 +125,12 @@ class TestFastPathPreconditions:
         result = asyncio.run(service.resolve_current_profile(principal))
 
         assert result is not None
-        assert result["name"] == "Ada Lovelace"
-        assert result["email"] == "ada@example.com"
-        assert result["profile_image_url"] == "https://example.com/ada.png"
-        assert "hashed_password" not in result
-        assert "token_version" not in result
+        fast = _as_json_dict(result)
+        assert fast["name"] == "Ada Lovelace"
+        assert fast["email"] == "ada@example.com"
+        assert fast["profile_image_url"] == "https://example.com/ada.png"
+        assert "hashed_password" not in fast
+        assert "token_version" not in fast
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +150,7 @@ class TestFastPathEquivalence:
         assert fast is not None
 
         golden = _profile_cache_miss_dict(base)
-        assert fast == golden
+        assert _as_json_dict(fast) == golden
 
     def test_equivalence_survives_edge_field_values(self) -> None:
         """Unicode, boundary lengths, nulls — outputs must stay identical.
@@ -154,7 +173,7 @@ class TestFastPathEquivalence:
             principal = AuthenticatedUser(**base)
             fast = asyncio.run(service.resolve_current_profile(principal))
             golden = _profile_cache_miss_dict(base)
-            assert fast == golden, f"divergence for overrides={overrides}"
+            assert _as_json_dict(fast) == golden, f"divergence for overrides={overrides}"
 
     def test_partial_principal_still_falls_back_to_load_path(self) -> None:
         """A principal constructed without profile fields (tests, partial
