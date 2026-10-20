@@ -79,6 +79,9 @@ class R1UnifiedMetrics:
             # record_attack_subset_compiled() for what this counts and
             # what it will count once branch-subset compilation lands.
             "r1_attack_subset_compiled_total": 0,
+            # A-8: the body-scan worker pool failed and the scan fell back
+            # to the event loop. See record_attack_scan_pool_failure().
+            "r1_attack_scan_pool_failure_total": 0,
         }
 
         # Gauges
@@ -404,6 +407,19 @@ def record_tenant_l1_publish_failed() -> None:
     makes the failure visible during incidents instead of a bare log line.
     """
     get_r1_metrics().inc_counter("r1_tenant_l1_publish_failed_total")
+
+
+def record_attack_scan_pool_failure() -> None:
+    """Record a failure of the A-8 body-scan worker pool.
+
+    ADR-0016's fail direction is fail-to-current WITH A CIRCUIT BREAKER: the
+    request is rescanned in process on the event loop, so no request is left
+    unscanned and none is rejected because the pool failed. This counter is
+    what makes that fallback visible during an incident instead of a bare log
+    line: a rising value means the pool is dead and the event loop is doing
+    the work.
+    """
+    get_r1_metrics().inc_counter("r1_attack_scan_pool_failure_total")
 
 
 def record_fail_open(operation: str) -> None:

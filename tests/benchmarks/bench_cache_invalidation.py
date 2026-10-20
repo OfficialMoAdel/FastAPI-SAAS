@@ -8,19 +8,45 @@ noise, and the measured noise floor here is 7.1x run-to-run on identical code
 (perf C11). The ceilings are what decide pass or fail.
 """
 
+from collections.abc import Callable
+from pathlib import Path
+from types import TracebackType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from cachetools import TTLCache
 
 from src.app.core.cache import invalidation_channel as channel_mod
+from src.app.core.cache import l1 as l1_module
 from src.app.core.cache.l1 import L1Cache, RawKeyCodec
 from src.app.core.utils import cache
+from src.app.modules.users import cache as users_cache
 from src.benchmarks import protocol
 
 # Absolute fixed ceilings for the NEW arm, in microseconds.
 HIERARCHICAL_CEILING_US = protocol.Ceiling(10_000.0, "invalidate_tenant_cache(tenant=1, prefix=user)")
 PATTERN_CEILING_US = protocol.Ceiling(50_000.0, "invalidate_by_pattern(pattern:*)")
+
+
+@pytest.fixture(autouse=True)
+def _keep_the_l1_registry_clean(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stop this file's THROWAWAY seams from entering the global L1 registry.
+
+    ``L1Cache.__init__`` registers itself in the process-global L1 registry,
+    and ``tests/unit/core/cache/test_l1_registry_contract.py`` holds that
+    registry to a CLOSED world: an unlisted channel fails the contract test.
+    These seams are oracle fixtures, not owners - nothing here starts a
+    listener or expects a lifespan to start one - so registration is stubbed
+    for the duration of each test, the same guard
+    ``tests/unit/core/cache/test_l1.py`` uses.
+
+    WITHOUT this guard the registry contract test fails whenever it runs after
+    this file, because the oracle's own seams are then registered channels it
+    does not know about. Nothing is weakened by the guard: the registry is not
+    what these tests measure - they assert on the WIRE and on the local cache
+    state - and the contract test keeps its closed world untouched.
+    """
+    monkeypatch.setattr(l1_module, "register_l1_channel", lambda name, channel: channel)
 
 
 @pytest.mark.asyncio
@@ -157,6 +183,14 @@ async def test_benchmark_pattern_invalidation():
 # that fails names the batch, not each key; that is coarser logging, not a
 # behaviour change, and is accepted here in advance so the diff is not
 # judged against a log shape it was told to change.
+#
+# WHAT WAS MISSING (FastAPI_saas-49ui): the block above pinned the SERIAL
+# arm only, and it exercised a LOCAL helper rather than the production code.
+# It was therefore green PRECISELY because the batched arm did not exist —
+# a gate that cannot fail cannot pass. The arms added below are the ones
+# that can fail: the batched arm of the PRODUCTION seam, the PRODUCTION call
+# site that actually pays the N round trips, and the redis-py fidelity the
+# batch depends on.
 # ---------------------------------------------------------------------------
 
 #: M keys for the sequence test, in an order that is NEITHER sorted NOR
@@ -170,20 +204,95 @@ _S6_M_KEYS: tuple[str, ...] = tuple(f"s6-oracle-user:{i}" for i in (3, 0, 7, 1, 
 _S6_DOUBLE_KEY = "s6-oracle-user:double"
 
 
+class _FakePipeline:
+    """A redis-py-shaped pipeline: commands queue, ``execute()`` sends them.
+
+    Two redis-py 5.3.1 behaviours are modelled, and both are load-bearing:
+
+    * ``Pipeline.__aexit__`` awaits ``reset()``, which CLEARS the command
+      stack. So a trailing ``execute()`` that was dedented out of the
+      ``async with`` runs against an empty stack, sends nothing, and
+      invalidates NOTHING while logging nothing.
+    * ``execute()`` short-circuits on an empty stack: no command, no round
+      trip. So the discarded batch is not even a wasted round trip — it is
+      silence.
+    """
+
+    def __init__(self, wire: "_FakePubSubRedis") -> None:
+        self._wire = wire
+        self._queue: list[tuple[str, tuple[object, ...]]] = []
+
+    def publish(self, channel: str, message: str) -> None:
+        self._queue.append(("publish", (channel, message)))
+
+    def delete(self, *keys: str) -> None:
+        self._queue.append(("delete", tuple(keys)))
+
+    def set(self, key: str, value: str, ex: int | None = None) -> None:
+        self._queue.append(("set", (key, value)))
+
+    async def execute(self) -> list[int]:
+        queued, self._queue = list(self._queue), []
+        if not queued:
+            return []
+        self._wire.round_trips += 1
+        for kind, args in queued:
+            if kind == "publish":
+                channel, message = args
+                self._wire.record(str(channel), str(message))
+            elif kind == "delete":
+                self._wire.deleted.extend(str(key) for key in args)
+        return [1] * len(queued)
+
+    async def __aenter__(self) -> "_FakePipeline":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
+        self._queue.clear()
+        return False
+
+
 class _FakePubSubRedis:
     """The subscriber harness: captures exactly what the wire would carry.
 
     ``publish`` records (channel, message) in call order, which is what a
     subscriber on a single connection receives — Redis preserves
     per-connection FIFO, so call order here IS arrival order there.
+
+    ``round_trips`` counts the wire operations that carried traffic: one per
+    direct ``publish`` call and one per pipeline ``execute`` that had
+    commands. That is the DISCRIMINATOR between the serial arm (N round
+    trips) and the batched arm (1).
+
+    ``observer`` is an optional hook, called with each payload as it is
+    recorded. The production-call-site oracle uses it to snapshot the LOCAL
+    cache at the moment of the publish, which is what proves that every local
+    drop happened BEFORE the first publish.
     """
 
     def __init__(self) -> None:
         self.published: list[tuple[str, str]] = []
+        self.deleted: list[str] = []
+        self.round_trips = 0
+        self.observer: Callable[[str], None] | None = None
+
+    def record(self, channel: str, message: str) -> None:
+        if self.observer is not None:
+            self.observer(message)
+        self.published.append((channel, message))
 
     async def publish(self, channel: str, message: str) -> int:
-        self.published.append((channel, message))
+        self.round_trips += 1
+        self.record(channel, message)
         return 1
+
+    def pipeline(self, transaction: bool = False) -> _FakePipeline:
+        return _FakePipeline(self)
 
 
 def _fresh_s6_seam(name: str) -> tuple[L1Cache, TTLCache[str, object], _FakePubSubRedis]:
@@ -277,3 +386,169 @@ def test_the_oracle_names_the_sequence_it_pins() -> None:
     assert expected != sorted(expected), "a sorted() in the code must fail this oracle"
     assert expected != sorted(expected, reverse=True), "a reversal must fail it too"
     assert _S6_DOUBLE_KEY not in _S6_M_KEYS, "the double key must stand alone, not alias the sequence"
+
+
+# ---------------------------------------------------------------------------
+# The arms that can FAIL (FastAPI_saas-49ui).
+# ---------------------------------------------------------------------------
+
+
+def test_the_batched_arm_publishes_the_identical_ordered_sequence_in_one_round_trip() -> None:
+    """The batched arm: same payloads, same order, same local state, ONE round trip.
+
+    This is the comparison the S-6 comment block above asked for and never
+    had. It runs BOTH arms of the PRODUCTION seam — the serial
+    ``invalidate`` per key and the batched ``invalidate_many`` — and
+    compares them on all three properties the batch has to preserve.
+    """
+    import asyncio
+
+    serial_pub, serial_local, serial_wire = _fresh_s6_seam("batch-serial-publisher")
+    batch_pub, batch_local, batch_wire = _fresh_s6_seam("batch-batched-publisher")
+    serial_sub, serial_sub_local, _ = _fresh_s6_seam("batch-serial-subscriber")
+    batch_sub, batch_sub_local, _ = _fresh_s6_seam("batch-batched-subscriber")
+
+    for key in _S6_M_KEYS:
+        for local in (serial_local, batch_local, serial_sub_local, batch_sub_local):
+            local[key] = f"entry-{key}"
+
+    with patch.object(channel_mod, "get_redis", return_value=serial_wire):
+        asyncio.run(_serial_invalidate(serial_pub, _S6_M_KEYS))
+    with patch.object(channel_mod, "get_redis", return_value=batch_wire):
+        asyncio.run(batch_pub.invalidate_many(list(_S6_M_KEYS)))
+
+    serial_payloads = _payloads_of(serial_wire)
+    batch_payloads = _payloads_of(batch_wire)
+
+    assert serial_payloads == [str(key) for key in _S6_M_KEYS], "the serial arm publishes each key, in order"
+    assert batch_payloads == serial_payloads, "the batched arm must publish the IDENTICAL ORDERED sequence"
+    assert dict(batch_local) == dict(serial_local) == {}, "identical local end state on the publisher"
+    assert serial_wire.round_trips == len(_S6_M_KEYS), "the serial arm is one round trip per key"
+    assert batch_wire.round_trips == 1, "the batched arm is ONE round trip for the whole batch"
+
+    for payload in serial_payloads:
+        serial_sub.handle(payload)
+    for payload in batch_payloads:
+        batch_sub.handle(payload)
+    assert dict(serial_sub_local) == dict(batch_sub_local) == {}, "both subscribers end empty"
+
+
+def test_the_production_batch_call_site_publishes_once_for_many_users() -> None:
+    """The REAL call site must batch: N users -> ONE publish round trip.
+
+    Without this arm the oracle would cover only the new seam primitive, and
+    the production call site could stay serial — paying N round trips — with
+    the oracle still green. That is the exact failure this bead was filed
+    for, so the call site itself is pinned here.
+    """
+    import asyncio
+
+    users = [
+        {"id": 1, "email": "alice@example.com", "username": "Alice", "tenant_id": 42, "token_version": 0},
+        {"id": 2, "email": "bob@example.com", "username": "Bob", "tenant_id": 42, "token_version": 0},
+    ]
+    # The auth-info subset of the delete keys, in the order the key family
+    # builds them: tenant-scoped email, global email, tenant-scoped
+    # username, global username — per user, users in submission order.
+    expected_payloads = [
+        "user:auth:42:alice@example.com",
+        "user:auth:global:alice@example.com",
+        "user:auth:42:alice",
+        "user:auth:global:alice",
+        "user:auth:42:bob@example.com",
+        "user:auth:global:bob@example.com",
+        "user:auth:42:bob",
+        "user:auth:global:bob",
+    ]
+
+    l1_wire = _FakePubSubRedis()
+    redis_wire = _FakePubSubRedis()
+    snapshots: list[dict[str, object]] = []
+    l1_wire.observer = lambda _payload: snapshots.append(dict(users_cache._auth_info_l1))
+
+    local = users_cache._auth_info_l1
+    local.clear()
+    for payload in expected_payloads:
+        local[payload] = {"id": payload}
+
+    try:
+        with (
+            patch.object(channel_mod, "get_redis", return_value=l1_wire),
+            patch.object(users_cache, "get_redis", return_value=redis_wire),
+        ):
+            asyncio.run(users_cache.UserCacheInvalidator.invalidate_user_cache_batch(users))
+    finally:
+        local.clear()
+
+    published = _payloads_of(l1_wire)
+    assert published == expected_payloads, "the auth-info payloads, in the order the delete keys were built"
+    assert l1_wire.round_trips == 1, "N users -> ONE publish round trip for the L1 fan-out"
+    assert redis_wire.round_trips == 1, "the Redis delete pipeline is ONE round trip"
+    assert set(expected_payloads) <= set(redis_wire.deleted), (
+        "the L1 fan-out covers the auth-info subset of what was deleted"
+    )
+    assert snapshots, "the observer saw no publish - the harness is broken, not the code"
+    assert all(snapshot == {} for snapshot in snapshots), "every local drop must happen BEFORE the first publish"
+    assert dict(local) == {}, "the local auth-info cache ends empty"
+
+
+def test_publish_many_sends_every_payload_in_one_round_trip() -> None:
+    """The production seam's batched publish: N payloads, ONE round trip, all delivered.
+
+    This is the arm that catches the redis-py trap: if the trailing
+    ``execute()`` were dedented out of the ``async with``, the stack would be
+    empty by then, nothing would be sent, and this assertion would fail.
+    """
+    import asyncio
+
+    wire = _FakePubSubRedis()
+    channel = channel_mod.InvalidationChannel(channel="s6-publish-many", on_message=lambda _payload: None)
+
+    with patch.object(channel_mod, "get_redis", return_value=wire):
+        asyncio.run(channel.publish_many(["a", "b", "c"]))
+
+    assert _payloads_of(wire) == ["a", "b", "c"], "every payload, in order"
+    assert wire.round_trips == 1, "ONE round trip for the whole batch"
+
+
+def test_the_fake_discards_queued_commands_on_exit_like_redis_py() -> None:
+    """redis-py 5.3.1: ``Pipeline.__aexit__`` -> ``reset()`` clears the stack.
+
+    The batched publish depends on this. A trailing ``execute()`` dedented
+    out of the ``async with`` would run against an EMPTY stack, send
+    nothing, and invalidate NOTHING while logging nothing. The fake has to
+    model that, or the oracle could not see the bug it exists to catch.
+    """
+    import asyncio
+
+    wire = _FakePubSubRedis()
+
+    async def _execute_outside_the_with_block() -> None:
+        async with wire.pipeline(transaction=False) as pipe:
+            pipe.publish("s6-fidelity", "payload")
+        # THE BUG SHAPE: the execute() is OUTSIDE the `async with`.
+        await pipe.execute()
+
+    asyncio.run(_execute_outside_the_with_block())
+
+    assert wire.published == [], "the queued publish must be discarded, exactly as redis-py discards it"
+    assert wire.round_trips == 0, (
+        "an empty execute sends nothing at all, exactly as redis-py's execute() short-circuits"
+    )
+
+
+def test_the_parallel_s6_oracle_file_does_not_exist() -> None:
+    """AUDIT_CODE_SECURITY.md §6: extend the home file, do NOT create a parallel one.
+
+    A parallel oracle duplicates the gate, and a duplicate that is not run by
+    the same command is a gate nobody watches. The S-6 implementation landed
+    against such a file; it was never on HEAD, and the file it did land
+    against could not discriminate the change.
+    """
+    forbidden = (
+        Path(__file__).resolve().parents[2] / "tests" / "unit" / "core" / "cache" / "test_s6_batched_publish_oracle.py"
+    )
+    assert not forbidden.exists(), (
+        "S-6's oracle belongs in tests/benchmarks/bench_cache_invalidation.py; "
+        "a parallel file is the defect FastAPI_saas-49ui was filed for"
+    )

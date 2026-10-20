@@ -1,0 +1,933 @@
+{
+  "schema": "perf-c2-prefilter-differential/1",
+  "bead": "FastAPI_saas-mhj4",
+  "item": "C-2 e2e",
+  "title": "Differential run of the narrowed attack-scan prefilter over the full corpus",
+  "method": "in-process differential over the seeded corpus plus labelled arms, and a six-payload sample over the real ASGI stack",
+  "variants": {
+    "old": "any of the 15 global literals present (reconstructed from the REAL global set)",
+    "new": "the shipped _attack_prefilter_hit: the 12 effective literals plus the cmd_inj gate"
+  },
+  "verdict": "ZERO verdict differences across the corpus",
+  "stable_facts": {
+    "payload_count": 20034,
+    "seeded_case_count": 20000,
+    "verdict_difference_count": 0,
+    "narrowed_only_admitted": 712,
+    "detected_count": 11493,
+    "global_literal_count": 15,
+    "effective_literal_count": 12,
+    "labelled_payloads": [
+      {
+        "name": "group_sql_union",
+        "payload_repr": "b'UNION SELECT password FROM users'",
+        "literals_present": [
+          "or",
+          "union"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "sql_union",
+          "sql_or"
+        ],
+        "new_branch_set": [
+          "sql_union",
+          "sql_or"
+        ],
+        "old_verdict": [
+          [
+            "sql_injection",
+            "sql_union_select",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "sql_injection",
+            "sql_union_select",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_sql_or",
+        "payload_repr": "b\"' OR '1'='1\"",
+        "literals_present": [
+          "or"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "sql_or"
+        ],
+        "new_branch_set": [
+          "sql_or"
+        ],
+        "old_verdict": [
+          [
+            "sql_injection",
+            "sql_or_1_equals_1",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "sql_injection",
+            "sql_or_1_equals_1",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_sql_drop",
+        "payload_repr": "b'DROP TABLE users'",
+        "literals_present": [
+          "drop"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "sql_drop"
+        ],
+        "new_branch_set": [
+          "sql_drop"
+        ],
+        "old_verdict": [
+          [
+            "sql_injection",
+            "sql_drop_table",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "sql_injection",
+            "sql_drop_table",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_sql_delete",
+        "payload_repr": "b'DELETE FROM sessions'",
+        "literals_present": [
+          "delete"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "sql_delete"
+        ],
+        "new_branch_set": [
+          "sql_delete"
+        ],
+        "old_verdict": [
+          [
+            "sql_injection",
+            "sql_delete_from",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "sql_injection",
+            "sql_delete_from",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_sql_comment",
+        "payload_repr": "b\"SELECT * FROM t WHERE a='x'-- comment\"",
+        "literals_present": [
+          "--"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "sql_comment",
+          "sql_semicomment"
+        ],
+        "new_branch_set": [
+          "sql_comment",
+          "sql_semicomment"
+        ],
+        "old_verdict": [
+          [
+            "sql_injection",
+            "sql_comment_end",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "sql_injection",
+            "sql_comment_end",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_sql_semicomment",
+        "payload_repr": "b'SELECT 1;-- comment'",
+        "literals_present": [
+          "--",
+          ";"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "sql_comment",
+          "sql_semicomment",
+          "cmd_inj"
+        ],
+        "new_branch_set": [
+          "sql_comment",
+          "sql_semicomment"
+        ],
+        "old_verdict": [
+          [
+            "sql_injection",
+            "sql_comment_end",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "sql_injection",
+            "sql_comment_end",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_sql_exec",
+        "payload_repr": "b'EXEC xp_cmdshell'",
+        "literals_present": [
+          "exec"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "sql_exec"
+        ],
+        "new_branch_set": [
+          "sql_exec"
+        ],
+        "old_verdict": [
+          [
+            "sql_injection",
+            "sql_exec_xp",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "sql_injection",
+            "sql_exec_xp",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_xss_script",
+        "payload_repr": "b'<script>alert(1)</script>'",
+        "literals_present": [
+          "<"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "xss_script",
+          "xss_event",
+          "xss_iframe_tag",
+          "xss_object_tag"
+        ],
+        "new_branch_set": [
+          "xss_script",
+          "xss_event",
+          "xss_iframe_tag",
+          "xss_object_tag"
+        ],
+        "old_verdict": [
+          [
+            "xss",
+            "xss_script_tag",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "xss",
+            "xss_script_tag",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_xss_jsuri",
+        "payload_repr": "b'javascript:alert(document.domain)'",
+        "literals_present": [
+          "javascript"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "xss_jsuri"
+        ],
+        "new_branch_set": [
+          "xss_jsuri"
+        ],
+        "old_verdict": [
+          [
+            "xss",
+            "xss_javascript_uri",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "xss",
+            "xss_javascript_uri",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_xss_event",
+        "payload_repr": "b'<img src=x onerror=\"alert(1)\">'",
+        "literals_present": [
+          "<",
+          "or"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "sql_or",
+          "xss_script",
+          "xss_event",
+          "xss_iframe_tag",
+          "xss_object_tag"
+        ],
+        "new_branch_set": [
+          "sql_or",
+          "xss_script",
+          "xss_event",
+          "xss_iframe_tag",
+          "xss_object_tag"
+        ],
+        "old_verdict": [
+          [
+            "xss",
+            "xss_event_handler",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "xss",
+            "xss_event_handler",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_xss_iframe_tag",
+        "payload_repr": "b\"<iframe src='http://evil.example/'>\"",
+        "literals_present": [
+          "<"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "xss_script",
+          "xss_event",
+          "xss_iframe_tag",
+          "xss_object_tag"
+        ],
+        "new_branch_set": [
+          "xss_script",
+          "xss_event",
+          "xss_iframe_tag",
+          "xss_object_tag"
+        ],
+        "old_verdict": [
+          [
+            "xss",
+            "xss_iframe",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "xss",
+            "xss_iframe",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_xss_object_tag",
+        "payload_repr": "b\"<object data='x'>\"",
+        "literals_present": [
+          "<"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "xss_script",
+          "xss_event",
+          "xss_iframe_tag",
+          "xss_object_tag"
+        ],
+        "new_branch_set": [
+          "xss_script",
+          "xss_event",
+          "xss_iframe_tag",
+          "xss_object_tag"
+        ],
+        "old_verdict": [
+          [
+            "xss",
+            "xss_object",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "xss",
+            "xss_object",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_path_dotdot",
+        "payload_repr": "b'../../../../etc/passwd'",
+        "literals_present": [
+          "../"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "path_dotdot"
+        ],
+        "new_branch_set": [
+          "path_dotdot"
+        ],
+        "old_verdict": [
+          [
+            "path_traversal",
+            "path_dotdot_slash",
+            "request_body"
+          ],
+          [
+            "path_traversal",
+            "path_dotdot_slash",
+            "request_body"
+          ],
+          [
+            "path_traversal",
+            "path_dotdot_slash",
+            "request_body"
+          ],
+          [
+            "path_traversal",
+            "path_dotdot_slash",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "path_traversal",
+            "path_dotdot_slash",
+            "request_body"
+          ],
+          [
+            "path_traversal",
+            "path_dotdot_slash",
+            "request_body"
+          ],
+          [
+            "path_traversal",
+            "path_dotdot_slash",
+            "request_body"
+          ],
+          [
+            "path_traversal",
+            "path_dotdot_slash",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_path_enc",
+        "payload_repr": "b'%2e%2e%2fetc%2fpasswd'",
+        "literals_present": [
+          "%2e%2e%2f"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "path_enc"
+        ],
+        "new_branch_set": [
+          "path_enc"
+        ],
+        "old_verdict": [
+          [
+            "path_traversal",
+            "path_encoded",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "path_traversal",
+            "path_encoded",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_path_penc",
+        "payload_repr": "b'%2e%2e/etc/passwd'",
+        "literals_present": [
+          "%2e%2e/"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "path_penc"
+        ],
+        "new_branch_set": [
+          "path_penc"
+        ],
+        "old_verdict": [
+          [
+            "path_traversal",
+            "path_partial_encoded",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "path_traversal",
+            "path_partial_encoded",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_cmd_inj",
+        "payload_repr": "b';cat /etc/passwd'",
+        "literals_present": [
+          ";"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "cmd_inj"
+        ],
+        "new_branch_set": [
+          "cmd_inj"
+        ],
+        "old_verdict": [
+          [
+            "command_injection",
+            "command_injection",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "command_injection",
+            "command_injection",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "group_ssrf_cloud",
+        "payload_repr": "b'http://169.254.169.254/latest/meta-data/'",
+        "literals_present": [
+          "169.254.169.254"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "ssrf_cloud"
+        ],
+        "new_branch_set": [
+          "ssrf_cloud"
+        ],
+        "old_verdict": [
+          [
+            "ssrf",
+            "ssrf_cloud_metadata",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "ssrf",
+            "ssrf_cloud_metadata",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "pixel_user_agent",
+        "payload_repr": "b'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36'",
+        "literals_present": [
+          ";"
+        ],
+        "old_admitted": true,
+        "new_admitted": false,
+        "old_branch_set": [
+          "cmd_inj"
+        ],
+        "new_branch_set": [],
+        "old_verdict": [],
+        "new_verdict": [],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "tripping_user_agent",
+        "payload_repr": "b'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ; id'",
+        "literals_present": [
+          ";"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "cmd_inj"
+        ],
+        "new_branch_set": [
+          "cmd_inj"
+        ],
+        "old_verdict": [
+          [
+            "command_injection",
+            "command_injection",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "command_injection",
+            "command_injection",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "non_ascii_accented",
+        "payload_repr": "b'caf\\xc3\\xa9 UNION SELECT'",
+        "literals_present": [
+          "union"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "sql_union"
+        ],
+        "new_branch_set": [
+          "sql_union"
+        ],
+        "old_verdict": [
+          [
+            "sql_injection",
+            "sql_union_select",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "sql_injection",
+            "sql_union_select",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "non_ascii_greek",
+        "payload_repr": "b'\\xce\\xb1\\xce\\xb2\\xce\\xb3 ; id'",
+        "literals_present": [
+          ";"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "cmd_inj"
+        ],
+        "new_branch_set": [
+          "cmd_inj"
+        ],
+        "old_verdict": [
+          [
+            "command_injection",
+            "command_injection",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "command_injection",
+            "command_injection",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "non_ascii_cjk",
+        "payload_repr": "b'\\xe4\\xb8\\xad\\xe6\\x96\\x87 UNION'",
+        "literals_present": [
+          "union"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "sql_union"
+        ],
+        "new_branch_set": [
+          "sql_union"
+        ],
+        "old_verdict": [],
+        "new_verdict": [],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "nfkc_fullwidth_union_select",
+        "payload_repr": "b'UNION SELECT'",
+        "literals_present": [
+          "union"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "sql_union"
+        ],
+        "new_branch_set": [
+          "sql_union"
+        ],
+        "old_verdict": [
+          [
+            "sql_injection",
+            "sql_union_select",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "sql_injection",
+            "sql_union_select",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "nfkc_fullwidth_script_tag",
+        "payload_repr": "b'<script>'",
+        "literals_present": [
+          "<"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "xss_script",
+          "xss_event",
+          "xss_iframe_tag",
+          "xss_object_tag"
+        ],
+        "new_branch_set": [
+          "xss_script",
+          "xss_event",
+          "xss_iframe_tag",
+          "xss_object_tag"
+        ],
+        "old_verdict": [
+          [
+            "xss",
+            "xss_script_tag",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "xss",
+            "xss_script_tag",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "zero_width_inside_a_literal",
+        "payload_repr": "b'UNION'",
+        "literals_present": [
+          "union"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "sql_union"
+        ],
+        "new_branch_set": [
+          "sql_union"
+        ],
+        "old_verdict": [],
+        "new_verdict": [],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "zero_width_between_literals",
+        "payload_repr": "b'UNION SELECT'",
+        "literals_present": [
+          "union"
+        ],
+        "old_admitted": true,
+        "new_admitted": true,
+        "old_branch_set": [
+          "sql_union"
+        ],
+        "new_branch_set": [
+          "sql_union"
+        ],
+        "old_verdict": [
+          [
+            "sql_injection",
+            "sql_union_select",
+            "request_body"
+          ]
+        ],
+        "new_verdict": [
+          [
+            "sql_injection",
+            "sql_union_select",
+            "request_body"
+          ]
+        ],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "non_ascii_token_0",
+        "payload_repr": "b'caf\\xc3\\xa9'",
+        "literals_present": [],
+        "old_admitted": false,
+        "new_admitted": false,
+        "old_branch_set": [],
+        "new_branch_set": [],
+        "old_verdict": [],
+        "new_verdict": [],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "non_ascii_token_1",
+        "payload_repr": "b'\\xce\\xb1\\xce\\xb2\\xce\\xb3'",
+        "literals_present": [],
+        "old_admitted": false,
+        "new_admitted": false,
+        "old_branch_set": [],
+        "new_branch_set": [],
+        "old_verdict": [],
+        "new_verdict": [],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "non_ascii_token_2",
+        "payload_repr": "b'\\xe4\\xb8\\xad\\xe6\\x96\\x87'",
+        "literals_present": [],
+        "old_admitted": false,
+        "new_admitted": false,
+        "old_branch_set": [],
+        "new_branch_set": [],
+        "old_verdict": [],
+        "new_verdict": [],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "non_ascii_token_3",
+        "payload_repr": "b'\\xef\\xbc\\xb5\\xef\\xbc\\xae\\xef\\xbc\\xa9\\xef\\xbc\\xaf\\xef\\xbc\\xae'",
+        "literals_present": [],
+        "old_admitted": false,
+        "new_admitted": false,
+        "old_branch_set": [],
+        "new_branch_set": [],
+        "old_verdict": [],
+        "new_verdict": [],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "non_ascii_token_4",
+        "payload_repr": "b'\\xef\\xbd\\x93\\xef\\xbd\\x85\\xef\\xbd\\x8c\\xef\\xbd\\x85\\xef\\xbd\\x83\\xef\\xbd\\x94'",
+        "literals_present": [],
+        "old_admitted": false,
+        "new_admitted": false,
+        "old_branch_set": [],
+        "new_branch_set": [],
+        "old_verdict": [],
+        "new_verdict": [],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "zero_width_token_0",
+        "payload_repr": "b'\\xe2\\x80\\x8b'",
+        "literals_present": [],
+        "old_admitted": false,
+        "new_admitted": false,
+        "old_branch_set": [],
+        "new_branch_set": [],
+        "old_verdict": [],
+        "new_verdict": [],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "zero_width_token_1",
+        "payload_repr": "b'\\xef\\xbb\\xbf'",
+        "literals_present": [],
+        "old_admitted": false,
+        "new_admitted": false,
+        "old_branch_set": [],
+        "new_branch_set": [],
+        "old_verdict": [],
+        "new_verdict": [],
+        "verdict": "MATCH"
+      },
+      {
+        "name": "zero_width_token_2",
+        "payload_repr": "b'a\\xe2\\x80\\x8bb'",
+        "literals_present": [],
+        "old_admitted": false,
+        "new_admitted": false,
+        "old_branch_set": [],
+        "new_branch_set": [],
+        "old_verdict": [],
+        "new_verdict": [],
+        "verdict": "MATCH"
+      }
+    ]
+  }
+}

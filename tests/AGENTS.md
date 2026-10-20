@@ -205,6 +205,48 @@ tests/e2e/
 - Validate external service integrations
 - Include security and isolation tests
 
+### The Lane C e2e oracles (C-2, C-5 and C-6)
+
+Three Lane C e2e scripts live in `tests/e2e/feature_validation/`, and they do
+not mean the same thing:
+
+- `test_c2_prefilter_conjunction_e2e.py` runs the whole attack corpus
+  through the OLD prefilter and the narrowed separator-AND-command gate and
+  asserts ZERO verdict differences. The narrowing HAS landed; the script
+  proves it changed no verdict.
+- `test_c5_health_summary_memo_e2e.py` pins the circuit-breaker
+  memoisation contract: equality with the uncached reference after EVERY
+  operation, and a demonstrable invalidation for all five mutation entry
+  points plus TTL expiry. **No memoisation exists in `core/resilience`**
+  (C-5 was closed as deferred), so this script SPECIFIES the contract a
+  future implementation must satisfy and pins the admin surface's
+  no-staleness property. It asserts NO duration: the 38 ms figure is an
+  inherited-harness number and asserting it would be inventing a
+  measurement.
+- `test_c6_golden_bytes_e2e.py` pins the BYTES the two JSON call sites
+  emit, by REACHING them rather than replicating them: the AI leg drives
+  the real `OpenAIProvider.generate_json` and reads the schema fragment out
+  of the captured system prompt; the refresh leg drives the real
+  `POST /api/v1/account/refresh` and captures the exact string handed to
+  the cache. ASCII cases are byte-exact, non-ASCII deltas are characterised
+  and named, and the token response is compared INCLUDING its headers.
+  **C-6 was closed as deferred**, so there is no before/after to diff: the
+  script PINS today's bytes and SPECIFIES what an orjson swap must
+  reproduce. Two findings it records: the schema fragment's bytes are
+  IDENTICAL under `orjson.OPT_INDENT_2` for ASCII (so a swap there would
+  be invisible on ASCII), and the rotation marker is ASCII by construction,
+  so its orjson delta is separator-only.
+
+❌ DON'T: treat a green C-5 e2e as evidence that the health summary is
+memoised. It is the specification of a diff, exactly like the A-1 harness
+below.
+
+❌ DON'T: treat a green C-6 e2e as evidence that an orjson swap is safe.
+It pins the bytes; it does not decide whether to make the swap. That
+decision is a human one, and `webhooks/signer.py` — whose
+`json.dumps(payload, sort_keys=True).encode("utf-8")` IS an HMAC wire
+contract — stays out of scope permanently.
+
 ---
 
 ## Integration Tests (`tests/integration/`)

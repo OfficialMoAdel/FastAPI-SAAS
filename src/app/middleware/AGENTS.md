@@ -182,6 +182,54 @@ is mid-word, and no command word follows any `;` at a word boundary. The case an
 reason are pinned in `tests/unit/middleware/test_attack_pruning_differential.py` and in
 the validator's `C2_pixel_ua` gate.
 
+The narrowing itself has an e2e differential oracle:
+`tests/e2e/feature_validation/test_c2_prefilter_conjunction_e2e.py` (bead
+`FastAPI_saas-mhj4`; recorded artefact
+`perf-results/RESULT-20261020-mhj4/c2_prefilter_differential.json`). It runs the
+whole seeded corpus through BOTH the reconstructed pre-C-2 prefilter and the
+shipped one, and asserts **zero verdict differences**: the narrowing may admit
+LESS, but it must never change a verdict. It also pins the `--` companion in
+BOTH literal sets, and asserts the mobile `user-agent` is benign because of the
+POSITION of `id` (`Android` contains it, `Pixel` does not).
+
+## The body-scan offload (A-8): a CAPACITY lever, never a detection lever
+
+`ATTACK_DETECTION_BRANCH_PRUNE_OFFLOAD` (default **False**) moves the request-BODY
+pattern scan into a worker process. It is off by default because the process arm's
+p95 was never measured on the Linux target — L-13's parity figures are for the
+THREAD arm — so switching it on would be an unmeasured production change.
+
+- `scan_content_for_attacks(content, location, log_full_request)` is module level and
+  **RETURNS** its findings instead of appending to a list the caller owns. That is not
+  a style choice: a worker process cannot mutate the parent's list, so a scan that
+  crosses a process boundary must hand its result back.
+- `_scan_in_worker` is module level so it is picklable **by reference**. A lambda or a
+  closure would not survive the pool's serialiser — one of the three obstacles L-13
+  recorded against the process arm.
+- The pool is created **once**, in `AttackDetectionMiddleware.__init__`, and stays warm.
+  It is never created per request.
+- **The fail direction is fail-to-current WITH A CIRCUIT BREAKER** (ADR-0016): a
+  pool-side error (broken pool, pickling failure, worker death, cancellation) falls
+  back to the in-process scan on the event loop. No request is left unscanned and
+  none is rejected because the pool failed. The fallback increments
+  `r1_attack_scan_pool_failure_total` (`record_attack_scan_pool_failure()`), so a
+  dead pool is visible during an incident instead of being a bare log line.
+- More than 5 pool failures in any 60 s window opens the breaker: the offload is
+  disabled, an ERROR is logged, and it stays off until the process restarts or an
+  operator re-enables it.
+- The prefilter decision is made in the **parent** (`_should_scan`), because the
+  prune counter lives there and a child cannot increment it.
+- The worker uses the **platform default** start method (fork on Linux). Forcing
+  spawn/forkserver has a second cost: a spawned child re-imports the parent's
+  `__main__`, which under a console-script launcher cannot even start. That is a
+  start-up failure, and the fail direction covers it. No start-up cost figure is
+  quoted for either start method: `[Unverified - Needs-Linux-measure]`.
+
+❌ DON'T: treat the offload as a detection change. It finds exactly the same attacks
+as the in-process scan; the oracle `tests/unit/middleware/test_a8_body_scan_offload.py`
+asserts the two paths produce the same findings, that a pool failure falls back AND
+is counted, and that the breaker opens and stops the offload being used.
+
 ## Common Gotchas
 
 - **Order matters**: registration order = reverse execution order; see the flow diagram in `main.py` before inserting a new middleware

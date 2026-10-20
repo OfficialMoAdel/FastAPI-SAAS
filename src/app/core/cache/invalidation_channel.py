@@ -8,7 +8,7 @@ Implements ADR-0004 cross-worker L1 invalidation over Redis pub/sub with:
 """
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
@@ -40,6 +40,42 @@ class InvalidationChannel:
             await redis_client.publish(self.channel, msg)
         except Exception as e:
             self._logger.warning("l1_invalidation_publish_failed", channel=self.channel, error=str(e))
+
+    async def publish_many(self, payloads: Sequence[str]) -> None:
+        """Publish a BATCH of invalidation messages in ONE round trip.
+
+        The batch is a single Redis pipeline, so the whole fan-out costs one
+        round trip instead of one per payload. The ORDER the payloads are
+        given in is the order the subscribers receive them: Redis executes a
+        pipeline's commands in submission order on one connection, so the
+        per-subscriber FIFO a serial fan-out had is preserved.
+
+        The trailing ``execute()`` MUST stay INSIDE the ``async with``:
+        redis-py 5.3.1's ``Pipeline.__aexit__`` awaits ``reset()``, which
+        clears the command stack, so a dedented ``execute()`` would send an
+        EMPTY batch and silently invalidate nothing.
+
+        A failure is logged as a BATCH — one warning naming the batch rather
+        than one per payload. That is coarser logging, not a behaviour
+        change, and it is the delta this seam's batch form was accepted with.
+        """
+        if not payloads:
+            return
+        redis_client = get_redis()
+        if redis_client is None:
+            return
+        try:
+            async with redis_client.pipeline(transaction=False) as pipe:
+                for payload in payloads:
+                    pipe.publish(self.channel, payload)
+                await pipe.execute()
+        except Exception as e:
+            self._logger.warning(
+                "l1_invalidation_publish_failed",
+                channel=self.channel,
+                error=str(e),
+                payload_count=len(payloads),
+            )
 
     def start(self) -> None:
         """Start the background subscriber listener (idempotent)."""

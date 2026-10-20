@@ -17,7 +17,9 @@ import asyncio
 import logging
 import posixpath
 import re
+import time
 import unicodedata
+from concurrent.futures import Executor, ProcessPoolExecutor
 from enum import Enum
 
 from fastapi import Request, Response
@@ -26,7 +28,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from src.app.core.config import settings
 from src.app.core.guard.ip_rules import IpRules
 from src.app.core.logger import get_logger
-from src.app.core.monitoring.r1_unified_metrics import record_attack_subset_compiled
+from src.app.core.monitoring.r1_unified_metrics import record_attack_scan_pool_failure, record_attack_subset_compiled
 from src.app.core.observability.log_sanitizer import LogSanitizer
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
 from src.app.core.utils.ip_utils import get_client_ip
@@ -75,7 +77,7 @@ _GROUP_TO_ATTACK: dict[str, tuple[str, AttackType]] = {
     "ssrf_cloud": ("ssrf_cloud_metadata", AttackType.SSRF),
 }
 
-# Combined bytes regex: single search() replaces 16 sequential pattern checks.
+# Combined bytes regex: single search() replaces 17 sequential pattern checks.
 # Compiled as bytes pattern for zero-copy scanning of request body.
 # P1-7 FP hardening: xss_event requires tag context (event handlers only
 # execute inside <tag ...> — bare "only=" query/form params must not match);
@@ -105,7 +107,14 @@ COMBINED_ATTACK_RE: re.Pattern[bytes] = re.compile(
 # P1-7: necessary-literal prefilter for the combined regex. Each literal is a
 # *necessary* (not sufficient) condition for its group — every byte-string the
 # group can match contains the literal — so "no literal present" provably
-# implies "regex cannot match" and we can skip the ~1.1 ms finditer. Any hit
+# implies "regex cannot match" and we can skip the finditer entirely. What that
+# saves scales with the content actually scanned, so it is NOT a fixed number:
+# tests/benchmarks/test_nrgi3_scan_cost.py (min-of-N, CPython 3.13.7 / Windows /
+# .venv, recorded 2026-10-01) records 47.8 us for a 77 B body and 1087 us for a
+# 60 KB one. The old "~1.1 ms" here was the 60 KB figure quoted as though it
+# applied to every request. Both figures are
+# [Unverified - Needs-Linux-measure]: they were not re-measured on the Linux
+# target. Any hit
 # falls through to the unchanged full regex, so false positives only cost the
 # regex run, never a missed verdict. Literals are lowercase ASCII and content
 # is ASCII-folded via bytes.lower() (bytes IGNORECASE folds ASCII only), which
@@ -318,6 +327,142 @@ _HEADERS_TO_CHECK_BYTES: frozenset[bytes] = frozenset(h.encode("latin-1") for h 
 _BODY_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH"})
 
 
+def scan_content_for_attacks(content: bytes, location: str, log_full_request: bool = False) -> list[dict]:
+    """Return every attack the combined regex finds in ``content``.
+
+    Module level, and it RETURNS its findings instead of appending them to a
+    list the caller owns. That is not a style choice: a worker process cannot
+    mutate the parent's list, so a scan that has to cross a process boundary
+    must hand its result back (ADR-0016's A-8).
+    """
+    findings: list[dict] = []
+    for match in COMBINED_ATTACK_RE.finditer(content):
+        group_name = match.lastgroup
+        if group_name and group_name in _GROUP_TO_ATTACK:
+            pattern_name, attack_type = _GROUP_TO_ATTACK[group_name]
+
+            # False positive mitigation for multipart/form-data boundaries
+            if pattern_name == "sql_comment_end":
+                match_start = match.start()
+                line_start = content.rfind(b"\n", 0, match_start) + 1
+                line = content[line_start : match.end()]
+                if line.startswith(b"--") and b" " not in line.strip() and len(line.strip()) > 10:
+                    continue
+
+            findings.append(
+                {
+                    "attack_type": attack_type.value,
+                    "pattern_name": pattern_name,
+                    "location": location,
+                    "matched_content": (
+                        LogSanitizer.sanitize_message(content[:100].decode("utf-8", errors="replace"))
+                        if log_full_request
+                        else "[redacted]"  # noqa: E501
+                    ),
+                }
+            )
+    return findings
+
+
+def _scan_in_worker(payload: tuple[bytes, str, bool]) -> list[dict]:
+    """Worker entry point for the A-8 body-scan process pool.
+
+    Module level so it is picklable BY REFERENCE
+    (``src.app.middleware.attack_detection._scan_in_worker``). A lambda or a
+    closure would not survive the trip through the pool's serialiser, which is
+    one of the three obstacles L-13 recorded against the process arm.
+    """
+    content, location, log_full_request = payload
+    return scan_content_for_attacks(content, location, log_full_request)
+
+
+class _BodyScanOffload:
+    """A-8: run the request-body pattern scan in a worker process.
+
+    ADR-0016's fail direction is FAIL-TO-CURRENT WITH A CIRCUIT BREAKER. A
+    pool-side error (a broken pool, a pickling failure, a dead worker) falls
+    back to the in-process scan on the event loop: no request is left
+    unscanned, and no request is rejected because the pool failed. The
+    fallback is counted, so the failure is visible during an incident rather
+    than only in a log line.
+
+    The breaker opens after more than ``_FAILURE_THRESHOLD`` failures inside
+    ``_FAILURE_WINDOW_SECONDS``; the offload then stays off until the process
+    restarts or an operator re-enables it. This is a CAPACITY lever, never a
+    detection lever: the worker returns exactly the findings the in-process
+    scan would have produced.
+
+    The worker process uses the PLATFORM DEFAULT start method, which is what
+    A-11 records: ``fork`` on Linux, ``spawn`` on macOS and Windows. Fork is
+    the Linux default and A-11's trade offers "keep fork and give up
+    max_tasks_per_child" as one branch; the fork hazard A-11 names -- the
+    child inherits the parent's open sockets -- is mitigated by the worker
+    being a PURE function that opens no socket, touches no global mutable
+    state and returns its findings instead of mutating the parent's list.
+
+    The other branch of A-11's trade is "force spawn/forkserver and pay the
+    start-up cost", and it has a second, unadvertised cost that this
+    implementation measured ON THIS HOST: a spawned child re-imports the
+    parent's ``__main__`` module, and under a console-script launcher whose
+    ``__main__`` is not decodable with the default encoding, the child
+    cannot even start. That is a start-up failure, and ADR-0016's fail
+    direction is exactly what covers it: the scan falls back to the event
+    loop and the failure is counted. No start-up cost figure is quoted for
+    either start method: ``[Unverified - Needs-Linux-measure]``.
+    """
+
+    _FAILURE_THRESHOLD = 5
+    _FAILURE_WINDOW_SECONDS = 60.0
+
+    def __init__(self, max_workers: int = 1, executor: Executor | None = None) -> None:
+        """Create the offload. ``executor`` exists so a test can inject one."""
+        self._executor = executor if executor is not None else ProcessPoolExecutor(max_workers=max_workers)
+        self._failures: list[float] = []
+        self._breaker_open = False
+
+    @property
+    def breaker_open(self) -> bool:
+        """True once the circuit breaker has opened."""
+        return self._breaker_open
+
+    async def scan(self, content: bytes, location: str, log_full_request: bool = False) -> list[dict] | None:
+        """Return the findings, or None when the caller must scan in-process."""
+        if self._breaker_open:
+            return None
+        try:
+            loop = asyncio.get_running_loop()
+            findings: list[dict] = await loop.run_in_executor(
+                self._executor,
+                _scan_in_worker,
+                (content, location, log_full_request),
+            )
+        except Exception as e:
+            self._record_failure(e)
+            return None
+        return findings
+
+    def _record_failure(self, error: Exception) -> None:
+        """Count the failure and open the breaker when there are too many."""
+        now = time.monotonic()
+        self._failures = [stamp for stamp in self._failures if now - stamp < self._FAILURE_WINDOW_SECONDS]
+        self._failures.append(now)
+        record_attack_scan_pool_failure()
+        if len(self._failures) > self._FAILURE_THRESHOLD and not self._breaker_open:
+            self._breaker_open = True
+            logger.error(
+                "attack_scan_pool_offload_disabled",
+                error=str(error),
+                failures=len(self._failures),
+                window_seconds=self._FAILURE_WINDOW_SECONDS,
+            )
+            return
+        logger.warning("attack_scan_pool_failure", error=str(error), failures=len(self._failures))
+
+    def shutdown(self) -> None:
+        """Stop the worker process."""
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+
 class AttackDetectionMiddleware:
     """Native ASGI middleware (not BaseHTTPMiddleware) to detect malicious patterns.
 
@@ -374,6 +519,16 @@ class AttackDetectionMiddleware:
         # restart -- a security control that needs a deploy to disable is not
         # a control you can use in an incident.
         self._branch_prune = settings.attack_detection.ATTACK_DETECTION_BRANCH_PRUNE
+
+        # A-8: the body-scan offload is a STARTUP decision, and the worker
+        # process is created once, here, and stays warm. It is never created
+        # per request (perf E5's own correction). The setting defaults to
+        # False, so a deployment that has not opted in starts no worker at
+        # all and this attribute is None: the body scan then runs exactly as
+        # it did before A-8 existed.
+        self._offload: _BodyScanOffload | None = (
+            _BodyScanOffload() if settings.attack_detection.ATTACK_DETECTION_BRANCH_PRUNE_OFFLOAD else None
+        )
 
     def _is_exempt_path(self, path: str) -> bool:
         """Check if path is exempt from attack detection.
@@ -628,14 +783,7 @@ class AttackDetectionMiddleware:
                             # sanitized+scanned in the thread pool so a large
                             # multipart/JSON payload cannot stall the event loop
                             # for every concurrent request.
-                            sanitized_body = self._sanitize_input(body_to_scan)
-                            if len(sanitized_body) > self._BODY_OFFLOAD_THRESHOLD:
-                                await asyncio.get_running_loop().run_in_executor(
-                                    None,
-                                    lambda: self._check_for_patterns(sanitized_body, "request_body", detected_attacks),
-                                )
-                            else:
-                                self._check_for_patterns(sanitized_body, "request_body", detected_attacks)
+                            await self._scan_body(body_to_scan, detected_attacks)
                 except BodySizeLimitExceeded:
                     # S-07 FIX: an oversized body is a SIZE violation, not an
                     # attack. `_drain_body` reads the same shared receive channel
@@ -666,6 +814,62 @@ class AttackDetectionMiddleware:
 
         return detected_attacks, receive
 
+    async def _scan_body(self, content: bytes, attacks: list[dict]) -> None:
+        """Scan a request body and record any findings in ``attacks``.
+
+        Three arms, in order:
+
+        1. A-8's worker process, when the offload is enabled. The prefilter
+           decision is made HERE, in the parent, because the prefilter is
+           cheap and its counter lives in the parent.
+        2. The thread pool, for a body larger than ``_BODY_OFFLOAD_THRESHOLD``
+           that is not offloaded, so a large payload cannot stall the event
+           loop.
+        3. The event loop itself, for everything else.
+        """
+        sanitized_body = self._sanitize_input(content)
+        if self._offload is not None:
+            if self._should_scan(sanitized_body):
+                findings = await self._offload.scan(sanitized_body, "request_body", self._log_full_request)
+                if findings is None:
+                    # ADR-0016's fail direction: a pool-side failure falls
+                    # back to the in-process scan. The prefilter decision is
+                    # NOT re-made here, so the prune counter is not counted
+                    # twice.
+                    attacks.extend(
+                        scan_content_for_attacks(sanitized_body, "request_body", self._log_full_request)
+                    )
+                else:
+                    attacks.extend(findings)
+            return
+        if len(sanitized_body) > self._BODY_OFFLOAD_THRESHOLD:
+            await asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda: self._check_for_patterns(sanitized_body, "request_body", attacks),
+            )
+            return
+        self._check_for_patterns(sanitized_body, "request_body", attacks)
+
+    def _should_scan(self, content: bytes) -> bool:
+        """A-1's pruning decision (ADR-0009). True means run the regex.
+
+        This is the ONLY pruning decision in this scan, so
+        ATTACK_DETECTION_BRANCH_PRUNE governs it: False means run the FULL
+        regex on every scan, i.e. the pre-P1 behaviour, which is what an
+        operator reaches for if the literal set is ever suspected too narrow.
+        The prunes are counted (mitigation (c)) because a prune is a
+        detection-soundness judgement and nothing else observes it.
+
+        It is a separate method because the A-8 offload has to make the SAME
+        decision in the PARENT process: the prefilter is cheap and its
+        counter lives in the parent, and a worker process cannot increment
+        the parent's counter.
+        """
+        if self._branch_prune and not _attack_prefilter_hit(content):
+            record_attack_subset_compiled()
+            return False
+        return True
+
     def _check_for_patterns(self, content: bytes, location: str, attacks: list[dict]) -> None:
         """Check content against all attack patterns using combined bytes regex.
 
@@ -682,34 +886,9 @@ class AttackDetectionMiddleware:
         too narrow. The prunes are counted (mitigation (c)) because a prune
         is a detection-soundness judgement and nothing else observes it.
         """
-        if self._branch_prune and not _attack_prefilter_hit(content):
-            record_attack_subset_compiled()
+        if not self._should_scan(content):
             return
-        for match in COMBINED_ATTACK_RE.finditer(content):
-            group_name = match.lastgroup
-            if group_name and group_name in _GROUP_TO_ATTACK:
-                pattern_name, attack_type = _GROUP_TO_ATTACK[group_name]
-
-                # False positive mitigation for multipart/form-data boundaries
-                if pattern_name == "sql_comment_end":
-                    match_start = match.start()
-                    line_start = content.rfind(b"\n", 0, match_start) + 1
-                    line = content[line_start : match.end()]
-                    if line.startswith(b"--") and b" " not in line.strip() and len(line.strip()) > 10:
-                        continue
-
-                attacks.append(
-                    {
-                        "attack_type": attack_type.value,
-                        "pattern_name": pattern_name,
-                        "location": location,
-                        "matched_content": (
-                            LogSanitizer.sanitize_message(content[:100].decode("utf-8", errors="replace"))
-                            if self._log_full_request
-                            else "[redacted]"  # noqa: E501
-                        ),
-                    }
-                )
+        attacks.extend(scan_content_for_attacks(content, location, self._log_full_request))
 
     async def _handle_attack_detection(
         self,

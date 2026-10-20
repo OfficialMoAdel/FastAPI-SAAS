@@ -264,6 +264,50 @@ class L1Cache:
         """Fan a raw wire payload out to the other workers."""
         await self._channel.publish(payload)
 
+    async def invalidate_many(self, keys: Sequence[Hashable | None]) -> None:
+        """Drop locally for EVERY key, **then** publish them all — in that order.
+
+        The batched form of :meth:`invalidate`, and it keeps both of that
+        method's invariants:
+
+        * every local drop happens BEFORE the first publish, because pub/sub
+          does not echo to the publisher — publishing first would leave this
+          process serving the very entry it just invalidated;
+        * every key goes through the same codec round-trip
+          (``parse(encode(key))``) :meth:`invalidate` uses, so a caller-held
+          key outside the wire domain drops the same entry the remotes drop.
+
+        The wire side is ONE round trip. The payloads are published in
+        submission order through a single pipeline, and Redis executes a
+        pipeline's commands in submission order on one connection, so the
+        subscribers receive exactly the sequence a serial fan-out sent.
+
+        A ``None`` key means "everything", locally and on the wire — the
+        broadcast token — exactly as in :meth:`invalidate`.
+        """
+        payloads: list[str] = []
+        for key in keys:
+            if key is None:
+                self.clear()
+                payloads.append(BROADCAST_TOKEN)
+                continue
+            encoded = self._codec.encode(key)
+            normalized = self._codec.parse(encoded)
+            if normalized is BROADCAST:
+                self.clear()
+            elif normalized is not IGNORE:
+                self.drop(normalized)
+            payloads.append(encoded)
+        await self.publish_many(payloads)
+
+    async def publish_many(self, payloads: Sequence[str]) -> None:
+        """Fan a batch of raw wire payloads out to the other workers.
+
+        One round trip for the whole batch; the order the payloads are given
+        in is the order the subscribers receive them.
+        """
+        await self._channel.publish_many(payloads)
+
     # -- introspection -----------------------------------------------------
 
     @property

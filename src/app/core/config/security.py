@@ -128,3 +128,18 @@ class AttackDetectionSettings(BaseSettings):
             "an optimisation and the regex is the detector."
         ),
     )
+    ATTACK_DETECTION_BRANCH_PRUNE_OFFLOAD: bool = Field(
+        default=False,
+        description=(
+            "A-8: run the request-BODY pattern scan in a worker process "
+            "instead of on the event loop. False (default): scan in process. "
+            "It defaults to False because the process arm's p95 was never "
+            "measured on the Linux target (L-13's parity figures are for the "
+            "THREAD arm), so switching it on would be an unmeasured change "
+            "to production. It is a CAPACITY lever, never a detection lever: "
+            "the in-process scan finds exactly the same attacks, and ADR-0016 "
+            "requires a pool-side failure to fall back to that in-process "
+            "scan (fail-to-current) with a circuit breaker that disables the "
+            "offload after repeated failures."
+        ),
+    )

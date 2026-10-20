@@ -125,6 +125,8 @@ rg -n "async def .*ctx" src/app/core/worker/functions.py
 - **UTC**: use `datetime.now(UTC)`, never `datetime.utcnow()`.
 - **RLS bypass** requires an explicit reason and is audited — reserve for admin ops.
 - **create_all gate**: outside `local`, startup `create_all` requires explicit `settings.app.CREATE_TABLES_ON_STARTUP=true` (tables created this way lack RLS policies).
+- **L1 invalidation fan-out**: `L1Cache.invalidate_many()` drops EVERY key locally BEFORE it publishes any of them, then fans the whole batch out through ONE Redis pipeline (`InvalidationChannel.publish_many`). Two invariants make it safe: pub/sub does not echo to the publisher, so publishing before dropping would leave this process serving the very entry it just invalidated; and the trailing `execute()` must stay INSIDE the `async with`, because redis-py 5.3.1's `Pipeline.__aexit__` awaits `reset()`, which clears the command stack — a dedented `execute()` sends an EMPTY batch and silently invalidates nothing. Both are pinned by `tests/benchmarks/bench_cache_invalidation.py`.
+- **L1 registry is a closed world**: `register_l1_channel` populates a process-global registry that `tests/unit/core/cache/test_l1_registry_contract.py` holds to an exact expected set. A new OWNER channel must be added to that set deliberately; a throwaway seam built in a test must not register at all (stub `l1.register_l1_channel`, as `tests/unit/core/cache/test_l1.py` does) or it breaks the contract test for every later test in the session.
 
 ## Pre-PR Checks
 

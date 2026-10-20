@@ -1,0 +1,98 @@
+{
+  "bead": "FastAPI_saas-ota3",
+  "item": "C-6 e2e",
+  "machine": {
+    "platform": "Windows",
+    "python": "3.13.7"
+  },
+  "method": "real call shapes driven, not replicated",
+  "per_run_facts": {
+    "site_1": {
+      "marker_byte_length": 137,
+      "marker_bytes_repr": "{\"user_id\": 1, \"sid\": \"7bcab2c5-e1c8-46c7-8f99-6934a12e6087\", \"new_jti\": \"6cdbe791-18c8-4c54-960a-36fda25dde2f\", \"new_exp\": 1793098105.0}",
+      "marker_bytes_sha256": "cb3eb141a4b1c6ca2f9a728635abf112417f64e692fcc1993d6f91de516d61a6",
+      "note": "these vary per run: the marker carries a fresh sid and jti, so they are recorded, not compared"
+    }
+  },
+  "quantity": 2,
+  "schema": "perf-c6-golden-bytes/1",
+  "stable_facts": {
+    "site_1": {
+      "bytes_differ_under_an_orjson_swap": true,
+      "marker_field_types": {
+        "new_exp": "float",
+        "new_jti": "str",
+        "sid": "str",
+        "user_id": "int"
+      },
+      "marker_is_ascii": true,
+      "marker_key_order": [
+        "user_id",
+        "sid",
+        "new_jti",
+        "new_exp"
+      ],
+      "marker_key_prefix": "refresh_rotated:",
+      "marker_uses_the_stdlib_separator_shape": true,
+      "orjson_delta_first_difference_index": 11,
+      "parsed_values_equal_under_an_orjson_swap": true,
+      "response_body_keys": [
+        "access_token",
+        "token_type"
+      ],
+      "response_header_names": [
+        "content-encoding",
+        "content-length",
+        "content-security-policy",
+        "content-type",
+        "permissions-policy",
+        "referrer-policy",
+        "set-cookie",
+        "vary",
+        "x-content-type-options",
+        "x-frame-options",
+        "x-ratelimit-limit",
+        "x-ratelimit-period",
+        "x-ratelimit-remaining",
+        "x-request-id",
+        "x-xss-protection"
+      ]
+    },
+    "site_2": {
+      "ascii": {
+        "bytes_differ_under_an_orjson_swap": false,
+        "golden_byte_length": 85,
+        "golden_sha256": "1eb6741094aea5c58b4853542ffcb5fe7c9836878044e736f20414c3bbf12e28",
+        "orjson_byte_length": 85,
+        "orjson_delta": {
+          "first_difference_index": 85,
+          "left_length": 85,
+          "left_window": "e\": \"number\"\n    }\n  }\n}",
+          "right_length": 85,
+          "right_window": "e\": \"number\"\n    }\n  }\n}"
+        },
+        "orjson_sha256": "1eb6741094aea5c58b4853542ffcb5fe7c9836878044e736f20414c3bbf12e28"
+      },
+      "non_ascii": {
+        "bytes_differ_under_an_orjson_swap": true,
+        "golden_byte_length": 45,
+        "golden_sha256": "a2f8892474463b1164b07847a4e761750c73f1d89604e80ebd32c7c7dedc4000",
+        "orjson_byte_length": 38,
+        "orjson_delta": {
+          "first_difference_index": 17,
+          "left_length": 45,
+          "left_window": "{\n  \"titre\": \"caf\\u00e9-\\u4e2d\",\n  \"v\": 0",
+          "right_length": 38,
+          "right_window": "{\n  \"titre\": \"caf\u00e9-\u4e2d\",\n  \"v\": 0.1\n}"
+        },
+        "orjson_sha256": "f90371557569c1890f46de71ad8e3afe35a8dacbdfcbd916c324e8bf2f2abaa7"
+      }
+    }
+  },
+  "title": "Golden bytes for the two json.dumps sites C-6 names",
+  "variants": {
+    "site_1": "src/app/modules/auth/services/tokens.py:235 - the refresh rotation marker",
+    "site_2": "src/app/modules/ai/providers.py:330 - the JSON schema fragment"
+  },
+  "verdict": "the bytes are pinned; an orjson swap changes them at BOTH sites and the delta is characterised"
+}

@@ -450,9 +450,13 @@ class UserCacheInvalidator:
                 logger.warning("Failed to build batch-invalidation keys for user", error=e)
 
         # Synchronous local drop + cross-worker publish for auth-info keys only.
-        for key in delete_keys:
-            if key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:"):
-                await _auth_info_l1_seam.invalidate(key)
+        # The fan-out is BATCHED: one pipeline, one round trip, instead of one
+        # publish per key. Every local drop still happens before the first
+        # publish (L1Cache.invalidate_many's invariant), and the payloads keep
+        # the order the delete keys were built in.
+        await _auth_info_l1_seam.invalidate_many(
+            [key for key in delete_keys if key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:")]
+        )
         if not delete_keys and not token_sets:
             return
 
