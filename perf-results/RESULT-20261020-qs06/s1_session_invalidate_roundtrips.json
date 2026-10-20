@@ -1,0 +1,95 @@
+{
+  "schema": "perf-s1-session-invalidate-roundtrips/1",
+  "bead": "FastAPI_saas-qs06",
+  "item": "S-1",
+  "title": "the round-trip count of one session invalidation, observed against a real Redis",
+  "recorded_at": "2026-10-20T14:33:58.866402+00:00",
+  "method": "The Redis server's own INFO commandstats is snapshotted immediately before and after ONE call to SessionManager.invalidate_session; the absolute per-command delta is reported. The app's lifespan is NOT run and no request is issued, so the delta is the invalidation's own and nothing else. Both arms ran on the SAME Redis on the SAME box; they differ only in which implementation of invalidate_session was under the instrument.",
+  "host": {
+    "hostname": "ansible1",
+    "platform": "Linux-5.14.0-578.el9.x86_64-x86_64-with-glibc2.34",
+    "python": "3.13.16",
+    "redis_version": "7.4.3",
+    "redis_host": "127.0.0.1",
+    "redis_port": 6379,
+    "in_repo": true,
+    "harness": "src/benchmarks/s1_session_invalidate_roundtrips.py"
+  },
+  "derived_claim": {
+    "source": "docs/verification/lane_b_checkbox2_arithmetic.md (bead FastAPI_saas-osxx)",
+    "before_wire_round_trips": 2,
+    "after_wire_round_trips": 1,
+    "before_shape": "one HEXISTS trip, then one packed transaction pipeline (redis-py sends MULTI+HDEL+ZREM+EXEC as ONE write)",
+    "after_shape": "one EVALSHA of the session_invalidate script; the existence check moved INSIDE the script",
+    "discrepancy_recorded": "the S-1 commit body says 3 -> 1, which counted MULTI and EXEC as separate trips; the derived count here is 2 -> 1 and the observation below settles which is right"
+  },
+  "arms": {
+    "before": {
+      "expect": "before",
+      "repo_head": "93750647ddbac6edd1e9d5bf5f4d44161f627569",
+      "repo_dir": "/home/ansible/FastAPI-Saas",
+      "imported_session_manager": "/home/ansible/FastAPI-Saas/src/app/core/security/session_manager.py",
+      "hit_path_delta": {
+        "hdel": 1,
+        "multi": 1,
+        "exec": 1,
+        "hexists": 1,
+        "zrem": 1
+      },
+      "miss_path_delta": {
+        "hexists": 1
+      },
+      "client_commands": [
+        "hexists",
+        "multi",
+        "hdel",
+        "zrem",
+        "exec"
+      ],
+      "client_round_trips": 2,
+      "client_round_trips_is": "DERIVED from the observed command set and the code shape, not a second observation: the commands the client sent are counted, and redis-py sends a transaction pipeline as ONE write on ONE connection.",
+      "control_window_delta": {}
+    },
+    "after": {
+      "expect": "after",
+      "repo_head": "dc1152919c075d58b246db6016490d32cb7e3050",
+      "repo_dir": "/home/ansible/qs06",
+      "imported_session_manager": "/home/ansible/qs06/src/app/core/security/session_manager.py",
+      "hit_path_delta": {
+        "zrem": 1,
+        "hexists": 1,
+        "hdel": 1,
+        "evalsha": 1
+      },
+      "miss_path_delta": {
+        "hexists": 1,
+        "evalsha": 1
+      },
+      "client_commands": [
+        "evalsha"
+      ],
+      "client_round_trips": 1,
+      "client_round_trips_is": "DERIVED from the observed command set and the code shape, not a second observation: the commands the client sent are counted, and redis-py sends a transaction pipeline as ONE write on ONE connection.",
+      "control_window_delta": {}
+    }
+  },
+  "what_the_observation_settles": {
+    "the_derived_count": "2 -> 1 client round trips on the HIT path",
+    "the_s1_commit_body_count": "3 -> 1",
+    "verdict": "THE OBSERVATION CONFIRMS THE DERIVED COUNT OF 2 -> 1 AND CORRECTS THE COMMIT BODY'S 3 -> 1. On the BEFORE arm the client sent HEXISTS and then one packed MULTI..EXEC transaction pipeline, which redis-py sends as ONE write on ONE connection: two round trips, not three. On the AFTER arm the client sent exactly ONE command, the EVALSHA of the session_invalidate script, and the script's own HEXISTS/HDEL/ZREM appear in the same delta because Redis counts a script's internal calls under their own commandstats entries and they cost no wire traffic.",
+    "the_saving_is_on_the_hit_path_only": "On the MISS path the before-arm paid ONE trip (the client's HEXISTS) and the after-arm pays ONE trip (the EVALSHA, whose internal HEXISTS returns early). The saving is therefore on the hit path only, which is what the record says.",
+    "the_observation_wins": "The bead's design says that if the observation contradicts the derived count, the observation wins and the record is corrected. It does not contradict it: the derived 2 -> 1 is CONFIRMED, and the S-1 commit body's 3 -> 1 is the thing that was wrong - it counted MULTI and EXEC as separate trips."
+  },
+  "what_is_not_asserted": {
+    "no_new_less_old": "No comparison of the before-arm against the after-arm is made as a pass criterion. Each run asserts an ABSOLUTE count for the implementation it was pointed at; the two counts are reported side by side and neither is asserted to be better than the other.",
+    "no_duration": "No timing, no duration and no latency figure is recorded. This is a COUNT, not a benchmark.",
+    "not_an_endpoint_measurement": "The app's lifespan is not run and no request is issued, so this says nothing about the latency of any endpoint.",
+    "the_script_internal_counts_are_not_round_trips": "The HEXISTS/HDEL/ZREM entries that appear in the after-arm's delta are the SCRIPT's internal calls: they execute inside the server on the same connection and cost no wire traffic. The client round-trip count is the DERIVATION the observation supports (one EVALSHA), not a second observation.",
+    "the_two_arms_ran_on_different_commits": "The before-arm ran the code at the box's own HEAD (93750647d, the origin tip, which predates S-1) and the after-arm ran the code at this repository's HEAD (the commit named in the after arm's repo_head), each in its own tree, on the same box, against the same Redis."
+  },
+  "how_the_two_arms_were_merged": "This artefact merges two files that are committed beside it: s1_after.json (the after arm) and s1_before.json (the before arm), each written by the harness itself. Nothing here is re-derived: the deltas are copied verbatim from those files and the host block is the after arm's, since both arms ran on the same box against the same Redis.",
+  "source_files": [
+    "s1_after.json",
+    "s1_before.json"
+  ]
+}

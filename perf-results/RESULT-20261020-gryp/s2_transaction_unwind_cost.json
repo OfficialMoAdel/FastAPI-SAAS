@@ -1,0 +1,130 @@
+{
+  "schema": "perf-s2-transaction-unwind-cost/1",
+  "bead": "FastAPI_saas-gryp",
+  "item": "S-2",
+  "title": "the cost of ONE transaction unwind on the duplicate logout path",
+  "recorded_at": "2026-10-20T14:57:20.775621+00:00",
+  "method": "The duplicate path is reproduced in the database: the staged insert is made inside a SAVEPOINT (begin_nested), the flush raises the unique violation, the savepoint rolls ITSELF back, and only then is the outer unwind timed. The exception is classified with the production predicate (_is_duplicate_blacklist_violation), so the arm can only be the duplicate branch. The savepoint's own rollback is NOT inside the timed region: the clock starts after it. No HTTP request is issued and the app's lifespan is not run.",
+  "host": {
+    "hostname": "ansible1",
+    "platform": "Linux-5.14.0-578.el9.x86_64-x86_64-with-glibc2.34",
+    "python": "3.13.16",
+    "in_repo": true,
+    "harness": "src/benchmarks/gryp_transaction_unwind_cost.py"
+  },
+  "protocol": {
+    "repetitions": 20,
+    "statistic": "min-of-N with the median and the max reported beside it",
+    "clock": "time.perf_counter_ns()",
+    "criterion": "report only; this is not a new < old comparison and no improvement is claimed"
+  },
+  "arms": {
+    "duplicate_path_unwind": {
+      "what": "the outer unwind on the duplicate logout path - the exact call and the exact state the redundant ROLLBACK S-2 removed ran in",
+      "min_us": 355.226,
+      "median_us": 449.528,
+      "max_us": 595.237,
+      "samples_us": [
+        595.237,
+        355.226,
+        439.447,
+        505.901,
+        390.227,
+        493.194,
+        371.468,
+        456.725,
+        383.668,
+        492.676,
+        428.61,
+        576.825,
+        405.902,
+        374.661,
+        497.208,
+        376.678,
+        388.196,
+        515.853,
+        481.875,
+        449.528
+      ],
+      "classified_as_the_production_duplicate_in_every_repetition": true
+    },
+    "unwind_with_a_flushed_insert_to_undo": {
+      "what": "one unwind that has real work to undo, for scale",
+      "min_us": 350.558,
+      "median_us": 460.741,
+      "max_us": 654.91,
+      "samples_us": [
+        468.673,
+        497.534,
+        460.741,
+        461.581,
+        623.741,
+        399.149,
+        383.729,
+        385.01,
+        398.544,
+        459.377,
+        529.146,
+        654.91,
+        394.1,
+        350.558,
+        476.155,
+        390.897,
+        370.581,
+        533.82,
+        475.519,
+        388.822
+      ]
+    },
+    "local_floor": {
+      "what": "one unwind with no transaction open - the local floor of the call",
+      "min_us": 23.783,
+      "median_us": 27.032,
+      "max_us": 42.042,
+      "samples_us": [
+        29.993,
+        31.794,
+        30.163,
+        34.149,
+        30.836,
+        24.699,
+        24.661,
+        24.028,
+        25.025,
+        24.077,
+        42.042,
+        26.176,
+        25.022,
+        24.103,
+        25.142,
+        38.778,
+        27.032,
+        39.958,
+        34.046,
+        23.783
+      ]
+    }
+  },
+  "the_figure": {
+    "numerator_us": 355.226,
+    "numerator_is": "the min-of-N cost of ONE transaction unwind on the duplicate logout path",
+    "fraction_of_the_4090_us_uncontended_floor_percent": 8.6852,
+    "fraction_of_em6s_12670_7_us_logout_p50_percent": 2.8035,
+    "denominators": {
+      "uncontended_floor_us": 4090.0,
+      "uncontended_floor_source": "GATE B's named floor; the committed corroboration is perf-results/RESULT-20261012-sweepB/sweepA_8_stats.csv (min 4.09577600294142 ms at concurrency 8)",
+      "em6_logout_p50_us": 12670.7,
+      "em6_logout_p50_source": "EM-6 (FastAPI_saas-ky66), perf-results/RESULT-20261013-logout/logout_step.json"
+    },
+    "endpoint_the_saving_lands_on": "POST /api/v1/account/logout, on the REPEAT (duplicate-token) path only. A normal logout never took this branch, so the saving lands on a repeat logout and on nothing else. It does not land on GET /users/me or on any other request path.",
+    "is_the_figure_above_the_local_floor": true,
+    "local_floor_min_us": 23.783
+  },
+  "what_is_not_asserted": {
+    "no_new_less_old": "No comparison of a before arm against an after arm is made. There is no before arm here: the line S-2 removed is gone from the tree, so what this measures is the cost of the unwind as it would have been executed, not a measured saving.",
+    "no_endpoint_measurement": "no HTTP request is issued and the lifespan is not run",
+    "not_the_cost_of_a_logout": "it is the cost of ONE unwind, on one branch",
+    "the_denominator_is_not_re_measured": "EM-6's logout p50 and the 4.09 ms floor are quoted from the committed record; neither is re-measured here, and the floor is not substituted with a warm p50",
+    "main_json_stub_never_compared": "tests/benchmarks/baselines/main.json is a stub and is never compared"
+  }
+}

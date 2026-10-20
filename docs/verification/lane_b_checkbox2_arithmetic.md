@@ -8,7 +8,10 @@
 > the PR description states, WITH ARITHMETIC, that it moves capacity and not p95 (§4.7 gate (c)), except where a p95 effect is separately demonstrated;
 
 **Companion record:** `docs/verification/lane_b_gate_b_record.md` - the per-item gate texts (labels, oracles, suites). This document supplies the arithmetic that record marks absent or wrong.
-**Audited at:** HEAD = `36dfda38` (branch `security/remediate-run3-findings`)
+**Audited at:** commit `36dfda38` (branch `security/remediate-run3-findings`).
+That commit is not an ancestor of this branch's tip - it was squashed into
+`cc6e6d17` - so read "Note on the commit identities" at the end of this
+document before trying to `git show` it.
 
 ## What this document is, and what it is not
 
@@ -135,11 +138,38 @@ after-arm is **1**.
 | Endpoint the saving lands on | The **logout / session-invalidation path**, not `GET /users/me`. The fraction is therefore a scale comparison, not an endpoint claim. |
 | Tier | **Measured, Linux.** The RTT is a store probe, not the invalidation path itself, and n=40 at concurrency 1; it is reported as a range, not a constant, because the artefact's own note says "RTT is reported ONLY as buckets. No single RTT constant and no p95-per-RTT figure appears anywhere in this artefact, by L-7." |
 
-**What is still owed.** The S-1 bead records that "the Phase-0 INFO commandstats
-delta on perf-local confirming exactly one round trip saved per invalidation
-against a real Redis is still owed". The round-trip **count** above is settled
-by reading the code; the round-trip **count against a real Redis on the perf
-host** is not, and stays open.
+**What is still owed.** Nothing for the count. The S-1 bead recorded that "the
+Phase-0 INFO commandstats delta on perf-local confirming exactly one round trip
+saved per invalidation against a real Redis is still owed". The round-trip
+**count** above was settled by reading the code, and it has since been
+**observed against a real Redis on the perf host**, on both arms -
+`perf-results/RESULT-20261020-qs06/s1_session_invalidate_roundtrips.json`
+(bead `FastAPI_saas-qs06`, harness
+`src/benchmarks/s1_session_invalidate_roundtrips.py`).
+
+| Observed on perf-local | hit path | miss path |
+|---|---|---|
+| **Before** (the box's pre-S-1 code, commit `93750647d`) | the client sent `HEXISTS` + one packed `MULTI`..`EXEC` pipeline = **2 round trips** | the client sent `HEXISTS` = **1 round trip** |
+| **After** (commit `dc115291`) | the client sent one `EVALSHA` = **1 round trip** | the client sent one `EVALSHA` = **1 round trip** |
+
+The command delta was read out of the Redis server's own `INFO commandstats`
+around one call to `SessionManager.invalidate_session`, and the counts are
+asserted as **absolute** values - no `new < old` comparison is made anywhere.
+A control window with no invalidation in it was **empty** in both runs, so the
+instrument contributed no traffic of its own.
+
+**The observation settles the dispute: 2 -> 1 on the hit path, and the S-1
+commit body's "3 -> 1" is a miscount.** The body counted `MULTI` and `EXEC` as
+two round trips; redis-py sends a transaction pipeline as ONE write on ONE
+connection, so the before-arm paid two trips, not three. The derivation above
+was right and the commit body was wrong, and this record now carries the
+observation beside the derivation.
+
+**The saving is on the hit path only**, exactly as the row above says: the
+miss path cost one trip before (the `HEXISTS` probe) and one trip after (the
+`EVALSHA`, whose internal existence check returns early). The two arms ran on
+different commits, on the same box and the same Redis, and the artefact records
+the file each arm's code was actually imported from.
 
 **The original figure.** The S-1 bead's close_reason carried the arithmetic
 against the Windows range ("0.3 ms = 7.3 % of the 4.09 ms floor at co-located
@@ -156,25 +186,48 @@ neither is quoted as a production claim here.
 outer `ROLLBACK` that is only correct by accident. The change removes it. The
 rollback on the **non-duplicate** path remains.
 
-**There is no numerator.** A search of the whole bead corpus for a
-ROLLBACK / transaction-unwind / savepoint figure returns nothing: **the cost of
-a transaction unwind is not measured anywhere in this programme.** No bead owns
-that measurement, so there is no bead to name.
+**The numerator exists now.** It did not when this section was written: a search of
+the whole bead corpus for a ROLLBACK / transaction-unwind / savepoint figure
+returned nothing, and no bead owned that measurement. Bead `FastAPI_saas-gryp`
+owns it now, and the measurement is committed:
+`perf-results/RESULT-20261020-gryp/s2_transaction_unwind_cost.json`, harness
+`src/benchmarks/gryp_transaction_unwind_cost.py`, perf-local (Linux), 2026-10-20.
 
-| | |
-|---|---|
-| **Numerator** | **DOES NOT EXIST.** One transaction unwind removed per duplicate-path logout; its cost is unmeasured. |
-| **Source** | none. No artefact, no bead, no measurement. |
-| **Fraction of the 4 090 us floor** | **Not applicable.** Logout is not `GET /users/me`. |
-| The denominator it would be measured against | EM-6 (`FastAPI_saas-ky66`, closed), `perf-results/RESULT-20261013-logout/logout_step.json`: **p50 12 670.7 us**, min 7 498.1 us, p95 33 834.2 us, 1 000 measured requests, success rate 1.0, 2026-10-13. |
-| Tier | **Capacity lever with no endpoint figure.** Not `[Unverified - Needs-Linux-measure]`: there is nothing to verify yet. |
+**How it was measured.** The duplicate path is reproduced in the database, not
+sketched: the staged insert is made inside a SAVEPOINT (`begin_nested()`) - what
+`blacklist_tokens` does - the flush raises the unique violation on
+`token_blacklist.token`, the savepoint rolls ITSELF back so the outer
+transaction is open and holds NOTHING, and only then is the outer unwind timed
+(`await db.rollback()`). The exception is classified with the production
+predicate (`_is_duplicate_blacklist_violation`), so the arm can only ever be the
+duplicate branch. The savepoint's own rollback is outside the timed region.
 
-**Two caveats that must travel with the denominator.** EM-6 measured **normal**
+| | | |
+|---|---|---|
+| **Numerator** | **355.226 us** (min-of-20) - the cost of ONE transaction unwind, as it would have been executed on the duplicate path. |
+| **Source** | `perf-results/RESULT-20261020-gryp/s2_transaction_unwind_cost.json` (bead `FastAPI_saas-gryp`), harness `src/benchmarks/gryp_transaction_unwind_cost.py`, perf-local, 2026-10-20. |
+| **Fraction of the 4 090 us floor** | **8.6852 %** - as a SCALE comparison. Logout is not `GET /users/me`, so the saving does not land on that path: it lands on a REPEAT logout. |
+| The denominator it would be measured against | EM-6 (`FastAPI_saas-ky66`, closed), `perf-results/RESULT-20261013-logout/logout_step.json`: **p50 12 670.7 us**, min 7 498.1 us, p95 33 834.2 us, 1 000 measured requests, success rate 1.0, 2026-10-13. The unwind is **2.8035 %** of that p50. |
+| Tier | **Measured, Linux (perf-local), 2026-10-20.** The `[Unverified - Needs-Linux-measure]` tag is REMOVED for this figure: the measurement settles exactly this figure and no other. |
+
+**Two more arms, for scale.** An unwind WITH a flushed insert to undo costs
+**350.558 us** (min-of-20) - the unwind's cost is the round trip, not the work
+undone. An unwind with nothing to undo and no transaction open - the local floor
+of the call - costs **23.783 us**, so the figure is about 15x the floor and is
+ABOVE it, not below it.
+
+**Three caveats that must travel with the figure.** (1) EM-6 measured **normal**
 logouts; the duplicate path was not exercised by it at all (1 000 requests, no
 duplicate recorded), and the 3.17-3.69 s logout step it was commissioned to
 explain **did not reproduce** (0 of 1 000). So even a measured unwind cost
 would need a duplicate-path frequency to become an endpoint claim, and this
-document has neither.
+document has neither. (2) **There is no before arm.** The line S-2 removed is
+gone from the tree, so this is the cost of the unwind as it would have been
+executed, not a measured saving. (3) The measurement ran with **no tenant
+context**: the app logged `restore_rls_context: no tenant context at pool
+checkout; resetting RLS vars to empty (fail-closed)` on every connection
+checkout. The row read was an existing `token_blacklist` row and the staged
+insert was a raw insert under empty RLS variables.
 
 ---
 
@@ -220,13 +273,13 @@ auth-info hit read, the Redis fill, and the auth-info write.
 
 | | |
 |---|---|
-| **Numerator** | **24.55 us saved per read** (25.7 us -> 1.15 us) |
-| **Source** | bead `FastAPI_saas-qbim` close_reason (the S-4 implementation bead). **No artefact file.** |
-| **Host** | **WINDOWS.** The commit body says so itself: "NOTE this figure is a WINDOWS microbenchmark number. It must be re-measured on Linux per H-11 before it is quoted as a production capacity claim." |
-| **Fraction of the 4 090 us floor** | **0.600 %** (24.55 / 4 090). The body said "0.6 percent" against a 4 000 us warm p50, which is 0.614 % - the wrong denominator and the same numerator. |
-| Secondary scale (EM-1's in-process server min-of-mins, 2 481.0 us) | 0.989 % - labelled as a different instrument, not the floor. |
+| **Numerator** | **9.187 us saved per read** (9.788 us -> 0.601 us), measured on Linux. |
+| **Source** | `perf-results/RESULT-20261020-x0or/s4_s5_numerators.json` (bead `FastAPI_saas-x0or`), harness `src/benchmarks/x0or_s4_s5_numerators.py`, **Linux target (perf-local), 2026-10-20**. The ORIGINAL instrument is **not in the repository** - the old figure came from a hand-rolled Windows script - so the min-of-N protocol was **re-implemented** with the repo's canonical `src/benchmarks/protocol.py::measure`. |
+| **Host** | **Linux (perf-local)**, CPython 3.13.16, 2026-10-20. The old figure's own host was Windows, and its commit body said so: "NOTE this figure is a WINDOWS microbenchmark number. It must be re-measured on Linux per H-11 before it is quoted as a production capacity claim." |
+| **Fraction of the 4 090 us floor** | **0.2246 %** (9.187 / 4 090). The old 0.600 % was the same shape of claim against the wrong denominator; the Linux measurement moves both the numerator and the fraction. |
+| Secondary scale (EM-1's in-process server min-of-mins, 2 481.0 us) | 0.370 % - labelled as a different instrument, not the floor. |
 | Endpoint the saving lands on | The authenticated request path that reads the auth-info payload (the auth prefetch: one `EVALSHA(composite_auth_prefetch)` per request in `raw_linux_d.json`), so it lands on `GET /users/me` **and** on every other authenticated request. No endpoint-level measurement of it exists. |
-| Tier | **`[Unverified - Needs-Linux-measure]`.** Windows-derived; re-measure on Linux per H-11 before it is quoted as a production capacity claim. |
+| Tier | **Measured, Linux (perf-local), 2026-10-20.** The `[Unverified - Needs-Linux-measure]` tag is REMOVED for this figure: the re-measurement settles exactly this figure and no other. The old Windows figure (24.55 us) is quoted above for comparison only and is not a production capacity claim. |
 
 ---
 
@@ -240,13 +293,13 @@ present, and none at all when one is.
 
 | | |
 |---|---|
-| **Numerator** | **33 us saved per request** (two `uuid4` draws removed) |
-| **Source** | the commit body `7dcf9f9f`: "THE ARITHMETIC (33 us / 0.8 %) / 33 us per request is 0.8% of the 4 ms /users/me p50 floor EM-1 recorded." |
-| **Host** | **NOT NAMED.** The body names a harness for the *floor* (EM-1) and **no harness or host at all** for the numerator. An unnamed host is not a Linux host. |
-| **Fraction of the 4 090 us floor** | **0.807 %** (33 / 4 090). The body said "0.8 %" against a 4 000 us warm p50 - the wrong denominator and the same numerator. |
-| Secondary scale (EM-1's in-process server min-of-mins, 2 481.0 us) | 1.330 % - labelled as a different instrument, not the floor. |
+| **Numerator** | **9.841 us saved per request** (two `uuid4` draws removed), measured on Linux. |
+| **Source** | `perf-results/RESULT-20261020-x0or/s4_s5_numerators.json` (bead `FastAPI_saas-x0or`), harness `src/benchmarks/x0or_s4_s5_numerators.py`, **Linux target (perf-local), 2026-10-20**. The ORIGINAL instrument is **not in the repository**, so the min-of-N protocol was **re-implemented** with the repo's canonical `src/benchmarks/protocol.py::measure`. The old figure's source was the commit body `7dcf9f9f`: "THE ARITHMETIC (33 us / 0.8 %) ..." - quoted for comparison only. |
+| **Host** | **Linux (perf-local)**, CPython 3.13.16, 2026-10-20. The old figure named **no host at all** for its numerator - "An unnamed host is not a Linux host" - which is why it carried the tag. |
+| **Fraction of the 4 090 us floor** | **0.2406 %** (9.841 / 4 090). The old 0.807 % was the same shape of claim against the wrong denominator; the Linux measurement moves both the numerator and the fraction. |
+| Secondary scale (EM-1's in-process server min-of-mins, 2 481.0 us) | 0.396 % - labelled as a different instrument, not the floor. |
 | Endpoint the saving lands on | **Every request**, including `GET /users/me` - the derivation sits in `request_id_from_scope`, which the request-id middleware and the outer guards all call. |
-| Tier | **`[Unverified - Needs-Linux-measure]`.** No host is named for the numerator. The sibling S-4 figure from the same session is explicitly Windows, so this figure cannot be treated as a Linux measurement either. |
+| Tier | **Measured, Linux (perf-local), 2026-10-20.** The `[Unverified - Needs-Linux-measure]` tag is REMOVED for this figure: the re-measurement settles exactly this figure and no other. The old 33 us figure is quoted above for comparison only. |
 
 ---
 
@@ -255,19 +308,23 @@ present, and none at all when one is.
 | Item | Numerator | Host / tier | Fraction of the 4 090 us uncontended floor | On `GET /users/me`? |
 |---|---|---|---|---|
 | S-1 | **1 Redis round trip** (2 -> 1 wire round trips, hit path only) | measured, Linux (perf-local), store probe, n=40 | **8.244 % - 14.421 %** (10.567 % at p50) | no - logout / invalidation path |
-| S-2 | **does not exist** (one transaction unwind, unmeasured) | no figure, no owning bead | **not applicable** | no - logout path; duplicate path only |
+| S-2 | **355.226 us** for one transaction unwind | measured, Linux (perf-local), 2026-10-20 | **8.6852 %** - a SCALE comparison; logout is not `GET /users/me` | no - logout path; duplicate path only |
 | S-3 | **2.1470 us** per DB-touching invocation | measured, Linux (M-5) | **0.0525 %** | **0 us - 0.0000 %** (the floor path opens no DB session) |
-| S-4 | **24.55 us** per read | **`[Unverified - Needs-Linux-measure]`** (Windows) | **0.600 %** | yes, and every other authenticated request |
-| S-5 | **33 us** per request | **`[Unverified - Needs-Linux-measure]`** (no host named) | **0.807 %** | yes, and every request |
+| S-4 | **9.187 us** per read | measured, Linux (perf-local), 2026-10-20 | **0.2246 %** | yes, and every other authenticated request |
+| S-5 | **9.841 us** per request | measured, Linux (perf-local), 2026-10-20 | **0.2406 %** | yes, and every request |
 
 ### Figures that remain unverified
 
-| Figure | Why it is unverified | What would settle it |
+**None of this document's own figures.** Every figure it carried as unverified has since been settled by a committed artefact:
+
+| Figure | Settled by | The measurement |
 |---|---|---|
-| S-4: 24.55 us saved per read | Windows microbenchmark (H-11) | a Linux re-measure of the same three call sites |
-| S-5: 33 us saved per request | no host or harness named for the numerator | a Linux measurement naming its harness, host and date |
-| S-2: the cost of one transaction unwind | never measured anywhere in this programme | a measurement of the duplicate-path unwind, plus its frequency |
-| S-1: the round-trip count against a real Redis on the perf host | the S-1 bead records this as still owed | the Phase-0 INFO commandstats delta on perf-local |
+| S-1: the round-trip count against a real Redis | `FastAPI_saas-qs06`, `perf-results/RESULT-20261020-qs06/` | 2 -> 1 client round trips on the hit path |
+| S-2: the cost of one transaction unwind | `FastAPI_saas-gryp`, `perf-results/RESULT-20261020-gryp/` | 355.226 us |
+| S-4: the copy saving per read | `FastAPI_saas-x0or`, `perf-results/RESULT-20261020-x0or/` | 9.187 us |
+| S-5: the request-id draw saving | `FastAPI_saas-x0or`, `perf-results/RESULT-20261020-x0or/` | 9.841 us |
+
+What is still unverified is not a figure in this document: it is the **frequency** with which the duplicate logout path is taken (S-2), which no measurement in this programme records - which is why S-2's fraction is a scale comparison and not an endpoint claim.
 
 ## What this document does not establish
 
@@ -279,10 +336,38 @@ present, and none at all when one is.
    as a committed record; they are not in the bodies, because the bodies are
    history and the artefacts they would live in do not exist (see
    `docs/verification/lane_b_gate_b_record.md`).
-3. **It does not promote any evidence tier.** Three of the five numerators
-   remain unverified, and they are marked as such above.
+3. **It does not promote an evidence tier beyond what a measurement
+   settles.** The figures that carried the tag when this document was
+   written have each been settled by a committed artefact, and the tag has
+   been removed from exactly those. What no artefact settles is the
+   duplicate-logout FREQUENCY, so S-2's fraction stays a scale comparison.
 4. **It quotes no figure from `tests/benchmarks/baselines/main.json`**, and no
    figure from a Windows artefact is quoted as a production capacity claim.
 5. **It does not claim a p95 effect for anything.** Every fraction here is a
    capacity statement about the uncontended floor, which is what the label
    "This moves capacity, not p95" asserts.
+
+## Note on the commit identities (2026-10-20)
+
+Three commits named in this document are **not reachable from this branch's
+tip**, so a reader who runs `git show <sha>` on this branch finds nothing.
+Each is named here with what it is and where its content now lives.
+
+- **`36dfda38`** - the S-6 commit (the batched L1 publish fan-out) that the
+  companion record cites. It was squashed into **`cc6e6d17`** ("perf(security):
+  batch L1 fan-out, add C-2/C-5/C-6 oracles, offload body scan"), whose tree is
+  byte-identical to the pre-squash tip: `git diff backup-before-squash-10c
+  cc6e6d17` is empty. Use `cc6e6d17`.
+- **`a94b1d9f`** and **`7dcf9f9f`** - the S-1 and S-5 implementation commits.
+  They are contained by **no branch or ref** at all, so they survive in this
+  repository's object database only - exactly as the companion record
+  `docs/verification/lane_b_gate_b_record.md` states ("Every body below was
+  recovered verbatim from the git object database"). A **fresh clone will not
+  contain them**: what they carried into the tree is in the tree, and the gate
+  texts they carried are transcribed in that record rather than merely linked.
+
+Nothing in this document's arithmetic depends on those commits being
+reachable. The arithmetic is arithmetic on recorded numbers and their
+recorded sources, and the two figures that were derived from an unreachable
+commit body - S-1's round-trip count and S-5's 33 us - have since been
+OBSERVED on the Linux target (`FastAPI_saas-qs06` and `FastAPI_saas-x0or`).

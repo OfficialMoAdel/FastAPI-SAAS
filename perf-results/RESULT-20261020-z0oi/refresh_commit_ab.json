@@ -1,0 +1,111 @@
+{
+  "schema": "perf-refresh-commit-ab/1",
+  "bead": "FastAPI_saas-z0oi",
+  "item": "M-2 - the refresh COMMIT's contribution",
+  "driver": "in-process over ASGITransport with the lifespan running",
+  "question": "does moving the refresh COMMIT off the critical path save the claimed ~3.2 ms of a 22.5 ms request, and is the denominator itself real",
+  "machine": {
+    "platform": "Linux-5.14.0-578.el9.x86_64-x86_64-with-glibc2.34",
+    "python": "3.13.16",
+    "cpu_count": 4
+  },
+  "repo_state": {
+    "head": "93750647ddbac6edd1e9d5bf5f4d44161f627569",
+    "branch": "security/remediate-run3-findings",
+    "dirty": "M pyproject.toml\n M src/app/core/db/database.py\n M src/app/core/guard/ordering.py\n M src/app/core/monitoring/process_series.py\n M src/app/core/rbac/dependencies.py\n M src/app/modules/posts/models.py\n M src/benchmarks/protocol.py\n M tests/performance/locustfile.py\n M uv.lock\n?? login_probe.py\n?? process_series.py\n?? reports/final_exceptions.csv\n?? reports/final_failures.csv\n?? reports/final_stats.csv\n?? reports/final_stats_history.csv\n?? reports/loaded_exceptions.csv\n?? reports/loaded_failures.csv\n?? reports/loaded_stats.csv\n?? reports/loaded_stats_history.csv\n?? reports/matrix_exceptions.csv\n?? reports/matrix_failures.csv\n?? reports/matrix_stats.csv\n?? reports/matrix_stats_history.csv\n?? reports/sweepA_128_exceptions.csv\n?? reports/sweepA_128_failures.csv\n?? reports/sweepA_128_stats.csv\n?? reports/sweepA_128_stats_history.csv\n?? reports/sweepA_1_exceptions.csv\n?? reports/sweepA_1_failures.csv\n?? reports/sweepA_1_stats.csv\n?? reports/sweepA_1_stats_history.csv\n?? reports/sweepA_256_exceptions.csv\n?? reports/sweepA_256_failures.csv\n?? reports/sweepA_256_stats.csv\n?? reports/sweepA_256_stats_history.csv\n?? reports/sweepA_32_exceptions.csv\n?? reports/sweepA_32_failures.csv\n?? reports/sweepA_32_stats.csv\n?? reports/sweepA_32_stats_history.csv\n?? reports/sweepA_64_exceptions.csv\n?? reports/sweepA_64_failures.csv\n?? reports/sweepA_64_stats.csv\n?? reports/sweepA_64_stats_history.csv\n?? reports/sweepA_8_exceptions.csv\n?? reports/sweepA_8_failures.csv\n?? reports/sweepA_8_stats.csv\n?? reports/sweepA_8_stats_history.csv\n?? reports/sweepB_128_exceptions.csv\n?? reports/sweepB_128_failures.csv\n?? reports/sweepB_128_stats.csv\n?? reports/sweepB_128_stats_history.csv\n?? reports/sweepB_1_exceptions.csv\n?? reports/sweepB_1_failures.csv\n?? reports/sweepB_1_stats.csv\n?? reports/sweepB_1_stats_history.csv\n?? reports/sweepB_256_exceptions.csv\n?? reports/sweepB_256_failures.csv\n?? reports/sweepB_256_stats.csv\n?? reports/sweepB_256_stats_history.csv\n?? reports/sweepB_32_exceptions.csv\n?? reports/sweepB_32_failures.csv\n?? reports/sweepB_32_stats.csv\n?? reports/sweepB_32_stats_history.csv\n?? reports/sweepB_64_exceptions.csv\n?? reports/sweepB_64_failures.csv\n?? reports/sweepB_64_stats.csv\n?? reports/sweepB_64_stats_history.csv\n?? reports/sweepB_8_exceptions.csv\n?? reports/sweepB_8_failures.csv\n?? reports/sweepB_8_stats.csv\n?? reports/sweepB_8_stats_history.csv\n?? rss_window.py\n?? scripts/body_scan_regimes.py\n?? scripts/clear_rate_limit_state.py\n?? scripts/emailstr_cost.py\n?? scripts/endpoint_phase_b.py\n?? scripts/header_scan_cost.py\n?? scripts/health_floor_probe.py\n?? scripts/health_probe.py\n?? scripts/login_floor_probe.py\n?? scripts/login_probe.py\n?? scripts/logout_step_probe.py\n?? scripts/p18_paired_arm.py\n?? scripts/query_count_reconciliation.py\n?? scripts/query_search_scan.py\n?? scripts/recompute_rss_divergence.py\n?? scripts/record_config_disclosure.py\n?? scripts/refresh_endpoint_probe.py\n?? scripts/rss_window.py\n?? scripts/rtt_distribution_probe.py\n?? scripts/span_cost.py\n?? scripts/step4_campaign.py\n?? scripts/step4_gate.py\n?? scripts/store_rtt_probe.py\n?? scripts/summarise_rss_artefact.py\n?? scripts/unauth_401_probe.py\n?? scripts/users_list_probe.py\n?? scripts/users_list_serialisation.py\n?? scripts/users_me_repetitions.py\n?? src/.env.example\n?? src/benchmarks/loop_occupancy.py\n?? src/benchmarks/m2_refresh_commit_ab.py\n?? src/migrations/versions/09_widen_token_blacklist_token.py\n?? tests/unit/middleware/test_c1_scope_path_oracle.py"
+  },
+  "store_addresses": {
+    "POSTGRES_SERVER": "192.168.121.147",
+    "POSTGRES_HOST": "None",
+    "POSTGRES_PORT": "5432",
+    "REDIS_CACHE_URL": "redis://:mypassword@192.168.121.147:6379",
+    "local_session_url": "None"
+  },
+  "protocol": {
+    "arms": [
+      "A (COMMIT on the request path)",
+      "B (COMMIT off the request path)"
+    ],
+    "interleaved": true,
+    "requests_per_arm": 1000,
+    "warmup_discarded": 20,
+    "logins": "every measured refresh is preceded by a fresh login; the login cost is not in the measurement",
+    "denominator": "arm A's pooled p50 from THIS run; never the cold-start-inflated 22.5 ms",
+    "percentile": "nearest rank, no interpolation"
+  },
+  "noise_floor": {
+    "intra_arm_x": 2.0,
+    "run_to_run_x": 7.1,
+    "arms_separated_by_the_floor": false,
+    "ratio_a_over_b": 1.0635
+  },
+  "arms": {
+    "A": {
+      "arm": "A",
+      "description": "the refresh request exactly as it runs today; the COMMIT is on the request path",
+      "requests": 1000,
+      "logins": 1000,
+      "status_distribution": {
+        "200": 1000
+      },
+      "rotations_observed": 1000,
+      "handler_executed": true,
+      "latency": {
+        "min_ms": 9.2276,
+        "p50_ms": 14.9445,
+        "p95_ms": 36.5863,
+        "p99_ms": 68.4509
+      },
+      "in_path_commit": {
+        "samples": 1000,
+        "p50_ms": 2.5647,
+        "p95_ms": 6.1715,
+        "min_ms": 1.5305
+      }
+    },
+    "B": {
+      "arm": "B",
+      "description": "the same request with the COMMIT off the critical path: the INSERT stays on the path (flush) and the COMMIT's round trip and WAL fsync are performed after the response, on the same connection, and timed there",
+      "requests": 1000,
+      "logins": 1000,
+      "status_distribution": {
+        "200": 1000
+      },
+      "rotations_observed": 1000,
+      "handler_executed": true,
+      "latency": {
+        "min_ms": 8.5236,
+        "p50_ms": 14.0526,
+        "p95_ms": 34.9443,
+        "p99_ms": 62.4319
+      },
+      "deferred_commit": {
+        "samples": 1000,
+        "p50_ms": 1.08,
+        "p95_ms": 2.5527,
+        "min_ms": 0.5939
+      }
+    }
+  },
+  "comparison": {
+    "difference_ms": 0.8919,
+    "ratio_a_over_b": 1.0635,
+    "arms_separated_by_the_intra_arm_floor": false,
+    "commit_contribution_ms": 1.8224
+  },
+  "projection": {
+    "projected_commit_ms": 3.2,
+    "projected_request_ms": 22.5,
+    "measured_denominator_ms": 14.9445,
+    "measured_commit_contribution_ms": 1.8224,
+    "projected_share_percent": 14.222,
+    "measured_share_percent": 12.194,
+    "projection_status": "CONFIRMED_WITHIN_HALF",
+    "denominator_status": "CONFIRMED_WITHIN_HALF"
+  },
+  "what_is_not_asserted": [
+    "no p95 claim and no capacity claim: this is the refresh request only",
+    "no figure for any other endpoint",
+    "the deferred COMMIT is not free: it is timed, and the time is reported here"
+  ]
+}

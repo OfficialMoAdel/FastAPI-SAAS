@@ -298,7 +298,37 @@ class L1Cache:
             elif normalized is not IGNORE:
                 self.drop(normalized)
             payloads.append(encoded)
-        await self.publish_many(payloads)
+        await self.publish_many(self.drop_locally(keys))
+
+    def drop_locally(self, keys: Sequence[Hashable | None]) -> list[str]:
+        """Drop every key locally and return the payloads a publish would carry.
+
+        The local half of :meth:`invalidate_many`, separated so a caller
+        whose own write must land BEFORE the peers are told can do that:
+        drop locally, write, then publish with :meth:`publish_many`.
+
+        Nothing is published here. The payload for each key is the same one
+        :meth:`invalidate_many` publishes, computed through the same codec
+        round-trip (``parse(encode(key))``), so the local drop and the wire
+        payload can never name different entries.
+
+        A ``None`` key means "everything", locally and on the wire - the
+        broadcast token - exactly as in :meth:`invalidate`.
+        """
+        payloads: list[str] = []
+        for key in keys:
+            if key is None:
+                self.clear()
+                payloads.append(BROADCAST_TOKEN)
+                continue
+            encoded = self._codec.encode(key)
+            normalized = self._codec.parse(encoded)
+            if normalized is BROADCAST:
+                self.clear()
+            elif normalized is not IGNORE:
+                self.drop(normalized)
+            payloads.append(encoded)
+        return payloads
 
     async def publish_many(self, payloads: Sequence[str]) -> None:
         """Fan a batch of raw wire payloads out to the other workers.

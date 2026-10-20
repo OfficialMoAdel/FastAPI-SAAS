@@ -670,3 +670,9 @@ tests/helpers/
 - Set performance baselines before changes
 - Track regressions with CI/CD
 - Use `--benchmark-compare` for trend analysis
+
+### The promoted attack-scan corpus (30 037 cases)
+- `tests/helpers/attack_scan_corpus.py` holds the 30 037-case corpus promoted from glm5.3's differential probe, with its seed (`20261004`) checked in as a source constant - the same seed the A-1 differential oracle uses.
+- It is a CORPUS, not an oracle. glm5.3's per-group-merge design was rejected on principle (a Python re-implementation of the regex engine's selection, resume and overlap-suppression semantics is a correctness surface) and it did not travel with the corpus.
+- `tests/unit/middleware/test_attack_scan_corpus.py` asserts the corpus is exactly 30 037 cases with the probe's composition, that it is deterministic, and that it is LIVE for the production scanner - every one of the 17 production attack groups is exercised by at least one case.
+- ❌ DON'T treat a green corpus test as evidence about glm5.3's design, and DON'T add a differential comparison against that rejected implementation: it has no stable expected side.

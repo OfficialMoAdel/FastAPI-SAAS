@@ -414,6 +414,23 @@ async def invalidate_users_permissions_cache_batch(user_ids: list[int], tenant_i
     # stale cached mask for any of the users it is invalidating. Pub/sub
     # is cross-process and would not echo back to us, so the local drops
     # have to lead the fan-out below.
+    #
+    # THE ORDER (GATE 93vx; the owner's decision of 2026-10-20): the L2
+    # DELETE lands FIRST and this L1 publish FOLLOWS it. The users path
+    # (src/app/modules/users/cache.py::invalidate_user_cache_batch) now
+    # uses this same shape, so the two agree.
+    #
+    # WHY the delete goes first: a publish tells the peers to drop their
+    # copy, but the row it is invalidating is still in Redis until the
+    # delete lands, so a peer that re-reads in that window re-caches the
+    # value that is being removed, and that resurrected value then lives
+    # until the L1 TTL.
+    #
+    # WHAT A FAILED DELETE MEANS: the peers are never told and the local
+    # caches were already cleared. No stale value is served anywhere - the
+    # row was never deleted, so what the caches hold is still the truth -
+    # but the INVALIDATION itself failed, which is the security-relevant
+    # outcome and is surfaced by the exception that reaches the caller.
     for user_id in user_ids:
         _bitmask_l1.pop(_bitmask_l1_key(user_id, tenant_id), None)
 

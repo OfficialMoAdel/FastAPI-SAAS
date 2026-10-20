@@ -480,3 +480,20 @@ blocked on a push the owner has declined.
 
 No test was weakened to accommodate this decision; no assertion was relaxed to
 make a number pass.
+
+## Note on the commit identities (2026-10-20)
+
+Two commits named in this record - **`36dfda38`** (the S-6 implementation) and
+**`b2469605`** (the checkbox-2 arithmetic record, the companion document) - are
+**not reachable from this branch's tip**. They were squashed into
+**`cc6e6d17`** ("perf(security): batch L1 fan-out, add C-2/C-5/C-6 oracles,
+offload body scan"), whose tree is byte-identical to the pre-squash tip
+(`git diff backup-before-squash-10c cc6e6d17` is empty). The original commits
+are preserved on the local branch `backup-before-squash-10c`; use `cc6e6d17`
+to reach the content on this branch.
+
+The eight Lane B commits whose bodies this record transcribes are a
+**different** case, and this record already says so: they are contained by no
+branch or ref and survive in the object database only, so a fresh clone will
+not have them. That is why their texts are transcribed here rather than
+merely linked.

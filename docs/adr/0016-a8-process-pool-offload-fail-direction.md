@@ -235,3 +235,33 @@ papered over, on the same reasoning as ADR-0009's Deviation 1.
 
 **A-8 is NOT implemented.** No process pool exists in the attack-detection path.
 What is decided here is the fail direction it must honour.
+
+## Amendment (2026-10-20): the implementation landed
+
+The status line above says "**Implementation not landed.**" That was true as of
+2026-10-07 and it is left as written - an ADR records a moment - so this
+amendment records what happened instead.
+
+The implementation landed on 2026-10-20 (commit `dfaa9e14`, bead
+`FastAPI_saas-0a0u`): the request-body pattern scan can be offloaded to a
+worker process, OFF BY DEFAULT. The setting
+`ATTACK_DETECTION_BRANCH_PRUNE_OFFLOAD` is a new field on
+`AttackDetectionSettings` and it defaults to `False`, because the process
+arm's p95 was never measured on the Linux target. The fail direction recorded
+above is implemented exactly as stated: a pool-side failure falls back to the
+in-process scan on the event loop and increments
+`r1_attack_scan_pool_failure_total`, and more than five failures in any
+sixty-second window disable the offload, log at ERROR, and keep it disabled
+until a process restart or an explicit operator re-enable.
+
+The decision, the fail direction, the thresholds and the budgets in this ADR
+are unchanged by the implementation.
+
+**Commit identity.** The implementation landed in commit `dfaa9e14`, which is
+**not an ancestor of this branch's tip**: it was squashed into **`cc6e6d17`**
+("perf(security): batch L1 fan-out, add C-2/C-5/C-6 oracles, offload body
+scan"), whose tree is byte-identical to the pre-squash tip
+(`git diff backup-before-squash-10c cc6e6d17` is empty). The original is
+preserved on the local branch `backup-before-squash-10c`. Use `git show
+cc6e6d17` to read the implementation. Nothing about the decision, the fail
+direction, the thresholds or the budgets changes.

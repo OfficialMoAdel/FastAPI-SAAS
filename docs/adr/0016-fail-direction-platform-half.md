@@ -53,3 +53,54 @@ it before the named owners respond, would be a Gate D violation. The platform
 clause above is the one exception, and it needed no owner: it was a fact about
 the build rather than a judgement about risk, so anyone can check it and it is
 recorded here as checked, not decided.
+
+## Amendment (2026-10-20): the Owner line was true when written, and the programme has an owner now
+
+The header line above reads:
+
+> **Owner:** _Unassigned - no Owner field exists anywhere in the programme; its absence is Q-11._
+
+That was TRUE when this ADR was written on 2026-10-06, and it is left as
+written. An ADR is a record of a moment: replacing the line with the present's
+owner would rewrite history to match the present. What follows is the
+amendment.
+
+THE ABSENCE WAS DISCHARGED on 2026-10-08
+
+`FastAPI_saas-3yp4` (Q-11) is the bead that closed that absence, and the
+twelve tracked ADRs 0009-0020 now carry an Owner line. Re-derived from those
+twelve files themselves, not from any summary field:
+
+* `0009-branch-pruning-proof-basis.md` - "OfficialMoAdel <mohamed01023618534@gmail.com> - threat-model owner, A-1"
+* `0010-bounded-gap-question.md`, `0011-logging-delta-question.md`,
+  `0012-model-construct-question.md`, `0013-api-key-mget-fail-direction.md`,
+  `0014-authenticated-user-accept-widening.md`,
+  `0015-gcra-double-consume-question.md`, `0017-429-counts-toward-auto-ban.md`,
+  `0018-literal-narrowing-max-scan-size.md`,
+  `0019-permission-catalog-reconcile-deferral.md` and
+  `0020-401-path-error-to-debug.md` - "OfficialMoAdel <mohamed01023618534@gmail.com> (recorded 2026-10-08)"
+
+`0021-amxv-linux-harness-deferred.md`, `0022-step4-p99-bar-vs-production-rate-limits.md`
+and `0023-admission-owns-api-key-identity.md` carry the same name without the
+date.
+
+THE CURRENT OWNER
+
+**OfficialMoAdel <mohamed01023618534@gmail.com>** - recorded on those ADRs
+between 2026-10-08 and 2026-10-09, and for ADR-0009 in the role of
+threat-model owner for A-1. The security and platform halves of A-8 are both
+that individual; the deviation is recorded in
+`0016-a8-process-pool-offload-fail-direction.md`.
+
+WHERE THE PLATFORM HALF'S QUESTION WAS ANSWERED
+
+The question below was answered on 2026-10-07, in the sibling ADR
+`0016-a8-process-pool-offload-fail-direction.md`: fail-to-current with a
+circuit breaker. This ADR's own header and status are left as written for the
+same reason its Owner line is - and the implementation landed on 2026-10-20, as
+that sibling ADR's own amendment records.
+
+WHAT THIS AMENDMENT DOES NOT CHANGE
+
+No decision, threshold, ceiling or budget in this ADR is changed. The Owner
+line above is left exactly as it was written.

@@ -449,18 +449,46 @@ class UserCacheInvalidator:
             except Exception as e:
                 logger.warning("Failed to build batch-invalidation keys for user", error=e)
 
-        # Synchronous local drop + cross-worker publish for auth-info keys only.
-        # The fan-out is BATCHED: one pipeline, one round trip, instead of one
-        # publish per key. Every local drop still happens before the first
-        # publish (L1Cache.invalidate_many's invariant), and the payloads keep
-        # the order the delete keys were built in.
-        await _auth_info_l1_seam.invalidate_many(
-            [key for key in delete_keys if key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:")]
-        )
         if not delete_keys and not token_sets:
             return
 
+        # THE ORDER (GATE 93vx; the owner's decision of 2026-10-20): the L2
+        # DELETE lands FIRST, and the L1 publish FOLLOWS it. This is the
+        # shape src/app/core/rbac/dependencies.py::
+        # invalidate_users_permissions_cache_batch already uses, and the two
+        # now agree.
+        #
+        # WHY the delete goes first: a publish tells the peers to drop their
+        # copy, but the row it is invalidating is still in Redis until the
+        # delete lands, so a peer that re-reads in that window re-caches the
+        # value that is being removed, and that resurrected value then lives
+        # until the L1 TTL. Deleting first removes the value the peers would
+        # re-read.
+        #
+        # WHAT A FAILED DELETE MEANS: the peers are never told, and the local
+        # caches were already cleared. No stale value is served anywhere -
+        # the row was never deleted, so what the caches hold is still the
+        # truth - but the INVALIDATION itself failed: the token stays valid.
+        # That is a security-relevant outcome, surfaced by the exhaustion
+        # policy below (one retry, then the poison marker), which LOGS the
+        # error and does not raise. The local drop is NOT rolled back,
+        # deliberately: it is the safe direction, and the failed delete is the
+        # loud one.
+        #
+        # The fan-out stays BATCHED: one pipeline, one round trip, instead of
+        # one publish per key, and the payloads keep the order the delete
+        # keys were built in.
+        auth_info_keys = [key for key in delete_keys if key.startswith(f"{AUTH_INFO_CACHE_PREFIX}:")]
+        pending_publish = _auth_info_l1_seam.drop_locally(auth_info_keys)
+
+        # Whether the L2 delete actually LANDED. The exhaustion policy below
+        # swallows the delete's error after its retry, so a caller cannot
+        # tell a failed delete from a successful one by looking for an
+        # exception - this flag is what tells it.
+        delete_landed = False
+
         async def _batch_invalidate_redis() -> None:
+            nonlocal delete_landed
             async with client.pipeline(transaction=False) as pipe:
                 if delete_keys:
                     pipe.delete(*delete_keys)
@@ -468,6 +496,7 @@ class UserCacheInvalidator:
                     new_version = version if is_explicit else (version + 1 if bump_token_version else version)
                     pipe.set(key, str(new_version), ex=300)
                 await pipe.execute()
+            delete_landed = True
 
         # The batch path is a security-relevant mutation (RBAC role
         # assign/remove routes here), so it runs under the SAME declared
@@ -488,6 +517,14 @@ class UserCacheInvalidator:
             },
             write_marker=lambda: _write_batch_poison_marker(client, marker_key),
         )
+
+        # The peers are told LAST, and ONLY IF the delete landed. The
+        # exhaustion policy swallows the delete's error after its retry, so
+        # the flag, not an exception, is what decides this: a failed delete
+        # leaves the peers with whatever they had, and that is the failure
+        # semantics stated above.
+        if pending_publish and delete_landed:
+            await _auth_info_l1_seam.publish_many(pending_publish)
 
 
 __all__ = [

@@ -1,0 +1,62 @@
+{
+  "schema": "perf-s1-session-invalidate-roundtrips/1",
+  "bead": "FastAPI_saas-qs06",
+  "item": "S-1",
+  "title": "the round-trip count of one session invalidation, observed against a real Redis",
+  "measured_at": "2026-10-20T14:31:38+00:00",
+  "method": "the Redis server's own INFO commandstats is snapshotted immediately before and after ONE call to SessionManager.invalidate_session; the absolute per-command delta is reported. The app's lifespan is NOT run and no request is issued, so the delta is the invalidation's own and nothing else.",
+  "host": {
+    "hostname": "ansible1",
+    "platform": "Linux-5.14.0-578.el9.x86_64-x86_64-with-glibc2.34",
+    "python": "3.13.16",
+    "redis_version": "7.4.3",
+    "redis_host": "127.0.0.1",
+    "redis_port": 6379,
+    "in_repo": true,
+    "harness": "src/benchmarks/s1_session_invalidate_roundtrips.py",
+    "repo_head": "dc1152919c075d58b246db6016490d32cb7e3050",
+    "repo_dir": "/home/ansible/qs06",
+    "imported_session_manager": "/home/ansible/qs06/src/app/core/security/session_manager.py"
+  },
+  "derived_claim": {
+    "source": "docs/verification/lane_b_checkbox2_arithmetic.md (bead FastAPI_saas-osxx)",
+    "before_wire_round_trips": 2,
+    "after_wire_round_trips": 1,
+    "before_shape": "one HEXISTS trip, then one packed transaction pipeline (redis-py sends MULTI+HDEL+ZREM+EXEC as ONE write)",
+    "after_shape": "one EVALSHA of the session_invalidate script; the existence check moved INSIDE the script",
+    "discrepancy_recorded": "the S-1 commit body says 3 -> 1, which counted MULTI and EXEC as separate trips; the derived count here is 2 -> 1 and the observation below settles which is right"
+  },
+  "expect": "after",
+  "observations": {
+    "hit_path_delta": {
+      "zrem": 1,
+      "hexists": 1,
+      "hdel": 1,
+      "evalsha": 1
+    },
+    "miss_path_delta": {
+      "hexists": 1,
+      "evalsha": 1
+    },
+    "client_commands": [
+      "evalsha"
+    ],
+    "client_round_trips": 1,
+    "client_round_trips_is": "DERIVED from the observed command set and the code shape, not a second observation: the commands the client sent are counted, and redis-py sends a transaction pipeline as ONE write on ONE connection."
+  },
+  "control_window": {
+    "delta": {}
+  },
+  "what_the_observation_settles": {
+    "the_derived_count": "2 -> 1 client round trips",
+    "the_s1_commit_body_count": "3 -> 1",
+    "verdict": "THE OBSERVATION CONFIRMS THE DERIVED COUNT OF 2 -> 1 AND CORRECTS THE COMMIT BODY'S 3 -> 1, which counted MULTI and EXEC as separate trips. On the after-arm the client sent exactly ONE command - the EVALSHA - on both the hit and the miss path; the script's own HEXISTS/HDEL/ZREM appear in the same delta because Redis counts a script's internal calls under their own commandstats entries, and they cost no wire traffic. On the before-arm the client sent HEXISTS and one packed MULTI..EXEC pipeline, which is two trips, not three.",
+    "the_saving_is_on_the_hit_path_only": "the before-code paid its second trip on both paths; the script's existence check is inside the EVALSHA, so the miss path pays one trip too. What differs between the paths is what the SCRIPT does, not how many trips it takes."
+  },
+  "what_is_not_asserted": {
+    "no_new_less_old": "no comparison of before against after is made. Each run asserts an ABSOLUTE count for the implementation it was pointed at; the two counts are reported side by side and neither is asserted to be better than the other.",
+    "no_duration": "this artefact quotes no timing and no latency.",
+    "not_an_endpoint_measurement": "no request is issued and the app's lifespan is not run, so nothing here says what a login or a logout costs end to end.",
+    "the_lua_internal_counts_are_not_round_trips": "HEXISTS, HDEL and ZREM execute inside the server on the same connection; they are counted separately by Redis under cmdstat_lua and they cost no wire traffic of their own."
+  }
+}

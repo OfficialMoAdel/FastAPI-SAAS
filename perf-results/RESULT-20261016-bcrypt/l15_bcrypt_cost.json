@@ -24,7 +24,7 @@
     "bcrypt_lib": "4.3.0",
     "is_declared_production_cpu": true,
     "host": "perf-local (192.168.121.147)",
-    "match_evidence": "cpu_model and core_count match the certified reports/app_host_report.json used for Phase 0 Step 4"
+    "match_evidence": "AMENDED 2026-10-20 (bead FastAPI_saas-5098): NO TRACKED FILE CORROBORATES THIS AS RECORDED. The cited reports/app_host_report.json is gitignored (.gitignore:188 matches reports/*.json) and is absent from this checkout; the seven committed copies of it (perf-results/RESULT-20261011-*/app_host_report.json) declare a DIFFERENT machine - the perf-app host, 2 cores, AMD EPYC 7763 64-Core, Debian GNU/Linux 12 - and src/benchmarks/run_manifest.py builds the app-host report ON the app host, so a copy read on the measurement host describes the host that produced it and cannot establish which host is the declared production one. The declared topology, the two-machine resolution and both drain figures are recorded in perf-results/RESULT-20261016-bcrypt/l15_declared_topology.json. The is_declared_production_cpu flag above is left AS RECORDED: it is what the run asserted, not what the repository establishes."
   },
 
   "protocol": {
@@ -101,7 +101,7 @@
       {
         "claim": "bcrypt is the dominant term in POST /account/login latency at 100 concurrency",
         "status": "INFERRED from queueing arithmetic on two separately measured numbers - this is NOT an endpoint measurement",
-        "arithmetic": "100 users x 271 ms = 27.1 CPU-seconds of hashing on 4 cores, i.e. ~6.8 s of wall time to drain a burst, against a pool of 8 bcrypt threads on 4 cores",
+        "arithmetic": "100 users x 271 ms = 27.1 CPU-seconds of hashing; on the MEASUREMENT HOST's 4 cores that is ~6.8 s of wall time to drain a burst, against a pool of 8 bcrypt threads on 4 cores; on the only TRACKED deployment declaration - the perf-app host, 2 cores - the same 27.1 CPU-seconds drain in ~13.5 s, TWICE the figure, with a pool of 8 bcrypt threads on 2 cores, which is a different contention story. BOTH figures are given because neither topology may be picked for the other (see perf-results/RESULT-20261016-bcrypt/l15_declared_topology.json).",
         "cross_reference": "Phase 0 Step 4 baseline run 20261016_151856 measured POST /account/login (setup) median 3100 ms cold / 1000 ms warm at 100 users",
         "reading": "the observed 1-3.1 s medians are the right order of magnitude for a saturated hashing pool, but attributing login latency to bcrypt requires a request-level profile, not this microbenchmark. Lane E item M-6 (FastAPI_saas-85l8) is the item that would settle it."
       }
@@ -127,6 +127,24 @@
     "windows_artifacts_non_representative": true,
     "main_json_stub_never_compared": true,
     "docker_execution_prohibited": true
+  },
+
+  "amendment": {
+    "date": "2026-10-20",
+    "bead": "FastAPI_saas-5098",
+    "what_is_amended": "The CORROBORATION (machine.match_evidence) and the drain arithmetic's topology (measured_vs_inferred.inferred_not_measured[0].arithmetic) only. Nothing else in this artefact changed.",
+    "what_is_NOT_amended": "Every measured number (271.395 ms median-of-rep-medians for bcrypt.hashpw, 273.193 ms for the app async path, 1.798 ms executor dispatch, 232.833 ms min-of-all-iterations, the 9 per-repetition medians, bcrypt_thread_pool_size 8) is untouched; machine.is_declared_production_cpu stays true, because it is what the run ASSERTED and it is not this bead's to rewrite; the seven committed app_host_report.json copies are untouched, because they are the record of what those runs observed.",
+    "resolution": "The Phase-0 app host and the L-15 measurement host are TWO MACHINES. The only tracked declaration of a deployment topology is the seven committed app-host reports: 2 cores, AMD EPYC 7763 64-Core, Debian GNU/Linux 12, kernel 6.8.0-1064-azure, orchestrator self-hosted-perf-app, container store hostnames db:5432 and redis:6379, store_locality co-located. The L-15 measurement ran on perf-local (192.168.121.147): 4 cores, Intel i7-8850H @ 2.60GHz, CentOS Stream 9, kernel 5.14.0-578.el9.x86_64, bare metal, IP-literal store addresses.",
+    "why_the_cited_corroboration_cannot_carry_the_claim": "reports/app_host_report.json is gitignored (.gitignore:188 matches reports/*.json) and is absent from this checkout and from perf-local's reports directory; and src/benchmarks/run_manifest.py builds the app-host report ON the app host (the module documents the report as read on the app host, and distro, cpu_model and core_count are read off that machine), so a copy read on the measurement host describes the host that produced it - it is CIRCULAR as a corroboration of which host is the declared production one.",
+    "correction_to_the_bead's_own_wording": "The seven committed copies are NOT byte-identical: they carry TWO distinct SHA-256 digests (the difference is in representative, non_representative_reasons and limits). They agree exactly on the deployment and host blocks, which is the part the claim depends on.",
+    "drain_figures": {
+      "against_the_measurement_host_4_cores_s": 6.8,
+      "against_the_declared_2_core_topology_s": 13.5,
+      "arithmetic": "27.1 CPU-seconds / 4 cores = 6.8 s; 27.1 CPU-seconds / 2 cores = 13.5 s",
+      "both_given": true
+    },
+    "tracked_record": "perf-results/RESULT-20261016-bcrypt/l15_declared_topology.json",
+    "no_new_measurement_was_taken": "bcrypt was NOT re-run. The measurement is not in question; only the topology claim was."
   },
 
   "closed": {

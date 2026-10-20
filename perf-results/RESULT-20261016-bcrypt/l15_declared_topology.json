@@ -1,0 +1,86 @@
+{
+  "schema": "perf-l15-declared-topology/1",
+  "bead": "FastAPI_saas-5098",
+  "item": "the declared production topology behind the L-15 bcrypt artefact's `is_declared_production_cpu` claim",
+  "question": "Which machine is the DECLARED production CPU that `l15_bcrypt_cost.json` claims its measurement host is?",
+  "answer": "Two different machines, and the corroboration the claim cites was host-local, so it could not establish the claim. The only TRACKED declaration of a deployment topology describes the perf-APP host; the measurement ran on perf-local.",
+  "recorded_at": "2026-10-20",
+  "declared_production_topology": {
+    "core_count": 2,
+    "cpu_model": "AMD EPYC 7763 64-Core Processor",
+    "distro": "Debian GNU/Linux 12 (bookworm)",
+    "host_release": "6.8.0-1064-azure",
+    "host_platform": "Linux",
+    "orchestrator": "self-hosted-perf-app",
+    "store_locality": "co-located",
+    "store_addresses": {
+      "postgres": "db:5432/perf_test_db",
+      "redis_cache": "redis:6379",
+      "redis_queue": "redis:6379"
+    },
+    "container_hostnames": true,
+    "provenance": {
+      "how_known": "These are the `deployment.*` and `host.*` fields of the app-host report that `src/benchmarks/run_manifest.py` produces (`APP_HOST_REPORT_SCHEMA = \"perf-app-host-report/1\"`, the required deployment paths `deployment.orchestrator`, `deployment.distro`, `deployment.cpu_model`, `deployment.core_count`, `deployment.store_locality`).",
+      "committed_copies": [
+        "perf-results/RESULT-20261011-124314/app_host_report.json",
+        "perf-results/RESULT-20261011-143547/app_host_report.json",
+        "perf-results/RESULT-20261011-145938/app_host_report.json",
+        "perf-results/RESULT-20261011-161348/app_host_report.json",
+        "perf-results/RESULT-20261011-162542/app_host_report.json",
+        "perf-results/RESULT-20261011-164148/app_host_report.json",
+        "perf-results/RESULT-20261011-190914/app_host_report.json"
+      ],
+      "correction": "The seven copies agree on the `deployment` and `host` blocks, but they are NOT byte-identical: they carry TWO distinct SHA-256 digests, differing in `representative`, `non_representative_reasons` and `limits`. 'All seven agree exactly' is true of the topology fields and false of the files."
+    }
+  },
+  "l15_measurement_host": {
+    "host": "perf-local (192.168.121.147)",
+    "core_count": 4,
+    "cpu_model": "Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz",
+    "platform": "Linux-5.14.0-578.el9.x86_64-x86_64-with-glibc2.34",
+    "distro": "CentOS Stream 9",
+    "python": "3.13.16",
+    "bcrypt_lib": "4.3.0",
+    "bare_metal": true,
+    "store_addresses_are_ip_literals": true,
+    "provenance": "The `machine` block of `perf-results/RESULT-20261016-bcrypt/l15_bcrypt_cost.json`, which names its own host. The host was also confirmed live: CentOS Stream 9, kernel 5.14.0-578.el9.x86_64, nproc 4, hostname ansible1.",
+    "harness": "/home/ansible/l15_bcrypt_cost.py (outside the repo: it is a harness, not app code)"
+  },
+  "resolution": {
+    "same_machine": false,
+    "why_the_cited_corroboration_cannot_carry_the_claim": [
+      "The cited path `reports/app_host_report.json` is GITIGNORED (`.gitignore:188` matches `reports/*.json`), so it cannot be read from git.",
+      "It is ABSENT from this checkout and from perf-local's `reports/` directory today (that directory holds only `final_*`, `loaded_*`, `matrix_*`, `sweepA_*`, `sweepB_*`).",
+      "BY CONSTRUCTION the app-host report is a report OF THE APP HOST: `run_manifest.py` builds it on the machine it runs on and reads `distro`, `cpu_model`, `core_count` and `store_locality` off THAT machine. A copy read on the measurement host therefore describes the measurement host, so citing it as evidence that the measurement host is the declared production CPU is CIRCULAR.",
+      "No tracked file corroborates the claim as recorded."
+    ],
+    "what_is_not_changed": [
+      "`is_declared_production_cpu` stays `true` in the artefact. It is the recorded assertion of that run and it is not this record's to flip.",
+      "The measured numbers are untouched: 271.395 ms median-of-rep-medians for `bcrypt.hashpw`, 273.193 ms for the app's async path, 1.798 ms executor dispatch, `bcrypt_thread_pool_size` 8.",
+      "The seven committed app-host report copies are untouched. They are the record of what those runs observed."
+    ]
+  },
+  "drain_figure": {
+    "arithmetic": "100 users x 271 ms = 27.1 CPU-seconds of hashing",
+    "against_the_measurement_host_4_cores": {
+      "drain_seconds": 6.8,
+      "formula": "27.1 CPU-seconds / 4 cores",
+      "topology": "perf-local: 4 cores, Intel i7-8850H, CentOS Stream 9, bare metal",
+      "note": "This is the figure the artefact records. It is a property of the measurement host, not of the declared deployment."
+    },
+    "against_the_declared_2_core_topology": {
+      "drain_seconds": 13.5,
+      "formula": "27.1 CPU-seconds / 2 cores",
+      "topology": "the only TRACKED deployment declaration: 2 cores, AMD EPYC 7763, Debian 12, self-hosted-perf-app, co-located",
+      "note": "Twice the recorded figure, and a different contention story as well: a pool of 8 bcrypt threads on 2 cores is not the pool of 8 on 4 cores."
+    },
+    "both_figures_are_given": "The bead requires the figure to be stated against the topology it assumes with the other topology's figure beside it, rather than one of them being picked."
+  },
+  "what_is_not_asserted_here": [
+    "That the measurement host is NOT a production host. It is a perf host, and the programme's own artefacts call perf-local the LOGIN host for the refresh and bcrypt work. What is settled here is narrower: the L-15 host is not the host the committed app-host reports describe, and the corroboration the artefact cites cannot establish that it is.",
+    "Any new measurement. Nothing was re-run: bcrypt was NOT re-measured, and the number was never the problem.",
+    "Anything about the declared topology's own sufficiency for production capacity. That is a separate question and this record does not answer it."
+  ],
+  "standing_debt": "The plan and audit material this question was recovered from is gitignored (owned by `FastAPI_saas-fwmf`). The app-host report the claim cites is gitignored (`.gitignore:188`). Neither is committed, which is the reason the claim could not be read out of the repository in the first place.",
+  "no_test_was_weakened": "NO TEST WAS WEAKENED TO ACCOMMODATE THIS RECORD, AND NO ASSERTION WAS RELAXED TO MAKE A NUMBER PASS. No measured number was changed, no threshold was moved, and no source file was touched."
+}

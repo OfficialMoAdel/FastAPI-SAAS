@@ -1,0 +1,160 @@
+{
+  "schema": "perf-s4-s5-numerators/1",
+  "bead": "FastAPI_saas-x0or",
+  "item": "S-4 and S-5",
+  "title": "the S-4 two-level copy and the S-5 request-id draw cost, measured on Linux",
+  "recorded_at": "2026-10-20T15:09:57.456233+00:00",
+  "method": "Both numerators are measured with the repository's canonical protocol (src/benchmarks/protocol.py::measure: warm up, collect, min-of-N inside a batch, then the median of the per-batch minima). The ORIGINAL S-4 and S-5 instruments are not in the repository, so this does not reproduce them: the old figures are quoted for comparison only and are neither re-measured nor re-derived. Each item is reported as a BEFORE/AFTER PAIR.",
+  "host": {
+    "hostname": "ansible1",
+    "platform": "Linux-5.14.0-578.el9.x86_64-x86_64-with-glibc2.34",
+    "python": "3.13.16",
+    "in_repo": true,
+    "harness": "src/benchmarks/x0or_s4_s5_numerators.py"
+  },
+  "protocol": {
+    "source": "src/benchmarks/protocol.py::measure",
+    "iterations": 2000,
+    "warmup": 100,
+    "repetitions": 5,
+    "estimator": "min-of-N inside a batch, then the median of the per-batch minima",
+    "the_original_instruments_are_not_committed": "There is no S-4 or S-5 microbenchmark in src/benchmarks/ or scripts/. The old figures came from a hand-rolled Windows script, and the M-4 bead's own record lists as a defect it closed: 'single-shot min-of-N with no warmup instead of src/benchmarks/protocol.py::measure'. This script uses the canonical protocol and compares against the OLD published figures, not against a re-run of the old instrument."
+  },
+  "s4_two_level_copy": {
+    "what": "copy.deepcopy against the production _two_level_copy, on the same auth payload",
+    "payload": {
+      "description": "one level deep, with one nested 'tier' whose values are all scalars - the shape assert_user_payload_shape admits, and the shape the two-level copy is an isomorphism of",
+      "keys": [
+        "email",
+        "id",
+        "is_active",
+        "is_superuser",
+        "tier",
+        "username"
+      ],
+      "tier_keys": [
+        "id",
+        "level",
+        "name"
+      ],
+      "satisfies_the_shape_assertion": true
+    },
+    "before_deepcopy": {
+      "best_us": 9.78800017037429,
+      "batch_mins_us": [
+        9.78800017037429,
+        10.364998161094263,
+        9.810999472392723,
+        9.343999408883974,
+        9.32100010686554
+      ],
+      "batch_medians_us": [
+        12.834998415200971,
+        10.693502190406434,
+        10.457000826136209,
+        9.662999218562618,
+        9.57999873207882
+      ],
+      "iterations": 2000,
+      "repetitions": 5,
+      "warmup": 100,
+      "spread_ratio": 1.1120049396265694
+    },
+    "after_two_level_copy": {
+      "best_us": 0.6010013748891652,
+      "batch_mins_us": [
+        0.5980000423733145,
+        0.6010013748891652,
+        0.6059999577701092,
+        0.5929978215135634,
+        0.6209993443917483
+      ],
+      "batch_medians_us": [
+        0.6759983079973608,
+        0.6689988367725164,
+        0.6780028343200684,
+        0.6750015018042177,
+        0.6839982233941555
+      ],
+      "iterations": 2000,
+      "repetitions": 5,
+      "warmup": 100,
+      "spread_ratio": 1.047220279505773
+    },
+    "numerator_us": 9.186998795485124,
+    "numerator_is": "the difference between the two arms on this payload",
+    "fraction_of_the_4090_us_uncontended_floor_percent": 0.2246,
+    "the_old_figure_for_comparison_only": {
+      "deepcopy_us": 25.7,
+      "two_level_copy_us": 1.15,
+      "saving_us": 24.55,
+      "host": "Windows (the S-4 commit body said so itself)",
+      "tag": "[Unverified - Needs-Linux-measure]"
+    }
+  },
+  "s5_request_id_draw": {
+    "what": "the unconditional path before the change - THREE independent uuid4 draws, one per guard that used to mint its own id - against the ONE draw the memoisation leaves on that path",
+    "before_three_draws": {
+      "best_us": 14.862998796161264,
+      "batch_mins_us": [
+        15.687000995967537,
+        14.862998796161264,
+        14.858997019473463,
+        14.80199716752395,
+        15.575998986605555
+      ],
+      "batch_medians_us": [
+        16.13950007595122,
+        15.314502888941206,
+        15.26999767520465,
+        15.220501154544763,
+        16.002002666937187
+      ],
+      "iterations": 2000,
+      "repetitions": 5,
+      "warmup": 100,
+      "spread_ratio": 1.0597894877581326
+    },
+    "after_one_draw": {
+      "best_us": 5.022000550525263,
+      "batch_mins_us": [
+        5.022000550525263,
+        4.78799847769551,
+        4.597000952344388,
+        5.060002877144143,
+        5.5679993238300085
+      ],
+      "batch_medians_us": [
+        5.173998943064362,
+        4.9460013542557135,
+        4.767000064020976,
+        10.274497981299646,
+        5.788999260403216
+      ],
+      "iterations": 2000,
+      "repetitions": 5,
+      "warmup": 100,
+      "spread_ratio": 1.211224313754042
+    },
+    "numerator_us": 9.840998245636001,
+    "numerator_is": "the cost of the two draws the change removed",
+    "fraction_of_the_4090_us_uncontended_floor_percent": 0.2406,
+    "the_old_figure_for_comparison_only": {
+      "saving_us": 33.0,
+      "host": "no host named at all",
+      "tag": "[Unverified - Needs-Linux-measure]"
+    }
+  },
+  "denominator": {
+    "uncontended_floor_us": 4090.0,
+    "uncontended_floor_source": "GATE B's named floor; the committed corroboration is perf-results/RESULT-20261012-sweepB/sweepA_8_stats.csv (min 4.09577600294142 ms at concurrency 8)",
+    "a_warm_p50_is_not_substituted_for_it": true
+  },
+  "what_is_not_asserted": {
+    "no_new_less_old": "No improvement is claimed and no arm is asserted to be the smaller one: the arms are compared for VACUITY only (they must not measure the same number). The before/after pair IS the numerator's own derivation, so it is reported as a pair.",
+    "the_old_figures_are_not_re_measured": "The old S-4 and S-5 figures are quoted for comparison only. They were measured on other hosts with an instrument that is not in the repository, so they are neither re-measured nor re-derived, and the difference between the old and the new figures is a difference between INSTRUMENTS as well as between hosts.",
+    "not_an_endpoint_measurement": "no request is issued and the app's lifespan is not run",
+    "the_payload_is_named": "The S-4 figure is the cost on the payload named above; a different payload shape is a different figure.",
+    "main_json_stub_never_compared": "tests/benchmarks/baselines/main.json is a stub and is never compared"
+  }
+}
