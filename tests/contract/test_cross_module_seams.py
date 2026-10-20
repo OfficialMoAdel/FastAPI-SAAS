@@ -3,7 +3,7 @@
 ``ARCHITECTURE.md`` records a decision (b): the bus preference is SOFTENED,
 because a request-scoped cross-module call needs its return value and an
 event has none. Softening a rule is only honest if the replacement is
-enforceable, so ``scripts/check_cross_module_seams.py`` names every
+enforceable, so ``scripts/checks/cross_module_seams.py`` names every
 behaviour-layer seam that exists today, and a new one fails.
 
 Why this is a test and not just a CI step: a sanctioned list is, by
@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-SCRIPT = REPO / "scripts" / "check_cross_module_seams.py"
+SCRIPT = REPO / "scripts" / "checks" / "cross_module_seams.py"
 MODULES_DIR = REPO / "src" / "app" / "modules"
 
 #: A module that has no sanctioned seam today, so a probe importing it is
@@ -151,9 +151,12 @@ class TestGateBites:
         assert clean.returncode == 0, f"the gate is not green on the real tree:\n{clean.stdout}{clean.stderr}"
 
         world = tmp_path / "world"
-        (world / "scripts").mkdir(parents=True)
+        # The gate derives the repo root from its own location
+        # (parents[2]), so the copy must sit two levels below the world
+        # root, exactly as scripts/checks/<gate>.py does in the repo.
+        (world / "scripts" / "checks").mkdir(parents=True)
         (world / "src" / "app").mkdir(parents=True)
-        shutil.copy2(SCRIPT, world / "scripts" / SCRIPT.name)
+        shutil.copy2(SCRIPT, world / "scripts" / "checks" / SCRIPT.name)
         shutil.copy2(REPO / "src" / "app" / "events.py", world / "src" / "app" / "events.py")
         shutil.copytree(
             MODULES_DIR, world / "src" / "app" / "modules", ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
@@ -165,7 +168,7 @@ class TestGateBites:
         )
 
         result = subprocess.run(
-            [sys.executable, str(world / "scripts" / SCRIPT.name)],
+            [sys.executable, str(world / "scripts" / "checks" / SCRIPT.name)],
             capture_output=True,
             text=True,
             cwd=world,
@@ -214,7 +217,7 @@ class TestAllowlistIsNotAGraveyard:
         Deliberately no vocabulary check. A test that greps the reason for
         specific words can only be satisfied by those words, so it rewards
         writing to the test instead of deciding — the same trap
-        ``scripts/check_comment_grease.py`` exists to catch in comments.
+        ``scripts/checks/comment_grease.py`` exists to catch in comments.
         Substantiveness is length plus absence of a placeholder; whether a
         reason is a real judgement is a review question, not a grep.
         """

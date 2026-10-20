@@ -1,4 +1,5 @@
 import base64
+import inspect
 import os
 import sys
 import uuid
@@ -996,143 +997,103 @@ async def auth_headers(tenant, superuser_token_headers):
 
 
 class FakeRedisPipeline:
-    """Fake Redis Pipeline for batched operations."""
+    """Fake Redis Pipeline for batched operations.
+
+    redis-py's ``Pipeline.execute()`` returns ONE result per queued command,
+    in submission order, and that invariant is load-bearing for production
+    code: ``core/job_monitoring.py`` pairs the results with the keys it
+    queued (``zip(keys, datas, strict=True)``), ``core/tenancy/resolver.py``
+    unpacks two of them, and ``core/guard/ip_rules.py`` reads them in PAIRS
+    (``get`` then ``ttl``).
+
+    A fake that dropped a verb it had no dedicated branch for broke exactly
+    that pairing: ``execute()`` returned FEWER results than commands, and the
+    strict zip raised. So every verb is queued here, and every queued verb
+    produces exactly one result. A verb the fake Redis does not implement
+    yields ``None`` - the value redis-py reports for a command whose result
+    nobody reads.
+    """
 
     def __init__(self, redis):
         self.redis = redis
         self._commands = []
-        self._results = []
 
     def __getattr__(self, name):
+        # redis-py queues ANY command and the server decides whether it can
+        # serve it. Names that are not commands (dunders, private helpers)
+        # must raise rather than be recorded as one.
+        if name.startswith("_"):
+            raise AttributeError(name)
+
         def method(*args, **kwargs):
+            self._commands.append((name, args, kwargs))
             return self
 
         return method
 
+    def hset(self, name, key=None, value=None, mapping=None, items=None):
+        """Queue a hset with redis-py's whole signature.
+
+        redis-py accepts ``hset(name, key, value)``, ``hset(name, mapping=...)``
+        and ``hset(name, items=...)``; production uses the three-argument
+        form, while the fake Redis takes a mapping, so the shape is
+        normalised here rather than in the fake's own ``hset``.
+        """
+        self._commands.append(("hset", (name, key, value, mapping, items), {}))
+        return self
+
     def exists(self, *keys):
-        """Queue an exists command."""
-        self._commands.append(("exists", *keys))
-        return self
-
-    def incr(self, key):
-        """Queue an incr command."""
-        self._commands.append(("incr", key))
-        return self
-
-    def hset(self, key, mapping=None):
-        """Queue a hset command."""
-        self._commands.append(("hset", key, mapping))
-        return self
-
-    def zscore(self, key, member):
-        """Queue a zscore command."""
-        self._commands.append(("zscore", key, member))
-        return self
-
-    def zadd(self, key, mapping, nx=False, xx=False, gt=False, lt=False):
-        """Queue a zadd command."""
-        self._commands.append(("zadd", key, mapping))
-        return self
-
-    def expire(self, key, seconds):
-        """Queue an expire command."""
-        self._commands.append(("expire", key, seconds))
-        return self
-
-    def get(self, key):
-        """Queue a get command."""
-        self._commands.append(("get", key))
-        return self
-
-    def set(self, key, value, ex=None, px=None, **kwargs):
-        """Queue a set command."""
-        self._commands.append(("set", key, value, ex))
-        return self
-
-    def setex(self, key, seconds, value):
-        """Queue a setex command (mapped onto the set+ex path)."""
-        self._commands.append(("set", key, value, seconds))
-        return self
-
-    def hincrby(self, key, field, amount):
-        """Queue a hincrby command."""
-        self._commands.append(("hincrby", key, field, amount))
-        return self
-
-    def hincrbyfloat(self, key, field, amount):
-        """Queue a hincrbyfloat command."""
-        self._commands.append(("hincrbyfloat", key, field, amount))
-        return self
-
-    def lpush(self, key, value):
-        """Queue a lpush command."""
-        self._commands.append(("lpush", key, value))
-        return self
-
-    def rpush(self, key, *values):
-        """Queue a rpush command."""
-        for value in values:
-            self._commands.append(("rpush", key, value))
-        return self
-
-    def ltrim(self, key, start, end):
-        """Queue a ltrim command."""
-        self._commands.append(("ltrim", key, start, end))
+        """Queue an exists. redis-py returns the COUNT of existing keys."""
+        self._commands.append(("exists", keys, {}))
         return self
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
-        pass
+        return False
 
     async def execute(self):
-        """Execute all queued commands and return results."""
+        """Execute all queued commands and return one result per command."""
         results = []
-        for cmd in self._commands:
-            if cmd[0] == "exists":
-                result = await self.redis.exists(*cmd[1:])
-                results.append(result)
-            elif cmd[0] == "hset":
-                result = await self.redis.hset(cmd[1], mapping=cmd[2])
-                results.append(result)
-            elif cmd[0] == "zscore":
-                result = await self.redis.zscore(cmd[1], cmd[2])
-                results.append(result)
-            elif cmd[0] == "zadd":
-                result = await self.redis.zadd(cmd[1], cmd[2])
-                results.append(result)
-            elif cmd[0] == "expire":
-                result = await self.redis.expire(cmd[1], cmd[2])
-                results.append(result)
-            elif cmd[0] == "incr":
-                result = await self.redis.incr(cmd[1])
-                results.append(result)
-            elif cmd[0] == "get":
-                result = await self.redis.get(cmd[1])
-                results.append(result)
-            elif cmd[0] == "set":
-                result = await self.redis.set(cmd[1], cmd[2], ex=cmd[3] if len(cmd) > 3 else None)
-                results.append(result)
-            elif cmd[0] == "hincrby":
-                result = await self.redis.hincrby(cmd[1], cmd[2], cmd[3])
-                results.append(result)
-            elif cmd[0] == "hincrbyfloat":
-                result = await self.redis.hincrbyfloat(cmd[1], cmd[2], cmd[3])
-                results.append(result)
-            elif cmd[0] == "lpush":
-                result = await self.redis.lpush(cmd[1], cmd[2])
-                results.append(result)
-            elif cmd[0] == "rpush":
-                result = await self.redis.rpush(cmd[1], cmd[2])
-                results.append(result)
-            elif cmd[0] == "ltrim":
-                result = await self.redis.ltrim(cmd[1], cmd[2], cmd[3])
-                results.append(result)
-            else:
-                results.append(None)
+        for name, args, kwargs in self._commands:
+            results.append(await self._run_one(name, args, kwargs))
         self._commands = []
         return results
+
+    async def _run_one(self, name, args, kwargs):
+        """Run ONE queued command and return its result."""
+        if name == "exists":
+            # redis-py: the COUNT of the given keys that exist.
+            count = 0
+            for key in args:
+                count += 1 if await self.redis.exists(key) else 0
+            return count
+        if name == "hset":
+            return await self.redis.hset(args[0], self._hset_mapping(args))
+        method = getattr(self.redis, name, None)
+        if method is None:
+            # The fake Redis does not implement this command. redis-py would
+            # raise; the fake reports None, which is what the callers that
+            # use it read anyway (publish results, zcard counts).
+            return None
+        result = method(*args, **kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    @staticmethod
+    def _hset_mapping(args):
+        """Normalise redis-py's hset forms into the mapping the fake takes."""
+        _, key, value, mapping, items = args
+        if mapping:
+            return mapping
+        fields = {}
+        if key is not None:
+            fields[key] = value
+        if items:
+            fields.update(dict(items))
+        return fields
 
 
 class FakeRedis:

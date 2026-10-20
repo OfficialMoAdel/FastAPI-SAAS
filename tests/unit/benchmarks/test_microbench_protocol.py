@@ -63,6 +63,7 @@ MICROBENCHMARK_FILES = (
     "tests/benchmarks/test_nrgi3_scan_cost.py",
     "tests/benchmarks/bench_r1_opus.py",
     "tests/benchmarks/bench_cache_invalidation.py",
+    "src/benchmarks/x0or_s4_s5_numerators.py",
 )
 
 #: Files permitted to call ``time.perf_counter()`` directly, each with the reason
@@ -162,6 +163,29 @@ ALLOWED_RAW_TIMERS: dict[str, str] = {
         "requests in flight at once - sequential repetition cannot produce a knee. "
         "This is the L-13 driver recovered from /home/ansible/l13_body_offload.py; its "
         "recorded artefact is perf-results/RESULT-20261016-l13/."
+    ),
+    "src/benchmarks/m2_refresh_commit_ab.py": (
+        "OPERATOR HARNESS at request scale, and the protocol's request-scale runner "
+        "cannot express what this measures. measure_request_scale drives ONE callable "
+        "for ONE arm; this harness runs TWO arms INTERLEAVED, alternating request by "
+        "request, because the question is the DIFFERENCE between them and any drift in "
+        "the box has to cancel instead of landing on one arm. It also times a SUB-STEP "
+        "of a request - the COMMIT, on the request's own connection, in milliseconds - "
+        "and the protocol's estimators time a whole callable, so the COMMIT's own cost "
+        "cannot be measured without timing the request around it. This is the M-2 "
+        "driver; its recorded artefact is perf-results/RESULT-20261020-z0oi/."
+    ),
+    "src/benchmarks/gryp_transaction_unwind_cost.py": (
+        "OPERATOR HARNESS whose quantity is a SUB-STEP of each repetition: the outer "
+        "await db.rollback() that unwinds the caller's transaction. The setup - opening "
+        "a transaction, staging the insert inside a SAVEPOINT, the unique violation and "
+        "the savepoint's own rollback - must happen OUTSIDE the timed region, and it "
+        "must be redone every repetition because the violation consumes the savepoint. "
+        "The protocol's estimators time a whole callable, so routing this through them "
+        "would time the setup as well, which is a different quantity. The harness also "
+        "asserts, per repetition, that the arm classified as the PRODUCTION duplicate - "
+        "a precondition check with no place in the callable model. This is the S-2 "
+        "numerator driver; its recorded artefact is perf-results/RESULT-20261020-gryp/."
     ),
 }
 

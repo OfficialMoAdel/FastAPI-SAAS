@@ -72,14 +72,14 @@ jobs:
         # a scan. The banned set is deliberately narrow: .copy() and .json()
         # are also dict/set/list and httpx/requests methods, and banning them
         # would fail on correct code.
-        run: uv run python scripts/check_pydantic_v1_shims.py
+        run: uv run python scripts/checks/pydantic_v1_shims.py
       - name: Every boot gate has a boot-failure test (sj09.3)
         # A gate nobody has watched fail is a gate that might not be a gate.
         # This project has shipped two already: an import-linter that sat
         # inert, and a worker that ran on an import side effect instead of a
         # called gate. Prints the coverage count every run so the number is
         # visible per-PR rather than discovered by the next audit.
-        run: uv run python scripts/check_boot_gate_coverage.py
+        run: uv run python scripts/checks/boot_gate_coverage.py
 
   tracked-env-guard:
     name: Guard against tracked .env files (C-1)

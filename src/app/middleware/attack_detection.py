@@ -436,7 +436,7 @@ class _BodyScanOffload:
                 _scan_in_worker,
                 (content, location, log_full_request),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - deliberate: ADR-0016's fail-to-current; ANY pool-side error falls back
             self._record_failure(e)
             return None
         return findings

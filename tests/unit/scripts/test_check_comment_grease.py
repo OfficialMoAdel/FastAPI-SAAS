@@ -1,4 +1,4 @@
-"""Tests for the comment-grease checker (``scripts/check_comment_grease.py``).
+"""Tests for the comment-grease checker (``scripts/checks/comment_grease.py``).
 
 The gate is only worth running if it can fail, so these tests pin the
 distinction that matters and nothing else:
@@ -18,17 +18,16 @@ with scripts/count_source_text_tests.py and cannot move the ratchet
 baseline.
 """
 
-import sys
 from pathlib import Path
 
 import pytest
 
-# scripts/ is not an installed package; add it so the checker is importable
-# by module name, matching tests/unit/scripts/test_check_doc_paths.py.
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "scripts"))
+# scripts/ is not an installed package, but it IS a package on disk
+# (scripts/checks/__init__.py), so the checker is importable as
+# scripts.checks.comment_grease from the repository root.
+from scripts.checks import comment_grease as checker
 
-import check_comment_grease as checker  # noqa: E402
+ROOT = Path(__file__).resolve().parents[3]
 
 #: Comments whose reason for existing is a text scan. Each must be caught.
 GREASE = [

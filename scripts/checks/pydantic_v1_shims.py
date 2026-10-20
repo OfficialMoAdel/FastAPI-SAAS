@@ -11,7 +11,7 @@ is subtly wrong.
 There is no ruff rule for this (checked against ruff 0.11.13: ``UP006``,
 ``UP007``, ``UP045`` and ``UP046`` are all annotation-shape rules, none
 concerned with v1 model methods), so the gate is a scan, matching the
-``scripts/check_*.py`` convention already used for the comment-grease and
+``scripts/checks/`` convention already used for the comment-grease and
 doc-path gates.
 
 AST-based on purpose. ``tokenize`` would match ``.dict()`` inside strings
@@ -23,8 +23,8 @@ deleted as unreachable, so such a probe is now a genuine test of an
 unreachable hypothesis rather than a shim call.
 
 Usage:
-    uv run python scripts/check_pydantic_v1_shims.py
-    uv run python scripts/check_pydantic_v1_shims.py --verbose
+    uv run python scripts/checks/pydantic_v1_shims.py
+    uv run python scripts/checks/pydantic_v1_shims.py --verbose
 
 Exit codes:
     0 - no v1 shim calls found in production code
@@ -39,7 +39,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 # Production code only. Tests may legitimately name the shims — a test
 # asserting their absence has to — and this script's own docstring and

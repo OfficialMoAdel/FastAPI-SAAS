@@ -1,4 +1,4 @@
-"""Tests for `scripts/check_schema_parity.py` (the ORM/migration column gate).
+"""Tests for `scripts/checks/schema_parity.py` (the ORM/migration column gate).
 
 The gate exists because a column mapped on a model but never created by a
 migration is invisible to every other check in this repo: `create_all` derives
@@ -49,7 +49,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path("scripts/check_schema_parity.py")
+SCRIPT = Path("scripts/checks/schema_parity.py")
 WORKFLOW = Path(".github/workflows/tests.yml")
 
 
@@ -134,12 +134,12 @@ class TestGateFailsOnDrift:
 
 class TestScriptRunsAsCIInvokesIt:
     def test_module_runs_and_exits_zero(self) -> None:
-        """CI runs `python scripts/check_schema_parity.py` directly."""
+        """CI runs `python scripts/checks/schema_parity.py` directly."""
         import subprocess
         import sys
 
         proc = subprocess.run(
-            [sys.executable, "scripts/check_schema_parity.py"],
+            [sys.executable, "scripts/checks/schema_parity.py"],
             capture_output=True,
             text=True,
             timeout=300,
@@ -346,7 +346,7 @@ class TestAlembicCheckStaysNonBlockingOnPurpose:
 
     def test_the_comment_names_the_gate_that_now_covers_types(self) -> None:
         step = self._alembic_step()
-        assert "check_schema_parity.py" in step, (
+        assert "scripts/checks/schema_parity.py" in step, (
             "the alembic check step must name the gate that took over its type coverage, "
             "or a future reader will make it blocking on ~395 untriaged diffs"
         )

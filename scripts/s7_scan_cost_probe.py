@@ -85,7 +85,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 # Importing src.app.core.config raises without these, so the probe carries the
-# same values tests/conftest.py and scripts/check_script_imports.py supply. The
+# same values tests/conftest.py and scripts/checks/script_imports.py supply. The
 # probe never opens a database or a Redis connection -- it drives the
 # middleware in isolation -- but the settings import is unconditional.
 os.environ.setdefault("ENVIRONMENT", "local")

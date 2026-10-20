@@ -25,7 +25,7 @@
     "raw_driver_used_for": "information_schema only: the declared type and width",
     "one_arm_per_process": "the app engine is a module-level singleton resolved at import, so POSTGRES_DB is set from argv before the first src import",
     "the_control_arm": "the same probe against test_db, which was built by create_all and has no alembic_version table - so it reads the schema the ORM itself declared",
-    "oracle": "scripts/check_schema_parity.py is the gate this bead measures the rows FOR; its TYPE_ALLOWLIST was updated in the same change and a stale entry fails the gate",
+    "oracle": "scripts/checks/schema_parity.py is the gate this bead measures the rows FOR; its TYPE_ALLOWLIST was updated in the same change and a stale entry fails the gate",
     "harness_bugs_found_while_measuring": [
       "the fixture-row insert bound strings to CAST(... AS time with time zone) and died inside asyncpg's encoder, which says nothing about the schema; fixed by binding real datetime.time objects",
       "passkey_credentials rows omitted credential_id_hash, which the MIGRATION declares NOT NULL, so the boundary attempt failed on a different column and reported a false boundary; fixed by supplying it",
@@ -240,7 +240,7 @@
     "migration": "NOT NULL (src/migrations/versions/02_authentication.py:65, unique index at :88)",
     "how_it_was_found": "an insert that omitted it failed with NotNullViolationError on a different column",
     "the_harmless_mirror_image": "passkey_credentials.device_type is NOT NULL in the ORM and nullable in the migration - that direction cannot fail a write",
-    "nullability_is_compared_by": "no gate - scripts/check_schema_parity.py compares names and types only",
+    "nullability_is_compared_by": "no gate - scripts/checks/schema_parity.py compares names and types only",
     "filed_in": "FastAPI_saas-nqk6"
   },
   "measured_vs_inferred": {
@@ -292,7 +292,7 @@
       "src/app/modules/auth/models.py:318",
       "src/migrations/versions/02_authentication.py:65,88"
     ],
-    "gate": "scripts/check_schema_parity.py",
+    "gate": "scripts/checks/schema_parity.py",
     "raw_artefacts_in_this_directory": [
       "subject_alembic.json",
       "control_create_all.json"

@@ -16,7 +16,7 @@ cannot be deleted in one change. The number must go DOWN, not to zero.
 > present on `main` when ykto.4 started and is not accounted for by any entry
 > below; the baseline had simply not been re-measured. ykto.4's own addition
 > is the 115 → 116 step, recorded here: `tests/unit/scripts/test_doc_gate_wiring.py`
-> copies `scripts/check_doc_paths.py` into a temporary tree and asserts on the
+> copies `scripts/checks/doc_paths.py` into a temporary tree and asserts on the
 > subprocess **exit code** — the property under test is that the gate can fail,
 > which cannot be observed any other way. The assertion is on behaviour (an
 > observed returncode), but the copied `.py` path is what the counter's

@@ -18,8 +18,8 @@ source files, and the repo ratchets source-text tests DOWN
 for is delivered by the CI job, which prints the count every run.
 
 Usage:
-    uv run python scripts/check_boot_gate_coverage.py
-    uv run python scripts/check_boot_gate_coverage.py --verbose
+    uv run python scripts/checks/boot_gate_coverage.py
+    uv run python scripts/checks/boot_gate_coverage.py --verbose
 
 Exit codes:
     0 - every gate in src/app has a boot-failure test
@@ -33,7 +33,7 @@ import ast
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "app"
 TABLE = ROOT / "tests" / "unit" / "core" / "test_boot_gates.py"
 

@@ -28,7 +28,7 @@ deliberate: a script that mutates global state at import time, or that
 fails to import, must not be able to take the gate itself down with it.
 
 Usage:
-    uv run python scripts/check_script_imports.py
+    uv run python scripts/checks/script_imports.py
 
 Exit codes:
     0 - every operator script imports cleanly
@@ -41,7 +41,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = ROOT / "src" / "scripts"
 
 # Imported rather than spawned, because the app's settings need the same

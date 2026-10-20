@@ -12,7 +12,7 @@ that never observes a failure proves nothing, which is why the negative cases
 are the substance of this file and the positive ones are the counter-test.
 
 Coverage of the gate table is enforced by
-`scripts/check_boot_gate_coverage.py`, which parses every gate in src/app
+`scripts/checks/boot_gate_coverage.py`, which parses every gate in src/app
 and fails on one missing from this file's table, and prints the count on
 every CI run.
 

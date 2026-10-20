@@ -10,7 +10,7 @@
     "drift": "03_access_control created api_keys.scopes as JSONB and key_prefix as varchar(10); the ORM declares Text and String(8)",
     "bead_claim_refuted": "'every POST /api/v1/api-keys 500s' does NOT reproduce: the INSERT is accepted, because asyncpg sends untyped parameters and the server coerces the JSON literal",
     "actual_failure": "the READ breaks instead: SQLAlchemy's asyncpg dialect decodes a jsonb column to a Python list, so json_loads(key.scopes) at service.py:652 raises JSONDecodeError (Input must be bytes, bytearray, memoryview, or str) and _validate_from_db has no handler for it - every X-API-Key request returns 500 on a migrated database",
-    "why_it_was_never_seen": "the create_all database matches the ORM by construction, and the blocking parity gate (scripts/check_schema_parity.py) compares column NAMES only; the CI alembic check that does see types is continue-on-error: true",
+    "why_it_was_never_seen": "the create_all database matches the ORM by construction, and the blocking parity gate (scripts/checks/schema_parity.py) compares column NAMES only; the CI alembic check that does see types is continue-on-error: true",
     "fix": "03_access_control now declares sa.Text() and sa.String(length=8), so a migrated database and a create_all database are identical"
   },
   "instrument": {

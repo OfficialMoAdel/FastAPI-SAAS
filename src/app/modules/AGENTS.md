@@ -87,7 +87,7 @@ return path, so a request-scoped read published to the bus can never answer
 its caller. This replaced a "prefer the Event Bus" rule that named no
 mechanism and steered nothing; the decision and its evidence are in
 [ARCHITECTURE.md](../../ARCHITECTURE.md), and it is enforced by
-`scripts/check_cross_module_seams.py`.
+`scripts/checks/cross_module_seams.py`.
 
 ✅ DO: Import cross-module services via the module package root (P1-20)
 Ruff `TID` (flake8-tidy-imports `banned-api`) forbids deep `*.service` /

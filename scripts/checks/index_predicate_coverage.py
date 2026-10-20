@@ -57,8 +57,8 @@ already does, and it is the thing this bead found untrustworthy — see
 EXPLAIN validation that is still owed.
 
 Usage:
-    uv run python scripts/check_index_predicate_coverage.py
-    uv run python scripts/check_index_predicate_coverage.py --verbose
+    uv run python scripts/checks/index_predicate_coverage.py
+    uv run python scripts/checks/index_predicate_coverage.py --verbose
 
 Exit codes:
     0 - every predicate has a column-order-correct covering index
@@ -73,8 +73,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Repo root = parent of scripts/
-ROOT = Path(__file__).resolve().parent.parent
+# Repo root = two levels up (scripts/checks/<gate>.py)
+ROOT = Path(__file__).resolve().parents[2]
 MODULES_DIR = ROOT / "src" / "app" / "modules"
 
 

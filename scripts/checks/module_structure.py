@@ -7,7 +7,7 @@ explicit allow-list below, so new modules can't silently drift and the
 allow-list itself is reviewed when it grows.
 
 Usage:
-    uv run python scripts/check_module_structure.py
+    uv run python scripts/checks/module_structure.py
 
 Exit codes:
     0 - all modules conform (or are allow-listed)
@@ -19,8 +19,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Repo root = parent of scripts/
-ROOT = Path(__file__).resolve().parent.parent
+# Repo root = two levels up (scripts/checks/<gate>.py)
+ROOT = Path(__file__).resolve().parents[2]
 MODULES_DIR = ROOT / "src" / "app" / "modules"
 
 # Modules exempt from the canonical contract, with the reason. Adding a new
@@ -90,7 +90,7 @@ def main() -> int:
             print(f"  - {name}: {', '.join(violations)}")
         print(
             "\nFix: add the missing files, or add the module to ALLOWLIST in "
-            "scripts/check_module_structure.py with a justification."
+            "scripts/checks/module_structure.py with a justification."
         )
         return 1
 

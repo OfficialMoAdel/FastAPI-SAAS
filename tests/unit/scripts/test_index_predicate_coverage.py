@@ -18,17 +18,16 @@ index/predicate pairs rather than the repo's real ones, so a mistake in the
 shared coverage rule cannot be cancelled out by a coincidence in the schema.
 """
 import ast
-import sys
 from pathlib import Path
 
 import pytest
 
-# scripts/ is not an installed package; add it so the checker is importable by
-# module name, matching tests/unit/scripts/test_check_doc_paths.py.
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "scripts"))
+# scripts/ is not an installed package, but it IS a package on disk
+# (scripts/checks/__init__.py), so the checker is importable as
+# scripts.checks.index_predicate_coverage from the repository root.
+from scripts.checks import index_predicate_coverage as checker
 
-import check_index_predicate_coverage as checker  # noqa: E402
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def mk_index(name, columns, ops=(), predicate=None):

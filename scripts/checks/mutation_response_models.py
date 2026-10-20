@@ -32,8 +32,8 @@ below. Removing any entry turns the debt into a CI failure, which is the
 point: an exception is only allowed to be removed deliberately.
 
 Usage:
-    uv run python scripts/check_mutation_response_models.py
-    uv run python scripts/check_mutation_response_models.py --list-allowlist
+    uv run python scripts/checks/mutation_response_models.py
+    uv run python scripts/checks/mutation_response_models.py --list-allowlist
 
 Exit codes:
     0 - every mutating endpoint declares a response model (or is allow-listed)
@@ -48,8 +48,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# Repo root = parent of scripts/
-ROOT = Path(__file__).resolve().parent.parent
+# Repo root = two levels up (scripts/checks/<gate>.py)
+ROOT = Path(__file__).resolve().parents[2]
 MODULES_DIR = ROOT / "src" / "app" / "modules"
 API_DIR = ROOT / "src" / "app" / "api"
 

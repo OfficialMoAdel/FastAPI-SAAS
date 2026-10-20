@@ -5,7 +5,7 @@
 `scopes` as `postgresql.JSONB` and `key_prefix` as `String(10)`. On any
 database built by `alembic upgrade head` the schema therefore disagreed with the
 model — and nothing noticed, because the repository's blocking gate
-(`scripts/check_schema_parity.py`) compares column NAMES only, and the CI
+(`scripts/checks/schema_parity.py`) compares column NAMES only, and the CI
 `alembic check` that does see types is `continue-on-error: true`.
 
 MEASURED, not assumed (perf-local, a scratch database built by

@@ -39,8 +39,8 @@ and auth paths, which is a migration (recorded as the candidate below),
 not a lint fix.
 
 Usage:
-    uv run python scripts/check_cross_module_seams.py
-    uv run python scripts/check_cross_module_seams.py --verbose
+    uv run python scripts/checks/cross_module_seams.py
+    uv run python scripts/checks/cross_module_seams.py --verbose
 
 Exit codes:
     0 - no unsanctioned seam, no new dead bus registration
@@ -56,8 +56,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
-# Repo root = parent of scripts/
-ROOT = Path(__file__).resolve().parent.parent
+# Repo root = two levels up (scripts/checks/<gate>.py)
+ROOT = Path(__file__).resolve().parents[2]
 MODULES_DIR = ROOT / "src" / "app" / "modules"
 
 #: A module's own behaviour layer. ``service.py`` and the ``service``/

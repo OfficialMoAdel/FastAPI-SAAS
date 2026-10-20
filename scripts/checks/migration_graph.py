@@ -36,7 +36,7 @@ property (name resolution, not graph shape) and needs the real import
 machinery rather than parsing.
 
 Usage:
-    uv run python scripts/check_migration_graph.py
+    uv run python scripts/checks/migration_graph.py
 
 Exit codes:
     0 - the graph is a single linear chain reaching base
@@ -49,7 +49,7 @@ import ast
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 VERSIONS_DIR = ROOT / "src" / "migrations" / "versions"
 
 # Module-level assignments that name a graph node. Alembic reads these four;

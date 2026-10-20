@@ -145,7 +145,7 @@ def test_names_banned_by_the_scan_cover_model_methods_only() -> None:
     gate to those would turn it red on correct code, and a gate that flags
     correct code gets switched off. This records why they stay out.
     """
-    from scripts.check_pydantic_v1_shims import V1_METHODS
+    from scripts.checks.pydantic_v1_shims import V1_METHODS
 
     assert "dict" in V1_METHODS, ".dict() on a model is a real v1 shim"
     assert "parse_obj" in V1_METHODS

@@ -24,7 +24,7 @@ name `src/app/models/product.py`, `src/app/api/v1/items.py`,
 all of which the reader is about to CREATE. A check that flags correct prose
 gets switched off, and a switched-off check protects nothing.
 
-That is also why `scripts/check_doc_paths.py` scopes itself to AGENTS.md and
+That is also why `scripts/checks/doc_paths.py` scopes itself to AGENTS.md and
 ARCHITECTURE.md: those are claims about the repo as it is, whereas a tutorial is
 an instruction for constructing something. So the rule here is anchored on a
 specific, unambiguous subject instead - any path naming the `capture_baseline`

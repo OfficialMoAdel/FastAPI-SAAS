@@ -167,6 +167,20 @@ def test_job_monitor_get_metrics_sync(benchmark):
     mock_redis.hgetall.return_value = {b"total_jobs": b"100", b"failed_jobs": b"2", b"success_jobs": b"98"}
     mock_redis.scan.return_value = (0, [b"arq:stats:process_data"])
 
+    # The metrics read batches its HGETALLs through a pipeline (C-4), and
+    # redis-py's Pipeline.execute() returns ONE result per queued command -
+    # the caller zips the results with the keys it queued, strictly. An
+    # AsyncMock's .pipeline() returns a coroutine, so the async context
+    # manager protocol failed on it; the pipeline is replaced the same way
+    # the sibling benchmark above replaces it, and its __aenter__ is wired to
+    # hand back the very mock whose execute() answers the queued reads.
+    mock_pipeline = MagicMock()
+    mock_pipeline.__aenter__.return_value = mock_pipeline
+    mock_pipeline.execute = AsyncMock(
+        return_value=[{b"total_jobs": b"100", b"failed_jobs": b"2", b"success_jobs": b"98"}]
+    )
+    mock_redis.pipeline = MagicMock(return_value=mock_pipeline)
+
     service = JobMonitoringService()
 
     async def _work():

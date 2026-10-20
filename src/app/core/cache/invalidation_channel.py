@@ -69,7 +69,7 @@ class InvalidationChannel:
                 for payload in payloads:
                     pipe.publish(self.channel, payload)
                 await pipe.execute()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - deliberate: a publish failure must not fail the request
             self._logger.warning(
                 "l1_invalidation_publish_failed",
                 channel=self.channel,

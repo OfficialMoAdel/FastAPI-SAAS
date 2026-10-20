@@ -1,6 +1,6 @@
 """The io15.8 response-model gate must be wired in CI, and must actually BIND.
 
-``scripts/check_mutation_response_models.py`` exists for one reason: the next
+``scripts/checks/mutation_response_models.py`` exists for one reason: the next
 mutating endpoint written without a ``response_model`` has to fail the build.
 A checker nobody runs is a paragraph, not a gate, and a checker that returns 0
 unconditionally is worse -- it certifies a property it never tested. This
@@ -39,7 +39,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO / ".github/workflows/tests.yml"
-CHECKER = "scripts/check_mutation_response_models.py"
+CHECKER = "scripts/checks/mutation_response_models.py"
 
 _ON_BLOCK_RE = re.compile(r"^on:\n(?P<body>(?:[ \t]+.*\n|[ \t]*\n)*)", re.M)
 _TOP_LEVEL_KEY_RE = re.compile(r"^[A-Za-z_-]+:", re.M)
@@ -146,10 +146,10 @@ class TestGateIsWired:
 
     def test_gate_step_is_present_and_mandatory(self) -> None:
         """The step exists, is not allowed to fail, and runs the real checker."""
-        step = _step_block_containing("check_mutation_response_models.py")
+        step = _step_block_containing("scripts/checks/mutation_response_models.py")
         assert step, "no workflow step runs the mutation response model gate"
         assert "continue-on-error" not in step, f"the gate is allowed to fail:\n{step}"
-        assert "python scripts/check_mutation_response_models.py" in step
+        assert "python scripts/checks/mutation_response_models.py" in step
 
 
 class TestGateBinds:
@@ -189,8 +189,8 @@ class TestGateBinds:
         missing scan root would itself be an error and the broken case would
         pass for the wrong reason.
         """
-        (tmp_path / "scripts").mkdir()
-        cls._copy_with_empty_allowlist(tmp_path / "scripts" / "check_mutation_response_models.py")
+        (tmp_path / "scripts" / "checks").mkdir(parents=True)
+        cls._copy_with_empty_allowlist(tmp_path / "scripts" / "checks" / "mutation_response_models.py")
         (tmp_path / "src" / "app" / "modules").mkdir(parents=True)
         (tmp_path / "src" / "app" / "api").mkdir(parents=True)
         (tmp_path / "src" / "app" / "modules" / "widgets").mkdir()
@@ -200,7 +200,7 @@ class TestGateBinds:
     def _run_checker_in(tree: Path) -> subprocess.CompletedProcess[str]:
         """Run the temp tree's OWN copy of the checker against that tree."""
         return subprocess.run(
-            [sys.executable, str(tree / "scripts" / "check_mutation_response_models.py")],
+            [sys.executable, str(tree / "scripts" / "checks" / "mutation_response_models.py")],
             cwd=tree,
             capture_output=True,
             text=True,
@@ -236,14 +236,10 @@ class TestAllowListIsLive:
 
     @staticmethod
     def _gate():
-        """Import the guard under test off the scripts path."""
-        sys.path.insert(0, str(REPO / "scripts"))
-        try:
-            import check_mutation_response_models
+        """Import the guard under test from the scripts package."""
+        from scripts.checks import mutation_response_models
 
-            return check_mutation_response_models
-        finally:
-            sys.path.pop(0)
+        return mutation_response_models
 
     def test_no_allowlist_entry_is_stale(self) -> None:
         """A key that resolves to nothing is a permission slip, not a debt record."""

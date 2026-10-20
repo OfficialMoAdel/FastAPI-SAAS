@@ -59,8 +59,13 @@ import re
 import sys
 from pathlib import Path
 
-SRC = Path("src/app")
-MIGRATIONS = Path("src/migrations/versions")
+#: Repo root = two levels up from this file (scripts/checks/<gate>.py). The
+#: paths are anchored to the ROOT rather than to the current working
+#: directory so the gate reads the same tree whichever directory it is run
+#: from — a CWD-relative path silently reads the wrong tree, or nothing.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SRC = REPO_ROOT / "src" / "app"
+MIGRATIONS = REPO_ROOT / "src" / "migrations" / "versions"
 
 # Relationship/association helpers that look like columns to a naive walk.
 NON_COLUMN_MARKERS = ("relationship(", "association_proxy(")

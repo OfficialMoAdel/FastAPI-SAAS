@@ -44,7 +44,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[3]
 SCRIPTS_DIR = REPO / "src/scripts"
-CHECKER = REPO / "scripts/check_script_imports.py"
+CHECKER = REPO / "scripts/checks/script_imports.py"
 
 # Mirrors the `tests` job env in .github/workflows/tests.yml and the
 # os.environ.setdefault block in tests/conftest.py. The settings object
@@ -190,16 +190,16 @@ class TestTheImportGateIsWiredAndBlocks:
         return next((b for b in blocks if needle in b), "")
 
     def test_checker_step_is_present(self) -> None:
-        step = self._step_block_containing("check_script_imports.py")
+        step = self._step_block_containing("scripts/checks/script_imports.py")
         assert step, (
-            f"no step in {self.WORKFLOW.name} runs check_script_imports.py; "
+            f"no step in {self.WORKFLOW.name} runs scripts/checks/script_imports.py; "
             "the operator-script import gate has been removed from CI"
         )
         assert "run:" in step, f"the reference is not a runnable step:\n{step}"
 
     def test_gate_step_is_not_allowed_to_fail(self) -> None:
-        step = self._step_block_containing("check_script_imports.py")
-        assert step, f"no step in {self.WORKFLOW.name} runs check_script_imports.py"
+        step = self._step_block_containing("scripts/checks/script_imports.py")
+        assert step, f"no step in {self.WORKFLOW.name} runs scripts/checks/script_imports.py"
         assert "continue-on-error" not in step, f"the gate step is allowed to fail:\n{step}"
 
     def test_checker_reports_a_broken_import(self, tmp_path: Path) -> None:
@@ -212,9 +212,9 @@ class TestTheImportGateIsWiredAndBlocks:
         satisfy the wiring tests above.
         """
         tree = tmp_path / "repo"
-        (tree / "scripts").mkdir(parents=True)
+        (tree / "scripts" / "checks").mkdir(parents=True)
         (tree / "src" / "scripts").mkdir(parents=True)
-        (tree / "scripts" / "check_script_imports.py").write_text(
+        (tree / "scripts" / "checks" / "script_imports.py").write_text(
             CHECKER.read_text(encoding="utf-8"), encoding="utf-8"
         )
         # The original defect, reproduced verbatim in shape: a script
@@ -225,7 +225,7 @@ class TestTheImportGateIsWiredAndBlocks:
         )
 
         result = subprocess.run(
-            [sys.executable, str(tree / "scripts" / "check_script_imports.py")],
+            [sys.executable, str(tree / "scripts" / "checks" / "script_imports.py")],
             cwd=tree,
             capture_output=True,
             text=True,

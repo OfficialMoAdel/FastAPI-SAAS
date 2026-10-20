@@ -1,6 +1,6 @@
 """Ratchet: the doc-pointer gate must stay wired, and stay unconditional.
 
-A documented path is a claim that the path exists. `scripts/check_doc_paths.py`
+A documented path is a claim that the path exists. `scripts/checks/doc_paths.py`
 is what makes that claim enforced rather than aspirational, and the root
 `AGENTS.md` states the gate is MANDATORY because it runs on every push and every
 pull request.
@@ -25,7 +25,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 TESTS_WORKFLOW = WORKFLOWS / "tests.yml"
-GATE_SCRIPT = Path("scripts/check_doc_paths.py")
+GATE_SCRIPT = Path("scripts/checks/doc_paths.py")
 
 
 def _workflow_text() -> str:

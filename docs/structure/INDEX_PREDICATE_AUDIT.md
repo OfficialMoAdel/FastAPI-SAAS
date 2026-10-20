@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-01
 **Status:** analysis complete; **no migration created** (see [What remains](#what-remains-not-done-and-why)).
-**Gate added:** `scripts/check_index_predicate_coverage.py` (static, no database).
+**Gate added:** `scripts/checks/index_predicate_coverage.py` (static, no database).
 
 This document is the deliverable. Its purpose is to stop a future query change
 from silently losing its index, and to record which of the bead's own claims
@@ -235,7 +235,7 @@ and both would be needed to cover the full failure space.
 
 ## 5. The durable check
 
-`scripts/check_index_predicate_coverage.py`, wired into the lint job of
+`scripts/checks/index_predicate_coverage.py`, wired into the lint job of
 `.github/workflows/tests.yml` as step "Run index predicate coverage gate".
 
 It parses every `src/app/modules/*/models.py` with `ast`, and compares the

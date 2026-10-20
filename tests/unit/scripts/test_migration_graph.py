@@ -12,7 +12,7 @@ they are worth pinning even though this repository's suite is wired to
 SQLite (see ``tests/unit/core/db/test_rls_policy_coherence.py`` for why no
 PostgreSQL-backed suite runs here at all).
 
-``scripts/check_migration_graph.py`` is the CI entry point; this module pins
+``scripts/checks/migration_graph.py`` is the CI entry point; this module pins
 both that it is wired and that it actually blocks.
 
 The checker parses revision identifiers with ``ast`` rather than importing
@@ -36,7 +36,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO / ".github/workflows/tests.yml"
-CHECKER = REPO / "scripts/check_migration_graph.py"
+CHECKER = REPO / "scripts/checks/migration_graph.py"
 VERSIONS_DIR = REPO / "src/migrations/versions"
 
 # The ``on:`` trigger block. Restricting to it keeps a ``paths:`` filter
@@ -362,9 +362,9 @@ class TestTheGateIsWiredInCI:
         a plain substring search would keep passing after the step was
         deleted while the comment survived.
         """
-        step = self._step_block_containing("check_migration_graph.py")
+        step = self._step_block_containing("scripts/checks/migration_graph.py")
         assert step, (
-            f"no step in {WORKFLOW.name} runs check_migration_graph.py; "
+            f"no step in {WORKFLOW.name} runs scripts/checks/migration_graph.py; "
             "the migration-graph gate has been removed from CI"
         )
         assert "run:" in step, f"the reference is not a runnable step:\n{step}"
@@ -384,15 +384,15 @@ class TestTheGateIsWiredInCI:
 
     def test_gate_step_is_not_allowed_to_fail(self) -> None:
         """``continue-on-error`` would make the gate advisory."""
-        step = self._step_block_containing("check_migration_graph.py")
-        assert step, f"no step in {WORKFLOW.name} runs check_migration_graph.py"
+        step = self._step_block_containing("scripts/checks/migration_graph.py")
+        assert step, f"no step in {WORKFLOW.name} runs scripts/checks/migration_graph.py"
         assert "continue-on-error" not in step, f"the gate step is allowed to fail:\n{step}"
 
 
 class TestTheCheckerExitsNonZeroWhenBroken:
     """End-to-end proof that the CI command fails, not just the library.
 
-    The CI step runs `python scripts/check_migration_graph.py`, so the exit
+    The CI step runs `python scripts/checks/migration_graph.py`, so the exit
     code is the property that actually gates the build. A checker whose
     `check()` returns violations but whose `main()` returns 0 would be
     wired and still block nothing.
@@ -400,7 +400,7 @@ class TestTheCheckerExitsNonZeroWhenBroken:
 
     def _run_against(self, tree: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, str(tree / "scripts" / "check_migration_graph.py")],
+            [sys.executable, str(tree / "scripts" / "checks" / "migration_graph.py")],
             cwd=tree,
             capture_output=True,
             text=True,
@@ -410,9 +410,9 @@ class TestTheCheckerExitsNonZeroWhenBroken:
     def _tree_with(self, tmp_path: Path) -> Path:
         """A throwaway repo layout with a forked versions/ tree."""
         tree = tmp_path / "repo"
-        (tree / "scripts").mkdir(parents=True)
+        (tree / "scripts" / "checks").mkdir(parents=True)
         (tree / "src" / "migrations" / "versions").mkdir(parents=True)
-        (tree / "scripts" / "check_migration_graph.py").write_text(
+        (tree / "scripts" / "checks" / "migration_graph.py").write_text(
             CHECKER.read_text(encoding="utf-8"), encoding="utf-8"
         )
         v = tree / "src" / "migrations" / "versions"

@@ -117,7 +117,7 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
 
         The lookup reads `users.models.User` directly rather than importing
         `users.UserDirectory`: a model read is a data cell, which
-        `scripts/check_cross_module_seams.py` explicitly does not govern, while
+        `scripts/checks/cross_module_seams.py` explicitly does not govern, while
         the behaviour layer would need a sanctioned seam to be added.
         """
         if target_user_id is None or target_user_id == caller_user_id:

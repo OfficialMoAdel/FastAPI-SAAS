@@ -107,14 +107,14 @@ jobs:
       # step, the rule is prose; this is what makes it bind on a new
       # cross-module service import.
       - name: Run cross-module seam gate
-        run: uv run python scripts/check_cross_module_seams.py
+        run: uv run python scripts/checks/cross_module_seams.py
 
       # io15.8: a mutating endpoint with no response_model sends an
       # undocumented body, and a too-narrow one silently strips fields. The
       # gate reports the endpoints that genuinely cannot be annotated, with
       # the reason, so the exceptions stay reviewable.
       - name: Run mutation response model gate
-        run: uv run python scripts/check_mutation_response_models.py
+        run: uv run python scripts/checks/mutation_response_models.py
 
       # Every rooted `src/…`, `tests/…`, `scripts/…`, `docs/…` and `.github/…`
       # path in a document is a claim that the path exists, and the root
@@ -124,7 +124,7 @@ jobs:
       # it exists to catch. `tests/unit/scripts/test_doc_gate_wiring.py` fails
       # if a filter is ever reintroduced, or if this step is deleted.
       - name: Run doc path integrity gate
-        run: uv run python scripts/check_doc_paths.py
+        run: uv run python scripts/checks/doc_paths.py
 
       # sj09.6: a forked Alembic history fails at DEPLOY time
       # ("Multiple head revisions are present") and the app never boots.
@@ -132,14 +132,14 @@ jobs:
       # revision files, so they belong in the database-free lint job rather
       # than in the tests job.
       - name: Run migration graph gate
-        run: uv run python scripts/check_migration_graph.py
+        run: uv run python scripts/checks/migration_graph.py
 
       # sj09.6: the same class of rot in executable form. A script that
       # imports a module that no longer exists still passes every static
       # gate here; only importing it proves the operator-facing entry
       # points resolve.
       - name: Run operator script import gate
-        run: uv run python scripts/check_script_imports.py
+        run: uv run python scripts/checks/script_imports.py
 
       # nrgi.7: a list service that changes its WHERE or ORDER BY keeps
       # working and silently loses the index that was the only reason the
@@ -148,7 +148,7 @@ jobs:
       # reads models.py and the declared predicates, so it needs no database
       # in the lint job.
       - name: Run index predicate coverage gate
-        run: uv run python scripts/check_index_predicate_coverage.py
+        run: uv run python scripts/checks/index_predicate_coverage.py
 
       # v8kz: Alembic compares indexes by NAME, and this repo declares no
       # naming_convention, so an index the ORM and the migration define
@@ -157,7 +157,7 @@ jobs:
       # columns IN ORDER, the partial predicate and uniqueness — not just the
       # name, which is the whole point. Pure AST, no database.
       - name: Run index definition consistency gate
-        run: uv run python scripts/check_index_definition_consistency.py
+        run: uv run python scripts/checks/index_definition_consistency.py
 
       # A column mapped on a model but never created by a migration is
       # invisible to every other gate here: create_all DERIVES the schema from
@@ -168,7 +168,7 @@ jobs:
       # and .transports, magic_links.user_agent, user_sso_connections
       # .provider_email). Pure AST, no database.
       - name: Run schema parity gate
-        run: uv run python scripts/check_schema_parity.py
+        run: uv run python scripts/checks/schema_parity.py
 
   type-check:
     runs-on: ubuntu-latest
@@ -248,7 +248,7 @@ jobs:
       # breaks a migrated database). The rest are index naming, column
       # comments and TIMESTAMP type comparisons — long-standing, and exactly
       # the classes this repo deliberately gates with precise AST checks
-      # instead (see check_index_definition_consistency.py: "Alembic compares
+      # instead (see index_definition_consistency.py: "Alembic compares
       # indexes by NAME, and this repo declares no naming_convention").
       #
       # As a BLOCKING gate this would be red on day one and stay red, which
@@ -256,7 +256,7 @@ jobs:
       # reviewable in the job log.
       #
       # Its type coverage is NOT what is missing:
-      # `scripts/check_schema_parity.py` (`Run schema parity gate`, the lint
+      # `scripts/checks/schema_parity.py` (`Run schema parity gate`, the lint
       # job) now compares column TYPES as well as names, and fails on the
       # differences that are observable at runtime — a jsonb column behind a
       # non-JSON ORM type, a column narrower than the model, the api_keys.scopes

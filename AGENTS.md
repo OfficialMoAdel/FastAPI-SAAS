@@ -29,17 +29,17 @@ uv run alembic upgrade head
 # Enforce the per-module file contract (router.py + service.py + models/schemas).
 # NOTE: currently RED — the `security` module has no service.py. A non-zero exit
 # is a pre-existing condition, not a regression you introduced.
-uv run python scripts/check_module_structure.py
+uv run python scripts/checks/module_structure.py
 
 # Reject production comments that exist only to keep a test's grep green.
 # See "Comments vs. test greps" below for the convention it enforces.
-uv run python scripts/check_comment_grease.py
+uv run python scripts/checks/comment_grease.py
 
 # Fail on a mutating endpoint (POST/PUT/PATCH/DELETE) with no response_model.
 # Endpoints that genuinely cannot carry one — 204 No Content, a returned
 # Response/StreamingResponse, or a genuinely dynamic body — are allow-listed
 # with the reason in the script, and a stale entry is itself a failure.
-uv run python scripts/check_mutation_response_models.py
+uv run python scripts/checks/mutation_response_models.py
 ```
 
 ## Module Generator CLI
@@ -99,7 +99,7 @@ uv run python -m src.scripts.create_module products --force
 - Middleware stack: `src/app/middleware/` → [see src/app/middleware/AGENTS.md](src/app/middleware/AGENTS.md)
 - Test suite: `tests/` → [see tests/AGENTS.md](tests/AGENTS.md) (suites live under `unit/`, `integration/`, `contract/`; the `tests/` root holds `conftest.py`, `factories/`, `fixtures/`)
 - Database migrations: `src/migrations/` → [see src/migrations/AGENTS.md](src/migrations/AGENTS.md)
-- Ops/perf scripts: `scripts/` (deploy, health-check, benchmarks, doc/module checks); setup scripts: `src/scripts/` (superuser, tier, module generator); perf **measurement harnesses**: `src/benchmarks/` (tracked, operator-run, never imported by `src/app/`)
+- Ops/perf scripts: `scripts/` (deploy, health-check, benchmarks, doc/module checks); **CI gates**: `scripts/checks/` (one module per gate — doc paths, schema parity, migration graph, comment grease, …); setup scripts: `src/scripts/` (superuser, tier, module generator); perf **measurement harnesses**: `src/benchmarks/` (tracked, operator-run, never imported by `src/app/`)
 
 ### Doc Pointer Integrity
 
@@ -108,7 +108,7 @@ path in any `AGENTS.md` or `ARCHITECTURE.md` is a claim that the path
 exists, and is enforced in CI:
 
 ```bash
-uv run python scripts/check_doc_paths.py
+uv run python scripts/checks/doc_paths.py
 ```
 
 Fix a failing pointer rather than deleting it, or add a reasoned
@@ -189,7 +189,7 @@ All 21 feature modules have a dedicated `AGENTS.md` (see table):
       note in the PR saying why it is still accurate — see "Documentation
       Ownership" above. This includes renaming/moving/deleting a file,
       changing a test path, and changing a public class or function name.
-- [ ] `uv run python scripts/check_doc_paths.py` exits 0 (it runs in CI and
+- [ ] `uv run python scripts/checks/doc_paths.py` exits 0 (it runs in CI and
       blocks the merge)
 - [ ] Error handling implemented with proper HTTP status codes
 - [ ] Pydantic schemas validate all input/output

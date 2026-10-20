@@ -1,7 +1,7 @@
 """The gate must catch a same-name/different-definition index, and must not
 invent one.
 
-`scripts/check_index_definition_consistency.py` exists because Alembic
+`scripts/checks/index_definition_consistency.py` exists because Alembic
 compares indexes by NAME and this repo declares no ``naming_convention``
 (``src/app/core/db/base.py`` and ``src/migrations/env.py`` both omit one), so
 an index that the ORM and the migration define differently produces NO
@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[3]
-_SCRIPT = _REPO / "scripts" / "check_index_definition_consistency.py"
+_SCRIPT = _REPO / "scripts" / "checks" / "index_definition_consistency.py"
 
 
 def _load():

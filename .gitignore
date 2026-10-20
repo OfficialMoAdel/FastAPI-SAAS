@@ -212,7 +212,7 @@ src/.env.local
 codegraph.json
 # ADRs are TRACKED. The blanket `docs/adr/*` ignore was removed because it made
 # the repository lie: `AGENTS.md` and `CLAUDE.md` link ADRs as live
-# architectural claims, and `scripts/check_doc_paths.py` is a mandatory gate that
+# architectural claims, and `scripts/checks/doc_paths.py` is a mandatory gate that
 # treats every rooted path in those documents as a statement that the path
 # EXISTS. A gitignored ADR is absent from every CI checkout, so the pointer is
 # false in CI and the gate fails there — and only there, which is the worst place

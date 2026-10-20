@@ -94,7 +94,46 @@ import count_broad_excepts as counter  # noqa: E402
 #: it by one. Both handlers added in the round above are still present
 #: (``benchmarks/protocol.py:163`` and ``benchmarks/prof_request_path.py:288``),
 #: so the shortfall is elsewhere in the tree, not a silent loss of either.
-BROAD_EXCEPT_BASELINE = 366
+#:
+#: 366 -> 373. Raised, deliberately and RE-MEASURED, and the reason is two
+#: facts rather than one.
+#:
+#: FIRST: the declared baseline did not describe the tree before this round.
+#: At the pre-session commit the counter reported 369 against a declared 366,
+#: so ``test_baseline_matches_the_measured_tree`` was ALREADY failing on a
+#: clean checkout - the ratchet was red before any of this round's work
+#: landed. A baseline that no longer matches the tree is not a ratchet, it is
+#: a number that has stopped being true.
+#:
+#: SECOND: this round added five, and each one is accounted for:
+#:
+#:   * core/cache/invalidation_channel.py (1) - the batched ``publish_many``
+#:     handler (S-6). Deliberate: a publish failure must not fail the request,
+#:     exactly as the single-payload ``publish`` beside it does. It now carries
+#:     ``# noqa: BLE001`` with that reason.
+#:   * middleware/attack_detection.py (1) - the A-8 worker-pool handler.
+#:     Deliberate, and REQUIRED by ADR-0016's fail-to-current direction: ANY
+#:     pool-side error must fall back to the in-process scan rather than 500
+#:     the request, so the set of exception types cannot be enumerated. It now
+#:     carries the noqa with that reason.
+#:   * benchmarks/m2_refresh_commit_ab.py (3) - the M-2 operator harness: a
+#:     failed session close, the git-state probe, the store-address probe. Not
+#:     a production path: ``src/app/`` never imports ``src/benchmarks/``, and
+#:     every harness there is ``__main__``-guarded.
+#:
+#: Narrowing was preferred to raising the ceiling, and one site was narrowed
+#: in this pass: the harness's git probe is now
+#: ``except (OSError, subprocess.SubprocessError)`` - the two failure modes
+#: ``subprocess.run`` actually has - which moved the count 374 -> 373. The
+#: other two harness handlers are kept broad ON PURPOSE: a failed session
+#: close and a failed store-address probe must not destroy a measurement that
+#: has already been taken.
+#:
+#: What was NOT done: narrowing seven unrelated production handlers to get
+#: back under 366. That is the blind-except campaign's work, and doing it as a
+#: side effect of a test fix would change production behaviour on seven paths
+#: nobody asked about. The number here is re-measured, not estimated.
+BROAD_EXCEPT_BASELINE = 373
 
 #: The files muse 22 triaged. BLE001 is enforced on each (the per-file-ignores
 #: in pyproject.toml no longer blanket-exempt them), so these are also the

@@ -73,7 +73,7 @@ def upgrade() -> None:
         # could only ever admit a row the application would refuse, never refuse
         # one it would accept, so the divergence could not surface as a failed
         # request - it just made the schema claim less than the code requires.
-        # Nullability is compared by no gate (scripts/check_schema_parity.py
+        # Nullability is compared by no gate (scripts/checks/schema_parity.py
         # compares names and types), and it was found only because a probe
         # INSERT that omitted `credential_id_hash` failed on THAT column first.
         # Its WIDTH (50 here vs the ORM's 100) is deliberately left alone:
@@ -87,7 +87,7 @@ def upgrade() -> None:
         # WebAuthn authenticator metadata. Both are mapped on the ORM
         # (auth/models.py PasskeyCredential.aaguid / .transports) and were
         # missing here, so a passkey read raised UndefinedColumnError.
-        # Caught by scripts/check_schema_parity.py.
+        # Caught by scripts/checks/schema_parity.py.
         sa.Column("aaguid", sa.UUID(), nullable=True),
         sa.Column("transports", sa.JSON(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -118,7 +118,7 @@ def upgrade() -> None:
         # Mapped on the ORM (auth/models.py MagicLink.user_agent) but missing
         # here -> UndefinedColumnError on read. The identically named column on
         # audit_logs (layer 07) is a DIFFERENT table and does not satisfy this
-        # one; check_schema_parity.py treats them separately.
+        # one; schema_parity.py treats them separately.
         sa.Column("user_agent", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_magic_links")),

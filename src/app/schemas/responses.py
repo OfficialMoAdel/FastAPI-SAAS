@@ -9,7 +9,7 @@ one clients already parse.
 Each schema below mirrors a handler's real return, field for field. Where a
 handler returns something that cannot be modelled without risking a payload
 change, it is deliberately NOT given a schema — see
-`scripts/check_mutation_response_models.py`, whose ALLOWLIST records every
+`scripts/checks/mutation_response_models.py`, whose ALLOWLIST records every
 mutating endpoint that stays undeclared and why, and which fails on a new one.
 """
 

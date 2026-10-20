@@ -180,7 +180,7 @@ class TestEveryScanCarriesAMatch:
 
         Checked on the AST, not the source text. A textual rule was tried and
         rejected: it flagged 30 lines across this tree that merely CONTAIN the
-        word - ``test_nrgi3_scan_cost.py``, ``check_index_predicate_coverage.py``
+        word - ``test_nrgi3_scan_cost.py``, ``index_predicate_coverage.py``
         and others - because a substring is not a command. ``execute_command`` is
         how a keyspace walk actually gets issued from Python.
         """

@@ -33,7 +33,7 @@ import re
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Directories whose rooted paths are treated as claims. Anything else is prose.
 SCANNED_ROOTS = ("src", "tests", "scripts", "docs", ".github")
@@ -182,7 +182,7 @@ def main() -> int:
             print(f"  {doc} -> {claim}", file=sys.stderr)
         print(
             "\nFix the pointer, or add a reasoned ALLOWLIST entry in "
-            "scripts/check_doc_paths.py.",
+            "scripts/checks/doc_paths.py.",
             file=sys.stderr,
         )
         return 1

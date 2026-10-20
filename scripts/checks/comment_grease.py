@@ -33,8 +33,8 @@ are explicitly excluded, because a docstring is API documentation and the
 "comment" exemption below is about prose next to code.
 
 Usage:
-    uv run python scripts/check_comment_grease.py
-    uv run python scripts/check_comment_grease.py --verbose
+    uv run python scripts/checks/comment_grease.py
+    uv run python scripts/checks/comment_grease.py --verbose
 
 Exit codes:
     0 - no comment-grease found
@@ -51,8 +51,8 @@ import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 
-# Repo root = parent of scripts/
-ROOT = Path(__file__).resolve().parent.parent
+# Repo root = two levels up (scripts/checks/<gate>.py)
+ROOT = Path(__file__).resolve().parents[2]
 
 # Production code only. Tests are allowed to talk about grep - a test that
 # asserts on source text is the whole point of the ratchet, and its
@@ -142,7 +142,7 @@ RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
 )
 
 #: Comments the rules match that are NOT grease, each with the reason it
-#: stays. Mirrors the ALLOWLIST convention of ``check_doc_paths.py``: a
+#: stays. Mirrors the ALLOWLIST convention of ``doc_paths.py``: a
 #: reviewer cannot wave a finding through by muting it, they have to say
 #: why. Removing an entry turns the comment back into a CI failure, so
 #: the decision to keep it is explicit and traceable in review.

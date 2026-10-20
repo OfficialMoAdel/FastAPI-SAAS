@@ -82,6 +82,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from src.benchmarks.percentiles import nearest_rank
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = REPO_ROOT / "perf-results" / "RESULT-20261020-z0oi" / "refresh_commit_ab.json"
 
@@ -101,13 +103,13 @@ INTRA_ARM_NOISE_FLOOR_X = 2.0
 RUN_TO_RUN_NOISE_FLOOR_X = 7.1
 
 
-def nearest_rank(samples: list[float], p: float) -> float:
-    """The nearest-rank percentile: no interpolation, so no invented value."""
-    if not samples:
-        raise ValueError("no samples")
-    ordered = sorted(samples)
-    index = max(1, min(len(ordered), int(-(-p * len(ordered) // 100))))
-    return ordered[index - 1]
+# The percentile estimator is NOT defined here. src/benchmarks/percentiles.py
+# holds the one implementation in the harness tree, and every harness in it
+# delegates - a second implementation is a bug the tree-wide scan in
+# tests/unit/benchmarks/test_percentiles.py fails on. The estimator is
+# nearest rank in both, so the numbers this harness published are unchanged;
+# only the CALLS move, from a 0-100 scale to the canonical fractions.
+
 
 
 class DeferredCommits:
@@ -302,9 +304,9 @@ async def _run_arm(
         "handler_executed": rotations == len(latencies) and len(latencies) > 0,
         "latency": {
             "min_ms": round(min(latencies), 4) if latencies else None,
-            "p50_ms": round(nearest_rank(latencies, 50), 4) if latencies else None,
-            "p95_ms": round(nearest_rank(latencies, 95), 4) if latencies else None,
-            "p99_ms": round(nearest_rank(latencies, 99), 4) if latencies else None,
+            "p50_ms": round(nearest_rank(latencies, 0.5), 4) if latencies else None,
+            "p95_ms": round(nearest_rank(latencies, 0.95), 4) if latencies else None,
+            "p99_ms": round(nearest_rank(latencies, 0.99), 4) if latencies else None,
         },
         "_latencies": latencies,
     }
@@ -385,14 +387,14 @@ async def _main_async(args: argparse.Namespace) -> int:
         "handler_executed": a_rotations == len(a_latencies) and len(a_latencies) > 0,
         "latency": {
             "min_ms": round(min(a_latencies), 4) if a_latencies else None,
-            "p50_ms": round(nearest_rank(a_latencies, 50), 4) if a_latencies else None,
-            "p95_ms": round(nearest_rank(a_latencies, 95), 4) if a_latencies else None,
-            "p99_ms": round(nearest_rank(a_latencies, 99), 4) if a_latencies else None,
+            "p50_ms": round(nearest_rank(a_latencies, 0.5), 4) if a_latencies else None,
+            "p95_ms": round(nearest_rank(a_latencies, 0.95), 4) if a_latencies else None,
+            "p99_ms": round(nearest_rank(a_latencies, 0.99), 4) if a_latencies else None,
         },
         "in_path_commit": {
             "samples": len(a_commit_ms),
-            "p50_ms": round(nearest_rank(a_commit_ms, 50), 4) if a_commit_ms else None,
-            "p95_ms": round(nearest_rank(a_commit_ms, 95), 4) if a_commit_ms else None,
+            "p50_ms": round(nearest_rank(a_commit_ms, 0.5), 4) if a_commit_ms else None,
+            "p95_ms": round(nearest_rank(a_commit_ms, 0.95), 4) if a_commit_ms else None,
             "min_ms": round(min(a_commit_ms), 4) if a_commit_ms else None,
         },
     }
@@ -410,14 +412,14 @@ async def _main_async(args: argparse.Namespace) -> int:
         "handler_executed": b_rotations == len(b_latencies) and len(b_latencies) > 0,
         "latency": {
             "min_ms": round(min(b_latencies), 4) if b_latencies else None,
-            "p50_ms": round(nearest_rank(b_latencies, 50), 4) if b_latencies else None,
-            "p95_ms": round(nearest_rank(b_latencies, 95), 4) if b_latencies else None,
-            "p99_ms": round(nearest_rank(b_latencies, 99), 4) if b_latencies else None,
+            "p50_ms": round(nearest_rank(b_latencies, 0.5), 4) if b_latencies else None,
+            "p95_ms": round(nearest_rank(b_latencies, 0.95), 4) if b_latencies else None,
+            "p99_ms": round(nearest_rank(b_latencies, 0.99), 4) if b_latencies else None,
         },
         "deferred_commit": {
             "samples": len(arm_b_commit_ms),
-            "p50_ms": round(nearest_rank(arm_b_commit_ms, 50), 4) if arm_b_commit_ms else None,
-            "p95_ms": round(nearest_rank(arm_b_commit_ms, 95), 4) if arm_b_commit_ms else None,
+            "p50_ms": round(nearest_rank(arm_b_commit_ms, 0.5), 4) if arm_b_commit_ms else None,
+            "p95_ms": round(nearest_rank(arm_b_commit_ms, 0.95), 4) if arm_b_commit_ms else None,
             "min_ms": round(min(arm_b_commit_ms), 4) if arm_b_commit_ms else None,
         },
     }
@@ -530,7 +532,10 @@ def _repo_state() -> dict[str, Any]:
     def run(args: list[str]) -> str | None:
         try:
             out = subprocess.run(args, capture_output=True, text=True, timeout=20, cwd=REPO_ROOT)
-        except Exception:  # noqa: BLE001 - git may be absent; the state is then unknown, not assumed
+        except (OSError, subprocess.SubprocessError):
+            # git may be absent (OSError) or time out (SubprocessError). The
+            # state is then UNKNOWN, not assumed - and the measurement itself
+            # must not die for it.
             return None
         return out.stdout.strip() or None
 

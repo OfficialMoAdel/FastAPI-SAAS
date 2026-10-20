@@ -44,7 +44,7 @@ The two remaining `TYPE_ALLOWLIST` rows are NOT in scope and stay: `files.mime_t
 were measured benign on domain grounds - a registered media type and a WebAuthn
 device-type token are both far shorter than the column that enforces them.
 
-The declarations below are read through `scripts/check_schema_parity.py`'s own
+The declarations below are read through `scripts/checks/schema_parity.py`'s own
 parsers rather than re-parsed here. One parse, two questions asked of it: an
 oracle with its own regex copy is a second source of truth about what the gate
 will see, and the whole point of this file is that the gate and the schema agree.
@@ -62,7 +62,7 @@ import pytest
 VERSIONS = Path("src/migrations/versions")
 STORAGE_MIGRATION = VERSIONS / "05_content_storage.py"
 AUDIT_MIGRATION = VERSIONS / "07_observability.py"
-GATE = Path("scripts/check_schema_parity.py")
+GATE = Path("scripts/checks/schema_parity.py")
 
 # `table -> (column, layer that creates the table)`
 COLUMNS: dict[str, tuple[str, str]] = {
@@ -79,7 +79,7 @@ USER_AGENT_4096 = "u" * 4096
 
 @pytest.fixture(scope="module")
 def gate() -> Any:
-    """`scripts/check_schema_parity.py` loaded from its path, as its own test does."""
+    """`scripts/checks/schema_parity.py` loaded from its path, as its own test does."""
     spec = importlib.util.spec_from_file_location("check_schema_parity", GATE)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

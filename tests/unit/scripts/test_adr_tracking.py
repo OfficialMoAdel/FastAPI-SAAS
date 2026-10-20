@@ -1,6 +1,6 @@
 """Ratchet: ADRs are tracked, and stay tracked.
 
-`scripts/check_doc_paths.py` asserts that every rooted path named in the
+`scripts/checks/doc_paths.py` asserts that every rooted path named in the
 authoritative docs EXISTS on disk. That check is satisfied by a file sitting in
 the working tree — whether or not git knows about it. So a gitignored ADR is a
 path the gate calls valid on your machine and cannot see at all in a CI
@@ -11,7 +11,7 @@ seventeen ADRs untracked, and the fix that was applied at the time was to carve
 out ADR-0007 with a `!` rule — an exception for the one file that happened to be
 linked from `AGENTS.md`, which treats the symptom and leaves the cause standing.
 
-Nothing in the suite could catch it: `check_doc_paths.py` only ever looked at
+Nothing in the suite could catch it: `doc_paths.py` only ever looked at
 the filesystem. So the two assertions below exist to make the filesystem check
 insufficient on its own ever again.
 

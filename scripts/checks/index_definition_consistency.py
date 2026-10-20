@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Every index NAME resolves to one consistent DEFINITION across both layers.
 
-`scripts/check_index_predicate_coverage.py` answers "does this hot list query
+`scripts/checks/index_predicate_coverage.py` answers "does this hot list query
 have a usable index?". This answers the prior question: "do the ORM and the
 migration layer actually agree on what the indexes ARE?".
 
@@ -27,8 +27,8 @@ runs in the lint job.
 
 Usage
 -----
-    uv run python scripts/check_index_definition_consistency.py
-    uv run python scripts/check_index_definition_consistency.py --verbose
+    uv run python scripts/checks/index_definition_consistency.py
+    uv run python scripts/checks/index_definition_consistency.py --verbose
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 MODELS_DIR = REPO_ROOT / "src" / "app" / "modules"
 MIGRATIONS_DIR = REPO_ROOT / "src" / "migrations" / "versions"
 

@@ -113,7 +113,7 @@ Every rooted `src/…`, `tests/…`, `scripts/…`, `docs/…` and `.github/…`
 path in this file is a claim that the path exists, and is enforced in CI:
 
 ```bash
-uv run python scripts/check_doc_paths.py
+uv run python scripts/checks/doc_paths.py
 ```
 
 If a pointer here fails, fix it or add a reasoned `ALLOWLIST` entry in the

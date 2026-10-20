@@ -249,7 +249,7 @@ Nothing in the tree catches a type drift today, for two concrete reasons:
 - `create_all` derives the schema FROM the ORM, so a dev database built that way
   can never show this class of bug. Only a database built by `alembic upgrade
   head` can.
-- `scripts/check_schema_parity.py` compares column NAMES only, and the `alembic
+- `scripts/checks/schema_parity.py` compares column NAMES only, and the `alembic
   check` step in CI carries `continue-on-error: true`.
 
 Measured example — `api_keys.scopes` was `postgresql.JSONB` in layer 03 while the
@@ -277,7 +277,7 @@ Oracle: `tests/unit/migrations/test_api_keys_column_type_parity.py`.
 
 ### The gate now compares types too, and only where a difference is observable (FastAPI_saas-d201)
 
-`scripts/check_schema_parity.py` used to compare column NAMES only, which is
+`scripts/checks/schema_parity.py` used to compare column NAMES only, which is
 why `api_keys.scopes` got through. It now also compares declared TYPES, and the
 scope was chosen deliberately:
 
@@ -327,7 +327,7 @@ all. It keeps `continue-on-error: true`. Making it blocking would fail the build
 on ~395 unexamined diffs and train people to ignore red; what it still sees that
 AST cannot is policies, constraints and server defaults, which is the part worth
 keeping visible. Its type coverage is no longer the gap -
-`scripts/check_schema_parity.py` covers that now. The comment in
+`scripts/checks/schema_parity.py` covers that now. The comment in
 `.github/workflows/tests.yml` says so, and a test fails if that comment stops
 naming the gate.
 
@@ -340,7 +340,7 @@ Two results change how a type drift should be read:
 1. **A family mismatch can refuse the write, not only the read.** `user_preferences.quiet_hours_start/_end` are `sa.Time(timezone=True)` in layer 05 while the model declares `String(5)`: the ORM's own `INSERT` is refused with `asyncpg.DatatypeMismatchError` **even when both columns are bound NULL**, so `get_or_create` cannot create the row — a stronger failure than `api_keys.scopes`, where the write survived and only the read broke. Fixed in `FastAPI_saas-nqk6` (see the next subsection).
 2. **A narrowed column refuses the width the ORM declares.** `files.storage_path` (ORM 1024, column 500), `files.mime_type` (128 / 100), `audit_logs.user_agent` (`Text` / 500) and `passkey_credentials.device_type` (100 / 50) all refuse a value the model considers legal, and the refusal is an untranslated `DBAPIError`. **Fixed in `FastAPI_saas-auz2`**: the two columns that refuse an ordinary value were WIDENED to the ORM declaration — `files.storage_path` to `sa.String(length=1024)` (Azure Blob's maximum blob name) and `audit_logs.user_agent` to `sa.Text()`. `files.mime_type` and `passkey_credentials.device_type` stayed allowlisted: their widest real values are far below the column, so the mismatch cannot refuse a write and renaming the type would buy nothing. See "A narrowed column is fixed by widening the COLUMN, not by shrinking the model" below.
 
-**NULLABILITY is compared by no gate.** `passkey_credentials.credential_id_hash` is nullable in the ORM and `NOT NULL` in migration 02 — found only because a probe insert that omitted it failed on that column. `scripts/check_schema_parity.py` compares names and types; it has no third axis, and that is the next hole rather than a solved one.
+**NULLABILITY is compared by no gate.** `passkey_credentials.credential_id_hash` is nullable in the ORM and `NOT NULL` in migration 02 — found only because a probe insert that omitted it failed on that column. `scripts/checks/schema_parity.py` compares names and types; it has no third axis, and that is the next hole rather than a solved one.
 
 The method these two facts came from is worth reusing: a scratch database migrated to the layer that creates the table, foreign keys dropped **in that database only**, one arm per process (the application's engine is a module-level singleton, so re-pointing the environment between two binds silently runs both arms against the same database), and the value read through the application's own ORM. `create_all` derives the schema FROM the ORM, so a development database can never show a migration drift and is not a control — it is the thing that hides them.
 
@@ -348,7 +348,7 @@ The method these two facts came from is worth reusing: a scratch database migrat
 
 When the finding is "layer N declares the wrong type", the rule for a schema that has not shipped yet is:
 
-1. **Correct layer N's `create_table`** so a database built from scratch is right and `scripts/check_schema_parity.py` stops reporting the row.
+1. **Correct layer N's `create_table`** so a database built from scratch is right and `scripts/checks/schema_parity.py` stops reporting the row.
 2. **Drop and rebuild the database** (`DROP SCHEMA public CASCADE; CREATE SCHEMA public`, then `uv run alembic -c src/alembic.ini upgrade head`) rather than adding a new revision. Per Package Identity: new schema changes extend the relevant layer's `upgrade()`/`downgrade()` rather than stacking a new dated revision, **unless the layer is already applied in production**. In that case the rule reverses and the fix becomes a correction to layer N **plus** a NEW revision that `ALTER`s the existing column — a corrected `create_table` does **not** rewrite a column that an applied revision already created, so every database that ran layer N keeps the old type forever, silently.
 
 `user_preferences.quiet_hours_start/_end` is the worked example. Layer 05 now declares `sa.String(length=5)` and the database is rebuilt.
@@ -357,14 +357,14 @@ Record the decision of **which side moves** in the new revision, not only in the
 
 ### A narrowed column is fixed by widening the COLUMN, not by shrinking the model (FastAPI_saas-auz2)
 
-The nqk6 rule above answers *which files* to touch. This answers *which side moves*, and the answer is not the symmetric one: when the column is narrower than the ORM declares, **the column moves**. Shrinking the model to `String(500)` would make `scripts/check_schema_parity.py` green and leave the defect intact — a 501-character value is still refused by PostgreSQL with the same untranslated `DBAPIError`, and now nothing in the tree records that the two sides ever disagreed. The gate going quiet is not the same as the bug being fixed, so "make the gate pass" is not an acceptable form of this fix.
+The nqk6 rule above answers *which files* to touch. This answers *which side moves*, and the answer is not the symmetric one: when the column is narrower than the ORM declares, **the column moves**. Shrinking the model to `String(500)` would make `scripts/checks/schema_parity.py` green and leave the defect intact — a 501-character value is still refused by PostgreSQL with the same untranslated `DBAPIError`, and now nothing in the tree records that the two sides ever disagreed. The gate going quiet is not the same as the bug being fixed, so "make the gate pass" is not an acceptable form of this fix.
 
 The other tell is what the ORM side claims. `audit_logs.user_agent` is `Text` in the model: that is a claim of NO cap, not a forgotten width, and it is corroborated by layer 02, which has always declared the magic-link table's `user_agent` as `sa.Text()`. A `User-Agent` longer than 500 characters is ordinary (proxy chains and enterprise scanners chain four or five of them), and the writer forwards the header verbatim, so a cap that narrow is a live defect, not a theoretical one. `files.storage_path` keeps a bounded width — 1024, the Azure Blob maximum blob name — because a storage key is generated by `storage/service.py` as `tenants/{tenant_id}/files/{uuid}.{ext}` and its length is the module's decision, not a client's.
 
 Two consequences worth stating because they look like contradictions and are not:
 
 - **The oracle asserts the database ACCEPTS a value the ORM accepts.** An oracle that only asserts "the two declarations agree" would be satisfied by the shrink and would have passed against the defect. `tests/unit/migrations/test_width_parity_storage_and_audit.py` therefore drives a 501- and a 4096-character `User-Agent` at the declared column type and requires that neither be refused.
-- **Both columns were corrected in the layer that creates them, not by a new revision.** The head is still `08_enable_rls_policies`; a layer-09 `ALTER` would have broken two existing oracles that assert the head (`tests/unit/migrations/test_user_preferences_quiet_hours_parity.py`), and `scripts/check_migration_graph.py` enforces one linear head. The database is rebuilt per the two-file rule above. The oracle pins that shape too, so a later reader who reaches for `alter_column()` fails the test rather than silently creating a second convention.
+- **Both columns were corrected in the layer that creates them, not by a new revision.** The head is still `08_enable_rls_policies`; a layer-09 `ALTER` would have broken two existing oracles that assert the head (`tests/unit/migrations/test_user_preferences_quiet_hours_parity.py`), and `scripts/checks/migration_graph.py` enforces one linear head. The database is rebuilt per the two-file rule above. The oracle pins that shape too, so a later reader who reaches for `alter_column()` fails the test rather than silently creating a second convention.
 
 Write `op.execute` statements **literally, not in a loop**. A migration is read by a human during an incident and grepped by the oracle; a loop hides both the table and the cast.
 

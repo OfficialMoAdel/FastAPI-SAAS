@@ -283,7 +283,7 @@ Every rooted `src/…`, `tests/…`, `scripts/…`, `docs/…` and `.github/…`
 path in this file is a claim that the path exists, and is enforced:
 
 ```bash
-uv run python scripts/check_doc_paths.py
+uv run python scripts/checks/doc_paths.py
 ```
 
 If you add a pointer here, the checker runs in CI. If it fails, either fix
