@@ -4,11 +4,12 @@ Tests validate user caching behavior with actual Redis connections,
 verifying cache hit/miss patterns, TTL expiration, and invalidation.
 """
 
-import asyncio
 import json
 from uuid import uuid4
 
 import pytest
+
+from tests.helpers.redis import wait_for_redis_key_expiry
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -72,12 +73,10 @@ class TestUserCachingIntegration:
         cached = await real_redis.get(cache_key)
         assert cached is not None
 
-        # Wait for expiration
-        await asyncio.sleep(2.5)
-
-        # Should be expired
-        cached = await real_redis.get(cache_key)
-        assert cached is None
+        try:
+            await wait_for_redis_key_expiry(real_redis, cache_key)
+        finally:
+            await real_redis.delete(cache_key)
 
     async def test_cache_invalidation_on_delete(self, real_redis, clean_redis):
         """Verify cache is invalidated when key is deleted."""
@@ -238,9 +237,7 @@ class TestTokenBlacklistNegativeCaching:
         negative_cache_ttl = 2  # 2 seconds for testing
         await real_redis.setex(cache_key, negative_cache_ttl, "0")
 
-        # Wait for expiration
-        await asyncio.sleep(2.5)
-
-        # Negative cache expired - would need to check actual blacklist again
-        cached = await real_redis.get(cache_key)
-        assert cached is None
+        try:
+            await wait_for_redis_key_expiry(real_redis, cache_key)
+        finally:
+            await real_redis.delete(cache_key)
