@@ -12,8 +12,10 @@ Memory Optimization (FEATURE_CONTEXTVAR_OPTIMIZATION):
 - Reduces memory overhead by ~90% per request
 """
 
+from collections.abc import Mapping
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
@@ -60,13 +62,28 @@ class TenantContext:
     Frozen to prevent accidental modifications.
 
     Memory savings: ~90% compared to storing full ORM model.
+
+    The instance is SHARED across the requests that hit the same cached
+    tenant entry (the parsed memo in ``core/tenancy/resolver.py``), so every
+    mutable part of it is made read-only in ``__post_init__``.
     """
 
     tenant_id: UUID
     tenant_slug: str
     tenant_name: str
     is_active: bool
-    extra: dict[str, Any] = field(default_factory=dict)
+    extra: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+
+    def __post_init__(self) -> None:
+        """Make ``extra`` read-only.
+
+        The dataclass is frozen, but a plain dict inside it is still mutable:
+        ``ctx.extra["key"] = value`` bypasses the frozen check. Because the
+        parsed context is shared between requests, such a mutation would
+        leak into every other request's view of that tenant.
+        """
+        if not isinstance(self.extra, MappingProxyType):
+            object.__setattr__(self, "extra", MappingProxyType(dict(self.extra)))
 
     @classmethod
     def from_model(cls, tenant: "TenantLike") -> "TenantContext":

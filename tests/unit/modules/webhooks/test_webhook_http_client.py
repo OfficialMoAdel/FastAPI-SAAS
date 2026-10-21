@@ -10,6 +10,7 @@ from src.app.modules.webhooks.http_client import (
     WEBHOOK_TIMEOUT,
     close_webhook_http_client,
     get_webhook_http_client,
+    reset_webhook_http_client,
 )
 
 
@@ -194,3 +195,35 @@ class TestWebhookSecuritySettings:
 
         # 30s read timeout matches typical webhook expectations
         assert client.timeout.read == 30.0
+
+
+class TestLoopBoundSingletonReset:
+    """D9: the client and its creation lock are bound to the first loop.
+
+    A function-scoped test loop would otherwise fail with "bound to a
+    different event loop" when the client is recreated. The reset hook
+    closes the client and forgets both references, so no transport is left
+    open across tests.
+    """
+
+    @pytest.mark.asyncio
+    async def test_reset_closes_the_client_and_drops_the_lock(self):
+        client = await get_webhook_http_client()
+        assert http_client._webhook_http_client is not None
+        assert http_client._client_lock is not None
+
+        await reset_webhook_http_client()
+
+        assert client.is_closed
+        assert http_client._webhook_http_client is None
+        assert http_client._client_lock is None
+
+    @pytest.mark.asyncio
+    async def test_closing_also_drops_the_lock(self):
+        """Shutdown closes the client; the lock must not outlive the loop."""
+        await get_webhook_http_client()
+        assert http_client._client_lock is not None
+
+        await close_webhook_http_client()
+
+        assert http_client._client_lock is None

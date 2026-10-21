@@ -168,9 +168,9 @@ def _db_double() -> MagicMock:
 
 
 def _cache_client(version: int | None) -> MagicMock:
-    """Redis double returning `version` for any ``get`` — the token_version cache."""
+    """Redis double returning `version` from ``get_strict`` — the token_version cache."""
     client = MagicMock()
-    client.get = AsyncMock(return_value=None if version is None else str(version))
+    client.get_strict = AsyncMock(return_value=None if version is None else str(version))
     client.set_nx = AsyncMock(return_value=True)
     return client
 
@@ -270,7 +270,7 @@ async def test_bumped_token_version_rejects_an_outstanding_token(rotate_key, jwt
     The token is signed with the CORRECT current key and is not expired and not
     blacklisted, so the only thing that can refuse it is the version
     comparison. The version is served through the same seam production uses
-    (``cache_client.get`` on the key the code computes), so the bump genuinely
+    (``cache_client.get_strict`` on the key the code computes), so the bump genuinely
     flows through the real code path rather than a stubbed comparison.
     """
     rotate_key()  # a fresh key, so nothing else can be the cause

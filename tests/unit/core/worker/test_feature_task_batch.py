@@ -49,7 +49,9 @@ def test_application_root_registers_the_batch():
     import src.app.worker  # noqa: F401 — the import is the registration
 
     batch = worker_registry.registered_feature_tasks()
-    assert len(batch) == 4
+    # F7: the dead `send_magic_link_email_task` is gone (magic links go
+    # through the notification.request event, so nothing ever enqueued it).
+    assert len(batch) == 3
     worker_registry.ensure_feature_tasks_registered()
 
 
@@ -84,7 +86,6 @@ def test_the_worker_registry_is_unchanged_in_size_and_names():
             "recover_stuck_notifications",
             "sample_background_task",
             "send_email_task",
-            "send_magic_link_email_task",
         ]
     )
     assert len(WorkerSettings.cron_jobs) == 4

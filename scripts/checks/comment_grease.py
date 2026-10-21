@@ -156,7 +156,7 @@ ALLOWLIST: dict[tuple[str, int], str] = {
     # claim about the CODE's history, which is why it is allow-listed rather
     # than rewritten - but it is the weakest form of the habit, so it is
     # recorded here where a future reader can see it and reconsider.
-    ("src/app/core/events/bus.py", 51): "retired key kept discoverable; asserts about code history",
+    ("src/app/core/events/bus.py", 93): "retired key kept discoverable; asserts about code history",
 }
 
 @dataclass(frozen=True, order=True)

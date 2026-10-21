@@ -188,9 +188,9 @@ async def _evaluate(
 
     async def _record_ban_and_rate_limit(
         client_ip: str, key: str, limit: int, period: int
-    ) -> tuple[Any, tuple[bool, int, int]]:
+    ) -> tuple[Any, tuple[bool, int, int, bool]]:
         metered.append((key, limit, period))
-        return MagicMock(is_banned=False), (limited, 0, period)
+        return MagicMock(is_banned=False), (limited, 0, period, False)
 
     aggregate = AsyncMock(return_value=(False, 250, _AGGREGATE_LIMIT[1]))
     auto_ban_check = AsyncMock(return_value=(False, 0))
@@ -210,7 +210,7 @@ async def _evaluate(
         ),
         patch(
             "src.app.core.security.request_admission.check_ban_blacklist_and_rate_limit",
-            AsyncMock(return_value=(MagicMock(is_banned=False), False, False, (False, 999, 3600), False, False)),
+            AsyncMock(return_value=(MagicMock(is_banned=False), False, False, (False, 999, 3600, False), False, False)),
         ),
         patch("src.app.core.security.request_admission.check_and_auto_ban", auto_ban_check),
         patch("src.app.core.security.request_admission.uses_gcra", MagicMock(return_value=True)),

@@ -30,8 +30,13 @@ class DLQItemResponse(BaseModel):
     job_id: str | None = None
     function: str | None = None
     error: str | None = None
-    timestamp: float
-    timestamp_iso: str
+    # F3: the DLQ keeps rows it could not parse — `{"raw": …, "error":
+    # "parse_error"}` — and those carry NEITHER timestamp. The fields were
+    # required, so ONE malformed row raised a pydantic ValidationError and
+    # took the WHOLE admin page down, at exactly the moment the operator
+    # needed to see what was in the queue.
+    timestamp: float | None = None
+    timestamp_iso: str | None = None
     raw: str | None = None  # For malformed items
 
 

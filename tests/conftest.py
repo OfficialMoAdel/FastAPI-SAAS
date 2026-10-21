@@ -303,7 +303,7 @@ def reset_circuit_breaker_registry():
 
 
 @pytest.fixture(autouse=True)
-def reset_singletons():
+async def reset_singletons():
     """Reset all singleton instances before and after each test.
 
     This fixture ensures test isolation by resetting module-level singletons
@@ -314,6 +314,9 @@ def reset_singletons():
     - RateLimiter (Redis Lua script cache)
     - TokenBlacklistCache (script SHA, locks)
     - EventBus (handlers, registration state)
+    - the feature-flag singleflight locks and the webhook HTTP client (D9:
+      both hold an asyncio primitive bound to the first event loop that
+      used them, which a function-scoped test loop rejects)
 
     The jwt_service DIP seams (``_token_version_lookup`` /
     ``_user_tenant_lookup``) are deliberately NOT reset here. They are wired
@@ -329,12 +332,16 @@ def reset_singletons():
     from src.app.core.security.token_blacklist_cache import reset_token_blacklist_cache
     from src.app.core.utils.gcra_rate_limit import reset_gcra_rate_limiter
     from src.app.core.utils.rate_limit import reset_rate_limiter
+    from src.app.modules.feature_flags.service import reset_feature_flag_locks
+    from src.app.modules.webhooks.http_client import reset_webhook_http_client
 
     # Pre-test reset
     reset_rate_limiter()
     reset_gcra_rate_limiter()
     reset_token_blacklist_cache()
     reset_event_bus()
+    reset_feature_flag_locks()
+    await reset_webhook_http_client()
     clear_jwt_key_cache()
     clear_decode_failure_cache()
 
@@ -345,6 +352,8 @@ def reset_singletons():
     reset_gcra_rate_limiter()
     reset_token_blacklist_cache()
     reset_event_bus()
+    reset_feature_flag_locks()
+    await reset_webhook_http_client()
     clear_jwt_key_cache()
     clear_decode_failure_cache()
 

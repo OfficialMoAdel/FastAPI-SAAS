@@ -296,7 +296,7 @@ async def _admit_with_engine(
 async def test_gcra_keeps_the_merged_composite():
     """Default engine: the 1-RTT composite path is preserved."""
     composite = AsyncMock(
-        return_value=(False, 10, 60, "k", BanInfo(is_banned=False), (False, 9, 0))
+        return_value=(False, 10, 60, "k", BanInfo(is_banned=False), (False, 9, 0, False))
     )
     await _admit_with_engine("gcra", composite, AsyncMock(), AsyncMock(return_value=(False, 9, 0, False)))
     composite.assert_awaited_once()
@@ -308,7 +308,7 @@ async def test_fixed_window_bypasses_the_gcra_composite():
     must not be routed through it — otherwise the setting is silently
     ignored on the authenticated hot path."""
     composite = AsyncMock(
-        return_value=(False, 10, 60, "k", BanInfo(is_banned=False), (False, 9, 0))
+        return_value=(False, 10, 60, "k", BanInfo(is_banned=False), (False, 9, 0, False))
     )
     consume_mock = AsyncMock(return_value=(False, 9, 0, False))
     await _admit_with_engine(

@@ -1,8 +1,24 @@
 """Event bus for publish/subscribe pattern across modules.
 
 Supports priority-based event handling:
-- CRITICAL: Synchronous, fire-and-forget (audit logs)
-- NORMAL/LOW: Asynchronous via ARQ queue (emails, webhooks)
+- CRITICAL: runs the handlers INLINE, in the publishing task
+- NORMAL/LOW: enqueues to ARQ and returns
+
+Degradation: when ARQ is unavailable (no queue wired, the ARQ circuit open, or
+the enqueue failed) the bus runs the handlers INLINE instead of dropping the
+event — bounded by the concurrency semaphore and the per-handler timeout, with
+a failing handler routed to the DLQ. The DLQ lives in Redis, so a
+DLQ-and-return was rejected: it would lose the event exactly when Redis is
+the thing that is down. See ``bus.py``'s module docstring for the full
+contract.
+
+Queue topology: arq polls exactly ONE queue per worker process. NORMAL events
+go to ``arq:queue``; LOW events go to ``arq:queue_low_priority`` and need a
+second worker process pointed at that queue
+(``core/worker/settings.py::LowPriorityWorkerSettings``).
+
+Payload contract: every handler of one publish receives the SAME payload dict
+and MUST NOT mutate it.
 
 This package decomposes the former single-module ``events.py`` by concern:
 

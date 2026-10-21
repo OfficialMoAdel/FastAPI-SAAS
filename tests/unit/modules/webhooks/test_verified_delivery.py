@@ -21,6 +21,9 @@ def _make_cache(held: bool = True) -> AsyncMock:
     cache = AsyncMock()
     cache.client = MagicMock()
     cache.set_nx.return_value = held
+    # D8: the lock carries an ownership token and is released with an
+    # ownership check, so the release is not a blind delete.
+    cache.release_lock_if_owned.return_value = True
     return cache
 
 
@@ -53,7 +56,8 @@ async def test_f6_lock_released_when_delivery_missing() -> None:
         with pytest.raises(ModelNotFoundError):
             await deliver(db, did)
 
-    cache.delete.assert_awaited_once_with(f"webhook:deliver_lock:{did}")
+    cache.release_lock_if_owned.assert_awaited_once()
+    assert cache.release_lock_if_owned.await_args.args[0] == f"webhook:deliver_lock:{did}"
 
 
 async def test_f6_lock_released_when_endpoint_missing() -> None:
@@ -72,7 +76,9 @@ async def test_f6_lock_released_when_endpoint_missing() -> None:
         with pytest.raises(ModelNotFoundError):
             await deliver(db, did)
 
-    cache.delete.assert_awaited_with(f"webhook:deliver_lock:{did}")
+    cache.release_lock_if_owned.assert_awaited_with(
+        f"webhook:deliver_lock:{did}", cache.release_lock_if_owned.await_args.args[1]
+    )
 
 
 async def test_f8_recovery_skips_inflight_delivery() -> None:
@@ -123,6 +129,8 @@ async def test_f7_recovery_row_failure_isolated() -> None:
 
 async def test_f26_binary_response_body_recorded() -> None:
     """F26: undecodable-binary bodies decode with replacement, no 500."""
+    from src.app.core.utils.circuit_breaker import CircuitState
+
     cache = _make_cache(held=True)
     db = AsyncMock()
     did = uuid4()
@@ -136,6 +144,7 @@ async def test_f26_binary_response_body_recorded() -> None:
     delivery = MagicMock()
     delivery.id = did
     delivery.tenant_id = endpoint.tenant_id
+    delivery.webhook_endpoint = endpoint
     delivery.payload = {"a": 1}
     delivery.attempt_count = 0
     delivery.event_type = "test.event"
@@ -150,7 +159,7 @@ async def test_f26_binary_response_body_recorded() -> None:
     http_client = AsyncMock()
     http_client.post.return_value = response
     breaker = MagicMock()
-    breaker.is_closed = True
+    breaker.state = CircuitState.CLOSED
     breaker.record_success = AsyncMock()
     breaker.record_failure = AsyncMock()
 
@@ -175,7 +184,9 @@ async def test_f26_binary_response_body_recorded() -> None:
     assert out.status == WebhookDeliveryStatus.DELIVERED
     assert isinstance(delivery.response_body, str)
     assert len(delivery.response_body) <= 10000
-    cache.delete.assert_awaited_with(f"webhook:deliver_lock:{did}")
+    cache.release_lock_if_owned.assert_awaited_with(
+        f"webhook:deliver_lock:{did}", cache.release_lock_if_owned.await_args.args[1]
+    )
 
 
 async def test_f33_subsecond_override_ceils_to_one_second() -> None:
@@ -192,3 +203,97 @@ async def test_f33_subsecond_override_ceils_to_one_second() -> None:
     assert delivery.status == WebhookDeliveryStatus.PENDING
     delta = (delivery.next_retry_at - datetime.now(UTC)).total_seconds()
     assert 0 < delta <= 2
+
+
+async def _half_open_webhook_breaker():
+    """A webhook breaker in the virtual HALF_OPEN state."""
+    import time
+
+    from src.app.core.utils.circuit_breaker import CircuitBreaker, CircuitState
+
+    breaker = CircuitBreaker(name="webhook-half-open", failure_threshold=1, recovery_timeout=60.0)
+    await breaker.record_failure(RuntimeError("endpoint down"))
+    breaker._last_failure_time = time.time() - 120
+    assert breaker.state == CircuitState.HALF_OPEN
+    return breaker
+
+
+def _delivery_fixture(db: AsyncMock, did) -> MagicMock:
+    endpoint = MagicMock()
+    endpoint.id = uuid4()
+    endpoint.url = "https://example.com/hook"
+    endpoint.secret = "enc"
+    endpoint.signing_secret = None
+    endpoint.old_signing_secret = None
+    endpoint.tenant_id = uuid4()
+    delivery = MagicMock()
+    delivery.id = did
+    delivery.tenant_id = endpoint.tenant_id
+    delivery.webhook_endpoint = endpoint
+    delivery.payload = {"a": 1}
+    delivery.attempt_count = 0
+    delivery.event_type = "test.event"
+    result = MagicMock()
+    result.unique.return_value.scalar_one_or_none.return_value = delivery
+    db.execute.return_value = result
+    db.get.return_value = delivery
+    return delivery
+
+
+async def test_d7_the_half_open_probe_is_claimed_and_released() -> None:
+    """D7/D6: exactly ONE delivery probes a recovering endpoint.
+
+    `is_closed` is True during the virtual HALF_OPEN, so every concurrent
+    delivery passed the gate and the recovering endpoint took the burst. The
+    probe slot must also be released on every exit path.
+    """
+    cache = _make_cache(held=True)
+    db = AsyncMock()
+    did = uuid4()
+    _delivery_fixture(db, did)
+    breaker = await _half_open_webhook_breaker()
+
+    response = MagicMock()
+    response.status_code = 200
+    response.content = b"ok"
+    http_client = AsyncMock()
+    http_client.post.return_value = response
+
+    with (
+        patch("src.app.core.cache.client.cache_client", cache),
+        patch("src.app.core.resilience.registry.get_webhook_breaker", return_value=breaker),
+        patch("src.app.modules.webhooks.delivery.validate_webhook_url", AsyncMock(return_value="93.184.216.34")),
+        patch("src.app.modules.webhooks.delivery.decrypt_data", return_value="s3cret"),
+        patch("src.app.modules.webhooks.delivery.get_webhook_http_client", AsyncMock(return_value=http_client)),
+    ):
+        await deliver(db, did)
+
+    assert breaker._probe_in_progress is False, "the probe slot must be released"
+
+
+async def test_d6_the_probe_is_released_on_the_early_return_path() -> None:
+    """D6: the SSRF refusal returns before any outcome is recorded.
+
+    The probe slot is released in the `finally`, so a path that never
+    records success or failure cannot leave the endpoint wedged.
+    """
+    from src.app.core.security.url_validator import SSRFProtectionError
+
+    cache = _make_cache(held=True)
+    db = AsyncMock()
+    did = uuid4()
+    _delivery_fixture(db, did)
+    breaker = await _half_open_webhook_breaker()
+
+    with (
+        patch("src.app.core.cache.client.cache_client", cache),
+        patch("src.app.core.resilience.registry.get_webhook_breaker", return_value=breaker),
+        patch(
+            "src.app.modules.webhooks.delivery.validate_webhook_url",
+            AsyncMock(side_effect=SSRFProtectionError("private address")),
+        ),
+        patch("src.app.modules.webhooks.delivery.decrypt_data", return_value="s3cret"),
+    ):
+        await deliver(db, did)
+
+    assert breaker._probe_in_progress is False, "the probe slot must be released"

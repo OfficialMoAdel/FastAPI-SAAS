@@ -75,8 +75,35 @@ class TestGcraDegradationIsCounted:
         mock_record.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_no_gcra_limiter_does_not_count_a_degradation(self) -> None:
-        """GCRA not configured is not a degradation."""
+    async def test_a_fixed_window_configuration_is_not_a_degradation(self) -> None:
+        """GCRA not CONFIGURED is not a degradation.
+
+        The operator chose the fixed window, so the fixed window IS the
+        configured engine — nothing degraded, nothing to count.
+        """
+        fallback = AsyncMock()
+        fallback.check_rate_limit = AsyncMock(return_value=(False, 0))
+
+        with (
+            patch("src.app.core.security.rate_policy.settings") as settings_mock,
+            patch("src.app.core.security.rate_policy.default_rate_limiter", fallback),
+            patch("src.app.core.monitoring.r1_unified_metrics.record_fail_open") as mock_record,
+        ):
+            settings_mock.rate_limit.RATE_LIMIT_ALGORITHM = "fixed_window"
+            _, _, _, degraded = await rate_policy.consume("k", 5, 60)
+
+        assert degraded is False
+        mock_record.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_an_uninitialised_gcra_limiter_is_a_degradation(self) -> None:
+        """GCRA CONFIGURED but never initialised IS a degradation.
+
+        Redis was absent at boot, so ``init_gcra_rate_limiter`` never ran.
+        The fixed window then enforces the limit — including the 2x
+        boundary burst that GCRA exists to remove. That has to be counted
+        and reported, not served silently.
+        """
         fallback = AsyncMock()
         fallback.check_rate_limit = AsyncMock(return_value=(False, 0))
 
@@ -87,5 +114,5 @@ class TestGcraDegradationIsCounted:
         ):
             _, _, _, degraded = await rate_policy.consume("k", 5, 60)
 
-        assert degraded is False
-        mock_record.assert_not_called()
+        assert degraded is True
+        mock_record.assert_called_once_with("rate_limit:gcra_uninitialized")

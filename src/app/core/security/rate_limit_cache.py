@@ -165,9 +165,17 @@ async def warm_policy_cache(tier_policies: dict[int, list[dict[str, Any]]]) -> i
 
 
 async def invalidate_tier_policy(tier_id: int) -> bool:
-    """Invalidate cached policy for a tier in single round-trip (P2-2 Optimization).
+    """Invalidate cached policy for a tier.
 
     Pipelines key deletion and L1 invalidation publish into 1 network execution.
+
+    The local drop goes through the L1 seam, which owns BOTH layers — the
+    policy list AND the compiled per-path map. Popping only the list would
+    leave the compiled map serving the OLD limits: `get_tier_policy_limits`
+    consults the map FIRST, and the map outlives the list by its own 300 s
+    TTL. The seam's contract ("the compiled path map can never outlive the
+    policy list it was built from") only holds if the invalidation goes
+    through it.
 
     Args:
         tier_id: The tier ID to invalidate
@@ -175,7 +183,7 @@ async def invalidate_tier_policy(tier_id: int) -> bool:
     Returns:
         True if invalidated successfully
     """
-    _tier_policy_l1.pop(tier_id, None)
+    _policy_l1_seam.drop(tier_id)
     redis_client = get_redis()
     if redis_client is None:
         return False

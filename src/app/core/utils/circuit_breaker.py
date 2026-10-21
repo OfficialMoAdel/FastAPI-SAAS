@@ -6,7 +6,8 @@ States: CLOSED (normal) → OPEN (failing) → HALF_OPEN (testing recovery)
 
 import asyncio
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import wraps
@@ -62,6 +63,13 @@ class CircuitBreaker:
     # Without this flag, multiple concurrent requests can all probe simultaneously,
     # defeating the circuit breaker pattern and potentially overwhelming a recovering service.
     _probe_in_progress: bool = field(default=False, init=False)
+    # D6: when the probe slot was claimed. The claim is a LEASE: a claim older
+    # than `recovery_timeout` belongs to a caller that died without releasing
+    # it (a cancelled probe), and is reclaimed. Without this, one cancelled
+    # probe wedges the breaker for the life of the process — every later
+    # HALF_OPEN caller is rejected, which for the DB breaker means 503 for all
+    # traffic.
+    _probe_claimed_at: float = field(default=0.0, init=False)
 
     def _get_lock(self) -> asyncio.Lock:
         """Return the internal asyncio.Lock, creating it lazily on first access."""
@@ -110,6 +118,7 @@ class CircuitBreaker:
             # BUG FIX: Always clear the probe flag on success so the next HALF_OPEN
             # cycle can allow a new probe if the circuit opens again later.
             self._probe_in_progress = False
+            self._probe_claimed_at = 0.0
 
             if self.state == CircuitState.HALF_OPEN:
                 self._success_count += 1
@@ -140,6 +149,7 @@ class CircuitBreaker:
             # BUG FIX: Always clear probe flag on failure so the next HALF_OPEN
             # cycle allows a fresh probe after recovery_timeout elapses again.
             self._probe_in_progress = False
+            self._probe_claimed_at = 0.0
             self._failure_count += 1
             self._last_failure_time = time.time()
 
@@ -186,6 +196,7 @@ class CircuitBreaker:
         self._success_count = 0
         self._last_failure_time = 0.0
         self._probe_in_progress = False
+        self._probe_claimed_at = 0.0
 
     def reset_lock(self) -> None:
         """Reset the asyncio lock for new event loop (test isolation).
@@ -196,11 +207,35 @@ class CircuitBreaker:
         self._lock = asyncio.Lock()
 
     def try_acquire_probe(self) -> bool:
-        """Try to acquire the HALF_OPEN probe slot (non-blocking, caller must hold lock externally)."""
+        """Try to acquire the HALF_OPEN probe slot (non-blocking, caller must hold lock externally).
+
+        The claim is a LEASE (D6). A claim older than ``recovery_timeout``
+        belongs to a caller that died without releasing it — a cancelled
+        probe, most often — and is reclaimed here, so a lost claim can block
+        the breaker for at most one recovery window instead of forever.
+        """
         if self._probe_in_progress:
-            return False
+            if time.time() - self._probe_claimed_at < self.recovery_timeout:
+                return False
+            logger.warning(
+                "circuit_breaker_stale_probe_reclaimed",
+                breaker=self.name,
+                claimed_for_s=round(time.time() - self._probe_claimed_at, 1),
+            )
         self._probe_in_progress = True
+        self._probe_claimed_at = time.time()
         return True
+
+    async def _admit(self) -> tuple[bool, bool]:
+        """Admit one call and report whether it claimed the HALF_OPEN probe."""
+        async with self._get_lock():
+            state = self.state
+            if state == CircuitState.CLOSED:
+                return True, False
+            if state == CircuitState.OPEN:
+                return False, False
+            claimed = self.try_acquire_probe()
+            return claimed, claimed
 
     async def allow_single_flight(self) -> bool:
         """Gate for enqueue-style callers during HALF_OPEN recovery.
@@ -211,26 +246,73 @@ class CircuitBreaker:
         calls when CLOSED, rejects all when OPEN, and admits exactly ONE
         caller in HALF_OPEN (it claims the probe slot; ``record_success`` /
         ``record_failure`` release it).
+
+        The claim is a lease (see :meth:`try_acquire_probe`), so a caller that
+        never releases it blocks the breaker for one recovery window at most.
+
+        Callers that release the probe themselves must use
+        :meth:`allow_single_flight_with_claim`: a call admitted while CLOSED
+        must not release a probe another caller claimed after a state flip.
         """
-        async with self._get_lock():
-            state = self.state
-            if state == CircuitState.CLOSED:
-                return True
-            if state == CircuitState.OPEN:
-                return False
-            return self.try_acquire_probe()
+        allowed, _ = await self._admit()
+        return allowed
+
+    async def allow_single_flight_with_claim(self) -> tuple[bool, bool]:
+        """Admit one call and report whether this call owns the probe slot.
+
+        Returns:
+            ``(allowed, probe_claimed)``. ``probe_claimed`` is True only when
+            the HALF_OPEN probe was claimed by THIS call, so the caller knows
+            whether its release is an ownership-checked release or a no-op.
+        """
+        return await self._admit()
+
+    @asynccontextmanager
+    async def probe_gate(self) -> AsyncIterator[bool]:
+        """Gate one call on the breaker, releasing the probe slot on every exit.
+
+        ``is_closed`` is True during the virtual HALF_OPEN, so every caller
+        that gates on it passes at once and floods a recovering dependency.
+        This gate admits every call in CLOSED, none in OPEN, and exactly ONE
+        in HALF_OPEN — the probe.
+
+        The HALF_OPEN probe slot is released on EVERY exit path — success,
+        failure, or cancellation — so a cancelled probe cannot wedge the
+        breaker (the D6 failure mode). ``record_success``/``record_failure``
+        inside the block may release it earlier; the release is idempotent.
+
+        Only a call that actually claimed the probe releases it. A call
+        admitted while CLOSED holds no probe, and if the breaker flips to
+        HALF_OPEN while that call is in flight, an unconditional release
+        would clear the claim of the caller that really owns the probe.
+
+        Yields:
+            True when the call may proceed.
+        """
+        allowed, probe_claimed = await self.allow_single_flight_with_claim()
+        if not allowed:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            if probe_claimed:
+                self.release_probe()
 
     def release_probe(self) -> None:
         """Release probe slot (idempotent)."""
         self._probe_in_progress = False
+        self._probe_claimed_at = 0.0
 
     async def clear_probe_async(self) -> None:
         """Async-safe probe release for use in exception handlers."""
         try:
             async with self._get_lock():
                 self._probe_in_progress = False
+                self._probe_claimed_at = 0.0
         except Exception:
             self._probe_in_progress = False
+            self._probe_claimed_at = 0.0
 
 
 class CircuitBreakerOpen(Exception):
@@ -267,6 +349,7 @@ def circuit_breaker(
             from src.app.core.config import settings
 
             state = breaker.state  # Fast path: no lock
+            probe_claimed = False
 
             # P4-1 Optimization: Double-check pattern for TOCTOU race prevention
             if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
@@ -289,12 +372,13 @@ def circuit_breaker(
                             # allowed to probe simultaneously, defeating the purpose. The dead
                             # code `if breaker._state == OPEN: breaker._state = HALF_OPEN` was
                             # also removed — it could never be True inside the HALF_OPEN guard.
-                            if breaker._probe_in_progress:
+                            if not breaker.try_acquire_probe():
                                 # Another request is already probing — reject immediately
                                 recovery_in = breaker.recovery_timeout - (time.time() - breaker.last_failure_time)
                                 raise CircuitBreakerOpen(breaker.name, max(0, recovery_in))
-                            # Claim the probe slot
-                            breaker._probe_in_progress = True
+                            # try_acquire_probe stamps the lease, so this claim
+                            # cannot be mistaken for a stale one.
+                            probe_claimed = True
                         elif breaker.state == CircuitState.OPEN:
                             # State changed to OPEN while acquiring lock
                             recovery_in = breaker.recovery_timeout - (time.time() - breaker.last_failure_time)
@@ -312,6 +396,18 @@ def circuit_breaker(
                 return result
             except Exception as e:
                 await breaker.record_failure(e)
+                raise
+            except BaseException:
+                # D6: a CANCELLED call is a BaseException, so the arm above
+                # never runs and the HALF_OPEN probe slot would stay claimed
+                # for the life of the process. Every later HALF_OPEN caller
+                # would then be rejected with CircuitBreakerOpen — for the
+                # DB breaker, 503 for all traffic until a restart.
+                # Only clear a probe THIS call claimed: a CLOSED call that did
+                # not claim one must not clear a probe claimed by another
+                # caller after the state flipped.
+                if probe_claimed:
+                    await breaker.clear_probe_async()
                 raise
 
         return wrapper

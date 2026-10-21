@@ -13,6 +13,13 @@ logger = get_logger(__name__)
 # Constants
 JOB_PREFIX = "arq:job:"
 JOB_STATS_PREFIX = "arq:stats:"
+# F2: where a job's START time is kept. The monitoring service recorded the
+# start of a job and then threw the timestamp away, so the status endpoint
+# could never say when a job began.
+JOB_START_PREFIX = "arq:job-start:"
+# The start time outlives the arq result (keep_result, an hour) so the status
+# view still explains a job that finished long ago.
+JOB_START_TTL_SECONDS = 86_400
 DLQ_KEY = DeadLetterQueue.key  # Backward-compatible name; policy lives in DeadLetterQueue.
 
 
@@ -55,14 +62,67 @@ class JobMonitoringService:
             logger.warning("Failed to deserialize arq job payload", job_id=job_id)
             return {"status": "unknown", "job_id": job_id, "raw": str(blob)[:500]}
 
-        parsed_data["status"] = "queued"
+        parsed_data["status"] = await self._job_status(job_id)
 
-        # arq stores enqueue_time as unix MILLISECONDS; expose it readably.
-        enqueue_ms = parsed_data.get("enqueue_time")
+        # F4: arq's blob stores the enqueue time under `et` (unix
+        # MILLISECONDS). The old read looked for `enqueue_time`, a key the blob
+        # never has, so the conversion was dead code and the field stayed
+        # unset. The value is also handed over as a datetime, not the raw
+        # millisecond integer: the response schema types it as a datetime, and
+        # an integer would be read as SECONDS and land far in the future.
+        enqueue_ms = parsed_data.get("et")
         if isinstance(enqueue_ms, int | float) and enqueue_ms > 0:
-            parsed_data["enqueued_at"] = datetime.fromtimestamp(enqueue_ms / 1000, tz=UTC).isoformat()
+            enqueued_at = datetime.fromtimestamp(enqueue_ms / 1000, tz=UTC)
+            parsed_data["enqueue_time"] = enqueued_at
+            parsed_data["enqueued_at"] = enqueued_at.isoformat()
+
+        # F1: the blob's `f` is the job's function name; the response schema
+        # calls it `function`.
+        function_name = parsed_data.get("f")
+        if isinstance(function_name, str):
+            parsed_data["function"] = function_name
+
+        # F2: the start time the monitoring service recorded when the job
+        # began.
+        started_raw = await client.get(f"{JOB_START_PREFIX}{job_id}")  # type: ignore[misc]
+        if isinstance(started_raw, bytes):
+            started_raw = started_raw.decode("utf-8", errors="replace")
+        if isinstance(started_raw, str):
+            try:
+                parsed_data["start_time"] = datetime.fromisoformat(started_raw)
+            except ValueError:
+                logger.warning("job_start_time_unreadable", job_id=job_id)
 
         return parsed_data
+
+    async def _job_status(self, job_id: str) -> str:
+        """The REAL status of a job, from arq's own bookkeeping.
+
+        F1: the blob is the job DEFINITION — arq stores ``t``/``f``/``a``/``k``/
+        ``et`` in it and no status at all — so the old code answered
+        "queued" for every job, including the ones that had failed. arq
+        knows the truth: the result key, the in-progress key and the queue
+        score.
+
+        A job whose definition outlived arq's result (keep_result is an
+        hour) is reported as "unknown" rather than guessed: its outcome is
+        genuinely no longer knowable.
+        """
+        from arq.jobs import Job as ArqJob
+
+        from src.app.core.redis_provider import get_arq
+
+        arq = get_arq()
+        if arq is None:
+            return "unknown"
+        try:
+            status = await ArqJob(job_id, arq).status()
+        except Exception as e:  # noqa: BLE001 - a monitoring read never fails the request
+            logger.warning("job_status_lookup_failed", job_id=job_id, error=str(e))
+            return "unknown"
+        if status.value == "not_found":
+            return "unknown"
+        return status.value
 
     async def record_job_start(self, job_id: str, function_name: str) -> None:
         """
@@ -72,11 +132,19 @@ class JobMonitoringService:
         if not client:
             return
 
+        started_at = datetime.now(UTC)
         async with client.pipeline() as pipe:
             # Increment total jobs for function
             pipe.hincrby(f"{JOB_STATS_PREFIX}{function_name}", "total", 1)
-            # Set start time in a temporary key or update the job key if we manage it
-            # For simplicity in this service, we update the global stats mostly.
+            # F2: persist the START time. The old comment claimed this was
+            # done "if we manage it" — it was not, so nothing could say when
+            # a job began and the elapsed time could not be attributed to
+            # one.
+            pipe.set(
+                f"{JOB_START_PREFIX}{job_id}",
+                started_at.isoformat(),
+                ex=JOB_START_TTL_SECONDS,
+            )
 
             await pipe.execute()  # type: ignore[misc]
 

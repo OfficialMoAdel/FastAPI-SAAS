@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.modules.feature_flags.service import FeatureFlagService
+from src.app.modules.feature_flags.service import FeatureFlagService, _with_flag_lock
 
 
 def _service(db):
@@ -76,3 +76,41 @@ async def test_update_tenant_flag_invalidates_cache():
 
     assert mock_tenant.feature_flags == {"new_flag": True}
     assert redis.delete.await_count >= 1
+
+
+class TestSingleflightLockReset:
+    """D9: the per-key singleflight locks are bound to the first event loop.
+
+    An ``asyncio.Lock`` is bound to the loop that first awaits it, so a
+    function-scoped test loop raises "bound to a different event loop" when
+    a lock created in an earlier test is reused. Production has one loop per
+    process, so the reset hook is a test-isolation concern.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_reset_hook_drops_the_locks(self):
+        from src.app.modules.feature_flags.service import _flag_cache_locks, reset_feature_flag_locks
+
+        async def _noop():
+            return None
+
+        await _with_flag_lock("tenant:1:flag", _noop())
+        assert "tenant:1:flag" in _flag_cache_locks
+
+        reset_feature_flag_locks()
+
+        assert _flag_cache_locks == {}
+
+    @pytest.mark.asyncio
+    async def test_a_lock_is_recreated_after_the_reset(self):
+        from src.app.modules.feature_flags.service import _flag_cache_locks, reset_feature_flag_locks
+
+        async def _noop():
+            return None
+
+        await _with_flag_lock("tenant:2:flag", _noop())
+        reset_feature_flag_locks()
+
+        # A fresh lock is created for this loop — no cross-loop reuse.
+        await _with_flag_lock("tenant:2:flag", _noop())
+        assert "tenant:2:flag" in _flag_cache_locks

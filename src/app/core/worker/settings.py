@@ -27,6 +27,7 @@ load_dotenv()
 from typing import Any
 
 from arq.connections import RedisSettings
+from arq.constants import default_queue_name
 from arq.cron import cron
 
 from src.app.core.config import settings
@@ -94,10 +95,11 @@ class WorkerSettings:
     ]
     # NOTE: arq 0.26.x has no multi-queue support — a worker polls exactly one
     # zset (queue_name). EventPriority.LOW events are enqueued to
-    # f"{default_queue_name}_low_priority" (see events/bus.py) and require a
-    # second worker process with that queue_name to be consumed. Unknown
-    # settings-class attributes (e.g. a `queues` list) are silently dropped by
-    # arq's get_kwargs, so declaring them here has no effect.
+    # f"{default_queue_name}_low_priority" (see events/bus.py) and are consumed
+    # by the SECOND worker process described below
+    # (LowPriorityWorkerSettings). Unknown settings-class attributes (e.g. a
+    # `queues` list) are silently dropped by arq's get_kwargs, so declaring
+    # them here has no effect.
     redis_settings = RedisSettings(
         host=settings.redis_queue.REDIS_QUEUE_HOST,
         port=settings.redis_queue.REDIS_QUEUE_PORT,
@@ -163,3 +165,42 @@ class WorkerSettings:
 
     job_serializer = staticmethod(serialize_job)
     job_deserializer = staticmethod(deserialize_job)
+
+
+class LowPriorityWorkerSettings:
+    """ARQ worker settings for the LOW-priority queue.
+
+    arq 0.26 polls exactly ONE queue per worker process, and
+    ``EventPriority.LOW`` events are enqueued to
+    ``f"{default_queue_name}_low_priority"`` (``core/events/arq_adapter.py``).
+    Without a worker pointed at that queue they are enqueued and never
+    consumed — a silent loss of every LOW-priority event. Run this as a SECOND
+    process alongside the primary worker::
+
+        arq src.app.core.worker.settings.LowPriorityWorkerSettings
+
+    The attributes below MIRROR :class:`WorkerSettings` instead of inheriting
+    from it: arq's ``get_kwargs`` reads ``settings_cls.__dict__``, which holds
+    only the attributes defined on the class itself — an inherited attribute
+    would be dropped and the worker would start with no functions at all.
+    ``tests/unit/core/worker/test_low_priority_worker.py`` fails if the mirror
+    ever misses an option.
+
+    ``cron_jobs`` is empty on purpose: the cron schedules (webhook recovery,
+    notification recovery, audit-log flush) belong to the primary worker, and
+    running them in a second worker would execute them twice.
+    """
+
+    queue_name = f"{default_queue_name}_low_priority"
+    functions = WorkerSettings.functions
+    redis_settings = WorkerSettings.redis_settings
+    on_startup = WorkerSettings.on_startup
+    on_shutdown = WorkerSettings.on_shutdown
+    handle_signals = WorkerSettings.handle_signals
+    max_jobs = WorkerSettings.max_jobs
+    job_timeout = WorkerSettings.job_timeout
+    keep_result = WorkerSettings.keep_result
+    max_tries = WorkerSettings.max_tries
+    job_serializer = staticmethod(serialize_job)
+    job_deserializer = staticmethod(deserialize_job)
+    cron_jobs: list[Any] = []

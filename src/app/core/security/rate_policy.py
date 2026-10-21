@@ -91,6 +91,24 @@ def build_verdict(
     )
 
 
+def window_reset_seconds(period: int | None) -> int:
+    """Seconds until the current rate-limit window rolls over.
+
+    The reset a client should wait for: the remainder of the window the
+    counter lives in. ``build_verdict`` uses the same formula for the
+    ``Retry-After`` of a limited verdict.
+
+    Args:
+        period: The window length in seconds, or None when no window applies.
+
+    Returns:
+        The seconds left in the window (0 when there is no window).
+    """
+    if not period or period <= 0:
+        return 0
+    return period - (int(time.time()) % period)
+
+
 def uses_gcra() -> bool:
     """Whether the operator configured the GCRA engine.
 
@@ -140,7 +158,19 @@ async def consume(
         from src.app.core.utils.gcra_rate_limit import get_gcra_rate_limiter
 
         gcra = get_gcra_rate_limiter()
-        if gcra is not None:
+        if gcra is None:
+            # GCRA is the CONFIGURED engine but the limiter was never
+            # initialised — Redis was absent at boot, so
+            # `init_gcra_rate_limiter` never ran (composition.py). The
+            # fixed window below will enforce the limit instead: the same
+            # degradation as a failed GCRA call, including the 2x boundary
+            # burst GCRA exists to remove. Counted and reported, not silent.
+            from src.app.core.monitoring.r1_unified_metrics import record_fail_open
+
+            record_fail_open("rate_limit:gcra_uninitialized")
+            logger.error("gcra_limiter_uninitialized_degrading_to_fixed_window", key=key)
+            degraded = True
+        else:
             try:
                 result = await gcra.check_rate_limit(key, limit, period, fail_closed=fail_closed)
                 # R6 FIX: round UP so sub-second retry windows are not
@@ -241,6 +271,17 @@ async def resolve_rate_limits(
         resolved_tier = str(tier_name).lower() if tier_name else "anonymous"
         limit_config = settings.rate_limit.TIER_RATE_LIMITS.get(resolved_tier)
         if limit_config is None:
+            if tier_name:
+                # The tier was NAMED but is not configured: the caller would
+                # silently get the generic default instead of its tier's
+                # budget. Loud, because it is a configuration mistake — the
+                # anonymous fallback (no tier name) is NOT a mistake and must
+                # not spam this line.
+                logger.warning(
+                    "rate_limit_tier_not_configured",
+                    tier_name=resolved_tier,
+                    user_id=user_id,
+                )
             default_limit = (
                 settings.rate_limit.DEFAULT_AUTHENTICATED_LIMIT
                 if user_id
@@ -249,6 +290,15 @@ async def resolve_rate_limits(
             limit_config = default_limit
 
         limit, period = limit_config
+
+    # C9: a period of 0 makes the 429 carry no Retry-After (the reset
+    # formula needs the period). The DB rows are protected by a
+    # `period > 0` check constraint, so this is the operator-configured
+    # path; the floor keeps the window non-degenerate instead of serving a
+    # 429 with no retry hint.
+    if period <= 0:
+        logger.warning("rate_limit_period_invalid_floored", period=period, limit=limit)
+        period = 1
 
     return limit, period
 
@@ -360,4 +410,5 @@ __all__ = [
     "resolve_anonymous_user_id",
     "resolve_rate_limits",
     "uses_gcra",
+    "window_reset_seconds",
 ]

@@ -34,7 +34,10 @@ async def test_codec_normalizes_json_and_legacy_entries() -> None:
     assert modern["source"] == "arq"
     assert modern["timestamp_iso"].startswith("1970-01-01")
     assert legacy is not None
-    assert legacy["source"] == "arq"
+    # F6: a legacy pipe row is NOT an "arq" row — the server-side filtered
+    # pop/clear only understand JSON envelopes, so tagging it "arq" made a
+    # source="arq" read show rows the pop could never touch.
+    assert legacy["source"] == "legacy"
     assert legacy["error"] == "failed"
     assert legacy["timestamp_iso"].startswith("1970-01-01")
 
@@ -52,7 +55,9 @@ async def test_read_uses_one_codec_for_all_sources() -> None:
     all_entries = await queue.read(include_invalid=True, include_legacy=True)
     bus_entries = await queue.read(source="event_bus")
 
-    assert [entry.get("source") for entry in all_entries] == ["arq", "event_bus", "arq", None]
+    # F6: the legacy row carries its own source, so the read and the
+    # server-side filtered pop/clear agree on what an "arq" row is.
+    assert [entry.get("source") for entry in all_entries] == ["arq", "event_bus", "legacy", None]
     assert all_entries[-1]["error"] == "parse_error"
     assert len(bus_entries) == 1
     assert bus_entries[0]["job_id"] == "bus-1"

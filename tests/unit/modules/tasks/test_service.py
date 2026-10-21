@@ -7,11 +7,16 @@ Tests cover:
 """
 
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
 from src.app.modules.tasks.schemas import Job, TaskCreate
+
+# F9: the deterministic job id is scoped by the tenant, so the tenant is
+# required — a tenant-less caller collapsed every tenant-less caller onto one
+# id, and `get_task` could never match the stored kwarg.
+TENANT_ID = uuid4()
 
 
 @pytest.fixture
@@ -50,11 +55,11 @@ class TestTaskServiceCreate:
 
         with patch("src.app.modules.tasks.service.get_arq", return_value=mock_pool):
 
-            result = await task_service.create_task(TaskCreate(message="test message"))
+            result = await task_service.create_task(TaskCreate(message="test message"), tenant_id=TENANT_ID)
 
             assert result.id == "test-job-123"
             mock_pool.enqueue_job.assert_called_once_with(
-                "sample_background_task", "test message", tenant_id=None, _job_id=ANY
+                "sample_background_task", "test message", tenant_id=str(TENANT_ID), _job_id=ANY
             )
 
     @pytest.mark.asyncio
@@ -65,7 +70,7 @@ class TestTaskServiceCreate:
         with patch("src.app.modules.tasks.service.get_arq", return_value=None):
 
             with pytest.raises(QueueUnavailableError) as exc_info:
-                await task_service.create_task(TaskCreate(message="test message"))
+                await task_service.create_task(TaskCreate(message="test message"), tenant_id=TENANT_ID)
 
             assert "Queue is not available" in str(exc_info.value)
 
@@ -83,10 +88,11 @@ class TestTaskServiceCreate:
 
         with patch("src.app.modules.tasks.service.get_arq", return_value=mock_pool):
 
-            result = await task_service.create_task(TaskCreate(message="test message"))
+            result = await task_service.create_task(TaskCreate(message="test message"), tenant_id=TENANT_ID)
 
-        # Service hashes f"{tenant_id}:{message}"; tenant_id=None renders as "None"
-        expected_id = f"sample_task:{hashlib.sha256(b'None:test message').hexdigest()}"
+        # F9: the service hashes f"{tenant_id}:{message}" with the tenant —
+        # a tenant-less caller collapsed every tenant-less caller onto one id.
+        expected_id = f"sample_task:{hashlib.sha256(f'{TENANT_ID}:test message'.encode()).hexdigest()}"
         assert result == Job(id=expected_id)
 
 

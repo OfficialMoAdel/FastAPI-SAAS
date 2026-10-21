@@ -82,6 +82,52 @@ Token verification checks: signature → type → revocation (Redis L1 → DB fa
 response.set_cookie(key="refresh_token", value=..., httponly=True, secure=True, samesite="lax")
 ```
 
+## Rate-limit engine — the degradation contract
+
+`rate_policy.uses_gcra()` is the ONE place that answers "which engine". The
+composite Lua scripts hard-code GCRA arithmetic (that is what buys their
+single round-trip), so a caller must consult it before taking a composite
+path.
+
+**A degradation is never silent.** Two cases mean "the limit was NOT
+enforced by the configured algorithm":
+
+* GCRA is configured but the call failed — the fixed window takes over, and
+  the 2x boundary burst GCRA exists to remove is back;
+* GCRA is configured but the limiter was never initialised (Redis was absent
+  at boot, so `init_gcra_rate_limiter` never ran) — the fixed window enforces
+  the limit from the start.
+
+Both are counted (`record_fail_open("rate_limit:gcra_degraded" /
+"rate_limit:gcra_uninitialized")`) and the flag travels with the result:
+`consume()` returns `(is_limited, remaining, retry_after, degraded)`, and the
+composites return the same 4-tuple inside their result. The verdict turns the
+flag into `X-RateLimit-Algorithm: fixed-window (degraded)`, so the swap is
+visible in the response traffic on the authenticated hot path — the one the
+merged Lua exists to optimize.
+
+`RateLimiter.check_rate_limit_algorithm` keeps its 3-tuple contract (many
+callers and every injected test engine depend on it);
+`check_rate_limit_algorithm_with_status` is the variant that carries the
+flag.
+
+**Header contract:** `build_verdict` owns the canonical `X-RateLimit-*` set
+(`Limit`, `Remaining`, `Period`, `Retry-After`). `X-RateLimit-Reset` is the
+WINDOW reset (`rate_policy.window_reset_seconds`) — the remainder of the
+window the counter lives in, never the retry-after (which is 0 on every
+allowed request).
+
+**Tier policy resolution** (`resolve_rate_limits`): tier-policy cache →
+DB → `settings.rate_limit.TIER_RATE_LIMITS` → the generic default. A NAMED
+tier that is not configured is a configuration mistake and is logged
+(`rate_limit_tier_not_configured`); the anonymous fallback is not. The period
+is floored at 1s, so a 429 always carries a `Retry-After`.
+
+**Invalidation:** `rate_limit_cache.invalidate_tier_policy` goes through the
+L1 seam, which owns BOTH the policy list and the compiled per-path map.
+Popping only the list left the map serving the OLD limits for up to its own
+300 s TTL, in the very process that performed the write.
+
 ## Touch Points
 
 - **Password hashing**: `password.py::get_password_hash` / `verify_password` (also `needs_rehash`)

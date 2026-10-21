@@ -25,12 +25,21 @@ async def test_job_metrics_endpoint(async_client: AsyncClient, superuser_token_h
 
 
 @pytest.mark.asyncio
-async def test_job_status_endpoint(async_client: AsyncClient, superuser_token_headers, mock_redis):
+async def test_job_status_endpoint(
+    async_client: AsyncClient, superuser_token_headers, mock_redis, monkeypatch: pytest.MonkeyPatch
+):
     import json
     import time
+    from unittest.mock import AsyncMock
+
+    from arq.jobs import Job as ArqJob
+    from arq.jobs import JobStatus
 
     monitor = get_job_monitor()
     await monitor.record_job_start("job2", "test_func_2")
+
+    monkeypatch.setattr("src.app.core.redis_provider.get_arq", lambda: object())
+    monkeypatch.setattr(ArqJob, "status", AsyncMock(return_value=JobStatus.queued))
 
     # K5: the status endpoint reads the arq job definition STRING blob
     # (JSON with enqueue_time in unix ms), not a hash.

@@ -572,7 +572,7 @@ class LuaScriptManager:
             -- KEYS[1]: DLQ list key (tail = oldest; RPUSH adds at head)
             -- ARGV[1]: wanted source ("event_bus" or "arq"; missing field counts as "arq")
             -- Returns: matched serialized element, or false when none matches.
-            -- Mirror of EventBus._retry_dlq_entry_raw_scan: only JSON objects
+            -- Mirror of DeadLetterQueue._retry_scan: only JSON objects
             -- participate (raw must start with '{'), unparseable entries are
             -- skipped, LREM count=1 removes the exact serialized element.
             local entries = redis.call('LRANGE', KEYS[1], 0, -1)
@@ -597,7 +597,7 @@ class LuaScriptManager:
             -- KEYS[1]: DLQ list key
             -- ARGV[1]: wanted source ("event_bus" or "arq"; missing field counts as "arq")
             -- Returns: number of entries removed.
-            -- Mirror of EventBus._clear_dlq_scan: head-to-tail order, one
+            -- Mirror of DeadLetterQueue._clear_scan: head-to-tail order, one
             -- LREM count=1 per match, count incremented per match.
             local entries = redis.call('LRANGE', KEYS[1], 0, -1)
             local cleared = 0

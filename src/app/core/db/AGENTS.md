@@ -110,7 +110,6 @@ src/app/core/db/
 ├── pk.py                    # Primary key type helpers
 ├── rls.py                   # Row Level Security helpers
 ├── tenant_crud.py           # Tenant-scoped CRUD helpers
-├── tenant_mixin.py          # TenantMixin (tenant_id FK mixin)
 ├── crud_token_blacklist.py  # DB CRUD for blacklisted tokens
 ├── token_blacklist.py       # Token blacklist model
 ├── profiler.py              # Query profiling support

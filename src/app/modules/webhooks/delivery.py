@@ -20,12 +20,11 @@ here (the standalone module was merged in).
 
 from __future__ import annotations
 
-import asyncio
 import math
 import random
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,19 +87,21 @@ def get_retry_delays() -> list[int]:
 # ---------------------------------------------------------------------------
 
 
-async def _release_delivery_lock(lock_key: str, lock_held: bool, delivery_id: UUID) -> None:
+async def _release_delivery_lock(lock_key: str, lock_token: str, delivery_id: UUID) -> None:
     """Release the webhook delivery lock, logging failures (R1-17).
 
-    A failed delete is not swallowed silently: the lock carries a 60s TTL, so
-    the worst case is a delayed redelivery, but operators should see the error.
+    D8: the release is OWNERSHIP-CHECKED. A blind delete lets a slow
+    delivery whose lock already expired delete the lock another delivery
+    acquired in the meantime — and the delivery lock exists precisely to
+    stop two deliveries of the same row from racing. The lock carries a
+    60s TTL, so the worst case is a delayed redelivery, but operators
+    should see the error.
     Goes through the CacheClient seam (None-safe: noop when Redis is down).
     """
-    if not lock_held:
-        return
     try:
         from src.app.core.cache.client import cache_client
 
-        await cache_client.delete(lock_key)
+        await cache_client.release_lock_if_owned(lock_key, lock_token)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "webhook_delivery_lock_release_failed",
@@ -156,27 +157,15 @@ async def enqueue(
 
 
 def _spawn_enqueue(delivery_id: UUID, defer_by: int, tenant_id: UUID | None) -> None:
-    """Fire-and-forget enqueue with the two context fallbacks the original used.
+    """Fire-and-forget enqueue from a running loop.
 
-    create_safe_task first (running loop); if no loop, best-effort
-    run_coroutine_threadsafe; both failures are logged, never raised —
-    the recovery cron is the safety net for a lost enqueue.
+    ``create_safe_task`` owns the failure handling; the recovery cron is the
+    safety net for a lost enqueue. This is only called from ``deliver()``,
+    which is async, so a second no-loop fallback would be unreachable.
     """
-    coro = enqueue(delivery_id, defer_by=defer_by, tenant_id=tenant_id)
-    try:
-        from src.app.core.utils.background_task import create_safe_task
+    from src.app.core.utils.background_task import create_safe_task
 
-        create_safe_task(coro)
-    except RuntimeError:
-        try:
-            loop = asyncio.get_event_loop()
-            asyncio.run_coroutine_threadsafe(coro, loop)
-        except Exception as loop_err:
-            logger.error(
-                "webhook_retry_enqueue_failed",
-                delivery_id=str(delivery_id),
-                error=str(loop_err),
-            )
+    create_safe_task(enqueue(delivery_id, defer_by=defer_by, tenant_id=tenant_id))
 
 
 # ---------------------------------------------------------------------------
@@ -201,16 +190,26 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
     # down the claim reports not-held and delivery proceeds unserialized).
     from src.app.core.cache.client import cache_client
     from src.app.core.resilience.registry import get_webhook_breaker
-    from src.app.core.utils.circuit_breaker import CircuitBreakerOpen
+    from src.app.core.utils.circuit_breaker import CircuitBreakerOpen, CircuitState
 
     _lock_key = f"webhook:deliver_lock:{delivery_id}"
-    _lock_held = await cache_client.set_nx(_lock_key, "1", ttl=60)
+    # D8: the lock carries an OWNERSHIP TOKEN, and the release is
+    # ownership-checked — a delivery that overran its TTL cannot delete the
+    # lock a later delivery acquired in the meantime.
+    _lock_token = uuid4().hex
+    _lock_held = await cache_client.set_nx(_lock_key, _lock_token, ttl=60)
     if cache_client.client is not None and not _lock_held:
             logger.info("Webhook delivery already in progress, skipping", delivery_id=delivery_id)
             existing = await db.get(WebhookDelivery, delivery_id)
             if not existing:
                 raise ModelNotFoundError("WebhookDelivery", delivery_id)
             return existing
+
+    # D6: the HALF_OPEN probe slot and the breaker that holds it are declared
+    # before the try so the finally below can release the slot on EVERY exit
+    # path — including the ones that never reach the gate.
+    breaker: Any = None
+    probe_claimed = False
 
     try:
         # Get delivery record (skips selectinload if endpoint is already pre-resolved)
@@ -228,6 +227,20 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
         if not delivery:
             raise ModelNotFoundError("WebhookDelivery", delivery_id)
 
+        # E8: a delivery that already reached a terminal state must not be
+        # POSTed again. The delivery lock serialises CONCURRENT attempts; it
+        # does not stop a LATER one (the recovery sweep and the retry ladder
+        # both re-enqueue). Without this check a DELIVERED row could be sent
+        # a second time and the receiver would see the same payload twice
+        # under the same X-Webhook-ID.
+        if delivery.status in (WebhookDeliveryStatus.DELIVERED, WebhookDeliveryStatus.FAILED):
+            logger.info(
+                "webhook_delivery_already_terminal",
+                delivery_id=str(delivery_id),
+                status=delivery.status.value,
+            )
+            return delivery
+
         # Access pre-resolved or eagerly loaded endpoint
         if endpoint is None:
             endpoint = delivery.webhook_endpoint
@@ -237,7 +250,19 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
         # P2-B: scoped per endpoint — one dead receiver must not trip deliveries
         # for every other tenant/endpoint sharing the process.
         breaker = get_webhook_breaker(str(endpoint.id))
-        if not breaker.is_closed:
+        # D7: `is_closed` is True during the virtual HALF_OPEN, so every
+        # concurrent delivery passed the gate and a recovering endpoint took
+        # the whole burst. The breaker now admits every delivery while
+        # CLOSED, none while OPEN, and exactly ONE while HALF_OPEN (the
+        # probe); the deliveries that are not the probe are deferred to the
+        # retry ladder, exactly as an OPEN circuit defers them.
+        # Fast path: CLOSED admits without the lock and owns no probe. Every
+        # other state goes through the gate, which returns the claim flag.
+        if breaker.state == CircuitState.CLOSED:
+            allowed, probe_claimed = True, False
+        else:
+            allowed, probe_claimed = await breaker.allow_single_flight_with_claim()
+        if not allowed:
             import time
 
             current_time = time.time()
@@ -264,6 +289,12 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
             # lost enqueue is the recovery cron's job (safety net by design).
             _spawn_enqueue(delivery_id, recovery_delay, delivery.tenant_id)
             return delivery
+
+        # D6: the probe slot is released on EVERY exit path below (success,
+        # failure, the SSRF early return, a cancellation). A claim that is
+        # never released blocks this endpoint's next recovery window.
+        # `probe_claimed` comes from the gate itself: a call admitted while
+        # CLOSED does not own a probe and must not release one on exit.
 
         # W1+W2+S-4 FIX: serialize and sign AT SEND TIME, per attempt.
         #
@@ -398,6 +429,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
         if response is not None:
             delivery.attempt_count += 1
             delivery.response_status = response.status_code
+            delivery.response_status_code = response.status_code
             # F26: response.text re-decodes per charset and raises on
             # undecodable binary (job 500s instead of recording failure).
             # Decode raw bytes with replacement so any payload is recordable.
@@ -407,15 +439,17 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
                 # Success - record with circuit breaker
                 await breaker.record_success()
                 delivery.status = WebhookDeliveryStatus.DELIVERED
-                # Note: delivered_at tracked via updated_at timestamp
+                delivery.delivered_at = datetime.now(UTC)
+                delivery.error_message = None
                 logger.info(
-                    "Webhook delivered successfully: (attempt )",
-                    delivery_id=delivery_id,
+                    "webhook_delivered",
+                    delivery_id=str(delivery_id),
                     attempt_count=delivery.attempt_count,
                 )
             else:
                 # HTTP error - record failure and retry if attempts remain
                 await breaker.record_failure(Exception(f"HTTP {response.status_code}"))
+                delivery.error_message = f"HTTP {response.status_code}"
 
                 # SECURITY FIX: Do not retry non-transient 4xx errors (e.g. 400, 422)
                 if 400 <= response.status_code < 500 and response.status_code not in (408, 429):
@@ -433,6 +467,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
             logger.warning("webhook_circuit_opened", error=str(circuit_error))
             delivery.attempt_count += 1
             delivery.response_body = str(circuit_error)[:1000]
+            delivery.error_message = str(circuit_error)[:1000]
             pending_retry = await _handle_failure(
                 db, delivery, override_delay=getattr(circuit_error, "recovery_in", None)
             )
@@ -443,6 +478,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
             await breaker.record_failure(http_error)
             delivery.attempt_count += 1
             delivery.response_body = str(http_error)[:1000]
+            delivery.error_message = str(http_error)[:1000]
             pending_retry = await _handle_failure(db, delivery)
 
         await db.commit()
@@ -455,11 +491,18 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
 
         return delivery
     finally:
+        # D6: release the HALF_OPEN probe slot on every exit path. The
+        # claim is what makes exactly one delivery probe a recovering
+        # endpoint; a claim that is never released blocks this endpoint's
+        # next recovery window (the delivery ladder would defer every
+        # delivery for a whole window).
+        if probe_claimed and breaker is not None:
+            breaker.release_probe()
         # F6: every exit path releases the claim (covers the raises the
         # inline releases missed: missing endpoint, re-fetch miss,
         # decrypt/commit/breaker failures). Double-release is a harmless
         # second DEL of a 60s-TTL key.
-        await _release_delivery_lock(_lock_key, _lock_held, delivery_id)
+        await _release_delivery_lock(_lock_key, _lock_token, delivery_id)
 
 
 async def _handle_failure(
@@ -511,16 +554,19 @@ async def _handle_failure(
         delivery.status = WebhookDeliveryStatus.PENDING
 
         logger.warning(
-            f"Webhook delivery failed, will retry in {retry_delay}s: {delivery.id} (attempt {delivery.attempt_count})"
+            "webhook_retry_scheduled",
+            delivery_id=str(delivery.id),
+            retry_delay=retry_delay,
+            attempt_count=delivery.attempt_count,
         )
         return (delivery.id, retry_delay, delivery.tenant_id)
 
     # Max retries exhausted
     delivery.status = WebhookDeliveryStatus.FAILED
     logger.error(
-        "Webhook delivery failed permanently after attempts:",
+        "webhook_delivery_failed_permanently",
+        delivery_id=str(delivery.id),
         attempt_count=delivery.attempt_count,
-        id=delivery.id,
     )
     return None
 
@@ -570,12 +616,30 @@ async def recover_stuck_deliveries(ctx: dict[str, Any]) -> int:
                 # F7: per-row isolation — one bad row (or a lost Redis) must
                 # not discard the whole batch's progress; commit per row.
                 row_lock_key = f"webhook:deliver_lock:{delivery.id}"
+                # D8: the recovery claim carries an OWNERSHIP TOKEN and is
+                # released with an ownership check, so a recovery that
+                # overran its TTL cannot delete the lock the delivery
+                # itself acquired in the meantime.
+                recovery_token = uuid4().hex
                 try:
                     from src.app.core.cache.client import cache_client as _cc
 
-                    claimed = await _cc.set_nx(row_lock_key, "recovery", ttl=60)
+                    claimed = await _cc.set_nx(row_lock_key, recovery_token, ttl=60)
                     if _cc.client is not None and not claimed:
                         continue
+                    # E6: release the claim BEFORE the enqueue.
+                    #
+                    # The claim on the DELIVERY lock is the atomic "is a
+                    # delivery in flight?" check — that is why it takes that
+                    # key. But holding it while the job was enqueued made
+                    # the job find the lock held, log "already in progress"
+                    # and skip the delivery: the recovered row was never
+                    # sent, and was only re-harvested ~10 minutes later.
+                    # Releasing first lets the enqueued job take the lock
+                    # itself; the ARQ job id (`recover_webhook_{id}`) keeps a
+                    # second tick from enqueueing the same row twice.
+                    if _cc.client is not None:
+                        await _cc.release_lock_if_owned(row_lock_key, recovery_token)
                     # NOTE: explicit _job_id (ARQ dedup) — two recovery ticks
                     # must not double-enqueue the same row.
                     await redis.enqueue_job(
@@ -602,9 +666,9 @@ async def recover_stuck_deliveries(ctx: dict[str, Any]) -> int:
 
                         # Release the claim so the enqueued job's own deliver()
                         # can acquire the lock at start; TTL bounds a crash leak.
-                        # Best-effort: a failed delete only delays one harvest.
+                        # Best-effort: a failed release only delays one harvest.
                         if _cc2.client is not None:
-                            await _cc2.delete(row_lock_key)
+                            await _cc2.release_lock_if_owned(row_lock_key, recovery_token)
                     except Exception:  # noqa: BLE001
                         pass
 

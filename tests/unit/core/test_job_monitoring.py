@@ -1,6 +1,6 @@
 import time
 from typing import Dict, List  # noqa: UP035
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -106,6 +106,10 @@ class MockPipeline:
     async def __aexit__(self, *args):
         return False
 
+    def set(self, key: str, value: str, ex: int | None = None):
+        self.commands.append(("set", key, value))
+        return self
+
     def hincrby(self, key: str, field: str, amount: int):
         self.commands.append(("hincrby", key, field, amount))
         return self
@@ -146,6 +150,11 @@ class MockPipeline:
                 self.redis.hashes[key][field] = str(current + amount)
                 results.append(current + amount)
 
+            elif op == "set":
+                key, value = cmd[1], cmd[2]
+                self.redis.data[key] = value
+                results.append(True)
+
             elif op == "lpush":
                 key, value = cmd[1], cmd[2]
                 if key not in self.redis.lists:
@@ -184,21 +193,27 @@ def service(mock_redis_client):
 
 @pytest.mark.asyncio
 async def test_get_job_status_found(service, mock_redis_client):
-    # K5: arq stores the job definition as a JSON STRING blob; the service
-    # reports it as "queued" and exposes enqueue_time (unix ms) as enqueued_at.
+    # K5: arq stores the job definition as a JSON STRING blob. F1: the blob
+    # carries NO status — the real one comes from arq's own bookkeeping — and
+    # F4: the enqueue time lives under `et` (unix ms), not `enqueue_time`.
     import json
+
+    from arq.jobs import JobStatus
 
     job_id = "test-job-1"
     key = f"arq:job:{job_id}"
     enqueue_ms = 1756000000000
     mock_redis_client.data[key] = json.dumps(
-        {"job_id": job_id, "function": "my_func", "args": ["x"], "enqueue_time": enqueue_ms}
+        {"t": None, "f": "my_func", "a": ["x"], "k": {}, "et": enqueue_ms}
     )
 
-    status = await service.get_job_status(job_id)
+    with (
+        patch("src.app.core.redis_provider.get_arq", return_value=MagicMock()),
+        patch("arq.jobs.Job.status", new_callable=AsyncMock, return_value=JobStatus.queued),
+    ):
+        status = await service.get_job_status(job_id)
 
     assert status["status"] == "queued"
-    assert status["job_id"] == job_id
     assert status["function"] == "my_func"
     assert "enqueued_at" in status
     assert status["enqueued_at"].startswith("2025")
@@ -206,17 +221,24 @@ async def test_get_job_status_found(service, mock_redis_client):
 
 @pytest.mark.asyncio
 async def test_get_job_status_running(service, mock_redis_client):
+    """F1: a job that is actually running is not reported as "queued"."""
     import json
+
+    from arq.jobs import JobStatus
 
     job_id = "test-job-running"
     key = f"arq:job:{job_id}"
     mock_redis_client.data[key] = json.dumps(
-        {"job_id": job_id, "function": "my_func", "enqueue_time": int(time.time() * 1000)}
+        {"t": None, "f": "my_func", "a": [], "k": {}, "et": int(time.time() * 1000)}
     )
 
-    status = await service.get_job_status(job_id)
+    with (
+        patch("src.app.core.redis_provider.get_arq", return_value=MagicMock()),
+        patch("arq.jobs.Job.status", new_callable=AsyncMock, return_value=JobStatus.in_progress),
+    ):
+        status = await service.get_job_status(job_id)
 
-    assert status["status"] == "queued"
+    assert status["status"] == "in_progress"
     assert "enqueued_at" in status
 
 
@@ -252,6 +274,8 @@ async def test_record_job_start(service, mock_redis_client):
     stats_key = "arq:stats:my_func"
     assert stats_key in mock_redis_client.hashes
     assert mock_redis_client.hashes[stats_key]["total"] == "1"
+    # F2: the start time is actually WRITTEN, not just claimed to be.
+    assert "arq:job-start:job1" in mock_redis_client.data
 
 
 @pytest.mark.asyncio

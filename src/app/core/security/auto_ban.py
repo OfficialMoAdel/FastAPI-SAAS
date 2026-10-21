@@ -229,7 +229,7 @@ async def check_ban_and_rate_limit(
     rate_limit_key: str,
     limit: int,
     period: int,
-) -> tuple[BanInfo, tuple[bool, int, int]]:
+) -> tuple[BanInfo, tuple[bool, int, int, bool]]:
     """H-3: ban check + GCRA rate limit in ONE Redis Lua round-trip.
 
     Replaces the middleware's sequential ``get_ban_info`` +
@@ -244,8 +244,11 @@ async def check_ban_and_rate_limit(
         period: Period in seconds.
 
     Returns:
-        (BanInfo, (is_limited, remaining, retry_after)) — identical
-        semantics to calling the two functions separately.
+        (BanInfo, (is_limited, remaining, retry_after, degraded)) — identical
+        semantics to calling the two functions separately, plus the
+        degradation flag: True when the limit was NOT enforced by the
+        configured algorithm (the GCRA path failed and the fixed window took
+        over), so the caller can mark the verdict degraded.
     """
     from src.app.core.utils.gcra_rate_limit import get_gcra_rate_limiter
     from src.app.core.utils.lua_manager import get_lua_manager
@@ -270,8 +273,8 @@ async def check_ban_and_rate_limit(
                 rate_limit_key=rate_limit_key,
             )
             record_fail_open("ban_check")
-            return BanInfo(is_banned=False), (False, limit, 0)
-        return BanInfo(is_banned=False), (True, limit, 0)
+            return BanInfo(is_banned=False), (False, limit, 0, False)
+        return BanInfo(is_banned=False), (True, limit, 0, False)
 
     # R1-01 parity: honor the negative cache. On a hit, only GCRA remains →
     # delegate to the existing single-RTT limiter to preserve its fail-open
@@ -303,8 +306,10 @@ async def check_ban_and_rate_limit(
         if gcra is not None:
             from src.app.core.utils.rate_limit import rate_limiter as _rl
 
-            is_limited, remaining, retry_after = await _rl.check_rate_limit_algorithm(rate_limit_key, limit, period)
-            return BanInfo(is_banned=False), (is_limited, remaining, retry_after)
+            is_limited, remaining, retry_after, degraded = await _rl.check_rate_limit_algorithm_with_status(
+                rate_limit_key, limit, period
+            )
+            return BanInfo(is_banned=False), (is_limited, remaining, retry_after, degraded)
 
     # P1-1 FIX: limit <= 0 means "block this path for this tier" (e.g. free
     # tier cannot call AI endpoints). The combined Lua script has no such
@@ -313,10 +318,12 @@ async def check_ban_and_rate_limit(
     # (gcra_rate_limit.py:124-130) instead of invoking the script.
     if limit <= 0:
         ban_info = await get_ban_info(client_ip)
-        return ban_info, (True, 0, period)
+        return ban_info, (True, 0, period, False)
 
     period_ms = period * 1000
-    emission_interval_ms = max(1, round(period_ms / limit)) if limit > 0 else 0
+    # `limit <= 0` returned above, so the division is safe and the old
+    # `else 0` arm was unreachable.
+    emission_interval_ms = max(1, round(period_ms / limit))
     burst_tolerance_ms = emission_interval_ms * limit
     now_ms = int(time.time() * 1000)
 
@@ -343,8 +350,10 @@ async def check_ban_and_rate_limit(
         ban_info = await get_ban_info(client_ip)
         from src.app.core.utils.rate_limit import rate_limiter as _rl
 
-        is_limited, remaining, retry_after = await _rl.check_rate_limit_algorithm(rate_limit_key, limit, period)
-        return ban_info, (is_limited, remaining, retry_after)
+        is_limited, remaining, retry_after, degraded = await _rl.check_rate_limit_algorithm_with_status(
+            rate_limit_key, limit, period
+        )
+        return ban_info, (is_limited, remaining, retry_after, degraded)
 
     is_b = int(is_banned) == 1
     ban_info = BanInfo(
@@ -361,6 +370,7 @@ async def check_ban_and_rate_limit(
         is_limited,
         int(float(remaining)),
         int(math.ceil(float(retry_after_ms) / 1000.0)) if is_limited else 0,
+        False,  # the merged Lua enforces GCRA — the configured engine
     )
 
 
@@ -375,7 +385,7 @@ async def check_ban_blacklist_and_rate_limit(
     tier_id_raw: int | str | None,
     anonymous_ip: str | None,
     path: str,
-) -> tuple[bool | None, int, int, str, BanInfo, tuple[bool, int, int]]:
+) -> tuple[bool | None, int, int, str, BanInfo, tuple[bool, int, int, bool]]:
     """P0-2: blacklist verdict + ban check + GCRA rate limit in ONE Redis Lua round-trip.
 
     Merges the rate-limit middleware's sequential ``is_token_blacklisted``
@@ -407,8 +417,11 @@ async def check_ban_blacklist_and_rate_limit(
 
     Returns:
         (is_blacklisted, limit, period, key, BanInfo,
-        (is_limited, remaining, retry_after)) for the SELECTED candidate.
-        is_blacklisted is None only when Redis is unavailable.
+        (is_limited, remaining, retry_after, degraded)) for the SELECTED
+        candidate. is_blacklisted is None only when Redis is unavailable.
+        ``degraded`` is True when the limit was NOT enforced by the configured
+        algorithm — the merged Lua always enforces GCRA, so only the
+        sequential fallback can report it.
     """
     from src.app.core.security.rate_policy import build_rate_limit_key, resolve_rate_limits
     from src.app.core.security.token_blacklist_cache import (
@@ -442,8 +455,8 @@ async def check_ban_blacklist_and_rate_limit(
                 rate_limit_key=anon_key,
             )
             record_fail_open("ban_check")
-            return verdict, sel_limit, sel_period, anon_key, BanInfo(is_banned=False), (False, sel_limit, 0)
-        return verdict, sel_limit, sel_period, anon_key, BanInfo(is_banned=False), (True, sel_limit, 0)
+            return verdict, sel_limit, sel_period, anon_key, BanInfo(is_banned=False), (False, sel_limit, 0, False)
+        return verdict, sel_limit, sel_period, anon_key, BanInfo(is_banned=False), (True, sel_limit, 0, False)
 
     # Resolve BOTH candidates up front (L1/settings-backed, no extra RTT).
     # The anonymous candidate clears the WHOLE tier identity (tier_id
@@ -471,8 +484,11 @@ async def check_ban_blacklist_and_rate_limit(
         return seq_verdict, sel_limit, sel_period, sel_key, ban_info, rl
 
     def _gcra_params(limit: int, period: int) -> tuple[int, int, int, int]:
+        # Both limits are > 0 here: the `limit <= 0` block-path above returns
+        # before this is reached, so the old `else 0` arm was unreachable
+        # (E9).
         period_ms = period * 1000
-        emission_interval_ms = max(1, round(period_ms / limit)) if limit > 0 else 0
+        emission_interval_ms = max(1, round(period_ms / limit))
         return emission_interval_ms, limit, emission_interval_ms * limit, period_ms
 
     now_s = time.time()
@@ -513,8 +529,10 @@ async def check_ban_blacklist_and_rate_limit(
         ban_info = await get_ban_info(client_ip)
         from src.app.core.utils.rate_limit import rate_limiter as _rl
 
-        is_limited, remaining, retry_after = await _rl.check_rate_limit_algorithm(sel_key, sel_limit, sel_period)
-        return seq_verdict, sel_limit, sel_period, sel_key, ban_info, (is_limited, remaining, retry_after)
+        is_limited, remaining, retry_after, degraded = await _rl.check_rate_limit_algorithm_with_status(
+            sel_key, sel_limit, sel_period
+        )
+        return seq_verdict, sel_limit, sel_period, sel_key, ban_info, (is_limited, remaining, retry_after, degraded)
 
     await token_cache_circuit.record_success()
     merged_verdict = bool(int(raw_bl))
@@ -534,6 +552,7 @@ async def check_ban_blacklist_and_rate_limit(
         is_limited,
         int(float(remaining)),
         int(math.ceil(float(retry_after_ms) / 1000.0)) if is_limited else 0,
+        False,  # the merged Lua enforces GCRA — the configured engine
     )
 
 

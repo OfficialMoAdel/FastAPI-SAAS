@@ -431,7 +431,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
 
         cached_version = None
         try:
-            cached_value = await cache_client.get(cache_key)
+            cached_value = await cache_client.get_strict(cache_key)
             if cached_value is not None:
                 cached_version = int(cached_value)
         except Exception as e:

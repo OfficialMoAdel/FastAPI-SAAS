@@ -327,7 +327,12 @@ async def mark_event_processed(event_id: str, lock_token: str | None = None) -> 
         _pkg.logger.error("Failed to persist WebhookEvent processed row", event_id=event_id, error=str(e))
 
 
-async def _release_webhook_event_lock(event_id: str, *, lock_token: str | None = None) -> None:
+async def _release_webhook_event_lock(
+    event_id: str,
+    *,
+    lock_token: str | None = None,
+    escalate: bool = True,
+) -> bool:
     """Release an in-flight claim so Stripe can retry.
 
     A failing delivery must undo ONLY ITS OWN claim. ``mark_event_processed``
@@ -347,6 +352,23 @@ async def _release_webhook_event_lock(event_id: str, *, lock_token: str | None =
       (``claimed_by = lock_token`` AND ``completed_at IS NULL``). Scoping on
       ownership is what stops a Redis-path delivery from deleting an unstamped
       claim belonging to a concurrent DB-fallback delivery.
+
+    Returns:
+        True when the claim is released (or was already gone), False when a
+        leg that had to run FAILED. The caller MUST NOT report success on
+        False — that is exactly how a leaked claim outlived its cleanup job:
+        the job swallowed every error, logged "cleaned up" and returned
+        success, so nothing ever retried it.
+
+    Args:
+        event_id: The Stripe event id whose claim is being released.
+        lock_token: The ownership token of the claim. Without it the Redis
+            leg is skipped (there is nothing to compare against) and the DB
+            leg runs WITHOUT the ownership predicate — so the caller must
+            pass it whenever it knows it.
+        escalate: Whether a failed release may enqueue the cleanup job. The
+            cleanup job itself passes False: it IS the escalation, and
+            letting it escalate again would schedule itself forever.
     """
     from sqlalchemy import delete
 
@@ -407,13 +429,28 @@ async def _release_webhook_event_lock(event_id: str, *, lock_token: str | None =
             redis_released=redis_ok,
             db_released=db_ok,
         )
-        try:
-            from src.app.core.utils.queue import pool
+        if escalate:
+            try:
+                from src.app.core.utils.queue import pool
 
-            if pool:
-                await pool.enqueue_job("cleanup_leaked_webhook_lock", event_id, _defer_by=300)
-        except Exception as q_err:
-            _pkg.logger.error("Failed to enqueue fallback cleanup task for webhook lock:", error=str(q_err))
+                if pool:
+                    # F10: the lock token travels with the cleanup job. The
+                    # job used to be enqueued with the event id alone, so it
+                    # could not compare-and-delete the Redis claim (the
+                    # leg was skipped entirely) and its DB leg deleted
+                    # WITHOUT the `claimed_by` predicate — it could remove
+                    # ANOTHER delivery's claim. With the token, both legs
+                    # are ownership-scoped.
+                    await pool.enqueue_job(
+                        "cleanup_leaked_webhook_lock",
+                        event_id,
+                        lock_token,
+                        _defer_by=300,
+                    )
+            except Exception as q_err:
+                _pkg.logger.error("Failed to enqueue fallback cleanup task for webhook lock:", error=str(q_err))
+        return False
+    return True
 
 
 async def _release_if_owned(key: str, lock_token: str) -> bool:

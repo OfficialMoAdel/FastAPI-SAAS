@@ -113,6 +113,31 @@ def tenant_context_from_cache_data(slug: str, data: dict[str, Any]) -> TenantCon
     return parsed
 
 
+def _parse_l1_entry(slug: str, data: dict[str, Any]) -> TenantContext | None:
+    """Parse a cached tenant payload, dropping the entry when it cannot be parsed.
+
+    A corrupt L1 entry (an id that is not a UUID, a missing key) must not
+    turn EVERY request for that slug into a 500 until the TTL ages the entry
+    out. The entry is dropped HERE — at the point of detection — so the
+    lookup falls through to L2/L3 and the next write repairs the cache.
+
+    Args:
+        slug: The slug the entry is cached under.
+        data: The cached payload.
+
+    Returns:
+        The parsed context, or None when the payload was corrupt. A corrupt
+        entry has already been removed from the L1 cache (and from the parsed
+        memo) by the time None is returned.
+    """
+    try:
+        return tenant_context_from_cache_data(slug, data)
+    except Exception as e:  # noqa: BLE001 - a corrupt entry must not break resolution
+        logger.warning("tenant_l1_cache_entry_corrupt", slug=slug, error=str(e))
+        invalidate_tenant_l1(slug)
+        return None
+
+
 async def resolve_tenant_by_slug(
     slug: str,
     *,
@@ -145,21 +170,31 @@ async def resolve_tenant_by_slug(
         return None
 
     # L1: in-memory cache (None value = negative entry).
-    try:
-        if slug in _L1_TENANT_CACHE:
-            cached_data = _L1_TENANT_CACHE[slug]
-            if cached_data is not None:
-                return tenant_context_from_cache_data(slug, cached_data)
+    if slug in _L1_TENANT_CACHE:
+        cached_data = _L1_TENANT_CACHE[slug]
+        if cached_data is None:
+            # Negative entry: the tenant is known to be missing, so the
+            # database is not consulted for it.
             return None
-    except Exception as e:  # noqa: BLE001 - L1 must never break resolution
-        logger.warning("tenant_l1_cache_read_failed", error=str(e))
+        context = _parse_l1_entry(slug, cached_data)
+        if context is not None:
+            return context
+        # The entry was corrupt and has been dropped — fall through to L2/L3
+        # instead of failing every request for this slug until the TTL
+        # ages the bad entry out.
 
     # L2/L3 under the per-slug stampede lock.
     async with _get_tenant_lock(slug) as lock:
         async with lock:
             if slug in _L1_TENANT_CACHE:
                 data = _L1_TENANT_CACHE[slug]
-                return tenant_context_from_cache_data(slug, data) if data else None
+                if data is None:
+                    return None
+                context = _parse_l1_entry(slug, data)
+                if context is not None:
+                    return context
+                # The entry was corrupt and has been dropped — fall through
+                # to L2/L3 (the same self-healing path as the first read).
 
             cache_key = slug_cache_key(slug)
 
@@ -207,6 +242,18 @@ async def resolve_tenant_by_slug(
                         "RLS bypass audit failed during tenant resolution, falling back to standard query",
                         error=str(e),
                     )
+                    # The connection state is ASSERTED, not assumed. The
+                    # bypass flag was already cleared by `bypass_rls`'s
+                    # finally, and the tenant GUC is empty because
+                    # resolution precedes tenant binding — but "should be" is
+                    # not an assertion, and a stale scope left on a pooled
+                    # connection would silently narrow (or widen) this
+                    # lookup. Clearing puts the connection in the fail-closed
+                    # unscoped state; the tenants table carries no RLS policy
+                    # (migration 08's TENANT_TABLES does not list it), so the
+                    # row stays visible there.
+                    conn = await session.connection()
+                    await clear_rls_context(conn)
                     result = await session.execute(stmt)
                 tenant = result.scalar_one_or_none()
 

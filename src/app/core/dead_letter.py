@@ -94,6 +94,13 @@ class DeadLetterQueue:
                     "function": first_parts[1],
                     "error": first_parts[2],
                     "timestamp": legacy_timestamp,
+                    # F6: a legacy pipe row is NOT an "arq" row. The
+                    # filtered pop/clear treats a missing source as "arq",
+                    # so without this explicit tag those server-side paths
+                    # would see rows they cannot parse as JSON envelopes and
+                    # could never remove. Its own source keeps the two
+                    # paths in agreement.
+                    "source": "legacy",
                 }
             except (TypeError, ValueError):
                 return None
@@ -330,12 +337,23 @@ class DeadLetterQueue:
         return self.decode(raw) if raw else None
 
     async def _retry_scan(self, client: Any, source: str) -> str | None:
+        """Remove the oldest entry matching ``source`` (the Lua-less path).
+
+        F5: the scan and the removal are separate round trips, so two
+        concurrent filtered ``retry()`` calls could both select the same
+        entry — the loser's LREM removed nothing, yet it still returned the
+        entry, handing the same row out twice. The removal's result is the
+        arbiter: an entry is only returned when THIS call removed it.
+        """
         raw_entries = await client.lrange(self.key, 0, -1)
         for raw in reversed(raw_entries):
             parsed = self.decode(raw)
             if parsed is not None and parsed.get("source") == source:
-                await client.lrem(self.key, 1, raw)
-                return raw if isinstance(raw, str) else raw.decode("utf-8", errors="replace")
+                removed = await client.lrem(self.key, 1, raw)
+                if removed:
+                    return raw if isinstance(raw, str) else raw.decode("utf-8", errors="replace")
+                # Another worker took this entry between the scan and the
+                # removal — it is no longer ours to hand out.
         return None
 
     async def clear(self, source: str | None = None) -> int:

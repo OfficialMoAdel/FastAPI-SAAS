@@ -26,6 +26,7 @@ from fastapi import Depends, HTTPException, Response, status
 from src.app.api.deps import get_current_user
 from src.app.api.deps.auth import AuthenticatedUser
 from src.app.core.security.budgets import Identity, SecurityAction, probe
+from src.app.core.security.rate_policy import window_reset_seconds
 
 
 async def check_rate_limit_dependency(
@@ -51,10 +52,15 @@ async def check_rate_limit_dependency(
 
     verdict = await probe(SecurityAction.AI_CHAT, Identity(user_id=user_id))
 
-    # Add rate limit headers to response
-    response.headers["X-RateLimit-Limit"] = str(verdict.limit)
-    response.headers["X-RateLimit-Remaining"] = str(verdict.remaining)
-    response.headers["X-RateLimit-Reset"] = str(verdict.retry_after)
+    # Add rate limit headers to response. The canonical set comes from the
+    # verdict itself (build_verdict), so this surface speaks the same
+    # contract as every other rate-limited route instead of hand-rolling
+    # three headers. X-RateLimit-Reset is the window the counter lives in —
+    # the old code sent `retry_after`, which is 0 on every ALLOWED request
+    # and told the client nothing.
+    for header_name, header_value in verdict.headers.items():
+        response.headers[header_name] = header_value
+    response.headers["X-RateLimit-Reset"] = str(window_reset_seconds(verdict.period))
 
     if verdict.is_limited:
         # T100: Return HTTP 429 with Retry-After header.
@@ -74,7 +80,8 @@ async def check_rate_limit_dependency(
                 "Retry-After": str(verdict.retry_after),
                 "X-RateLimit-Limit": str(verdict.limit),
                 "X-RateLimit-Remaining": "0",
-                "X-RateLimit-Reset": str(verdict.retry_after),
+                "X-RateLimit-Period": str(verdict.period),
+                "X-RateLimit-Reset": str(window_reset_seconds(verdict.period)),
             },
         )
 

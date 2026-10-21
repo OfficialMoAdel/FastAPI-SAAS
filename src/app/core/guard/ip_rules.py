@@ -250,22 +250,28 @@ class IPFilterService:
     async def _get_list(self, prefix: str) -> list[dict[str, Any]]:
         pattern = f"{prefix}*"
         keys: list[str | bytes] = []
-        async with get_redis_client() as client:
-            if not client:
-                return []
-            cursor = 0
-            while True:
-                cursor, batch = await client.scan(cursor, match=pattern, count=100)
-                keys.extend(batch)
-                if cursor == 0:
-                    break
-            if not keys:
-                return []
-            async with client.pipeline() as pipe:
-                for key in keys:
-                    pipe.get(key)
-                    pipe.ttl(key)
-                results = await pipe.execute()
+        try:
+            async with get_redis_client() as client:
+                cursor = 0
+                while True:
+                    cursor, batch = await client.scan(cursor, match=pattern, count=100)
+                    keys.extend(batch)
+                    if cursor == 0:
+                        break
+                if not keys:
+                    return []
+                async with client.pipeline() as pipe:
+                    for key in keys:
+                        pipe.get(key)
+                        pipe.ttl(key)
+                    results = await pipe.execute()
+        except MissingClientError:
+            # The client is never substituted with None — it RAISES (see
+            # get_redis_client). A Redis outage must read as an empty list,
+            # not as a 500: the sibling _clear_list already answers 0 in the
+            # same situation, and the admin list endpoint has nothing to
+            # report when the store is unreachable.
+            return []
 
         entries: list[dict[str, Any]] = []
         for index in range(0, len(results), 2):

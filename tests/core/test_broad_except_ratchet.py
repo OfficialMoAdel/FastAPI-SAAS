@@ -133,7 +133,25 @@ import count_broad_excepts as counter  # noqa: E402
 #: back under 366. That is the blind-except campaign's work, and doing it as a
 #: side effect of a test fix would change production behaviour on seven paths
 #: nobody asked about. The number here is re-measured, not estimated.
-BROAD_EXCEPT_BASELINE = 373
+#:
+#: 373 -> 381. Raised, deliberately and RE-MEASURED, by the probe-lease and
+#: degradation-guard remediation in this branch. The additions are two shapes:
+#:
+#:   * the HALF_OPEN probe lease release at the request-loop boundary
+#:     (clients/notifications/smtp.py, core/utils/circuit_breaker.py,
+#:     core/resilience/db_circuit_breaker.py). `asyncio.CancelledError` is a
+#:     `BaseException`, so the `except Exception` arm cannot release a claimed
+#:     probe; the `except BaseException` arm releases only the claim this call
+#:     owns and re-raises.
+#:   * the degradation guards added on the cache, tenant, job-monitoring and
+#:     billing-webhook paths (core/cache/client.py, core/job_monitoring.py,
+#:     core/tenancy/resolver.py, modules/billing/webhook/idempotency.py), each
+#:     annotated with the reason it must not propagate.
+#:
+#: The one triaged-file site, smtp.py's `BaseException` arm, now carries the
+#: `# noqa: BLE001` the triaged-site check requires; without it the count was
+#: 381 but that check still failed.
+BROAD_EXCEPT_BASELINE = 381
 
 #: The files muse 22 triaged. BLE001 is enforced on each (the per-file-ignores
 #: in pyproject.toml no longer blanket-exempt them), so these are also the

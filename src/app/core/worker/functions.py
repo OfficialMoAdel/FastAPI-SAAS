@@ -136,19 +136,30 @@ async def cleanup_expired_tokens_task(ctx: dict) -> str:
 
 
 @monitor_job("cleanup_leaked_webhook_lock")
-async def cleanup_leaked_webhook_lock(ctx: Worker, event_id: str) -> str:
+async def cleanup_leaked_webhook_lock(ctx: Worker, event_id: str, lock_token: str | None = None) -> str:
     """B8: release a webhook idempotency lock whose release path failed.
 
-    ``_release_webhook_event_lock`` enqueues this when BOTH the Redis delete
-    and the DB unlock fail. Previously this function was enqueued but never
-    defined or registered, so the orphaned WebhookEvent row permanently lost
-    the event (every retry rejected as already_processed).
+    ``_release_webhook_event_lock`` enqueues this when a leg of the release
+    FAILED. Previously this function was enqueued but never defined or
+    registered, so the orphaned WebhookEvent row permanently lost the event
+    (every retry rejected as already_processed).
 
-    Retries the same dual release; raises so arq/monitoring record the failure.
+    F10: the lock token comes with the job. Without it the Redis leg was
+    skipped outright (there is nothing to compare against) and the DB leg
+    ran WITHOUT the ``claimed_by`` predicate — so the cleanup could remove
+    ANOTHER delivery's claim while leaving its own behind. The job also
+    used to swallow every error and report success, so the claim outlived
+    the job that was supposed to clear it.
+
+    Raises:
+        RuntimeError: the claim was not released. arq retries the job and
+            the monitoring records the failure instead of a false success.
     """
     release_lock = require_feature_collaborators().release_webhook_event_lock
 
-    await release_lock(event_id)
+    released = await release_lock(event_id, lock_token=lock_token, escalate=False)
+    if not released:
+        raise RuntimeError(f"Leaked webhook lock for {event_id} was not released")
     logger.info("Leaked webhook lock cleaned up", event_id=event_id)
     return f"Released lock for {event_id}"
 
@@ -263,7 +274,6 @@ ENQUEUED_JOB_NAMES: frozenset[str] = frozenset(
         "process_event_handler",
         "deliver_webhook_task",
         "cleanup_leaked_webhook_lock",
-        "send_magic_link_email_task",
         "send_email_task",
         "sample_background_task",
     }

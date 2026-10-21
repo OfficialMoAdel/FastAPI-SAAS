@@ -55,7 +55,7 @@ def _is_sqlite(connection: Any) -> bool:
         return False
 
 
-def _mark_rls_dirty(connection: AsyncConnection) -> None:
+def mark_rls_dirty(connection: AsyncConnection) -> None:
     """Flag the pooled connection's record info as RLS-dirty.
 
     MUST be called BEFORE the GUC mutation it guards (fail-safe ordering):
@@ -68,6 +68,11 @@ def _mark_rls_dirty(connection: AsyncConnection) -> None:
     ``info["rls_tenant"] == <real tenant str>``, a comparison test doubles
     (MagicMock ``.info``) can never satisfy. Non-dict info is therefore
     left untouched — the checkout degrades to always-restore.
+
+    This is the escape hatch for code OUTSIDE this module: any raw SQL
+    that changes ``app.current_tenant_id`` / ``app.current_user_id`` /
+    ``app.bypass_rls`` on a pooled connection must call this, or the
+    checkout skip can carry that stale scope into the next request.
     """
     record_info = connection.sync_connection.info if connection.sync_connection is not None else None
     if isinstance(record_info, dict):
@@ -98,6 +103,12 @@ def restore_rls_context(dbapi_connection: Any, connection_record: Any, connectio
     ``current_setting(..., true)`` NULL-vs-'' semantics differ per policy.
     Unauthenticated/no-tenant checkouts are low-volume; the tenant branch
     (every authed request) is where the skip pays.
+
+    The skip's safety depends on every GUC mutation being flagged. The
+    mutations inside this module do that (fail-safe ordering: mark BEFORE
+    mutate). Code OUTSIDE this module that changes the GUCs with raw SQL
+    must call :func:`mark_rls_dirty` — otherwise this skip can carry that
+    stale scope into the next request on the same connection.
     """
     tenant = get_current_tenant()
     tenant_id = str(tenant.id) if tenant else None
@@ -182,7 +193,7 @@ async def set_rls_context(
 
     # P2 RLS dirty flag (fail-safe ordering: mark BEFORE mutating, so a
     # failed set leaves the next checkout re-asserting instead of skipping).
-    _mark_rls_dirty(connection)
+    mark_rls_dirty(connection)
 
     try:
         # P2-2: Single roundtrip for all context variables using COALESCE
@@ -231,7 +242,7 @@ async def clear_rls_context(connection: AsyncConnection) -> None:
         return
 
     # P2 RLS dirty flag (fail-safe ordering: mark BEFORE mutating).
-    _mark_rls_dirty(connection)
+    mark_rls_dirty(connection)
 
     try:
         # P2-2: Single roundtrip to reset all RLS variables
@@ -388,7 +399,7 @@ async def bypass_rls(
     # P2 RLS dirty flag (fail-safe ordering: mark BEFORE the bypass SET;
     # the finally-clear deliberately leaves the flag set — any bypass during
     # a checkout forces the next checkout to re-assert fail-closed).
-    _mark_rls_dirty(connection)
+    mark_rls_dirty(connection)
 
     try:
         # Store in session info for restoration upon new transactions

@@ -25,10 +25,11 @@ class RateLimit(Base, kw_only=True):
     """RateLimit model specifying throughput rules scoped to a Tier."""
 
     __tablename__ = "rate_limit"
-    # P2-3: Composite index for tier+path lookups (common query pattern)
-    # Unique constraint to prevent duplicate rate limits for same path in tier
+    # P2-3: the unique constraint on (tier_id, path) already builds the
+    # index this table is queried by — a separate plain index on the same
+    # columns was pure write and storage cost. The creating layer declares
+    # the same constraint (03_access_control.py), so both layers agree.
     __table_args__: tuple[Index | UniqueConstraint, ...] = (
-        Index("ix_rate_limit_tier_path", "tier_id", "path"),
         UniqueConstraint("tier_id", "path", name="uq_rate_limit_tier_path"),
     )
 

@@ -160,7 +160,13 @@ def upgrade() -> None:
         sa.Column("id", sa.UUID(), nullable=False, server_default=sa.text("gen_random_uuid()")),
         sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("url", sa.String(length=2048), nullable=False),
-        sa.Column("secret", sa.String(length=255), nullable=True),
+        # NOT NULL: the endpoint's HMAC secret is what the receiver verifies
+        # the signature with. It was nullable here while the ORM declared it
+        # NOT NULL, so the two layers disagreed AND a null secret could be
+        # stored — after which every delivery to that endpoint failed at
+        # decrypt time, long after the write returned 200. The column moves:
+        # the database enforces the invariant the ORM promises.
+        sa.Column("secret", sa.String(length=255), nullable=False),
         sa.Column(
             "signing_secret",
             sa.String(255),
@@ -177,7 +183,10 @@ def upgrade() -> None:
         sa.Column("event_type", sa.String(length=100), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("description", sa.String(length=500), nullable=True),
-        sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        # Named `endpoint_metadata`, not `metadata`: SQLAlchemy reserves
+        # `metadata` on a declarative base, so a column of that name cannot be
+        # mapped by attribute name at all.
+        sa.Column("endpoint_metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_webhook_endpoints")),
@@ -246,7 +255,14 @@ def upgrade() -> None:
         "idx_webhook_delivery_retry",
         "webhook_deliveries",
         ["status", "next_retry_at"],
-        postgresql_where=sa.text("status = 'pending' AND next_retry_at IS NOT NULL"),
+        # The predicate used to add `AND next_retry_at IS NOT NULL`, which
+        # excluded exactly the rows the recovery sweep needs: a delivery whose
+        # INITIAL enqueue was lost has next_retry_at NULL, and the sweep
+        # selects on `coalesce(next_retry_at, created_at)`. The partial index
+        # could never serve that population, so the sweep fell back to a
+        # sequential scan on a table that grows per webhook. The predicate now
+        # covers every PENDING row.
+        postgresql_where=sa.text("status = 'pending'"),
     )
     op.create_index(
         "idx_webhook_delivery_endpoint_status",

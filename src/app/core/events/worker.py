@@ -3,6 +3,8 @@
 import asyncio
 from typing import Any
 
+from arq.worker import Retry
+
 from src.app.core import events as _pkg
 
 
@@ -23,6 +25,12 @@ async def process_event_handler(
         data: Event payload
     """
     job_try = ctx.get("job_try", 1)
+    # A4: the backoff schedule is indexed by `job_try - 1`. A malformed ctx
+    # (job_try 0 or negative) would index -1 and select the LONGEST delay,
+    # and a non-int would break the comparison outright — so the counter is
+    # clamped to the first attempt.
+    if not isinstance(job_try, int) or job_try < 1:
+        job_try = 1
     with _pkg.trace_span(
         "process_event_handler",
         attributes={
@@ -66,9 +74,15 @@ async def process_event_handler(
             module = importlib.import_module(handler_module)
             handler = getattr(module, handler_name)
 
+            # A1: read the timeout BEFORE the inner try, so the TimeoutError
+            # handler below can never reference an unbound name. A settings
+            # read that raised TimeoutError used to surface as
+            # UnboundLocalError and DLQ the event as an opaque generic
+            # failure, losing the timeout diagnosis.
+            timeout_val = _pkg.settings.events.EVENT_HANDLER_TIMEOUT_SECONDS
+
             # Apply timeout protection for async worker execution
             try:
-                timeout_val = _pkg.settings.events.EVENT_HANDLER_TIMEOUT_SECONDS
                 await asyncio.wait_for(
                     handler(data),
                     timeout=timeout_val,
@@ -141,12 +155,13 @@ async def process_event_handler(
             # CancelledError/RetryJob). A bare raise of a plain exception sets
             # result=e, finish=True and DELETES the job -> zero retries. Raise
             # Retry with the configured backoff so the job re-runs.
-            # F10: resolve the backoff live (same getattr+fallback the bus
-            # uses) — the old class-attr read ignored EVENT_BUS_RETRY_DELAYS
-            # overrides, so web and worker disagreed on retry cadence.
-            delays = list(getattr(_pkg.settings, "EVENT_BUS_RETRY_DELAYS", None) or _pkg.EventBus.RETRY_DELAYS)
-            from arq.worker import Retry
-
+            # F10: resolve the backoff live (same fallback the bus uses) — the
+            # old class-attr read ignored EVENT_BUS_RETRY_DELAYS overrides, so
+            # web and worker disagreed on retry cadence. The knob lives on the
+            # `events` component, so it is read through that namespace (H-7);
+            # an empty schedule falls back to the class default because the
+            # schedule is indexed below.
+            delays = list(_pkg.settings.events.EVENT_BUS_RETRY_DELAYS) or list(_pkg.EventBus.RETRY_DELAYS)
             raise Retry(defer=delays[min(job_try - 1, len(delays) - 1)]) from e
         finally:
             # SECURITY FIX: Always clear context to prevent leakage between jobs in the same worker

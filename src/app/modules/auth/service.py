@@ -422,7 +422,7 @@ class AuthService:
         if not old_jti:
             return  # unverifiable here; verify_token below rejects it
         try:
-            raw = await cache_client.get(f"refresh_rotated:{old_jti}")
+            raw = await cache_client.get_strict(f"refresh_rotated:{old_jti}")
         except Exception as e:
             # P2-3: this used to return silently at DEBUG. Redis loss
             # downgraded theft detection from "kill the session and blacklist

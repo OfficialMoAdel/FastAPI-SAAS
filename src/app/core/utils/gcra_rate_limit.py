@@ -132,9 +132,11 @@ class GCRARateLimiter:
                     reset_at=time.time() + period,
                 )
 
-            # Calculate emission interval (time between requests)
+            # Calculate emission interval (time between requests).
+            # `limit <= 0` returned above, so the division is safe and the
+            # old `else 0` arm was unreachable.
             period_ms = period * 1000
-            emission_interval_ms = max(1, round(period_ms / limit)) if limit > 0 else 0
+            emission_interval_ms = max(1, round(period_ms / limit))
             now_ms = time.time() * 1000
 
             # Execute atomic GCRA check

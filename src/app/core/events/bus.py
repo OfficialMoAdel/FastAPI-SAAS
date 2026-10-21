@@ -1,4 +1,32 @@
-"""The EventBus class, its singleton instance, and the test-reset helper."""
+"""The EventBus class, its singleton instance, and the test-reset helper.
+
+Priority contract
+-----------------
+``EventPriority.CRITICAL`` runs the handlers INLINE, in the publishing task.
+``NORMAL`` and ``LOW`` enqueue to ARQ and return immediately.
+
+Degradation contract
+--------------------
+When ARQ is unavailable — no queue wired, the ARQ circuit open, or the
+enqueue itself failed — the bus DEGRADES to inline execution instead of
+dropping the event. The handlers then run in the publisher's task, bounded by
+``_concurrency_semaphore`` and ``settings.events.EVENT_HANDLER_TIMEOUT_SECONDS``,
+and a handler that fails is routed to the DLQ (never silently dropped — the B8
+contract).
+
+DLQ-and-return was considered and rejected: the DLQ lives in Redis, so during
+a Redis outage the DLQ write fails and the event would be lost outright.
+Inline execution at least runs the handler, and its failure is logged and
+DLQ-routed. The cost of the degradation is that a publisher waits for the
+handlers (up to the per-handler timeout) — a Redis brownout therefore slows
+down the requests that publish events.
+
+Payload contract
+----------------
+Every handler of one publish receives the SAME payload dict object. Handlers
+MUST NOT mutate it: a mutation is visible to the sibling handlers running
+concurrently against the same object.
+"""
 
 import asyncio
 from collections import defaultdict
@@ -14,15 +42,29 @@ from src.app.core.events.priority import EventPriority
 _UNSET = object()
 EventHandler = Callable[..., Coroutine[Any, Any, None]]
 
+#: Bound applied when the configured concurrency is missing or malformed.
+DEFAULT_EVENT_BUS_CONCURRENCY = 50
+
 
 def _concurrency_limit() -> int:
     """Read the sync-handler concurrency bound live from settings (F13).
 
-    ``getattr`` + fallback mirrors the RETRY_DELAYS pattern: tests patch
-    ``_pkg.settings`` with a MagicMock, and a missing attribute must fall
-    back to the configured default (50) rather than raising.
+    The knob lives on the ``events`` component, so it is read through the
+    namespace that owns it (``settings.events``): the flat form — ``settings``
+    followed by an UPPER_SNAKE attribute — resolves only through the config
+    layer's delegation ``__getattr__`` and is invisible to static analysis
+    (H-7).
+
+    A value that is not a positive int falls back to
+    :data:`DEFAULT_EVENT_BUS_CONCURRENCY`. The bound is read once per instance
+    at construction time, so a malformed value must not silently become a
+    concurrency of 1 — that would serialise every CRITICAL handler behind the
+    semaphore.
     """
-    return int(getattr(_pkg.settings, "EVENT_BUS_CONCURRENCY", None) or 50)
+    limit = _pkg.settings.events.EVENT_BUS_CONCURRENCY
+    if isinstance(limit, int) and limit > 0:
+        return limit
+    return DEFAULT_EVENT_BUS_CONCURRENCY
 
 
 class EventBus:
@@ -60,10 +102,13 @@ class EventBus:
         self._redis_client: Any = _UNSET
         self._registration_complete = False
         # M-9: pull the backoff schedule from settings (default [60,300,900]).
-        # Flat access matches every other EVENT_BUS_* read here; tests patch
-        # _pkg.settings with a MagicMock, so fall back to the class default
-        # when the attribute is missing.
-        self.RETRY_DELAYS = list(getattr(_pkg.settings, "EVENT_BUS_RETRY_DELAYS", None) or type(self).RETRY_DELAYS)
+        # The knob lives on the `events` component, so it is read through that
+        # namespace (H-7): the flat form resolves only through the config
+        # layer's delegation `__getattr__`, which no static analyser can see
+        # through. An empty schedule falls back to the class default — the
+        # schedule is indexed by the retry counter, so an empty one would
+        # raise IndexError on the first retry instead of backing off.
+        self.RETRY_DELAYS = list(_pkg.settings.events.EVENT_BUS_RETRY_DELAYS) or list(type(self).RETRY_DELAYS)
         # P3-2: Semaphore to bound concurrent sync execution
         self._concurrency_semaphore = asyncio.Semaphore(_concurrency_limit())
 
@@ -202,6 +247,12 @@ class EventBus:
         Uses SETNX pattern for race-condition-free idempotency check.
         The Lua script atomically checks and sets the key in a single operation.
 
+        This is the atomic CLAIM primitive: it both tests and marks the event
+        in one round trip, so it is the right tool for a caller that needs
+        claim-before-side-effect semantics. ``publish()`` deliberately does
+        NOT use it — it peeks read-only and claims AFTER a successful publish
+        (H-6), so a crash between the two cannot drop a re-published event.
+
         Args:
             event_id: Unique event identifier
 
@@ -320,8 +371,13 @@ class EventBus:
 
         Args:
             event_name: Name of event
-            data: Event payload data
-            priority: Event priority (CRITICAL=sync, NORMAL/LOW=async)
+            data: Event payload data. Handlers receive this object as-is and
+                MUST NOT mutate it (see the module docstring's payload
+                contract).
+            priority: Event priority. ``CRITICAL`` runs the handlers inline in
+                this task; ``NORMAL``/``LOW`` enqueue to ARQ. Both degrade to
+                inline execution when ARQ is unavailable — see the module
+                docstring's degradation contract.
             event_id: Optional unique event ID for idempotency. If provided,
                       duplicate events with the same ID will be skipped.
 
@@ -380,7 +436,8 @@ class EventBus:
 
             # R5-10: Gate get_next_sequence behind a setting or consumer check
             # Avoids hitting Redis on every single event unless strict ordering is explicitly required
-            if getattr(_pkg.settings, "EVENT_BUS_REQUIRE_STRICT_ORDERING", False):
+            # The knob lives on the `events` component (H-7).
+            if _pkg.settings.events.EVENT_BUS_REQUIRE_STRICT_ORDERING:
                 sequence = await self.get_next_sequence(event_name)
             else:
                 sequence = 0
@@ -505,17 +562,23 @@ class EventBus:
         tasks = [_call_handler(handler) for handler in handlers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Log CRITICAL exceptions (they are already logged inside _call_handler but we can keep the logger.critical)
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                _pkg.logger.critical(
-                    "Event handler task failed with unhandled exception",
+        # A6/A7: `_call_handler` swallows every Exception and records it in
+        # `failed_handlers` itself, so an Exception in `results` has ALREADY
+        # been counted — appending it here again would write two DLQ entries
+        # for one failure. What can still reach here is a BaseException that
+        # escaped `_call_handler`'s `except Exception` (a CancelledError,
+        # say). It is still a failed handler and must not be reported as
+        # success: the caller marks the event idempotent on success, so a
+        # swallowed cancellation would drop that handler for good.
+        for handler, result in zip(handlers, results, strict=True):
+            if isinstance(result, BaseException) and not isinstance(result, Exception):
+                _pkg.logger.error(
+                    "Event handler task failed with an unhandled BaseException",
                     event_name=event_name,
-                    handler=handlers[i].__name__,
-                    error=str(result),
-                    exc_info=True,
+                    handler=handler.__name__,
+                    error=f"{type(result).__name__}: {result}",
                 )
-                failed_handlers.append((handlers[i], str(result)))
+                failed_handlers.append((handler, f"{type(result).__name__}: {result}"))
 
         # P1-10: route each failure to the DLQ (mirroring _sync_fallback_handler)
         # so the event is recoverable instead of silently lost. A DLQ *write*
@@ -547,6 +610,10 @@ class EventBus:
                 event_name=event_name,
                 message="ARQ queue not set, falling back to sync execution",
             )
+            # Degradation policy (see the module docstring): the handlers run
+            # inline rather than being dropped. The DLQ lives in Redis, so a
+            # DLQ-and-return would lose the event exactly when Redis is the
+            # thing that is down.
             return await self._publish_sync(event_name, data, handlers)
 
         # P1-4: Parallel enqueue using asyncio.gather for reduced latency
@@ -582,7 +649,8 @@ class EventBus:
                 # B8: route through the shared fallback so failures land in
                 # the DLQ (the old inline block only logged them — during a
                 # Redis outage, exactly when the circuit is open, log-only
-                # meant permanent silent loss).
+                # meant permanent silent loss). Degradation policy: inline,
+                # never dropped (see the module docstring).
                 fallback_ok = await self._sync_fallback_handler(
                     event_name, handler, data, reason="circuit open"
                 )
@@ -762,7 +830,8 @@ class EventBus:
         # Check circuit breaker once for the batch (K9 FIX: single-flight gate)
         if not await _pkg.arq_circuit.allow_single_flight():
             _pkg.logger.warning("ARQ circuit breaker open during batch enqueue", event_name=event_name)
-            # Fallback to sync execution for all handlers
+            # Fallback to sync execution for all handlers — degradation
+            # policy: inline, never dropped (see the module docstring).
             return await self._publish_sync(event_name, data, handlers, priority=priority)
 
         from src.app.core.events.arq_adapter import enqueue_batch_jobs

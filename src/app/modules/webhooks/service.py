@@ -243,20 +243,59 @@ class WebhookService:
         return result.scalar_one_or_none()
 
     async def update_endpoint(self, endpoint: WebhookEndpoint, update_data: dict[str, Any]) -> WebhookEndpoint:
-        """Update a webhook endpoint."""
+        """Update a webhook endpoint.
+
+        E3: the update is restricted to the endpoint's OWN columns, and a
+        null is only accepted where the column accepts one.
+
+        The previous version applied every supplied key with `setattr`:
+        a field the update schema does not declare (a tenant id, a rotation
+        deadline) would be persisted verbatim — a `tenant_id` re-parenting
+        would move the endpoint to another tenant. An explicitly sent JSON
+        `null` also survived (`exclude_unset` keeps a null that WAS sent),
+        and applying it to a NOT NULL column raised a NotNullViolation
+        (a 500 on a request the caller thought was fine), while applying it
+        to `secret` silently destroyed the endpoint's signing material and
+        broke every later delivery to it.
+        """
         from src.app.core.security.encryption import encrypt_data
         from src.app.modules.webhooks.utils import validate_url_ssrf
 
+        # The fields a caller may change, and whether the column accepts NULL.
+        # This mirrors `WebhookEndpointUpdate` exactly; a field that is not
+        # listed is never written.
+        allowed: dict[str, bool] = {
+            "url": False,
+            "event_type": False,
+            "is_active": False,
+            "secret": False,
+            "signing_secret": True,
+        }
         for field, value in update_data.items():
+            if field not in allowed:
+                # A field the update schema does not declare must never reach
+                # the row — it is the tenant re-parenting path.
+                logger.warning(
+                    "webhook_endpoint_update_ignored_field",
+                    endpoint_id=str(endpoint.id),
+                    field=field,
+                )
+                continue
+            if value is None:
+                if not allowed[field]:
+                    raise ValidationError(f"Field '{field}' cannot be null")
+                setattr(endpoint, field, None)
+                continue
+
             # Handle HttpUrl from Pydantic
             if hasattr(value, "scheme") and hasattr(value, "host"):
                 value = str(value)
 
-            if field == "url" and value:
+            if field == "url":
                 value = str(value)
                 await validate_url_ssrf(value)
 
-            if field in ("secret", "signing_secret") and value is not None:
+            if field in ("secret", "signing_secret"):
                 value = encrypt_data(value)
             setattr(endpoint, field, value)
 

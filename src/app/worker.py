@@ -37,7 +37,6 @@ from src.app.modules.audit_logs.service import (  # noqa: E402
     AUDIT_LOG_MAX_FLUSH_PER_RUN,
     flush_audit_log_buffer,
 )
-from src.app.modules.auth.tasks import send_magic_link_email_task
 from src.app.modules.billing.webhook.idempotency import _release_webhook_event_lock
 from src.app.modules.notifications.service import (
     recover_stuck_notifications,
@@ -53,7 +52,6 @@ _EVERY_FIVE_MINUTES = {"minute": set(range(0, 60, 5))}
 
 register_feature_tasks(
     [
-        FeatureTask(send_magic_link_email_task),
         FeatureTask(send_email_task),
         FeatureTask(recover_stuck_notifications, _EVERY_FIVE_MINUTES),
         FeatureTask(recover_stuck_deliveries, _EVERY_FIVE_MINUTES),

@@ -128,3 +128,50 @@ def test_manual_invocation_jobs_are_still_registered():
         f"MANUAL_INVOCATION_JOBS names unregistered functions: {sorted(unknown)}. "
         "Remove them from the set — the job was deleted or renamed."
     )
+
+
+def _enqueued_job_names() -> set[str]:
+    """Every job name the source tree enqueues, from the literal first argument.
+
+    The literal is the contract: ``enqueue_job("name", …)`` names the job
+    the worker must have registered. A computed name cannot be checked this
+    way — and the codebase has none.
+    """
+    import ast
+    from pathlib import Path
+
+    src_root = Path(__file__).resolve().parents[4] / "src" / "app"
+    names: set[str] = set()
+    for path in sorted(src_root.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:  # pragma: no cover - a file that does not parse is a different failure
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute) or func.attr != "enqueue_job":
+                continue
+            if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                names.add(node.args[0].value)
+    return names
+
+
+def test_every_listed_job_name_has_a_producer():
+    """F7: a name in ENQUEUED_JOB_NAMES must be enqueued somewhere.
+
+    The set is hand-maintained, so a name could be listed (and registered on
+    the worker) while NOTHING ever enqueued it — the registration guard then
+    reported "healthy" in both directions while the job could never run.
+    ``send_magic_link_email_task`` was exactly that: magic links go through
+    the notification.request event, so no producer existed.
+    """
+    enqueued = _enqueued_job_names()
+    missing = sorted(ENQUEUED_JOB_NAMES - enqueued)
+    assert not missing, (
+        f"{missing} are listed in ENQUEUED_JOB_NAMES but nothing enqueues them; "
+        "remove the name or add the producer"
+    )

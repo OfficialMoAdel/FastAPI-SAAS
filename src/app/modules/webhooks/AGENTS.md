@@ -36,22 +36,25 @@ src/app/modules/webhooks/
 ### Webhook Endpoint Creation
 ✅ DO: Create endpoints with auto-generated secrets
 ```python
-# src/app/modules/webhooks/router.py (lines 68-90)
-@router.post("/endpoints", response_model=WebhookEndpointResponse, status_code=201)
+# src/app/modules/webhooks/router.py
+@router.post("/endpoints", response_model=WebhookEndpointCreateResponse, status_code=201)
 async def create_webhook_endpoint(
+    ctx: RequestContextDep,
     request: WebhookEndpointCreate,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
-) -> WebhookEndpointResponse:
-    service = WebhookService(db)
+) -> Any:
+    service = WebhookService(ctx.db)
     endpoint = await service.create_endpoint(
-        tenant_id=current_tenant.id,
-        url=request.url,
-        event_types=request.event_types,
+        tenant_id=ctx.tenant_id,
+        url=str(request.url),
+        event_type=request.event_type,   # ONE pattern, not a list
         secret=request.secret,  # Auto-generated if None
+        signing_secret=request.signing_secret,  # Auto-generated if None
     )
-    return WebhookEndpointResponse.model_validate(endpoint)
+    return WebhookEndpointCreateResponse.model_validate(endpoint)
 ```
+> E5: an endpoint subscribes to ONE event-type pattern (`user.created`,
+> `user.*`). The `event_types` list form this snippet used to show never
+> existed in the code.
 
 ### Trigger Webhooks for Events
 ✅ DO: Use WebhookService to trigger webhooks

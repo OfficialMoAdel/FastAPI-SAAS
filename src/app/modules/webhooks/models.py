@@ -10,6 +10,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Integer,
     SmallInteger,
     String,
     Text,
@@ -52,7 +53,6 @@ class WebhookEndpoint(Base, UUIDMixin):
         PgUUID(as_uuid=True),
         ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     # Endpoint Configuration
@@ -71,6 +71,28 @@ class WebhookEndpoint(Base, UUIDMixin):
         nullable=False,
         index=True,
         comment="Event type pattern (e.g., 'user.*', 'user.created')",
+    )
+    # The creating layer (07_observability) declares these two columns; the
+    # ORM did not, so the two layers disagreed about the table's shape. They
+    # are not part of the delivery contract — they are operator-facing
+    # annotations — so they are `init=False` and default to NULL.
+    description: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+        default=None,
+        init=False,
+        comment="Operator-facing description of this endpoint",
+    )
+    # Named `endpoint_metadata`, not `metadata`: SQLAlchemy RESERVES
+    # `metadata` on a declarative base (`Base.metadata` is the registry), so
+    # a column of that name cannot be mapped by attribute name at all. The
+    # creating layer uses the same name, so the two layers agree.
+    endpoint_metadata: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        default=None,
+        init=False,
+        comment="Free-form operator metadata for this endpoint",
     )
     signing_secret: Mapped[str | None] = mapped_column(
         String(255),
@@ -100,14 +122,22 @@ class WebhookEndpoint(Base, UUIDMixin):
     )
 
     # Timestamps
+    #
+    # TIMEZONE-AWARE, and the creating layer says so too. These columns used
+    # to be declared as a naive `DateTime` while every write path used
+    # `datetime.now(UTC)`, and the recovery sweep compares
+    # `coalesce(next_retry_at, created_at)` against an aware cutoff — a
+    # naive/aware mix that PostgreSQL resolves against the SERVER's session
+    # timezone, so the recovery window skewed by the local UTC offset on any
+    # non-UTC database.
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         insert_default=lambda: datetime.now(UTC),
         server_default=text("current_timestamp(0)"),
         init=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         insert_default=lambda: datetime.now(UTC),
         server_default=text("current_timestamp(0)"),
         onupdate=lambda: datetime.now(UTC),
@@ -152,6 +182,15 @@ class WebhookEndpoint(Base, UUIDMixin):
             "idx_webhook_endpoint_active",
             "tenant_id",
             "is_active",
+        ),
+        # The creating layer creates this one on (tenant_id); the ORM used to
+        # ask for an unnamed `index=True` instead, so a create_all database
+        # carried a differently-named index on the same column that the
+        # migrated database did not have. The named declaration makes the two
+        # layers describe the same index.
+        Index(
+            "idx_webhook_endpoint_tenant",
+            "tenant_id",
         ),
     )
 
@@ -233,7 +272,7 @@ class WebhookDelivery(Base, UUIDMixin):
         comment="Current delivery status",
     )
     attempt_count: Mapped[int] = mapped_column(
-        SmallInteger,
+        Integer,
         nullable=False,
         default=0,
         server_default="0",
@@ -253,6 +292,29 @@ class WebhookDelivery(Base, UUIDMixin):
         init=False,
         comment="HTTP response body (truncated to 10KB)",
     )
+    # The creating layer (07_observability) declares these three columns and
+    # the delivery path keeps them in sync: `response_status_code` mirrors
+    # `response_status`, `delivered_at` is set on a 2xx, and `error_message`
+    # carries the latest failure. They exist for readers that ask for these
+    # names; `delivered_at` is the delivery outcome, not `updated_at`.
+    response_status_code: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        init=False,
+        comment="HTTP response status code (creating-layer name for response_status)",
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        init=False,
+        comment="Timestamp the delivery was accepted by the receiver",
+    )
+    error_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        init=False,
+        comment="Error message for a failed delivery",
+    )
 
     # Retry Information
     next_retry_at: Mapped[datetime | None] = mapped_column(
@@ -264,14 +326,20 @@ class WebhookDelivery(Base, UUIDMixin):
     )
 
     # Timestamps
+    #
+    # TIMEZONE-AWARE, matching the creating layer. The recovery sweep
+    # compares `coalesce(next_retry_at, created_at)` against an aware
+    # cutoff; a naive `created_at` made that comparison depend on the
+    # database server's session timezone, so the recovery window skewed by
+    # the local UTC offset on any non-UTC database.
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         insert_default=lambda: datetime.now(UTC),
         server_default=text("current_timestamp(0)"),
         init=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         insert_default=lambda: datetime.now(UTC),
         server_default=text("current_timestamp(0)"),
         onupdate=lambda: datetime.now(UTC),
@@ -288,12 +356,20 @@ class WebhookDelivery(Base, UUIDMixin):
 
     # Composite Indexes for Performance
     __table_args__ = (
-        # Query pending deliveries ready for retry
+        # Query pending deliveries ready for retry.
+        #
+        # The predicate used to add `AND next_retry_at IS NOT NULL`, which
+        # excluded exactly the rows the recovery sweep needs: a delivery whose
+        # INITIAL enqueue was lost has next_retry_at NULL, and the sweep
+        # selects on `coalesce(next_retry_at, created_at)`. The partial index
+        # could never serve that population, so the sweep fell back to a
+        # sequential scan on a table that grows per webhook. The predicate
+        # now covers every PENDING row; the creating layer says the same.
         Index(
             "idx_webhook_delivery_retry",
             "status",
             "next_retry_at",
-            postgresql_where="status = 'pending' AND next_retry_at IS NOT NULL",
+            postgresql_where="status = 'pending'",
         ),
         # Query deliveries by endpoint and status
         Index(

@@ -185,8 +185,15 @@ class SMTPProvider(EmailProvider):
 
         logger = get_logger(__name__)
 
-        # Check circuit breaker before attempting send
-        if not email_circuit.is_closed:
+        # Check circuit breaker before attempting send.
+        # D7: `is_closed` is True during the virtual HALF_OPEN, so every
+        # concurrent send passed the gate and the recovering SMTP server
+        # took the whole burst. The gate admits every send while CLOSED,
+        # none while OPEN, and exactly ONE while HALF_OPEN (the probe). A
+        # rejected send is not lost: the caller maps False to a failure and
+        # the job is retried.
+        allowed, probe_claimed = await email_circuit.allow_single_flight_with_claim()
+        if not allowed:
             logger.warning("email_circuit_open_skipping", to=message.to_email)
             return False
 
@@ -277,6 +284,16 @@ class SMTPProvider(EmailProvider):
             await email_circuit.record_failure(e)
             logger.error("Failed to send email", error=e)
             return False
+        except BaseException:  # noqa: BLE001 - a cancelled send must release its HALF_OPEN probe before propagating
+            # D6: a CANCELLED send is a BaseException, so the arm above
+            # never runs and the HALF_OPEN probe slot would stay claimed.
+            # Every later send would then be rejected for the whole
+            # recovery window — the email circuit wedged by one cancelled
+            # delivery. Only release a probe THIS send claimed: a send
+            # admitted while CLOSED must not clear another caller's claim.
+            if probe_claimed:
+                email_circuit.release_probe()
+            raise
 
     async def send_bulk_emails(self, messages: list[EmailMessage]) -> dict:
         """Send multiple emails via SMTP."""

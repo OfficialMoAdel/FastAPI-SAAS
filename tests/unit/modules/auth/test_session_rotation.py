@@ -56,6 +56,9 @@ class _FakeCache:
         self.store: dict[str, Any] = {}
         self.nx_calls: list[str] = []
         self.deleted: list[str] = []
+        # D8: the lock carries an ownership token and is released with an
+        # ownership check, so the release is not a blind delete.
+        self.released: list[tuple[str, str]] = []
 
     async def set_nx(self, key: str, value: str, ttl: int) -> bool:
         self.nx_calls.append(key)
@@ -72,6 +75,14 @@ class _FakeCache:
             self.store.pop(key, None)
             self.deleted.append(key)
         return len(keys)
+
+    async def release_lock_if_owned(self, key: str, token: str) -> bool:
+        self.released.append((key, token))
+        if self.store.get(key) == token:
+            del self.store[key]
+            self.deleted.append(key)
+            return True
+        return False
 
 
 def _mock_request() -> MagicMock:
@@ -126,6 +137,10 @@ class TestRotateSession:
         assert issued.refresh_token == new_refresh
         # Lock acquired and released.
         assert cache.nx_calls == ["refresh_lock:old-jti-1"]
+        # D8: the release is ownership-checked, and the token the lock was
+        # acquired with is the token it is released with.
+        assert [key for key, _token in cache.released] == ["refresh_lock:old-jti-1"]
+        assert cache.released[0][1] == cache.store.get("refresh_lock:old-jti-1", cache.released[0][1])
         assert "refresh_lock:old-jti-1" in cache.deleted
         # Rotation + blacklist + marker.
         mock_rotate.assert_awaited_once()

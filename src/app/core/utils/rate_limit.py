@@ -88,10 +88,37 @@ class RateLimiter:
 
         Returns:
             Tuple of (is_limited, remaining, retry_after)
+
+        The degradation signal is NOT part of this contract — use
+        :meth:`check_rate_limit_algorithm_with_status` when the caller has to
+        report that a different engine than the configured one enforced the
+        limit (the response header and the fail-open counter both need it).
+        """
+        is_limited, remaining, retry_after, _degraded = await self.check_rate_limit_algorithm_with_status(
+            key, limit, period, fail_closed=fail_closed
+        )
+        return is_limited, remaining, retry_after
+
+    async def check_rate_limit_algorithm_with_status(
+        self, key: str, limit: int, period: int, *, fail_closed: bool = False
+    ) -> tuple[bool, int, int, bool]:
+        """Check the rate limit and REPORT whether the engine degraded.
+
+        A silent algorithm swap is worse than the outage it hides: the
+        configured engine (GCRA) failed and the fixed window took over, so
+        the bucket now allows the 2x boundary burst that GCRA exists to
+        remove. That is counted (fail-open counter) and returned, so the
+        caller can mark the verdict degraded and say so in the response.
+
+        Returns:
+            Tuple of (is_limited, remaining, retry_after, degraded) —
+            ``degraded`` is True when the limit was NOT enforced by the
+            configured algorithm.
         """
         from src.app.core.config import settings
 
         use_gcra = settings.rate_limit.RATE_LIMIT_ALGORITHM.lower() == "gcra"
+        degraded = False
 
         if use_gcra:
             from src.app.core.utils.gcra_rate_limit import get_gcra_rate_limiter
@@ -106,16 +133,37 @@ class RateLimiter:
                     import math
 
                     retry_after = int(math.ceil(result.retry_after)) if result.is_limited else 0
-                    return result.is_limited, result.remaining, retry_after
+                    return result.is_limited, result.remaining, retry_after, False
                 except Exception as e:
                     logger.warning("gcra_rate_limit_check_failed", error=str(e))
-                    # Fallback to fixed window handled below
+                    # The swap is a DEGRADATION, not a silent fallback: count
+                    # it and tell the caller, so the response can say which
+                    # engine actually enforced the limit.
+                    from src.app.core.monitoring.r1_unified_metrics import record_fail_open
+
+                    record_fail_open("rate_limit:gcra_degraded")
+                    logger.error(
+                        "gcra_degraded_to_fixed_window",
+                        key=key,
+                        error=str(e),
+                    )
+                    degraded = True
+            else:
+                # GCRA is configured but the limiter was never initialised
+                # (Redis was absent at boot). The fixed window below will
+                # enforce the limit, so this is the same degradation as the
+                # failed-GCRA branch above — counted and reported, not silent.
+                from src.app.core.monitoring.r1_unified_metrics import record_fail_open
+
+                record_fail_open("rate_limit:gcra_uninitialized")
+                logger.error("gcra_limiter_uninitialized_degrading_to_fixed_window", key=key)
+                degraded = True
 
         # Fixed window fallback / default
         try:
             is_limited, current_count = await self.check_rate_limit(key, limit, period, fail_closed=fail_closed)
             remaining = max(0, limit - current_count)
-            return is_limited, remaining, 0
+            return is_limited, remaining, 0, degraded
         except Exception as fallback_e:
             logger.error("rate_limit_check_failed", error=str(fallback_e))
             # R1 FIX: RATE_LIMIT_FAIL_OPEN lives on settings.rate_limit; the old
@@ -123,7 +171,7 @@ class RateLimiter:
             # C2: fail_closed=True forces limited regardless of the operator flag.
             is_limited = fail_closed or not settings.rate_limit.RATE_LIMIT_FAIL_OPEN
             remaining = 0 if is_limited else limit
-            return is_limited, remaining, 0
+            return is_limited, remaining, 0, degraded
 
     @classmethod
     def reset(cls) -> None:

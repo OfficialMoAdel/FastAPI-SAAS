@@ -172,7 +172,7 @@ class RequestAdmissionService:
                 period,
                 key,
                 ban_info,
-                (is_limited, remaining, retry_after),
+                (is_limited, remaining, retry_after, degraded),
             ) = await check_ban_blacklist_and_rate_limit(
                 client_ip=client_ip,
                 token=ctx.token,
@@ -204,7 +204,7 @@ class RequestAdmissionService:
             limit, period, key, downgraded_to_anonymous = await self._resolve_legacy_config(request, ctx)
 
             if settings.security.AUTO_BAN_ENABLED and uses_gcra():
-                ban_info, (is_limited, remaining, retry_after) = await check_ban_and_rate_limit(
+                ban_info, (is_limited, remaining, retry_after, degraded) = await check_ban_and_rate_limit(
                     client_ip, key, limit, period
                 )
                 if ban_info.is_banned:

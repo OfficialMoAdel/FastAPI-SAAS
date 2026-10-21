@@ -1,6 +1,6 @@
 """Unit tests for the notification outbox seam and delivery provider ports & adapters."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -357,31 +357,37 @@ class TestHermeticDeliveryWithInMemoryProvider:
             mock_srv.mark_failed.assert_awaited_once()
 
 
-class TestMagicLinkTaskOutboxSeam:
-    """Tests that send_magic_link_email_task dispatches via notification.request seam."""
+class TestMagicLinkOutboxSeam:
+    """The magic-link email dispatches via the notification.request seam.
+
+    F7: this used to test ``send_magic_link_email_task`` — a worker task with
+    NO producer (magic links go through the service, which publishes
+    notification.request directly). The task was listed in
+    ENQUEUED_JOB_NAMES as if the web process enqueued it, so the guard could
+    not see that nothing ever did. The task is gone; this now pins the LIVE
+    path.
+    """
 
     @pytest.mark.asyncio
     @patch("src.app.core.events.notifications.event_bus.publish", new_callable=AsyncMock)
-    async def test_send_magic_link_email_task_publishes_notification_request(self, mock_publish) -> None:
-        """send_magic_link_email_task publishes notification.request with no direct NotificationService."""
-        from src.app.modules.auth.tasks import send_magic_link_email_task
+    async def test_the_magic_link_service_publishes_notification_request(self, mock_publish) -> None:
+        """The magic-link service publishes notification.request — no direct NotificationService."""
+        from src.app.modules.auth.services.magic_link import MagicLinkService
 
-        mock_ctx = MagicMock()
-        result = await send_magic_link_email_task(
-            ctx=mock_ctx,
+        service = MagicLinkService.__new__(MagicLinkService)
+        await service._queue_magic_link_email(
             email="magic@example.com",
-            magic_link_url="https://app.example.com/magic?token=xyz",
+            token="raw-token",
             user_id=123,
         )
 
-        assert "magic@example.com" in result
         mock_publish.assert_awaited_once()
         args, kwargs = mock_publish.call_args
         assert args[0] == "notification.request"
         payload = args[1]
         assert payload["to_email"] == "magic@example.com"
         assert payload["template_name"] == "magic_link"
-        assert payload["context"]["magic_link_url"] == "https://app.example.com/magic?token=xyz"
+        assert "magic-link?token=raw-token" in payload["context"]["magic_link_url"]
         assert payload["user_id"] == 123
 
 

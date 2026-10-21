@@ -6,11 +6,12 @@ Tests cover:
 - Service initialization
 """
 
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
+from src.app.core.utils.circuit_breaker import CircuitState
 from src.app.modules._base import ModelNotFoundError, ValidationError
 from src.app.modules.webhooks.delivery import deliver
 from src.app.modules.webhooks.models import WebhookDeliveryStatus
@@ -336,7 +337,8 @@ class TestWebhookServiceDelivery:
         # per-endpoint breaker from get_webhook_breaker, not the legacy
         # process-global webhook_circuit)
         mock_circuit = MagicMock()
-        type(mock_circuit).is_closed = PropertyMock(return_value=False)
+        mock_circuit.state = CircuitState.OPEN
+        mock_circuit.allow_single_flight_with_claim = AsyncMock(return_value=(False, False))
         mock_circuit.recovery_timeout = 60
         mock_circuit.last_failure_time = 0  # stale/absent timestamp -> clamped to 0s
         with (
@@ -441,7 +443,7 @@ class TestWebhookServiceDelivery:
                 # Mock scoped circuit breaker (P2-B: network failures record
                 # on the per-endpoint breaker from get_webhook_breaker)
                 mock_circuit = MagicMock()
-                mock_circuit.is_closed = True
+                mock_circuit.state = CircuitState.CLOSED
                 mock_circuit.record_failure = AsyncMock()
                 with patch(
                     "src.app.core.resilience.registry.get_webhook_breaker",
@@ -478,7 +480,7 @@ class TestWebhookServiceDelivery:
                 # Also mock the scoped circuit breaker (P2-B: per-endpoint
                 # breaker from get_webhook_breaker)
                 mock_circuit = MagicMock()
-                mock_circuit.is_closed = True
+                mock_circuit.state = CircuitState.CLOSED
                 mock_circuit.record_success = AsyncMock()
                 with patch(
                     "src.app.core.resilience.registry.get_webhook_breaker",
@@ -516,7 +518,7 @@ class TestWebhookServiceDelivery:
 
             with patch("src.app.modules.webhooks.delivery.get_webhook_http_client", return_value=mock_client):
                 mock_circuit = MagicMock()
-                mock_circuit.is_closed = True
+                mock_circuit.state = CircuitState.CLOSED
                 mock_circuit.record_failure = AsyncMock()
                 with patch(
                     "src.app.core.resilience.registry.get_webhook_breaker",
@@ -552,7 +554,7 @@ class TestWebhookServiceDelivery:
             # Attempt 5 (max is 5, index 4)
             with patch("src.app.modules.webhooks.delivery.get_webhook_http_client", return_value=mock_client):
                 mock_circuit = MagicMock()
-                mock_circuit.is_closed = True
+                mock_circuit.state = CircuitState.CLOSED
                 mock_circuit.record_failure = AsyncMock()
                 with patch(
                     "src.app.core.resilience.registry.get_webhook_breaker",

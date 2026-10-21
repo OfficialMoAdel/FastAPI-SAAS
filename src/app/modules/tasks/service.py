@@ -20,12 +20,19 @@ class QueueUnavailableError(ServiceUnavailableError):
 class TaskService:
     """Service class for task/job-related business logic."""
 
-    async def create_task(self, data: TaskCreate, tenant_id: UUID | None = None) -> Job:
+    async def create_task(self, data: TaskCreate, tenant_id: UUID) -> Job:
         """Create a new background task.
 
         Idempotent per (tenant_id, message): re-submitting an identical
         request while the previous job still exists returns the SAME job id
         instead of failing (B7 FIX - previously raised ValueError -> HTTP 500).
+
+        F9: the tenant is REQUIRED. The deterministic id is derived from
+        (tenant, message), so a tenant-less caller collapsed every
+        tenant-less caller onto ONE id ("None:<message>") — unrelated
+        callers shared a job, and ``get_task`` compared the stored kwarg
+        against ``str(tenant_id)`` and could never match it, so the job was
+        unreachable. The router has always had a tenant to pass.
         """
         message = data.message
         if not message or not message.strip():
@@ -37,7 +44,7 @@ class TaskService:
 
         # P2-C: UUID is the sole tenant type; arq serializes kwargs with
         # orjson (no UUID support), so stringify at the enqueue boundary.
-        tenant_str = str(tenant_id) if tenant_id is not None else None
+        tenant_str = str(tenant_id)
         job_id_input = f"{tenant_str}:{message}".encode()
         deterministic_job_id = f"sample_task:{hashlib.sha256(job_id_input).hexdigest()}"
         job = await arq.enqueue_job(

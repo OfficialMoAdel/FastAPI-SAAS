@@ -49,6 +49,9 @@ def mock_smtp_cls():
 async def test_send_email_success(smtp_provider, email_message, mock_smtp_cls):
     with patch("src.app.core.utils.circuit_breaker.email_circuit") as mock_circuit:
         mock_circuit.is_closed = True
+        # D7: the gate is the single-flight one: every send while CLOSED,
+        # exactly one while HALF_OPEN.
+        mock_circuit.allow_single_flight_with_claim = AsyncMock(return_value=(True, False))
         mock_circuit.record_success = AsyncMock()
 
         result = await smtp_provider.send_email(email_message)
@@ -76,6 +79,9 @@ async def test_send_email_pools_connection(smtp_provider, email_message, mock_sm
     """P2-D: consecutive sends reuse one connection (one handshake)."""
     with patch("src.app.core.utils.circuit_breaker.email_circuit") as mock_circuit:
         mock_circuit.is_closed = True
+        # D7: the gate is the single-flight one: every send while CLOSED,
+        # exactly one while HALF_OPEN.
+        mock_circuit.allow_single_flight_with_claim = AsyncMock(return_value=(True, False))
         mock_circuit.record_success = AsyncMock()
 
         assert await smtp_provider.send_email(email_message) is True
@@ -91,6 +97,9 @@ async def test_send_email_pools_connection(smtp_provider, email_message, mock_sm
 async def test_send_email_failure_discards_connection(smtp_provider, email_message, mock_smtp_cls):
     with patch("src.app.core.utils.circuit_breaker.email_circuit") as mock_circuit:
         mock_circuit.is_closed = True
+        # D7: the gate is the single-flight one: every send while CLOSED,
+        # exactly one while HALF_OPEN.
+        mock_circuit.allow_single_flight_with_claim = AsyncMock(return_value=(True, False))
         mock_circuit.record_failure = AsyncMock()
         mock_smtp_cls.return_value.send_message.side_effect = Exception("SMTP Error")
 
@@ -108,6 +117,9 @@ async def test_send_email_pool_drops_stale_loop_connections(smtp_provider, email
     """P2-D: connections are loop-bound — a new loop must not reuse them."""
     with patch("src.app.core.utils.circuit_breaker.email_circuit") as mock_circuit:
         mock_circuit.is_closed = True
+        # D7: the gate is the single-flight one: every send while CLOSED,
+        # exactly one while HALF_OPEN.
+        mock_circuit.allow_single_flight_with_claim = AsyncMock(return_value=(True, False))
         mock_circuit.record_success = AsyncMock()
         await smtp_provider.send_email(email_message)
         instance = mock_smtp_cls.return_value
@@ -129,6 +141,7 @@ async def test_send_email_pool_drops_stale_loop_connections(smtp_provider, email
 async def test_send_email_circuit_open(smtp_provider, email_message):
     with patch("src.app.core.utils.circuit_breaker.email_circuit") as mock_circuit:
         mock_circuit.is_closed = False
+        mock_circuit.allow_single_flight_with_claim = AsyncMock(return_value=(False, False))
 
         result = await smtp_provider.send_email(email_message)
         assert result is False
@@ -163,3 +176,40 @@ def test_get_email_provider_caches_default_instance():
         assert isinstance(first, SMTPProvider)
     finally:
         smtp_module._default_smtp_provider = None
+
+
+@pytest.mark.asyncio
+async def test_d7_only_one_send_is_admitted_while_half_open(smtp_provider, email_message, mock_smtp_cls):
+    """D7: `is_closed` is True during the virtual HALF_OPEN.
+
+    Every concurrent send therefore passed the gate and the recovering
+    SMTP server took the whole burst. The gate now admits exactly ONE send
+    while HALF_OPEN — the probe. The rejected send is not lost: the caller
+    maps False to a failure and the job is retried.
+    """
+    import time
+
+    from src.app.core.utils.circuit_breaker import CircuitBreaker, CircuitState
+
+    breaker = CircuitBreaker(name="email-half-open", failure_threshold=1, recovery_timeout=60.0)
+    await breaker.record_failure(RuntimeError("smtp down"))
+    breaker._last_failure_time = time.time() - 120
+    assert breaker.state == CircuitState.HALF_OPEN
+
+    # The first send must still be IN FLIGHT when the second one arrives —
+    # that is the overlap the gate exists to bound.
+    async def _slow_send(*args, **kwargs):
+        await asyncio.sleep(0.05)
+
+    mock_smtp_cls.return_value.send_message = AsyncMock(side_effect=_slow_send)
+
+    with patch("src.app.core.resilience.breakers.email_circuit", breaker):
+        results = await asyncio.gather(
+            smtp_provider.send_email(email_message),
+            smtp_provider.send_email(email_message),
+        )
+
+    assert results.count(True) == 1
+    assert results.count(False) == 1
+    # The probe slot is released once the admitted send reports its outcome.
+    assert breaker._probe_in_progress is False

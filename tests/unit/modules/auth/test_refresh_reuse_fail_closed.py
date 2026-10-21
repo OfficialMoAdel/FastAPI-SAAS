@@ -54,7 +54,7 @@ class TestMarkerLookupFailureIsAlertable:
     async def test_lookup_failure_logs_at_warning(self, service) -> None:
 
         cache = MagicMock()
-        cache.get = AsyncMock(side_effect=RuntimeError("redis down"))
+        cache.get_strict = AsyncMock(side_effect=RuntimeError("redis down"))
 
         with (
             patch("src.app.core.cache.client.cache_client", cache),
@@ -71,7 +71,7 @@ class TestMarkerLookupFailureIsAlertable:
     async def test_lookup_failure_does_not_log_at_debug(self, service) -> None:
         """The exact defect: DEBUG for a more dangerous condition."""
         cache = MagicMock()
-        cache.get = AsyncMock(side_effect=RuntimeError("redis down"))
+        cache.get_strict = AsyncMock(side_effect=RuntimeError("redis down"))
 
         with (
             patch("src.app.core.cache.client.cache_client", cache),
@@ -94,7 +94,7 @@ class TestReplayIsStillRejectedWithRedisDown:
         fails CLOSED.
         """
         cache = MagicMock()
-        cache.get = AsyncMock(side_effect=RuntimeError("redis down"))
+        cache.get_strict = AsyncMock(side_effect=RuntimeError("redis down"))
 
         with (
             patch("src.app.core.cache.client.cache_client", cache),
@@ -138,7 +138,7 @@ class TestFamilyRevocationStillWorks:
         from src.app.shared.exceptions import UnauthorizedError
 
         cache = MagicMock()
-        cache.get = AsyncMock(return_value=json.dumps(MARKER).encode())
+        cache.get_strict = AsyncMock(return_value=json.dumps(MARKER).encode())
 
         with (
             patch("src.app.core.cache.client.cache_client", cache),
@@ -167,7 +167,7 @@ class TestNoSpuriousWarningOnNormalFlow:
     @pytest.mark.asyncio
     async def test_no_marker_means_no_warning(self, service) -> None:
         cache = MagicMock()
-        cache.get = AsyncMock(return_value=None)
+        cache.get_strict = AsyncMock(return_value=None)
 
         with (
             patch("src.app.core.cache.client.cache_client", cache),
@@ -182,7 +182,7 @@ class TestNoSpuriousWarningOnNormalFlow:
     async def test_malformed_marker_still_takes_the_warning_path(self, service) -> None:
         """Unchanged: a corrupt value warns and returns."""
         cache = MagicMock()
-        cache.get = AsyncMock(return_value=b"not json")
+        cache.get_strict = AsyncMock(return_value=b"not json")
 
         with (
             patch("src.app.core.cache.client.cache_client", cache),
@@ -196,7 +196,7 @@ class TestNoSpuriousWarningOnNormalFlow:
     @pytest.mark.asyncio
     async def test_unverifiable_jti_returns_quietly(self, service) -> None:
         cache = MagicMock()
-        cache.get = AsyncMock()
+        cache.get_strict = AsyncMock()
 
         with (
             patch("src.app.core.cache.client.cache_client", cache),
@@ -205,4 +205,4 @@ class TestNoSpuriousWarningOnNormalFlow:
             await service._reject_reused_refresh_token("not-a-jwt")
 
         mock_logger.warning.assert_not_called()
-        cache.get.assert_not_called()
+        cache.get_strict.assert_not_called()

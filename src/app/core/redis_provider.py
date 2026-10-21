@@ -67,6 +67,11 @@ async def get_redis_pool() -> ConnectionPool:
             socket_timeout=settings.redis_cache.REDIS_CACHE_SOCKET_TIMEOUT,
             socket_connect_timeout=settings.redis_cache.REDIS_CACHE_SOCKET_CONNECT_TIMEOUT,
             retry_on_timeout=True,
+            # D5: the pool answers in BYTES while the client built on it
+            # (below) answers in STRINGS. That asymmetry is deliberate: the
+            # ARQ queue client shares this pool, and ARQ's serializers
+            # require bytes. Only code that talks to the pool directly sees
+            # the difference.
             decode_responses=False,
         )
     return cast(ConnectionPool, _shared_pool)

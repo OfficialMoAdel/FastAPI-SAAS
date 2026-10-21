@@ -66,7 +66,7 @@ The database layer implements async SQLAlchemy 2.0 patterns with careful attenti
 
 The `models.py` module defines essential mixin classes that provide common functionality across all database models. The `UUIDMixin` implements UUID v7 primary keys using the `uuid6` library, providing time-ordered UUIDs that are ideal for distributed systems. The `TimestampMixin` automatically handles `created_at` and `updated_at` timestamps using timezone-aware datetime values. The `SoftDeleteMixin` implements soft deletion through `deleted_at` and `is_deleted` fields, enabling data recovery and audit trails without permanent data loss.
 
-The `tenant_crud.py` and `tenant_mixin.py` modules provide multi-tenancy support through database-level tenant isolation. The `TenantMixin` adds `tenant_id` foreign key and creates indexes for efficient tenant-scoped queries. Specialized CRUD operations in `tenant_crud.py` ensure all tenant operations are properly scoped and validated. The `token_blacklist.py` module handles JWT token invalidation for logout functionality, storing blacklisted tokens in the database for validation during authentication checks.
+The `tenant_crud.py` module provides multi-tenancy support through database-level tenant isolation. Tenant-scoped models declare their `tenant_id` column directly, with a foreign key to `tenants.id`, an index and explicit nullability visible in the model that owns them. There is deliberately no `TenantMixin` class or shared column factory: a declarative mixin cannot add a column to a `MappedAsDataclass` model, so the old class declared nothing and was removed rather than left as a reference to behaviour that does not exist. Specialized CRUD operations in `tenant_crud.py` ensure all tenant operations are properly scoped and validated. The `token_blacklist.py` module handles JWT token invalidation for logout functionality, storing blacklisted tokens in the database for validation during authentication checks.
 
 ### Security Module (`core/security/`)
 
@@ -122,7 +122,7 @@ The authentication module (`auth/`) implements JWT-based authentication with acc
 
 The users module (`users/`) handles user account management including creation, retrieval, update, and soft deletion. The module implements user-scoped operations and integrates with the tenant module for multi-tenant user membership. User profiles support avatar management, preference storage, and activity tracking through the audit system.
 
-The tenants module (`tenants/`) implements multi-tenant organization management, supporting tenant creation, membership management, and tenant-scoped settings. Tenant isolation is enforced at the database level through the tenant mixin and at the API level through the tenant middleware. The module supports tenant hierarchies, invitation-based membership, and role assignment within tenant contexts.
+The tenants module (`tenants/`) implements multi-tenant organization management, supporting tenant creation, membership management, and tenant-scoped settings. Tenant isolation is enforced at the database level through each tenant-scoped model's `tenant_id` foreign key plus PostgreSQL RLS, and at the API level through the tenant middleware. The module supports tenant hierarchies, invitation-based membership, and role assignment within tenant contexts.
 
 ### Authorization and Security Modules
 
@@ -234,7 +234,7 @@ Understanding component relationships is essential for making changes that don't
 
 The main.py application imports and composes the API router and middleware stack. The API router imports module routers, which import service classes and dependencies. Service classes use CRUD operations for database access and may publish events through the event bus. The middleware stack depends on core services for configuration, security, and tenant resolution.
 
-Database models inherit from base mixins and may reference other models through foreign keys. The tenant mixin establishes the tenant isolation pattern that all tenant-scoped models follow. Event models support the event bus pattern for inter-module communication.
+Database models inherit from base mixins and may reference other models through foreign keys. Tenant-scoped models carry an explicit `tenant_id` foreign key and are covered by the RLS policies, which establishes the tenant isolation pattern they follow. Event models support the event bus pattern for inter-module communication.
 
 ## Extension Points
 

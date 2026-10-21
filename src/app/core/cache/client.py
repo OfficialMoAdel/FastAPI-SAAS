@@ -18,7 +18,10 @@ from __future__ import annotations
 
 from typing import Any, Protocol, cast
 
+from src.app.core.logger import get_logger
 from src.app.core.utils.cache.keys import build_tenant_key
+
+logger = get_logger(__name__)
 
 
 class CacheClient(Protocol):
@@ -30,6 +33,15 @@ class CacheClient(Protocol):
 
     async def get(self, key: str) -> str | None:
         """Return the value at ``key``, or None."""
+        ...  # pragma: no cover - Protocol
+
+    async def get_strict(self, key: str) -> str | None:
+        """Read ``key`` without swallowing backend errors.
+
+        Security-sensitive checks use this: a Redis outage must be
+        observable so the caller can log it and run its own fallback,
+        instead of being indistinguishable from a cache miss.
+        """
         ...  # pragma: no cover - Protocol
 
     async def set(self, key: str, value: str, ttl: int | None = None) -> None:
@@ -49,6 +61,17 @@ class CacheClient(Protocol):
 
     async def delete(self, *keys: str) -> int:
         """Delete keys; return the number removed."""
+        ...  # pragma: no cover - Protocol
+
+    async def release_lock_if_owned(self, key: str, token: str) -> bool:
+        """Release a lock ONLY if this caller still owns it.
+
+        The ownership-token Lua (``lock_release_if_owned``) is the primitive
+        the repo already uses in four places. A blind delete lets a slow
+        worker whose lock has expired delete the lock a DIFFERENT worker
+        acquired in the meantime. Returns False when the lock is gone, is
+        owned by someone else, or could not be released.
+        """
         ...  # pragma: no cover - Protocol
 
     async def exists(self, key: str) -> bool:
@@ -93,6 +116,21 @@ class RedisCacheAdapter:
         client = get_redis()
         if client is None:
             return None
+        try:
+            return cast("str | None", await client.get(key))
+        except Exception as e:  # noqa: BLE001 - the cache must never fail a request
+            # D4: the cache is a read-ahead optimisation. A Redis outage must
+            # read as a MISS, not as a failed request.
+            logger.warning("cache_get_failed", key=key, error=str(e))
+            return None
+
+    async def get_strict(self, key: str) -> str | None:
+        from src.app.core.redis_provider import get_redis
+
+        client = get_redis()
+        if client is None:
+            return None
+        # Deliberately uncaught: callers that need fail-open use ``get``.
         return cast("str | None", await client.get(key))
 
     async def set(self, key: str, value: str, ttl: int | None = _DEFAULT_TTL) -> None:
@@ -104,7 +142,13 @@ class RedisCacheAdapter:
         # P2-B: an explicit ttl=None is coerced to the fail-safe default —
         # a missing ttl must never create a non-expiring key (unbounded
         # growth). There is no persistent-key path on this adapter.
-        await client.set(key, value, ex=ttl if ttl is not None else _DEFAULT_TTL)
+        try:
+            await client.set(key, value, ex=ttl if ttl is not None else _DEFAULT_TTL)
+        except Exception as e:  # noqa: BLE001 - the cache must never fail a request
+            # D4: a write that follows a SUCCEEDED business operation must not
+            # turn that success into a 500. The value is lost, the operation
+            # is not.
+            logger.warning("cache_set_failed", key=key, error=str(e))
 
     async def set_nx(self, key: str, value: str, ttl: int) -> bool:
         from src.app.core.redis_provider import get_redis
@@ -112,6 +156,13 @@ class RedisCacheAdapter:
         client = get_redis()
         if client is None:
             return False
+        # D4: the claim is the ONE operation that does NOT fail open. "The
+        # key was taken" and "the claim could not be made" are different
+        # answers, and a caller that cannot tell them apart is in trouble:
+        # the billing webhook lock falls back to the DB idempotency check
+        # when the claim ERRORS, and that fallback is what stops a Stripe
+        # event from being processed twice. Collapsing an error into False
+        # would silently drop that fallback. The error propagates.
         result = await client.set(key, value, ex=ttl, nx=True)
         return bool(result)
 
@@ -121,7 +172,39 @@ class RedisCacheAdapter:
         client = get_redis()
         if client is None or not keys:
             return 0
-        return cast(int, await client.delete(*keys))
+        try:
+            return cast(int, await client.delete(*keys))
+        except Exception as e:  # noqa: BLE001 - the cache must never fail a request
+            logger.warning("cache_delete_failed", keys=list(keys), error=str(e))
+            return 0
+
+    async def release_lock_if_owned(self, key: str, token: str) -> bool:
+        """Release a lock only if this caller still owns it.
+
+        Uses the ownership-token Lua the repo already owns
+        (``lock_release_if_owned``). There is deliberately NO blind-delete
+        fallback: the whole point is to avoid deleting a lock a different
+        worker acquired after this one's expired. A lock that cannot be
+        released expires on its own TTL.
+        """
+        from src.app.core.redis_provider import get_redis
+
+        client = get_redis()
+        if client is None:
+            return False
+        try:
+            from src.app.core.utils.lua_manager import get_lua_manager
+
+            released = await get_lua_manager().execute(
+                client,
+                "lock_release_if_owned",
+                keys=[key],
+                args=[token],
+            )
+            return bool(released)
+        except Exception as e:  # noqa: BLE001 - the lock expires on its own
+            logger.warning("cache_lock_release_failed", key=key, error=str(e))
+            return False
 
     async def exists(self, key: str) -> bool:
         from src.app.core.redis_provider import get_redis
@@ -129,7 +212,11 @@ class RedisCacheAdapter:
         client = get_redis()
         if client is None:
             return False
-        return bool(await client.exists(key))
+        try:
+            return bool(await client.exists(key))
+        except Exception as e:  # noqa: BLE001 - the cache must never fail a request
+            logger.warning("cache_exists_failed", key=key, error=str(e))
+            return False
 
     @staticmethod
     def tenant_key(key: str, tenant_id: Any = None) -> str:

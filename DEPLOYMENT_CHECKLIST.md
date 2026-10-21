@@ -252,6 +252,14 @@ job_duration_ms > (job_duration_baseline_ms * 2)
   Rollback plan: Ready
   ```
 
+- [ ] **ARQ worker processes**: arq polls exactly ONE queue per worker process. The event bus enqueues `NORMAL` events to `arq:queue` and `LOW` events to `arq:queue_low_priority`, so run a second worker process for the low-priority queue whenever a publisher uses `EventPriority.LOW` — otherwise those events are enqueued and never consumed.
+  ```bash
+  # primary worker (default queue + the cron schedules)
+  arq src.app.core.worker.settings.WorkerSettings
+  # low-priority queue worker (no cron jobs — they belong to the primary worker)
+  arq src.app.core.worker.settings.LowPriorityWorkerSettings
+  ```
+
 ### Step 2: Staging Deployment
 
 - [ ] **Deploy to Staging**

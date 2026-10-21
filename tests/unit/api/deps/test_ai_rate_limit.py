@@ -67,7 +67,12 @@ class TestRateLimitDependency:
             assert result == mock_current_user
             assert mock_response.headers["X-RateLimit-Limit"] == "60"
             assert mock_response.headers["X-RateLimit-Remaining"] == "59"
-            assert mock_response.headers["X-RateLimit-Reset"] == "60"
+            # The reset is the remainder of the window the counter lives in.
+            # It used to be `retry_after`, which is 0 on every ALLOWED
+            # request — the client was told nothing.
+            reset = int(mock_response.headers["X-RateLimit-Reset"])
+            assert 1 <= reset <= 60
+            assert mock_response.headers["X-RateLimit-Period"] == "60"
 
     @pytest.mark.asyncio
     async def test_rate_limit_adds_headers_on_success(self, mock_response, mock_current_user):
@@ -84,7 +89,9 @@ class TestRateLimitDependency:
             assert result == mock_current_user
             assert mock_response.headers["X-RateLimit-Limit"] == "60"
             assert mock_response.headers["X-RateLimit-Remaining"] == "15"
-            assert mock_response.headers["X-RateLimit-Reset"] == "45"
+            reset = int(mock_response.headers["X-RateLimit-Reset"])
+            assert 1 <= reset <= 60
+            assert mock_response.headers["X-RateLimit-Period"] == "60"
 
     @pytest.mark.asyncio
     async def test_rate_limit_raises_429_when_exceeded(self, mock_response, mock_current_user):
@@ -134,7 +141,9 @@ class TestRateLimitDependency:
             headers = exc_info.value.headers
             assert headers["X-RateLimit-Limit"] == "60"
             assert headers["X-RateLimit-Remaining"] == "0"
-            assert headers["X-RateLimit-Reset"] == "60"
+            assert headers["X-RateLimit-Period"] == "60"
+            reset = int(headers["X-RateLimit-Reset"])
+            assert 1 <= reset <= 60
 
     @pytest.mark.asyncio
     async def test_rate_limit_keys_on_user_id_via_the_budget_seam(self, mock_response, mock_current_user):

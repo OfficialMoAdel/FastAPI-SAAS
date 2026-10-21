@@ -776,7 +776,14 @@ async def send_email_task(
                 async def _send_with_check() -> bool:
                     result = await provider.send_email(message)
                     if not result:
-                        raise RuntimeError(f"EmailProvider failed to send email to {to_email}")
+                        # F8: the message is NOT named here. This text is
+                        # what `monitor_job` writes to the DLQ on the final
+                        # failure, and the DLQ is an operator-facing surface:
+                        # the recipient address would be persisted there (PII
+                        # in a store that outlives the notification). The
+                        # notification id is in scope of the caller and
+                        # identifies the row without naming the person.
+                        raise RuntimeError(f"EmailProvider failed to send notification {notification_id}")
                     return bool(result)
 
                 await with_retry(

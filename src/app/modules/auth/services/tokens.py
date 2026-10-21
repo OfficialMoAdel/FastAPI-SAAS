@@ -188,10 +188,16 @@ class TokenIssuer:
 
         # Create new tokens FIRST to ensure atomicity. If this fails, the user is not left locked out.
         lock_key = None
+        lock_token = None
         old_jti = old_refresh_payload.get("jti")
         if cache_client.client is not None and old_jti:
             lock_key = f"refresh_lock:{old_jti}"
-            lock_acquired = await cache_client.set_nx(lock_key, "1", ttl=30)
+            # D8: the lock carries an OWNERSHIP TOKEN. A blind delete lets a
+            # slow refresh whose lock already expired delete the lock a
+            # SECOND refresh acquired in the meantime — which would let two
+            # rotations of the same token run at once.
+            lock_token = uuid4().hex
+            lock_acquired = await cache_client.set_nx(lock_key, lock_token, ttl=30)
             if not lock_acquired:
                 raise UnauthorizedError("Token refresh already in progress.")
         try:
@@ -245,12 +251,14 @@ class TokenIssuer:
             except Exception as e:
                 logger.debug("failed to plant refresh rotation marker", error=str(e))
         finally:
-            if lock_key:
+            if lock_key and lock_token:
                 try:
-                    await cache_client.delete(lock_key)
+                    # D8: release only if THIS caller still owns the lock.
+                    # The TTL (30s) bounds the lock either way.
+                    await cache_client.release_lock_if_owned(lock_key, lock_token)
                 except Exception as e:
                     # Bounded by ex=30, but log for incident diagnosis
-                    logger.debug("Failed to delete refresh lock key", lock_key=lock_key, error=str(e))
+                    logger.debug("Failed to release refresh lock key", lock_key=lock_key, error=str(e))
 
         # Invalidate the old session entry to prevent session proliferation,
         # keyed by the stable sid claim carried through rotation.

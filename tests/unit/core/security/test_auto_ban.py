@@ -599,7 +599,7 @@ class TestCheckBanAndRateLimit:
         mock_get_redis.return_value = mock_redis
         mock_get_ban_info.return_value = BanInfo(is_banned=False)
 
-        ban_info, (is_limited, remaining, retry_after) = await check_ban_and_rate_limit(
+        ban_info, (is_limited, remaining, retry_after, _degraded) = await check_ban_and_rate_limit(
             sample_ip, "rate_limit:test:path", 0, 60
         )
 
@@ -619,7 +619,7 @@ class TestCheckBanAndRateLimit:
         mock_get_redis.return_value = mock_redis
         mock_get_ban_info.return_value = BanInfo(is_banned=False)
 
-        ban_info, (is_limited, remaining, retry_after) = await check_ban_and_rate_limit(
+        ban_info, (is_limited, remaining, retry_after, _degraded) = await check_ban_and_rate_limit(
             sample_ip, "rate_limit:test:path", -1, 120
         )
 
@@ -639,7 +639,7 @@ class TestCheckBanAndRateLimit:
         mock_get_redis.return_value = mock_redis
         mock_get_ban_info.return_value = BanInfo(is_banned=True, reason="banned for test")
 
-        ban_info, (is_limited, remaining, retry_after) = await check_ban_and_rate_limit(
+        ban_info, (is_limited, remaining, retry_after, _degraded) = await check_ban_and_rate_limit(
             sample_ip, "rate_limit:test:path", 0, 60
         )
 
@@ -659,7 +659,7 @@ class TestP24NoClientPolicy:
         from src.app.core.config import settings as real_settings
 
         assert real_settings.rate_limit.RATE_LIMIT_FAIL_OPEN is False
-        ban_info, (is_limited, _remaining, _retry_after) = await check_ban_and_rate_limit(
+        ban_info, (is_limited, _remaining, _retry_after, _degraded) = await check_ban_and_rate_limit(
             sample_ip, "rate_limit:p24", 10, 60
         )
         assert ban_info.is_banned is False
@@ -671,7 +671,7 @@ class TestP24NoClientPolicy:
         from src.app.core.config import settings as real_settings
 
         with patch.object(real_settings.rate_limit, "RATE_LIMIT_FAIL_OPEN", True):
-            ban_info, (is_limited, _remaining, _retry_after) = await check_ban_and_rate_limit(
+            ban_info, (is_limited, _remaining, _retry_after, _degraded) = await check_ban_and_rate_limit(
                 sample_ip, "rate_limit:p24", 10, 60
             )
         assert ban_info.is_banned is False

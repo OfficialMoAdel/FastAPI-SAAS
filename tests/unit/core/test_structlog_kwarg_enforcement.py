@@ -70,7 +70,7 @@ SECURITY_EVENTS = [
     ("src/app/core/security/auto_ban.py", "auto_ban_applied"),
     ("src/app/core/security/auto_ban.py", "auto_ban_lifted"),
     ("src/app/middleware/tenant.py", "tenant_resolution_failed_invalid_slug"),
-    ("src/app/core/tenancy/resolver.py", "tenant_l1_cache_read_failed"),
+    ("src/app/core/tenancy/resolver.py", "tenant_l1_cache_entry_corrupt"),
     ("src/app/modules/auth/services/mfa.py", "mfa_lockout_redis_unavailable_fail_closed"),
 ]
 
@@ -79,6 +79,7 @@ SECURITY_EVENT_FIELDS = {
     "auto_ban_applied": {"ip", "duration", "reason", "ban_count"},
     "auto_ban_lifted": {"ip"},
     "tenant_resolution_failed_invalid_slug": {"tenant_slug"},
+    "tenant_l1_cache_entry_corrupt": {"slug", "error"},
     "mfa_lockout_redis_unavailable_fail_closed": {"user_id"},
 }
 

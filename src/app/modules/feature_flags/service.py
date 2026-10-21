@@ -117,6 +117,17 @@ async def _with_flag_lock(key: str, coro: Awaitable[T]) -> T:
         return await coro
 
 
+def reset_feature_flag_locks() -> None:
+    """Drop the per-key singleflight locks (test isolation).
+
+    D9: an ``asyncio.Lock`` is bound to the event loop that first awaits
+    it, so a function-scoped test loop raises "bound to a different event
+    loop" when a lock created in an earlier test is reused. Production has
+    one loop per process, so this is a test-only hook.
+    """
+    _flag_cache_locks.clear()
+
+
 class FeatureFlagService(BaseService[FeatureFlag]):
     """Service for managing feature flags using BaseService pattern."""
 

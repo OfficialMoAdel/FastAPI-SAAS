@@ -107,10 +107,27 @@ async def close_webhook_http_client() -> None:
 
     Should be called during application shutdown.
     """
-    global _webhook_http_client
+    global _webhook_http_client, _client_lock
 
     if _webhook_http_client is not None:
         if not _webhook_http_client.is_closed:
             await _webhook_http_client.aclose()
         _webhook_http_client = None
         logger.debug("Closed shared webhook HTTP client")
+    # D9: the creation lock is bound to the loop that first used it. A
+    # function-scoped test loop would otherwise raise "bound to a different
+    # event loop" the next time the client is recreated. Production has one
+    # loop per process, so dropping it here is free.
+    _client_lock = None
+
+
+async def reset_webhook_http_client() -> None:
+    """Close and forget the cached client and its creation lock (test isolation).
+
+    D9: both are bound to the first event loop that used them, so a
+    function-scoped test run would hit "bound to a different event loop"
+    when the client is recreated. The client must be closed here: dropping
+    the only reference to an ``httpx.AsyncClient`` leaves its transport
+    open until the loop or GC gets to it.
+    """
+    await close_webhook_http_client()

@@ -269,7 +269,7 @@ def test_rate_limit_headers_allowed(mock_combined, client):
     H-3: the hot path now runs ban+GCRA in one combined call; mock the new
     seam. Decorators inject bottom-up, so the FIRST arg is the check_ban
     mock — set its return_value rather than rebinding the name."""
-    mock_combined.return_value = (BanInfo(is_banned=False), (False, 5, 0))
+    mock_combined.return_value = (BanInfo(is_banned=False), (False, 5, 0, False))
 
     response = client.get("/")
 
@@ -285,7 +285,7 @@ def test_rate_limit_headers_exceeded(mock_combined, client):
 
     H-3: mock the combined ban+GCRA seam (see test_rate_limit_headers_allowed)."""
     limit = 10
-    mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10))
+    mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10, False))
 
     response = client.get("/")
 
@@ -377,7 +377,7 @@ def test_refresh_budget_exceeded_returns_429(mock_budget, mock_ban_info, client)
 def test_options_skips_rate_limit(mock_combined, mock_ban_info, client):
     """P1-3: CORS preflight must not burn rate-limit budget. Even with the
     combined seam armed to 429, OPTIONS passes through with zero Redis RTT."""
-    mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10))
+    mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10, False))
     mock_ban_info.return_value = BanInfo(is_banned=False)
 
     response = client.options("/")
@@ -412,7 +412,7 @@ def test_health_path_skips_rate_limit(mock_combined, mock_ban_info, client):
     """P1-3: orchestrator probes (/health) bypass rate limiting entirely —
     full passthrough, not even the cheap ban lookup. The bare test app has
     no /health route, so 404 proves pass-through instead of a 429."""
-    mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10))
+    mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10, False))
 
     response = client.get("/health")
 
@@ -426,7 +426,7 @@ def test_health_path_skips_rate_limit(mock_combined, mock_ban_info, client):
 def test_exempt_subpath_skips_rate_limit(mock_combined, mock_ban_info, client):
     """P1-3: exempt sub-paths (/api/v1/health/live) inherit the skip via the
     shared is_path_exempt prefix rule."""
-    mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10))
+    mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10, False))
 
     response = client.get("/api/v1/health/live")
 

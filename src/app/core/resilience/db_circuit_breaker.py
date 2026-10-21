@@ -102,3 +102,12 @@ async def db_circuit_guard() -> AsyncIterator[None]:
         # so the next recovery window can actually probe (otherwise wedge).
         await db_circuit.clear_probe_async()
         raise
+    except BaseException:
+        # D6: a CANCELLED operation is a BaseException, so the arm above
+        # never runs and the HALF_OPEN probe slot would stay claimed for the
+        # life of the process. Every later HALF_OPEN caller would then be
+        # rejected with ServiceUnavailableError — 503 for ALL database
+        # traffic until the breaker is reset or the process restarts. A
+        # client disconnect or a request timeout is enough to trigger it.
+        await db_circuit.clear_probe_async()
+        raise

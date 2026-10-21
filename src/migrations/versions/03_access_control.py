@@ -175,8 +175,18 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["tier_id"], ["tier.id"], name=op.f("fk_rate_limit_tier_id"), ondelete="CASCADE"),
         sa.CheckConstraint('"limit" > 0', name=op.f("ck_rate_limit_limit_positive")),
         sa.CheckConstraint("period > 0", name=op.f("ck_rate_limit_period_positive")),
+        # The (tier_id, path) lookup is the hot path of this table, and the
+        # ORM declares the SAME columns as a UNIQUE constraint
+        # (``uq_rate_limit_tier_path`` in
+        # ``src/app/modules/rate_limits/models.py``). A unique constraint
+        # builds its own index, so the separate plain index this layer used
+        # to create (``ix_rate_limit_tier_path``) was a second structure over
+        # identical columns — pure write and storage cost — AND it left the
+        # two layers disagreeing: the ORM promised uniqueness the schema did
+        # not have. Creating the constraint instead gives one index, the
+        # uniqueness the ORM declares, and agreement between the layers.
+        sa.UniqueConstraint("tier_id", "path", name="uq_rate_limit_tier_path"),
     )
-    op.create_index("ix_rate_limit_tier_path", "rate_limit", ["tier_id", "path"])
 
 
 def downgrade() -> None:

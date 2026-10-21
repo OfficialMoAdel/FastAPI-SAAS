@@ -303,6 +303,13 @@ class _FakeSequentialLimiter:
         self.ledger[key] = self.ledger.get(key, 0) + 1
         return (False, limit, 0)
 
+    async def check_rate_limit_algorithm_with_status(
+        self, key: str, limit: int, period: int
+    ) -> tuple[bool, int, int, bool]:
+        self.calls.append(key)
+        self.ledger[key] = self.ledger.get(key, 0) + 1
+        return (False, limit, 0, False)
+
 
 async def _fixed_limits(
     path: str,
@@ -363,7 +370,7 @@ class _OracleEnv:
         path: str,
         user_id: Any = None,
         anonymous_ip: str | None = None,
-    ) -> tuple[bool | None, int, int, str, Any, tuple[bool, int, int]]:
+    ) -> tuple[bool | None, int, int, str, Any, tuple[bool, int, int, bool]]:
         return await auto_ban_mod.check_ban_blacklist_and_rate_limit(
             client_ip=client_ip,
             token="tok-oracle-a7",
@@ -487,7 +494,7 @@ class TestNoRedisMirrorsPolicy:
         verdict, limit, period, key, ban_info, rl = result
         assert verdict is None
         assert (limit, period) == (_FIXED_LIMIT, _FIXED_PERIOD)
-        assert rl == (False, _FIXED_LIMIT, 0)
+        assert rl == (False, _FIXED_LIMIT, 0, False)
         assert ban_info.is_banned is False
         assert oracle_env.lua.calls == []
         assert oracle_env.ledger_total() == 0
@@ -502,7 +509,7 @@ class TestNoRedisMirrorsPolicy:
         verdict, limit, period, key, ban_info, rl = result
         assert verdict is True
         assert (limit, period) == (_FIXED_LIMIT, _FIXED_PERIOD)
-        assert rl == (True, _FIXED_LIMIT, 0)
+        assert rl == (True, _FIXED_LIMIT, 0, False)
         assert ban_info.is_banned is False
         assert oracle_env.lua.calls == []
 

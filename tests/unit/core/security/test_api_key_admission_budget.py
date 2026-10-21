@@ -128,11 +128,11 @@ async def _evaluate(
         patch("src.app.core.security.request_admission.consume", AsyncMock(side_effect=_record)),
         patch(
             "src.app.core.security.request_admission.check_ban_and_rate_limit",
-            AsyncMock(return_value=(BanInfo(False), (limited, 0, _API_KEY_LIMIT[1]))),
+            AsyncMock(return_value=(BanInfo(False), (limited, 0, _API_KEY_LIMIT[1], False))),
         ),
         patch(
             "src.app.core.security.request_admission.check_ban_blacklist_and_rate_limit",
-            AsyncMock(return_value=(BanInfo(False), False, False, (False, 999, 3600), False, False)),
+            AsyncMock(return_value=(BanInfo(False), False, False, (False, 999, 3600, False), False, False)),
         ),
         patch("src.app.core.security.request_admission.check_and_auto_ban", auto_ban_check),
         patch("src.app.core.security.request_admission.uses_gcra", MagicMock(return_value=True)),

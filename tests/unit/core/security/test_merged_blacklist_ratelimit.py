@@ -67,7 +67,7 @@ class TestMergedBlacklistRateLimit:
         assert (limit, period) == (200, 60)
         assert key == "rate_limit:user:42:/api/v1/x" or "user:42" in key
         assert ban_info.is_banned is False
-        assert rl == (False, 199, 0)
+        assert rl == (False, 199, 0, False)
         mock_exec.assert_awaited_once()
         # Single RTT: one script execution for blacklist + ban + GCRA.
         _, kwargs = mock_exec.call_args
@@ -92,7 +92,7 @@ class TestMergedBlacklistRateLimit:
         assert (limit, period) == (100, 60)
         assert key == "rate_limit:anonymous:ip:10.0.0.1:/api/v1/x"
         assert ban_info.is_banned is False
-        assert rl == (False, 99, 0)
+        assert rl == (False, 99, 0, False)
 
     @pytest.mark.asyncio
     async def test_blacklisted_premium_resolves_anonymous_limit_not_premium(self):
@@ -156,7 +156,7 @@ class TestMergedBlacklistRateLimit:
             patch(
                 "src.app.core.security.auto_ban.check_ban_and_rate_limit",
                 new_callable=AsyncMock,
-                return_value=(BanInfo(is_banned=False), (True, 0, 60)),
+                return_value=(BanInfo(is_banned=False), (True, 0, 60, False)),
             ),
         ]
         for p in ctx["patches"] + extra:
@@ -171,7 +171,7 @@ class TestMergedBlacklistRateLimit:
 
         assert verdict is False
         assert (limit, period) == (0, 60)
-        assert rl == (True, 0, 60)
+        assert rl == (True, 0, 60, False)
         mock_exec.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -216,7 +216,7 @@ class TestMergedBlacklistRateLimit:
             started = p.start()
             if p is extra[-1]:
                 rl_mock = started
-                rl_mock.check_rate_limit_algorithm = AsyncMock(return_value=(False, 50, 0))
+                rl_mock.check_rate_limit_algorithm_with_status = AsyncMock(return_value=(False, 50, 0, False))
         try:
             verdict, limit, period, key, ban_info, rl = await check_ban_blacklist_and_rate_limit(
                 **_base_kwargs()
@@ -227,7 +227,7 @@ class TestMergedBlacklistRateLimit:
 
         assert verdict is False
         assert (limit, period) == (200, 60)
-        assert rl == (False, 50, 0)
+        assert rl == (False, 50, 0, False)
 
 
 class TestCompositePrefetchSkipBlacklist:
