@@ -113,10 +113,10 @@ class AuditLog(Base):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(  # type: ignore
+    tenant: Mapped["Tenant"] = relationship(
         "Tenant", back_populates="audit_logs", init=False, lazy="noload"
     )
-    user: Mapped["User | None"] = relationship(  # type: ignore
+    user: Mapped["User | None"] = relationship(
         "User", back_populates="audit_logs", init=False, lazy="noload"
     )
 

@@ -146,19 +146,12 @@ ignore = [
     "F403", # star imports
 ]
 "src/migrations/*" = ["E501"]
-# P1-17: BLE001 is enforced on the boot path
-# (src/app/main.py, src/app/core/setup.py, src/app/api/monitoring.py,
-# src/app/core/job_monitoring.py). Everything else below is deferred to the
-# repo-wide blind-except campaign — do NOT add new broad excepts there
-# without a justification; extend enforcement instead.
+# P1-17: BLE001 (blind except) is enforced on the boot path
+# (main.py, core/setup.py, api/monitoring.py, core/job_monitoring.py).
+# Other files below are deferred; do not add new broad excepts without justification.
 #
-# muse 22 (FastAPI_saas-io15.4) narrowed three more subtrees from a blanket
-# glob to an explicit per-file list, so that `api/deps/auth.py`,
-# `middleware/tenant.py` and `clients/notifications/smtp.py` are now
-# ENFORCED rather than silently exempt. A glob like `middleware/**` cannot
-# exempt its siblings and enforce one file: ruff UNIONs a broad
-# per-file-ignore with a narrower one, so the exemption always wins. The
-# list form is what makes the gate actually bite on the triaged files.
+# Explicit file lists are used instead of broad globs because ruff unions
+# per-file-ignores, meaning a broad ignore would silently exempt nested files.
 "src/app/{modules,admin,transport,models,schemas,shared,templates}/**" = ["BLE001"]
 # Deferred siblings of the triaged files (still unannotated broad excepts,
 # not yet triaged — each must carry a reasoned noqa or be narrowed later).
@@ -173,47 +166,27 @@ ignore = [
 "src/app/core/{__init__,env_validator,errors,health,json_utils,logger,middleware_exempt,pagination,redis_provider,schemas}.py" = ["BLE001"]
 "src/{migrations,scripts}/**" = ["BLE001"]
 "tests/**" = ["BLE001", "TID"]
-# P1-20: TID (banned-api) per-file exemptions. The package-root rule
-# applies to cross-module production imports; these are sanctioned:
-# - api/v1/__init__.py is the composition root — it MUST import routers to mount them.
-# - modules/*/__init__.py are the facades — deep imports inside lazy __getattr__ ARE the seam.
-# (tests/** above: white-box tests pin internals + mock targets by design.)
+# P1-20: TID (banned-api) exemptions for package roots.
+# - api/v1/__init__.py is the composition root and must import routers.
+# - modules/*/__init__.py are facades that use lazy __getattr__.
 "src/app/api/v1/__init__.py" = ["TID"]
 "src/app/modules/*/__init__.py" = ["TID"]
-# P1-20 (widened, 2026-09-30) — the exemptions that make the widened ban
-# expressible. ruff cannot see WHO imports, so each entry below is a seam
-# where a service/router is legitimately reached, and each is a class of
-# site rather than a single file. Removing one turns the gate red.
-# - modules/*/router.py + modules/*/routers/**: a module's own router
-#   calling its own service. That is the module's internal layering.
-# - modules/*/checkout_service.py etc. are NOT exempt: a service reaching
-#   ANOTHER module's service is exactly the coupling this gate exists for.
+# P1-20: TID251 exemptions for intra-module service/router edges.
+# ruff banned-api is prefix-only and cannot distinguish the importer,
+# so these exemptions allow a module to call its own service/router.
 "src/app/modules/*/router.py" = ["TID251"]
-# auth is the one module whose service layer is a PACKAGE: `auth/service.py`
-# and `auth/services/*` are siblings inside the same module, so the
-# intra-module rule above (which matches only `router.py`/`routers/`) does
-# not cover them. These are auth-internal edges, not cross-module coupling.
+# auth's service layer is a package, requiring explicit sibling exemptions.
 "src/app/modules/auth/service.py" = ["TID251"]
 "src/app/modules/auth/services/**" = ["TID251"]
 "src/app/modules/*/routers/**" = ["TID251"]
-# Intra-module service/router edges that the wildcard above does not cover
-# (the patterns only match files named `router.py`/`routers/`):
-# - rbac/permissions_router.py is rbac's own second router, so it reaches
-#   rbac.router and rbac.service; it is intra-module layering like router.py.
-# - billing/checkout_service.py and audit_logs/trail.py are siblings of
-#   their own module's service.py, not a cross-module consumer.
+# Non-standard filenames that still represent intra-module layering.
 "src/app/modules/rbac/permissions_router.py" = ["TID251"]
 "src/app/modules/billing/checkout_service.py" = ["TID251"]
 "src/app/modules/audit_logs/trail.py" = ["TID251"]
-# DELIBERATE cross-module exemptions — a module reaching ANOTHER module's
-# service. These are the two residual breaches this gate reports today.
-# Both are documented import-cycle guards, not drift: `tiers/__init__.py`
-# states that `tiers.service` transitively imports `rate_limits`, so
-# `users.service` and `rate_limits.service` import it directly and eagerly
-# to keep the cycle out of the tiers-first import order. Rewriting them to
-# the facade would reintroduce the ImportError that __getattr__ was added
-# to prevent. They stay as named, visible debt — a NEW cross-module
-# service import is still red.
+# Deliberate cross-module exemptions to prevent import cycles.
+# `tiers/__init__.py` transitively imports `rate_limits`, so `users.service`
+# and `rate_limits.service` import it directly to avoid circular imports.
+# New cross-module service imports are still blocked.
 "src/app/modules/users/service.py" = ["TID251"]
 "src/app/modules/rate_limits/service.py" = ["TID251"]
 # events.py registers handlers with the services that own them; worker.py
@@ -238,25 +211,18 @@ max-complexity = 24
 # exceptions are env_validator.py (pre-Pydantic raw-env validator) and
 # scripts/** (ops harnesses); see per-file-ignores above.
 "os.getenv".msg = "Use Pydantic settings (src.app.core.config) instead of raw os.getenv"
-# P1-20 WIDENED + RE-FRAMED (2026-09-30). This list previously named 6 of
-# the 160 internal cells and `ruff check --select TID251` was CLEAN — it
-# caught nothing. The rule as written ("never import another module's
-# internals", ARCHITECTURE.md:39) defends the BEHAVIOUR LAYER: a module's
-# service and router are what the facade exists to hide. models/schemas/crud
-# are not that seam; banning them would have demanded 429 rewrites of LEGAL
-# intra-module imports (measured), not 40 targeted ones.
+# P1-20: Cross-module import restrictions (ARCHITECTURE.md:39).
 #
-# The reframe is also the only expressible one: ruff banned-api is
-# PREFIX-ONLY, has NO WILDCARDS, and has NO NOTION OF THE IMPORTER. Banning
-# `src.app.modules.X` would ban the facade `src.app.modules.X` itself and
-# would flag a module's own `router.py -> service.py` edge, which is that
-# module's internal layering and is legal. The per-file-ignores that make
-# this green are therefore structural, not cosmetic.
+# Restricts imports of `{module}.service` and `{module}.router` to prevent
+# cross-module coupling at the behavior layer. Models, schemas, and CRUD
+# operations are not restricted, as they are legitimately shared within modules.
 #
-# Cells: every `{module}.service` and `{module}.router` (and their
-# subpackages) enumerated from the tree - 40 cells across all 21 modules
-# that have a service or router. `_base` is excluded: it is documented
-# shared scaffolding, not a feature module.
+# Uses per-file-ignores because `ruff banned-api` is prefix-only and lacks
+# wildcards or importer context. A broad ban would flag legal intra-module
+# imports (e.g., `router.py` importing `service.py`).
+#
+# Applies to all 40 service/router cells across the 21 feature modules.
+# `_base` is excluded as shared scaffolding.
 # ai
 "src.app.modules.ai.router".msg = 'Deep module import: use the package root `src.app.modules.ai` (its lazy __getattr__ facade) instead'
 "src.app.modules.ai.service".msg = 'Deep module import: use the package root `src.app.modules.ai` (its lazy __getattr__ facade) instead'
@@ -297,6 +263,7 @@ max-complexity = 24
 "src.app.modules.rbac.service".msg = 'Deep module import: use the package root `src.app.modules.rbac` (its lazy __getattr__ facade) instead'
 # security
 "src.app.modules.security.router".msg = 'Deep module import: use the package root `src.app.modules.security` (its lazy __getattr__ facade) instead'
+"src.app.modules.security.service".msg = 'Deep module import: use the package root `src.app.modules.security` (its lazy __getattr__ facade) instead'
 # storage
 "src.app.modules.storage.router".msg = 'Deep module import: use the package root `src.app.modules.storage` (its lazy __getattr__ facade) instead'
 "src.app.modules.storage.service".msg = 'Deep module import: use the package root `src.app.modules.storage` (its lazy __getattr__ facade) instead'
@@ -366,21 +333,14 @@ markers = [
 [dependency-groups]
 dev = [
     "aiosqlite>=0.21.0",
-    # q2ik (d): `src/benchmarks/prof_request_path.py:482` and
-    # `src/benchmarks/census.py:443` both do a lazy
-    # `from asgi_lifespan import LifespanManager` inside the phase that drives
-    # the app in-process. The lazy import is deliberate - neither module may be
-    # imported into a test session - but the PACKAGE was never declared, so both
-    # instruments died with ModuleNotFoundError on any machine that did not
-    # happen to have it installed. That is how an instrument that is supposed to
-    # produce a number produces a traceback instead, and it is invisible until
-    # the instrument is actually run on a clean checkout.
+    # q2ik (d): Adds `asgi-lifespan` to the declared dependencies.
     #
-    # Found by criterion (d) of the Phase-0 Step 1 exit gate, which asks that
-    # this file either compile and produce a profile on the Linux target or be
-    # deleted. It compiled; it did not produce a profile. Deleting a 766-line
-    # profiler over a missing one-line declaration would have been the wrong
-    # trade, so the declaration is what got added.
+    # `prof_request_path.py` and `census.py` use a lazy import for `LifespanManager`
+    # to avoid loading it during test sessions. This lazy import hid the missing
+    # package declaration, causing `ModuleNotFoundError` on clean checkouts.
+    #
+    # Caught by the Phase-0 exit gate, which requires these profilers to run or be
+    # deleted. Adding the dependency keeps the profilers functional.
     "asgi-lifespan>=2.1.0",
     "faker>=37.3.0",
     # s92p.1: the layering gate is cited as an enforced invariant in
@@ -413,12 +373,14 @@ namespace_packages = true
 packages = ["src"]
 check_untyped_defs = true
 disallow_any_generics = false
+# Every ``# type: ignore`` must name the error code it suppresses, so a
+# suppression cannot silently outlive the error it was written for.
+enable_error_code = ["ignore-without-code"]
 # ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = "src.app.*"
 disallow_untyped_defs = false
-
 [[tool.mypy.overrides]]
 module = "src.app.core.*"
 disallow_untyped_defs = true

@@ -8,7 +8,6 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.events import event_bus
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 
@@ -18,15 +17,17 @@ from src.app.core.db.scoped import execute_scoped
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules._base.service import BaseService
 from src.app.modules.api_keys.models import APIKey
-from src.app.modules.api_keys.schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
+from src.app.modules.api_keys.schemas import (
+    APIKeyCreate,
+    APIKeyRead,
+    APIKeyResponse,
+    APIKeyRotateResponse,
+)
 from src.app.modules.audit_logs import audit
 from src.app.shared.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 
 MAX_GRACE_PERIOD_DAYS: int = 90
 __all__ = ["APIKeyService", "MAX_GRACE_PERIOD_DAYS"]
-# Re-exported for test backward compatibility
-# (TODO: REMOVE once tests/unit/modules/api_keys no longer patch this module attribute)
-event_bus = event_bus
 
 # Cache configuration for API key validation.
 # ADR-0023 (bead hfps): the cache-key FORMAT and the "is this cached payload
@@ -708,17 +709,19 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
         user_id: int,
         tenant_id: UUID,
         grace_period_days: int = 7,
-    ) -> APIKeyResponse:
+    ) -> APIKeyRotateResponse:
         """Rotate an API key with grace period for zero-downtime rotation.
 
         Flow:
-        1. Create new key immediately with valid_from set to future timestamp
-        2. Old key remains valid for grace_period_days
-        3. New key becomes valid after grace period expires
-        4. Both keys work during grace period (seamless transition)
+        1. The NEW key is created and is valid IMMEDIATELY (``valid_from=None``)
+        2. The OLD key's ``expires_at`` is moved to the end of the overlap
+           window: ``min(now + grace_period_days, the old key's own expiry)``
+        3. Both keys work during that window (seamless transition)
 
-        Security: Revoking the old key automatically invalidates it.
-        Users should update their applications within the grace period.
+        The grace window belongs to the OLD key. An earlier revision set
+        ``valid_from = now + grace_period`` on the NEW key instead, which made
+        the replacement unusable during the very window it was meant to cover
+        and never expired the OLD key, leaving it valid indefinitely.
 
         Parameters
         ----------
@@ -729,12 +732,14 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
         tenant_id : int
             ID of the tenant
         grace_period_days : int
-            Days before new key becomes valid (default: 7)
+            Overlap window in days (default: 7), clamped to
+            ``MAX_GRACE_PERIOD_DAYS``.
 
         Returns
         -------
-        APIKeyResponse
-            New API key (only shown once)
+        APIKeyRotateResponse
+            New API key (only shown once) plus the overlap window that was
+            actually applied.
 
         Raises
         ------
@@ -870,7 +875,7 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
                 "new_key_id": new_key_record.id,
                 "new_key_name": new_key_record.name,
                 "new_key_prefix": new_key_record.key_prefix,
-                "grace_period_days": grace_period_days,
+                "grace_period_days": capped_grace_days,
                 "old_key_expires_at": grace_expires_at.isoformat(),
             },
         )
@@ -878,16 +883,22 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
         logger.info(
             f"API key rotated | user={user_id} | tenant={tenant_id} | "
             f"old_key_id={api_key_id} | new_key_id={new_key_record.id} | "
-            f"grace_period={grace_period_days}d | old_key_expires_at={grace_expires_at.isoformat()}"
+            f"grace_period={capped_grace_days}d | old_key_expires_at={grace_expires_at.isoformat()}"
         )
 
-        return APIKeyResponse(
+        return APIKeyRotateResponse(
             id=new_key_record.id,
             name=new_key_record.name,
             key=full_key,  # Only returned on creation!
             key_prefix=prefix,
             expires_at=new_key_record.expires_at,
             created_at=new_key_record.created_at,
+            # The new key is valid immediately; the grace window applies to
+            # the OLD key's expiry, so this is the new key's own value (None).
+            valid_from=new_key_record.valid_from,
+            # The window that was APPLIED, not the one that was requested:
+            # a request above MAX_GRACE_PERIOD_DAYS is clamped.
+            grace_period_days=capped_grace_days,
         )
 
 

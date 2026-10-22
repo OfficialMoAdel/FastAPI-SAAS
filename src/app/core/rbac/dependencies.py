@@ -30,12 +30,21 @@ from src.app.core.rbac.permissions import Permission as PermissionEnum
 from src.app.core.rbac.superuser_tenant import enforce_superuser_tenant_rule
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.shared.exceptions import ForbiddenError as ForbiddenException
+from src.app.shared.exceptions import ServiceUnavailableError
 from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
 logger = get_logger(__name__)
 
 # Cache TTL for user permissions (5 minutes)
 PERMISSIONS_CACHE_TTL = 300
+
+# C3: safety bound on the 4-table permission join. It is NOT an invariant —
+# the join is bounded only so a pathological row count cannot pull an
+# unbounded result set into memory. Reaching it means the user's permission
+# set may be incomplete, so the bound is enforced LOUDLY (see
+# ``get_user_permissions``) instead of silently truncating the mask.
+_PERMISSION_ROW_LIMIT = 1000
+
 # P1-7: singleflight registry for bitmask recomputation. Concurrent cache
 # misses on the same (tenant, user) key share one 4-table join instead of
 # each firing their own; the winner alone performs the DB query + setex.
@@ -86,13 +95,22 @@ async def get_user_permissions(
     """
     # Row types from the application seam; see core/rbac/models.py.
     graph = require_permission_graph()
+    # DISTINCT, not a plain projection: the join emits one row per
+    # (role, permission) PAIR, so a user holding two roles that both grant
+    # ``users:read`` yields that slug twice. Without DISTINCT the row count
+    # is a function of how many roles the user holds, not of how many
+    # permissions they have — and the safety bound below would then fire on
+    # a user with many narrowly-scoped roles long before it could fire on a
+    # user with an implausibly large permission set. With DISTINCT, one row
+    # is one DISTINCT permission, which is what the bound is about.
     stmt = (
         select(graph.permission.slug)
         .join(graph.role_permission, graph.role_permission.permission_id == graph.permission.id)
         .join(graph.role, graph.role.id == graph.role_permission.role_id)
         .join(graph.user_role, graph.user_role.role_id == graph.role.id)
         .where(graph.user_role.user_id == user_id)
-        .limit(1000)  # Safety bound
+        .distinct()
+        .limit(_PERMISSION_ROW_LIMIT)
     )
     result = await execute_scoped(
         stmt,
@@ -100,7 +118,32 @@ async def get_user_permissions(
         model=graph.user_role,
         scope=ExplicitTenant(tenant_id, reason='legacy-criterion:UserRole'),
     )
-    return set(result.scalars().all())
+    slugs = list(result.scalars().all())
+    # C3: the LIMIT above is a safety bound, not an invariant. A truncated
+    # result would silently drop permissions from the user's mask — a
+    # SECURITY-relevant silent degradation, because the mask is exactly what
+    # the permission gate checks. So the bound is LOUD: reaching it means the
+    # user's DISTINCT permission set is at least as large as the bound, so
+    # the returned set may be INCOMPLETE, and an incomplete mask must never
+    # be cached as if it were the user's full permission set.
+    #
+    # The refusal is a domain error (503 via the central handler), not an
+    # HTTP object: core never raises transport-layer exceptions (P1-10), and
+    # a worker reaching this seam has no request in scope. It fails LOUD and
+    # LOUDLY LOGGED rather than failing quiet with a short mask.
+    if len(slugs) >= _PERMISSION_ROW_LIMIT:
+        logger.error(
+            "permission_row_limit_reached",
+            user_id=user_id,
+            tenant_id=str(tenant_id),
+            limit=_PERMISSION_ROW_LIMIT,
+            permission_count=len(slugs),
+        )
+        raise ServiceUnavailableError(
+            f"Permission join reached the {_PERMISSION_ROW_LIMIT}-permission safety bound for "
+            f"user {user_id} in tenant {tenant_id}; the permission set may be incomplete."
+        )
+    return set(slugs)
 
 
 def _get_bitmask_cache_key(user_id: int, tenant_id: int | UUID) -> str:
@@ -113,7 +156,6 @@ def _get_bitmask_cache_key(user_id: int, tenant_id: int | UUID) -> str:
 async def get_cached_permissions_bitmask(
     user_id: int,
     tenant_id: int | UUID,
-    db: AsyncSession,
 ) -> int:
     """
     Get user permissions as bitmask with Redis caching.
@@ -126,10 +168,14 @@ async def get_cached_permissions_bitmask(
     Args:
         user_id: The user's ID
         tenant_id: The tenant's ID
-        db: Database session for fallback query
 
     Returns:
         Integer bitmask with bits set for each permission
+
+    C1: there is NO session parameter. The DB fallback runs inside the
+    singleflight task, which owns its own short-lived session — see
+    ``_compute_and_cache_bitmask``. A caller's request-scoped session must
+    never reach that task, because the task is awaited by OTHER requests.
     """
     from src.app.core.redis_provider import get_redis
 
@@ -159,10 +205,21 @@ async def get_cached_permissions_bitmask(
 
     # Query from database — singleflight: concurrent misses on this key
     # share one join; only the winner queries + backfills the cache.
+    #
+    # C1: the task does NOT receive the caller's ``db``. The singleflight
+    # registry is process-global, so the task is awaited by requests OTHER
+    # than the one that created it. Handing it the winner's request-scoped
+    # session meant a loser's await could resume on a session that was
+    # mid-commit, rolled back, or already closed — surfacing as an
+    # intermittent 5xx on a permission check. The task opens its OWN
+    # short-lived session instead, exactly as ``jwt_service._check_db_fallback``
+    # does (see its "SECURITY FIX" note). This helper never receives a
+    # caller's session at all; the caller still owns its own session for
+    # whatever else it reads.
     async with _bitmask_lock:
         task = _in_flight_bitmask.get(cache_key)
         if task is None:
-            task = asyncio.create_task(_compute_and_cache_bitmask(user_id, tenant_id, db, redis_client, cache_key))
+            task = asyncio.create_task(_compute_and_cache_bitmask(user_id, tenant_id, redis_client, cache_key))
             _in_flight_bitmask[cache_key] = task
     try:
         return await task
@@ -175,7 +232,6 @@ async def get_cached_permissions_bitmask(
 async def _compute_and_cache_bitmask(
     user_id: int,
     tenant_id: int | UUID,
-    db: AsyncSession,
     redis_client: Any,
     cache_key: str,
 ) -> int:
@@ -183,8 +239,17 @@ async def _compute_and_cache_bitmask(
 
     Only the singleflight winner runs this; concurrent waiters await its
     task and receive the identical mask.
+
+    C1: this task opens its OWN short-lived session. It is registered in the
+    process-global ``_in_flight_bitmask`` registry and awaited by other
+    requests, so it must not run on any one request's session — see the
+    comment at the singleflight call site and ``jwt_service.py`` for the
+    same defect class already fixed there.
     """
-    permissions = await get_user_permissions(user_id, tenant_id, db)
+    from src.app.core.db.database import local_session
+
+    async with local_session() as session:
+        permissions = await get_user_permissions(user_id, tenant_id, session)
 
     # Encode to bitmask
     mask = PermissionBitmask.encode(permissions)
@@ -210,7 +275,6 @@ async def has_permission_cached(
     user_id: int,
     tenant_id: int | UUID,
     permission_slug: str,
-    db: AsyncSession,
 ) -> bool:
     """
     Check if a user has a specific permission using O(1) bitmask check.
@@ -225,13 +289,16 @@ async def has_permission_cached(
         user_id: The user's ID
         tenant_id: The tenant's ID
         permission_slug: The permission to check (e.g., "users:read")
-        db: Database session for fallback query
 
     Returns:
         True if user has the permission, False otherwise
+
+    C1: there is NO session parameter, for the same reason as
+    ``get_cached_permissions_bitmask`` — the DB fallback belongs to the
+    singleflight task, which owns its own session.
     """
     # Get user's permission bitmask (from cache or DB)
-    mask = await get_cached_permissions_bitmask(user_id, tenant_id, db)
+    mask = await get_cached_permissions_bitmask(user_id, tenant_id)
 
     # O(1) bitwise check: (mask & permission_bit) != 0
     return PermissionBitmask.has_permission(mask, permission_slug)
@@ -256,13 +323,11 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
     """
     permission_slug = permission.value if isinstance(permission, PermissionEnum) else permission
 
-    from src.app.core.db.database import async_get_db
     from src.app.core.principal import AuthContext, DenialReason, denial, get_auth_context
     from src.app.core.tenancy.context import resolve_tenant_id
 
     async def _check_permission(
         request: Request = None,  # type: ignore[assignment]
-        db: AsyncSession = Depends(async_get_db),
         auth_context: AuthContext = Depends(get_auth_context),
     ) -> None:
         # Single production path: tests inject a real AuthContext via
@@ -359,9 +424,9 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
                 # path is itself cached (Redis bitmask plus an in-process L1
                 # map), so this only costs a lookup when the prefetch denies --
                 # the allow fast path above is unchanged.
-                has_perm = await has_permission_cached(user_id, tenant_id, permission_slug, db)
+                has_perm = await has_permission_cached(user_id, tenant_id, permission_slug)
         else:
-            has_perm = await has_permission_cached(user_id, tenant_id, permission_slug, db)
+            has_perm = await has_permission_cached(user_id, tenant_id, permission_slug)
 
         # Raise if permission denied
         if not has_perm:

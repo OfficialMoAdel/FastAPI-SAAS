@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import redis
-from fastapi import HTTPException
 
 from src.app.core.security.login_helpers import register_login_session
+from src.app.shared.exceptions import ServiceUnavailableError
 
 
 def _patch_settings(mode: str) -> MagicMock:
@@ -26,7 +26,13 @@ def _patch_settings(mode: str) -> MagicMock:
 class TestRegisterLoginSessionFailMode:
     @pytest.mark.asyncio
     async def test_redis_error_fail_closed_raises_503(self) -> None:
-        """Raised RedisError + default fail_closed -> HTTP 503."""
+        """Raised RedisError + default fail_closed -> HTTP 503.
+
+        A6: the refusal is a DOMAIN error (ServiceUnavailableError, mapped
+        to 503 by the central handler), not ``fastapi.HTTPException`` — an
+        HTTP response object must not escape below the transport layer into
+        ARQ/worker contexts. The wire status is unchanged.
+        """
         with (
             patch(
                 "src.app.core.security.login_helpers.global_session_manager"
@@ -39,11 +45,11 @@ class TestRegisterLoginSessionFailMode:
             mock_sm.register_session = AsyncMock(
                 side_effect=redis.exceptions.RedisError("connection lost")
             )
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(ServiceUnavailableError) as exc_info:
                 await register_login_session(
                     user_id=1, access_token="tok", request=None, verify=False
                 )
-            assert exc_info.value.status_code == 503
+            assert exc_info.value.http_status == 503
 
     @pytest.mark.asyncio
     async def test_redis_error_fail_open_proceeds(self) -> None:
@@ -84,11 +90,11 @@ class TestRegisterLoginSessionFailMode:
             mock_sm.register_session = AsyncMock(
                 return_value={"registered": False, "reason": "redis_unavailable"}
             )
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(ServiceUnavailableError) as exc_info:
                 await register_login_session(
                     user_id=1, access_token="tok", request=None, verify=False
                 )
-            assert exc_info.value.status_code == 503
+            assert exc_info.value.http_status == 503
 
     @pytest.mark.asyncio
     async def test_registered_false_fail_open_proceeds(self) -> None:

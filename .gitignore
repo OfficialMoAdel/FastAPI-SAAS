@@ -149,16 +149,7 @@ src/.env.local
 
 # Don't ignore files inside of script folder:
 !scripts/*
-.clinerules/byterover-rules.md
-.kilocode/rules/byterover-rules.md
-.roo/rules/byterover-rules.md
-.windsurf/rules/byterover-rules.md
-.cursor/rules/byterover-rules.mdc
-.kiro/steering/byterover-rules.md
-.qoder/rules/byterover-rules.md
-.augment/rules/byterover-rules.md
 *.txt
-#.specify
 .beads
 docs.md
 .opencode
@@ -200,65 +191,29 @@ storage_test/tenants/1/files/*.txt*
 auto_test_from_report.py
 .agents
 *.db
-CODE_REVIEW_REPORT.md
+CODE_REVIEW*
 storage_test
 drop.py
 report.xml
 skills-lock.json
 graphify-out
-src/.env.local
 *live-baseline.json
 .codegraph
 codegraph.json
-# ADRs are TRACKED. The blanket `docs/adr/*` ignore was removed because it made
-# the repository lie: `AGENTS.md` and `CLAUDE.md` link ADRs as live
-# architectural claims, and `scripts/checks/doc_paths.py` is a mandatory gate that
-# treats every rooted path in those documents as a statement that the path
-# EXISTS. A gitignored ADR is absent from every CI checkout, so the pointer is
-# false in CI and the gate fails there — and only there, which is the worst place
-# for a gate to fail. That defect was previously worked around by carving out
-# ADR-0007 alone (via `!`); the root cause was the ignore itself, so the ignore
-# went and seventeen untracked ADRs came with it. `tests/unit/scripts/test_adr_tracking.py`
-# now fails if a referenced ADR goes untracked, so this cannot rot back.
-# Local architecture review reports (working notes, not versioned)
 *.html
 .benchmarks
 *.svg
 .workbuddy-ai
 
-# Beads / Dolt files (added by bd init)
-.dolt/
-.beads-credential-key
-.beads/proxieddb/
 *.gate.lock*
 AUDIT_*.md
-# Perf ARTEFACTS only. The bare `perf_*` also matched SOURCE modules -
-# src/benchmarks/perf_accounts.py was silently untracked, so the file the
-# seeder and the load file both import was absent from the repo. Scoped to
-# what it was written for: the generated CSVs and logs.
-# Perf artefact DIRECTORIES. The old bare `perf_*` matched these by name,
-# which is also why it silently matched src/benchmarks/perf_*.py. Restore the
-# directory-level coverage explicitly and scope the file patterns below.
-#
-# SCOPED TO THE ROOT. Every pattern here is anchored with a leading slash so it
-# matches a generated artefact at the repository root and nothing deeper. The
-# unanchored forms were themselves a second bug: a bare `perf-*` added to fix the
-# first one swallowed `perf-results/` wholesale, which silently untracked the
-# measurement EVIDENCE - six RESULT-* directories, the 2,101.9 s RSS/CPU series,
-# and the hand-written STATE.md. An ignore rule that hides the proof is worse
-# than the untracked source module it was written to fix, so the directory is
-# negated explicitly below rather than left to pattern subtlety.
 /reports/perf_*/
 /perf_*.csv
 /perf_*.log
 /perf_*.out
 /perf_*.json
 !src/benchmarks/perf_*.py
-# Evidence is TRACKED. The RSS/CPU series is the answer to L-10 and the run
-# artefacts are what every latency claim in STATE.md rests on; neither survives
-# a clone unless committed. This negation is deliberately explicit rather than
-# relying on the anchoring above to keep missing it - a leading `!` is the only
-# way to be sure, and getting this backwards silently untracked the evidence.
 !/perf-results/
 tests/benchmarks/results
 locust_baseline_NON_REPRESENTATIVE.md
+mcp.json

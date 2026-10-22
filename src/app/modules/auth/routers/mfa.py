@@ -77,9 +77,9 @@ async def setup_mfa(
     Returns:
         MFASetupResponse with secret and provisioning URI.
     """
-    # P1 FIX (code-review): setup/enable had no rate limit while verify did —
-    # the enable TOTP check was brute-forceable. Throttle both seams.
-    await check_mfa_mutate_rate_limit(fastapi_request, ctx.user_id)
+    # The step-up seam charges the MFA_MUTATE budget before bcrypt, so setup is
+    # throttled without a second charge here (a router charge would count one
+    # request twice).
     # Run-3: enrolling a second factor requires step-up re-authentication, not
     # merely a valid session. Matches disable_mfa's existing bar.
     await verify_step_up_password(db=ctx.db, user_id=ctx.user_id, password=step_up.password)
@@ -111,7 +111,8 @@ async def enable_mfa(
     Raises:
         ValidationError: If MFA already enabled or token is invalid.
     """
-    await check_mfa_mutate_rate_limit(fastapi_request, ctx.user_id)
+    # The step-up seam charges the MFA_MUTATE budget before bcrypt; charging
+    # again here would double-count this request.
     # Run-3: re-verify at enable time. /mfa/setup now requires step-up, but a
     # setup_token obtained earlier must not be redeemable without the password.
     await verify_step_up_password(db=ctx.db, user_id=ctx.user_id, password=request.password)

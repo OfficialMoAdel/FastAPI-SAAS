@@ -237,11 +237,11 @@ class EnvironmentValidator:
         has_errors = False
         for result in results:
             if result.severity == ValidationSeverity.ERROR:
-                logger.error("[ENV VALIDATION ERROR] :", key=result.key, message=result.message)
+                logger.error("[ENV VALIDATION ERROR]", key=result.key, message=result.message)
                 has_errors = True
             elif result.severity == ValidationSeverity.WARNING:
-                logger.warning("[ENV VALIDATION WARNING] :", key=result.key, message=result.message)
+                logger.warning("[ENV VALIDATION WARNING]", key=result.key, message=result.message)
             else:
-                logger.info("[ENV VALIDATION INFO] :", key=result.key, message=result.message)
+                logger.info("[ENV VALIDATION INFO]", key=result.key, message=result.message)
 
         return not has_errors

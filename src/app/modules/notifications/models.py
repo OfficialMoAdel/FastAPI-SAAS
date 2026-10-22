@@ -43,6 +43,7 @@ class Notification(Base, UUIDMixin):
         status: Delivery status (pending/sent/failed)
         sent_at: Timestamp when email was successfully sent
         error_message: Error details if delivery failed
+        error_kind: Machine-readable failure class (NULL unless the row failed)
         created_at: Timestamp when notification was created
         updated_at: Timestamp when status last changed
     """
@@ -109,12 +110,22 @@ class Notification(Base, UUIDMixin):
         init=False,
         comment="Error details if delivery failed",
     )
+    error_kind: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        init=False,
+        comment=(
+            "Machine-readable failure class (e.g. 'rate_limited', 'enqueue_error', "
+            "'recovery_window_exhausted'). NULL on a non-failed row. Operators filter "
+            "on this instead of parsing the subject text."
+        ),
+    )
 
     # Relationships
-    tenant: Mapped[Optional["Tenant"]] = relationship(  # type: ignore
+    tenant: Mapped[Optional["Tenant"]] = relationship(
         "Tenant", back_populates="notifications", init=False, lazy="noload"
     )
-    user: Mapped[Optional["User"]] = relationship(  # type: ignore
+    user: Mapped[Optional["User"]] = relationship(
         "User", back_populates="notifications", init=False, lazy="noload"
     )
 
@@ -204,7 +215,7 @@ class EmailTemplateOverride(Base, UUIDMixin):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(  # type: ignore
+    tenant: Mapped["Tenant"] = relationship(
         "Tenant", back_populates="email_template_overrides", init=False, lazy="noload"
     )
 

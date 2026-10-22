@@ -158,8 +158,14 @@ def _enforce_session_registration_fail_mode() -> None:
 
     fail_closed rejects the login (503) so concurrent-session limiting is never
     silently bypassed; fail_open logs and lets the login proceed.
+
+    A6 / P1-10: raised ``fastapi.HTTPException`` before — an HTTP response
+    object escaping below the transport layer into ARQ/worker contexts, where
+    no request handler catches it. Now raises the domain equivalent
+    (ServiceUnavailableError, mapped to 503 by the central handler), matching
+    the precedent at core/resilience/db_circuit_breaker.py.
     """
     if settings.auth.SESSION_REGISTRATION_FAIL_MODE == "fail_closed":
-        from fastapi import HTTPException
+        from src.app.shared.exceptions import ServiceUnavailableError
 
-        raise HTTPException(status_code=503, detail="Authentication service temporarily unavailable")
+        raise ServiceUnavailableError("Authentication service temporarily unavailable")

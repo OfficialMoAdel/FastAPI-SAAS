@@ -44,6 +44,7 @@ from src.app.modules.billing.schemas import (
     UserSubscriptionRead,
     UserSubscriptionUpdate,
 )
+from src.app.modules.billing.tenant_scope import TenantScopedService
 from src.app.shared.exceptions import ForbiddenError, ModelNotFoundError, StripeError
 
 if TYPE_CHECKING:
@@ -69,31 +70,14 @@ def _subscription_plan_to_dict(plan: SubscriptionPlan) -> dict[str, Any]:
     }
 
 
-class SubscriptionPlanService(BaseService[SubscriptionPlan]):
+class SubscriptionPlanService(BaseService[SubscriptionPlan], TenantScopedService):
     """Service for managing subscription plans."""
+
+    _default_entity_name = "SubscriptionPlan"
 
     def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None):
         super().__init__(SubscriptionPlan, db, select_schema=SubscriptionPlanRead)
         self.tenant_id = tenant_id
-
-    @property
-    def current_tenant_id(self) -> Any:
-        """Effective tenant id — read-only view over the ONE seam.
-
-        Returns the context tenant when bound, else the construction value,
-        else ``None`` (``fail_closed=False``). Callers that must not proceed
-        without a tenant use :meth:`_resolve_tenant` instead.
-        """
-        return resolve_tenant_id(
-            self.tenant_id,
-            entity_name="Tenant",
-            entity_id="current",
-            fail_closed=False,
-        )
-
-    def _resolve_tenant(self, entity_name: str = "SubscriptionPlan", entity_id: Any = None) -> Any:
-        """Resolve tenant via the ONE seam (context wins; mismatch soft-404s)."""
-        return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
 
     async def create_plan(self, data: SubscriptionPlanCreate) -> dict[str, Any]:
         """Create a new subscription plan."""
@@ -204,30 +188,14 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         return plan.get("tenant_id")
 
 
-class UserSubscriptionService(BaseService[UserSubscription]):
+class UserSubscriptionService(BaseService[UserSubscription], TenantScopedService):
     """Service for managing user subscriptions."""
+
+    _default_entity_name = "UserSubscription"
 
     def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None):
         super().__init__(UserSubscription, db, select_schema=UserSubscriptionRead)
         self.tenant_id = tenant_id
-
-    @property
-    def current_tenant_id(self) -> Any:
-        """Effective tenant id (context wins; explicit construction value otherwise).
-
-        Read-only compatibility view over the ONE seam — see
-        :class:`SubscriptionPlanService`.
-        """
-        return resolve_tenant_id(
-            self.tenant_id,
-            entity_name="Tenant",
-            entity_id="current",
-            fail_closed=False,
-        )
-
-    def _resolve_tenant(self, entity_name: str = "UserSubscription", entity_id: Any = None) -> Any:
-        """Resolve tenant via the ONE seam (context wins; mismatch soft-404s)."""
-        return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
 
     async def create_subscription(self, user_id: int, data: UserSubscriptionCreate) -> dict[str, Any]:
         """Create a user subscription."""

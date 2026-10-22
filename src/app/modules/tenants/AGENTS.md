@@ -66,6 +66,7 @@ src/app/modules/tenants/
 ## Touch Points
 
 - **Tenant service**: `modules/tenants/service.py::TenantService`
+- **Activate/deactivate**: `modules/tenants/service.py::TenantService._set_active_state` — the ONE implementation behind `deactivate_tenant` and `reactivate_tenant`; both public methods delegate to it with the flag and the log event as the only difference.
 - **Models**: `modules/tenants/models.py::Tenant`
 - **Middleware**: `src/app/middleware/tenant.py`
 - **Context**: `src/app/core/tenancy/context.py`

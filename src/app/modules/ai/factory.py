@@ -115,7 +115,7 @@ class AIProviderFactory:
             cls._instances[cache_key] = provider
             return provider
         except Exception as e:
-            logger.error("Failed to create provider :", provider_name=provider_name, error=e)
+            logger.error("Failed to create provider", provider_name=provider_name, error=e)
             raise AIServerError(
                 provider=provider_name,
                 message=f"Failed to create provider: {e}",

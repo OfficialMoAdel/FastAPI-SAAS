@@ -54,12 +54,11 @@ def _service_with_existing(key: MagicMock) -> tuple[APIKeyService, AsyncMock]:
     return svc, db
 
 
-def _patched(svc: APIKeyService, name_lookup: MagicMock | None) -> tuple[object, object, object]:
+def _patched(svc: APIKeyService, name_lookup: MagicMock | None) -> tuple[object, object]:
     """Patch the collaborators rotate_api_key reaches for."""
     return (
         patch("src.app.modules.api_keys.service.execute_scoped", new=AsyncMock(return_value=name_lookup)),
         patch.object(svc.crud, "update", new_callable=AsyncMock),
-        patch("src.app.modules.api_keys.service.event_bus.publish", new_callable=AsyncMock),
     )
 
 
@@ -76,7 +75,7 @@ class TestRotateNameCollision:
         found = MagicMock()
         found.scalar_one_or_none.return_value = _existing_key("Service Key (Rotated)")
 
-        p_scoped, p_update, p_bus = _patched(svc, lookup)
+        p_scoped, p_update = _patched(svc, lookup)
         with (
             p_scoped as scoped,
             p_update,
@@ -124,11 +123,10 @@ class TestRotateNameCollision:
         db.execute = AsyncMock(return_value=found)
         db.commit = AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("uq_api_key_name_tenant")))
 
-        p_scoped, p_update, p_bus = _patched(svc, free)
+        p_scoped, p_update = _patched(svc, free)
         with (
             p_scoped as scoped,
             p_update,
-            p_bus,
             patch.object(svc, "_generate_key", return_value=("raw-new", "pfxnew", "hashed_new")),
             patch("src.app.modules.api_keys.service.audit", new_callable=AsyncMock),
         ):
@@ -156,11 +154,10 @@ class TestRotateNameCollision:
 
         db.execute = AsyncMock(return_value=found)
 
-        p_scoped, p_update, p_bus = _patched(svc, free)
+        p_scoped, p_update = _patched(svc, free)
         with (
             p_scoped as scoped,
             p_update,
-            p_bus,
             patch.object(svc, "_generate_key", return_value=("raw-new", "pfxnew", "hashed_new")),
             patch("src.app.modules.api_keys.service.audit", new_callable=AsyncMock),
         ):

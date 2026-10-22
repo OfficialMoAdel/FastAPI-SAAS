@@ -134,8 +134,19 @@ Oracle: `tests/unit/modules/api_keys/test_issue_key_for_another_user.py`.
   by `_validate_from_db`'s LEFT JOIN on user → tier — so a mocked key row in a
   test must model `.user` or `json_dumps` will refuse the MagicMock. Oracle:
   `tests/unit/core/security/test_api_key_identity_admission.py`.
-- **Grace Period**: During rotation, both old and new keys work for the grace period (default 7 days)
-- **valid_from column**: New keys have valid_from = now + grace_period, allowing overlap
+- **Grace Period**: On rotation the NEW key is valid immediately and the OLD
+  key's `expires_at` is moved to `min(now + grace_period_days, the old key's
+  own expiry)`, so both work during the overlap window (default 7 days, max
+  `MAX_GRACE_PERIOD_DAYS` = 90). The window is a property of the OLD key's
+  expiry, not of the new key's activation.
+- **valid_from column**: stays `None` for a rotated key — the key is valid
+  immediately. It is a per-key "not valid before" gate, not the rotation
+  mechanism.
+- **Rotate response**: `APIKeyRotateResponse.grace_period_days` reports the
+  window that was **applied** (the request clamped to
+  `MAX_GRACE_PERIOD_DAYS`), and `valid_from` reports the new key's own
+  activation (always `None`). The service computes both and the router
+  forwards them, so the response never answers for itself.
 - **Audit Logging**: All key operations (create, revoke, rotate) are logged to audit trail
 
 ## Pre-PR Checks

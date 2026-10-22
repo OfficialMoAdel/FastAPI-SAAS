@@ -118,6 +118,29 @@ rg -n "UserRole" src/app/modules/rbac/
 - **Permission cache**: Permissions may be cached - allow for propagation delay
 - **Superuser bypass**: Superusers bypass all permission checks
 - **Cascade deletes**: Deleting role removes all user assignments
+- **The bitmask singleflight owns its own session**: `core/rbac/dependencies.py`
+  computes a user's permission mask inside a process-global singleflight task
+  that is awaited by OTHER requests. It therefore opens its own
+  `local_session()` and NEVER runs on a caller's request-scoped session — a
+  shared task on a shared session is the defect class `jwt_service.py`
+  already fixed. Do not add a session parameter to
+  `get_cached_permissions_bitmask`, `has_permission_cached` or
+  `_compute_and_cache_bitmask`.
+- **The permission join's row limit is LOUD**: the 4-table join is bounded
+  (`_PERMISSION_ROW_LIMIT`) so a pathological row count cannot pull an
+  unbounded result set into memory. Reaching the bound REFUSES the lookup
+  (`ServiceUnavailableError`) rather than returning a truncated mask — a
+  short mask is a silent permission loss, which is security-relevant.
+  The join selects `DISTINCT` slugs, so one row is one DISTINCT permission.
+- **`RolePermission` has no `tenant_id`**: its tenant scope comes from the
+  parent `Role`, so the role-permission queries scope through
+  `CRUDAssociations._scoped_role_ids` and take an explicit `tenant_id`.
+  Do not reintroduce a bare `db.execute` there — the tenant safety must be a
+  property of the STATEMENT, not of the caller remembering to check first.
+- **`UserRoleRead` is not a `BaseRead`**: `user_roles` is an association
+  table keyed on `(user_id, tenant_id, role_id)` with no `id` and no
+  `created_at`, so the schema is a plain `BaseModel` carrying exactly the
+  columns the table has.
 
 ## Pre-PR Checks
 

@@ -155,8 +155,14 @@ SANCTIONED_SEAMS: dict[tuple[str, str], str] = {
     # surprising, but both of these are dependency-injection wiring: the
     # router needs a collaborator and the facade is the sanctioned
     # accessor. Naming the router explicitly keeps the edge visible.
-    ("security/router.py", "src.app.modules.auth.services.passkey"): (
-        "DI wiring: security's router builds a passkey collaborator via auth's own factory"
+    #
+    # The security module's passkey edge moved from the router to the
+    # service (F1): the router is now a thin adapter and the business
+    # logic — including the passkey collaborator — lives in
+    # `security/service.py`. The seam is the same edge in a different
+    # layer, so the sanctioned entry follows the importer.
+    ("security/service.py", "src.app.modules.auth"): (
+        "DI wiring: security's service builds a passkey collaborator via auth's own factory"
     ),
     ("users/router.py", "src.app.modules.auth.services.email_verification"): (
         "DI wiring: users' router needs the email verifier auth owns to complete a registration"

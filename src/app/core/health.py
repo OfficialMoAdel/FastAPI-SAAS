@@ -63,6 +63,49 @@ def resolve_readiness_status(
     return "degraded"
 
 
+async def collect_readiness_results(
+    *,
+    db: AsyncSession | None = None,
+    redis: Redis | None = None,
+) -> tuple[HealthResult, HealthResult, HealthResult, bool]:
+    """Collect the readiness results for the canonical dependency set.
+
+    This is the ONE place the four readiness inputs are gathered, so the
+    canonical HTTP surface (``modules/health/router.py``) and the
+    compatibility alias (``api/monitoring.py``) cannot disagree about
+    what the system currently looks like.
+
+    ``db`` and ``redis`` may be supplied by the caller — the request-scoped
+    path injects both. When they are omitted, this opens its own session
+    and resolves the shared Redis client, which is what a probe outside a
+    request (the compatibility alias, an operator script) needs.
+    """
+    from src.app.core.events import event_bus
+
+    if db is None:
+        from src.app.core.db.database import local_session
+
+        async with local_session() as session:
+            database_result = await check_database_health(db=session)
+    else:
+        database_result = await check_database_health(db=db)
+
+    if redis is None:
+        from src.app.core.redis_provider import get_redis
+
+        redis_client = get_redis()
+        redis_result = (
+            await check_redis_health(redis=redis_client)
+            if redis_client is not None
+            else HealthResult(status="degraded", error="Redis not configured")
+        )
+    else:
+        redis_result = await check_redis_health(redis=redis)
+
+    queue_result = await check_redis_queue_health()
+    return database_result, redis_result, queue_result, event_bus.is_ready
+
+
 async def check_database_health(db: AsyncSession) -> HealthResult:
     """Check database connectivity with latency measurement.
 

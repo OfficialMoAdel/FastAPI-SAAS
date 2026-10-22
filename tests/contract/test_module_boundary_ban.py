@@ -164,14 +164,14 @@ class TestBanCoversTheTree:
     def test_ban_covers_every_behaviour_layer_cell(self) -> None:
         """The ratchet: coverage is checked against the tree, not a count.
 
-        66 behaviour-layer cells exist. The ban names 45 entries because
+        67 behaviour-layer cells exist. The ban names 46 entries because
         banning a package cell (``auth.services``) covers everything beneath
-        it via ruff's dot-segment matching — so coverage is a predicate, not
+        it via ruff's dot-segment matching, so coverage is a predicate, not
         a set difference.
         """
         expected = _service_router_cells()
-        assert len(expected) == 66, (
-            f"tree walk found {len(expected)} behaviour-layer cells, expected 66; "
+        assert len(expected) == 67, (
+            f"tree walk found {len(expected)} behaviour-layer cells, expected 67; "
             "if a module was added or split, update this number and the ban together"
         )
         banned = set(_banned_api())

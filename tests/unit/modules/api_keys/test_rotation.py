@@ -167,7 +167,6 @@ class TestAPIKeyRotation:
         with (
             patch.object(api_key_service.crud, "get") as mock_get,
             patch.object(api_key_service.crud, "update", new_callable=AsyncMock) as mock_update,
-            patch("src.app.modules.api_keys.service.event_bus.publish", new_callable=AsyncMock),
         ):
             mock_result = MagicMock()
 
@@ -226,7 +225,6 @@ class TestAPIKeyRotation:
         with (
             patch.object(api_key_service.crud, "get") as mock_get,
             patch.object(api_key_service.crud, "update", new_callable=AsyncMock) as mock_update,
-            patch("src.app.modules.api_keys.service.event_bus.publish", new_callable=AsyncMock),
         ):
             mock_result = MagicMock()
 
@@ -290,7 +288,6 @@ class TestAPIKeyRotation:
         with (
             patch.object(api_key_service.crud, "get") as mock_get,
             patch.object(api_key_service.crud, "update", new_callable=AsyncMock) as mock_update,
-            patch("src.app.modules.api_keys.service.event_bus.publish", new_callable=AsyncMock),
         ):
             mock_result = MagicMock()
 
@@ -340,7 +337,6 @@ class TestAPIKeyRotation:
         with (
             patch.object(api_key_service.crud, "get") as mock_get,
             patch.object(api_key_service.crud, "update", new_callable=AsyncMock) as mock_update,
-            patch("src.app.modules.api_keys.service.event_bus.publish", new_callable=AsyncMock),
         ):
             mock_result = MagicMock()
 
@@ -504,7 +500,6 @@ class TestAPIKeyRotationGracePeriod:
         with (
             patch.object(api_key_service.crud, "get") as mock_get,
             patch.object(api_key_service.crud, "update") as mock_update,
-            patch("src.app.modules.api_keys.service.event_bus.publish"),
             patch.object(api_key_service, "_generate_key") as mock_gen,
         ):
             mock_result = MagicMock()
@@ -563,7 +558,6 @@ class TestAPIKeyRotationGracePeriod:
         with (
             patch.object(api_key_service.crud, "get") as mock_get,
             patch.object(api_key_service.crud, "update") as mock_update,
-            patch("src.app.modules.api_keys.service.event_bus.publish"),
             patch.object(api_key_service, "_generate_key") as mock_gen,
         ):
             mock_result = MagicMock()

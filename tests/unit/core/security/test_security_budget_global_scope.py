@@ -47,6 +47,11 @@ EXPECTED_DOORS: dict[str, str] = {
     "app/modules/auth/routers/mfa.py": "check",
     "app/modules/auth/routers/passkey.py": "check",
     "app/modules/auth/services/mfa.py": "check",
+    # Step-up password verification (A5). GLOBAL, like every other
+    # identity-keyed brute-force control: the caller is authenticated, so
+    # the leg is keyed on the principal, and scoping it per tenant would
+    # let an attacker mint a fresh budget by varying the tenant header.
+    "app/modules/auth/services/step_up.py": "check",
 }
 
 

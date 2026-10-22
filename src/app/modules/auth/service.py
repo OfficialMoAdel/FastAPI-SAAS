@@ -160,7 +160,7 @@ class AuthService:
         # in place of a real password. Passing it to verify_password raises UnknownHashError
         # (500). Treat the sentinel as an invalid password so the login fails cleanly with 401.
         # Empty/missing hashes (e.g. partially migrated rows) are handled the same way.
-        if not hash_to_verify or str(hash_to_verify).startswith("!SSO_ONLY"):
+        if not hash_to_verify or hash_to_verify.startswith("!SSO_ONLY"):
             # Still perform dummy bcrypt to prevent timing-based account enumeration
             await verify_password(password, self._DUMMY_BCRYPT_HASH)
             return None
@@ -652,7 +652,20 @@ class AuthService:
             entity_id=user_id_val,
             tenant_id=tenant_id_val,
             user_id=user_id_val,
-            details={"username": username, "success": True, "session_revoked": session_revoked},
+            # A10: two independent legs, recorded separately.
+            # success = the PRIMARY leg (token blacklist). A failure there
+            # raises before reaching this audit, so success is True here.
+            # session_revoked = the SECONDARY leg (the Redis session entry);
+            # False means a PARTIAL logout — tokens are dead but a stale
+            # session entry survives until its TTL. The P1-2 trust contract
+            # exposes exactly this pair to the client, so the audit row
+            # carries the same two facts rather than a single "success"
+            # that hides the partial case.
+            details={
+                "username": username,
+                "success": True,
+                "session_revoked": session_revoked,
+            },
             ip_address=ip_address or (get_client_ip(request) if request else None),
             user_agent=user_agent or (request.headers.get("user-agent") if hasattr(request, "headers") else None),
             guarantee=AuditGuarantee.BEST_EFFORT,

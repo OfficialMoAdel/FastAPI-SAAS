@@ -25,21 +25,13 @@ def upgrade() -> None:
     op.create_table(
         "token_blacklist",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        # ``token`` is TEXT, not VARCHAR(500).
-        #
-        # The 500 was too narrow for a real token pair: ``blacklist_tokens``
-        # (``src/app/core/security/jwt_service.py:556``) stores the RAW JWT as
-        # well as a ``jti:`` key, and the raw refresh token measures 547
-        # characters (access 501) for a username alone. The overflow raised
-        # ``asyncpg.exceptions.StringDataRightTruncationError``, which maps to
-        # ``sqlalchemy.exc.DataError`` -- a SIBLING of ``IntegrityError`` under
-        # ``DatabaseError`` -- so the ``except IntegrityError`` in that function
-        # never fired and the failure escaped to the client as a 500 on logout.
-        #
-        # The raw row is load-bearing and cannot simply be dropped:
-        # ``_check_db_fallback`` (``jwt_service.py:299-302``) queries it directly
-        # when a ``jti:`` lookup misses, and ``crud_token_blacklist``'s cache
-        # warmup selects every row with no ``jti`` predicate.
+        # ``token`` uses TEXT instead of VARCHAR(500).
+        # The 500 limit was too small for the raw JWT and ``jti:`` key stored in
+        # ``blacklist_tokens`` (``src/app/core/security/jwt_service.py:556``). A raw
+        # refresh token is 547 characters (access is 501), causing a DataError instead
+        # of an IntegrityError during logout. The raw row is required because
+        # ``_check_db_fallback`` (``jwt_service.py:299-302``) queries it directly on
+        # cache misses, and cache warmup selects all rows without a ``jti`` predicate.
         sa.Column("token", sa.Text(), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("tenant_id", sa.UUID(), nullable=False),
@@ -64,23 +56,15 @@ def upgrade() -> None:
         sa.Column("public_key", sa.LargeBinary(), nullable=False),
         sa.Column("credential_id_hash", sa.String(length=64), nullable=False),
         sa.Column("counter", sa.Integer(), nullable=False, server_default=sa.text("0")),
-        # FastAPI_saas-nqk6. The ORM declares `device_type`
-        # `Mapped[str] = mapped_column(String(100), nullable=False)`
-        # (auth/models.py:314) and the only writer always supplies one
-        # (auth/services/passkey.py:206-221 passes it into
-        # PasskeyCredentialCreate, whose default is the string "passkey"), yet
-        # this column was nullable. That is the LOOSE direction: the database
-        # could only ever admit a row the application would refuse, never refuse
-        # one it would accept, so the divergence could not surface as a failed
-        # request - it just made the schema claim less than the code requires.
-        # Nullability is compared by no gate (scripts/checks/schema_parity.py
-        # compares names and types), and it was found only because a probe
-        # INSERT that omitted `credential_id_hash` failed on THAT column first.
-        # Its WIDTH (50 here vs the ORM's 100) is deliberately left alone:
-        # FastAPI_saas-9cmn MEASURED the 50-character boundary
-        # (perf-results/RESULT-20261018-9cmn/) and found it benign, because
-        # WebAuthn device types are the four single-token values in the
-        # specification. That row is owned by FastAPI_saas-auz2.
+        # FastAPI_saas-nqk6. The ORM declares `device_type` as String(100), NOT NULL
+        # (auth/models.py:314), and the writer always supplies it
+        # (auth/services/passkey.py:206-221, default "passkey"), but the column was nullable.
+        # This makes the schema looser than the code, so it would not surface as failed requests.
+        # No gate compares nullability; it was found by a probe INSERT.
+        #
+        # The width stays 50 instead of 100. FastAPI_saas-9cmn measured the 50-character
+        # boundary (perf-results/RESULT-20261018-9cmn/) and found it benign because WebAuthn
+        # device types are four short spec values. That row is owned by FastAPI_saas-auz2.
         sa.Column("device_type", sa.String(length=50), nullable=False),
         sa.Column("device_name", sa.String(length=100), nullable=True),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),

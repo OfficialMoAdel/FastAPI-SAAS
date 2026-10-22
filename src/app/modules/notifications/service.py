@@ -65,6 +65,22 @@ EMAIL_RATE_LIMIT_HOUR_WINDOW_SECONDS: int = _DEFAULT_QUOTA.email_hour_window_sec
 NOTIFICATION_MAX_PENDING_AGE_HOURS: int = 24
 NOTIFICATION_RECOVERY_BATCH_SIZE: int = 100
 
+# D4: the machine-readable failure classes carried on
+# ``Notification.error_kind``. These are STABLE identifiers: an operator
+# filters on them, and a dashboard counts them, so they must not be
+# reworded casually the way a free-text message can be.
+#
+# Before this, a rate-limited row was identifiable only by parsing its
+# subject ("Rate limited: {template}") — so refusals mixed into admin
+# history that is filtered and sorted by subject, and a refusal looked
+# like a message. The kind is the field to filter on; the subject stays
+# human-readable.
+ERROR_KIND_RATE_LIMITED: str = "rate_limited"
+ERROR_KIND_ENQUEUE_ERROR: str = "enqueue_error"
+ERROR_KIND_QUEUE_UNAVAILABLE: str = "queue_unavailable"
+ERROR_KIND_RECOVERY_EXHAUSTED: str = "recovery_window_exhausted"
+ERROR_KIND_SEND_ERROR: str = "send_error"
+
 # Initialize Jinja2 environment
 TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates" / "email"
 # Use SandboxedEnvironment to prevent SSTI attacks from user-supplied templates
@@ -213,26 +229,60 @@ class NotificationService:
 
         return subject, rendered_html
 
-    async def _rate_limited(self, tenant_id: UUID | None, to_email: str) -> str | None:
+    async def _rate_limited(
+        self,
+        tenant_id: UUID | None,
+        to_email: str,
+        template_name: str | None = None,
+    ) -> str | None:
         """Check the shared email rate-limit policy (P2-7).
 
         Both doors into the email pipeline (send_email service door and
         handle_notification_request_event event door) call this helper so
         the policy constants are defined once.
 
+        D1: auth-critical templates draw on a SEPARATE bucket from
+        administratively-triggered sends. The preference gate already
+        carves auth-critical templates out of quiet hours; without the
+        matching carve-out here, a tenant that exhausted its own email
+        budget also blocked its own ``password_reset`` / ``magic_link`` /
+        ``email_verification`` mail — a tenant could lock out its own users'
+        authentication.
+
+        This is a SEPARATE BUCKET, not a bypass. The auth bucket has the
+        same size as the general one, so the per-category bound is
+        unchanged and an auth flood is still capped; what changes is that
+        the tenant's TOTAL email budget becomes 2x the old value (100
+        general + 100 auth per minute). That is a deliberate, bounded
+        policy change, not an unbounded hole — and it is safe because the
+        auth PATHS are themselves budgeted upstream
+        (``magic_link_send`` is 3/min per email hash, ``auth`` is 5/min per
+        IP), so one caller cannot drive this bucket arbitrarily fast.
+
         Args:
             tenant_id: Tenant ID (None falls back to a global per-email key)
             to_email: Recipient email address (used for the global key)
+            template_name: Template being sent. An auth-critical template
+                uses the dedicated auth bucket; everything else uses the
+                tenant's general bucket.
 
         Returns:
             The limit reason when rate-limited (e.g. "100 emails per minute"),
             or None when the request is within budget.
         """
+        # D1: the auth bucket is a separate key namespace, so a general
+        # send can never consume an auth send's budget (and vice versa).
+        auth_critical = template_name in AUTH_CRITICAL_TEMPLATES
+        bucket = "auth" if auth_critical else "general"
         # N4: probe both windows concurrently (1 Redis round instead of 2).
         # Note: both counters increment even if the minute probe rejects —
         # accepted trade-off, the rejected request consumes one hourly slot.
-        rate_limit_key_min = f"notif:min:{tenant_id}" if tenant_id else f"notif:min:global:{to_email}"
-        rate_limit_key_hour = f"notif:hour:{tenant_id}" if tenant_id else f"notif:hour:global:{to_email}"
+        if tenant_id:
+            rate_limit_key_min = f"notif:min:{bucket}:{tenant_id}"
+            rate_limit_key_hour = f"notif:hour:{bucket}:{tenant_id}"
+        else:
+            rate_limit_key_min = f"notif:min:{bucket}:global:{to_email}"
+            rate_limit_key_hour = f"notif:hour:{bucket}:global:{to_email}"
         # Cross the one rate-policy seam so these budgets honour
         # RATE_LIMIT_ALGORITHM like every other consumer (they previously
         # pinned the fixed-window engine regardless of configuration).
@@ -249,10 +299,18 @@ class NotificationService:
             ),
         )
         if is_limited_min:
-            logger.warning("notification_rate_limit_exceeded_min", tenant_id=str(tenant_id))
+            logger.warning(
+                "notification_rate_limit_exceeded_min",
+                tenant_id=str(tenant_id),
+                bucket=bucket,
+            )
             return f"{EMAIL_RATE_LIMIT_PER_MINUTE} emails per minute"
         if is_limited_hour:
-            logger.warning("notification_rate_limit_exceeded_hour", tenant_id=str(tenant_id))
+            logger.warning(
+                "notification_rate_limit_exceeded_hour",
+                tenant_id=str(tenant_id),
+                bucket=bucket,
+            )
             return f"{EMAIL_RATE_LIMIT_PER_HOUR} emails per hour"
         return None
 
@@ -302,19 +360,39 @@ class NotificationService:
 
         if arq_pool:
             try:
-                await arq_pool.enqueue_job(
+                job = await arq_pool.enqueue_job(
                     "send_email_task",
                     str(notification.id),
                     to_email,
                     subject,
                     html_content,
                     str(tenant_id) if tenant_id else None,
+                    # D3: the ARQ job id IS the notification id. That makes
+                    # the enqueue's liveness PROVABLE from the notification
+                    # row alone — the recovery sweep can ask Redis whether
+                    # the job still exists instead of guessing from the
+                    # row's age. It costs no schema change: the notification
+                    # id is already on the row.
+                    _job_id=str(notification.id),
                 )
-                logger.info(
-                    "email_queued",
-                    notification_id=str(notification.id),
-                    template=template_name,
-                )
+                if job is None:
+                    # ARQ returns None when a job with this id ALREADY
+                    # exists. With the job id being the notification id,
+                    # that can only mean this row was already enqueued — so
+                    # the live job IS this notification's job and the row
+                    # correctly stays PENDING. It is logged distinctly
+                    # because "email_queued" would claim a fresh enqueue.
+                    logger.info(
+                        "email_already_queued",
+                        notification_id=str(notification.id),
+                        template=template_name,
+                    )
+                else:
+                    logger.info(
+                        "email_queued",
+                        notification_id=str(notification.id),
+                        template=template_name,
+                    )
             except Exception as e:
                 logger.error(
                     "failed_to_enqueue_email_task",
@@ -323,6 +401,7 @@ class NotificationService:
                 )
                 notification.status = NotificationStatus.FAILED
                 notification.error_message = f"Enqueue error: {e}"
+                notification.error_kind = ERROR_KIND_ENQUEUE_ERROR
                 await self.db.commit()
         else:
             logger.warning(
@@ -331,6 +410,7 @@ class NotificationService:
             )
             notification.status = NotificationStatus.FAILED
             notification.error_message = "ARQ queue not available"
+            notification.error_kind = ERROR_KIND_QUEUE_UNAVAILABLE
             await self.db.commit()
 
         return notification
@@ -377,7 +457,10 @@ class NotificationService:
                 )
                 return None
 
-        limit_reason = await self._rate_limited(tenant_id, to_email)
+        # D1: the template name selects the rate-limit bucket — auth-critical
+        # templates draw on their own, so a tenant that exhausted its general
+        # email budget cannot block its own authentication mail.
+        limit_reason = await self._rate_limited(tenant_id, to_email, template_name)
         if limit_reason is not None:
             from src.app.shared.exceptions import RateLimitExceededError
 
@@ -396,6 +479,11 @@ class NotificationService:
                 status=NotificationStatus.FAILED,
             )
             notification.error_message = f"Rate limit exceeded: {limit_reason}"
+            # D4: the machine-readable class. The sentinel subject above
+            # stays for humans (and for any operator grep), but the KIND is
+            # what an operator filters on — the subject alone made refusals
+            # indistinguishable from messages in history sorted by subject.
+            notification.error_kind = ERROR_KIND_RATE_LIMITED
             self.db.add(notification)
             await self.db.commit()
             raise RateLimitExceededError(f"Rate limit exceeded: {limit_reason}")
@@ -455,6 +543,10 @@ class NotificationService:
         if notification:
             notification.status = NotificationStatus.FAILED
             notification.error_message = error_message
+            # D4: the machine-readable class for a delivery failure. The
+            # free-text message above stays for the operator; the kind is
+            # what a filter or a counter groups on.
+            notification.error_kind = ERROR_KIND_SEND_ERROR
             await self.db.commit()
 
     async def get_notifications(
@@ -655,10 +747,76 @@ class NotificationService:
         )
         return list(result.scalars().all())
 
+    @staticmethod
+    def _validate_override_content(template_name: str, content: str) -> None:
+        """Compile-check a tenant template override BEFORE it is persisted.
+
+        D2. The compile is the same one ``render_template`` performs, in the
+        same sandboxed environment, so a template accepted here renders
+        later. A syntax error is a 400 at the admin edge rather than a 500
+        on every send of that template.
+
+        The check is deliberately narrow: it proves the template COMPILES.
+        It does not prove it renders — a template that references an
+        undefined variable compiles fine and renders to an empty string at
+        send time, which is a content mistake, not a broken template.
+
+        Args:
+            template_name: The template being overridden (for the message).
+            content: The override's Jinja2 source.
+
+        Raises:
+            ValidationError: the content does not compile.
+        """
+        from jinja2 import TemplateSyntaxError
+
+        from src.app.shared.exceptions import ValidationError
+
+        try:
+            jinja_env.from_string(content)
+        except TemplateSyntaxError as exc:
+            logger.warning(
+                "template_override_syntax_error",
+                template_name=template_name,
+                line=exc.lineno,
+                error=str(exc),
+            )
+            raise ValidationError(
+                f"Template override for '{template_name}' is not valid Jinja2: "
+                f"{exc.message} (line {exc.lineno})"
+            ) from exc
+        except Exception as exc:
+            # A non-syntax failure (e.g. the sandbox refusing an operation
+            # at compile time) is still a broken template. Refuse it here for
+            # the same reason.
+            logger.warning(
+                "template_override_compile_error",
+                template_name=template_name,
+                error=str(exc),
+            )
+            raise ValidationError(
+                f"Template override for '{template_name}' could not be compiled: {exc}"
+            ) from exc
+
     async def create_template_override(
         self, tenant_id: UUID, template_name: str, subject_override: str | None, content: str
     ) -> EmailTemplateOverride:
-        """Create or update an email template override"""
+        """Create or update an email template override.
+
+        D2: the content is COMPILED before it is persisted. A tenant
+        override with broken Jinja syntax used to be accepted here and then
+        500 every send of that template until somebody noticed and deleted
+        it — the loud-failure treatment the file templates already get
+        (S-48) applied only to file templates, not to overrides. Rejecting
+        at the admin edge turns a silent runtime failure into a 400 at the
+        moment the mistake is made.
+
+        The compile runs in the SANDBOXED environment, so the check is
+        exactly the one ``render_template`` will perform later — a template
+        that compiles here compiles there.
+        """
+        self._validate_override_content(template_name, content)
+
         query = select(EmailTemplateOverride).where(
             EmailTemplateOverride.template_name == template_name,
         )
@@ -930,6 +1088,42 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
         raise
 
 
+async def _notification_job_is_live(notification_id: UUID) -> bool:
+    """Whether the ARQ job for this notification still exists.
+
+    D3. The job id IS the notification id (``_create_and_enqueue`` enqueues
+    with ``_job_id=str(notification.id)``), so liveness is a single Redis
+    key lookup and no schema change is needed.
+
+    ARQ writes ``arq:job:{job_id}`` when the job is enqueued and deletes it
+    when the job finishes or terminally fails, so:
+      * key present  -> the job is queued or deferred; the worker still owns
+        it, and it MUST NOT be swept.
+      * key absent   -> the job is gone; the enqueue is provably lost.
+
+    If Redis cannot answer, this returns False ("not live"), which
+    degrades the sweep to its age-only behaviour. That is the conservative
+    choice for a bounded-terminal-state sweep, and the caller logs the
+    degradation.
+    """
+    from arq.constants import job_key_prefix
+
+    from src.app.core.utils.queue import pool as arq_pool
+
+    if arq_pool is None:
+        # No queue client: the worker never ran, so nothing can be live.
+        return False
+    try:
+        return bool(await arq_pool.exists(job_key_prefix + str(notification_id)))
+    except Exception as exc:
+        logger.warning(
+            "notification_job_liveness_check_failed",
+            notification_id=str(notification_id),
+            error=str(exc),
+        )
+        return False
+
+
 async def recover_stuck_notifications(ctx: dict[str, Any]) -> int:
     """ARQ periodic job: sweep stuck PENDING notifications to terminal FAILED (P2-6).
 
@@ -937,8 +1131,25 @@ async def recover_stuck_notifications(ctx: dict[str, Any]) -> int:
     (recover_stuck_deliveries) without replicating its table shape: a
     PENDING row whose enqueue was lost (or whose worker retries all
     exhausted without a final FAILED marking) must not stay PENDING
-    forever. Rows older than NOTIFICATION_MAX_PENDING_AGE_HOURS are marked
-    FAILED with a bounded terminal reason.
+    forever.
+
+    D3: the sweep only touches a row whose enqueue is PROVABLY LOST. The
+    age alone is not proof: during a long worker outage, rows legitimately
+    deferred through worker retries are older than the threshold too, and
+    sweeping them destroys deliverable mail that the worker would still
+    have sent. So the sweep asks Redis whether the row's ARQ job still
+    exists (the job id IS the notification id — see ``_create_and_enqueue``)
+    and leaves a row alone while its job is live.
+
+    A row whose job is gone is provably lost: ARQ deletes the job key when
+    the job finishes or terminally fails, and the key expires on its own if
+    the worker never picks it up.
+
+    When Redis cannot answer (the queue is down), the sweep degrades to the
+    AGE-ONLY behaviour it had before: an old row is swept. That is the
+    conservative choice — a stuck PENDING row is a bounded terminal state
+    by design, and the alternative (never sweeping) would leak rows
+    forever. The degradation is logged, never silent.
 
     Re-enqueueing on recovery is deliberately NOT attempted: the rendered
     html body is not persisted on the Notification row, so a re-enqueue
@@ -972,8 +1183,19 @@ async def recover_stuck_notifications(ctx: dict[str, Any]) -> int:
             result = await db.execute(stmt)
             notifications = result.scalars().all()
             for notification in notifications:
+                # D3: only sweep a row whose enqueue is provably lost. A row
+                # whose ARQ job still exists is queued or deferred — the
+                # worker will still deliver it, so sweeping it would destroy
+                # deliverable mail.
+                if await _notification_job_is_live(notification.id):
+                    logger.info(
+                        "notification_recovery_skipped_job_still_live",
+                        notification_id=str(notification.id),
+                    )
+                    continue
                 notification.status = NotificationStatus.FAILED
                 notification.error_message = "Recovery window exhausted"
+                notification.error_kind = ERROR_KIND_RECOVERY_EXHAUSTED
                 recovered += 1
 
             if recovered > 0:

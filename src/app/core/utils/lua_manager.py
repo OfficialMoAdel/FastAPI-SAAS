@@ -695,11 +695,11 @@ class LuaScriptManager:
                     )
 
                 script.loaded = True
-                logger.debug("Preloaded script ''", name=name)
+                logger.debug("Preloaded script", name=name)
                 return name, True
 
             except Exception as e:
-                logger.error("Failed to preload script '':", name=name, error=e)
+                logger.error("Failed to preload script", name=name, error=e)
                 return name, False
 
         # K10: concurrent SCRIPT LOAD — one startup latency, not N sequential RTTs.
@@ -822,7 +822,7 @@ class LuaScriptManager:
             return await self.execute(redis, script_name, keys, args)
         except LuaScriptError as e:
             if fallback_fn is not None:
-                logger.warning("Script failed, using fallback:", script_name=script_name, error=e)
+                logger.warning("Script failed, using fallback", script_name=script_name, error=e)
                 return await fallback_fn()
             raise
 

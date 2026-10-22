@@ -87,13 +87,10 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name=op.f("fk_user_tenant_id"), ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["tier_id"], ["tier.id"], name=op.f("fk_user_tier_id"), ondelete="SET NULL"),
     )
-    # Tenant-scoped PARTIAL unique indexes, exactly as declared in
-    # users/models.py __table_args__. Partial (WHERE is_deleted = false) so a
-    # soft-deleted row does not block re-registration of the same
-    # email/username within a tenant. (Previously this file created a global
-    # UNIQUE ix_user_username and a non-unique ix_user_email, which drifted
-    # from the ORM and broke IntegrityError-name matching; the fix was folded
-    # in here during development instead of a separate migration.)
+    # Tenant-scoped partial unique indexes matching `users/models.py __table_args__`.
+    # The `WHERE is_deleted = false` clause lets soft-deleted users re-register
+    # with the same email or username. Fixes ORM drift and IntegrityError matching
+    # issues caused by the older global/non-unique indexes.
     op.create_index(
         "uq_user_email_tenant",
         "users",

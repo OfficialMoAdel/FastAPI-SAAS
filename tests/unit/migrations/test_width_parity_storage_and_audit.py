@@ -36,8 +36,9 @@ WHERE THE FIX LIVES. In the creating layers, not in a new revision. Per
 `upgrade()` rather than stacking a dated revision "unless the layer is already
 applied in production". Nothing has been shipped, so the rule applies in the form
 that corrects layer 05 and layer 07 in place and drops/rebuilds the database.
-Two existing oracles also pin the head at `08_enable_rls_policies`, so a new
-revision 09 would contradict the repository rather than follow it.
+Two existing oracles pin the migration head by name (`08`), so a new revision for
+a `create_table`-only change would contradict the repository rather than follow
+it.
 
 The two remaining `TYPE_ALLOWLIST` rows are NOT in scope and stay: `files.mime_type`
 (ORM 128 / column 100) and `passkey_credentials.device_type` (ORM 100 / column 50)

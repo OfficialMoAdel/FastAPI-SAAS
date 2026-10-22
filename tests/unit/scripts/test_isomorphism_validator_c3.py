@@ -69,6 +69,17 @@ FORMER_HOLDERS: tuple[tuple[str, str], ...] = (
     ("src/app/core/principal.py", "get_auth_context"),
 )
 
+# The FIFTH former holder (Cluster C / C1, 2026-10-22).
+# `core.rbac.dependencies._check_permission` held a session ONLY to hand it
+# to the permission lookup. The C1 fix gave the RBAC bitmask singleflight its
+# own short-lived session -- it must not run on a request's session, because
+# the task is awaited by OTHER requests -- so the dependency no longer needs
+# one and no longer takes one. It holds no session to classify, so it was
+# removed from the pinned holder set.
+FORMER_HOLDERS_C1: tuple[tuple[str, str], ...] = (
+    ("src/app/core/rbac/dependencies.py", "_check_permission"),
+)
+
 # The chain from those four to a session, edge by edge. Each edge is a
 # source-level fact; together they are what makes the removal of the
 # four from the holder set a correction rather than a loss of coverage.
@@ -156,8 +167,14 @@ class TestTheTwoClosedWorldsArePinned:
         asserts this, so the type is load-bearing."""
         assert isinstance(validator.C3_DB_CALLERS, frozenset)
 
-    def test_the_holder_set_is_the_pinned_sixty(self, validator: Any) -> None:
-        assert len(validator.C3_DB_CALLERS) == 60
+    def test_the_holder_set_is_the_pinned_fifty_nine(self, validator: Any) -> None:
+        """59 since the Cluster C / C1 fix removed the fifth former holder.
+
+        The count is a ratchet: it moves DOWN when a holder stops holding a
+        session, and a new holder fails the enumeration gate until it is
+        classified. It never moves up without a new classification.
+        """
+        assert len(validator.C3_DB_CALLERS) == 59
 
     def test_the_opener_set_is_a_frozenset_of_eight(self, validator: Any) -> None:
         assert isinstance(validator.C3_SESSION_OPENERS, frozenset)
@@ -165,6 +182,11 @@ class TestTheTwoClosedWorldsArePinned:
 
     def test_the_four_former_holders_are_not_in_the_holder_set(self, validator: Any) -> None:
         for key in FORMER_HOLDERS:
+            assert key not in validator.C3_DB_CALLERS, f"{key} was re-added to the holder set"
+
+    def test_the_c1_former_holder_is_not_in_the_holder_set(self, validator: Any) -> None:
+        """Cluster C / C1: the RBAC dependency stopped holding a session."""
+        for key in FORMER_HOLDERS_C1:
             assert key not in validator.C3_DB_CALLERS, f"{key} was re-added to the holder set"
 
     def test_the_holder_enumeration_matches_the_code(self, validator: Any) -> None:
@@ -181,6 +203,32 @@ class TestTheTwoClosedWorldsArePinned:
         of the two scans is wrong."""
         overlap = set(validator.C3_DB_CALLERS) & set(validator.C3_SESSION_OPENERS)
         assert overlap == set()
+
+
+class TestTheC1FormerHolderHoldsNoSession:
+    """The code fact that justifies removing the RBAC dependency from the
+    holder set (Cluster C / C1)."""
+
+    @pytest.mark.parametrize("relpath,name", FORMER_HOLDERS_C1)
+    def test_the_signature_carries_no_session_parameter(self, relpath: str, name: str) -> None:
+        node = _function_node(relpath, name)
+        args = node.args
+        params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+        for param in params:
+            annotation = ast.unparse(param.annotation) if param.annotation is not None else ""
+            default = getattr(param, "default", None)
+            default_text = ast.unparse(default) if default is not None else ""
+            assert "async_get_db" not in annotation
+            assert "async_get_db" not in default_text
+
+    def test_the_permission_lookup_opens_its_own_session(self) -> None:
+        """The session it used to hold now lives in the task's own session.
+
+        That is the OPENERS world (a different acquisition mechanism), and
+        it is why the dependency no longer needs one.
+        """
+        node = _function_node("src/app/core/rbac/dependencies.py", "_compute_and_cache_bitmask")
+        assert "local_session()" in ast.unparse(node)
 
 
 class TestTheFourDelegatorsHoldNoSession:

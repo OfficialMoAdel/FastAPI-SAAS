@@ -22,9 +22,7 @@ from src.app.api.monitoring_schemas import (
 from src.app.core.config import settings
 from src.app.core.health import (
     HealthResult,
-    check_database_health,
-    check_redis_health,
-    check_redis_queue_health,
+    collect_readiness_results,
     resolve_readiness_status,
 )
 from src.app.core.logger import get_logger
@@ -248,18 +246,16 @@ async def liveness_probe() -> dict[str, str]:
 
 
 async def _collect_readiness_results() -> tuple[HealthResult, HealthResult, HealthResult, bool]:
-    from src.app.core.db.database import local_session
-    from src.app.core.events import event_bus
-    from src.app.core.redis_provider import get_redis
+    """Gather the readiness inputs for the compatibility alias.
 
-    async with local_session() as db:
-        database_result = await check_database_health(db)
-    redis = get_redis()
-    redis_result = await check_redis_health(redis) if redis is not None else HealthResult(
-        status="degraded", error="Redis not configured"
-    )
-    queue_result = await check_redis_queue_health()
-    return database_result, redis_result, queue_result, event_bus.is_ready
+    Delegates to ``core.health.collect_readiness_results`` — the same
+    collector the canonical ``/api/v1/ready`` surface uses — so the two
+    surfaces cannot disagree about the current state of the system. The
+    only difference left is the envelope: this alias answers
+    ``{"status": "ready"}`` / ``{"status": "not_ready", ...}`` where the
+    canonical surface answers the full ``ReadyCheck`` body.
+    """
+    return await collect_readiness_results()
 
 
 @router.get("/health/ready", response_model=None)

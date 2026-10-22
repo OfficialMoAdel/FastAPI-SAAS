@@ -60,7 +60,12 @@ class UserBase(BaseModel):
 class User(TimestampSchema, UserBase, UUIDSchema, PersistentDeletion):
     """Internal user schema with all fields including sensitive data."""
 
-    profile_image_url: Annotated[str, Field(default="https://www.profileimageurl.com")]
+    # B2: no default. The old "https://www.profileimageurl.com" default was a
+    # docs placeholder that had become a runtime value: every user row
+    # carried a third-party avatar URL nobody chose. Absent avatar is now
+    # None, which the read schemas and the avatar-upload flow both expect
+    # (user_preferences writes profile_image_url=None to clear one).
+    profile_image_url: str | None = None
     hashed_password: str
     is_superuser: bool = False
     tier_id: int | None = None
@@ -97,6 +102,26 @@ class UserUpdateInternal(BaseUpdate):
             raise ValueError("Username cannot consist entirely of numbers")
         return v
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v: str | None) -> str | None:
+        """Normalize the email to lowercase on the UPDATE path too.
+
+        B1: ``UserBase.normalize_email`` only covered CREATE, so an update
+        could write ``Victim@X.com`` while the unique index
+        ``uq_user_email_tenant`` is case-SENSITIVE. Two rows differing only
+        in case could then coexist, and the login lookup (which lowercases
+        both sides) would match BOTH — and because it ends in
+        ``scalar_one_or_none()``, that raises ``MultipleResultsFound``:
+        every login for that email 500s.
+
+        Create and update must not diverge, so the same normalisation
+        applies here.
+        """
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
     profile_image_url: Annotated[
         str | None,
         Field(
@@ -125,7 +150,11 @@ class UserReadPublic(BaseRead):
     name: str
     username: str
     email: EmailStr
-    profile_image_url: str
+    # B2: optional — a user with no avatar has no URL. The old required
+    # ``str`` here was only satisfiable because the ORM supplied a
+    # placeholder; making it Optional is what lets "no avatar" be
+    # representable without inventing a URL.
+    profile_image_url: str | None = None
     tier_id: int | None
     is_email_verified: bool = False
     is_active: bool = True
@@ -170,7 +199,8 @@ class UserAuthInfo(BaseModel):
     name: str
     username: str
     email: str
-    profile_image_url: str
+    # B2: optional — mirrors the nullable ORM column.
+    profile_image_url: str | None = None
     tenant_id: UUID
     tier_id: int | None = None
     hashed_password: str
@@ -272,6 +302,26 @@ class UserUpdate(BaseUpdate):
             return v
         if v.lower() in settings.app.RESERVED_USERNAMES:
             raise ValueError(f"Username '{v}' is reserved.")
+        return v
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v: str | None) -> str | None:
+        """Normalize the email to lowercase on the UPDATE path too.
+
+        B1: ``UserBase.normalize_email`` only covered CREATE, so an update
+        could write ``Victim@X.com`` while the unique index
+        ``uq_user_email_tenant`` is case-SENSITIVE. Two rows differing only
+        in case could then coexist, and the login lookup (which lowercases
+        both sides) would match BOTH — and because it ends in
+        ``scalar_one_or_none()``, that raises ``MultipleResultsFound``:
+        every login for that email 500s.
+
+        Create and update must not diverge, so the same normalisation
+        applies here.
+        """
+        if isinstance(v, str):
+            return v.strip().lower()
         return v
 
 

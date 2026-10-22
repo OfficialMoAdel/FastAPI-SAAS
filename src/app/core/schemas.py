@@ -19,7 +19,7 @@ from uuid6 import uuid7
 class HealthCheck(BaseModel):
     status: Literal["healthy", "degraded", "unhealthy"]
     environment: str
-    version: str
+    version: str | None
     timestamp: str
 
 
@@ -32,7 +32,7 @@ class MessageResponse(BaseModel):
 class ReadyCheck(BaseModel):
     status: Literal["healthy", "degraded", "unhealthy"]
     environment: str
-    version: str
+    version: str | None
     app: str
     database: str
     redis: str

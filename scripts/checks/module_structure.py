@@ -27,13 +27,25 @@ MODULES_DIR = ROOT / "src" / "app" / "modules"
 # entry here is a deliberate, reviewable decision — not an accident.
 ALLOWLIST: dict[str, str] = {
     "_base": "shared BaseService/CRUD base classes, not an API module",
-    "cache_warming": "background warming service, no HTTP surface or models",
     "health": "liveness/readiness router only, no service or models",
     "storage": "storage backend adapters (local/S3), no HTTP surface",
 }
 
 CANONICAL_REQUIRED = ("router.py", "service.py")
 MODEL_REQUIRED_ANY = ("models.py", "schemas.py")
+
+
+def _display_path(path: Path) -> str:
+    """Render a path relative to the repo root when it is inside it.
+
+    The checker is also pointed at temporary trees by its own test, and
+    ``Path.relative_to`` raises when the path is not under the root. The
+    display string is cosmetic, so fall back to the absolute path.
+    """
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
 
 def check_module(module_dir: Path) -> list[str]:
@@ -73,16 +85,28 @@ def main() -> int:
         if violations:
             failing.append((module_dir.name, violations))
 
-    print(f"Checked {total} modules under {MODULES_DIR.relative_to(ROOT)}")
+    print(f"Checked {total} modules under {_display_path(MODULES_DIR)}")
     print(f"Allow-listed deviations ({len(allowlisted)}):")
     for name in allowlisted:
         print(f"  - {name}: {ALLOWLIST[name]}")
 
-    # Warn if an allow-list entry no longer exists (stale allow-list)
+    # A stale allow-list entry is a contract hole: it exempts a module that
+    # no longer exists, so the day that name comes back it is silently exempt
+    # again. It used to be a WARNING, which meant the entry could sit here
+    # indefinitely — the gate printed it on every run and nobody read it.
+    # It is now a FAILURE (F13): the allow-list must describe the tree as it
+    # stands, and deleting a module is a reason to delete its exemption.
     existing = {m.name for m in modules}
     stale = [name for name in ALLOWLIST if name not in existing]
-    for name in stale:
-        print(f"WARNING: allow-list entry '{name}' matches no module — remove it")
+    if stale:
+        print(f"\nFAIL: {len(stale)} allow-list entr(ies) match no module:")
+        for name in stale:
+            print(f"  - '{name}': {ALLOWLIST[name]}")
+        print(
+            "\nFix: remove the stale entry from ALLOWLIST in "
+            "scripts/checks/module_structure.py."
+        )
+        return 1
 
     if failing:
         print(f"\nFAIL: {len(failing)} module(s) violate the structure contract:")

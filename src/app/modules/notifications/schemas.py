@@ -40,6 +40,9 @@ class NotificationRead(BaseReadUUID):
     status: str
     sent_at: datetime | None
     error_message: str | None
+    # D4: the machine-readable failure class (NULL unless the row failed).
+    # Operators filter on this rather than parsing the subject text.
+    error_kind: str | None = None
 
 
 # Backward compatibility alias

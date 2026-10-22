@@ -490,8 +490,10 @@ def create_application(
 # Every phase keeps its historical behavior verbatim; only the address
 # changed (moved from main.py).
 
-# admin interface initialized inside lifespan to eliminate import-time side effects
-admin: "CRUDAdmin | None" = None
+# The admin panel instance is NOT a module global: it is stored on
+# ``application.state.admin`` by ``_init_admin``. A global would be
+# overwritten by the LAST ``create_application`` call, so a process that
+# builds more than one app would mount the panel onto the wrong one.
 
 
 
@@ -694,12 +696,20 @@ async def _init_admin(application: FastAPI) -> None:
     The panel is mounted HERE rather than in ``create_application`` because
     ``CRUDAdmin.initialize()`` provisions the bootstrap credential and must
     not run at import/construction time.
+
+    The panel instance lives on ``application.state``, not in a module
+    global. A global is overwritten by the LAST ``create_application``
+    call, so a process that builds more than one app mounted the panel
+    onto whichever was built last rather than the one whose lifespan was
+    running. ``app.state`` is per-application, which is the scope the
+    panel actually has.
     """
-    global admin
+    admin: CRUDAdmin | None = getattr(application.state, "admin", None)
     if admin is None:
         from src.app.admin.initialize import create_admin_interface
 
         admin = create_admin_interface()
+        application.state.admin = admin
     if admin:
         try:
             await admin.initialize()

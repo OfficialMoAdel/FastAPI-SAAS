@@ -38,6 +38,23 @@ def _session_returning(slugs: list[str]) -> AsyncMock:
     return db
 
 
+def _session_factory(db):
+    """An async-context-manager factory handing out ``db``.
+
+    C1: the RBAC bitmask singleflight task opens its OWN session through
+    ``local_session()`` (a caller's request-scoped session must never reach
+    it — the task is awaited by other requests). Tests that exercise the
+    DB-backed permission path install their mock db here.
+    """
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _factory():
+        yield db
+
+    return _factory
+
+
 
 class TestCompositeAuthPrefetch:
     """Test suite for composite auth prefetch and sequential fallbacks."""
@@ -155,13 +172,11 @@ class TestCompositeAuthPrefetch:
         mock_auth_context = build_test_auth_context(mock_user, mock_tenant)
 
         checker = requires_permission(Permission.USERS_READ)
-        mock_db = AsyncMock()
 
         with patch("src.app.core.rbac.dependencies.has_permission_cached") as mock_has_perm:
             # Execute dependency check
             await checker(
                 request=mock_request,
-                db=mock_db,
                 auth_context=mock_auth_context,
             )
             # has_permission_cached should NOT be called because bitmask was in request.state
@@ -266,13 +281,11 @@ class TestCompositeAuthPrefetch:
         mask = PermissionBitmask.encode({Permission.USERS_READ.value})
 
         checker = requires_permission(Permission.ROLES_MANAGE)
-        mock_db = _session_returning([])
         mock_request = MagicMock()
         mock_request.state.cached_permissions_bitmask = (user_id, str(tenant_id), mask)
         with pytest.raises(ForbiddenError) as exc_info:
             await checker(
                 request=mock_request,
-                db=mock_db,
                 auth_context=mock_auth_context,
             )
 
@@ -306,8 +319,11 @@ class TestCompositeAuthPrefetch:
         mock_request = MagicMock()
         mock_request.state.cached_permissions_bitmask = (user_id, str(tenant_id), mask)
 
-        await checker(
-            request=mock_request,
-            db=mock_db,
-            auth_context=mock_auth_context,
-        )
+        # C1: the DB-backed confirmation runs inside the singleflight task,
+        # which owns its own short-lived session — so the mock db is
+        # installed as THAT session, not handed to the dependency.
+        with patch("src.app.core.db.database.local_session", _session_factory(mock_db)):
+            await checker(
+                request=mock_request,
+                auth_context=mock_auth_context,
+            )

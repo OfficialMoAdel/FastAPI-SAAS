@@ -1,46 +1,21 @@
 name: Backend CI
 
-# Every push and PR runs the full check set. These triggers used to carry
-# `paths-ignore: ['**/*.md', 'docs/**']`, which meant a change to a doc
-# pointer or a CI gate alone never started this workflow — the checks were
-# present in the file and unrunnable in practice. Dropping the filter is
-# what makes the gates below mandatory rather than advisory.
-#
-# The two-host performance arm (perf-app-host, perf-preflight, perf-load,
-# perf-teardown) has been removed from this file. It lived here because
-# tests.yml is the only workflow registered on the default branch, which is
-# what made an on-demand arm launchable without merging to main - but it made
-# a file that gates correctness also carry a job that boots a production
-# stack, and a failure in either stopped the other from being read.
-# Its findings are recorded on beads FastAPI_saas-8rez, mrv3, po5h, leep,
-# 6gai, 6ybl, u788, 5my8, gled, wxqr and upr0.
+# Runs on every push and PR. Removed `paths-ignore` so doc-only changes trigger the workflow.
+# Removed the two-host performance arm to prevent production stack boot failures from blocking correctness gates. Findings are in beads FastAPI_saas-8rez, mrv3, po5h, leep, 6gai, 6ybl, u788, 5my8, gled, wxqr, and upr0.
 on:
   push:
   pull_request:
   workflow_dispatch:
 
-# ONE workflow, and superseded runs do not keep billing.
-#
-# This block was absent, so a second push left the first run burning its full
-# ~14 minutes alongside the new one: every job in it was real work whose result
-# nobody would read, because the newer commit had already invalidated it.
-# cancel-in-progress is what turns "two runs" into "one run".
-#
-# The group is deliberately SHARED with the other workflows by name. A GitHub
-# concurrency group is repository-wide, so `ci-${{ github.ref }}` means a push
-# here cancels an in-flight perf-validation run on the same ref too, rather than
-# the two coexisting because they live in different files.
+# Cancels superseded runs to save CI minutes.
+# Uses a shared concurrency group across workflows to cancel in-flight runs on the same ref.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Folded in from the standalone "Performance Validation" workflow.
-  #
-  # Two workflows meant two checks to discover, two sets of annotations to read,
-  # and two runs for one push. The validator is self-contained (stdlib +
-  # structlog, no database and no Redis), so it costs ~30 s and has no reason to
-  # be a separate workflow rather than a job.
+  # Merged from the standalone "Performance Validation" workflow to reduce redundant runs and annotations.
+  # The validator uses only stdlib and structlog (no DB/Redis).
   isomorphism:
     name: Isomorphism Validation
     runs-on: ubuntu-latest
@@ -61,18 +36,8 @@ jobs:
         run: uv sync
 
       - name: Run isomorphism tests
-        # Run from the repository root: the validator locates the project by
-        # walking up from its own path, and it imports only stdlib + structlog.
-        #
-        # The credentials below are NOT database credentials: nothing here
-        # connects to Postgres or Redis. `test_c2_pixel_ua_differential` imports
-        # the real `src.app.middleware.attack_detection`, whose module-level
-        # `settings` construction requires POSTGRES_USER/POSTGRES_PASSWORD to be
-        # present, SECRET_KEY to be >=32 characters, and ADMIN_PASSWORD to be
-        # present and to satisfy the complexity validator. Without them the import
-        # raises before the assertion runs, so the test reports a config error
-        # instead of its result. These are throwaway values for a process that
-        # only validates them.
+        # Runs from the repository root. Uses stdlib and structlog only.
+        # The env vars are dummy values required by `settings` validation during import, not real DB credentials.
         env:
           ENVIRONMENT: local
           POSTGRES_USER: postgres
@@ -103,72 +68,45 @@ jobs:
       - name: Run Ruff
         run: uv run ruff check src
 
-      # s92p.7: the cross-module seam rule in ARCHITECTURE.md. Without a
-      # step, the rule is prose; this is what makes it bind on a new
-      # cross-module service import.
+      # Enforces the cross-module seam rule (ARCHITECTURE.md s92p.7).
       - name: Run cross-module seam gate
         run: uv run python scripts/checks/cross_module_seams.py
 
-      # io15.8: a mutating endpoint with no response_model sends an
-      # undocumented body, and a too-narrow one silently strips fields. The
-      # gate reports the endpoints that genuinely cannot be annotated, with
-      # the reason, so the exceptions stay reviewable.
+      # Ensures mutating endpoints have valid response_models (io15.8).
       - name: Run mutation response model gate
         run: uv run python scripts/checks/mutation_response_models.py
 
-      # Every rooted `src/…`, `tests/…`, `scripts/…`, `docs/…` and `.github/…`
-      # path in a document is a claim that the path exists, and the root
-      # AGENTS.md states the gate is mandatory for that reason. Unconditional:
-      # a `paths:` filter here would stop a documentation-only PR from
-      # triggering this workflow, and the gate could no longer fire on the rot
-      # it exists to catch. `tests/unit/scripts/test_doc_gate_wiring.py` fails
-      # if a filter is ever reintroduced, or if this step is deleted.
+      # Validates paths in documentation exist (AGENTS.md). Runs unconditionally to catch doc rot.
       - name: Run doc path integrity gate
         run: uv run python scripts/checks/doc_paths.py
 
-      # sj09.6: a forked Alembic history fails at DEPLOY time
-      # ("Multiple head revisions are present") and the app never boots.
-      # Single-head and graph linearity are static properties of the
-      # revision files, so they belong in the database-free lint job rather
-      # than in the tests job.
+      # Checks Alembic migration graph linearity (sj09.6) statically to prevent deploy failures.
       - name: Run migration graph gate
         run: uv run python scripts/checks/migration_graph.py
 
-      # sj09.6: the same class of rot in executable form. A script that
-      # imports a module that no longer exists still passes every static
-      # gate here; only importing it proves the operator-facing entry
-      # points resolve.
+      # Validates operator script imports resolve (sj09.6).
       - name: Run operator script import gate
         run: uv run python scripts/checks/script_imports.py
 
-      # nrgi.7: a list service that changes its WHERE or ORDER BY keeps
-      # working and silently loses the index that was the only reason the
-      # query was cheap — a correct answer from a sequential scan is still a
-      # correct answer, so no test catches it. The checker is pure AST: it
-      # reads models.py and the declared predicates, so it needs no database
-      # in the lint job.
+      # Checks index predicate coverage (nrgi.7) via AST to prevent silent sequential scans.
       - name: Run index predicate coverage gate
         run: uv run python scripts/checks/index_predicate_coverage.py
 
-      # v8kz: Alembic compares indexes by NAME, and this repo declares no
-      # naming_convention, so an index the ORM and the migration define
-      # differently produces NO autogenerate diff. A migrated database and a
-      # create_all database then hold different schemas. The gate compares
-      # columns IN ORDER, the partial predicate and uniqueness — not just the
-      # name, which is the whole point. Pure AST, no database.
+      # Compares index columns, predicates, and uniqueness via AST (v8kz) to catch schema drift.
       - name: Run index definition consistency gate
         run: uv run python scripts/checks/index_definition_consistency.py
 
-      # A column mapped on a model but never created by a migration is
-      # invisible to every other gate here: create_all DERIVES the schema from
-      # the ORM, so a create_all database always has it, and the tests run
-      # against such a database. On a migrated database the query then raises
-      # UndefinedColumnError. `pricing.currency` was exactly this, and adding
-      # this gate immediately surfaced three more (passkey_credentials.aaguid
-      # and .transports, magic_links.user_agent, user_sso_connections
-      # .provider_email). Pure AST, no database.
+      # AST check for columns mapped on models but missing in migrations, preventing UndefinedColumnError on migrated DBs.
       - name: Run schema parity gate
         run: uv run python scripts/checks/schema_parity.py
+
+      # Checks log templates for empty slots that cause truncated operator output.
+      - name: Run log template gate
+        run: uv run python scripts/checks/log_templates.py
+
+      # Enforces the modular-monolith contract (router.py, service.py, models/schemas) in `src/app/modules`.
+      - name: Run module structure gate
+        run: uv run python scripts/checks/module_structure.py
 
   type-check:
     runs-on: ubuntu-latest
@@ -235,37 +173,13 @@ jobs:
       - name: Install package with dev dependencies
         run: uv pip install -e ".[dev]"
 
-      # Real Alembic parity, against a genuinely migrated database.
-      #
-      # Runs in a SEPARATE database on purpose: `alembic upgrade head` here
-      # would leave test_db with the migration-08 RLS policies enabled, whereas
-      # the suite currently runs against a create_all schema that has none.
-      # Flipping that is a much larger change than adding a gate, so this gets
-      # its own database and test_db is left alone.
-      #
-      # NON-BLOCKING, deliberately. Measured on this repo at 7de0ff2a: ~395
-      # diffs, of which ZERO are "added column" (the defect class that actually
-      # breaks a migrated database). The rest are index naming, column
-      # comments and TIMESTAMP type comparisons — long-standing, and exactly
-      # the classes this repo deliberately gates with precise AST checks
-      # instead (see index_definition_consistency.py: "Alembic compares
-      # indexes by NAME, and this repo declares no naming_convention").
-      #
-      # As a BLOCKING gate this would be red on day one and stay red, which
-      # trains people to ignore red. It runs so drift is VISIBLE and
-      # reviewable in the job log.
-      #
-      # Its type coverage is NOT what is missing:
-      # `scripts/checks/schema_parity.py` (`Run schema parity gate`, the lint
-      # job) now compares column TYPES as well as names, and fails on the
-      # differences that are observable at runtime — a jsonb column behind a
-      # non-JSON ORM type, a column narrower than the model, the api_keys.scopes
-      # class. What alembic still sees and AST cannot is the part worth keeping
-      # non-blocking-and-visible: policies, constraints and server defaults. Do
-      # not flip continue-on-error to false until that residue is triaged; doing
-      # so re-fails the build on ~395 diffs nobody has read.
-      # Step-level env is NOT inherited from the service block or from the
-      # "Run tests" step, so every step here declares what it needs.
+      # Runs Alembic parity check against a genuinely migrated database.
+      # Uses a separate DB to avoid enabling migration-08 RLS policies on `test_db`.
+      # `scripts/checks/schema_parity.py` in the lint job compares column names
+      # and types; this step still covers policies, constraints and server defaults.
+      # Non-blocking: surfaces long-standing drift (index names, timestamps, policies) without failing the build.
+      # Keep `continue-on-error: true` until the ~395 pre-existing diffs are triaged.
+      # Step-level env is not inherited, so every step declares what it needs.
       - name: Create parity check database
         run: |
           PGPASSWORD="${POSTGRES_PASSWORD}" psql -h localhost -U "${POSTGRES_USER}" -d postgres             -c "DROP DATABASE IF EXISTS parity_check;"             -c "CREATE DATABASE parity_check;"
@@ -273,18 +187,12 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
 
-      # `src/migrations/env.py` imports `src.app.models`, which imports the
-      # settings object, and `Settings` includes `FirstUserSettings`, whose
-      # ADMIN_PASSWORD is a REQUIRED field. No migration step reads or uses
-      # that password; the value only has to satisfy the field validator.
+      # `ADMIN_PASSWORD` is required by `FirstUserSettings` validation during import.
       - name: Apply migrations to parity check database
         run: uv run alembic -c src/alembic.ini upgrade head
         env:
           ENVIRONMENT: local
           SECRET_KEY: "12345678901234567890123456789012"
-          # Throwaway CI fixture, NOT a real credential. Must satisfy
-          # FirstUserSettings: >=16 chars with lower, upper, digit and one
-          # of [@$!%*?&].
           ADMIN_PASSWORD: "NotASecretCiFixture1!@#"
           POSTGRES_SERVER: localhost
           POSTGRES_PORT: "5432"
@@ -292,7 +200,7 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: parity_check
 
-      - name: Run alembic parity check (non-blocking, see comment above)
+      - name: Run alembic parity check (non-blocking)
         continue-on-error: true
         run: uv run alembic -c src/alembic.ini check
         env:
@@ -305,37 +213,14 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: parity_check
 
-      # `test_db` needs a schema BEFORE pytest, and it deliberately gets
-      # `create_all` rather than `alembic upgrade head` — see the comment above
-      # on the parity database for why the two must not share a database.
-      #
-      # Nothing was populating test_db: the main suite builds its own SQLite
-      # file (tests/conftest.py), and the app's lifespan is NOT exercised by
-      # tests that drive the ASGI app through `httpx.ASGITransport`
-      # (tests/contract/conftest.py, tests/e2e/*) — that transport never runs
-      # startup, so the `create_all` phase in the lifespan never fires either.
-      # The code paths that DO talk to the app's real engine then hit an empty
-      # database: `src/app/core/db/rls.py::_write_bypass_audit` imports
-      # `async_engine` from `core.db.database` rather than using the caller's
-      # session, so it raised UndefinedTableError on `rls_audit_log` (50
-      # outcomes across contract + e2e).
-      #
-      # `create_all` is the shape those tests are written against and the shape
-      # local dev gets from the same startup phase; migration 08 would instead
-      # enable RLS policies on test_db and break every write that does not
-      # first set a tenant context.
-      #
-      # This calls the app's own `create_tables()` — the same function the
-      # lifespan calls — so CI and local dev cannot drift into using different
-      # schema-creation paths. It needs SECRET_KEY/ADMIN_PASSWORD only because
-      # importing settings constructs `FirstUserSettings`, whose ADMIN_PASSWORD
-      # is required and validated; no migration step reads the value.
+      # Populates `test_db` using `create_all` instead of `alembic upgrade head` to avoid enabling RLS policies.
+      # Required because `httpx.ASGITransport` tests bypass lifespan startup, leaving `test_db` empty and causing UndefinedTableError.
+      # Uses `create_tables()` to match local dev schema creation.
       - name: Create schema in test database
         run: uv run python -c "import asyncio; from src.app.core.setup import create_tables; asyncio.run(create_tables())"
         env:
           ENVIRONMENT: local
           SECRET_KEY: "12345678901234567890123456789012"
-          # Throwaway CI fixture, NOT a real credential.
           ADMIN_PASSWORD: "NotASecretCiFixture1!@#"
           POSTGRES_SERVER: localhost
           POSTGRES_PORT: "5432"

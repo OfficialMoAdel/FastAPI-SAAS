@@ -1,12 +1,15 @@
 # Health Module AGENTS.md
 
 ## Package Identity
-Simple health check endpoints for monitoring service status. No database models or service layer - uses core infrastructure checks.
+The canonical HTTP health surface: `/health` and `/ready`. The check
+implementations live in `src/app/core/health.py` (the canonical check
+library, shared with `api/monitoring.py`); this module owns only the HTTP
+surface. No database models and no service layer.
 
 ## Setup & Run
 ```bash
 # Run tests
-uv run pytest tests/contract/test_tenant_middleware.py -v
+uv run pytest tests/unit/modules/health/ -v
 
 # Type check
 uv run mypy src/app/modules/health/
@@ -20,24 +23,37 @@ uv run ruff check src/app/modules/health/
 ### Code Organization
 - Router only (no service.py, no crud.py, no models)
 - Use `src/app/core/health.py` for actual health checks
-- Return JSON responses with status indicators
+- Return the declared Pydantic models, not hand-built dicts
 - Use FastAPI dependency injection for database/cache checks
 
 ### Endpoints
 ```python
 # Pattern from src/app/modules/health/router.py:
 
-@router.get("/health", tags=["health"])
-async def health_check(db: AsyncSession = Depends(get_db)):
-    """Check overall service health."""
-    # Checks: DB, Redis, Queue
-    return {"status": "healthy", "checks": {...}}
+@router.get("/health", response_model=HealthCheck)
+async def health() -> HealthCheck:
+    """Liveness-style check: the process is up and serving."""
+    return HealthCheck(
+        status="healthy",
+        environment=settings.env.ENVIRONMENT.value,
+        version=settings.app.APP_VERSION,
+        timestamp=datetime.now(UTC).isoformat(timespec="seconds"),
+    )
 
-@router.get("/ready", tags=["health"])
-async def readiness_check(db: AsyncSession = Depends(get_db)):
-    """Check if service is ready to accept traffic."""
-    # More strict: All dependencies must be healthy
-    return {"status": "ready", "checks": {...}}
+
+@router.get("/ready", response_model=ReadyCheck)
+async def ready(
+    response: Response,
+    redis: Annotated[Redis, Depends(async_get_redis)],
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> ReadyCheck:
+    """Readiness: every required dependency must be healthy.
+
+    The 503 is carried on `response.status_code` — returning a
+    `JSONResponse` would bypass FastAPI's response-model serialization
+    and leave `response_model=ReadyCheck` inert.
+    """
+    ...
 ```
 
 ### Health Check Logic
@@ -48,7 +64,11 @@ async def readiness_check(db: AsyncSession = Depends(get_db)):
 ## Touch Points / Key Files
 
 - Router: `src/app/modules/health/router.py` - Health and readiness endpoints
-- Core health: `src/app/core/health.py` - Health check utilities
+- Core health: `src/app/core/health.py` - Health check utilities and
+  `collect_readiness_results` (the single collector both readiness
+  surfaces use)
+- Compatibility alias: `src/app/api/monitoring.py` - `/api/health`,
+  `/api/health/live`, `/api/health/ready`
 
 ## JIT Index Hints
 
@@ -64,9 +84,13 @@ async def readiness_check(db: AsyncSession = Depends(get_db)):
 - Use `GET` requests only (no side effects)
 - Ready endpoint should fail faster than health endpoint (stricter)
 - Don't expose sensitive configuration in responses
+- Return the pydantic model, not `JSONResponse`: FastAPI skips
+  response-model serialization when the handler returns a `Response`
+- The probes are patched at `src.app.core.health.*` in tests, because
+  `collect_readiness_results` resolves them there
 
 ## Pre-PR Checks
 
 ```bash
-uv run mypy src/app/modules/health/ && uv run ruff check src/app/modules/health/ && uv run pytest tests/contract/test_tenant_middleware.py -v
+uv run mypy src/app/modules/health/ && uv run ruff check src/app/modules/health/ && uv run pytest tests/unit/modules/health/ -v
 ```

@@ -14,49 +14,46 @@ Admin Endpoints:
 - GET /admin/security/ip/lists - Get both whitelist and blacklist
 - GET /admin/security/config - Get current IP filter config
 - PATCH /admin/security/config - Update IP filter config
+
+Every handler here is a thin adapter: the business logic lives in
+``src/app/modules/security/service.py``. The router resolves the request
+context, delegates, and shapes the response. The core singletons
+(``ip_filter_service``, the auto-ban functions) are reached from the
+service, not from here.
 """
 
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 from structlog import get_logger
 
 from src.app.api.deps import RequestContextDep, get_current_superuser
 from src.app.api.deps.auth import AuthenticatedUser
-from src.app.core.config import settings
-from src.app.core.guard.ip_rules import ip_filter_service
-from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
-from src.app.core.security.auto_ban import (
-    ban_ip,
-    get_all_banned_ips,
-    get_violation_stats,
-    unban_ip,
-)
-from src.app.modules.audit_logs import AuditGuarantee, audit
+from src.app.core.pagination import PaginationParams, get_pagination_params
 from src.app.modules.auth.schemas import (
     PasskeyCredentialList,
     PasskeyDeleteResponse,
 )
-from src.app.modules.auth.services.passkey import PasskeyService, get_passkey_service
 from src.app.modules.security.schemas import (
     AutoBanConfig,
     AutoBanConfigUpdate,
     BanActionResponse,
-    BannedIPEntry,
     BannedIPsResponse,
     IPAddressRequest,
     IPFilterConfig,
     IPFilterConfigUpdate,
-    IPListEntry,
     IPListsResponse,
     IPListUpdateResponse,
     IPViolationStats,
     ViolationStats,
 )
+from src.app.modules.security.service import SecurityService, get_security_service
 
 router = APIRouter(prefix="/security", tags=["security"])
 
 logger = get_logger(__name__)
+
+SecurityServiceDep = Annotated[SecurityService, Depends(get_security_service)]
 
 
 # ============================================================================
@@ -67,9 +64,9 @@ logger = get_logger(__name__)
 @router.get("/passkeys", response_model=PasskeyCredentialList)
 async def list_passkeys(
     ctx: RequestContextDep,
-    passkey_svc: Annotated[PasskeyService, Depends(get_passkey_service)],
+    service: SecurityServiceDep,
     pagination: Annotated[PaginationParams, Depends(get_pagination_params)],
-):
+) -> PasskeyCredentialList:
     """List user's passkey credentials (paginated).
 
     This is a convenience endpoint that wraps /auth/passkey/credentials
@@ -80,11 +77,19 @@ async def list_passkeys(
         ``GET /auth/passkey/credentials``. New clients should call the
         canonical ``/auth`` endpoint directly.
     """
-    credentials = await passkey_svc.list_credentials(db=ctx.db, user_id=ctx.user_id)
-    start = pagination.offset
-    page_items = credentials[start : start + pagination.limit]
-    return build_paginated_response(
-        items=page_items, total=len(credentials), page=pagination.page, per_page=pagination.per_page
+    page = await service.list_passkeys(
+        db=ctx.db,
+        user_id=ctx.user_id,
+        offset=pagination.offset,
+        limit=pagination.limit,
+    )
+    return PasskeyCredentialList(
+        items=page["items"],
+        total=page["total"],
+        page=page["page"],
+        per_page=page["per_page"],
+        has_next=page["has_next"],
+        has_previous=page["has_previous"],
     )
 
 
@@ -92,8 +97,8 @@ async def list_passkeys(
 async def delete_passkey(
     passkey_id: int,
     ctx: RequestContextDep,
-    passkey_svc: Annotated[PasskeyService, Depends(get_passkey_service)],
-):
+    service: SecurityServiceDep,
+) -> PasskeyDeleteResponse:
     """Delete a passkey credential.
 
     This is a convenience endpoint that wraps /auth/passkey/credentials/{credential_id}
@@ -104,7 +109,7 @@ async def delete_passkey(
         ``DELETE /auth/passkey/credentials/{credential_id}``. New clients
         should call the canonical ``/auth`` endpoint directly.
     """
-    await passkey_svc.delete_credential(db=ctx.db, user_id=ctx.user_id, credential_id=passkey_id)
+    await service.delete_passkey(db=ctx.db, user_id=ctx.user_id, credential_id=passkey_id)
     return PasskeyDeleteResponse(message="Passkey deleted successfully")
 
 
@@ -122,6 +127,7 @@ async def delete_passkey(
 async def add_ip_to_whitelist(
     request: IPAddressRequest,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],
+    service: SecurityServiceDep,
 ) -> IPListUpdateResponse:
     """Add an IP address to the whitelist.
 
@@ -132,8 +138,8 @@ async def add_ip_to_whitelist(
     - **reason**: Optional reason for whitelisting
     - **expires_at**: Optional expiration datetime
     """
-    success = await ip_filter_service.add_to_whitelist(
-        ip_address=request.ip_address,
+    success = await service.add_to_whitelist(
+        request.ip_address,
         reason=request.reason,
         expires_at=request.expires_at,
         added_by=current_user.id,
@@ -158,6 +164,7 @@ async def add_ip_to_whitelist(
 async def remove_ip_from_whitelist(
     ip_address: str,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
+    service: SecurityServiceDep,
 ) -> IPListUpdateResponse:
     """Remove an IP address from the whitelist.
 
@@ -165,7 +172,7 @@ async def remove_ip_from_whitelist(
 
     - **ip_address**: IPv4 or IPv6 address to remove
     """
-    success = await ip_filter_service.remove_from_whitelist(ip_address)
+    success = await service.remove_from_whitelist(ip_address)
 
     return IPListUpdateResponse(
         success=success,
@@ -185,6 +192,7 @@ async def remove_ip_from_whitelist(
 async def add_ip_to_blacklist(
     request: IPAddressRequest,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],
+    service: SecurityServiceDep,
 ) -> IPListUpdateResponse:
     """Add an IP address to the blacklist.
 
@@ -195,8 +203,8 @@ async def add_ip_to_blacklist(
     - **reason**: Optional reason for blacklisting
     - **expires_at**: Optional expiration datetime
     """
-    success = await ip_filter_service.add_to_blacklist(
-        ip_address=request.ip_address,
+    success = await service.add_to_blacklist(
+        request.ip_address,
         reason=request.reason,
         expires_at=request.expires_at,
         added_by=current_user.id,
@@ -221,6 +229,7 @@ async def add_ip_to_blacklist(
 async def remove_ip_from_blacklist(
     ip_address: str,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
+    service: SecurityServiceDep,
 ) -> IPListUpdateResponse:
     """Remove an IP address from the blacklist.
 
@@ -228,7 +237,7 @@ async def remove_ip_from_blacklist(
 
     - **ip_address**: IPv4 or IPv6 address to remove
     """
-    success = await ip_filter_service.remove_from_blacklist(ip_address)
+    success = await service.remove_from_blacklist(ip_address)
 
     return IPListUpdateResponse(
         success=success,
@@ -246,6 +255,7 @@ async def remove_ip_from_blacklist(
 )
 async def get_ip_lists(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
+    service: SecurityServiceDep,
 ) -> IPListsResponse:
     """Get both whitelist and blacklist with all entries.
 
@@ -254,39 +264,7 @@ async def get_ip_lists(
     Returns current configuration status and all IP entries
     with their metadata (added time, reason, expiration).
     """
-    whitelist_raw = await ip_filter_service.get_whitelist()
-    blacklist_raw = await ip_filter_service.get_blacklist()
-
-    # Convert raw entries to schema objects
-    whitelist = [
-        IPListEntry(
-            ip_address=entry["ip_address"],
-            added_at=entry["added_at"],
-            reason=entry.get("reason"),
-            expires_at=entry.get("expires_at"),
-            added_by=entry.get("added_by"),
-        )
-        for entry in whitelist_raw
-    ]
-
-    blacklist = [
-        IPListEntry(
-            ip_address=entry["ip_address"],
-            added_at=entry["added_at"],
-            reason=entry.get("reason"),
-            expires_at=entry.get("expires_at"),
-            added_by=entry.get("added_by"),
-        )
-        for entry in blacklist_raw
-    ]
-
-    return IPListsResponse(
-        whitelist=whitelist,
-        blacklist=blacklist,
-        whitelist_enabled=settings.security.IP_WHITELIST_ENABLED,
-        blacklist_enabled=settings.security.IP_BLACKLIST_ENABLED,
-        whitelist_bypass_rate_limit=settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT,
-    )
+    return await service.get_ip_lists()
 
 
 @router.get(
@@ -296,6 +274,7 @@ async def get_ip_lists(
 )
 async def get_ip_filter_config(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
+    service: SecurityServiceDep,
 ) -> IPFilterConfig:
     """Get current IP filter configuration.
 
@@ -304,11 +283,7 @@ async def get_ip_filter_config(
     Returns the current configuration values for IP filtering.
     Note: Configuration changes require application restart to take effect.
     """
-    return IPFilterConfig(
-        whitelist_enabled=settings.security.IP_WHITELIST_ENABLED,
-        blacklist_enabled=settings.security.IP_BLACKLIST_ENABLED,
-        whitelist_bypass_rate_limit=settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT,
-    )
+    return service.get_ip_filter_config()
 
 
 @router.patch(
@@ -319,6 +294,7 @@ async def get_ip_filter_config(
 async def update_ip_filter_config(
     config_update: IPFilterConfigUpdate,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],
+    service: SecurityServiceDep,
 ) -> IPFilterConfig:
     """Update IP filter configuration.
 
@@ -335,35 +311,7 @@ async def update_ip_filter_config(
     **Note**: This endpoint updates the in-memory settings only.
     For persistent configuration, modify environment variables.
     """
-
-    from src.app.core.security.runtime_config import apply_and_store_runtime_config
-
-    updates: dict[str, Any] = {}
-    if config_update.whitelist_enabled is not None:
-        updates["IP_WHITELIST_ENABLED"] = config_update.whitelist_enabled
-    if config_update.blacklist_enabled is not None:
-        updates["IP_BLACKLIST_ENABLED"] = config_update.blacklist_enabled
-    if config_update.whitelist_bypass_rate_limit is not None:
-        updates["IP_WHITELIST_BYPASS_RATE_LIMIT"] = config_update.whitelist_bypass_rate_limit
-
-    await apply_and_store_runtime_config(updates)
-
-    # P2-1: security-config mutations are audited (superuser actor).
-    await audit(
-        action="security.ip_filter_config_updated",
-        entity_type="security_config",
-        entity_id="ip_filter",
-        tenant_id=None,
-        user_id=current_user.id,
-        details={"updates": updates},
-        guarantee=AuditGuarantee.BEST_EFFORT,
-    )
-
-    return IPFilterConfig(
-        whitelist_enabled=settings.security.IP_WHITELIST_ENABLED,
-        blacklist_enabled=settings.security.IP_BLACKLIST_ENABLED,
-        whitelist_bypass_rate_limit=settings.security.IP_WHITELIST_BYPASS_RATE_LIMIT,
-    )
+    return await service.update_ip_filter_config(config_update, actor_id=current_user.id)
 
 
 # ============================================================================
@@ -378,6 +326,7 @@ async def update_ip_filter_config(
 )
 async def get_auto_ban_config(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
+    service: SecurityServiceDep,
 ) -> AutoBanConfig:
     """Get current auto-ban configuration.
 
@@ -386,12 +335,7 @@ async def get_auto_ban_config(
     Returns the current auto-ban settings including threshold,
     duration, and escalation settings.
     """
-    return AutoBanConfig(
-        enabled=settings.security.AUTO_BAN_ENABLED,
-        threshold=settings.security.AUTO_BAN_THRESHOLD,
-        duration=settings.security.AUTO_BAN_DURATION,
-        escalation=settings.security.AUTO_BAN_ESCALATION,
-    )
+    return service.get_auto_ban_config()
 
 
 @router.patch(
@@ -402,6 +346,7 @@ async def get_auto_ban_config(
 async def update_auto_ban_config(
     config_update: AutoBanConfigUpdate,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],
+    service: SecurityServiceDep,
 ) -> AutoBanConfig:
     """Update auto-ban configuration.
 
@@ -416,38 +361,7 @@ async def update_auto_ban_config(
     - `AUTO_BAN_DURATION` - Ban duration in seconds
     - `AUTO_BAN_ESCALATION` - Enable duration escalation
     """
-
-    from src.app.core.security.runtime_config import apply_and_store_runtime_config
-
-    updates: dict[str, Any] = {}
-    if config_update.enabled is not None:
-        updates["AUTO_BAN_ENABLED"] = config_update.enabled
-    if config_update.threshold is not None:
-        updates["AUTO_BAN_THRESHOLD"] = config_update.threshold
-    if config_update.duration is not None:
-        updates["AUTO_BAN_DURATION"] = config_update.duration
-    if config_update.escalation is not None:
-        updates["AUTO_BAN_ESCALATION"] = config_update.escalation
-
-    await apply_and_store_runtime_config(updates)
-
-    # P2-1: security-config mutations are audited (superuser actor).
-    await audit(
-        action="security.auto_ban_config_updated",
-        entity_type="security_config",
-        entity_id="auto_ban",
-        tenant_id=None,
-        user_id=current_user.id,
-        details={"updates": updates},
-        guarantee=AuditGuarantee.BEST_EFFORT,
-    )
-
-    return AutoBanConfig(
-        enabled=settings.security.AUTO_BAN_ENABLED,
-        threshold=settings.security.AUTO_BAN_THRESHOLD,
-        duration=settings.security.AUTO_BAN_DURATION,
-        escalation=settings.security.AUTO_BAN_ESCALATION,
-    )
+    return await service.update_auto_ban_config(config_update, actor_id=current_user.id)
 
 
 @router.get(
@@ -457,6 +371,7 @@ async def update_auto_ban_config(
 )
 async def list_banned_ips(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
+    service: SecurityServiceDep,
 ) -> BannedIPsResponse:
     """Get all currently banned IP addresses.
 
@@ -465,22 +380,7 @@ async def list_banned_ips(
     Returns a list of all IPs currently banned by the auto-ban system,
     including ban reason and time remaining.
     """
-    banned_raw = await get_all_banned_ips()
-
-    banned = [
-        BannedIPEntry(
-            ip=entry["ip"],
-            reason=entry["reason"],
-            ttl_seconds=entry["ttl_seconds"],
-            ban_count=entry["ban_count"],
-        )
-        for entry in banned_raw
-    ]
-
-    return BannedIPsResponse(
-        banned_ips=banned,
-        total_count=len(banned),
-    )
+    return await service.list_banned_ips()
 
 
 @router.post(
@@ -492,6 +392,7 @@ async def list_banned_ips(
 async def manually_ban_ip(
     request: IPAddressRequest,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],
+    service: SecurityServiceDep,
 ) -> BanActionResponse:
     """Manually ban an IP address.
 
@@ -503,7 +404,7 @@ async def manually_ban_ip(
     - **ip_address**: IPv4 or IPv6 address to ban
     - **reason**: Optional reason for the ban
     """
-    success = await ban_ip(
+    success = await service.ban_ip(
         request.ip_address,
         reason=request.reason or f"Manual ban by admin {current_user.id}",
     )
@@ -524,6 +425,7 @@ async def manually_ban_ip(
 async def unban_ip_address(
     ip_address: str,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
+    service: SecurityServiceDep,
 ) -> BanActionResponse:
     """Remove ban from an IP address.
 
@@ -531,12 +433,7 @@ async def unban_ip_address(
 
     - **ip_address**: IPv4 or IPv6 address to unban
     """
-    # Validate IP format
-    import ipaddress
-
-    try:
-        ipaddress.ip_address(ip_address)
-    except ValueError:
+    if not service.is_valid_ip(ip_address):
         return BanActionResponse(
             success=False,
             ip_address=ip_address,
@@ -544,7 +441,7 @@ async def unban_ip_address(
             message=f"Invalid IP address format: {ip_address}",
         )
 
-    success = await unban_ip(ip_address)
+    success = await service.unban_ip(ip_address)
 
     return BanActionResponse(
         success=success,
@@ -561,6 +458,7 @@ async def unban_ip_address(
 )
 async def get_violation_statistics(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
+    service: SecurityServiceDep,
 ) -> ViolationStats:
     """Get violation statistics.
 
@@ -569,18 +467,7 @@ async def get_violation_statistics(
     Returns aggregate statistics about rate limit violations across
     all tracked IP addresses.
     """
-    stats = await get_violation_stats()
-
-    if isinstance(stats, dict):
-        return ViolationStats(
-            total_ips=stats.get("total_ips", 0),
-            total_violations=stats.get("total_violations", 0),
-        )
-
-    return ViolationStats(
-        total_ips=0,
-        total_violations=0,
-    )
+    return await service.get_violation_statistics()
 
 
 @router.get(
@@ -591,6 +478,7 @@ async def get_violation_statistics(
 async def get_ip_violation_stats(
     ip_address: str,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_superuser)],  # noqa: ARG001
+    service: SecurityServiceDep,
 ) -> IPViolationStats:
     """Get violation statistics for a specific IP.
 
@@ -600,25 +488,4 @@ async def get_ip_violation_stats(
 
     Returns violation count and ban status for the specified IP.
     """
-    # Validate IP format
-    import ipaddress
-
-    try:
-        ipaddress.ip_address(ip_address)
-    except ValueError:
-        return IPViolationStats(ip=ip_address, violations=0, total_ips=0, total_violations=0)
-
-    stats = await get_violation_stats(ip_address)
-    # ban_info = await get_ban_info(ip_address)
-
-    if isinstance(stats, dict):
-        violations = stats.get("violations", 0)
-    else:
-        violations = 0
-
-    return IPViolationStats(
-        ip=ip_address,
-        violations=violations,
-        total_ips=1,
-        total_violations=violations,
-    )
+    return await service.get_ip_violation_stats(ip_address)

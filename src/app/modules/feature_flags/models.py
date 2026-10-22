@@ -185,7 +185,7 @@ class FeatureFlagOverride(Base, kw_only=True):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(  # type: ignore
+    tenant: Mapped["Tenant"] = relationship(
         "Tenant", back_populates="feature_flag_overrides", init=False, lazy="noload"
     )
     feature_flag: Mapped["FeatureFlag"] = relationship(

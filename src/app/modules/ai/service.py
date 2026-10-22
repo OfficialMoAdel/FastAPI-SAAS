@@ -182,7 +182,7 @@ class ChatSessionService(BaseService[AIChatSession]):
         session_data = data.model_dump()
         session_data["tenant_id"] = tenant.id
         session_data["user_id"] = user_id
-        created = await crud_chat_sessions.create(db=self.db, object=session_data)  # type: ignore
+        created = await crud_chat_sessions.create(db=self.db, object=session_data)
         await self.db.commit()
 
         # create() hands back only the new primary key, but ChatSessionRead
@@ -309,7 +309,7 @@ class ChatMessageService(BaseService[AIChatMessage]):
             content=data.content,
             token_count=token_count,
         )
-        result = await crud_chat_messages.create(db=self.db, object=internal_data.model_dump())  # type: ignore
+        result = await crud_chat_messages.create(db=self.db, object=internal_data.model_dump())
         await self.db.commit()
         return result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
 
@@ -428,7 +428,7 @@ class AISettingsService(BaseService[AISettings]):
             create_data = default_settings.model_dump()
             create_data["user_id"] = user_id
             create_data["tenant_id"] = tenant_id
-            result = await crud_ai_settings.create(db=self.db, object=create_data)  # type: ignore
+            result = await crud_ai_settings.create(db=self.db, object=create_data)
             await self.db.commit()
 
             # S-28 FIX: create() hands back only the primary key, but
@@ -469,7 +469,7 @@ class AISettingsService(BaseService[AISettings]):
                 "user_id": user_id,
                 "tenant_id": tenant_id,
             }
-            result = await crud_ai_settings.create(db=self.db, object=create_data_dict)  # type: ignore
+            result = await crud_ai_settings.create(db=self.db, object=create_data_dict)
             await self.db.commit()
 
             # S-28 FIX (second site): the create path built a 3-key dict

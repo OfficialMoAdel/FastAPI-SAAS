@@ -3,7 +3,7 @@
 ## Package Identity
 Database migration management for the FastAPI SaaS application using Alembic with async SQLAlchemy 2.0 and PostgreSQL.
 
-> **Migrations are consolidated into 8 named origin layers** (`01_foundation.py` … `08_enable_rls_policies.py`) — not date-stamped revisions. New schema changes should extend the relevant layer's `upgrade()`/`downgrade()` rather than stacking a new dated revision, unless the layer is already applied in production. `src/app/core/setup.py::resolve_create_tables_on_start` notes that `create_all`-created tables silently lack the migration 08 RLS policies.
+> **Migrations are 8 named origin layers** (`01_foundation.py` … `08_enable_rls_policies.py`) — not date-stamped revisions. New schema changes should extend the relevant layer's `upgrade()`/`downgrade()` rather than stacking a new dated revision, unless the layer is already applied in production; a column read by live code on an already-applied layer needs a repair revision. `src/app/core/setup.py::resolve_create_tables_on_start` notes that `create_all`-created tables silently lack the migration 08 RLS policies.
 
 ## Setup & Run
 ```bash
@@ -364,7 +364,7 @@ The other tell is what the ORM side claims. `audit_logs.user_agent` is `Text` in
 Two consequences worth stating because they look like contradictions and are not:
 
 - **The oracle asserts the database ACCEPTS a value the ORM accepts.** An oracle that only asserts "the two declarations agree" would be satisfied by the shrink and would have passed against the defect. `tests/unit/migrations/test_width_parity_storage_and_audit.py` therefore drives a 501- and a 4096-character `User-Agent` at the declared column type and requires that neither be refused.
-- **Both columns were corrected in the layer that creates them, not by a new revision.** The head is still `08_enable_rls_policies`; a layer-09 `ALTER` would have broken two existing oracles that assert the head (`tests/unit/migrations/test_user_preferences_quiet_hours_parity.py`), and `scripts/checks/migration_graph.py` enforces one linear head. The database is rebuilt per the two-file rule above. The oracle pins that shape too, so a later reader who reaches for `alter_column()` fails the test rather than silently creating a second convention.
+- **Both columns were corrected in the layer that creates them, not by a new revision.** They are only reachable through `create_table`, so the quiet-hours and width fixes stay in layers 05/02 and the database is rebuilt per the two-file rule above. `notifications.error_kind` follows the same rule: it is declared in layer 07's `create_table` and the database is rebuilt while the layer is still pre-release. The head is `08_enable_rls_policies`; `scripts/checks/migration_graph.py` enforces one linear head. The oracle pins that shape too, so a later reader who reaches for `alter_column()` on a quiet-hours column fails the test rather than silently creating a second convention.
 
 Write `op.execute` statements **literally, not in a loop**. A migration is read by a human during an incident and grepped by the oracle; a loop hides both the table and the cast.
 

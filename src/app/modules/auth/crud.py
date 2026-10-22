@@ -115,6 +115,39 @@ class CRUDUserSSOConnection(
         else:
             result = await db.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_provider_email(
+        self,
+        db: AsyncSession,
+        provider: str,
+        provider_email: str,
+        tenant_id: UUID | None = None,
+    ) -> UserSSOConnection | None:
+        """Look up a connection by its provider-side email, case-insensitively.
+
+        Used to migrate Microsoft connections created before the identity
+        claim moved from Graph ``id`` to OIDC ``sub``: the row still carries
+        the old id, but the same provider email. Ambiguity (more than one
+        match) returns ``None`` — two rows sharing an address cannot be
+        safely collapsed onto one subject, so the caller keeps the normal
+        collision path.
+        """
+        stmt = select(UserSSOConnection).where(
+            UserSSOConnection.provider == provider,
+            func.lower(UserSSOConnection.provider_email) == provider_email.lower(),
+        )
+        if tenant_id is not None:
+            result = await execute_scoped(
+                stmt,
+                db=db,
+                model=UserSSOConnection,
+                scope=ExplicitTenant(tenant_id=tenant_id, reason="legacy-criterion:UserSSOConnection"),
+            )
+        else:
+            result = await db.execute(stmt)
+        matches = list(result.scalars().all())
+        return matches[0] if len(matches) == 1 else None
+
     async def exists_for_user(
         self,
         db: AsyncSession,
@@ -236,6 +269,42 @@ class CRUDPasskeyCredential(
         )
         result = await db.execute(query)
         return list(result.scalars().all())
+
+    async def get_page_by_user(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        *,
+        offset: int,
+        limit: int,
+    ) -> dict[str, Any]:
+        """Get ONE PAGE of a user's passkey credentials, with the total.
+
+        The page and the total come from a single round trip: the
+        total is computed by a window function over the same rows the
+        page is drawn from, so the count can never disagree with the
+        rows it counts. An out-of-range page has no row carrying the
+        window value, so it falls back to an explicit count - the total
+        must not depend on the page being non-empty.
+
+        The ORDER BY matches ``get_by_user`` (newest first) and adds the
+        primary key as a tiebreaker, so rows created at the same
+        timestamp cannot be skipped or duplicated across pages.
+        """
+        total_expr = func.count(PasskeyCredential.id).over().label("total_count")
+        query = (
+            select(PasskeyCredential, total_expr)
+            .where(PasskeyCredential.user_id == user_id)
+            .order_by(PasskeyCredential.created_at.desc(), PasskeyCredential.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await db.execute(query)
+        rows = result.all()
+
+        data = [row[0] for row in rows]
+        total_count = rows[0][1] if rows else await self.count_by_user(db, user_id)
+        return {"data": data, "total_count": total_count}
 
     async def count_by_user(
         self,

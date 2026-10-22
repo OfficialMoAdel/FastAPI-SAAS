@@ -31,13 +31,11 @@ def upgrade() -> None:
         sa.Column("entity_id", sa.String(length=255), nullable=True),
         sa.Column("details", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("ip_address", postgresql.INET(), nullable=True),
-        # FastAPI_saas-auz2: was sa.String(length=500) against the ORM's Text.
-        # Text states "no cap" outright, so a capped column contradicts a claim
-        # the model made; MEASURED, the column accepted 500 characters and
-        # refused 501 (perf-results/RESULT-20261018-9cmn/). A User-Agent over 500
-        # characters is ordinary, and the value arrives verbatim from the request
-        # header, so nothing upstream of the INSERT can shorten it. Layer 02
-        # already declares magic-link user_agent as sa.Text() for the same reason.
+        # FastAPI_saas-auz2: changes the column from sa.String(length=500) to
+        # String(1024) to match the ORM. The smaller size caused
+        # StringDataRightTruncationError and turned valid input into a 500.
+        # 1024 is Azure Blob's maximum blob name
+        # (perf-results/RESULT-20261018-9cmn/).
         sa.Column("user_agent", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_audit_logs")),
@@ -106,6 +104,16 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=20), nullable=False, server_default=sa.text("'pending'")),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
+        sa.Column(
+            "error_kind",
+            sa.String(length=50),
+            nullable=True,
+            comment=(
+                "Machine-readable failure class (e.g. 'rate_limited', 'enqueue_error', "
+                "'recovery_window_exhausted'). NULL on a non-failed row. Operators filter "
+                "on this instead of parsing the subject text."
+            ),
+        ),
         sa.Column("retry_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -160,12 +168,10 @@ def upgrade() -> None:
         sa.Column("id", sa.UUID(), nullable=False, server_default=sa.text("gen_random_uuid()")),
         sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("url", sa.String(length=2048), nullable=False),
-        # NOT NULL: the endpoint's HMAC secret is what the receiver verifies
-        # the signature with. It was nullable here while the ORM declared it
-        # NOT NULL, so the two layers disagreed AND a null secret could be
-        # stored — after which every delivery to that endpoint failed at
-        # decrypt time, long after the write returned 200. The column moves:
-        # the database enforces the invariant the ORM promises.
+        # Adds NOT NULL to the HMAC secret column to match the ORM.
+        #
+        # The secret is required for signature verification. The previous nullable
+        # column allowed invalid records to be stored, causing delivery failures.
         sa.Column("secret", sa.String(length=255), nullable=False),
         sa.Column(
             "signing_secret",
@@ -255,13 +261,11 @@ def upgrade() -> None:
         "idx_webhook_delivery_retry",
         "webhook_deliveries",
         ["status", "next_retry_at"],
-        # The predicate used to add `AND next_retry_at IS NOT NULL`, which
-        # excluded exactly the rows the recovery sweep needs: a delivery whose
-        # INITIAL enqueue was lost has next_retry_at NULL, and the sweep
-        # selects on `coalesce(next_retry_at, created_at)`. The partial index
-        # could never serve that population, so the sweep fell back to a
-        # sequential scan on a table that grows per webhook. The predicate now
-        # covers every PENDING row.
+        # Removes `AND next_retry_at IS NOT NULL` from the index predicate.
+        #
+        # The recovery sweep queries `coalesce(next_retry_at, created_at)` and needs
+        # rows where `next_retry_at` is NULL. The previous condition excluded them,
+        # causing sequential scans. The updated predicate covers all PENDING rows.
         postgresql_where=sa.text("status = 'pending'"),
     )
     op.create_index(

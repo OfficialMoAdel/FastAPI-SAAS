@@ -701,11 +701,21 @@ async def test_c2_pixel_ua_differential() -> bool:
 # `get_db_context` class was ADDED as its own closed world, which this
 # gate did not check at all before. A new holder or a new opener fails
 # its enumeration gate until it is classified with its 401-path analysis.
+#
+# HISTORY (2026-10-22, Cluster C / C1): `core.rbac.dependencies._check_permission`
+# was ALSO a holder, via `db: AsyncSession = Depends(async_get_db)`. It held
+# that session ONLY to pass it down to the permission lookup. The C1 fix gave
+# the RBAC bitmask singleflight its own short-lived session (it must not run
+# on a request's session -- the task is awaited by OTHER requests), so the
+# dependency no longer needed one and no longer takes one. It was therefore
+# removed from this set: it holds no session to classify. Its coverage was
+# not lost -- the session it used to hold now lives in the task's own
+# `local_session()`, which is the OPENERS world (a different acquisition
+# mechanism), and the 401-path analysis for this path is unchanged.
 C3_DB_CALLERS: frozenset[tuple[str, str]] = frozenset(
     {
         ("src/app/api/deps/auth.py", "get_user_by_api_key"),
         ("src/app/api/deps/request_context.py", "get_request_context"),
-        ("src/app/core/rbac/dependencies.py", "_check_permission"),
         ("src/app/modules/ai/router.py", "get_chat_session_service"),
         ("src/app/modules/ai/router.py", "get_chat_message_service"),
         ("src/app/modules/ai/router.py", "get_ai_settings_service"),

@@ -443,18 +443,17 @@ async def seed_accounts(count: int, tier: str, application: Any) -> tuple[list[S
         # the prefetch reads. It computes the mask from the database -- it does
         # not fabricate one -- and it runs during SETUP, outside every timed
         # phase.
-        from src.app.core.db.database import async_get_db
+        #
+        # C1: ``has_permission_cached`` no longer takes a session. The DB
+        # fallback runs inside the singleflight task, which owns its own
+        # short-lived session -- a caller's request-scoped session must never
+        # reach that task, because the task is awaited by OTHER requests.
         from src.app.core.rbac.dependencies import has_permission_cached
 
         warmed = 0
         for row in rows:
-            session = async_get_db()
-            db = await session.__anext__()
-            try:
-                if await has_permission_cached(int(row["id"]), tenant_id, "users:read", db):
-                    warmed += 1
-            finally:
-                await session.aclose()
+            if await has_permission_cached(int(row["id"]), tenant_id, "users:read"):
+                warmed += 1
         if warmed != len(rows):
             raise RuntimeError(
                 f"permission backfill covered {warmed} of {len(rows)} seeded accounts; "

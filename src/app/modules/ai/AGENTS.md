@@ -183,6 +183,23 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_TIMEOUT=120
 ```
 
+Both are read from `settings.ai` (`AISettings` in
+`src/app/core/config/integrations.py`). `OllamaProvider` resolves BOTH its
+default `base_url` and its default `timeout` from that setting, so a
+deployment that points Ollama elsewhere is reachable without every caller
+repeating the URL — the constructor's default is `None`, meaning "use the
+configured one", not a hardcoded literal.
+
+## Gotchas
+
+- **A JSON parse failure logs the model body, capped**: `_extract_json` logs
+  the offending body on a parse failure (`providers.py`). The body is capped
+  at `MAX_LOGGED_BODY_CHARS` (2000) with the original length reported as
+  `content_length`. The cap matters because the log sanitizer masks
+  SECRET-SHAPED values (JWTs, API keys, emails, cards) but not free-form
+  prose — and a parse failure means the model answered with prose, usually
+  echoing the caller's prompt.
+
 ## Pre-PR Checks
 
 ```bash

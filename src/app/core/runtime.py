@@ -64,7 +64,7 @@ async def compose_phases(
                     duration_ms=round(elapsed_ms, 2),
                     threshold_ms=PHASE_SLOW_THRESHOLD_MS,
                 )
-    except BaseException:
+    except BaseException:  # noqa: BLE001 - cancelled startup must still run teardown before propagating
         if teardown_on_startup_failure:
             for phase in reversed(phases):
                 if phase.teardown is not None:

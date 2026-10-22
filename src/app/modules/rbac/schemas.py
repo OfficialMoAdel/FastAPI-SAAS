@@ -2,7 +2,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from src.app.modules._base.schemas import BaseCreate, BaseList, BaseRead, BaseUpdate
+from src.app.modules._base.schemas import BaseCreate, BaseList, BaseUpdate
 
 
 class PermissionBase(BaseModel):
@@ -65,12 +65,25 @@ class UserRoleAssignment(BaseModel):
     role_id: int
 
 
-class UserRoleRead(BaseRead):
-    """Schema for user role assignment response."""
+class UserRoleRead(BaseModel):
+    """Schema for user role assignment response.
+
+    C5: this was ``BaseRead``, which requires ``id: int`` and
+    ``created_at: datetime``. ``UserRole`` is a pure ASSOCIATION table
+    whose primary key is the composite ``(user_id, tenant_id, role_id)``
+    and which has no ``id`` and no ``created_at`` column at all — so the
+    schema could never validate a real ``UserRole`` row. It is now a plain
+    ``BaseModel`` carrying exactly the columns the table has.
+
+    The composite key IS the identity here, so all three parts are
+    required: a ``UserRole`` is only identified by the triple.
+    """
 
     user_id: int
     role_id: int
     tenant_id: UUID
+
+    model_config = {"from_attributes": True}
 
 
 

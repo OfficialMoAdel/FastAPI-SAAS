@@ -67,7 +67,7 @@ async def test_superuser_bypass(tenant_ctx, mock_db):
     user = _User(is_superuser=True, tenant_id=TENANT_ID)
     ctx = _AuthContext(user, tenant_ctx)
     dep = rbac_deps.requires_permission(Permission.USERS_READ)
-    await dep(request=_make_request(), db=mock_db, auth_context=ctx)
+    await dep(request=_make_request(), auth_context=ctx)
 
 
 async def test_tenant_mismatch_forbidden(tenant_ctx, mock_db):
@@ -75,7 +75,7 @@ async def test_tenant_mismatch_forbidden(tenant_ctx, mock_db):
     ctx = _AuthContext(user, tenant_ctx)
     dep = rbac_deps.requires_permission(Permission.USERS_READ)
     with pytest.raises(Exception):
-        await dep(request=_make_request(), db=mock_db, auth_context=ctx)
+        await dep(request=_make_request(), auth_context=ctx)
 
 
 async def test_tenant_context_required(mock_db):
@@ -85,7 +85,7 @@ async def test_tenant_context_required(mock_db):
     ctx = _AuthContext(user, None)
     dep = rbac_deps.requires_permission(Permission.USERS_READ)
     with pytest.raises(TenantContextError):
-        await dep(request=_make_request(), db=mock_db, auth_context=ctx)
+        await dep(request=_make_request(), auth_context=ctx)
 
 
 async def test_user_id_required(tenant_ctx, mock_db):
@@ -98,7 +98,7 @@ async def test_user_id_required(tenant_ctx, mock_db):
     ctx = _AuthContext(user, tenant_ctx)
     dep = rbac_deps.requires_permission(Permission.USERS_READ)
     with pytest.raises(Exception):
-        await dep(request=_make_request(), db=mock_db, auth_context=ctx)
+        await dep(request=_make_request(), auth_context=ctx)
 
 
 async def test_permission_granted_via_cache(tenant_ctx, mock_db):
@@ -107,7 +107,7 @@ async def test_permission_granted_via_cache(tenant_ctx, mock_db):
     mask = PermissionBitmask.get_bit(Permission.USERS_READ.value)
     with patch.object(rbac_deps, "get_cached_permissions_bitmask", AsyncMock(return_value=mask)):
         dep = rbac_deps.requires_permission(Permission.USERS_READ)
-        await dep(request=_make_request(), db=mock_db, auth_context=ctx)
+        await dep(request=_make_request(), auth_context=ctx)
 
 
 async def test_permission_denied_403(tenant_ctx, mock_db):
@@ -116,7 +116,7 @@ async def test_permission_denied_403(tenant_ctx, mock_db):
     with patch.object(rbac_deps, "get_cached_permissions_bitmask", AsyncMock(return_value=0)):
         dep = rbac_deps.requires_permission(Permission.USERS_READ)
         with pytest.raises(Exception):
-            await dep(request=_make_request(), db=mock_db, auth_context=ctx)
+            await dep(request=_make_request(), auth_context=ctx)
 
 
 async def test_get_user_permissions_query(mock_db):
@@ -132,7 +132,7 @@ async def test_get_cached_permissions_bitmask_cache_hit(mock_db):
     fake_redis = AsyncMock()
     fake_redis.get.return_value = b"42"
     with patch.object(cache_module, "client", fake_redis):
-        mask = await rbac_deps.get_cached_permissions_bitmask(1, TENANT_ID, mock_db)
+        mask = await rbac_deps.get_cached_permissions_bitmask(1, TENANT_ID)
     assert mask == 42
     fake_redis.setex.assert_not_called()
 
@@ -144,7 +144,7 @@ async def test_get_cached_permissions_bitmask_cache_miss_db(mock_db):
         patch.object(cache_module, "client", fake_redis),
         patch.object(rbac_deps, "get_user_permissions", AsyncMock(return_value={"users:read"})),
     ):
-        mask = await rbac_deps.get_cached_permissions_bitmask(1, TENANT_ID, mock_db)
+        mask = await rbac_deps.get_cached_permissions_bitmask(1, TENANT_ID)
     assert mask == PermissionBitmask.get_bit(Permission.USERS_READ.value)
     fake_redis.setex.assert_awaited_once()
 
@@ -154,7 +154,7 @@ async def test_get_cached_permissions_bitmask_no_redis(mock_db):
         patch.object(cache_module, "client", None),
         patch.object(rbac_deps, "get_user_permissions", AsyncMock(return_value=set())),
     ):
-        mask = await rbac_deps.get_cached_permissions_bitmask(1, TENANT_ID, mock_db)
+        mask = await rbac_deps.get_cached_permissions_bitmask(1, TENANT_ID)
     assert mask == 0
 
 
@@ -175,7 +175,7 @@ async def test_get_cached_permissions_bitmask_concurrent_miss_singleflight(mock_
         patch.object(cache_module, "client", fake_redis),
         patch.object(rbac_deps, "get_user_permissions", AsyncMock(side_effect=_slow_query)),
     ):
-        tasks = [asyncio.create_task(rbac_deps.get_cached_permissions_bitmask(1, TENANT_ID, mock_db)) for _ in range(5)]
+        tasks = [asyncio.create_task(rbac_deps.get_cached_permissions_bitmask(1, TENANT_ID)) for _ in range(5)]
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         assert calls == 1
@@ -189,7 +189,7 @@ async def test_get_cached_permissions_bitmask_concurrent_miss_singleflight(mock_
 async def test_has_permission_cached(mock_db):
     mask = PermissionBitmask.get_bit(Permission.USERS_READ.value)
     with patch.object(rbac_deps, "get_cached_permissions_bitmask", AsyncMock(return_value=mask)):
-        ok = await rbac_deps.has_permission_cached(1, TENANT_ID, Permission.USERS_READ.value, mock_db)
+        ok = await rbac_deps.has_permission_cached(1, TENANT_ID, Permission.USERS_READ.value)
     assert ok is True
 
 

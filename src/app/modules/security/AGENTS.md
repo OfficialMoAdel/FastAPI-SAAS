@@ -59,26 +59,37 @@ core-owned administrative instance directly.
 ```
 src/app/modules/security/
 ├── __init__.py         # Module exports
-└── router.py           # API routes (thin wrapper)
+├── router.py           # API routes (thin: request shaping + response models)
+├── service.py          # Business logic (passkeys, IP rules, auto-ban)
+└── schemas.py          # Request/response schemas
 ```
 
 ### Design Pattern
 
-The security module follows the **Facade Pattern**:
-- **Wrapper Layer:** Provides convenience endpoints at `/security/*`
-- **Delegation:** All business logic delegated to `passkey_service`
-- **No Duplication:** No duplicate service layer; reuses existing passkey module
-- **IP filtering:** Delegates administrative operations to `core.guard.ip_rules.ip_filter_service`
+The security module follows the **Service Layer** pattern:
+- **Router:** Parses the request, resolves the request context, and shapes the
+  response — no business logic and no raw-dict reshaping.
+- **Service:** Owns the behaviour: passkey listing/deletion, IP whitelist and
+  blacklist shaping, runtime-config updates (with the audit write), and the
+  auto-ban operations. It depends on the core-side collaborators
+  (`core.guard.ip_rules.ip_filter_service`, `core.security.auto_ban`,
+  `core.security.runtime_config`), never on the API layer.
+- **Passkeys:** The passkey collaborator comes from the auth module's own
+  factory (`src.app.modules.auth` → `get_passkey_service`). The security
+  module does not re-implement passkey logic; it delegates.
 
 ### Dependencies
 
 ```python
+from src.app.modules.auth import get_passkey_service
 from src.app.modules.auth.schemas import (
     PasskeyCredentialResponse,
     PasskeyDeleteResponse,
 )
-from src.app.modules.auth.services.passkey import passkey_service
 ```
+
+The service never imports `src.app.api.*` — the API layer sits above it, so
+the service takes `db` and the resolved ids as plain arguments.
 
 ## Implementation Notes
 
@@ -94,8 +105,12 @@ The security module is a **thin wrapper** around the passkey module:
 
 | Security Endpoint | Delegates To | Purpose |
 |-------------------|--------------|---------|
-| `GET /security/passkeys` | `passkey_service.list_credentials()` | List user's passkeys |
-| `DELETE /security/passkeys/{id}` | `passkey_service.delete_credential()` | Delete a passkey |
+| `GET /security/passkeys` | `SecurityService.list_passkeys()` → `passkey_service.list_credentials_page()` | List user's passkeys |
+| `DELETE /security/passkeys/{id}` | `SecurityService.delete_passkey()` → `passkey_service.delete_credential()` | Delete a passkey |
+
+`SecurityService.list_passkeys()` pages in the DATABASE, not in RAM: it asks
+the CRUD for one page (`offset`/`limit`) and the matching total, so a user
+with many credentials does not load all of them to return a slice.
 
 Full passkey functionality (registration, authentication) remains at:
 - `POST /auth/passkey/register/start` - Start registration
@@ -110,7 +125,7 @@ Full passkey functionality (registration, authentication) remains at:
 
 ```bash
 # Run security module tests
-uv run pytest tests/unit/modules/security/test_security_router.py -v
+uv run pytest tests/unit/modules/security/ -v
 ```
 
 **Test Coverage:**
@@ -118,6 +133,8 @@ uv run pytest tests/unit/modules/security/test_security_router.py -v
 - ✅ OpenAPI documentation generation
 - ✅ Correct tag assignment ("security")
 - ✅ Compatibility with passkey endpoints
+- ✅ Database-level pagination of the passkey list
+- ✅ Service-level behaviour for IP rules, runtime config and auto-ban
 
 ### Integration Tests
 

@@ -65,18 +65,20 @@ JWK_E = 'AQAB'
 
 @pytest.fixture(autouse=True)
 def _cold_jwks_cache():
-    """The module client is shared; clear it so tests cannot inherit warm keys.
+    """The module clients are shared; clear them so tests cannot inherit warm keys.
 
     A warm cache means no fetch happens, which would make the burst test
     measure nothing and the happy path skip the code under test.
     """
     from src.app.modules.auth.providers import apple, microsoft
 
-    for module in (apple, microsoft):
-        module._jwks_client.jwk_set_cache.jwk_set_with_timestamp = None
+    def _clear() -> None:
+        apple._jwks_client.jwk_set_cache.jwk_set_with_timestamp = None
+        microsoft._jwks_client.jwk_set_cache.jwk_set_with_timestamp = None
+
+    _clear()
     yield
-    for module in (apple, microsoft):
-        module._jwks_client.jwk_set_cache.jwk_set_with_timestamp = None
+    _clear()
 
 
 #: Claims the patched ``jwt.decode`` returns, matching _id_token()'s payload.

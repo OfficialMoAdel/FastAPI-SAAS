@@ -94,6 +94,8 @@ rg -n "user_roles" src/app/modules/users/
 - **Username uniqueness**: Per-tenant, not global
 - **Superuser access**: Superusers see all users
 - **Profile updates**: Some fields restricted (email, tenant_id)
+- **Email is normalised on CREATE *and* UPDATE** — `UserBase.normalize_email` (create) and `UserUpdate.normalize_email` / `UserUpdateInternal.normalize_email` (update) both strip + lowercase. The unique index `uq_user_email_tenant` is case-SENSITIVE, so the update path's duplicate check (`UserService._email_taken`) is case-INSENSITIVE on purpose, matching the login lookup (`crud.py`: `func.lower(User.email) == email.lower()`). **Why this matters**: the check must be at least as strict as the lookup that reads it. If the check were exact-match, `Victim@X.com` could be written beside `victim@x.com`; the case-insensitive login lookup would then match BOTH rows and — ending in `scalar_one_or_none()` — raise `MultipleResultsFound`, 500-ing every login for that address. Do not "simplify" the duplicate check back to an exact comparison.
+- **`profile_image_url` is nullable and has NO default.** It used to default to `https://www.profileimageurl.com`, a docs example that had become a runtime value: every user row was written with a third-party avatar URL nobody chose. The column was already `nullable=True` in the database (`01_foundation.py:77`) and `user_preferences` already writes `profile_image_url=None` to clear an avatar, so the ORM's NOT NULL was the outlier. A user with no avatar has `None`, not a placeholder.
 
 ## Pre-PR Checks
 

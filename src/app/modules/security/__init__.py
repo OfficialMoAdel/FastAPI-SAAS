@@ -9,9 +9,15 @@ The name collision is deliberate legacy — renames break imports; distinguish
 by layer: this = routers, core/security = primitives.
 
 Provides convenience endpoints for security-related operations,
-particularly passkey management.
+particularly passkey management, plus the admin IP-filter and auto-ban
+surfaces.
+
+The module has the canonical ``router.py`` + ``service.py`` + ``schemas.py``
+shape: the router is a thin adapter and the business logic lives in
+``service.py``.
 """
 
 from src.app.modules.security.router import router
+from src.app.modules.security.service import SecurityService, get_security_service
 
-__all__ = ["router"]
+__all__ = ["SecurityService", "get_security_service", "router"]

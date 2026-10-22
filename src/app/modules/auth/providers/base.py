@@ -102,6 +102,32 @@ class BaseOAuthProvider(ABC):
         """
         return await sso_http_get(url, headers=headers)
 
+    def requires_verified_email(self) -> bool:
+        """Whether this provider guarantees a verified email.
+
+        True (the default) means an explicit verification verdict is
+        required before a new account may be created from this provider's
+        identity; the SSO gate rejects a verdict of False. Providers that
+        cannot make such a guarantee override this to False.
+        """
+        return True
+
+    def trusts_identity_without_claim(self) -> bool:
+        """Whether an ABSENT email-verification claim may be treated as trusted.
+
+        The first-time-signup gate distinguishes three verdicts: asserted
+        verified (True), asserted unverified (False), and unknown (None —
+        claim absent, or the id_token could not be verified). For most
+        providers "unknown" must fail closed: Google and GitHub emit an
+        explicit boolean, so its absence means "not verified".
+
+        Directory-authority providers (Microsoft Entra, Apple) guarantee the
+        mailbox namespace structurally — the tenant owns the UPN/mailbox, and
+        Apple relay addresses are verified at issuance. Those providers
+        override this to True so a missing claim does not block signup.
+        """
+        return False
+
     @abstractmethod
     async def exchange_code_for_token(self, code: str) -> dict[str, Any]:
         """Exchange the authorization code for an access token."""

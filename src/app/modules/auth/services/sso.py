@@ -5,6 +5,7 @@ from uuid import UUID
 
 import httpx
 from fastapi import Request, Response
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
@@ -110,11 +111,23 @@ class SSOService:
                 redirect_uri=redirect_uri,
             )
         if provider_name == SSOProvider.MICROSOFT:
-            return MicrosoftProvider(
-                client_id=settings["client_id"],
-                client_secret=settings["client_secret"],
-                redirect_uri=redirect_uri,
-            )
+            # A12: optional tenant pinning. When the operator configures a
+            # tenant, every URL and the id_token issuer check are pinned to
+            # it; unset keeps the multi-tenant ("common") authority.
+            config = settings.get("additional_config") or {}
+            try:
+                return MicrosoftProvider(
+                    client_id=settings["client_id"],
+                    client_secret=settings["client_secret"],
+                    redirect_uri=redirect_uri,
+                    tenant_id=str(config["tenant_id"]) if config.get("tenant_id") else None,
+                )
+            except ValueError as exc:
+                # A domain-form tenant_id can never match the GUID in ``iss``.
+                # Surface the misconfiguration instead of letting the issuer
+                # check fail into "unknown" on every callback.
+                logger.error("invalid_microsoft_sso_config", error=str(exc))
+                raise ValidationError("Microsoft SSO is misconfigured: tenant_id must be a tenant GUID") from exc
         if provider_name == SSOProvider.APPLE:
             return AppleProvider(
                 client_id=settings["client_id"],
@@ -125,6 +138,66 @@ class SSOService:
                 private_key=settings["private_key"],
             )
         raise ValidationError(f"Provider '{provider_name}' is not supported yet")
+
+    async def _relink_microsoft_connection(
+        self,
+        db: AsyncSession,
+        provider: str,
+        user_info: Any,
+        tenant_id: UUID,
+    ) -> Any | None:
+        """Migrate a Microsoft connection from the Graph object id to OIDC ``sub``.
+
+        A3 moved identity from Graph ``/me`` to the OIDC UserInfo endpoint, and
+        the identity claim changed with it: ``sub`` is a pairwise subject, not
+        the Graph ``id``. Every connection created before that switch still
+        stores the object id, so a lookup by ``sub`` misses and the callback
+        would fall into the email-collision branch — indistinguishable from a
+        real takeover attempt. When the provider email matches exactly one
+        legacy row, upgrade that row in place; the unique
+        ``(provider, provider_user_id)`` constraint keeps two concurrent
+        callbacks from racing onto the same subject.
+        """
+        legacy = await crud_user_sso_connections.get_by_provider_email(
+            db,
+            provider=provider,
+            provider_email=user_info.email,
+            tenant_id=tenant_id,
+        )
+        if legacy is None:
+            return None
+
+        # If the sub already belongs to another row, the two identities
+        # really are distinct; leave the collision path to reject.
+        conflict = await crud_user_sso_connections.get_by_provider_user_id(
+            db,
+            provider=provider,
+            provider_user_id=user_info.provider_user_id,
+            tenant_id=tenant_id,
+        )
+        if conflict is not None:
+            return conflict
+
+        legacy.provider_user_id = user_info.provider_user_id
+        legacy.provider_email = user_info.email
+        try:
+            await db.commit()
+        except IntegrityError:
+            # A concurrent callback won the upgrade. Use its row.
+            await db.rollback()
+            return await crud_user_sso_connections.get_by_provider_user_id(
+                db,
+                provider=provider,
+                provider_user_id=user_info.provider_user_id,
+                tenant_id=tenant_id,
+            )
+
+        logger.info(
+            "sso_provider_user_id_migrated",
+            provider=provider,
+            connection_id=legacy.id,
+        )
+        return legacy
 
     async def get_authorization_url(
         self,
@@ -163,7 +236,11 @@ class SSOService:
             redirect_uri = self.default_redirect_uri(provider)
 
         tenant = get_current_tenant()
-        extra_data: dict[str, Any] = {"tenant_id": tenant.id} if tenant else {}
+        # A13: store the tenant id as a STRING. PendingTokenStore round-trips
+        # this payload through JSON, so a raw UUID object would be
+        # serialised anyway — doing it explicitly makes the wire format
+        # obvious and the read side coerces back to UUID.
+        extra_data: dict[str, Any] = {"tenant_id": str(tenant.id)} if tenant else {}
 
         # Store connect mode info in state for callback
         if connect_mode:
@@ -240,7 +317,17 @@ class SSOService:
             redirect_uri = state_data["redirect_uri"]
 
             extra_data = state_data.get("extra_data") or {}
-            tenant_id: int | None = extra_data.get("tenant_id")
+            # A13: Tenant.id is a UUID that crosses PendingTokenStore as
+            # JSON, so the round-tripped value is a STRING. Coerce at the
+            # boundary instead of annotating it as int and relying on the
+            # driver to guess.
+            raw_tenant_id = extra_data.get("tenant_id")
+            tenant_id: UUID | None = None
+            if raw_tenant_id:
+                try:
+                    tenant_id = UUID(str(raw_tenant_id))
+                except ValueError:
+                    raise ValidationError("SSO state carries a malformed tenant id") from None
 
             if tenant_id:
                 from src.app.modules.tenants.crud import crud_tenants
@@ -319,6 +406,15 @@ class SSOService:
                 provider_user_id=user_info.provider_user_id,
                 tenant_id=current_tenant.id,
             )
+            # A3 migration: connections linked before the switch to OIDC still
+            # store the Graph object id, not the pairwise ``sub``.
+            if connection is None and provider == SSOProvider.MICROSOFT and user_info.email:
+                connection = await self._relink_microsoft_connection(
+                    db,
+                    provider,
+                    user_info,
+                    current_tenant.id,
+                )
 
             found_user_data = None
             connect_mode = extra_data.get("connect_mode", False)
@@ -363,14 +459,37 @@ class SSOService:
                     if not user_info.email:
                         raise ValidationError("Email required from provider")
 
-                    is_verified = getattr(user_info, "email_verified", False)
+                    # A4: tri-state verdict consulted against the provider's
+                    # declared policies. An ABSENT claim is "unknown", not
+                    # "unverified" — for a directory authority (Microsoft
+                    # Entra, Apple) the mailbox namespace is guaranteed
+                    # structurally. An explicit False still rejects whenever
+                    # the provider requires a verified email.
+                    is_verified = getattr(user_info, "email_verified", None)
                     if isinstance(is_verified, bool):
-                        verified = is_verified
+                        verified: bool | None = is_verified
+                    elif is_verified is None:
+                        verified = None
                     else:
-                        verified = str(is_verified).lower() in ("true", "1", "yes")
+                        verdict_text = str(is_verified).strip().lower()
+                        if verdict_text in ("true", "1", "yes"):
+                            verified = True
+                        elif verdict_text in ("false", "0", "no"):
+                            verified = False
+                        else:
+                            verified = None
 
-                    if not verified:
-                        raise ValidationError("Unverified provider emails are not permitted for security reasons")
+                    if verified is None:
+                        # Unknown verdict: fail closed UNLESS the provider
+                        # guarantees the mailbox namespace structurally.
+                        if not oauth_provider.trusts_identity_without_claim():
+                            raise ValidationError(
+                                "Unverified provider emails are not permitted for security reasons"
+                            )
+                    elif not verified and oauth_provider.requires_verified_email():
+                        raise ValidationError(
+                            "Unverified provider emails are not permitted for security reasons"
+                        )
 
                     try:
                         user_by_email = await UserDirectory(db).by_email(user_info.email)

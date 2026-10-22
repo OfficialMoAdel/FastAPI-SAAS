@@ -37,8 +37,6 @@ from src.app.shared.exceptions import UnauthorizedError
 
 logger = get_logger(__name__)
 
-logger = get_logger(__name__)
-
 # A generic message for every failure mode. Distinguishing "no such user" from
 # "wrong password" here would reintroduce the enumeration oracle this module
 # exists to close.
@@ -56,9 +54,19 @@ async def verify_step_up_password(db, user_id: int, password: str | None) -> Non
     Raises:
         UnauthorizedError: If the password is missing, the user is inactive, or
             the password is wrong. The message is identical in all three cases.
+        RateLimitExceededError: If the step-up budget is exhausted (429).
     """
     # Imported here to keep this module free of a service -> module cycle.
+    # A5: brute-force metering. Every step-up door funnels through THIS one
+    # function, so the budget lives here rather than on router decorators —
+    # a new door cannot forget it. Reuses MFA_MUTATE (5/60 per user,
+    # fail-closed): identical threat model — a stolen bearer token guessing
+    # the victim's password to mutate factors. Charged BEFORE bcrypt so a
+    # refusal does not pay ~100ms of CPU per attempt.
+    from src.app.core.security.budgets import Identity, SecurityAction, check
     from src.app.modules.users import UserDirectory
+
+    await check(SecurityAction.MFA_MUTATE, Identity(user_id=user_id))
 
     if not password:
         raise UnauthorizedError(_INVALID_STEP_UP, reason="step_up_missing")

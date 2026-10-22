@@ -50,7 +50,7 @@ def _permission_gate(granted: set[str]):
     route demands. Here the decision is derived from the slug the route asks for.
     """
 
-    async def _has_permission_cached(_user_id, _tenant_id, permission_slug, _db):
+    async def _has_permission_cached(_user_id, _tenant_id, permission_slug):
         return permission_slug in granted
 
     return patch(

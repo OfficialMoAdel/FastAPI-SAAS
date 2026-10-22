@@ -58,22 +58,30 @@ class TestP21DirectDictImplementation:
         assert "TenantResponse.model_validate" not in source
 
     def test_deactivate_tenant_uses_direct_dict(self) -> None:
-        """deactivate_tenant should use _tenant_to_dict, not TenantResponse."""
+        """deactivate_tenant delegates to the shared helper that uses _tenant_to_dict."""
         from src.app.modules.tenants.service import TenantService
 
         source = inspect.getsource(TenantService.deactivate_tenant)
-
-        assert "_tenant_to_dict" in source
+        assert "self._set_active_state(" in source
+        assert "is_active=False" in source
         assert "TenantResponse.model_validate" not in source
 
+        shared = inspect.getsource(TenantService._set_active_state)
+        assert "_tenant_to_dict" in shared
+        assert "TenantResponse.model_validate" not in shared
+
     def test_reactivate_tenant_uses_direct_dict(self) -> None:
-        """reactivate_tenant should use _tenant_to_dict, not TenantResponse."""
+        """reactivate_tenant delegates to the shared helper that uses _tenant_to_dict."""
         from src.app.modules.tenants.service import TenantService
 
         source = inspect.getsource(TenantService.reactivate_tenant)
-
-        assert "_tenant_to_dict" in source
+        assert "self._set_active_state(" in source
+        assert "is_active=True" in source
         assert "TenantResponse.model_validate" not in source
+
+        shared = inspect.getsource(TenantService._set_active_state)
+        assert "_tenant_to_dict" in shared
+        assert "TenantResponse.model_validate" not in shared
 
 
 class TestP21DirectDictOptimization:

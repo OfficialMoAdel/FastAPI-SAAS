@@ -127,15 +127,15 @@ class LocalStorage(StorageProvider):
             async with aiofiles.open(meta_path, "w") as f:
                 await f.write(mime_type)
 
-            logger.info("Uploaded file: , size: bytes", path=path, size=size)
+            logger.info("Uploaded file", path=path, size=size)
             return StorageResult(success=True, path=path, size=size)
 
         except ValueError as e:
-            logger.error("Path validation failed for :", path=path, error=e)
+            logger.error("Path validation failed", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
         except Exception as e:
-            logger.error("Failed to upload file :", path=path, error=e)
+            logger.error("Failed to upload file", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
     async def download(self, path: str) -> AsyncGenerator[bytes]:
@@ -181,11 +181,11 @@ class LocalStorage(StorageProvider):
             return StorageResult(success=True, path=path)
 
         except ValueError as e:
-            logger.error("Path validation failed for :", path=path, error=e)
+            logger.error("Path validation failed", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
         except Exception as e:
-            logger.error("Failed to delete file :", path=path, error=e)
+            logger.error("Failed to delete file", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
     async def exists(self, path: str) -> bool:

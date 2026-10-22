@@ -207,7 +207,7 @@ class MFAService:
                 prevent_replay=True,
                 redis_client=client,
             )
-        except BaseException:
+        except BaseException:  # noqa: BLE001 - a cancelled verify must release the claim before propagating
             # verify_totp_token signals a rejected factor by RAISING (and by
             # returning {"valid": False} on the rarer path), so the release has
             # to cover both or a single typo would hold the claim until its TTL

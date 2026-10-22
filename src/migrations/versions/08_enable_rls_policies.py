@@ -54,21 +54,14 @@ TENANT_TABLES = [
     "users",
 ]
 
-# S-11: tables whose ``tenant_id`` is LEGITIMATELY nullable. A NULL there means
-# "global / system", not "corrupt".
+# S-11: Tables with nullable `tenant_id`.
 #
-# The strict predicate `tenant_id = auth.current_tenant_id()` evaluates to NULL
-# for a NULL tenant_id, and SQL treats NULL as not-true. So under the uniform
-# policy these rows are invisible to EVERY tenant, and inserting one fails
-# WITH CHECK — making global notifications and system AI token-usage rows
-# unpersistable outside a bypass.
+# A NULL `tenant_id` represents a global or system row. The strict predicate
+# `tenant_id = auth.current_tenant_id()` evaluates to false for NULL, hiding
+# these rows and blocking their insertion without a bypass.
 #
-# Verified against the live schema: of the 25 tables in TENANT_TABLES, exactly
-# these two carry a nullable tenant_id. Every other table keeps the strict
-# predicate, so this does not weaken isolation anywhere else.
-#
-# NULL rows are visible to all tenants BY DESIGN — that is what "global"
-# means. A tenant-bound row is still restricted to its own tenant.
+# These are the only two tables in TENANT_TABLES with a nullable `tenant_id`.
+# All other tables use the strict predicate, preserving tenant isolation.
 GLOBAL_TENANT_TABLES = frozenset({"notifications", "ai_token_usage"})
 
 

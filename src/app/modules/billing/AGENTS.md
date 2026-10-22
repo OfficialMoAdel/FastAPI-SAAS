@@ -165,6 +165,7 @@ src/app/modules/billing/
 │   └── products.py           # /products endpoints
 ├── service.py                # StripeSettingsService, ProductService, PricingService
 ├── subscription_service.py   # UserSubscriptionService, SubscriptionPlanService, BillingRecordService
+├── tenant_scope.py           # TenantScopedService: the ONE tenant-resolution seam (shared base)
 ├── checkout_service.py       # CheckoutService (checkout session + portal URL validation)
 ├── lifecycle.py              # State-machine functions (map_stripe_status, is_valid_transition, can_cancel)
 ├── webhook/                  # Stripe webhook ingest and processing subpackage
@@ -194,6 +195,9 @@ src/app/modules/billing/
 4. **`lifecycle.py` (State Machine Engine):**
    * Module-level functions only — `map_stripe_status`, `is_valid_transition`, `validate_transition`, `can_cancel`, `is_access_granted` — enforcing valid transitions to prevent out-of-order resurrection of churned accounts. Cancellation itself is `UserSubscriptionService.cancel_subscription_for_user`.
 
+5. **`tenant_scope.py` (Shared Tenant Scoping):**
+   * `TenantScopedService` holds the ONE tenant-resolution seam for the module's services: `current_tenant_id` (the read-only view) and `_resolve_tenant` (the fail-closed resolution used before a write). `StripeSettingsService`, `ProductService`, `PricingService`, `SubscriptionPlanService` and `UserSubscriptionService` inherit it and set only their own `_default_entity_name`. Do NOT re-add the two accessors to a service — extend this base instead.
+
 ## Touch Points
 
 - **Settings / catalog services**: `modules/billing/service.py::StripeSettingsService` / `ProductService` / `PricingService`
@@ -202,6 +206,7 @@ src/app/modules/billing/
 - **Checkout + portal**: `modules/billing/checkout_service.py::CheckoutService`
 - **Subscription service**: `modules/billing/subscription_service.py::UserSubscriptionService`
 - **Lifecycle state machine**: `modules/billing/lifecycle.py::map_stripe_status`
+- **Tenant scoping seam**: `modules/billing/tenant_scope.py::TenantScopedService`
 - **Product CRUD**: `modules/billing/crud.py::crud_products`
 - **Pricing CRUD**: `modules/billing/crud.py::crud_pricing`
 - **Subscription CRUD**: `modules/billing/crud.py::crud_user_subscriptions`

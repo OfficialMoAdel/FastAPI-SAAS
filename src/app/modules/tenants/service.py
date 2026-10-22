@@ -519,26 +519,7 @@ class TenantService(BaseService[Tenant]):
         ModelNotFoundError
             If tenant not found
         """
-        # P1-1: Fetch ORM object directly for in-place update
-        tenant = await self.db.get(Tenant, tenant_id)
-        if tenant is None:
-            raise ModelNotFoundError("Tenant", tenant_id)
-
-        tenant.is_active = False
-        tenant.updated_at = datetime.now(UTC)
-
-        await self.db.commit()
-        await self.db.refresh(tenant)
-
-        # FIXED: Invalidate tenant cache after deactivation to prevent stale data
-        await self._invalidate_tenant_cache(tenant_id, tenant.slug)
-
-        logger.info("tenant_deactivated", tenant_id=tenant_id, slug=tenant.slug)
-
-        # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
-        updated_dict = _tenant_to_dict(tenant)  # type: ignore[arg-type]
-        await self._cache_tenant(updated_dict)
-        return updated_dict
+        return await self._set_active_state(tenant_id, is_active=False, log_event="tenant_deactivated")
 
     async def reactivate_tenant(self, tenant_id: UUID) -> dict[str, Any]:
         """Reactivate a deactivated tenant.
@@ -560,21 +541,51 @@ class TenantService(BaseService[Tenant]):
         ModelNotFoundError
             If tenant not found
         """
+        return await self._set_active_state(tenant_id, is_active=True, log_event="tenant_reactivated")
+
+    async def _set_active_state(self, tenant_id: UUID, *, is_active: bool, log_event: str) -> dict[str, Any]:
+        """Flip a tenant's active flag and republish the cached copy.
+
+        Deactivation and reactivation are the same operation with opposite
+        flag values, so they share this one implementation. They used to be
+        copy-pasted blocks that differed only in the flag and the log event
+        — a change to one (e.g. the cache invalidation) could silently miss
+        the other.
+
+        Parameters
+        ----------
+        tenant_id : UUID
+            Tenant unique identifier
+        is_active : bool
+            The value to write to ``Tenant.is_active``
+        log_event : str
+            The structlog event name to emit for this transition
+
+        Returns
+        -------
+        dict[str, Any]
+            The updated tenant data
+
+        Raises
+        ------
+        ModelNotFoundError
+            If tenant not found
+        """
         # P1-1: Fetch ORM object directly for in-place update
         tenant = await self.db.get(Tenant, tenant_id)
         if tenant is None:
             raise ModelNotFoundError("Tenant", tenant_id)
 
-        tenant.is_active = True
+        tenant.is_active = is_active
         tenant.updated_at = datetime.now(UTC)
 
         await self.db.commit()
         await self.db.refresh(tenant)
 
-        # FIXED: Invalidate tenant cache after reactivation to prevent stale data
+        # FIXED: Invalidate tenant cache after the state change to prevent stale data
         await self._invalidate_tenant_cache(tenant_id, tenant.slug)
 
-        logger.info("tenant_reactivated", tenant_id=tenant_id, slug=tenant.slug)
+        logger.info(log_event, tenant_id=tenant_id, slug=tenant.slug)
 
         # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
         updated_dict = _tenant_to_dict(tenant)  # type: ignore[arg-type]

@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.principal import AuthenticatedUser
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
-from src.app.modules.{{ module_name }}.crud import crud_{{ module_name }}
 from src.app.modules.{{ module_name }}.models import {{ ModelName }}
 from src.app.modules.{{ module_name }}.schemas import {{ ModelName }}Create, {{ ModelName }}Read, {{ ModelName }}Update
 from src.app.shared.exceptions import ForbiddenError
@@ -16,11 +15,18 @@ from src.app.shared.exceptions import ForbiddenError
 class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
     """Service class for {{ module_name }}-related business logic.
 
-    Tenant isolation note: ``crud_{{ module_name }}`` is a TenantAwareCRUD —
-    the tenant_id filter is injected from request context on every call.
+    Tenant isolation note: ``self.crud`` is a TenantAwareCRUD — the
+    tenant_id filter is injected from request context on every call.
     Service methods therefore do NOT take (or pass) explicit ``tenant_id``
     kwargs; a caller-supplied value would be ignored (and logged) by the
     seam.
+
+    B4: this template used to import the module-level
+    ``crud_{{ module_name }}`` symbol, which was DEAD — ``BaseService.__init__``
+    builds its own ``self.crud`` via ``scoped_crud(db, model)``, and every
+    method body calls ``self.crud``. The import was never referenced, so a
+    generated service carried a module-level symbol it did not use (and
+    whose absence no test would have caught).
     """
 
     def __init__(self, db: AsyncSession):

@@ -69,7 +69,17 @@ class User(Base, kw_only=True):
     email: Mapped[str] = mapped_column(String(50), index=True)  # Uniqueness now per-tenant via constraint
     hashed_password: Mapped[str] = mapped_column(String)
 
-    profile_image_url: Mapped[str] = mapped_column(String, default="https://www.profileimageurl.com")
+    # B2: nullable, and NO Python-side default. The column used to default to
+    # "https://www.profileimageurl.com" — a placeholder that escaped a
+    # docs example into a runtime value, so EVERY user row was written with
+    # a third-party avatar URL they never chose (and every profile view
+    # fetched from a domain nobody controls).
+    #
+    # The migration already declared this column nullable=True
+    # (01_foundation.py:77) and user_preferences already writes
+    # profile_image_url=None to clear an avatar, so the ORM's NOT NULL was
+    # the outlier — this is a correction, not a loosening.
+    profile_image_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     uuid: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), default_factory=uuid7, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime | None] = mapped_column(

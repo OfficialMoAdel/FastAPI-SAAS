@@ -23,6 +23,29 @@ from src.app.shared.exceptions import AppException
 
 logger = get_logger(__name__)
 
+#: Maximum number of characters of a model response body that reach the log.
+#:
+#: A JSON parse failure means the model returned prose where a JSON document
+#: was expected, and that prose is whatever the user's prompt made it echo.
+#: The log sanitizer masks secrets (JWTs, API keys, emails, cards, ...), but
+#: free-form text is not a secret-shaped value, so it survives masking intact.
+#: Capping the length bounds what a log line can carry without dropping the
+#: diagnostic entirely: the first N characters are what the operator needs to
+#: see the shape of the failure, and the full length is reported alongside.
+MAX_LOGGED_BODY_CHARS: int = 2000
+
+
+def _truncate_body_for_log(content: str, limit: int = MAX_LOGGED_BODY_CHARS) -> str:
+    """Cap a model response body for logging.
+
+    Returns ``content`` unchanged when it fits the limit, otherwise the first
+    ``limit`` characters plus a marker stating how much was dropped.
+    """
+    if len(content) <= limit:
+        return content
+    dropped = len(content) - limit
+    return f"{content[:limit]}... [truncated, {dropped} more chars]"
+
 
 class AIProviderError(AppException):
     """Base exception for AI provider errors.
@@ -265,7 +288,11 @@ class AIProvider(ABC):
         try:
             parsed: dict[str, Any] = json.loads(stripped.strip())
         except (json.JSONDecodeError, ValueError) as e:
-            logger.error(f"Failed to parse JSON from {self.provider_name} response:", content=content)
+            logger.error(
+                f"Failed to parse JSON from {self.provider_name} response:",
+                content=_truncate_body_for_log(content),
+                content_length=len(content),
+            )
             raise AIProviderError(
                 f"Failed to parse JSON: {e}",
                 error_code="json_parse_error",

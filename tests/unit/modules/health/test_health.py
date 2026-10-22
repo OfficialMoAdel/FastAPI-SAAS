@@ -9,12 +9,13 @@ from src.app.core.health import HealthResult
 
 @pytest.fixture
 def mock_health_checks():
-    # All probe functions are imported at module scope, so patch them where
-    # the route resolves them.
+    # The probes live in core/health.py and are called from there by
+    # collect_readiness_results — so patch them where they are RESOLVED,
+    # not where the route used to import them.
     with (
-        patch("src.app.modules.health.router.check_database_health", new_callable=AsyncMock) as db_mock,
-        patch("src.app.modules.health.router.check_redis_health", new_callable=AsyncMock) as redis_mock,
-        patch("src.app.modules.health.router.check_redis_queue_health", new_callable=AsyncMock) as queue_mock,
+        patch("src.app.core.health.check_database_health", new_callable=AsyncMock) as db_mock,
+        patch("src.app.core.health.check_redis_health", new_callable=AsyncMock) as redis_mock,
+        patch("src.app.core.health.check_redis_queue_health", new_callable=AsyncMock) as queue_mock,
     ):
         yield db_mock, redis_mock, queue_mock
 

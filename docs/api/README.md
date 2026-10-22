@@ -1573,6 +1573,41 @@ Authorization: Bearer <access_token>
 }
 ```
 
+### POST /api/v1/api-keys/{key_id}/rotate
+
+Rotates an API key. The new key is returned once, in full, and is valid
+immediately. The OLD key keeps working for an overlap window and then
+expires, so the caller can swap the credential without downtime.
+
+**Query parameters:**
+- `grace_period_days` (optional, default `7`, range `0`–`90`) — the overlap
+  window granted to the old key. A request above the maximum is clamped.
+
+**Authenticated Request:**
+```
+Authorization: Bearer <access_token>
+```
+
+**Response (200 OK):**
+```json
+{
+  "id": 42,
+  "name": "Production Integration (Rotated)",
+  "key": "<the full new key, shown once>",
+  "key_prefix": "a1b2c3d4",
+  "expires_at": null,
+  "created_at": "2024-01-15T12:00:00Z",
+  "valid_from": null,
+  "grace_period_days": 7,
+  "message": "Key rotated successfully. Old key remains valid for grace period. Store new key securely - it will not be shown again."
+}
+```
+
+`grace_period_days` is the window that was **applied** (the request clamped
+to the maximum), not the number that was asked for. `valid_from` is the new
+key's own start-of-validity timestamp and is `null`, because a rotated key is
+valid immediately — the window belongs to the old key's expiry.
+
 ---
 
 ## Rate Limits Endpoints (`/api/v1/rate_limits/`)

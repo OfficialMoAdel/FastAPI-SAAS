@@ -256,13 +256,15 @@ def test_the_layer_that_creates_user_preferences_is_the_one_under_test() -> None
 
 
 def test_there_is_exactly_one_migration_head() -> None:
-    """A branching history would make "the repair is the head" meaningless.
+    """A branching history would make "the latest layer is the head" meaningless.
 
     The head is asserted by NAME as well as by count: a head assertion that only
     checks the count cannot notice that it selected the wrong end of the chain.
     """
     heads = migration_heads()
-    assert heads == ["08_enable_rls_policies"], f"expected the head to be 08_enable_rls_policies, found {heads}"
+    assert heads == ["08_enable_rls_policies"], (
+        f"expected the head to be 08_enable_rls_policies, found {heads}"
+    )
 
 
 # --------------------------------------------------------------------------

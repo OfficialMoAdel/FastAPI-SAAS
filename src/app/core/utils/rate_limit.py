@@ -62,7 +62,7 @@ class RateLimiter:
                 return True, current_count
 
         except Exception as e:
-            logger.exception("Error checking rate limit for key :", key=key, error=e)
+            logger.exception("Error checking rate limit for key", key=key, error=e)
             # Use configurable fail-open/fail-closed behavior. C2: callers
             # guarding brute-force budgets pass fail_closed=True so a Redis
             # outage maps to limited even when the general RATE_LIMIT_FAIL_OPEN

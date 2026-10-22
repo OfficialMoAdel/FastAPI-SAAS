@@ -132,10 +132,27 @@ class APIKeyRotateResponse(APIKeyResponse):
     """Schema for API key rotation response.
 
     Extends APIKeyResponse to include grace period info.
+
+    `valid_from` is the NEW key's own start-of-validity timestamp, which is
+    `None` because a rotated key is valid immediately - the grace window
+    belongs to the OLD key's expiry, not to the new key's activation.
+
+    `grace_period_days` is the overlap window that was actually applied, not
+    the one that was requested: a request above `MAX_GRACE_PERIOD_DAYS` is
+    clamped, and reporting the requested value would misstate the window the
+    old key actually got. The old key's own earlier expiry can shorten the
+    window further, independently of this value.
     """
 
-    valid_from: datetime | None = None
-    grace_period_days: int = 7
+    valid_from: datetime | None = Field(
+        default=None,
+        description="When the new key becomes valid (null: it is valid immediately).",
+    )
+    grace_period_days: int = Field(
+        default=7,
+        ge=0,
+        description="Overlap window in days granted to the old key (clamped to the maximum).",
+    )
     message: str = (
         "Key rotated successfully. Old key remains valid for grace period. "
         "Store new key securely - it will not be shown again."

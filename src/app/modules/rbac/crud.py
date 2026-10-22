@@ -136,28 +136,84 @@ class CRUDAssociations:
         result = await execute_scoped(stmt, db=db, model=UserRole, scope=scope)
         return list(result.scalars().all())
 
-    async def get_role_permission(self, db: AsyncSession, role_id: int, permission_id: int) -> RolePermission | None:
-        """Check if a permission is assigned to a role."""
-        stmt = select(RolePermission).where(
-            and_(
-                RolePermission.role_id == role_id,
-                RolePermission.permission_id == permission_id,
-            )
-        )
-        result = await db.execute(stmt)
-        return result.scalar_one_or_none()
+    async def get_role_permission(
+        self,
+        db: AsyncSession,
+        tenant_id: UUID,
+        role_id: int,
+        permission_id: int,
+    ) -> RolePermission | None:
+        """Check if a permission is assigned to a role.
 
-    async def remove_role_permission(self, db: AsyncSession, role_id: int, permission_id: int) -> bool:
-        """Remove a permission from a role (single-statement, race-safe)."""
-        result = await db.execute(
-            delete(RolePermission).where(
+        C4: the query is TENANT-SCOPED, not left to caller discipline.
+        ``RolePermission`` carries no ``tenant_id`` of its own, so the
+        tenant predicate is applied through the parent ``Role`` — the same
+        shape ``delete_relations`` already uses. The previous form issued a
+        bare ``db.execute`` with no tenant criterion and no circuit guard,
+        so a role id belonging to another tenant was readable and its
+        permission links were deletable; both callers happened to
+        ``get_role()`` first, which made the safety a property of the
+        CALLERS rather than of the query.
+        """
+        stmt = (
+            select(RolePermission)
+            .where(
                 and_(
                     RolePermission.role_id == role_id,
                     RolePermission.permission_id == permission_id,
                 )
             )
+            .where(RolePermission.role_id.in_(self._scoped_role_ids(tenant_id, role_id)))
         )
+        async with db_circuit_guard():
+            result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def remove_role_permission(
+        self,
+        db: AsyncSession,
+        tenant_id: UUID,
+        role_id: int,
+        permission_id: int,
+    ) -> bool:
+        """Remove a permission from a role (single-statement, race-safe).
+
+        C4: tenant-scoped through the parent ``Role``, for the same reason
+        as ``get_role_permission`` — the delete's tenant safety must be a
+        property of the STATEMENT, not of the caller remembering to check
+        the role first.
+        """
+        stmt = (
+            delete(RolePermission)
+            .where(
+                and_(
+                    RolePermission.role_id == role_id,
+                    RolePermission.permission_id == permission_id,
+                )
+            )
+            .where(RolePermission.role_id.in_(self._scoped_role_ids(tenant_id, role_id)))
+        )
+        async with db_circuit_guard():
+            result = await db.execute(stmt)
         return _rows_affected(result)
+
+    @staticmethod
+    def _scoped_role_ids(tenant_id: UUID, role_id: int) -> Any:
+        """The role ids of ``role_id`` that belong to ``tenant_id``.
+
+        ``RolePermission`` has no ``tenant_id`` column, so the tenant
+        predicate has to be expressed against the parent ``Role``. This
+        returns that subquery; it is composed here rather than executed
+        here (the caller's statement embeds it as an ``IN`` predicate).
+
+        The scope is explicit and carries a reason, so the tenant decision
+        is auditable and honours the same context-wins rule as every other
+        scoped statement in this file.
+        """
+        return select(Role.id).where(
+            Role.id == role_id,
+            criterion(Role, scope=ExplicitTenant(tenant_id, reason="rbac:role_permission_scope")),
+        )
 
     async def get_user_role(self, db: AsyncSession, tenant_id: UUID, user_id: int, role_id: int) -> UserRole | None:
         """Get user role assignment within a tenant."""

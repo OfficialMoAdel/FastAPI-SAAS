@@ -102,6 +102,7 @@ from src.app.core.tenancy.context import (  # noqa: F401 — get_current_tenant 
 )
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.modules._base.service import fetch_page_with_total
+from src.app.modules.billing.tenant_scope import TenantScopedService
 from src.app.shared.exceptions import ModelNotFoundError
 
 logger = get_logger(__name__)
@@ -213,32 +214,15 @@ def _product_to_dict(product: Product, pricing_tiers: list[Pricing]) -> dict[str
     }
 
 
-class StripeSettingsService:
+class StripeSettingsService(TenantScopedService):
     """Service for managing tenant Stripe settings."""
+
+    _default_entity_name = "Billing"
 
     def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None) -> None:
         self.db = db
         self.tenant_id = tenant_id
         self._encryption = CredentialEncryption()
-
-    @property
-    def current_tenant_id(self) -> Any:
-        """Effective tenant id — read-only view over the ONE seam.
-
-        Returns the context tenant when bound, else the construction value,
-        else ``None`` (``fail_closed=False``). Callers that must not proceed
-        without a tenant use :meth:`_resolve_tenant` instead.
-        """
-        return resolve_tenant_id(
-            self.tenant_id,
-            entity_name="Tenant",
-            entity_id="current",
-            fail_closed=False,
-        )
-
-    def _resolve_tenant(self, entity_name: str = "Billing", entity_id: Any = None) -> Any:
-        """Resolve tenant with cross-tenant mismatch guard (via the ONE seam)."""
-        return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
 
     async def get_settings(self) -> dict[str, Any] | None:
         """Get Stripe settings for the current tenant.
@@ -306,30 +290,14 @@ class StripeSettingsService:
             return dict(stripe_settings_record)
 
 
-class ProductService:
+class ProductService(TenantScopedService):
     """Service for managing products."""
+
+    _default_entity_name = "Product"
 
     def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None) -> None:
         self.db = db
         self.tenant_id = tenant_id
-
-    @property
-    def current_tenant_id(self) -> Any:
-        """Effective tenant id (context wins; explicit construction value otherwise).
-
-        Read-only compatibility view over the ONE seam — see
-        :class:`StripeSettingsService`.
-        """
-        return resolve_tenant_id(
-            self.tenant_id,
-            entity_name="Tenant",
-            entity_id="current",
-            fail_closed=False,
-        )
-
-    def _resolve_tenant(self, entity_name: str = "Product", entity_id: Any = None) -> Any:
-        """Resolve tenant via the ONE seam (context wins; mismatch soft-404s)."""
-        return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
 
     async def create_product(self, data: ProductCreate) -> dict[str, Any]:
         """Create a new product."""
@@ -439,30 +407,14 @@ class ProductService:
         )
 
 
-class PricingService:
+class PricingService(TenantScopedService):
     """Service for managing pricing tiers."""
+
+    _default_entity_name = "Pricing"
 
     def __init__(self, db: AsyncSession, tenant_id: int | UUID | None = None) -> None:
         self.db = db
         self.tenant_id = tenant_id
-
-    @property
-    def current_tenant_id(self) -> Any:
-        """Effective tenant id (context wins; explicit construction value otherwise).
-
-        Read-only compatibility view over the ONE seam — see
-        :class:`StripeSettingsService`.
-        """
-        return resolve_tenant_id(
-            self.tenant_id,
-            entity_name="Tenant",
-            entity_id="current",
-            fail_closed=False,
-        )
-
-    def _resolve_tenant(self, entity_name: str = "Pricing", entity_id: Any = None) -> Any:
-        """Resolve tenant via the ONE seam (context wins; mismatch soft-404s)."""
-        return resolve_tenant_id(self.tenant_id, entity_name=entity_name, entity_id=entity_id)
 
     async def create_pricing(self, product_id: int, data: PricingCreate) -> dict[str, Any]:
         """Create a pricing tier for a product."""

@@ -536,7 +536,7 @@ def _register_app_exception_fallback(app: FastAPI) -> None:
     class), but keeping it last documents the intent: the framework handlers
     are the overrides, this is the default for the whole domain tree.
     """
-    app.exception_handler(AppException)(_make_app_exception_handler())  # type: ignore
+    app.exception_handler(AppException)(_make_app_exception_handler())
 
 
 def _register_global_handler(app: FastAPI) -> None:

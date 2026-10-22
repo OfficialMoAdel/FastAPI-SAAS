@@ -5,6 +5,12 @@ Revises: 02_authentication
 Create Date: 2026-01-30
 
 Tables: permissions, roles, role_permissions, user_roles, api_keys, rate_limit
+
+Roles are created EMPTY on purpose. `roles.tenant_id` is NOT NULL and a
+migration runs before any tenant exists, so seeding an admin role here would
+either invent a tenant-blind role (breaking isolation) or fail outright.
+Operators grant per-role permissions afterwards via
+`src/scripts/grant_tasks_manage.py`.
 """
 
 from collections.abc import Sequence
@@ -30,23 +36,14 @@ def upgrade() -> None:
     )
     op.create_index("ix_permissions_slug", "permissions", ["slug"], unique=True)
 
-    # Seed the permission catalog.
+    # Seeds the permission catalog.
     #
-    # Run-3 finding rbac.seeded_permission_catalog_drifted_from_enum: this block
-    # used to seed a hardcoded list of 18 slugs that had drifted from
-    # src/app/core/rbac/permissions.py (then 24 values, now 25). Fifteen enum
-    # permissions were therefore UNGRANTABLE, because add_permission_to_role
-    # resolves a slug against this table and raises ModelNotFoundError when it
-    # is absent. Adding a permission to the enum alone silently produced an
-    # inert authorization gate.
+    # Derives permission slugs from the enum in `src/app/core/rbac/permissions.py`
+    # at migration time instead of using a hardcoded list. This prevents catalog
+    # drift, which previously left new enum permissions ungrantable.
     #
-    # The enum is the single source of truth, so the catalog is derived from it
-    # at migration time rather than re-typed here. A hand-maintained copy of a
-    # growing enum is exactly what caused the drift.
-    #
-    # Because roles/role_permissions are created EMPTY below and no role is
-    # seeded, this rebuild is what makes every declared permission grantable
-    # from a clean database. Operators grant them per role afterwards.
+    # Roles are created empty below, so this ensures all declared permissions are
+    # available for operators to grant from a clean database.
     from src.app.core.rbac.permissions import Permission as _PermissionEnum
 
     op.get_bind().execute(
@@ -129,22 +126,14 @@ def upgrade() -> None:
             comment="Timestamp when key becomes valid for grace period rotation",
         ),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
-        # api_keys.scopes is Text on the ORM (api_keys/models.py), and the whole
-        # read/write path is string-shaped to match: create_api_key stores
-        # json_dumps(...) AS A STRING, rotate re-binds whatever came back
-        # verbatim, and validate_api_key reads it with json_loads. This layer
-        # declared JSONB instead (FastAPI_saas-vthy), and on a database built by
-        # `alembic upgrade head` that broke API-key AUTHENTICATION:
-        # SQLAlchemy's asyncpg dialect decodes a jsonb column to a Python list,
-        # so `json_loads(key.scopes)` (service.py:652) raises JSONDecodeError on
-        # a list, and _validate_from_db has no handler for it - every
-        # X-API-Key request fails with 500. MEASURED on a scratch database built
-        # by `alembic upgrade 03_access_control`, with the create_all database
-        # as the control: the INSERT succeeds either way (asyncpg sends untyped
-        # parameters and the server coerces the literal), but the ORM read
-        # returns `list` on jsonb and `str` on Text, and only Text keeps
-        # json_loads working. Nothing in the application queries scopes as JSON,
-        # so jsonb bought nothing and cost the read path.
+        # `api_keys.scopes` uses Text to match the ORM (api_keys/models.py) and the
+        # application's string-based read/write path. The service layer stores it via
+        # `json_dumps` and reads it with `json_loads` (service.py:652).
+        #
+        # Declaring this as JSONB (FastAPI_saas-vthy) caused asyncpg to return a list,
+        # breaking `json_loads` and failing API-key authentication with a 500 error.
+        # Text ensures the ORM reads a string, keeping the validation path intact.
+        # Since nothing queries scopes as JSON, JSONB offered no benefit.
         sa.Column("scopes", sa.Text(), nullable=True),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -175,16 +164,12 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["tier_id"], ["tier.id"], name=op.f("fk_rate_limit_tier_id"), ondelete="CASCADE"),
         sa.CheckConstraint('"limit" > 0', name=op.f("ck_rate_limit_limit_positive")),
         sa.CheckConstraint("period > 0", name=op.f("ck_rate_limit_period_positive")),
-        # The (tier_id, path) lookup is the hot path of this table, and the
-        # ORM declares the SAME columns as a UNIQUE constraint
-        # (``uq_rate_limit_tier_path`` in
-        # ``src/app/modules/rate_limits/models.py``). A unique constraint
-        # builds its own index, so the separate plain index this layer used
-        # to create (``ix_rate_limit_tier_path``) was a second structure over
-        # identical columns — pure write and storage cost — AND it left the
-        # two layers disagreeing: the ORM promised uniqueness the schema did
-        # not have. Creating the constraint instead gives one index, the
-        # uniqueness the ORM declares, and agreement between the layers.
+        # Creates the unique constraint on (tier_id, path) to match the ORM
+        # (`uq_rate_limit_tier_path` in `src/app/modules/rate_limits/models.py`).
+        #
+        # Replaces the previous non-unique index (`ix_rate_limit_tier_path`).
+        # The unique constraint provides the necessary index for lookups and ensures
+        # the database schema matches the ORM's uniqueness requirement.
         sa.UniqueConstraint("tier_id", "path", name="uq_rate_limit_tier_path"),
     )
 

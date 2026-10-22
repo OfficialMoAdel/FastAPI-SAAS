@@ -17,7 +17,6 @@ from src.app.modules.api_keys.schemas import (
     APIKeyRotateResponse,
 )
 from src.app.modules.api_keys.service import (
-    MAX_GRACE_PERIOD_DAYS,
     APIKeyService,
     get_api_key_service,
 )
@@ -111,30 +110,28 @@ async def rotate_api_key(
     grace_period_days: int = Query(
         7,
         ge=0,
-        le=MAX_GRACE_PERIOD_DAYS,
-        description="Grace period in days for the old key to remain active",
+        description="Grace period in days for the old key to remain active (clamped to the maximum)",
     ),
 ) -> APIKeyRotateResponse:
     """Rotate an API key with grace period for zero-downtime rotation.
 
-    Creates a new key that becomes valid after the grace period.
-    The old key remains valid during the grace period, allowing
-    seamless transition without service interruption.
-
-    After the grace period expires, only the new key will work.
-    Both keys can be used during the grace period.
+    The new key is valid immediately. The old key keeps working for the
+    requested grace period and then expires, so the caller can swap the
+    credential without a service interruption.
 
     Parameters
     ----------
     key_id : int
         ID of the API key to rotate
     grace_period_days : int
-        Days before new key becomes valid (default: 7)
+        Overlap window in days during which the old key still works
+        (default: 7)
 
     Returns
     -------
     APIKeyRotateResponse
-        New API key with grace period information
+        New API key, plus the overlap window that was actually applied
+        (the requested window, clamped to ``MAX_GRACE_PERIOD_DAYS``).
     """
     result = await service.rotate_api_key(
         key_id=key_id,
@@ -149,5 +146,7 @@ async def rotate_api_key(
         key_prefix=result.key_prefix,
         expires_at=result.expires_at,
         created_at=result.created_at,
+        valid_from=result.valid_from,
+        grace_period_days=result.grace_period_days,
         message=result.message,
     )

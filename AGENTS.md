@@ -25,20 +25,21 @@ uv run pytest
 # Database migrations
 uv run alembic upgrade head
 
-
-# Enforce the per-module file contract (router.py + service.py + models/schemas).
-# NOTE: currently RED — the `security` module has no service.py. A non-zero exit
-# is a pre-existing condition, not a regression you introduced.
+# Enforces the per-module file contract (router.py, service.py, models/schemas).
+# Stale allow-list entries fail the build.
 uv run python scripts/checks/module_structure.py
 
-# Reject production comments that exist only to keep a test's grep green.
-# See "Comments vs. test greps" below for the convention it enforces.
+# Fails if a log template has an empty slot ("Failed to upload file :").
+# Remove the slot entirely since structlog renders braces literally.
+uv run python scripts/checks/log_templates.py
+
+# Fails if production code contains comments added just to satisfy test greps.
+# See the "Comments vs. test greps" convention.
 uv run python scripts/checks/comment_grease.py
 
-# Fail on a mutating endpoint (POST/PUT/PATCH/DELETE) with no response_model.
-# Endpoints that genuinely cannot carry one — 204 No Content, a returned
-# Response/StreamingResponse, or a genuinely dynamic body — are allow-listed
-# with the reason in the script, and a stale entry is itself a failure.
+# Requires a response_model for mutating endpoints (POST/PUT/PATCH/DELETE).
+# Valid exceptions like 204 No Content must be allow-listed in the script.
+# Stale allow-list entries fail the build.
 uv run python scripts/checks/mutation_response_models.py
 ```
 

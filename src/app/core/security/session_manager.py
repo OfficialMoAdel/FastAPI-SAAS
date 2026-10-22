@@ -580,9 +580,9 @@ class SessionManager:
                     logger.info("Migrated users", count=count)
 
             except Exception as e:
-                logger.error("Failed to migrate session key :", key=key, error=e)
+                logger.error("Failed to migrate session key", key=key, error=e)
 
-        logger.info("Session migration completed. Migrated users.", count=count)
+        logger.info("Session migration completed", count=count)
         return count
 
 

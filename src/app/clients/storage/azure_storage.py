@@ -108,11 +108,11 @@ class AzureBlobStorage(StorageProvider):
                 content_settings=ContentSettings(content_type=mime_type),
             )
 
-            logger.info("Uploaded blob: , size: bytes", path=path, size=size)
+            logger.info("Uploaded blob", path=path, size=size)
             return StorageResult(success=True, path=path, size=size)
 
         except Exception as e:
-            logger.error("Failed to upload blob :", path=path, error=e)
+            logger.error("Failed to upload blob", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
     async def download(self, path: str) -> AsyncGenerator[bytes]:
@@ -153,7 +153,7 @@ class AzureBlobStorage(StorageProvider):
             return StorageResult(success=True, path=path)  # Idempotent delete
 
         except Exception as e:
-            logger.error("Failed to delete blob :", path=path, error=e)
+            logger.error("Failed to delete blob", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
     async def exists(self, path: str) -> bool:

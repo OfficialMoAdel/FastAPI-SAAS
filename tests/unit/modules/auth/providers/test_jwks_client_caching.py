@@ -90,7 +90,13 @@ class TestFetchIsOffloaded:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(("module", "cls", "issuer"), [
         ("apple", "AppleProvider", "https://appleid.apple.com"),
-        ("microsoft", "MicrosoftProvider", "https://login.microsoftonline.com/x/v2.0"),
+        (
+            "microsoft",
+            "MicrosoftProvider",
+            # A12: the issuer must be the concrete tenant GUID shape — the
+            # old prefix/suffix check accepted any path segment.
+            "https://login.microsoftonline.com/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/v2.0",
+        ),
     ])
     async def test_signing_key_resolved_off_the_event_loop(self, module, cls, issuer) -> None:
         mod = __import__(f"src.app.modules.auth.providers.{module}", fromlist=["_jwks_client"])

@@ -489,6 +489,63 @@ _BACKUP_CODE_PATTERN = re.compile(
 )
 
 
+def _check_totp_token(v: str | None) -> str | None:
+    """Validate an optional TOTP token: exactly six digits, or nothing.
+
+    Shared by every request schema that accepts a TOTP token, so the
+    rule lives in one place.
+    """
+    if v is not None and not _TOTP_TOKEN_PATTERN.match(v):
+        raise ValueError("TOTP token must be exactly 6 digits")
+    return v
+
+
+def _normalize_backup_code(v: str | None) -> str | None:
+    """Normalize an optional backup code to its canonical stored form.
+
+    Upper-cased, trimmed, and prefixed with ``BC-`` when the prefix is
+    absent. Shared by every request schema that accepts a backup code.
+    """
+    if v is None:
+        return None
+    normalized = v.upper().strip()
+    if not _BACKUP_CODE_PATTERN.match(normalized):
+        raise ValueError("Invalid backup code format")
+    if not normalized.startswith("BC-"):
+        normalized = f"BC-{normalized}"
+    return normalized
+
+
+class _OneFactorRequest(BaseModel):
+    """Base for requests that carry EITHER a TOTP token OR a backup code.
+
+    The two-factor request schemas carried identical copies of the
+    TOTP validator, the backup-code normalizer, and the "exactly one
+    factor" post-init check. They now inherit the shared behaviour, so
+    a change to the rule cannot land on one schema and miss the others.
+    """
+
+    totp_token: str | None = None
+    backup_code: str | None = None
+
+    @field_validator("totp_token")
+    @classmethod
+    def validate_totp_token(cls, v: str | None) -> str | None:
+        return _check_totp_token(v)
+
+    @field_validator("backup_code")
+    @classmethod
+    def normalize_backup_code(cls, v: str | None) -> str | None:
+        return _normalize_backup_code(v)
+
+    def model_post_init(self, __context: Any) -> None:
+        """Validate that exactly one of totp_token or backup_code is provided."""
+        if self.totp_token is None and self.backup_code is None:
+            raise ValueError("Either totp_token or backup_code must be provided")
+        if self.totp_token is not None and self.backup_code is not None:
+            raise ValueError("Only one of totp_token or backup_code should be provided, not both")
+
+
 class MFASetupResponse(BaseModel):
     setup_token: str
     otpauth_url: str
@@ -523,13 +580,14 @@ class MFAVerifyRequest(BaseModel):
     @field_validator("totp_token")
     @classmethod
     def validate_totp_token(cls, v: str | None) -> str | None:
-        if v is not None and not _TOTP_TOKEN_PATTERN.match(v):
-            raise ValueError("TOTP token must be exactly 6 digits")
-        return v
+        return _check_totp_token(v)
 
     @field_validator("backup_code")
     @classmethod
     def validate_backup_code(cls, v: str | None) -> str | None:
+        # This schema verifies an EXISTING code, so it only upper-cases
+        # the value — it does not add the "BC-" prefix the storage
+        # normalizer adds, because a stored code already carries it.
         if v is not None:
             v_upper = v.upper()
             if not _BACKUP_CODE_PATTERN.match(v_upper):
@@ -551,36 +609,8 @@ class MFAVerifyResponse(BaseModel):
     backup_codes_remaining: int | None = None
 
 
-class MFADisableRequest(BaseModel):
+class MFADisableRequest(_OneFactorRequest):
     password: str = Field(..., min_length=8)
-    totp_token: str | None = None
-    backup_code: str | None = None
-
-    @field_validator("totp_token")
-    @classmethod
-    def validate_totp_token(cls, v: str | None) -> str | None:
-        if v is not None and not _TOTP_TOKEN_PATTERN.match(v):
-            raise ValueError("TOTP token must be exactly 6 digits")
-        return v
-
-    @field_validator("backup_code")
-    @classmethod
-    def normalize_backup_code(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        normalized = v.upper().strip()
-        if not _BACKUP_CODE_PATTERN.match(normalized):
-            raise ValueError("Invalid backup code format")
-        if not normalized.startswith("BC-"):
-            normalized = f"BC-{normalized}"
-        return normalized
-
-    def model_post_init(self, __context: Any) -> None:
-        """Validate that exactly one of totp_token or backup_code is provided."""
-        if self.totp_token is None and self.backup_code is None:
-            raise ValueError("Either totp_token or backup_code must be provided")
-        if self.totp_token is not None and self.backup_code is not None:
-            raise ValueError("Only one of totp_token or backup_code should be provided, not both")
 
 
 class MFAStatusResponse(BaseModel):
@@ -594,36 +624,8 @@ class MFABackupCodesResponse(BaseModel):
     message: str = "New backup codes generated successfully"
 
 
-class MFACompleteLoginRequest(BaseModel):
+class MFACompleteLoginRequest(_OneFactorRequest):
     mfa_token: str = Field(..., min_length=32, max_length=64)
-    totp_token: str | None = None
-    backup_code: str | None = None
-
-    @field_validator("totp_token")
-    @classmethod
-    def validate_totp_token(cls, v: str | None) -> str | None:
-        if v is not None and not _TOTP_TOKEN_PATTERN.match(v):
-            raise ValueError("TOTP token must be exactly 6 digits")
-        return v
-
-    @field_validator("backup_code")
-    @classmethod
-    def normalize_backup_code(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        normalized = v.upper().strip()
-        if not _BACKUP_CODE_PATTERN.match(normalized):
-            raise ValueError("Invalid backup code format")
-        if not normalized.startswith("BC-"):
-            normalized = f"BC-{normalized}"
-        return normalized
-
-    def model_post_init(self, __context: Any) -> None:
-        """Validate that exactly one of totp_token or backup_code is provided."""
-        if self.totp_token is None and self.backup_code is None:
-            raise ValueError("Either totp_token or backup_code must be provided")
-        if self.totp_token is not None and self.backup_code is not None:
-            raise ValueError("Only one of totp_token or backup_code should be provided, not both")
 
 
 class MFACompleteLoginResponse(BaseModel):

@@ -32,18 +32,21 @@ class OllamaProvider(AIProvider):
     """
     def __init__(
         self,
-        base_url: str = "http://localhost:11434",
+        base_url: str | None = None,
         timeout: float | None = None,
     ):
         """Initialize Ollama provider.
 
         Args:
-            base_url: Ollama API base URL (default: http://localhost:11434)
+            base_url: Ollama API base URL. Defaults to
+                `settings.ai.OLLAMA_BASE_URL`, so a deployment that points
+                Ollama somewhere else is reachable without every caller
+                having to repeat the URL.
             timeout: Request timeout in seconds (default: settings.ai.OLLAMA_TIMEOUT)
         """
         from src.app.core.config import settings
 
-        self.base_url = base_url.rstrip("/")
+        self.base_url = (base_url or settings.ai.OLLAMA_BASE_URL).rstrip("/")
         self.timeout = timeout if timeout is not None else settings.ai.OLLAMA_TIMEOUT
         self._client: AsyncClient | None = None
 

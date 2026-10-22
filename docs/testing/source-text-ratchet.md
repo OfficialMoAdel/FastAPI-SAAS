@@ -10,7 +10,11 @@ cannot be deleted in one change. The number must go DOWN, not to zero.
 
 ## Baseline
 
-    SOURCE_TEXT_TEST_BASELINE = 116
+    SOURCE_TEXT_TEST_BASELINE = 156
+
+The baseline is enforced by `tests/core/test_source_text_ratchet.py`, which
+imports `scripts/count_source_text_tests.py` and fails when the measured
+count exceeds the constant above.
 
 > **Note on the 115 → 116 step (ykto.4).** The 114 → 115 rise was already
 > present on `main` when ykto.4 started and is not accounted for by any entry
@@ -43,6 +47,17 @@ a `.txt` asset is ordinary setup and does not count. A test that does both is
 a behavioural test with an extra assertion, and is not the defect.
 
 ## Notes on the measured baseline
+
+**2026-10-22: re-measured 156, and the ratchet is now enforced in the suite.**
+The four Cluster regression files (`auth/test_cluster_a_regressions.py`,
+`users/test_cluster_b_regressions.py`, `rbac/test_cluster_c_regressions.py`,
+`notifications/test_cluster_d_regressions.py`) contributed 26 source-text
+assertions. They were either deleted where a behavioural test already covered
+the property, or converted to tests that execute the code (compiled
+statements, mocked seams, mocked Alembic `op`). That removed all 26, leaving
+156. `tests/core/test_source_text_ratchet.py` was added because this document
+previously cited an enforcement test that did not exist; the baseline had
+silently drifted from 116 to 182.
 
 114 is measured, not asserted. The figure in the plan (44) counts FILES that
 contain such an assertion; this counts individual test FUNCTIONS, which is the

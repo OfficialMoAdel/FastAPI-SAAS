@@ -13,7 +13,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, cast
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -193,8 +193,24 @@ class UserService:
         # Optimized: Check for duplicate email or username in single query.
         # id-only projection — only existence is tested, so no column data
         # (notably hashed_password) is ever fetched or materialized.
+        #
+        # B1: the comparison is CASE-INSENSITIVE, matching the login lookup
+        # (``crud.py`` uses ``func.lower(User.email) == email.lower()``). An
+        # exact-match check was inconsistent with it: a row stored as
+        # ``Victim@X.com`` would not be seen as a duplicate of
+        # ``victim@x.com``, so a second row could be created that the
+        # case-insensitive login lookup then matches BOTH — and because that
+        # lookup ends in ``scalar_one_or_none()``, it raises
+        # ``MultipleResultsFound`` and every login for the address 500s.
+        # The schema normalises the email on create, so the value arriving
+        # here is already lowercase; ``lower()`` additionally covers rows
+        # that predate that validator.
         stmt = select(User.id).where(
-            or_(User.email == user.email, User.username == user.username), User.is_deleted.is_(False)
+            or_(
+                func.lower(User.email) == user.email.lower(),
+                func.lower(User.username) == user.username.lower(),
+            ),
+            User.is_deleted.is_(False),
         )
 
         scope = (
@@ -400,6 +416,74 @@ class UserService:
                     return None
         return None
 
+    async def _email_taken(
+        self,
+        *,
+        email: str,
+        tenant_id: Any,
+        exclude_username: str | None = None,
+    ) -> bool:
+        """Whether another (non-deleted) user in the tenant already has this email.
+
+        B1: CASE-INSENSITIVE, matching the login lookup in ``crud.py``
+        (``func.lower(User.email) == email.lower()``).
+
+        The unique index ``uq_user_email_tenant`` is case-SENSITIVE, so the
+        database alone would allow ``Victim@X.com`` beside
+        ``victim@x.com``. The login lookup lowercases both sides, so it
+        would then match BOTH rows — and because it ends in
+        ``scalar_one_or_none()``, it raises ``MultipleResultsFound`` and
+        every login for that address 500s. The duplicate check must
+        therefore be at least as strict as the lookup that reads it.
+
+        ``exclude_username`` lets the caller ignore the row it is updating
+        (the same user changing case is not a collision).
+        """
+        stmt = select(User.id).where(
+            func.lower(User.email) == email.lower(),
+            User.is_deleted.is_(False),
+        )
+        if exclude_username is not None:
+            stmt = stmt.where(User.username != exclude_username)
+        scope = (
+            ExplicitTenant(tenant_id=tenant_id, reason="users:email_duplicate_check")
+            if tenant_id is not None
+            else Unscoped(reason="users:email_duplicate_check")
+        )
+        result = await execute_scoped(stmt, db=self.db, model=User, scope=scope)
+        return result.scalar() is not None
+
+    async def _username_taken(
+        self,
+        *,
+        username: str,
+        tenant_id: Any,
+        exclude_username: str | None = None,
+    ) -> bool:
+        """Whether another (non-deleted) user in the tenant already has this username.
+
+        CASE-INSENSITIVE for the same reason as ``_email_taken``: the login
+        lookup lowercases both sides and ends in ``scalar_one_or_none()``,
+        so a case-variant pair raises ``MultipleResultsFound`` on every
+        login. The unique index is case-SENSITIVE, so the check is the only
+        thing preventing that pair.
+
+        ``exclude_username`` lets the caller ignore the row it is updating.
+        """
+        stmt = select(User.id).where(
+            func.lower(User.username) == username.lower(),
+            User.is_deleted.is_(False),
+        )
+        if exclude_username is not None:
+            stmt = stmt.where(User.username != exclude_username)
+        scope = (
+            ExplicitTenant(tenant_id=tenant_id, reason="users:username_duplicate_check")
+            if tenant_id is not None
+            else Unscoped(reason="users:username_duplicate_check")
+        )
+        result = await execute_scoped(stmt, db=self.db, model=User, scope=scope)
+        return result.scalar() is not None
+
     async def update(
         self,
         username: str,
@@ -450,18 +534,45 @@ class UserService:
         if db_username != current_user.username and not current_user.is_superuser:
             raise ModelNotFoundError("User", username)
         # Check for duplicate email if changing (exclude soft-deleted users)
+        #
+        # B1: the comparison is CASE-INSENSITIVE, matching the login lookup
+        # (``crud.py`` uses ``func.lower(User.email) == email.lower()``). An
+        # exact-match check was inconsistent with it: a row stored as
+        # ``Victim@X.com`` would NOT be seen as a duplicate of
+        # ``victim@x.com``, so the update could create a second row that the
+        # case-insensitive login lookup then matches BOTH — and because that
+        # lookup ends in ``scalar_one_or_none()``, it raises
+        # ``MultipleResultsFound`` and every login for the address 500s.
+        #
+        # The comparison is done here rather than through a FastCRUD
+        # ``email__iexact=`` filter because FastCRUD has no ``iexact``
+        # operator (only ``ilike``), and an unsupported operator resolves to
+        # ``None`` and fails at query time rather than at import time.
+        #
+        # The schema now normalises the email on update (UserUpdate.
+        # normalize_email), so the value arriving here is already lowercase;
+        # the ``lower()`` comparison additionally covers rows that predate
+        # that validator.
         reason = InvalidationReason.PROFILE_EDIT
         if values.email is not None and values.email != db_email:
             reason = InvalidationReason.CREDENTIAL_CHANGE
             tenant_id_val = get_user_attr(db_user, "tenant_id")
-            if await self.crud.exists(db=self.db, email=values.email, tenant_id=tenant_id_val, is_deleted=False):
+            if await self._email_taken(
+                email=values.email,
+                tenant_id=tenant_id_val,
+                exclude_username=db_username,
+            ):
                 raise DuplicateError("email", values.email)
 
         # Check for duplicate username if changing (exclude soft-deleted users)
         if values.username is not None and values.username != db_username:
             reason = InvalidationReason.CREDENTIAL_CHANGE
             tenant_id_val = get_user_attr(db_user, "tenant_id")
-            if await self.crud.exists(db=self.db, username=values.username, tenant_id=tenant_id_val, is_deleted=False):
+            if await self._username_taken(
+                username=values.username,
+                tenant_id=tenant_id_val,
+                exclude_username=db_username,
+            ):
                 raise DuplicateError("username", values.username)
 
         await self.crud.update(db=self.db, object=values, username=db_username, commit=False)

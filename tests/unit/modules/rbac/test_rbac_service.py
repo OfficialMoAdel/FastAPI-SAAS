@@ -280,7 +280,9 @@ class TestRoleServicePermissions:
             await role_service.remove_permission_from_role(1, "users:read")
 
             # Atomic path: single DELETE statement, no loaded-object db.delete.
-            mock_remove.assert_awaited_once_with(mock_db, 1, mock_permission.id)
+            # C4: the tenant is passed explicitly so the statement — not the
+            # caller — carries the tenant scope.
+            mock_remove.assert_awaited_once_with(mock_db, role_service.tenant_id, 1, mock_permission.id)
             mock_db.delete.assert_not_called()
             mock_db.commit.assert_called_once()
             mock_invalidate.assert_awaited_once_with(1)

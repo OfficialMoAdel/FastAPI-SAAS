@@ -145,7 +145,7 @@ class WebhookEndpoint(Base, UUIDMixin):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(  # type: ignore
+    tenant: Mapped["Tenant"] = relationship(
         "Tenant", back_populates="webhook_endpoints", init=False, lazy="noload"
     )
     deliveries: Mapped[list["WebhookDelivery"]] = relationship(
@@ -350,7 +350,7 @@ class WebhookDelivery(Base, UUIDMixin):
     webhook_endpoint: Mapped["WebhookEndpoint"] = relationship(
         "WebhookEndpoint", back_populates="deliveries", init=False, lazy="selectin"
     )
-    tenant: Mapped["Tenant"] = relationship(  # type: ignore
+    tenant: Mapped["Tenant"] = relationship(
         "Tenant", back_populates="webhook_deliveries", init=False, lazy="noload"
     )
 

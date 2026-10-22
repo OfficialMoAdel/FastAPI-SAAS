@@ -48,7 +48,11 @@ class TestMicrosoftProvider:
         )
         assert provider.authorization_endpoint == "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
         assert provider.token_endpoint == "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-        assert provider.userinfo_endpoint == "https://graph.microsoft.com/v1.0/me"
+        # A3: the OIDC UserInfo endpoint, not Graph /me. The OIDC scopes
+        # (openid/email/profile) authorise THIS surface; Graph /me needs the
+        # separate User.Read delegated consent, and calling it with an
+        # OIDC-scoped token 401s on every Microsoft callback.
+        assert provider.userinfo_endpoint == "https://graph.microsoft.com/oidc/userinfo"
 
     def test_microsoft_provider_default_scopes(self):
         """Verify default scopes include openid, email, and profile."""
@@ -63,6 +67,11 @@ class TestMicrosoftProvider:
         assert "openid" in scopes
         assert "email" in scopes
         assert "profile" in scopes
+        assert "offline_access" in scopes
+        # A3: we do NOT call Graph /me any more, so the Graph delegated
+        # permission must not be requested (it needs separate tenant consent).
+        assert "User.Read" not in scopes
+        assert not any("graph.microsoft.com" in s for s in scopes)
 
     def test_microsoft_provider_is_oidc_compliant(self):
         """Verify Microsoft is OIDC compliant."""
@@ -112,7 +121,7 @@ class TestMicrosoftProvider:
 
     @pytest.mark.asyncio
     async def test_microsoft_get_user_info(self):
-        """Verify user info retrieval from Microsoft Graph API."""
+        """Verify user info retrieval from the OIDC UserInfo endpoint."""
         from src.app.modules.auth.providers.microsoft import MicrosoftProvider
 
         provider = MicrosoftProvider(
@@ -121,12 +130,12 @@ class TestMicrosoftProvider:
             redirect_uri="http://localhost/callback",
         )
 
+        # A3: the OIDC UserInfo endpoint returns standard claims — `sub`
+        # (not Graph's `id`), `email`, `name`.
         mock_user_data = {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "displayName": "Test User",
-            "mail": "test@example.com",
-            "userPrincipalName": "test@example.com",
-            "givenName": "Test",
+            "sub": "12345678-1234-1234-1234-123456789012",
+            "name": "Test User",
+            "email": "test@example.com",
         }
 
         with patch.object(provider, "_http_get", new_callable=AsyncMock, return_value=mock_user_data):
@@ -134,8 +143,9 @@ class TestMicrosoftProvider:
 
         assert user_info.provider_user_id == "12345678-1234-1234-1234-123456789012"
         assert user_info.email == "test@example.com"
-        # M10: no id_token -> email_verified defaults to False (fail closed)
-        assert user_info.email_verified is False
+        # A4: no id_token -> UNKNOWN (None), not False. The SSO gate decides
+        # what unknown means via the provider's structural-trust policy.
+        assert user_info.email_verified is None
         assert user_info.name == "Test User"
         assert user_info.picture is None
 
@@ -153,7 +163,7 @@ class TestMicrosoftProvider:
             client_secret="test-client-secret",
             redirect_uri="http://localhost/callback",
         )
-        mock_user_data = {"id": "abc", "mail": "test@example.com"}
+        mock_user_data = {"sub": "abc", "email": "test@example.com"}
 
         async def _claims(claims: dict) -> dict:
             return claims
@@ -177,7 +187,10 @@ class TestMicrosoftProvider:
 
         assert verified.email_verified is True   # M10: explicit true only
         assert explicit_false.email_verified is False  # M10: explicit false fails closed
-        assert omitted.email_verified is False  # M10: omitted claim defaults False
+        # A4: an ABSENT claim is UNKNOWN, not "unverified". Microsoft never
+        # sends `email_verified`; the gate resolves unknown via the
+        # provider's structural-trust policy.
+        assert omitted.email_verified is None
 
     @pytest.mark.asyncio
     async def test_microsoft_get_user_info_unverified_signature_fails_closed(self):
@@ -189,7 +202,7 @@ class TestMicrosoftProvider:
             client_secret="test-client-secret",
             redirect_uri="http://localhost/callback",
         )
-        mock_user_data = {"id": "abc", "mail": "test@example.com"}
+        mock_user_data = {"sub": "abc", "email": "test@example.com"}
 
         with (
             patch.object(provider, "_http_get", new_callable=AsyncMock, return_value=mock_user_data),
@@ -202,6 +215,9 @@ class TestMicrosoftProvider:
         ):
             user_info = await provider.get_user_info("tok", id_token="forged.jwt.here")
 
+        # A verification failure must FAIL CLOSED: treating it as UNKNOWN
+        # would let the identity gate accept the token
+        # (``trusts_identity_without_claim()`` is True for Microsoft).
         assert user_info.email_verified is False
 
     @pytest.mark.asyncio
@@ -216,12 +232,11 @@ class TestMicrosoftProvider:
         )
 
         mock_user_data = {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "displayName": "Test User",
+            "sub": "12345678-1234-1234-1234-123456789012",
+            "name": "Test User",
             "mail": None,  # No mail field
             "userPrincipalName": "test@contoso.onmicrosoft.com",
             "givenName": "Test",
-            "emailVerified": True,
         }
 
         with patch.object(provider, "_http_get", new_callable=AsyncMock, return_value=mock_user_data):
@@ -241,10 +256,10 @@ class TestMicrosoftProvider:
         )
 
         mock_user_data = {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "displayName": "Full Name",
-            "mail": "test@example.com",
-            "givenName": "First",
+            "sub": "12345678-1234-1234-1234-123456789012",
+            "name": "Full Name",
+            "email": "test@example.com",
+            "given_name": "First",
         }
 
         with patch.object(provider, "_http_get", new_callable=AsyncMock, return_value=mock_user_data):

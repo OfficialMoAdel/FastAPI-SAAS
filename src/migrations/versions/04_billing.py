@@ -216,14 +216,15 @@ def upgrade() -> None:
         postgresql_where=sa.text("stripe_refund_id IS NOT NULL"),
     )
 
-    # ===== WEBHOOK_EVENTS =====
-    # The claim/completion state machine. `completed_at` discriminates a CLAIM
-    # (inserted before the handler runs, NULL) from a COMPLETION (stamped after
-    # it succeeds); without it a delivery that died mid-handler was
-    # indistinguishable from one that finished, and a paid invoice could be
-    # replayed. `claimed_by`/`claimed_at` make claim OWNERSHIP expressible so a
-    # takeover can be a single conditional UPDATE (exactly one winner) rather
-    # than a SELECT every losing delivery reads identically.
+        # ===== WEBHOOK_EVENTS =====
+        # Tracks webhook delivery state.
+        #
+        # `completed_at` records when a delivery finishes. A NULL value means the event
+        # is claimed but still processing, which prevents failed deliveries from being
+        # confused with completed ones.
+        #
+        # `claimed_by` and `claimed_at` track worker ownership, allowing safe claim
+        # takeovers via a single conditional UPDATE.
     op.create_table(
         "webhook_events",
         sa.Column("event_id", sa.String(length=255), nullable=False),

@@ -132,13 +132,24 @@ class PasswordLifecycleService:
         logger.info("invalidated_all_user_sessions_in_db", user_id=user.get("id"))
 
     async def delete_user_token_cache(self, user: dict[str, Any]) -> None:
-        """Delete token_version cache keys for a user.
+        """Invalidate all Redis sessions for a user after a credential change.
 
-        Should be called AFTER DB commit to ensure next reads get the new version.
+        A7: this method used to ALSO write ``token_version`` keys with a
+        guessed ``user["token_version"] + 1`` derived from the pre-bump
+        payload. That violated the seam's own contract
+        (users/cache.py:283-287: "Guessing old+1 from the possibly-stale
+        user payload silently diverges Redis from the DB under concurrent
+        bumps — route through the seam instead"). Both callers invoke
+        invalidate_sessions(commit=True) BEFORE this method, so the seam has
+        already performed the atomic SQL bump, committed, read the fresh
+        version back via RETURNING, and written the authoritative value to
+        Redis. This method's only remaining job is the GLOBAL session sweep
+        (kill every device session for the user), which the per-user seam
+        does not cover.
         """
         user_id = user.get("id")
 
-        # Invalidate all active Redis sessions
+        # Invalidate all active Redis sessions (all devices).
         try:
             from src.app.core.security.session_manager import session_manager as global_session_manager
 
@@ -146,34 +157,6 @@ class PasswordLifecycleService:
                 await global_session_manager.invalidate_all_sessions(str(user_id))
         except Exception as e:
             logger.error("failed_to_invalidate_redis_sessions", user_id=user_id, error=str(e))
-
-        try:
-            from src.app.core.redis_provider import get_redis
-
-            redis_client = get_redis()
-
-            if redis_client:
-                username = user.get("username")
-                email = user.get("email")
-                tenant_id = user.get("tenant_id")
-                keys = []
-                from src.app.core.utils.cache import build_tenant_key
-
-                if username:
-                    keys.append(build_tenant_key(f"user:{username}:token_version", tenant_id))
-                if email:
-                    keys.append(build_tenant_key(f"user:{email}:token_version", tenant_id))
-                if keys:
-                    # Fix P0.2: Forcefully overwrite the cache with the new token version
-                    # to prevent stale-read race conditions that could allow old tokens.
-                    new_version = user.get("token_version", 0) + 1
-                    async with redis_client.pipeline() as pipe:
-                        for key in keys:
-                            pipe.set(key, str(new_version), ex=300)
-                        await pipe.execute()
-                    logger.debug("overwrote_user_token_cache", user_id=user_id, keys=keys)
-        except Exception as e:
-            logger.warning("Failed to delete token_version cache", user_id=user_id, error=str(e))
 
     async def request_password_reset(
         self,

@@ -242,6 +242,54 @@ class PasskeyService:
 
         return await crud_passkey_credentials.get_by_user(db=db, user_id=user_id)
 
+    async def list_credentials_page(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        *,
+        offset: int,
+        limit: int,
+    ) -> dict[str, Any]:
+        """List ONE PAGE of a user's passkey credentials.
+
+        The tenant check is the same one ``list_credentials`` performs:
+        a user who is not a member of the current tenant gets a
+        ``ModelNotFoundError`` rather than an empty page, so the
+        cross-tenant caller learns nothing from the difference between
+        "no credentials" and "not your credentials".
+
+        Unlike ``list_credentials``, this does not load the user's whole
+        credential set and slice it in RAM. The page is selected in the
+        database and the total comes from the same round trip, so the
+        read cost tracks the page size rather than the size of the
+        user's whole set.
+
+        Args:
+            db: The request-scoped session.
+            user_id: The user whose credentials are listed.
+            offset: The row offset of the requested page.
+            limit: The maximum number of rows in the page.
+
+        Returns:
+            ``{"data": [...], "total_count": N}`` — the page's rows and
+            the total number of rows for the user.
+        """
+        from src.app.core.tenancy.context import get_current_tenant
+        from src.app.modules.users import UserDirectory
+
+        tenant = get_current_tenant()
+        if tenant:
+            member = await UserDirectory(db).member(id=user_id)
+            if member and member.tenant_id != tenant.id:
+                raise ModelNotFoundError("PasskeyCredential", user_id, message="Passkey credentials not found.")
+
+        return await crud_passkey_credentials.get_page_by_user(
+            db=db,
+            user_id=user_id,
+            offset=offset,
+            limit=limit,
+        )
+
     async def delete_credential(self, db: AsyncSession, user_id: int, credential_id: int) -> None:
         """Delete a passkey credential."""
         from src.app.core.tenancy.context import get_current_tenant

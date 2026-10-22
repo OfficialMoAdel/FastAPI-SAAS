@@ -126,6 +126,28 @@ class BaseService(Generic[T, ReadSchemaT]):
             yield
 
 
+    async def _read(self, id: Any) -> ReadSchemaT | dict[str, Any] | None:
+        """Read one record WITHOUT opening the circuit-breaker guard.
+
+        The caller owns the guard. ``update`` needs to re-read inside the
+        same guarded unit as its write, and nesting ``get`` (which opens its
+        own guard) would claim the HALF_OPEN probe slot twice — the second
+        claim is refused, so a half-open database would fail the update with
+        a 503 instead of letting the single probe through.
+        """
+        if self.select_schema is not None:
+            result = await self.crud.get(
+                db=self.db,
+                id=id,
+                schema_to_select=self.select_schema,
+                return_as_model=True,
+            )
+        else:
+            result = await self.crud.get(db=self.db, id=id)
+        # FastCRUD is the untyped boundary; the union above is what we can
+        # actually promise its return maps onto.
+        return cast("ReadSchemaT | dict[str, Any] | None", result)
+
     async def get(self, id: Any) -> ReadSchemaT | dict[str, Any] | None:
         """Get a single record by ID as the configured ``select_schema``.
 
@@ -139,18 +161,7 @@ class BaseService(Generic[T, ReadSchemaT]):
             call site).
         """
         async with self._guard():
-            if self.select_schema is not None:
-                result = await self.crud.get(
-                    db=self.db,
-                    id=id,
-                    schema_to_select=self.select_schema,
-                    return_as_model=True,
-                )
-            else:
-                result = await self.crud.get(db=self.db, id=id)
-        # FastCRUD is the untyped boundary; the union above is what we can
-        # actually promise its return maps onto.
-        return cast("ReadSchemaT | dict[str, Any] | None", result)
+            return await self._read(id)
 
     async def get_multi(
         self,
@@ -363,10 +374,13 @@ class BaseService(Generic[T, ReadSchemaT]):
         """
         async with self._guard():
             await self.crud.update(db=self.db, object=kwargs, id=id)
-        if self.select_schema is not None:
-            return await self.get(id)
-        result = await self.crud.get(db=self.db, id=id)
-        return result
+            # The re-read belongs to the same guarded unit as the write:
+            # for a global-table service (plain FastCRUD) the guard is the
+            # only circuit breaker around this query, and leaving the read
+            # outside it let a degraded database serve the stale row with
+            # no fail-fast. It reads through ``_read`` (not ``get``) so the
+            # guard is not opened twice.
+            return await self._read(id)
 
     async def delete(self, id: Any) -> None:
         """Delete a record by ID.

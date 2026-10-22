@@ -39,7 +39,7 @@ class AppleUserInfo:
         self,
         provider_user_id: str,
         email: str | None = None,
-        email_verified: bool = False,
+        email_verified: bool | None = None,
         is_private_email: bool = False,
         name: str | None = None,
         picture: str | None = None,
@@ -126,6 +126,12 @@ class AppleProvider(BaseOAuthProvider):
 
     def requires_verified_email(self) -> bool:
         """Apple always provides verified emails."""
+        return True
+
+    def trusts_identity_without_claim(self) -> bool:
+        """Apple's email claim is verified at issuance (relay addresses too);
+        a missing claim is an anomaly, not an unverified mailbox.
+        """
         return True
 
     def get_authorization_url(self, state: str) -> str:
@@ -222,7 +228,7 @@ class AppleProvider(BaseOAuthProvider):
         return AppleUserInfo(
             provider_user_id=claims["sub"],
             email=claims.get("email"),
-            email_verified=claims.get("email_verified", False),
+            email_verified=claims.get("email_verified"),
             is_private_email=claims.get("is_private_email", False),
             name=name,
         )

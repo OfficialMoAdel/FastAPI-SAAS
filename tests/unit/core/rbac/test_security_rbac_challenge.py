@@ -45,7 +45,7 @@ async def test_rbac_exempt_path_tenant_from_path_params_uses_one_seam(mock_db):
         return_value=True,
     ) as mock_perm:
         # Should execute successfully
-        await checker(request=request, db=mock_db, auth_context=ctx)
+        await checker(request=request, auth_context=ctx)
 
     # The path tenant reached the permission lookup as a UUID...
     assert mock_perm.call_args[0][1] == tenant_id
@@ -87,7 +87,7 @@ async def test_rbac_exempt_path_enforces_tenant_isolation(mock_db):
         return_value=True,
     ):
         with pytest.raises(ForbiddenException) as exc_info:
-            await checker(request=request, db=mock_db, auth_context=mock_auth_context)
+            await checker(request=request, auth_context=mock_auth_context)
 
         assert "User does not belong to the current tenant" in str(exc_info.value.detail)
 
@@ -123,7 +123,7 @@ async def test_rbac_exempt_path_uuid_string_coercion_match(mock_db):
         return_value=True,
     ):
         # Should execute successfully without ForbiddenException because string conversion matches them
-        await checker(request=request, db=mock_db, auth_context=ctx)
+        await checker(request=request, auth_context=ctx)
 
 
 @pytest.mark.asyncio
@@ -149,6 +149,6 @@ async def test_rbac_exempt_path_no_tenant_raises_forbidden(mock_db):
     )
 
     with pytest.raises(TenantContextError) as exc_info:
-        await checker(request=request, db=mock_db, auth_context=ctx)
+        await checker(request=request, auth_context=ctx)
 
     assert "Tenant context required for permission check" in str(exc_info.value)

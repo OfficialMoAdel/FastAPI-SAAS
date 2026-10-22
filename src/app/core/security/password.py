@@ -75,7 +75,14 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
 
     SECURITY FIX: Added exception handling for malformed hashes to prevent crashes.
     A7 FIX: >72-byte passwords are SHA-256 pre-hashed instead of silently truncated.
+    A14 FIX: a non-str hashed_password (None from a present-but-null column,
+    bytes, int) is rejected before ``.encode()``, so it returns False (401)
+    instead of raising AttributeError past the (ValueError, TypeError) catch
+    and becoming a 500.
     """
+    if not isinstance(hashed_password, str) or not hashed_password:
+        return False
+
     try:
         loop = asyncio.get_running_loop()
         result: bool = await loop.run_in_executor(

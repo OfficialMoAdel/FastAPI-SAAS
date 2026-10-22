@@ -189,7 +189,7 @@ class PreferencesService:
             # No updates provided, just return current preferences
             return await self.get_preferences(db=db, user_id=user_id)
 
-        logger.debug("Updating preferences for user :", user_id=user_id, updated_keys=list(update_dict.keys()))
+        logger.debug("Updating preferences for user", user_id=user_id, updated_keys=list(update_dict.keys()))
 
         # Update preferences
 
@@ -297,7 +297,7 @@ class PreferencesService:
         result = await storage.upload(file.file, new_path, file.content_type)
 
         if not result.success:
-            logger.error("Failed to upload image for user :", user_id=user_id, error=result.error)
+            logger.error("Failed to upload image for user", user_id=user_id, error=result.error)
             raise PreferenceStorageError("upload", result.error or "Unknown error")
 
         # 6. Get URL

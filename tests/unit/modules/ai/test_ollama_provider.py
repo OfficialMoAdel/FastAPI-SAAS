@@ -628,14 +628,38 @@ async def test_close_when_client_none(provider):
 
 
 def test_initialization_with_defaults():
-    """Test provider initialization with default values (timeout from settings)."""
+    """Test provider initialization with default values (from settings)."""
     from src.app.core.config import settings
 
     provider = OllamaProvider()
 
-    assert provider.base_url == "http://localhost:11434"
+    # Both defaults come from settings, so a deployment that moves Ollama
+    # (or retunes its timeout) is picked up without touching the caller.
+    assert provider.base_url == settings.ai.OLLAMA_BASE_URL.rstrip("/")
     assert provider.timeout == settings.OLLAMA_TIMEOUT
     assert provider._client is None
+
+
+def test_initialization_default_base_url_follows_settings(monkeypatch):
+    """The default base URL is the configured one, not a hardcoded literal."""
+    from src.app.core.config import settings
+
+    monkeypatch.setattr(settings.ai, "OLLAMA_BASE_URL", "http://ollama.internal:9999/")
+
+    provider = OllamaProvider()
+
+    assert provider.base_url == "http://ollama.internal:9999"
+
+
+def test_explicit_base_url_overrides_settings(monkeypatch):
+    """An explicit base URL still wins over the configured one."""
+    from src.app.core.config import settings
+
+    monkeypatch.setattr(settings.ai, "OLLAMA_BASE_URL", "http://ollama.internal:9999")
+
+    provider = OllamaProvider(base_url="http://explicit:1234")
+
+    assert provider.base_url == "http://explicit:1234"
 
 
 def test_initialization_with_custom_values():

@@ -113,6 +113,20 @@ class RoleService:
         except IntegrityError:
             await self.db.rollback()
             raise DuplicateError("name", role.name)
+
+        # C2: invalidate the role cache on rename/describe, like every
+        # sibling role mutation does (delete_role, add_permission_to_role,
+        # remove_permission_from_role).
+        #
+        # WHY, HONESTLY: the cached payload holds the role's PERMISSIONS
+        # (each permission's id/slug/description), not the role's own name or
+        # description — and a rename does not change a role's permissions. So
+        # today this call has no stale-read consequence: role NAMES are read
+        # fresh from the DB on every access (``get_role`` -> ``get_by_id``),
+        # never through this cache. It is added for CONSISTENCY: every other
+        # role mutation invalidates, and a future change to the cached
+        # payload's shape would otherwise silently inherit this one gap.
+        await self._invalidate_role_cache(role_id)
         return role
 
     async def delete_role(self, role_id: int) -> None:
@@ -412,7 +426,7 @@ class RoleService:
             raise ModelNotFoundError("Permission", permission_slug)
 
         # Check if already assigned
-        existing = await crud_associations.get_role_permission(self.db, role_id, permission.id)
+        existing = await crud_associations.get_role_permission(self.db, self.tenant_id, role_id, permission.id)
         if existing:
             return  # Already assigned, idempotent
         role_permission = RolePermission(
@@ -461,7 +475,7 @@ class RoleService:
             raise ModelNotFoundError("Permission", permission_slug)
 
         # Find and delete the role permission
-        removed = await crud_associations.remove_role_permission(self.db, role_id, permission.id)
+        removed = await crud_associations.remove_role_permission(self.db, self.tenant_id, role_id, permission.id)
         if removed:
             await self.db.commit()
 

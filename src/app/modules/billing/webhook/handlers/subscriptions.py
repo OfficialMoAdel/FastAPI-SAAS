@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import cast
 
 from src.app.clients.billing import StripeEvent
 from src.app.modules.billing import webhook as _pkg
@@ -46,7 +47,7 @@ async def handle_subscription_updated(event: StripeEvent) -> None:
     user_id = subscription_ref.user_id
 
     # Map Stripe status to our status
-    new_status: SubscriptionStatus = map_stripe_status(subscription["status"])  # type: ignore
+    new_status = cast(SubscriptionStatus, map_stripe_status(subscription["status"]))
 
     # P1-4 FIX (event payload): current_period_* moved to SubscriptionItem in
     # Stripe API 2025-03-31.basil+; read from items.data[0] with top-level fallback.
