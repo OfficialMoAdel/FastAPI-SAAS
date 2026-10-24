@@ -90,6 +90,67 @@ def _gcra_tat(*, key: str, limited: str, allowed: str) -> str:
     )
 
 
+# F-11: Use Redis as the GCRA clock source.
+#
+# Stamping `now_ms` in Python introduces staleness and divergence:
+# - Staleness: the stamp is taken before the awaited call, so by script
+#   execution it is already one round-trip behind (negligible on LAN,
+#   significant across regions).
+# - Divergence: workers use local clocks, so drift causes inconsistent
+#   verdicts and unequal budgets.
+#
+# Redis holds the authoritative clock and serializes all rate-limit
+# decisions. Reading TIME inside the script gives every caller one
+# timeline and removes the timestamp argument from the wire.
+#
+# GCRA is translation-invariant in time: the verdict depends only on
+# emission interval and burst tolerance. Only within one tick of a
+# boundary does behavior differ, and that behavior is already
+# nondeterministic (it depends on the handling worker and call latency).
+# No test asserts a verdict at an exact GCRA boundary; the suites mock
+# `evalsha` or emulate a counter.
+_REDIS_NOW_MS = """
+            local __now = redis.call('TIME')
+            local now_ms = tonumber(__now[1]) * 1000 + math.floor(tonumber(__now[2]) / 1000)
+"""
+
+
+# F-10: the same arithmetic again, for a bucket whose verdict must be RECORDED
+# rather than RETURNED, so one script can decide on two buckets. Identical
+# arithmetic to _GCRA_TAT_FRAGMENT -- it exists so the second bucket cannot
+# drift from the first -- but the two bodies assign to caller-named variables
+# instead of returning.
+_GCRA_TAT_BRANCH_FRAGMENT = """
+            local tat_ms = tonumber(redis.call('GET', __GCRA_KEY__)) or now_ms
+            local new_tat_ms = math.max(now_ms, tat_ms) + emission_interval_ms
+            local allow_at_ms = new_tat_ms - burst_tolerance_ms
+
+            if allow_at_ms > now_ms then
+                local retry_after_ms = allow_at_ms - now_ms
+                __LIMITED_BODY__
+            else
+                redis.call('SET', __GCRA_KEY__, new_tat_ms)
+                redis.call('PEXPIRE', __GCRA_KEY__, math.ceil(period_ms + emission_interval_ms))
+                local remaining = 0
+                if emission_interval_ms > 0 then
+                    remaining = math.floor((now_ms + burst_tolerance_ms - new_tat_ms) / emission_interval_ms)
+                end
+                remaining = math.max(0, math.min(remaining, limit - 1))
+                __ALLOWED_BODY__
+            end
+"""
+
+
+def _gcra_tat_branch(*, key: str, limited_body: str, allowed_body: str) -> str:
+    """Compose the shared GCRA core for a bucket whose verdict is recorded."""
+    return (
+        _GCRA_TAT_BRANCH_FRAGMENT
+        .replace("__GCRA_KEY__", key)
+        .replace("__LIMITED_BODY__", limited_body)
+        .replace("__ALLOWED_BODY__", allowed_body)
+    )
+
+
 class LuaScriptManager:
     """Manages Redis Lua scripts with preloading and automatic fallback.
 
@@ -177,17 +238,12 @@ class LuaScriptManager:
             end
             return 0
         """,
-        # MFA pending-token single-flight claim. The backup-code redemption
-        # mutates and commits, so exactly one request may be inside the
-        # factor verify at a time or a loser still burns the victim's codes.
-        # SET NX is the arbitration: Redis runs scripts one at a time, so
-        # the winner is decided by a single atomic step and every loser is
-        # refused before it can touch state. The claim is separate from the
-        # token key itself so it can be released on a failed verify (a typo
-        # must not cost the user their pending challenge).
-        # KEYS[1]: claim key
-        # ARGV[1]: claim TTL seconds, ARGV[2]: ownership nonce
-        # Returns: 1 if claimed (you own the verify), 0 if someone else does.
+        # MFA pending-token single-flight claim: prevents concurrent requests from racing
+        # and burning backup codes. Redis `SET NX` provides atomic arbitration.
+        # The claim key is separate from the token so a typo releases the lock
+        # without invalidating the pending challenge.
+        # KEYS[1]: claim key | ARGV[1]: TTL | ARGV[2]: ownership nonce
+        # Returns: 1 if claimed, 0 if locked by another request.
         "mfa_pending_claim": """
             local set = redis.call('SET', KEYS[1], ARGV[2], 'NX', 'EX', tonumber(ARGV[1]))
             if not set then
@@ -218,16 +274,19 @@ class LuaScriptManager:
         # GCRA rate limit: atomic TAT update (migrated from gcra_rate_limit)
         "rate_limit_gcra": """
             -- KEYS[1]: GCRA TAT key
-            -- ARGV[1]: now_ms, ARGV[2]: emission_interval_ms,
-            -- ARGV[3]: limit, ARGV[4]: burst_tolerance_ms, ARGV[5]: period_ms
+            -- ARGV[1]: emission_interval_ms, ARGV[2]: limit,
+            -- ARGV[3]: burst_tolerance_ms, ARGV[4]: period_ms
             -- Returns: [is_allowed(0/1), remaining, retry_after_ms, reset_at_ms]
+            -- F-11: the clock is Redis's, read inside the script, so every
+            -- caller shares one timeline and the stamp cannot be stale by a
+            -- round-trip. The now_ms argument is gone (see _REDIS_NOW_MS).
             local key = KEYS[1]
-            local now_ms = tonumber(ARGV[1])
-            local emission_interval_ms = tonumber(ARGV[2])
-            local limit = tonumber(ARGV[3])
-            local period_ms = tonumber(ARGV[5])
+            """ + _REDIS_NOW_MS + """
+            local emission_interval_ms = tonumber(ARGV[1])
+            local limit = tonumber(ARGV[2])
+            local period_ms = tonumber(ARGV[4])
 
-            local burst_tolerance_ms = tonumber(ARGV[4])
+            local burst_tolerance_ms = tonumber(ARGV[3])
             """ + _gcra_tat(
                 key="key",
                 limited="{0, 0, retry_after_ms, new_tat_ms}",
@@ -471,49 +530,121 @@ class LuaScriptManager:
 
             return {1, ban_count}
         """,
-        # H-3: Ban check + GCRA in ONE round-trip (middleware hot path).
-        # Combines "rate_limit_gcra" TAT logic with the ban-key GET + TTL so
-        # the middleware makes 1 Redis RTT instead of 2 for banned-or-limited.
+        # H-3 / F-10: ban check + per-path GCRA + (optional) anonymous-aggregate
+        # GCRA in ONE round-trip. Combines the "rate_limit_gcra" TAT logic with
+        # the ban-key GET + TTL so the middleware makes 1 Redis RTT instead of 2
+        # for banned-or-limited, and F-10 folds the anonymous per-IP aggregate
+        # ceiling in as a SECOND bucket so anonymous traffic makes 1 RTT
+        # instead of 2.
+        #
+        # ADR-0015 invariants, each mechanical:
+        #   * the aggregate is consumed ONLY when the per-path leg allowed it
+        #     (the in-script `if per_limited == 1 ... return` is the
+        #     conditional-consume, not a post-hoc check);
+        #   * NOTHING is consumed when ARGV[7] == '0' (ceiling disabled) or
+        #     when the ban leg rejects;
+        #   * there is no sequential fallback INSIDE the script.
         "ban_and_gcra_check": """
-            -- KEYS[1]: GCRA TAT key (e.g. gcra:tenant:{tid}:{uid}:{path})
+            -- KEYS[1]: per-path GCRA TAT key (e.g. gcra:tenant:{tid}:{uid}:{path})
             -- KEYS[2]: ban key (e.g. security:ban:{ip})
-            -- ARGV[1]: now_ms, ARGV[2]: emission_interval_ms, ARGV[3]: limit,
-            -- ARGV[4]: burst_tolerance_ms, ARGV[5]: period_ms, ARGV[6]: check_gcra ("1"/"0")
-            -- Returns: {is_allowed, remaining, retry_after_ms, is_banned, ban_reason, ban_ttl}
+            -- KEYS[3]: anonymous-aggregate GCRA TAT key (read only when ARGV[6]=='1')
+            -- ARGV[1]: emission_interval_ms, ARGV[2]: limit,
+            -- ARGV[3]: burst_tolerance_ms, ARGV[4]: period_ms,
+            -- ARGV[5]: check_gcra ("1"/"0"), ARGV[6]: aggregate_enabled ("1"/"0"),
+            -- ARGV[7..10]: aggregate emission_interval_ms, limit,
+            --   burst_tolerance_ms, period_ms,
+            -- ARGV[11]: check_ban ("1"/"0") -- "0" when the caller's ban
+            --   negative cache is warm, so the GET is skipped INSIDE the same
+            --   round-trip rather than being paid as a second call.
+            -- KEYS[4]: idempotency nonce key (one per REQUEST, TTL-bounded)
+            -- ARGV[12]: nonce TTL in ms
+            -- Returns: {is_allowed, remaining, retry_after_ms, is_banned,
+            --   ban_reason, ban_ttl, aggregate_limited, aggregate_remaining,
+            --   aggregate_retry_after_ms}
+            -- F-11: now_ms is read from Redis below, not passed in.
+            --
+            -- ADR-0015 IDEMPOTENCY GUARD (§8.3): the script records the
+            -- request's own nonce BEFORE it touches a budget. If a merged
+            -- EVALSHA times out AFTER the server executed it, the Python
+            -- fallback asks whether this nonce already ran; if it did, the
+            -- fallback returns the merged verdict instead of re-consuming.
+            -- The guard is IN THE SCRIPT because the ambiguity it resolves is
+            -- "did the server execute it?", which only Redis can answer.
+            local __nonce_key = KEYS[4]
+            if redis.call('SET', __nonce_key, '1', 'NX', 'PX', ARGV[12]) then
+                -- first execution of this request: proceed
+            else
+                -- a previous execution of the SAME request already ran; it
+                -- consumed the budget, so this replay must not consume again.
+                return {'duplicate'}
+            end
             local ban_key = KEYS[2]
-            local ban_reason = redis.call('GET', ban_key)
+            local ban_reason = false
             local is_banned = 0
             local ban_ttl = 0
-            if ban_reason then
-                is_banned = 1
-                ban_ttl = redis.call('TTL', ban_key)
+            if ARGV[11] ~= '0' then
+                ban_reason = redis.call('GET', ban_key)
+                if ban_reason then
+                    is_banned = 1
+                    ban_ttl = redis.call('TTL', ban_key)
+                end
             end
 
-            if is_banned == 1 or ARGV[6] == '0' then
-                -- Rejected by ban (skip GCRA — the request dies here), or GCRA
+            if is_banned == 1 or ARGV[5] == '0' then
+                -- Rejected by ban (skip GCRA -- the request dies here), or GCRA
                 -- not requested: return neutral GCRA values with ban status.
-                return {0, 0, 0, is_banned, ban_reason or '', ban_ttl}
+                return {0, 0, 0, is_banned, ban_reason or '', ban_ttl, 0, 0, 0}
             end
 
-            local now_ms = tonumber(ARGV[1])
-            local emission_interval_ms = tonumber(ARGV[2])
-            local limit = tonumber(ARGV[3])
-            local period_ms = tonumber(ARGV[5])
-            local burst_tolerance_ms = tonumber(ARGV[4])
+            """ + _REDIS_NOW_MS + """
+            local emission_interval_ms = tonumber(ARGV[1])
+            local limit = tonumber(ARGV[2])
+            local period_ms = tonumber(ARGV[4])
+            local burst_tolerance_ms = tonumber(ARGV[3])
             local key = KEYS[1]
-            """ + _gcra_tat(
+
+            local per_limited = 0
+            local per_remaining = 0
+            local per_retry_after_ms = 0
+            """ + _gcra_tat_branch(
                 key="key",
-                limited="{0, 0, retry_after_ms, 0, '', 0}",
-                allowed="{1, remaining, 0, 0, '', 0}",
+                limited_body="per_limited = 1\n                per_retry_after_ms = retry_after_ms",
+                allowed_body="per_remaining = remaining",
             ) + """
+            if per_limited == 1 then
+                -- Per-path leg rejected: the aggregate ceiling is NOT consumed
+                -- (ADR-0015's invariant, stated verbatim in the decision).
+                return {0, 0, per_retry_after_ms, is_banned, ban_reason or '', ban_ttl, 0, 0, 0}
+            end
+
+            local agg_limited = 0
+            local agg_remaining = 0
+            local agg_retry_after_ms = 0
+            if ARGV[6] == '1' then
+                -- Shadow the per-path parameter names with the aggregate's, so
+                -- the shared arithmetic runs unchanged against the second
+                -- bucket.
+                local agg_key = KEYS[3]
+                local emission_interval_ms = tonumber(ARGV[7])
+                local limit = tonumber(ARGV[8])
+                local burst_tolerance_ms = tonumber(ARGV[9])
+                local period_ms = tonumber(ARGV[10])
+                """ + _gcra_tat_branch(
+                    key="agg_key",
+                    limited_body="agg_limited = 1\n                agg_retry_after_ms = retry_after_ms",
+                    allowed_body="agg_remaining = remaining",
+                ) + """
+            end
+
+            if agg_limited == 1 then
+                return {0, 0, agg_retry_after_ms, is_banned, ban_reason or '', ban_ttl, 1, 0, agg_retry_after_ms}
+            end
+            return {1, per_remaining, 0, is_banned, ban_reason or '', ban_ttl, 0, agg_remaining, 0}
         """,
-        # P0-2: Blacklist + ban check + GCRA in ONE round-trip (authed hot path).
-        # Merges the middleware's sequential is_token_blacklisted Lua probe +
-        # ban_and_gcra_check script (2 RTTs) into a single script (1 RTT).
-        # The GCRA key depends on the in-script blacklist verdict, so the
-        # caller passes BOTH candidate keys/limits and the script consumes
-        # exactly one of them. Blacklist/ban/GCRA sections mirror the
-        # standalone token_blacklist_check and ban_and_gcra_check scripts.
+        # P0-2: Combines blacklist, ban check, and GCRA into 1 Redis RTT on the authed hot path (down from 2).
+        # Since the GCRA key depends on the blacklist verdict, the caller passes both candidate keys/limits,
+        # and the script conditionally consumes the correct one. Logic mirrors the standalone
+        # `token_blacklist_check` and `ban_and_gcra_check` scripts.
         "ban_blacklist_gcra_check": """
             -- KEYS[1]: negative blacklist cache key (e.g. token:verified:{hash})
             -- KEYS[2]: blacklist zset key (e.g. token:blacklist)
@@ -521,10 +652,25 @@ class LuaScriptManager:
             -- KEYS[4]: ban key (e.g. security:ban:{ip})
             -- KEYS[5]: anonymous GCRA TAT key (e.g. gcra:rate_limit:anonymous:ip:{ip}:{path})
             -- ARGV[1]: blacklist member (jti:{jti} or token), ARGV[2]: now (sec),
-            -- ARGV[3]: negative-cache TTL (sec), ARGV[4]: now_ms,
-            -- ARGV[5..8]: authed emission_interval_ms, limit, burst_tolerance_ms, period_ms
-            -- ARGV[9..12]: anonymous emission_interval_ms, limit, burst_tolerance_ms, period_ms
+            -- ARGV[3]: negative-cache TTL (sec),
+            -- ARGV[4..7]: authed emission_interval_ms, limit, burst_tolerance_ms, period_ms
+            -- ARGV[8..11]: anonymous emission_interval_ms, limit, burst_tolerance_ms, period_ms
+            -- KEYS[6]: idempotency nonce key (one per REQUEST, TTL-bounded)
+            -- ARGV[12]: nonce TTL in ms
             -- Returns: {is_blacklisted, is_allowed, remaining, retry_after_ms, is_banned, ban_reason, ban_ttl}
+            --          or {'duplicate'} when this request's nonce already ran.
+            -- F-11: now_ms is read from Redis below, not passed in.
+            --
+            -- ADR-0015 IDEMPOTENCY GUARD (§8.3): identical shape to
+            -- `ban_and_gcra_check` -- record the request nonce BEFORE any
+            -- budget moves, so a timeout that fired after execution cannot
+            -- lead the Python fallback to consume the same budget twice.
+            local __nonce_key = KEYS[6]
+            if redis.call('SET', __nonce_key, '1', 'NX', 'PX', ARGV[12]) then
+                -- first execution of this request: proceed
+            else
+                return {'duplicate'}
+            end
             local is_blacklisted = 0
             if redis.call('EXISTS', KEYS[1]) == 0 then
                 local score = redis.call('ZSCORE', KEYS[2], ARGV[1])
@@ -550,17 +696,17 @@ class LuaScriptManager:
                 return {is_blacklisted, 0, 0, 0, 1, ban_reason, ban_ttl}
             end
 
-            local base = 5
+            local base = 4
             local gcra_key = KEYS[3]
             if is_blacklisted == 1 then
-                base = 9
+                base = 8
                 gcra_key = KEYS[5]
             end
             local emission_interval_ms = tonumber(ARGV[base])
             local limit = tonumber(ARGV[base + 1])
             local burst_tolerance_ms = tonumber(ARGV[base + 2])
             local period_ms = tonumber(ARGV[base + 3])
-            local now_ms = tonumber(ARGV[4])
+            """ + _REDIS_NOW_MS + """
             """ + _gcra_tat(
                 key="gcra_key",
                 limited="{is_blacklisted, 0, 0, retry_after_ms, 0, '', 0}",

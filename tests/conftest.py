@@ -2,6 +2,7 @@ import base64
 import inspect
 import os
 import sys
+import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import asynccontextmanager
@@ -1115,6 +1116,17 @@ class FakeRedis:
             return None
         return self.store.get(key)
 
+    async def mget(self, keys, *args):
+        """Multi-key GET: one call, values in the same order as the keys.
+
+        Mirrors redis-py's signature (``mget(keys, *args)`` also accepts a
+        flat spread), so a caller batching a SCAN page reads identically to
+        the per-key loop it replaced.
+        """
+        if args:
+            keys = (keys, *args)
+        return [self.store.get(k) for k in keys]
+
     async def exists(self, key):
         """Check if a key exists in the store."""
         return 1 if key in self.store else 0
@@ -1350,8 +1362,9 @@ class FakeRedis:
         # --- Merged ban/blacklist+GCRA script (P0-2) ---
         # KEYS[1]=neg_key, KEYS[2]=blacklist_zset, KEYS[3]=authed_gcra,
         # KEYS[4]=ban_key, KEYS[5]=anon_gcra.
-        # ARGV = member, now_sec, neg_ttl, now_ms,
+        # ARGV = member, now_sec, neg_ttl,
         #        a_emit, a_lim, a_burst, a_per, n_emit, n_lim, n_burst, n_per.
+        # (F-11 removed now_ms, so every later offset shifts down by one.)
         # Returns [is_blacklisted, is_allowed, remaining, retry_after_ms,
         #          is_banned, ban_reason, ban_ttl].
         # Matched by SHA for the same reason as GETDEL above.
@@ -1359,14 +1372,20 @@ class FakeRedis:
             from src.app.core.utils.lua_manager import get_lua_manager
 
             if sha == get_lua_manager().get_script("ban_blacklist_gcra_check").sha1:
+                # ADR-0015 nonce guard (KEYS[6]).
+                nonce_key = keys_and_args[5] if numkeys >= 6 else ""
+                if nonce_key:
+                    if nonce_key in self.store:
+                        return ["duplicate"]
+                    self.store[nonce_key] = "1"
                 neg_key = keys_and_args[0]
                 blacklist_key = keys_and_args[1]
                 authed_gcra = keys_and_args[2]
                 ban_key = keys_and_args[3]
                 anon_gcra = keys_and_args[4]
-                member = keys_and_args[5]
-                now_sec = float(keys_and_args[6]) if len(keys_and_args) > 6 else 0
-                now_ms = int(float(keys_and_args[8])) if len(keys_and_args) > 8 else 0
+                # 6 keys precede ARGV now (KEYS[6] is the nonce).
+                member = keys_and_args[6]
+                now_sec = float(keys_and_args[7]) if len(keys_and_args) > 7 else 0
 
                 # Blacklist leg (mirrors token_blacklist_check).
                 if neg_key in self.store:
@@ -1475,13 +1494,78 @@ class FakeRedis:
             self.store.pop(violations_key, None)
             return [1, count]
 
+        # --- Merged ban + per-path GCRA + optional aggregate (H-3 / F-10) ---
+        # KEYS[1]=per-path gcra, KEYS[2]=ban_key, KEYS[3]=aggregate gcra.
+        # ARGV[1]=emit, [2]=limit, [3]=burst, [4]=period,
+        #      [5]=check_gcra, [6]=aggregate_enabled, [7..10]=aggregate params,
+        #      [11]=check_ban.  (F-11: no now_ms; the script reads Redis TIME.)
+        # Returns [is_allowed, remaining, retry_after_ms, is_banned,
+        #          ban_reason, ban_ttl, agg_limited, agg_remaining, agg_retry].
+        # Matched by SHA, because the generic GCRA sniff below reads ARGV[1] as
+        # now_ms and would misread the ban key as a number.
+        try:
+            from src.app.core.utils.lua_manager import get_lua_manager
+
+            if sha == get_lua_manager().get_script("ban_and_gcra_check").sha1:
+                gcra_key = keys_and_args[0]
+                ban_key = keys_and_args[1]
+                agg_key = keys_and_args[2] if numkeys >= 3 else ""
+                # ADR-0015: the script claims its request nonce FIRST; a
+                # second execution for the same request is a replay.
+                nonce_key = keys_and_args[3] if numkeys >= 4 else ""
+                if nonce_key:
+                    if nonce_key in self.store:
+                        return ["duplicate"]
+                    self.store[nonce_key] = "1"
+                # 4 keys precede ARGV (KEYS[4] is the ADR-0015 nonce), so
+                # ARGV[n] is at keys_and_args[n + 3].
+                check_gcra = str(keys_and_args[8]) if len(keys_and_args) > 8 else "1"
+                agg_enabled = str(keys_and_args[9]) if len(keys_and_args) > 9 else "0"
+                check_ban = str(keys_and_args[14]) if len(keys_and_args) > 14 else "1"
+
+                is_banned, ban_reason, ban_ttl = 0, "", 0
+                if check_ban != "0" and ban_key in self.store:
+                    is_banned, ban_reason, ban_ttl = 1, str(self.store[ban_key] or ""), 300
+                if is_banned == 1 or check_gcra == "0":
+                    return [0, 0, 0, is_banned, ban_reason, ban_ttl, 0, 0, 0]
+
+                def _bucket(key: str, base: int) -> tuple[int, int, int]:
+                    limit = int(float(keys_and_args[base + 1]))
+                    period_ms = int(float(keys_and_args[base + 3]))
+                    current = self.store.get(key, 0)
+                    if isinstance(current, str):
+                        current = int(current)
+                    if current >= limit:
+                        return 0, 0, period_ms
+                    current += 1
+                    self.store[key] = current
+                    return 1, limit - current, 0
+
+                # ARGV[1] (emission) is index 4; _bucket reads base+1/base+3.
+                per_allowed, per_remaining, per_retry = _bucket(gcra_key, 4)
+                if per_allowed == 0:
+                    # ADR-0015: the aggregate is NOT consumed when the
+                    # per-path leg rejects.
+                    return [0, 0, per_retry, is_banned, ban_reason, ban_ttl, 0, 0, 0]
+
+                agg_limited, agg_remaining, agg_retry = 0, 0, 0
+                if agg_enabled == "1" and agg_key:
+                    # ARGV[7] (aggregate emission) is index 10.
+                    ok, agg_remaining, agg_retry = _bucket(agg_key, 10)
+                    if ok == 0:
+                        agg_limited = 1
+                        return [0, 0, agg_retry, is_banned, ban_reason, ban_ttl, 1, 0, agg_retry]
+                return [1, per_remaining, 0, is_banned, ban_reason, ban_ttl, agg_limited, agg_remaining, 0]
+        except Exception:
+            pass
+
         # --- GCRA Rate Limit Script ---
-        # Called with 1 key and 4 ARGV: now_ms, emission_interval_ms, limit, period_ms
-        if primary_key.startswith("gcra:") and len(keys_and_args) >= 5:
-            now_ms = int(float(keys_and_args[1]))
-            int(float(keys_and_args[2]))
-            limit = int(float(keys_and_args[3]))
+        # Called with 1 key and 4 ARGV: emission_interval_ms, limit,
+        # burst_tolerance_ms, period_ms (F-11: no now_ms; Redis owns the clock).
+        if primary_key.startswith("gcra:") and len(keys_and_args) >= 4:
+            limit = int(float(keys_and_args[2]))
             period_ms = int(float(keys_and_args[4]))
+            now_ms = int(time.time() * 1000)  # the emulated Redis clock
 
             current = self.store.get(primary_key, 0)
             if isinstance(current, str):
@@ -1633,10 +1717,11 @@ def mock_redis(request):
     from src.app.core.utils.ip_utils import _is_ip_in_trusted_networks, _is_trusted_proxy_cached
 
     # Clear L1 caches before test to ensure isolation
-    from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
+    from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_NEGATIVE, _L1_TENANT_PARSED
     from src.app.modules.rbac.service import _L1_RBAC_CACHE
 
     _L1_TENANT_CACHE.clear()
+    _L1_TENANT_NEGATIVE.clear()
     _L1_TENANT_PARSED.clear()
     _L1_RBAC_CACHE.clear()
     try:
@@ -1676,6 +1761,7 @@ def mock_redis(request):
         session_manager.set_redis_client(None)
         # Clear L1 caches after test for cleanup
         _L1_TENANT_CACHE.clear()
+        _L1_TENANT_NEGATIVE.clear()
         _L1_TENANT_PARSED.clear()
         _L1_RBAC_CACHE.clear()
         try:
@@ -1751,10 +1837,11 @@ async def init_real_redis_async(request):
         await cache.client.flushdb()
 
         # Clear L1 caches (in-memory caches that persist across tests)
-        from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
+        from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_NEGATIVE, _L1_TENANT_PARSED
         from src.app.modules.rbac.service import _L1_RBAC_CACHE
 
         _L1_TENANT_CACHE.clear()
+        _L1_TENANT_NEGATIVE.clear()
         _L1_TENANT_PARSED.clear()
         _L1_RBAC_CACHE.clear()
     except Exception as e:
@@ -1821,9 +1908,10 @@ async def cleanup_real_redis(request):
 
     # SETUP: Clear L1 caches BEFORE test (in-memory caches that persist across tests)
     try:
-        from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
+        from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_NEGATIVE, _L1_TENANT_PARSED
 
         _L1_TENANT_CACHE.clear()
+        _L1_TENANT_NEGATIVE.clear()
         _L1_TENANT_PARSED.clear()
     except ImportError:
         pass

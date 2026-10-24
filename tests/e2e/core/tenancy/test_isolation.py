@@ -586,15 +586,24 @@ class TestTenantIsolationE2E:
 
         try:
             # Patch dependencies for load test
+            from src.app.core.security.auto_ban import BanInfo
             from tests.conftest import test_async_engine
 
             with (
                 patch("src.app.middleware.tenant.local_session", get_testing_session_local()),
                 patch("src.app.core.db.database.async_engine", new=test_async_engine),
                 patch(
-                    "src.app.core.utils.rate_limit.RateLimiter.check_rate_limit",
+                    "src.app.core.security.request_admission.check_ban_and_rate_limit",
                     new_callable=AsyncMock,
-                    return_value=(False, 0),
+                    # Admission now flows through RequestAdmissionService, which
+                    # calls this composite directly; the old patch on
+                    # RateLimiter.check_rate_limit intercepted nothing.
+                    return_value=(BanInfo(is_banned=False), (False, 1_000_000_000, 0, False), None),
+                ),
+                patch(
+                    "src.app.core.security.request_admission.RequestAdmissionService._check_anonymous_aggregate",
+                    new_callable=AsyncMock,
+                    return_value=None,
                 ),
             ):
                 async with AsyncClient(

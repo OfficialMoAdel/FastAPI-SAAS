@@ -10,11 +10,13 @@ Redis Schema:
 """
 
 import asyncio
+import secrets
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from cachetools import TTLCache
+from redis.exceptions import RedisError
 
 from src.app.core.cache.l1 import L1Cache, PrefixedKeyCodec
 from src.app.core.config import settings
@@ -29,16 +31,14 @@ VIOLATIONS_KEY_PREFIX = "security:violations:{ip}"
 BAN_KEY_PREFIX = "security:ban:{ip}"
 BAN_COUNT_KEY_PREFIX = "security:ban_count:{ip}"
 
-# R1-01: negative cache for ban lookups. get_ban_info is the one unconditional
-# per-request Redis GET in the rate-limit middleware (tier policy and token
-# blacklist already have their own L1/negative caches). Caching "not banned"
-# for a short TTL removes that GET for repeat requests from clean IPs.
+# R1-01: Negative cache for ban lookups in `get_ban_info` (the sole unconditional per-request
+# Redis GET in the rate-limit middleware, as tier policies and token blacklists already have L1 caches).
+# Caching "not banned" states for a short TTL eliminates this overhead for repeat clean-IP traffic.
 #
-# Tradeoff (same as token_blacklist_cache): a freshly-banned IP can slip through
-# for up to _BAN_NEGATIVE_TTL seconds, and the cache is per-process so a ban set
-# by another worker is not seen until expiry. ban_ip/unban_ip evict the local
-# entry so same-process bans/unbans take effect immediately. Bounded and
-# acceptable for a rate-limiting defense (not a primary security boundary).
+# Tradeoffs: Similar to `token_blacklist_cache`, newly banned IPs may bypass checks for up to
+# `_BAN_NEGATIVE_TTL` seconds, and cross-worker ban propagation is delayed until TTL expiry.
+# `ban_ip` and `unban_ip` explicitly evict local process entries for immediate same-process effect.
+# This bounded staleness is an acceptable design tradeoff for a defense-in-depth rate-limiting layer.
 _BAN_NEGATIVE_TTL = 5  # P1-6: was already 5; now also fenced by pub/sub invalidation channel
 _ban_negative_cache: TTLCache[str, bool] = TTLCache(maxsize=10000, ttl=_BAN_NEGATIVE_TTL)
 # P1-6: cross-worker L1 invalidation. ban_ip/unban_ip publish here so every web
@@ -46,6 +46,63 @@ _ban_negative_cache: TTLCache[str, bool] = TTLCache(maxsize=10000, ttl=_BAN_NEGA
 # stale "not banned" for up to _BAN_NEGATIVE_TTL (5s).
 _BAN_L1_INVALIDATION_CHANNEL = "ban:l1_invalidate"
 _BAN_KEY_PREFIX = "ban:"
+
+# ADR-0015 idempotency guard (§8.3). One nonce per REQUEST, written by the
+# merged script before it moves any budget:
+#
+#   * if the merged EVALSHA times out AFTER the server executed it, the nonce
+#     is present, and the fallback must NOT consume again -- it fails closed
+#     (429), the ADR's sanctioned direction;
+#   * if the nonce is absent, the script provably did not run (the SETNX is
+#     the first thing it does), so the sequential fallback is safe and costs
+#     exactly one advance.
+#
+# The nonce lives in Redis because the ambiguity ("did the server execute
+# it?") is a property of the server. TTL is bounded well below a request
+# timeout's relevance: it only has to outlive the fallback's own round-trips.
+_NONCE_TTL_MS = 30_000
+
+#: The Lua idempotency guard returns the Redis bulk string ``'duplicate'``.
+#: ``lua_manager.execute`` hands the raw redis-py reply back unchanged, so the
+#: sentinel arrives as ``str`` on the production client (``decode_responses=
+#: True``, ``redis_provider``) and as ``bytes`` only where a test mocks the
+#: undecoded shape. Accepting one and not the other makes the replay
+#: fast-path dead in production and routes every duplicate through the
+#: 9-element unpack below -- which raises ``ValueError``, is caught, and pays
+#: for a best-effort ``EXISTS`` probe to recover the same verdict.
+_DUPLICATE_SENTINELS: Final[frozenset[str | bytes]] = frozenset(("duplicate", b"duplicate"))
+
+
+def _new_request_nonce() -> str:
+    """A fresh, unguessable nonce for one admission attempt."""
+    return secrets.token_hex(16)
+
+
+def _nonce_key(nonce: str) -> str:
+    """Redis key for a request nonce (namespaced away from user data)."""
+    return f"ratelimit:nonce:{nonce}"
+
+
+async def _nonce_was_claimed(redis_client: Any, nonce: str) -> bool:
+    """True when the merged script already ran for this request.
+
+    Best effort by design: if the check itself fails we cannot prove the
+    script ran, and refusing every request on a Redis blip would turn a
+    timeout into an outage. The caller then takes the sequential path, whose
+    own failure policy (fail-open/fail-closed) already applies.
+
+    The result is accepted only when it is a GENUINE int. `bool()` is wrong
+    here because a mock (or any object with `__bool__`/`__int__`) is truthy by
+    default, which would make every script error look like "already executed"
+    and fail closed on a fault that never ran anything. A non-int answer is
+    not evidence, and the sequential path is then taken.
+    """
+    try:
+        result = await redis_client.exists(_nonce_key(nonce))
+    except (RedisError, OSError) as exc:  # the claim probe, not the request path
+        logger.debug("nonce_probe_failed", error=str(exc))
+        return False
+    return type(result) is int and result == 1
 
 
 def _ban_cache_key(client_ip: str) -> str:
@@ -99,6 +156,30 @@ class BanInfo:
     # never invent `expires_at = now` at a read site.
     expires_at: float | None = None
     ban_count: int = 0
+
+
+async def _duplicate_replay_result(
+    redis_client: Any, client_ip: str, ban_key: str
+) -> tuple[BanInfo, tuple[bool, int, int, bool], None]:
+    """The result for a replayed request: allowed, nothing consumed again.
+
+    A replay means the first execution already spent the budget and returned a
+    verdict the client never received. Reporting "not limited" here is the
+    only answer that cannot double-charge; the ban leg is re-read so a ban
+    that landed in between is still honoured.
+    """
+    reason = None
+    expires_at = None
+    try:
+        raw = await redis_client.get(ban_key)
+        if raw:
+            reason = raw.decode() if isinstance(raw, bytes) else str(raw)
+            ttl = int(await redis_client.ttl(ban_key))
+            expires_at = time.time() + ttl if ttl > 0 else None
+    except (RedisError, OSError) as exc:  # the replay verdict stands without the ban detail
+        logger.debug("duplicate_replay_ban_read_failed", error=str(exc))
+    ban_info = BanInfo(is_banned=bool(reason), reason=reason, expires_at=expires_at)
+    return ban_info, (False, 0, 0, False), None
 
 
 async def increment_violations(client_ip: str) -> int:
@@ -229,27 +310,41 @@ async def check_ban_and_rate_limit(
     rate_limit_key: str,
     limit: int,
     period: int,
-) -> tuple[BanInfo, tuple[bool, int, int, bool]]:
-    """H-3: ban check + GCRA rate limit in ONE Redis Lua round-trip.
+    *,
+    aggregate_limit: int = 0,
+    aggregate_period: int = 0,
+) -> tuple[BanInfo, tuple[bool, int, int, bool], tuple[bool, int, int] | None]:
+    """H-3 / F-10: ban check + per-path GCRA + optional aggregate in ONE RTT.
 
     Replaces the middleware's sequential ``get_ban_info`` +
     ``check_rate_limit_algorithm`` pair (2 RTTs) with a single
     ``ban_and_gcra_check`` script (1 RTT), extending the composite-Lua
     pattern from auth_prefetch/lua_manager.
 
+    F-10 folds the anonymous per-IP aggregate ceiling into the SAME script as a
+    second GCRA bucket, so anonymous traffic makes 1 RTT instead of 2. The
+    consumption order is the documented one -- the aggregate is consumed only
+    when the per-path leg allowed the request (ADR-0015's stated invariant),
+    and not at all when the ceiling is disabled.
+
     Args:
         client_ip: Client IP (ban key namespace).
         rate_limit_key: GCRA key (already tenant/user/path-scoped).
         limit: Max requests per period.
         period: Period in seconds.
+        aggregate_limit: Anonymous aggregate ceiling; 0 disables the fold.
+        aggregate_period: Aggregate period in seconds.
 
     Returns:
-        (BanInfo, (is_limited, remaining, retry_after, degraded)) — identical
-        semantics to calling the two functions separately, plus the
-        degradation flag: True when the limit was NOT enforced by the
-        configured algorithm (the GCRA path failed and the fixed window took
-        over), so the caller can mark the verdict degraded.
+        ``(BanInfo, (is_limited, remaining, retry_after, degraded), aggregate)``
+        -- the rate-limit tuple has identical semantics to calling the two
+        functions separately, plus the degradation flag: True when the limit
+        was NOT enforced by the configured algorithm (the GCRA path failed and
+        the fixed window took over), so the caller can mark the verdict
+        degraded. ``aggregate`` is ``(is_limited, remaining, retry_after)``
+        when the fold ran, else ``None`` (the caller then owns the ceiling).
     """
+    from src.app.core.security.rate_policy import build_anonymous_aggregate_key
     from src.app.core.utils.gcra_rate_limit import get_gcra_rate_limiter
     from src.app.core.utils.lua_manager import get_lua_manager
 
@@ -273,8 +368,8 @@ async def check_ban_and_rate_limit(
                 rate_limit_key=rate_limit_key,
             )
             record_fail_open("ban_check")
-            return BanInfo(is_banned=False), (False, limit, 0, False)
-        return BanInfo(is_banned=False), (True, limit, 0, False)
+            return BanInfo(is_banned=False), (False, limit, 0, False), None
+        return BanInfo(is_banned=False), (True, limit, 0, False), None
 
     # R1-01 parity: honor the negative cache. On a hit, only GCRA remains →
     # delegate to the existing single-RTT limiter to preserve its fail-open
@@ -301,7 +396,9 @@ async def check_ban_and_rate_limit(
     # `check_rate_limit_algorithm` handles limit <= 0 itself
     # (gcra_rate_limit.py:126-133, returns is_limited=True).
     cache_key = _ban_cache_key(client_ip)
-    if _ban_negative_cache.get(cache_key):
+    ban_cached = bool(_ban_negative_cache.get(cache_key))
+    want_aggregate = aggregate_limit > 0 and aggregate_period > 0
+    if ban_cached and not want_aggregate:
         gcra = get_gcra_rate_limiter()
         if gcra is not None:
             from src.app.core.utils.rate_limit import rate_limiter as _rl
@@ -309,7 +406,7 @@ async def check_ban_and_rate_limit(
             is_limited, remaining, retry_after, degraded = await _rl.check_rate_limit_algorithm_with_status(
                 rate_limit_key, limit, period
             )
-            return BanInfo(is_banned=False), (is_limited, remaining, retry_after, degraded)
+            return BanInfo(is_banned=False), (is_limited, remaining, retry_after, degraded), None
 
     # P1-1 FIX: limit <= 0 means "block this path for this tier" (e.g. free
     # tier cannot call AI endpoints). The combined Lua script has no such
@@ -318,42 +415,102 @@ async def check_ban_and_rate_limit(
     # (gcra_rate_limit.py:124-130) instead of invoking the script.
     if limit <= 0:
         ban_info = await get_ban_info(client_ip)
-        return ban_info, (True, 0, period, False)
+        return ban_info, (True, 0, period, False), None
 
     period_ms = period * 1000
     # `limit <= 0` returned above, so the division is safe and the old
     # `else 0` arm was unreachable.
     emission_interval_ms = max(1, round(period_ms / limit))
     burst_tolerance_ms = emission_interval_ms * limit
-    now_ms = int(time.time() * 1000)
 
     ban_key = BAN_KEY_PREFIX.format(ip=client_ip)
     gcra_key = f"gcra:{rate_limit_key}"
+
+    # F-10: the aggregate bucket's own emission/burst parameters. When the
+    # ceiling is disabled the placeholders keep the ARGV positions stable and
+    # ARGV[7]='0' tells the script not to read KEYS[3] at all.
+    aggregate_key = ""
+    aggregate_args = ["0", "0", "0", "0", "0"]
+    if want_aggregate:
+        aggregate_period_ms = aggregate_period * 1000
+        aggregate_emission_interval_ms = max(1, round(aggregate_period_ms / aggregate_limit))
+        aggregate_burst_tolerance_ms = aggregate_emission_interval_ms * aggregate_limit
+        aggregate_key = f"gcra:{build_anonymous_aggregate_key(client_ip)}"
+        aggregate_args = [
+            "1",
+            str(float(aggregate_emission_interval_ms)),
+            str(int(aggregate_limit)),
+            str(int(aggregate_burst_tolerance_ms)),
+            str(float(aggregate_period_ms)),
+        ]
+
+    # ADR-0015 idempotency guard: a per-REQUEST nonce, written by the script
+    # BEFORE it moves any budget. A timeout that fired AFTER the server
+    # executed the script leaves the nonce behind, which is the only way the
+    # fallback can tell "never ran" from "ran and the reply was lost".
+    nonce = _new_request_nonce()
 
     try:
         result = await get_lua_manager().execute(
             redis_client,
             "ban_and_gcra_check",
-            keys=[gcra_key, ban_key],
+            keys=[gcra_key, ban_key, aggregate_key, _nonce_key(nonce)],
             args=[
-                str(float(now_ms)),
+                # F-11: no now_ms -- the script reads Redis's clock.
                 str(float(emission_interval_ms)),
                 str(int(limit)),
                 str(int(burst_tolerance_ms)),
                 str(float(period_ms)),
                 "1",
+                *aggregate_args,
+                # F-10: with a warm ban negative cache the ban GET is skipped
+                # INSIDE this round-trip instead of being paid as a second
+                # call — the cached "not banned" verdict is the one the script
+                # would read, within the documented 5 s window.
+                "0" if ban_cached else "1",
+                # ADR-0015: the nonce's own TTL (ms). Long enough to cover the
+                # fallback's own round-trips, short enough that the key cannot
+                # outlive its request.
+                str(_NONCE_TTL_MS),
             ],
         )
-        is_allowed, remaining, retry_after_ms, is_banned, ban_reason, ban_ttl = result
+        if result and result[0] in _DUPLICATE_SENTINELS:
+            # The script has already run for this request; it consumed the
+            # budget then. Do NOT consume again -- return the merged verdict
+            # the first execution produced by reading the ban leg only.
+            return await _duplicate_replay_result(redis_client, client_ip, ban_key)
+        (
+            is_allowed,
+            remaining,
+            retry_after_ms,
+            is_banned,
+            ban_reason,
+            ban_ttl,
+            agg_limited,
+            agg_remaining,
+            agg_retry_after_ms,
+        ) = result
     except Exception as e:
         logger.warning("Combined ban+GCRA check failed, falling back to sequential", error=str(e))
+        # ADR-0015: Enforce "consume at most once" per request. If the nonce is present,
+        # the server already executed the merged script prior to the error, meaning the budget was spent.
+        # Re-running sequential helpers would double-charge legitimate callers, which ADR-0015 forbids.
+        # In this ambiguous state, the system fails closed with a 429 status code rather
+        # than risking a duplicate charge.
+        if await _nonce_was_claimed(redis_client, nonce):
+            logger.warning(
+                "merged_gcra_timed_out_after_execution_failing_closed",
+                client_ip=client_ip,
+                rate_limit_key=rate_limit_key,
+            )
+            return BanInfo(is_banned=False), (True, 0, period, True), None
         ban_info = await get_ban_info(client_ip)
         from src.app.core.utils.rate_limit import rate_limiter as _rl
 
         is_limited, remaining, retry_after, degraded = await _rl.check_rate_limit_algorithm_with_status(
             rate_limit_key, limit, period
         )
-        return ban_info, (is_limited, remaining, retry_after, degraded)
+        return ban_info, (is_limited, remaining, retry_after, degraded), None
 
     is_b = int(is_banned) == 1
     ban_info = BanInfo(
@@ -361,16 +518,28 @@ async def check_ban_and_rate_limit(
         reason=(ban_reason.decode() if isinstance(ban_reason, bytes) else str(ban_reason or "")) if is_b else None,
         expires_at=(time.time() + int(ban_ttl)) if is_b and int(ban_ttl) > 0 else None,
     )
-    if not is_b:
+    if not is_b and not ban_cached:
         _ban_negative_cache[cache_key] = True
     is_limited = int(is_allowed) == 0
     import math
 
-    return ban_info, (
-        is_limited,
-        int(float(remaining)),
-        int(math.ceil(float(retry_after_ms) / 1000.0)) if is_limited else 0,
-        False,  # the merged Lua enforces GCRA — the configured engine
+    aggregate: tuple[bool, int, int] | None = None
+    if want_aggregate:
+        aggregate = (
+            int(agg_limited) == 1,
+            int(float(agg_remaining)),
+            int(math.ceil(float(agg_retry_after_ms) / 1000.0)) if int(agg_limited) == 1 else 0,
+        )
+
+    return (
+        ban_info,
+        (
+            is_limited,
+            int(float(remaining)),
+            int(math.ceil(float(retry_after_ms) / 1000.0)) if is_limited else 0,
+            False,  # the merged Lua enforces GCRA — the configured engine
+        ),
+        aggregate,
     )
 
 
@@ -480,7 +649,7 @@ async def check_ban_blacklist_and_rate_limit(
         # get_ban_info leg usually rides the 5s negative cache).
         seq_verdict = await is_token_blacklisted(token, jti=jti)
         sel_key, sel_limit, sel_period = _selected(seq_verdict)
-        ban_info, rl = await check_ban_and_rate_limit(client_ip, sel_key, sel_limit, sel_period)
+        ban_info, rl, _aggregate = await check_ban_and_rate_limit(client_ip, sel_key, sel_limit, sel_period)
         return seq_verdict, sel_limit, sel_period, sel_key, ban_info, rl
 
     def _gcra_params(limit: int, period: int) -> tuple[int, int, int, int]:
@@ -491,9 +660,7 @@ async def check_ban_blacklist_and_rate_limit(
         emission_interval_ms = max(1, round(period_ms / limit))
         return emission_interval_ms, limit, emission_interval_ms * limit, period_ms
 
-    now_s = time.time()
-    now_sec = int(now_s)
-    now_ms = int(now_s * 1000)
+    now_sec = int(time.time())
     neg_ttl = getattr(settings.r1_unified, "TOKEN_NEGATIVE_CACHE_TTL", 60)
     negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token, jti)}"
     member = _extract_blacklist_member(token, jti)
@@ -501,16 +668,26 @@ async def check_ban_blacklist_and_rate_limit(
     a_emit, a_lim, a_burst, a_per = _gcra_params(authed_limit, authed_period)
     n_emit, n_lim, n_burst, n_per = _gcra_params(anon_limit, anon_period)
 
+    # ADR-0015 idempotency guard (see the sibling `ban_and_gcra_check`).
+    nonce = _new_request_nonce()
+
     try:
         result = await get_lua_manager().execute(
             redis_client,
             "ban_blacklist_gcra_check",
-            keys=[negative_key, BLACKLIST_KEY, f"gcra:{authed_key}", ban_key, f"gcra:{anon_key}"],
+            keys=[
+                negative_key,
+                BLACKLIST_KEY,
+                f"gcra:{authed_key}",
+                ban_key,
+                f"gcra:{anon_key}",
+                _nonce_key(nonce),
+            ],
             args=[
                 member,
                 str(now_sec),
                 str(int(neg_ttl)),
-                str(float(now_ms)),
+                # F-11: no now_ms -- the script reads Redis's clock.
                 str(float(a_emit)),
                 str(int(a_lim)),
                 str(int(a_burst)),
@@ -519,11 +696,37 @@ async def check_ban_blacklist_and_rate_limit(
                 str(int(n_lim)),
                 str(int(n_burst)),
                 str(float(n_per)),
+                str(_NONCE_TTL_MS),  # ADR-0015 nonce TTL
             ],
         )
+        if result and result[0] in _DUPLICATE_SENTINELS:
+            # ADR-0015: this request's budget was already spent by the first
+            # execution. Do not consume again; report the replay verdict.
+            seq_verdict = await is_token_blacklisted(token, jti=jti)
+            sel_key, sel_limit, sel_period = _selected(seq_verdict)
+            replay_ban, replay_rl, _agg = await _duplicate_replay_result(redis_client, client_ip, ban_key)
+            return seq_verdict, sel_limit, sel_period, sel_key, replay_ban, replay_rl
         raw_bl, is_allowed, remaining, retry_after_ms, is_banned, ban_reason, ban_ttl = result
     except Exception as e:
         logger.warning("Combined ban+blacklist+GCRA check failed, falling back to sequential", error=str(e))
+        # ADR-0015: consume at most ONCE per request (see the sibling
+        # `ban_and_gcra_check` handler for the full reasoning). A claimed
+        # nonce means the server executed the merged script, so re-running the
+        # sequential helpers would charge the caller twice -> fail closed.
+        if await _nonce_was_claimed(redis_client, nonce):
+            logger.warning(
+                "merged_blacklist_gcra_timed_out_after_execution_failing_closed",
+                client_ip=client_ip,
+            )
+            sel_key, sel_limit, sel_period = _selected(None)
+            return (
+                None,
+                sel_limit,
+                sel_period,
+                sel_key,
+                BanInfo(is_banned=False),
+                (True, 0, sel_period, True),
+            )
         seq_verdict = await is_token_blacklisted(token, jti=jti)
         sel_key, sel_limit, sel_period = _selected(seq_verdict)
         ban_info = await get_ban_info(client_ip)
@@ -624,11 +827,10 @@ async def ban_ip(
         # R1-01: evict the negative cache so the unban is reflected on the
         # next lookup instead of waiting out the 5s TTL.
         _ban_negative_cache.pop(_ban_cache_key(client_ip), None)
-        # P1-6: cross-worker fan-out (best-effort — never fail the unban
-        # on a publish error).
-        # F9: the Lua ban above already succeeded — a publish failure must
-        # not flip this to `return False` (callers read that as "not
-        # banned"). Guard the fan-out so success stays success.
+        # P1-6 / F9: Cross-worker fan-out for ban/unban operations is best-effort.
+        # A pub/sub publish failure must not flip the result to `False` (which callers interpret as "not banned"),
+        # because the underlying Lua state change already succeeded. Fan-out errors are guarded
+        # to preserve operation success.
         try:
             await _publish_ban_l1_invalidation(client_ip)
         except Exception as fanout_exc:  # noqa: BLE001
@@ -880,10 +1082,15 @@ async def get_violation_stats(client_ip: str | None = None) -> dict:
             seen.update(keys)
             total_ips += len(fresh)
 
-            for key in fresh:
-                count = await redis_client.get(key)
-                if count:
-                    total_violations += int(count)
+            if fresh:
+                # F-12: ONE MGET for the page instead of per-key GETs. The keys
+                # are independent reads and the F19 dedupe above is unchanged,
+                # so the sum is identical; the result is still approximate only
+                # by the same documented mid-scan races. (get_all_banned_ips
+                # already multiplexes its reads this way.)
+                for count in await redis_client.mget(*fresh):
+                    if count:
+                        total_violations += int(count)
 
             if cursor == 0:
                 break

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_PARSED
+from src.app.middleware.tenant import _L1_TENANT_CACHE, _L1_TENANT_NEGATIVE, _L1_TENANT_PARSED
 
 
 @pytest.fixture(autouse=True)
@@ -80,9 +80,10 @@ class TestNegativeCache:
 
                 await middleware._get_tenant_by_slug(tenant_slug)
 
-        # Verify L1 was set with negative result
-        assert tenant_slug in _L1_TENANT_CACHE
-        assert _L1_TENANT_CACHE[tenant_slug] is None
+        # Verify L1 was set with negative result. D.6: the marker lives in
+        # its OWN cache, so it cannot evict real tenants from the positive one.
+        assert tenant_slug in _L1_TENANT_NEGATIVE
+        assert tenant_slug not in _L1_TENANT_CACHE
 
     @pytest.mark.asyncio
     async def test_negative_cache_not_returned_as_tenant(self):
@@ -91,8 +92,8 @@ class TestNegativeCache:
 
         middleware = TenantMiddleware(MagicMock())
 
-        # Populate L1 with negative cache
-        _L1_TENANT_CACHE["bad-tenant"] = None
+        # Populate the negative L1 (D.6: its own cache)
+        _L1_TENANT_NEGATIVE["bad-tenant"] = True
 
         # Query should return None, not a TenantContext
         result = await middleware._get_tenant_by_slug("bad-tenant")
@@ -110,8 +111,8 @@ class TestNegativeCachePropagation:
 
         middleware = TenantMiddleware(MagicMock())
 
-        # Set L1 negative cache
-        _L1_TENANT_CACHE["cached-negative"] = None
+        # Set the negative L1 (D.6: its own cache)
+        _L1_TENANT_NEGATIVE["cached-negative"] = True
 
         mock_redis = AsyncMock()
         mock_redis.get = AsyncMock(side_effect=AssertionError("L2 should not be called"))
@@ -137,9 +138,9 @@ class TestNegativeCachePropagation:
         with patch("src.app.core.utils.cache.client", mock_redis):
             await middleware._get_tenant_by_slug("l2-negative")
 
-        # L1 should be populated with None
-        assert "l2-negative" in _L1_TENANT_CACHE
-        assert _L1_TENANT_CACHE["l2-negative"] is None
+        # L1 negative marker populated; the positive cache stays clean
+        assert "l2-negative" in _L1_TENANT_NEGATIVE
+        assert "l2-negative" not in _L1_TENANT_CACHE
 
 
 class TestSlugValidation:

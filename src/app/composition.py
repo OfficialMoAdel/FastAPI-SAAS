@@ -58,17 +58,17 @@ async def _start_create_tables(enabled: bool) -> None:
 
 
 async def _start_users_security_lookups() -> None:
-    # Explicit user-domain security lookup wiring (deterministic;
-    # backstops the import-time registration in users/__init__.py).
+    # Explicit user-domain security lookup wiring;
+    # backstops import-time registration in users/__init__.py.
     from src.app.modules.users import register_users_security_lookups
 
     register_users_security_lookups()
 
 
 async def _start_jwt_lookup_gate() -> None:
-    # P1 FIX (code-review): fail fast when the JWT DIP seams are
-    # unwired instead of surfacing as mass 401s at runtime. The
-    # per-request path still fails closed; this is the loud gate.
+    # P1 FIX: fail fast when the JWT DIP seams are unwired,
+    # instead of surfacing as mass 401s at runtime. Per-request
+    # path still fails closed; this is the loud gate.
     try:
         from src.app.core.security.jwt_service import ensure_jwt_lookups_registered
 
@@ -81,40 +81,66 @@ async def _start_jwt_lookup_gate() -> None:
 
 
 async def _start_tenant_model_gate() -> None:
-    # H-5: core.tenancy resolves and warms tenants from a row type the
-    # application registers (src.app.models). An unwired process would fail
-    # on the first slug lookup, which is far harder to diagnose than a boot
-    # failure — so check it here, beside the other DIP gates.
+    # H-5: core.tenancy resolves/warms tenants from a registered row type.
+    # An unwired process fails on the first slug lookup — harder to diagnose
+    # than a boot failure — so check it here beside the other DIP gates.
     from src.app.core.tenancy.models import ensure_tenant_model_registered
 
     ensure_tenant_model_registered()
 
 
 async def _start_bypass_recorder_gate() -> None:
-    # The RLS-bypass recorder is supplied by the audit module. Unwired, the
-    # worker would still bypass RLS — _record_bypass_audit swallows failures
-    # by design — so without this gate a bypass could be silently unaudited.
+    # The RLS-bypass recorder comes from the audit module. Unwired, the
+    # worker still bypasses RLS (_record_bypass_audit swallows failures by
+    # design), so a bypass could be silently unaudited without this gate.
     from src.app.core.worker.audit import ensure_bypass_recorder_registered
 
     ensure_bypass_recorder_registered()
 
 
 async def _start_rate_policy_gate() -> None:
-    # H-5: the tier path-policy rows are fetched by a callable the application
-    # registers. Unwired, the failure would surface on the first cache miss at
-    # request time — check it at boot with the other DIP gates.
+    # H-5: tier path-policy rows are fetched by a registered callable.
+    # Unwired, failure surfaces on the first request-time cache miss —
+    # check it at boot with the other DIP gates.
     from src.app.core.security.policies import ensure_rate_policy_fetcher_registered
 
     ensure_rate_policy_fetcher_registered()
 
 
 async def _start_permission_graph_gate() -> None:
-    # H-5: core.rbac joins four row types the application registers. An
-    # unwired process would fail on the first permission lookup, so check it
-    # at boot with the other DIP gates.
+    # H-5: core.rbac joins four registered row types. Unwired, the first
+    # permission lookup fails — check it at boot with the other DIP gates.
     from src.app.core.rbac.models import ensure_permission_graph_registered
 
     ensure_permission_graph_registered()
+
+
+async def _start_mfa_fernet_warm() -> None:
+    """Derive the MFA Fernet key at BOOT instead of on the first MFA request.
+
+    §9: `MFAService._get_fernet` runs PBKDF2-HMAC-SHA256 with 480 000
+    iterations synchronously. It is deterministic in
+    (ENCRYPTION_KEY, ENCRYPTION_SALT[:16], iterations) -- all frozen for the
+    process lifetime and boot-validated -- so the derivation is pure boot cost
+    that used to land on the event loop during the first MFA verification
+    (measured ~0.6 s on this host). Paying it here removes it from the request
+    path entirely and surfaces a bad ENCRYPTION_KEY at boot rather than as a
+    500 on someone's first login.
+
+    Runs off the event loop because it is a ~0.6 s CPU burn and boot has no
+    reason to serialise on it.
+
+    Not a boot gate: `MFAService.warm()` swallows a missing ENCRYPTION_KEY and
+    logs it, so the app still boots (MFA stays unavailable until the key is
+    fixed, exactly as before the warm-up existed) instead of dying at startup.
+
+    Imported through the PACKAGE ROOT (`modules.auth`), not
+    `modules.auth.services.mfa`: the latter is a banned deep import
+    (P1-20 / TID251), and the facade is the sanctioned path.
+    """
+    from src.app.modules.auth import MFAService
+
+    await asyncio.to_thread(MFAService.warm)
 
 
 async def _start_permission_catalog_reconcile() -> None:
@@ -146,23 +172,22 @@ async def _start_permission_catalog_reconcile() -> None:
     try:
         async with local_session() as db:
             report = await reconcile_permission_catalog(db)
-            # S-13 FIX: the condition was inverted (`if not report.stale`).
-            # `migrate_successor_grants` only does work when a STALE slug row
-            # actually exists — it looks each SUCCESSOR_SLUGS key up in the
-            # persisted set and `continue`s when absent. That row exists
-            # precisely when `report.stale` is non-empty, since reconcile
-            # computes `stale = existing - wanted`.
+            # S-13 FIX: condition was inverted (`if not report.stale`).
+            # `migrate_successor_grants` only works when a STALE slug row
+            # exists — it looks up each SUCCESSOR_SLUGS key and `continue`s
+            # when absent. That row exists exactly when `report.stale` is
+            # non-empty (reconcile computes `stale = existing - wanted`).
             #
-            # So the old guard ran the migration exactly when there was
-            # nothing to migrate (every lookup `continue`d), and skipped it
-            # exactly when there was — leaving a role holding the retired
-            # `files:manage` grant with no `files:write`/`files:delete`
-            # successor. Silent, permanent permission loss.
+            # The old guard ran the migration when there was nothing to
+            # migrate (every lookup `continue`d), and skipped it when there
+            # was — leaving a role holding retired `files:manage` with no
+            # `files:write`/`files:delete` successor. Silent, permanent
+            # permission loss.
             if report.stale:
-                # Carry grants forward for the renamed slugs. On a database
-                # built from the corrected 03_access_control `stale` is empty,
-                # so this is a no-op there — migrate_successor_grants is
-                # idempotent and never removes a grant.
+                # Carry grants forward for renamed slugs. On a database
+                # built from corrected 03_access_control, `stale` is empty
+                # (no-op) — migrate_successor_grants is idempotent and never
+                # removes a grant.
                 await migrate_successor_grants(db)
     except Exception as e:  # noqa: BLE001 - catalog sync must not block startup
         logger.error("permission_catalog_reconcile_failed", error=str(e))
@@ -176,11 +201,11 @@ async def _start_permission_catalog_reconcile() -> None:
 
 
 async def _start_security_budget_gate() -> None:
-    # Every leg's budget name now comes from the security-budget seam's table,
-    # so an operator who removes an entry (e.g. mfa_verify_global) would
-    # otherwise hit a KeyError on the first MFA verification in production.
-    # This is also what retires the old call-site settings sniff, which
-    # silently charged a different budget when the preferred one was absent.
+    # Every budget name comes from the security-budget seam's table —
+    # removing an entry (e.g. mfa_verify_global) would KeyError on the first
+    # MFA verification in production. Also retires the old call-site
+    # settings sniff, which silently charged a different budget when the
+    # preferred one was absent.
     from src.app.core.security.budgets import validate_budget_definitions
 
     validate_budget_definitions()
@@ -188,11 +213,11 @@ async def _start_security_budget_gate() -> None:
 
 async def _start_principal_provider_gate() -> None:
     # Candidate 2 (one principal-resolution seam): fail fast when the
-    # principal DIP seam is unwired instead of surfacing as mass 401s.
-    # ``core.principal`` owns the ``get_auth_context`` dependency so that
-    # ``core.rbac`` need not import the api layer (H-5); ``api.deps.auth``
-    # registers the resolver at import time. The per-request path still
-    # fails closed (503); this is the loud boot gate.
+    # principal DIP seam is unwired instead of mass 401s.
+    # ``core.principal`` owns ``get_auth_context`` so ``core.rbac`` need not
+    # import the api layer (H-5); ``api.deps.auth`` registers the resolver
+    # at import time. Per-request path still fails closed (503); loud boot
+    # gate.
     try:
         from src.app.core.principal import ensure_principal_provider_registered
 
@@ -206,9 +231,9 @@ async def _start_principal_provider_gate() -> None:
 
 async def _start_cache_warmer(done: asyncio.Event) -> None:
     # Warm caches after DB and Redis are ready. Fire and forget with safe
-    # error handling and hard reference; ``done`` signals "startup
-    # teardown is allowed", not "caches are warm" (P3-5 note at the call
-    # site — the warmer completes asynchronously).
+    # error handling and hard reference; ``done`` signals "startup teardown
+    # is allowed", not "caches are warm" (P3-5 at call site — warmer runs
+    # asynchronously).
     from src.app.core.cache.warmer import warm_caches
 
     async def _warm_caches_background() -> None:
@@ -251,8 +276,8 @@ async def _dispose_engine() -> None:
         engine = db_module.get_async_engine()
         await engine.dispose()
     except Exception as exc:  # noqa: BLE001
-        # R1-17: engine may not exist if startup failed — but a real
-        # dispose failure must be visible, not swallowed.
+        # R1-17: engine may not exist if startup failed — but a real dispose
+        # failure must be visible, not swallowed.
         logger.warning("engine_dispose_failed", error=str(exc))
     db_module._async_engine = None
 
@@ -321,25 +346,23 @@ def lifespan_factory(
         # P3-5: ``initialization_complete`` signals "startup teardown is
         # allowed", not "caches are warm". The cache warmers run as a
         # background task (line 176) and complete asynchronously. Anything
-        # that gates on this event expecting a warm cache is a bug — the
-        # DB and Redis pools ARE ready at this point, but the warmer
-        # results are not. (Historical note: the deleted
-        # api/deps/core.rate_limiter_dependency used to wait on this event so
-        # concurrent requests didn't all try to seed tier limits during
-        # burst startup; the ASGI rate-limit path does not wait — its cache
-        # misses simply fall through to the next resolution tier.)
+        # gating on this event expecting a warm cache is a bug — DB and Redis
+        # pools are ready, but warmer results are not. (Historical note: the
+        # deleted api/deps/core.rate_limiter_dependency waited on this event
+        # so concurrent requests didn't all seed tier limits during burst
+        # startup; the ASGI rate-limit path doesn't wait — misses fall
+        # through to the next resolution tier.)
         initialization_complete = Event()
         app.state.initialization_complete = initialization_complete
 
         # NOTE: the threadpool is sized by the "threadpool" StartupPhase
-        # below, not here. It used to run both ways — once as a bare await
-        # and once as a phase — which is idempotent today and a trap the
-        # moment the body is not.
+        # below, not here. It used to run twice — bare await and phase —
+        # idempotent today, a trap if the body changes.
         #
         # S1 FIX: initialize flags BEFORE the try block. If a fallible create
-        # call below raises, the finally block references these names; assigning
-        # them inside the try let an early failure raise NameError and mask the
-        # original startup exception.
+        # below raises, the finally block references these names; assigning
+        # them inside the try lets an early failure raise NameError and mask
+        # the original startup exception.
         redis_cache_enabled = settings.redis_cache.REDIS_CACHE_ENABLED
         redis_queue_enabled = settings.redis_queue.REDIS_QUEUE_ENABLED
 
@@ -363,24 +386,27 @@ def lifespan_factory(
             StartupPhase("tenant_model_gate", _start_tenant_model_gate, None),
             StartupPhase("permission_graph_gate", _start_permission_graph_gate, None),
             StartupPhase("permission_catalog_reconcile", _start_permission_catalog_reconcile, None),
+            # §9: pay MFA Fernet PBKDF2 derivation at boot, off the loop,
+            # instead of during the first MFA verification.
+            StartupPhase("mfa_fernet_warm", _start_mfa_fernet_warm, None),
             StartupPhase("rate_policy_gate", _start_rate_policy_gate, None),
             StartupPhase("bypass_recorder_gate", _start_bypass_recorder_gate, None),
-            # The phase NAME is part of the observable startup contract and is
-            # asserted behaviourally (the phase sequence handed to
-            # compose_phases), not by grepping this file.
+            # The phase NAME is part of the observable startup contract,
+            # asserted behaviourally via the phase sequence handed to
+            # compose_phases — not by grepping this file.
             StartupPhase("warm_caches", partial(_start_cache_warmer, initialization_complete), None),
         ]
-        # Teardown pairing: the pool closes ride their phases (reverse
-        # order: queue before cache — independent pools, both closed before
-        # the shared pool below, so the reorder is behavior-preserving).
+        # Teardown pairing: pools close via their phases (reverse order:
+        # queue before cache — independent pools, both closed before the
+        # shared pool below, so the reorder is behavior-preserving).
         # Everything else keeps its verbatim finally-block position in tail.
         factory_tail: list[Callable[[], Awaitable[None]]] = [
             partial(_remove_init_event, app),
             # Close cached storage providers (S3/Azure hold HTTP clients)
-            # before the shared pool teardown below.
+            # before the shared pool teardown.
             _close_storage_providers,
             _dispose_engine,
-            # Close the shared Redis connection pool AFTER clients are closed
+            # Close shared Redis pool AFTER clients are closed
             runtime_setup.close_redis_pool,
             _close_sso_http_client,
             _close_webhook_http_client,
@@ -403,7 +429,7 @@ def create_application(
     """Creates and configures a FastAPI application based on the provided settings."""
 
     # --- before creating application ---
-    # R1-UNIFIED: Support both composition (Settings) and legacy mixins
+    # R1-UNIFIED: support both composition (Settings) and legacy mixins
     app_name = settings.app.APP_NAME
     app_description = settings.app.APP_DESCRIPTION
     contact_name = settings.app.CONTACT_NAME
@@ -433,27 +459,27 @@ def create_application(
     if environment != EnvironmentOption.LOCAL:
         kwargs.update({"docs_url": None, "redoc_url": None, "openapi_url": None})
 
-    # Use custom lifespan if provided, otherwise use default factory.
+    # Use custom lifespan if provided, otherwise default factory.
     # The factory applies the A-M4 gate: outside local, create_all at startup
-    # requires an explicit settings.app.CREATE_TABLES_ON_STARTUP opt-in.
+    # requires explicit settings.app.CREATE_TABLES_ON_STARTUP opt-in.
     if lifespan is None:
         lifespan = lifespan_factory(settings, create_tables_on_start=create_tables_on_start)
 
     application = FastAPI(lifespan=lifespan, **kwargs)
-    # S-21 / #11: the admin panel is mounted during the lifespan, which runs
-    # AFTER this function returns, so the app has to reach `_init_admin`
-    # through the phase list. A module-level `_application` global was the first
-    # attempt and was wrong: it is overwritten by the LAST `create_application`
-    # call, so a suite that builds two apps mounted the panel onto whichever was
-    # built last rather than the one whose lifespan was running. The app is now
-    # bound with `functools.partial` at the phase site, alongside every other
-    # phase that needs a constructor argument.
+    # S-21 / #11: the admin panel mounts during the lifespan, which runs
+    # AFTER this function returns — so `_init_admin` is reached via the phase
+    # list. A module-level `_application` global was the first attempt and
+    # was wrong: overwritten by the LAST `create_application` call, so a
+    # suite building two apps mounted the panel onto whichever was built
+    # last rather than the one whose lifespan ran. The app is now bound with
+    # `functools.partial` at the phase site, like every other phase needing
+    # a constructor argument.
     application.include_router(router)
 
     # C4: CORS is registered by the single middleware wiring point
     # (core/guard/ordering.py, outermost entry) so guard short-circuits
-    # (403/429/413) also carry Access-Control-Allow-Origin. Nothing to add
-    # here — registering it in the factory would nest it INSIDE the guards.
+    # (403/429/413) carry Access-Control-Allow-Origin. Registering CORS here
+    # would nest it INSIDE the guards.
 
     if environment != EnvironmentOption.PRODUCTION:
         docs_router = APIRouter()
@@ -512,49 +538,46 @@ async def _warm_token_blacklist_cache() -> None:
 
     try:
         async with async_session_maker() as db:
-            # S-10 FIX (mechanism): the warmup SELECT ran tenant-unaware, but
-            # `token_blacklist` is RLS-enforced AND FORCEd (migration 08) with a
+            # S-10 FIX (mechanism): warmup SELECT ran tenant-unaware, but
+            # `token_blacklist` is RLS-enforced AND FORCEd (migration 08) with
             # NOT NULL tenant_id and policy
             # `tenant_id = auth.current_tenant_id()`. At boot no tenant is
-            # bound, so that predicate is NULL -> the query matched ZERO ROWS on
-            # every boot, forever. The cache was therefore always cold, which is
-            # exactly what the warmup exists to prevent: is_token_blacklisted
-            # returns None on a miss, so every authenticated request paid a
-            # _check_db_fallback DB round-trip until the negative cache filled.
+            # bound, so that predicate is NULL -> query matches ZERO ROWS every
+            # boot, forever. Cache stayed cold — exactly what warmup prevents:
+            # is_token_blacklisted returns None on a miss, so every auth
+            # request paid a _check_db_fallback DB round-trip until negative
+            # cache filled.
             #
-            # The blacklist is a GLOBAL revocation oracle - the model is
-            # explicitly tenant-blind ("the idempotency domain is the account").
+            # The blacklist is a GLOBAL revocation oracle — explicitly
+            # tenant-blind ("the idempotency domain is the account").
             # Warming it must be tenant-blind too, hence an audited bypass
             # rather than an RLS exemption.
             from src.app.core.db.rls import bypass_rls
 
             async with bypass_rls(db, reason="Token blacklist cache warmup (global revocation set)"):
-                # P-M9: cap the warmup set — loading every active blacklisted
-                # token made boot cost O(total sessions). Keep the N
-                # longest-lived entries (they stay in the cache longest, so the
-                # warm-up value per slot is highest); the rest fall back to the
-                # on-demand DB check on first lookup. TOKEN_BLACKLIST_WARMUP_LIMIT
-                # is env-tunable (APP_TOKEN_BLACKLIST_WARMUP_LIMIT); 0 disables
-                # warmup entirely (and skips the query). P2: the cap is pushed
-                # into the DB (ORDER BY expires_at DESC + LIMIT) so boot is
-                # O(limit) even before the first row is read.
+                # P-M9: cap warmup — loading every active blacklisted token
+                # cost O(total sessions). Keep the N longest-lived entries
+                # (highest warm-up value per slot); rest fall back to on-demand
+                # DB check on first lookup. TOKEN_BLACKLIST_WARMUP_LIMIT
+                # is env-tunable; 0 disables warmup entirely. P2: cap pushed
+                # into DB (ORDER BY expires_at DESC + LIMIT) so boot is
+                # O(limit) before the first row is read.
                 limit = settings.app.TOKEN_BLACKLIST_WARMUP_LIMIT
                 if limit == 0:
                     logger.info("Token blacklist warmup disabled by TOKEN_BLACKLIST_WARMUP_LIMIT=0")
                 else:
                     tokens = await crud_token_blacklist.get_active_tokens(db, limit=limit)
-                    # S-10 FIX (observability half): an empty result used to
-                    # fall through silently — no log, no error. The query
-                    # SUCCEEDED, so the `except (RedisError, SQLAlchemyError,
-                    # ...)` below cannot fire, and this is the ONLY blacklist
-                    # warmup path in the codebase, so nothing downstream would
-                    # notice either. A warmup that reports nothing when it warms
-                    # nothing is an unmonitorable control.
+                    # S-10 FIX (observability half): empty result used to fall
+                    # through silently — no log, no error. Query SUCCEEDED, so
+                    # the `except (RedisError, SQLAlchemyError, ...)` below
+                    # cannot fire. This is the ONLY blacklist warmup path, so
+                    # nothing downstream would notice either. A warmup that
+                    # reports nothing when it warms nothing is unmonitorable.
                     #
-                    # With the bypass above, an empty result now genuinely means
+                    # With the bypass above, empty result genuinely means
                     # "no active revocations", not "RLS hid them". It still
-                    # warns, because a revocation set that empties unexpectedly
-                    # is worth surfacing rather than absorbing.
+                    # warns — a revocation set emptying unexpectedly is worth
+                    # surfacing rather than absorbing.
                     if tokens:
                         count = await warm_cache_from_db(tokens)
                         logger.info("Token blacklist cache warmed", count=count)
@@ -630,9 +653,9 @@ async def _init_rate_limiting_and_security(redis_client: Any) -> None:
         if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
             raise
 
-    # I11: the central registry owns L1 listener lifecycle. Importing the
-    # owner modules triggers their self-registration; one start call replaces
-    # the five hand-wired listeners that used to live here.
+    # I11: central registry owns L1 listener lifecycle. Importing owner
+    # modules triggers self-registration; one start call replaces the five
+    # hand-wired listeners that used to live here.
     from src.app.core.cache.l1 import start_all_l1_listeners
 
     import_l1_owner_modules()
@@ -714,19 +737,19 @@ async def _init_admin(application: FastAPI) -> None:
         try:
             await admin.initialize()
 
-            # S-21 FIX: the panel was BUILT and INITIALIZED but never reachable —
-            # nothing called .mount(), while initialize() had already
-            # provisioned the bootstrap admin credential. The log even claimed
+            # S-21 FIX: panel was BUILT and INITIALIZED but never reachable —
+            # nothing called .mount(), while initialize() already provisioned
+            # the bootstrap admin credential. Log claimed
             # "Admin interface initialized successfully".
             #
-            # CRUDAdmin builds its own FastAPI app: __init__ sets `self.app` and
-            # calls `self.app.include_router(self.router)`. That is the object to
-            # mount, at `get_url_prefix()` (the router itself carries NO prefix,
-            # so the mount prefix is the only one - no doubling).
+            # CRUDAdmin builds its own FastAPI app: __init__ sets `self.app`
+            # and calls `self.app.include_router(self.router)`. That object is
+            # what to mount, at `get_url_prefix()` (router carries NO prefix,
+            # so mount prefix is the only one — no doubling).
             #
-            # Previously I concluded the package "exposes no ASGI app". That was
-            # wrong, and instructive: `dir(CRUDAdmin)` inspects the CLASS, and
-            # `app` is an INSTANCE attribute. Read __init__, not the class dir.
+            # Previously I concluded the package "exposes no ASGI app" —
+            # wrong, instructive: `dir(CRUDAdmin)` inspects the CLASS, `app`
+            # is an INSTANCE attribute. Read __init__, not class dir.
             mount_path = admin.get_url_prefix() or settings.admin.CRUD_ADMIN_MOUNT_PATH.rstrip("/")
             # S-26 guarantees the mount path is non-root at the config layer; a
             # root mount would exempt every path from tenant resolution.
@@ -765,9 +788,10 @@ async def _teardown_security_listeners() -> None:
     from src.app.core.cache.l1 import stop_all_l1_listeners
 
     await stop_all_l1_listeners()
-    # SSO HTTP client teardown is single-owned by lifespan_factory's finally
-    # (P2): it always runs — lifespan_with_admin composes that lifespan — so
-    # closing here too was a guaranteed double close on every shutdown.
+    # SSO HTTP client teardown is single-owned by lifespan_factory's
+    # finally (P2): it always runs — lifespan_with_admin composes that
+    # lifespan — closing here too guarantees a double close on every
+    # shutdown.
 
 
 @asynccontextmanager
@@ -799,14 +823,13 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None]:
             # already runs tenant_model_gate before these admin phases start.
             # The old copy here carried a comment justifying it by what "the
             # worker" needs — a worker concern sitting in the web phase list.
-            # muse 18: this phase used to be named "warm_caches", the SAME
-            # name as the web phase above, while doing different work — this
-            # one is the blocking, 15s-bounded token-blacklist warm; the web
-            # one is a fire-and-forget application cache warm. Two phases
-            # sharing a name make per-phase timing and any name-keyed
-            # operator signal ambiguous. tests/unit/core/
-            # test_startup_phase_duplication.py asserts the union of BOTH
-            # lists has no repeated name.
+            # muse 18: this phase used to be named "warm_caches", same name
+            # as the web phase above but different work — this one is the
+            # blocking, 15s-bounded token-blacklist warm; the web one is
+            # fire-and-forget application cache warm. Two phases sharing a
+            # name make per-phase timing and name-keyed operator signals
+            # ambiguous. tests/unit/core/test_startup_phase_duplication.py
+            # asserts the union of BOTH lists has no repeated name.
             StartupPhase("warm_token_blacklist", _warm_startup_caches, None),
             StartupPhase("admin", partial(_init_admin, app), None),
         ]

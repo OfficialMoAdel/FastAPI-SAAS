@@ -187,10 +187,14 @@ async def _evaluate(
         return False, max(limit - 1, 0), period, False
 
     async def _record_ban_and_rate_limit(
-        client_ip: str, key: str, limit: int, period: int
-    ) -> tuple[Any, tuple[bool, int, int, bool]]:
+        client_ip: str, key: str, limit: int, period: int, **kwargs: Any
+    ) -> tuple[Any, tuple[bool, int, int, bool], None]:
+        # F-10: the composite now returns a third element (the folded
+        # aggregate verdict). An API-key caller never folds the ceiling
+        # (`api_key_metered` excludes it), so the third element is None.
         metered.append((key, limit, period))
-        return MagicMock(is_banned=False), (limited, 0, period, False)
+        assert kwargs.get("aggregate_limit", 0) == 0, "an API-key caller must not fold the anonymous ceiling"
+        return MagicMock(is_banned=False), (limited, 0, period, False), None
 
     aggregate = AsyncMock(return_value=(False, 250, _AGGREGATE_LIMIT[1]))
     auto_ban_check = AsyncMock(return_value=(False, 0))

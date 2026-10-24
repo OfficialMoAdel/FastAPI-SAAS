@@ -1,15 +1,18 @@
 """Auth service layer - encapsulates all authentication business logic."""
 
 import json
-from typing import Any, cast
+import secrets
+from typing import Any, ClassVar, cast
 from uuid import UUID
 
+import bcrypt
 from jwt import ExpiredSignatureError
 from jwt.exceptions import PyJWTError as JWTError
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
+from src.app.core.config import settings
 from src.app.core.security import (
     TokenType,
     blacklist_tokens,
@@ -44,9 +47,40 @@ def get_auth_service() -> "AuthService":
 class AuthService:
     """Service class for authentication-related business logic."""
 
-    # Precomputed dummy bcrypt hash for timing attack prevention.
-    # Used when user doesn't exist to ensure constant-time authentication.
+    # Dummy bcrypt hash for constant-time authentication on non-existent users.
+    # §8.2 FIX: A hardcoded cost-12 literal reopened user enumeration when `BCRYPT_ROUNDS`
+    # was raised, making real accounts pay 2x–4x more CPU than the dummy. Resolved at call time
+    # via `_dummy_bcrypt_hash`, memoized per legal cost (max 7 times per process).
     _DUMMY_BCRYPT_HASH = "$2b$12$DOUePotH1f1kDX4WZ21DzuRgFk7C8xFhasEURTDHCx1KnvQstFIvi"  # noqa: S105
+
+    #: cost -> a bcrypt hash of an UNGUESSABLE secret at that cost. Bounded by
+    #: the setting's own domain (ge=8, le=14), so at most seven entries.
+    _DUMMY_BCRYPT_HASHES: ClassVar[dict[int, str]] = {}
+
+    #: Plaintext for dummy hashes: 32 random bytes minted once per process.
+    #: Unlike fixed values (e.g., `b"\x00" * 32`), which could allow a zero-byte
+    #: bypass if the `db_user` guard is ever dropped, a random secret ensures
+    #: the dummy validates for NO input at all.
+    _DUMMY_BCRYPT_SECRET: ClassVar[bytes] = secrets.token_bytes(32)
+
+    @classmethod
+    def _dummy_bcrypt_hash(cls) -> str:
+        """A dummy hash whose cost matches ``BCRYPT_ROUNDS``.
+
+        `bcrypt.checkpw` returns False for any password against a hash of an
+        unguessable secret, so this is behaviourally identical to the fixed
+        literal -- only the wall-clock of the unknown-account branch changes,
+        and it changes TOWARD the real-account branch, which is the point.
+
+        Memoized per cost: generating one is ~100 ms, and there are at most
+        seven legal values, so the cost is paid once per process per value.
+        """
+        rounds = int(settings.crypt.BCRYPT_ROUNDS)
+        cached = cls._DUMMY_BCRYPT_HASHES.get(rounds)
+        if cached is None:
+            cached = bcrypt.hashpw(cls._DUMMY_BCRYPT_SECRET, bcrypt.gensalt(rounds=rounds)).decode()
+            cls._DUMMY_BCRYPT_HASHES[rounds] = cached
+        return cached
 
     def __init__(
         self,
@@ -155,14 +189,14 @@ class AuthService:
         # SECURITY: Use dummy hash if user not found to prevent timing attacks.
         # This ensures bcrypt verification always takes ~100ms, preventing
         # attackers from enumerating valid usernames via response time analysis.
-        hash_to_verify = db_user["hashed_password"] if db_user else self._DUMMY_BCRYPT_HASH
+        hash_to_verify = db_user["hashed_password"] if db_user else self._dummy_bcrypt_hash()
         # SSO-only accounts store a non-bcrypt sentinel ("!SSO_ONLY_ACCOUNT_NO_PASSWORD")
         # in place of a real password. Passing it to verify_password raises UnknownHashError
         # (500). Treat the sentinel as an invalid password so the login fails cleanly with 401.
         # Empty/missing hashes (e.g. partially migrated rows) are handled the same way.
         if not hash_to_verify or hash_to_verify.startswith("!SSO_ONLY"):
             # Still perform dummy bcrypt to prevent timing-based account enumeration
-            await verify_password(password, self._DUMMY_BCRYPT_HASH)
+            await verify_password(password, self._dummy_bcrypt_hash())
             return None
         password_valid = await verify_password(password, hash_to_verify)
 
@@ -259,28 +293,10 @@ class AuthService:
         # Prevents bypass via case variations (e.g., User@example.com vs user@example.com)
         normalized_username = username.lower().strip()
 
-        # SEC-08: resolve the account BEFORE the lockout check so the counter
-        # is keyed on the user id, which the caller cannot influence. The
-        # previous identifier key let an unauthenticated attacker lock any
-        # known or guessed account, and split the budget in two because
-        # "alice" and "alice@example.com" are separate counters for one
-        # account.
-        #
-        # The lookup is a cached directory read, not a bcrypt verification,
-        # so this does not reintroduce the CPU-exhaustion cost the pre-auth
-        # check existed to avoid: the expensive hash check still runs only
-        # after a known account is confirmed unlocked.
         lockout = self.lockout
-        # Resolve the account so the counter keys on the id. This lookup is a
-        # cached directory read, not a bcrypt verification, so the expensive
-        # hash check still runs only after a known account is confirmed
-        # unlocked.
-        #
-        # Deliberately NOT wrapped in a try/except: falling back to the
-        # identifier key when the resolve fails would hand the attacker back
-        # exactly the SEC-08 vulnerability on every DB hiccup. Failing loud is
-        # correct — the route is not tenant-exempt, so a tenant is always
-        # bound and this query succeeds in production.
+        # SEC-08: Resolve account before lockout check to key on user ID (preventing DOS and split counters).
+        # This is a cached directory read, not bcrypt, so CPU cost stays low.
+        # NOT wrapped in try/except: failing loud prevents reintroducing SEC-08 on DB hiccups.
         auth_info = await self._resolve_user_auth_info(normalized_username, db)
         # A3 pattern: the directory seam may hand back a model or a dict.
         resolved_user_id = get_user_attr(auth_info, "id") if auth_info is not None else None
@@ -302,14 +318,9 @@ class AuthService:
         user = await self.authenticate_user(username_or_email=normalized_username, password=password, db=db)
 
         if not user:
-            # Charge the resolved account's counter when the account exists, so
-            # a wrong password on a real account accumulates toward ITS budget
-            # even though authentication returned no user. `resolved_user_id` is
-            # the ONLY source of the charged id here — `user` is None by the
-            # branch condition, so there is no second id to fall back to. When
-            # the account could not be resolved, `resolve_key` charges the
-            # identifier key instead, which is what keeps brute-force guessing
-            # from getting cheaper.
+            # Charge `resolved_user_id` on wrong passwords for real accounts, even though auth fails.
+            # If the account doesn't exist, `resolve_key` charges the identifier to prevent
+            # brute-force guessing from getting cheaper.
             charged_user_id = resolved_user_id
             key = lockout.resolve_key(redis, charged_user_id, normalized_username)
             attempts = await lockout.record_failed_attempt_for_key(redis, key)
@@ -330,10 +341,9 @@ class AuthService:
             )
             raise UnauthorizedError("User account is no longer active.")
 
-        # Clear failed attempts on success (single roundtrip).
-        # G-2: never let a Redis blip 500 a correctly-authenticated login —
-        # the counter clear is hygiene, not auth. Stale counters self-heal
-        # via key TTL and fail closed on the next pre-auth check.
+        # G-2: Clear failed attempts on success in a single roundtrip.
+        # A Redis blip must never 500 a valid login—clearing is hygiene, not auth.
+        # Stale counters self-heal via TTL and fail closed on the next pre-auth check.
         try:
             await lockout.clear(redis, normalized_username, user_id=resolved_user_id)
         except Exception as e:
@@ -424,15 +434,10 @@ class AuthService:
         try:
             raw = await cache_client.get_strict(f"refresh_rotated:{old_jti}")
         except Exception as e:
-            # P2-3: this used to return silently at DEBUG. Redis loss
-            # downgraded theft detection from "kill the session and blacklist
-            # the replacement token" to "reject this one token" — the stolen
-            # token is still refused by verify_token's DB-backed revocation
-            # check, but the ATTACKER'S ALREADY-ISSUED REPLACEMENT TOKEN stays
-            # valid until its natural expiry. A degradation of theft
-            # detection is an alertable event, so this logs at WARNING (the
-            # malformed-marker path below logs no more quietly for a less
-            # dangerous condition).
+            # P2-3: Redis loss previously logged at DEBUG, degrading theft detection
+            # from full session termination to single-token rejection. The stolen token is
+            # blocked by DB revocation, but attacker replacement tokens stay valid until expiry.
+            # Since theft degradation is alertable, this logs at WARNING.
             logger.warning("refresh reuse-marker lookup failed", error=str(e))
             return
         if not raw:
@@ -526,12 +531,20 @@ class AuthService:
             raise UnauthorizedError("User account is no longer active.")
 
         # A2/A3: recover the OLD refresh payload so rotation can carry forward
-        # absolute_exp, original iat and the stable sid. The token string has
-        # already been signature-verified by verify_token() above; this decode
-        # is a local operation to surface claims TokenData does not expose.
-        from src.app.core.security.jwt_utils import decode_jwt_token
+        # absolute_exp, original iat and the stable sid.
+        #
+        # §9 FIX: this used to call `decode_jwt_token(refresh_token)` — a SECOND
+        # full signature verification of a token `verify_token` had just
+        # verified (only failures are cached, so a valid token always paid it
+        # twice). `TokenData.raw_payload` carries the verified dict, so the
+        # second decode is gone. The fallback keeps the old behaviour for any
+        # TokenData built without it (a test double, or a future construction
+        # site), so this cannot silently produce an empty payload.
+        old_refresh_payload = user_data.raw_payload
+        if not isinstance(old_refresh_payload, dict):
+            from src.app.core.security.jwt_utils import decode_jwt_token
 
-        old_refresh_payload = await decode_jwt_token(refresh_token) or {}
+            old_refresh_payload = await decode_jwt_token(refresh_token) or {}
 
         # P2-1: bind the refresh token to the user's tenant. Enforced only
         # when both sides carry a tenant (legacy tokens may lack the claim).
@@ -540,21 +553,15 @@ class AuthService:
         if payload_tenant is not None and user_tenant is not None and str(payload_tenant) != str(user_tenant):
             raise UnauthorizedError("Invalid refresh token.")
 
-        # token_version is enforced by verify_token() above (Redis/DB-backed
-        # comparison inside the jwt_service seam). No re-check against the
-        # DB row here — the row was fetched after verification of the same
-        # token, and any version minted after this point is enforced on the
-        # next refresh's verify_token call.
-
-        # Include tier info in JWT claims for Zero-DB rate limiting
-        # SECURITY FIX: Include token_version for session invalidation
-        # SECURITY FIX: Include tenant_id for tenant isolation during token refresh
+        # token_version is already enforced by verify_token() above. We skip a redundant DB
+        # re-check here; newer versions will be handled on the next refresh.
+        # JWT claims include: tier (Zero-DB rate limiting), token_version (session invalidation),
+        # and tenant_id (tenant isolation).
         token_data = TokenIssuer.build_token_data(subject=user_data.username_or_email, user=db_user or {})
 
-        # Rotation tail (lock → pair → blacklist → marker → session →
-        # cookie → audit) lives behind the TokenIssuer seam; only the
-        # verification pre-checks above stay here. The seam owns the cookie
-        # (response threaded through) — the router no longer writes it.
+        # The rotation tail (lock → pair → blacklist → marker → session → cookie → audit)
+        # lives behind the TokenIssuer seam; only pre-checks stay here.
+        # The seam handles the cookie via a threaded response, so the router no longer writes it.
         issued = await TokenIssuer.rotate_session(
             token_data=token_data,
             old_refresh_payload=old_refresh_payload,
@@ -652,15 +659,10 @@ class AuthService:
             entity_id=user_id_val,
             tenant_id=tenant_id_val,
             user_id=user_id_val,
-            # A10: two independent legs, recorded separately.
-            # success = the PRIMARY leg (token blacklist). A failure there
-            # raises before reaching this audit, so success is True here.
-            # session_revoked = the SECONDARY leg (the Redis session entry);
-            # False means a PARTIAL logout — tokens are dead but a stale
-            # session entry survives until its TTL. The P1-2 trust contract
-            # exposes exactly this pair to the client, so the audit row
-            # carries the same two facts rather than a single "success"
-            # that hides the partial case.
+            # A10: Tracks two independent legs for the P1-2 contract:
+            # - success (primary token blacklist): True here since failures raise earlier.
+            # - session_revoked (secondary Redis session): False means a partial logout (dead tokens,
+            #   stale session until TTL). The audit carries both to avoid hiding partial cases.
             details={
                 "username": username,
                 "success": True,

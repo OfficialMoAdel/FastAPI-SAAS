@@ -26,6 +26,7 @@ from src.app.core.redis_provider import get_redis
 from src.app.core.tenancy.cache import (
     _L1_INVALIDATION_CHANNEL,
     _L1_TENANT_CACHE,
+    _L1_TENANT_NEGATIVE,
     _L1_TENANT_PARSED,
     _TENANT_LOCKS,
     TENANT_CACHE_TTL,
@@ -63,6 +64,7 @@ __all__ = [
     "TenantMiddleware",
     "_L1_INVALIDATION_CHANNEL",
     "_L1_TENANT_CACHE",
+    "_L1_TENANT_NEGATIVE",
     "_L1_TENANT_PARSED",
     "_TENANT_EXEMPT_MATCHES",
     "_TENANT_LOCKS",

@@ -32,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+from functools import lru_cache
 
 from redis.asyncio import Redis
 
@@ -53,14 +54,29 @@ _GETDEL_LUA = """
 _TOKEN_PEPPER_DOMAIN = "saas-token-v1"
 
 
+@lru_cache(maxsize=1)
 def _pepper() -> bytes:
     # I2: SECRET_KEY is required config — no silent default. Fail fast if unset.
+    #
+    # Memoized like its siblings (`jwt_service._get_signing_key`,
+    # `jwt_utils._get_parsed_verification_key`, both `@lru_cache(maxsize=1)`).
+    # Measured 0.74 us per call and called at least twice per request
+    # (hash_token on the probe + the rotation/blacklist write), so this is a
+    # pure saving: SECRET_KEY is boot-validated and immutable for the process
+    # lifetime, which is exactly the precondition the siblings already rely on.
+    # `clear_pepper_cache` exists for the same reason their clear functions do
+    # (tests that patch SECRET_KEY, and any future key rotation).
     from src.app.core.config import settings
 
     key = settings.SECRET_KEY.get_secret_value()
     if not key:
         raise RuntimeError("SECRET_KEY must be set for token hashing")
     return f"{_TOKEN_PEPPER_DOMAIN}:{key}".encode()
+
+
+def clear_pepper_cache() -> None:
+    """Drop the memoized pepper (tests that patch SECRET_KEY; key rotation)."""
+    _pepper.cache_clear()
 
 
 def hash_token(token: str) -> str:

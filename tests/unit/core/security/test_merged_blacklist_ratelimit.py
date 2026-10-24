@@ -156,7 +156,7 @@ class TestMergedBlacklistRateLimit:
             patch(
                 "src.app.core.security.auto_ban.check_ban_and_rate_limit",
                 new_callable=AsyncMock,
-                return_value=(BanInfo(is_banned=False), (True, 0, 60, False)),
+                return_value=(BanInfo(is_banned=False), (True, 0, 60, False), None),
             ),
         ]
         for p in ctx["patches"] + extra:

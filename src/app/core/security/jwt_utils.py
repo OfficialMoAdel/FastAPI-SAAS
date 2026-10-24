@@ -297,12 +297,26 @@ async def decode_verified_token(
     if verify_issuer:
         kwargs["issuer"] = settings.crypt.JWT_ISSUER
 
-    failure_key = _decode_failure_key(token, verify_issuer)
-    if failure_key in _decode_failure_cache:
-        # Sentinel hit: same token already failed permanently — skip decode.
-        # (No debug log here by design: emitting an event would re-pay the
-        # structlog/sanitizer cost this fast path exists to avoid.)
-        return None
+    # F-13 §6: compute the failure key ONLY when the sentinel cache can use it.
+    # `_decode_failure_key` is a peppered HMAC -- measured 6.95 us, ~44% of a
+    # warm HS256 decode -- and it was computed on EVERY decode then discarded
+    # on success. When the cache is empty (the common case: no token has
+    # failed permanently in this process) the membership test below was a
+    # guaranteed miss, so the key was pure waste. An empty cache therefore
+    # short-circuits before the HMAC.
+    #
+    # Isomorphism: the cache is keyed by this exact value, so "skip the
+    # computation when the cache is empty" cannot change a hit -- an empty
+    # cache has no keys to hit. Once anything is cached the computation runs
+    # exactly as before.
+    failure_key: tuple[str, bool] | None = None
+    if _decode_failure_cache:
+        failure_key = _decode_failure_key(token, verify_issuer)
+        if failure_key in _decode_failure_cache:
+            # Sentinel hit: same token already failed permanently — skip decode.
+            # (No debug log here by design: emitting an event would re-pay the
+            # structlog/sanitizer cost this fast path exists to avoid.)
+            return None
 
     try:
         alg = _get_algorithm()
@@ -325,6 +339,10 @@ async def decode_verified_token(
         return payload  # type: ignore[no-any-return]
     except (InvalidSignatureError, DecodeError, ExpiredSignatureError):
         # Permanent for this (token, flag) — memoize, skip crypto next time.
+        # The key is built here when the cache was empty above (the lazy path),
+        # so a failure still populates the sentinel exactly as before.
+        if failure_key is None:
+            failure_key = _decode_failure_key(token, verify_issuer)
         _decode_failure_cache[failure_key] = None
         return None
     except PyJWTError as e:

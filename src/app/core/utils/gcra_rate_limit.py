@@ -53,7 +53,6 @@ class GCRARateLimiter:
     async def _execute_gcra_script(
         self,
         rate_limit_key: str,
-        now_ms: float,
         emission_interval_ms: float,
         limit: int,
         period_ms: float,
@@ -62,6 +61,10 @@ class GCRARateLimiter:
 
         The manager owns EVALSHA + NOSCRIPT fallback, so script reloads after
         Redis restarts are handled centrally.
+
+        F-11: no timestamp is sent. The script reads Redis's clock, so the
+        decision is anchored to the same timeline for every worker and cannot
+        be stale by one round-trip.
         """
         if not self._redis:
             raise ValueError("Redis client not initialized")
@@ -78,7 +81,6 @@ class GCRARateLimiter:
             "rate_limit_gcra",
             keys=[rate_limit_key],
             args=[
-                str(float(now_ms)),
                 str(float(emission_interval_ms)),
                 str(int(limit)),
                 str(float(burst_tolerance_ms)),
@@ -137,13 +139,13 @@ class GCRARateLimiter:
             # old `else 0` arm was unreachable.
             period_ms = period * 1000
             emission_interval_ms = max(1, round(period_ms / limit))
-            now_ms = time.time() * 1000
 
-            # Execute atomic GCRA check
+            # Execute atomic GCRA check. F-11: the clock comes from Redis
+            # inside the script (one timeline for every worker), so there is
+            # no `now_ms` argument here any more.
             rate_limit_key = f"gcra:{key}"
             result = await self._execute_gcra_script(
                 rate_limit_key,
-                int(now_ms),
                 int(emission_interval_ms),
                 limit,
                 int(period_ms),

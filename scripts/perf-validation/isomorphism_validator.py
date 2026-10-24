@@ -58,15 +58,155 @@ async def test_u3_parallel_isomorphism() -> bool:
 
 
 async def test_u4_pipeline_isomorphism() -> bool:
-    """Verify pipeline produces same state as separate commands."""
-    # Both patterns should result in same data
-    # This is verified by the integration tests
-    return True
+    """U4 (non-hollow): the multi-key cache write is a BATCHED pipeline.
+
+    The isomorphism claim is "a pipeline produces the same state as the
+    separate commands it batches". A live-Redis differential is not
+    available in this gate's environment (no Redis and no ``fakeredis``),
+    so this pins the MECHANISM the claim rests on and that a refactor can
+    silently break: the multi-key writer builds ONE pipeline and issues
+    its writes INSIDE it. It fails if the batch is replaced by per-key
+    calls -- at which point the state-equality claim is void and must be
+    re-derived, not assumed. The state equality itself is covered by the
+    integration cache round-trip tests.
+    """
+    path = REPO_ROOT / "src/app/modules/users/cache.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        # Any `async with X.pipeline(...) as pipe:` block must issue >= 2
+        # write commands inside it and must not fall back to a bare client
+        # write in the same method (the exact shape of the regression).
+        if not isinstance(node, ast.AsyncWith):
+            continue
+        is_pipeline = any(
+            isinstance(item.context_expr, ast.Call)
+            and isinstance(item.context_expr.func, ast.Attribute)
+            and item.context_expr.func.attr == "pipeline"
+            for item in node.items
+        )
+        if not is_pipeline:
+            continue
+        writes = [
+            inner
+            for inner in ast.walk(node)
+            if isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Attribute)
+            and inner.func.attr in {"setex", "set", "get", "delete", "hset", "expire"}
+        ]
+        if len(writes) < 2:
+            logger.error("u4_pipeline_degenerate", writes=len(writes))
+            return False
+        logger.info("u4_pipeline_ok", writes=len(writes))
+        return True
+    logger.error("u4_no_pipeline_found", path=str(path))
+    return False
 
 
 async def test_u6_n1_isomorphism() -> bool:
-    """Verify joinedload returns same data as lazy loading."""
-    # Verified by unit tests
+    """U6 (non-hollow): the auth-info read is EAGER, so it cannot be N+1.
+
+    "joinedload returns the same data as lazy loading" is only a claim
+    about this app while the read actually APPLIES an eager-load option.
+    This gate pins that ``get_user_with_tier_eager`` uses
+    ``joinedload``/``selectinload`` on the tier relationship. If it is
+    dropped the read silently becomes a lazy (N+1) load, and both this
+    claim and the surrounding per-request budget are void -- so the gate
+    fails loudly on that edit rather than letting the claim rot.
+    """
+    path = REPO_ROOT / "src/app/modules/users/crud.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AsyncFunctionDef) or node.name != "get_user_with_tier_eager":
+            continue
+        options = [
+            call
+            for call in ast.walk(node)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id in {"joinedload", "selectinload"}
+        ]
+        if not options:
+            logger.error("u6_eager_load_missing", func="get_user_with_tier_eager")
+            return False
+        logger.info("u6_eager_load_ok", loaders=[c.func.id for c in options])
+        return True
+    logger.error("u6_function_missing", path=str(path))
+    return False
+
+
+async def test_f1_scan_isomorphism() -> bool:
+    """Gate F-1: the linear scanner is byte-identical to the combined regex.
+
+    ``scan_content_for_attacks`` now reads the four super-linear ordering
+    branches (``sql_union``/``sql_drop``/``sql_delete``/``sql_exec``, whose
+    unbounded ``.*?`` makes ``re`` O(n^2) -- 96 KB stalls the event loop
+    ~14 s) with the linear token scanner, and keeps the other thirteen in
+    ``re``. The observable is ``COMBINED_ATTACK_RE.finditer``'s ordered
+    ``(lastgroup, start, end)`` sequence. This gate imports the REAL
+    modules and asserts equality over the 17 minimal per-group probes, a
+    seeded token-soup fuzz, the quadratic trigger classes, and the
+    cursor-inside-a-previous-match regression that a naive merge loses.
+    It FAILS on any divergence, which is what makes "provably isomorphic"
+    a test rather than a claim.
+    """
+    import random
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    try:
+        from app.middleware import attack_detection as ad
+        from app.middleware.attack_scan_linear import QUADRATIC_GROUPS, build_linear_pattern, split_branches
+    finally:
+        sys.path.remove(str(REPO_ROOT / "src"))
+
+    if len(QUADRATIC_GROUPS) != 4:
+        logger.error("f1_quadratic_group_count", count=len(QUADRATIC_GROUPS))
+        return False
+    if len(split_branches(ad.COMBINED_ATTACK_RE.pattern)) != 17:
+        logger.error("f1_branch_count_changed")
+        return False
+    if not ad.settings.attack_detection.ATTACK_DETECTION_LINEAR_SCAN:
+        logger.error("f1_linear_scan_disabled")
+        return False
+    if build_linear_pattern(ad.COMBINED_ATTACK_RE.pattern) == ad.COMBINED_ATTACK_RE.pattern:
+        logger.error("f1_linear_pattern_unchanged")
+        return False
+
+    def reference(payload: bytes) -> list[tuple[str | None, int, int]]:
+        return [(m.lastgroup, m.start(), m.end()) for m in ad.COMBINED_ATTACK_RE.finditer(payload)]
+
+    def linear(payload: bytes) -> list[tuple[str | None, int, int]]:
+        return [(g, s, e) for s, e, g in ad._iter_scan_matches(payload)]
+
+    probes: list[bytes] = [
+        b"x union all select y", b"x or 1=1", b"x drop table y", b"x delete from y",
+        b"'abc--", b";\n--", b"x exec y xp_cmdshell", b"<script src",
+        b"javascript:alert(1)", b"<img onerror=x", b"<iframe src", b"<object data",
+        b"a/../b", b"a%2e%2e%2fb", b"a%2e%2e/b", b"a; cat /etc/passwd",
+        b"http://169.254.169.254/latest",
+        # quadratic classes + the naive-merge regression
+        b"union " * 300, b"select " + b"union " * 300, b"table " + b"drop " * 300,
+        b" table  delete xxp_' or 1=1 --from 169.254.169.254\n",
+        b"union a select union b select", b"union <script>x</script> a select",
+    ]
+    rng = random.Random(20261023)
+    tokens = [
+        b"union ", b"select ", b"drop ", b"table ", b"delete ", b"from ", b"exec ", b"xp_",
+        b"<script>", b"' or 1=1 --", b"; cat ", b"169.254.169.254", b"../", b"\n", b" ",
+        b"x", b"javascript:", b"<a onx=", b"-- ", b"union", b"select",
+    ]
+    probes += [b"".join(rng.choice(tokens) for _ in range(rng.randint(0, 14))) for _ in range(20000)]
+
+    for payload in probes:
+        if reference(payload) != linear(payload):
+            logger.error(
+                "f1_scan_divergence",
+                payload=payload[:80].decode("latin-1"),
+                reference=reference(payload)[:4],
+                linear=linear(payload)[:4],
+            )
+            return False
+    logger.info("f1_scan_isomorphism_ok", cases=len(probes))
     return True
 
 
@@ -98,36 +238,15 @@ async def test_u22_slug_isomorphism() -> bool:
     # All should normalize to same value
     return len(set(normalized)) == 1
 
-
-# ---------------------------------------------------------------------------
-# C-1 (f9ug): topology gate + path-equality gate.
+# C-1 (f9ug) / Addendum A-10 (uu5p): Topology and path-equality gate.
+# Routing-relevant middlewares read paths via two different spellings (`request.url.path` vs `scope["path"]`),
+# which can diverge under sub-path mounts or normalization differences.
+# The validation oracle enforces: (1) `root_path == ""` in deployment, and (2) strict equality
+# (`Request.url.path == scope["path"]`) across all critical path shapes.
 #
-# The routing-relevant middlewares read the request path through two
-# different spellings: `request.url.path` (request_admission twice) and
-# `scope["path"]` (ip_filter, tenant, rate_limit, request_id,
-# attack_detection). These are only the same string while the deployment
-# has no sub-path mount, so the oracle has two legs: (1) the deployed
-# topology really has root_path == "", read from the real construction
-# path and the real framework default, and (2) Request(scope,
-# receive).url.path == scope["path"] for every real path shape, with and
-# without a root_path set.
-#
-# ADDENDUM A-10 (uu5p): three shapes were missing and are the ones a
-# proxy or a scanner actually produces. Nested resources exercise the
-# multi-segment split; a repeated slash is the shape where a router that
-# collapsed `//` and one that did not would silently disagree; and the
-# traversal-like shape is a NEGATIVE case -- neither spelling may
-# normalise it, or the equivalence would hold only because both were
-# rewritten the same way. The negative shape is deliberately a raw
-# `..` segment: it must arrive byte-identical or a path-traversal filter
-# reading one spelling and a tenant resolver reading the other would
-# diverge on exactly the request class that matters most.
-# ---------------------------------------------------------------------------
-
-#: Path shapes the behavioural gate exercises. Percent-encoding,
-#: trailing slashes, nested segments, repeated slashes, non-ASCII and a
-#: raw traversal-like segment are the shapes where two path spellings
-#: would diverge if they ever did.
+# Addendum A-10 covers proxy/scanner edge cases (nested segments, repeated slashes `//`).
+# Crucially, the traversal-like shape is a negative test using a raw `..` segment: it must arrive byte-identical
+# to ensure security filters (path-traversal protection) and tenant resolvers never diverge.
 C1_PATH_SHAPES = (
     "/api/v1/users/me",
     "/api/v1/users/me/",
@@ -235,17 +354,10 @@ async def test_c1_request_url_path_equals_scope_path() -> bool:
     return checked > 0
 
 
-#: (relpath, enclosing function) pairs that may read `request.url.path`
-#: because they ROUTE on it. A fifth routing reader fails this gate
-#: until it is classified here with a reason.
-#:
-#: ip_filter, tenant, rate_limit and request_id were listed here before
-#: addendum A-10 and have been REMOVED, because they no longer read
-#: `request.url.path` at all -- the C-1 conversion moved each of them to
-#: `scope["path"]`, and they are now classified below by whether they
-#: ROUTE on the path or only LOG it. Leaving them here would have been a
-#: silent permission: the set is an allow-list, so a stale entry keeps
-#: passing whether or not the code still reads that form.
+# C-1 Allow-list of (relpath, enclosing_function) pairs permitted to read `request.url.path`
+# because they route on it. Unclassified routing readers fail this gate.
+# Note: `ip_filter`, `tenant`, `rate_limit`, and `request_id` were removed under Addendum A-10
+# and migrated to `scope["path"]`. This strict allow-list prevents stale permissions from lingering.
 C1_URL_PATH_ROUTING = frozenset(
     {
         ("src/app/core/security/request_admission.py", "evaluate"),
@@ -372,40 +484,25 @@ async def test_c1_no_unclassified_path_reader() -> bool:
     return True
 
 
-# ---------------------------------------------------------------------------
-# Gate C-2: every group that depends on ";" holds via b"--" — except
-# cmd_inj, which holds via ";" itself.
-#
-# The prefilter is a NECESSARY-literal gate: if a group can match
-# content carrying ";" but no set literal is necessary for that group,
-# the prefilter skips content the regex would have flagged — a missed
-# verdict, not a slow path.
-# ---------------------------------------------------------------------------
-
-#: Groups whose sub-pattern contains ";" mapped to the companion literal
-#: that must be textually required by the sub-pattern AND present in
-#: the prefilter set. `cmd_inj` is deliberately absent: every one of
-#: its alternatives starts with ";" / "||" / "&&", so ";" itself is
-#: necessary for it and the set already covers it.
+# Gate C-2: Necessary-literal prefilter gate. Groups matching content with ";" must require a
+# companion literal (e.g., `b"--"`) in the prefilter set; otherwise, the prefilter would skip evaluation,
+# resulting in a missed security verdict.
+# `cmd_inj` is deliberately excluded because its alternatives begin with `;`, `||`, or `&&`, meaning
+# ";" is already a mandatory literal naturally covered by the prefilter set.
 C2_SEMICOLON_COMPANION: dict[str, bytes] = {
     "sql_comment": b"--",
     "sql_semicomment": b"--",
 }
 C2_CMD_INJ_GROUP = "cmd_inj"
 
-#: The differential UA. "Linux; Android 14; Pixel 8" carries ";" and so
-#: USED TO trip the prefilter (it carried ";") while the full regex cleared
-#: it. Since C-2 (FastAPI_saas-niix) the cmd_inj gate is a CONJUNCTION --
-#: a separator AND a command word -- so this UA no longer trips the
-#: prefilter either, and the benign verdict is reached for a stronger
-#: reason than before.
-#:
-#: The corrected attribution, recorded so the next reader does not "fix"
-#: the wrong token: `Pixel` contains no `id`; `Android` does
-#: (A-n-d-r-o-i-d). The `id` inside "Android" is mid-word, never at
-#: `;` + command position, and no command word follows any ";" at a
-#: word boundary — so the verdict is benign and the reason is the
-#: position, not the absence, of `id`.
+# C-2 Differential UA (`"Linux; Android 14; Pixel 8"`): Previously tripped the prefilter
+# due to semicolons, despite clearing the full regex. Following FastAPI_saas-niix, the `cmd_inj` gate
+# is a strict conjunction (requiring both a separator AND a command word), so this UA now safely
+# bypasses the prefilter under a stronger security guarantee.
+#
+# Attribution & Position Analysis: While the substring `id` exists inside `Android` (A-n-d-r-o-i-d),
+# it is entirely mid-word and never follows a semicolon at a valid command boundary.
+# The benign verdict is determined by strict token positioning rather than the absence of `id`.
 C2_PIXEL_UA = (
     b"Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36"
     b" (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
@@ -670,11 +767,6 @@ async def test_c2_pixel_ua_differential() -> bool:
     logger.info("c2_pixel_ua_ok", reason="android_not_pixel")
     return True
 
-
-# --- C-3: session-holder enumeration + no handler reads ---------------------
-# The plan's "27 callers" is [Unverified]: a raw grep returns ~100 hits
-# including imports, docstrings and comments. This section enumerates the
-# COMPLETE set of functions that can end up holding a database session, as
 # TWO closed worlds -- one per acquisition mechanism:
 #
 #   1. HOLDERS -- the session arrives as a parameter resolved by FastAPI:
@@ -684,34 +776,26 @@ async def test_c2_pixel_ua_differential() -> bool:
 #      `async with get_db_context() as session:`. Enumerated by
 #      C3_SESSION_OPENERS.
 #
-# HISTORY (2026-10-19, FastAPI_saas-tpbs): the original comment here
-# claimed the Depends-parameter form was "the complete caller set by
-# construction (FastAPI resolves the session only through Depends)". That
-# was true until commit ec632f29 (2026-10-17) refactored the auth path:
-# `get_current_user`, `get_optional_auth_context`, `get_optional_user` and
-# `core.principal.get_auth_context` stopped taking a session parameter and
-# became pure delegators -- the session is now opened inside the shared
-# resolver `resolve_principal` through `get_db_context()`. `get_db_context`
-# is the `async with` form of the SAME session lifecycle as
-# `async_get_db` (both call session_maker(), roll back on exception and
-# close in finally; src/app/core/db/database.py:184 and :232), so the
-# auth path still opens a session -- it just no longer does so through a
-# parameter. The four delegators were therefore removed from
-# C3_DB_CALLERS (they hold no session to be classified) and the
-# `get_db_context` class was ADDED as its own closed world, which this
-# gate did not check at all before. A new holder or a new opener fails
-# its enumeration gate until it is classified with its 401-path analysis.
+# Gate C-3 Evolution History & Architectural Shifts:
 #
-# HISTORY (2026-10-22, Cluster C / C1): `core.rbac.dependencies._check_permission`
-# was ALSO a holder, via `db: AsyncSession = Depends(async_get_db)`. It held
-# that session ONLY to pass it down to the permission lookup. The C1 fix gave
-# the RBAC bitmask singleflight its own short-lived session (it must not run
-# on a request's session -- the task is awaited by OTHER requests), so the
-# dependency no longer needed one and no longer takes one. It was therefore
-# removed from this set: it holds no session to classify. Its coverage was
-# not lost -- the session it used to hold now lives in the task's own
-# `local_session()`, which is the OPENERS world (a different acquisition
-# mechanism), and the 401-path analysis for this path is unchanged.
+# 1. Auth Path Refactoring (Commit ec632f29, 2026-10-19):
+#    - Previous assumption that FastAPI `Depends` parameters formed the complete session caller set was broken
+#      when auth helpers (`get_current_user`, `get_optional_auth_context`, `get_optional_user`,
+#      and `core.principal.get_auth_context`)
+#      transitioned from parameter injection to pure delegation via `resolve_principal` and `get_db_context()`.
+#    - `get_db_context()` and `async_get_db` share the exact same underlying lifecycle (`session_maker()`,
+#      exception rollback, and `finally` close; `src/app/core/db/database.py:184` and `:232`).
+#    - Action: The four delegators were removed from `C3_DB_CALLERS` (holders), and
+#      `get_db_context` was added as its own
+#      closed world of Openers. Any new holder or opener fails enumeration until explicitly classified.
+#
+# 2. RBAC Singleflight Migration (Cluster C / C1, 2026-10-22):
+#    - `core.rbac.dependencies._check_permission` previously held a session via
+#      `Depends(async_get_db)` solely for downstream passing.
+#    - C1 Fix: RBAC bitmask singleflight tasks are awaited across concurrent requests,
+#      making request-scoped sessions unsafe.
+#      They now use dedicated short-lived sessions via task-local `local_session()`.
+#    - Action: Removed from holders (now classified under the Openers world); 401-path analysis remains unaffected.
 C3_DB_CALLERS: frozenset[tuple[str, str]] = frozenset(
     {
         ("src/app/api/deps/auth.py", "get_user_by_api_key"),
@@ -796,31 +880,21 @@ C3_SESSION_OPENERS: frozenset[tuple[str, str]] = frozenset(
 )
 
 
-# The session calls a handler is ALLOWED to make. A rollback ends a
-# transaction; it does not read from one.
+# C-3 Rule: Handlers are permitted to call `session.rollback()` because ending a transaction
+# does not check out a database connection or execute queries.
 #
-# MEASURED (2026-10-19, FastAPI_saas-tpbs) against the real engine, with
-# the same instrument the C-3 e2e uses (an `engine.sync_engine` "checkout"
-# listener plus a "before_cursor_execute" listener):
-#   `await session.rollback()` on a session that has never connected  ->
-#       checkout=0, stmt=0
-#   `await session.execute(text("SELECT 1"))` on a fresh session       ->
-#       checkout=1, stmt=1
-#   `await session.execute(...)` then `await session.rollback()`      ->
-#       checkout=1, stmt=1  (the rollback added no checkout)
-# So a rollback cannot put a request on the database -- which is the
-# entire subject of C-3 ("defer the DB session on the 401 path"). Any
-# OTHER use of the session inside a handler does check a connection out
-# and is a violation.
+# Empirical Measurements (FastAPI_saas-tpbs):
+# - `session.rollback()` on an unconnected session -> checkout=0, stmt=0.
+# - `session.execute(...)` -> checkout=1, stmt=1.
+# - Subsequent `session.rollback()` adds zero checkouts.
 #
-# The two sites this rule permits are the ones the extension to
-# self-opened sessions exposed, and both are correct code:
-# `audit_logs/service.py::flush_audit_log_buffer` (a background buffer
-# flush that rolls the bulk insert back) and
-# `webhooks/delivery.py::recover_stuck_deliveries` (an ARQ job that rolls
-# one failed row back and continues with the batch). Both are permitted
-# uses, and both are LOGGED by the gate rather than hidden -- a permitted
-# use that is really a read would show up here in every CI run.
+# Therefore, rollbacks do not violate C-3 ("defer the DB session on the 401 path"). Any other session
+# interaction checks out a connection and constitutes a policy violation.
+#
+# Permitted Exceptions (explicitly logged and monitored in CI):
+# 1. `audit_logs/service.py::flush_audit_log_buffer`: Background buffer flush rolling back failed bulk inserts.
+# 2. `webhooks/delivery.py::recover_stuck_deliveries`: ARQ job rolling back individual failed rows
+#    to continue batch processing.
 C3_ALLOWED_HANDLER_SESSION_CALLS: frozenset[str] = frozenset({"rollback"})
 
 
@@ -1101,17 +1175,14 @@ async def test_c3_no_caller_reads_session_in_handler() -> bool:
     return True
 
 
-# --- A-6: AuthenticatedUser python-mode dump/load differential -----------------
-# The A-6 diff reuses one validated payload object instead of re-validating
-# per access; the differential below proves dump->load is the identity in
-# PYTHON mode (exact types preserved) for a realistic payload AND a
-# JSON-round-tripped one. JSON mode passes vacuously (UUID and str serialise
-# the same), so the python-mode arm is the load-bearing one and the JSON arm
-# is documented as weak rather than silently relied upon.
-# STOP CONDITION (bead): tenant_id is UUID|str|int|None — if ANY variant
-# mismatches, the differential is NOT sound and the work STOPS here. Probed
-# on HEAD: UUID/int/str/None all round-trip exactly (int stays int, UUID
-# stays UUID), so the condition is discharged, not triggered.
+# A-6: AuthenticatedUser dump/load differential. Reuses validated payload objects to avoid
+# redundant re-validation per access. Dump-to-load maintains strict identity in PYTHON mode
+# (preserving exact types), whereas JSON mode passes vacuously (since UUID and str serialize identically),
+# making the Python-mode arm the load-bearing path.
+#
+# Stop Condition: `tenant_id` is typed as `UUID | str | int | None`. If any variant mismatches,
+# the differential is unsound and execution must halt. Probed on HEAD: all variants round-trip
+# exactly (ints remain ints, UUIDs remain UUIDs), discharging the condition cleanly.
 A6_TENANT_ID_VARIANTS: tuple[tuple[str, object], ...] = (
     ("uuid", "__UUID_SENTINEL__"),
     ("int", 42),
@@ -1225,6 +1296,11 @@ ISOMORPHISM_TESTS = [
         "A-6: AuthenticatedUser dump->load is the identity, incl. tenant_id",
         test_a6_python_mode_differential,
     ),
+    IsomorphismTest(
+        "F1_scan",
+        "F-1: the linear scanner is byte-identical to COMBINED_ATTACK_RE.finditer",
+        test_f1_scan_isomorphism,
+    ),
 ]
 
 
@@ -1257,6 +1333,8 @@ async def run_isomorphism_validation() -> dict[str, Any]:
 
 
 if __name__ == "__main__":
+    import sys as _sys
+
     result = asyncio.run(run_isomorphism_validation())
     print(f"Isomorphism Validation: {'PASSED' if result['all_passed'] else 'FAILED'}")
     for r in result["results"]:
@@ -1265,3 +1343,6 @@ if __name__ == "__main__":
         # needed most.
         status = "PASS" if r["passed"] else "FAIL"
         print(f"  {status} {r['name']}")
+    # A gate that cannot fail the build is not a gate: exit non-zero so the
+    # CI step fails instead of printing FAILED and succeeding anyway.
+    _sys.exit(0 if result["all_passed"] else 1)

@@ -143,3 +143,20 @@ class AttackDetectionSettings(BaseSettings):
             "offload after repeated failures."
         ),
     )
+    ATTACK_DETECTION_LINEAR_SCAN: bool = Field(
+        default=True,
+        description=(
+            "F-1: read the four super-linear ordering branches "
+            "(sql_union/drop/delete/exec, whose unbounded `.*?` makes `re` "
+            "O(n^2) -- 96 KB stalls the event loop for ~14 s) through the "
+            "linear token scanner (attack_scan_linear) instead of the "
+            "backtracking regex. True (default): linear scanner + the "
+            "thirteen linear branches, a merged sequence byte-identical to "
+            "the original single-pattern finditer. False: run the original "
+            "COMBINED_ATTACK_RE whole, i.e. the pre-fix, super-linear "
+            "behaviour. This is a SECURITY control: the linear scanner is "
+            "isomorphic (differentially proven) and never misses, so the "
+            "switch exists only to fall back during an incident where the "
+            "scanner itself is suspected."
+        ),
+    )

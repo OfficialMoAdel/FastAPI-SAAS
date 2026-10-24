@@ -23,8 +23,9 @@ works with typed event/message keys (``headers`` as list[tuple[bytes, bytes]]);
 the ignores mark exactly those message-shape accesses.
 """
 
-from fastapi.middleware.gzip import GZipMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from src.app.middleware.gzip_threaded import ThreadedGZipMiddleware
 
 # Content types to exempt from GZip compression
 GZIP_EXEMPT_TYPES = frozenset(
@@ -87,7 +88,11 @@ class GZipFilterMiddleware:
         # The exempt flag is written into the scope dict, which the outer
         # stripper reads back — see __call__.
         marker_app = _ExemptMarker(app)
-        self._gzip_app = GZipMiddleware(
+        # F-4: the threaded gzip middleware, so the deflate does not run on
+        # the event loop. Same construction signature as Starlette's, so this
+        # is a drop-in for GZipMiddleware here (byte-identical output; zlib
+        # releases the GIL, so the offload is a real win, not a relocation).
+        self._gzip_app = ThreadedGZipMiddleware(
             marker_app,
             minimum_size=self.minimum_size,
             compresslevel=self.compresslevel,

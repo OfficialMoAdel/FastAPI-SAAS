@@ -138,9 +138,27 @@ def restore_rls_context(dbapi_connection: Any, connection_record: Any, connectio
             else:
                 # No tenant context at pool checkout. Reset ALL RLS vars to empty so a
                 # previous connection's tenant context cannot leak into this checkout
-                # (fail-closed). We still warn so a missing-context bug on an
-                # authenticated path is observable rather than silently masked.
-                logger.warning(
+                # (fail-closed).
+                #
+                # F-14 POLICY DECISION: this record is DEBUG, not WARNING.
+                # The reset is the fail-closed behaviour and is unconditional;
+                # the log line only reports that a tenant-less checkout
+                # happened. Emitting it at WARNING made every unauthenticated
+                # DB-touching route (health, login, refresh, password reset)
+                # pay the full structlog processor chain -- merge_contextvars,
+                # TimeStamper, UnicodeDecoder, the sampler and the per-field
+                # regex SanitizingProcessor -- on the EVENT LOOP, before the
+                # QueueHandler could move the I/O off it. A login burst
+                # produced one such record per DB checkout, which both cost
+                # CPU and buried real warnings.
+                #
+                # This is deliberately NOT an isomorphism claim: it changes
+                # observable log output. It is a policy call, made explicitly
+                # (see the report's F-14), and the SECURITY signal is
+                # unchanged -- an operator who wants these records sets the
+                # logger to DEBUG. The genuine security failure path below
+                # still logs at CRITICAL and still raises.
+                logger.debug(
                     "restore_rls_context: no tenant context at pool checkout; resetting RLS vars to empty (fail-closed)"
                 )
                 await conn.execute(

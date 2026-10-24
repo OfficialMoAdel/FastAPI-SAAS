@@ -128,7 +128,7 @@ async def _evaluate(
         patch("src.app.core.security.request_admission.consume", AsyncMock(side_effect=_record)),
         patch(
             "src.app.core.security.request_admission.check_ban_and_rate_limit",
-            AsyncMock(return_value=(BanInfo(False), (limited, 0, _API_KEY_LIMIT[1], False))),
+            AsyncMock(return_value=(BanInfo(False), (limited, 0, _API_KEY_LIMIT[1], False), None)),
         ),
         patch(
             "src.app.core.security.request_admission.check_ban_blacklist_and_rate_limit",

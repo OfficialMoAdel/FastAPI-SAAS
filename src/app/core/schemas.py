@@ -92,6 +92,12 @@ class TokenData(BaseModel):
     token_version: int = 0
     sid: str | None = None  # A3: stable session id shared by access+refresh tokens
     iat: float | None = None  # A2: original login iat, preserved through rotation
+    # §9: the verified payload, carried so a caller that needs claims TokenData
+    # does not expose can read them without a SECOND signature verification.
+    # `verify_token` already decoded and verified this dict; re-decoding the
+    # same token (as the refresh path used to) paid the full crypto cost twice.
+    # Excluded from serialization so it never reaches a response.
+    raw_payload: dict[str, Any] | None = Field(default=None, exclude=True)
 
 
 class TokenBlacklistBase(BaseModel):

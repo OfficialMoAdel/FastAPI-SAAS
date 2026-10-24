@@ -157,12 +157,31 @@ def ensure_jwt_lookups_registered() -> None:
 
 
 @lru_cache(maxsize=1)
-def _get_signing_key() -> str:
-    """Get the key for signing tokens (private key for RS256, secret for HS256)."""
+def _get_signing_key() -> Any:
+    """Get the key for signing tokens (parsed private key for RS256, secret for HS256).
+
+    §9: the RS256 branch used to return the PEM **string**, so PyJWT re-parsed
+    the private key on EVERY sign -- measured 35.3 ms vs 0.76 ms with a parsed
+    key (46x). This mirrors `jwt_utils._get_parsed_verification_key`, which
+    already caches a parsed object for the verification side.
+
+    A no-op today: `ALGORITHM=HS256` (the default) takes the string branch and
+    is unchanged. It matters the day `docs/RS256_MIGRATION_RUNBOOK.md` Step 9
+    executes, and it must land BEFORE that step, not after.
+
+    The JWS is byte-for-byte identical: PyJWT's `RSAAlgorithm.prepare_key`
+    returns an already-parsed key object unchanged, so the signature input is
+    the same bytes (verified by test).
+    """
     from src.app.core.security.jwt_utils import _is_symmetric_algorithm
 
     if not _is_symmetric_algorithm():
-        return str(settings.crypt.JWT_PRIVATE_KEY.get_secret_value())  # type: ignore[union-attr]
+        from cryptography.hazmat.primitives import serialization
+
+        pem = settings.crypt.JWT_PRIVATE_KEY.get_secret_value()  # type: ignore[union-attr]
+        # Returns a cryptography private-key object; PyJWT accepts it directly
+        # and skips the PEM parse.
+        return serialization.load_pem_private_key(pem.encode(), password=None)
     return str(settings.SECRET_KEY.get_secret_value())
 
 
@@ -179,8 +198,13 @@ ACCESS_TOKEN_EXPIRE_MINUTES = settings.crypt.ACCESS_TOKEN_EXPIRE_MINUTES
 MFA_PENDING_EXPIRY_SECONDS = settings.auth.MFA_PENDING_EXPIRY_SECONDS
 
 
-async def _jwt_encode(payload: dict, key: str, algorithm: str) -> str:
-    """Encode JWT, inlining for symmetric algorithms."""
+async def _jwt_encode(payload: dict, key: Any, algorithm: str) -> str:
+    """Encode JWT, inlining for symmetric algorithms.
+
+    ``key`` is ``str`` for HS256 and a parsed cryptography private key for
+    RS256 (§9) -- PyJWT accepts both, and passing the parsed object is what
+    removes the per-sign PEM parse.
+    """
     from src.app.core.security.jwt_utils import _is_symmetric_algorithm
 
     if _is_symmetric_algorithm():
@@ -312,14 +336,12 @@ async def _check_db_fallback(jti: str | None, token: str) -> bool | None:
                 _db_fallback_cache[cache_key] = True
             return is_blacklisted
         finally:
-            # S-25 FIX: pop only if the registered task is STILL OURS. Every
-            # waiter runs this finally, so an unconditional pop could remove a
-            # NEWLY registered task belonging to an unrelated later request
-            # (owner A completes -> pops -> C registers task_C -> A's late
-            # waiter pops task_C). Correctness held — each task does its own DB
-            # read — but the singleflight the P6/H3 guard was added to collapse
-            # silently degraded to N concurrent SELECTs, worst precisely when
-            # Redis is down and this path is the only revocation oracle.
+            # S-25 FIX: Pop tasks only if the registration still belongs to the current execution.
+            # An unconditional pop in the `finally` block allowed late-completing waiters (e.g., Task A)
+            # to accidentally remove newly registered tasks from unrelated concurrent requests (e.g., Task C).
+            # While correctness held via individual DB fallbacks, this silently broke singleflight deduplication
+            # (P6/H3 guard), degrading performance into N concurrent SELECTs precisely during Redis outages when
+            # this path acts as the primary revocation oracle.
             async with _db_fallback_lock:
                 if _in_flight_db_checks.get(cache_key) is task:
                     del _in_flight_db_checks[cache_key]
@@ -481,6 +503,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
         token_version=token_version or 0,
         sid=payload.get("sid") or jti,  # A3: fall back to jti for pre-sid tokens
         iat=payload.get("iat"),  # A2: original login iat
+        raw_payload=payload,  # §9: reuse, never re-decode
     )
 
 
@@ -783,12 +806,9 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
                     "DB blacklist insert failed; still writing the Redis revocation",
                     error=str(e),
                 )
-            # B1: the Redis cache write runs on EVERY path (fresh insert,
-            # IntegrityError retry, tenant-less fallback) so the hot-path
-            # check always sees the revocation, and it is LOUD —
-            # add_token_to_blacklist raises ServiceUnavailableError on write
-            # failure so logout/refresh surface 5xx instead of silently
-            # leaving a "revoked" token valid for up to its natural expiry.
+            # B1: The Redis cache write executes on every path (fresh insert, retry, fallback)
+            # to ensure immediate hot-path revocation visibility. Failures raise `ServiceUnavailableError`
+            # (surfacing a 5xx response) rather than silently failing and leaving revoked tokens valid until expiration.
             await add_token_to_blacklist(cache_key, expires_at)
     except JWTError as e:
         _jwt_logger.warning("Skipping blacklist for invalid token", error=str(e))

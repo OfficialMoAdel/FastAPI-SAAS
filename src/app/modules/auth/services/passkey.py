@@ -183,7 +183,13 @@ class PasskeyService:
             # Parse dict into RegistrationCredential (handles snake_case conversion and base64 decoding)
             parsed_credential = parse_registration_credential_json(credential)
 
-            verification = self._verify_with_webauthn(
+            # §9: the webauthn verification is SYNCHRONOUS crypto (CBOR
+            # parsing + signature check) and used to run inline on the event
+            # loop. Offloaded like this same file already does for
+            # `encryption.decrypt_credential` at the credential-read site --
+            # the established pattern here, not a new one.
+            verification = await asyncio.to_thread(
+                self._verify_with_webauthn,
                 credential=parsed_credential,
                 expected_challenge=challenge,
                 expected_origin=self._get_origin(),
@@ -406,7 +412,10 @@ class PasskeyService:
 
         # 3. Verify authentication response
         try:
-            verification = self._verify_authentication_response(
+            # §9: synchronous crypto -- off the event loop (see the
+            # registration site above).
+            verification = await asyncio.to_thread(
+                self._verify_authentication_response,
                 credential=credential,
                 expected_challenge=stored_challenge,
                 expected_origin=self._get_origin(),

@@ -3,7 +3,9 @@
 Owns the L1 in-process tenant cache and its cross-worker invalidation
 coordination:
 
-- L1: ``_L1_TENANT_CACHE`` (``TTLCache``, 60s) — hot-path tenant resolution.
+- L1 positive: ``_L1_TENANT_CACHE`` (``TTLCache``, 60s, 1000) — hot-path tenant resolution.
+- L1 negative: ``_L1_TENANT_NEGATIVE`` (``TTLCache``, 60s, 2000) — "slug absent", in its OWN
+  cache (D.6/ADR-0028) so an unbounded, attacker-controlled slug space cannot evict tenants.
 - L2: ``TENANT_CACHE_TTL`` (300s) — Redis ``tenant:slug:{slug}`` entries.
 - Cross-worker invalidation via ``InvalidationChannel`` (ADR-0004).
 
@@ -22,6 +24,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 from uuid import UUID
 
 from cachetools import TTLCache
@@ -44,16 +47,33 @@ TENANT_CACHE_TTL = 300
 
 # L1 in-memory cache for tenant resolution (hot path). Distinct 60.0s TTL —
 # see module docstring; do not unify with TENANT_CACHE_TTL (L2, 300s).
-_L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=60.0)
+#
+# D.6 (report OQ-5): POSITIVE entries only. The negative marker used to be a
+# ``None`` VALUE in THIS dict, which made attacker-chosen slugs compete for the
+# same ``maxsize`` as real tenants: ~1000 probes of nonexistent slugs evicted
+# every live tenant from the hot path, and each miss then cost an L2 RTT plus
+# an audited L3 ``bypass_rls`` DB query. A slug space is unbounded and
+# attacker-controlled, so the two populations are now separate caches with
+# separate capacities — eviction in one can never displace the other.
+_L1_TENANT_CACHE: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=1000, ttl=60.0)
+
+# Negative L1: "this slug is known to be absent", in its OWN cache.
+#
+# Sized separately and deliberately larger than the positive cache: a negative
+# entry costs one boolean, while a positive entry costs a tenant payload, so
+# trading capacity toward the cheap side is safe. It stays bounded, so the
+# memory a scanner can pin is bounded too.
+_L1_TENANT_NEGATIVE: TTLCache[str, bool] = TTLCache(maxsize=2000, ttl=60.0)
 
 # P2 micro: frozen parsed-object memo. TenantContext is frozen+slots
 # (tenancy/context.py), so sharing one instance across requests is safe and
 # skips the uuid.UUID re-parse (~1.33 us) on repeat L1 hits. Same
 # maxsize/TTL as the dict cache. Correctness contract: every write to
 # _L1_TENANT_CACHE in middleware/tenant.py pairs with a pop here, and
-# invalidate_tenant_l1 drops both — so a parsed entry can never survive the
-# dict entry it was built from (TTL expiry drops the earlier-written dict
-# first; the subsequent L2/L3 fill rewrites both).
+# invalidate_tenant_l1 drops every layer — so a parsed entry can never survive
+# the dict entry it was built from (TTL expiry drops the earlier-written dict
+# first; the subsequent L2/L3 fill rewrites both). The negative cache is a
+# layer of the same key-space, so one invalidation clears all three.
 _L1_TENANT_PARSED: TTLCache[str, TenantContext] = TTLCache(maxsize=1000, ttl=60.0)
 
 # Cache stampede protection - track lock waiters to prevent memory leaks
@@ -73,7 +93,7 @@ _tenant_l1_seam = L1Cache(
     name="tenant_l1",
     channel=_L1_INVALIDATION_CHANNEL,
     codec=RawKeyCodec(),
-    caches=[_L1_TENANT_CACHE, _L1_TENANT_PARSED],
+    caches=[_L1_TENANT_CACHE, _L1_TENANT_NEGATIVE, _L1_TENANT_PARSED],
     logger_name="tenant_l1",
 )
 
@@ -142,6 +162,7 @@ def start_l1_invalidation_listener() -> None:
 __all__ = [
     "TENANT_CACHE_TTL",
     "get_tenant_cache_key",
+    "_L1_TENANT_NEGATIVE",
     "invalidate_tenant_l1",
     "publish_tenant_l1_invalidation",
     "start_l1_invalidation_listener",

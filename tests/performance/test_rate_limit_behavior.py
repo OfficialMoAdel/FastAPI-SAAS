@@ -249,15 +249,6 @@ _ORACLE_PATHS = (
     "/health",
 )
 
-#: Reason for the KNOWN-FAILING contract test below (kept as a constant so
-#: the xfail line stays within the 120-column limit).
-_KNOWN_FAILING_DOUBLE_CONSUME = (
-    "KNOWN-FAILING (arms): merged timeout + sequential fallback double-consumes "
-    "the per-path budget (auto_ban.py:509-517 re-consumes the candidate the "
-    "script already advanced); flips green when the fallback is made idempotent"
-)
-
-
 def _canon(key: str) -> str:
     """Ledger key with one wire `gcra:` prefix stripped (merged vs fallback)."""
     return key[len("gcra:") :] if key.startswith("gcra:") else key
@@ -276,6 +267,9 @@ class _FakeMergedLua:
         self.verdict: bool = False
         self.timeout_mode: str = "off"
 
+    #: Nonces the script has claimed (mirrors the in-script SET NX).
+    nonces: set[str] = set()
+
     async def execute(
         self, client: Any, script: str, *, keys: list[str], args: list[str]
     ) -> tuple[bytes, int, int, float, int, bytes, int]:
@@ -283,12 +277,31 @@ class _FakeMergedLua:
         index = 2 if not self.verdict else 4
         if self.timeout_mode == "before":
             raise TimeoutError("merged EVALSHA timed out before executing")
+        # ADR-0015: the real script claims its request nonce BEFORE moving a
+        # budget. KEYS[6] is the nonce on the 5-key composite.
+        if len(keys) > 5:
+            self.nonces.add(keys[5])
         self.ledger[keys[index]] = self.ledger.get(keys[index], 0) + 1
         self.selected.append(index)
         if self.timeout_mode == "after":
             raise TimeoutError("merged EVALSHA timed out after executing")
         raw: bytes = b"1" if self.verdict else b"0"
         return (raw, 1, 99, 0.0, 0, b"", 0)
+
+
+class _NonceAwareRedis:
+    """Just enough Redis for the ADR-0015 nonce probe (`exists`).
+
+    The oracle's composite fake claims the nonce; this answers the fallback's
+    `EXISTS <nonce key>` from the same set, so "did the script run?" is
+    answerable exactly as production answers it.
+    """
+
+    def __init__(self, lua: _FakeMergedLua) -> None:
+        self._lua = lua
+
+    async def exists(self, key: str) -> int:
+        return 1 if key in self._lua.nonces else 0
 
 
 class _FakeSequentialLimiter:
@@ -337,7 +350,7 @@ class _OracleEnv:
         self.lua = _FakeMergedLua()
         self.limiter = _FakeSequentialLimiter(self.lua.ledger)
         self.blacklisted = False
-        self.redis_client: Any = object()
+        self.redis_client: Any = _NonceAwareRedis(self.lua)
         self._mp = monkeypatch
         monkeypatch.setattr(lua_manager_mod, "get_lua_manager", lambda: self.lua)
         monkeypatch.setattr(
@@ -466,16 +479,32 @@ class TestMergedTimeoutDoubleConsume:
         assert oracle_env.limiter.calls != []
         assert oracle_env.ledger_total() == before + 1
 
-    async def test_timeout_after_execution_advances_twice(self, oracle_env: _OracleEnv) -> None:
+    async def test_timeout_after_execution_advances_exactly_once(self, oracle_env: _OracleEnv) -> None:
+        """The ADR-0015 guard's headline case.
+
+        Was `test_timeout_after_execution_advances_twice`, which pinned the
+        HAZARD (the script advanced, then the fallback advanced again). With
+        the in-script nonce the fallback can prove the script ran and fails
+        closed instead, so the budget moves once and the caller gets a 429.
+        """
         oracle_env.lua.timeout_mode = "after"
         before = oracle_env.ledger_total()
-        await oracle_env.check(client_ip=_ip(102), path=_ORACLE_PATHS[0])
-        assert oracle_env.lua.calls != []
-        assert oracle_env.limiter.calls != []
-        assert oracle_env.ledger_total() == before + 2
+        verdict, _limit, _period, _key, _ban, rl = await oracle_env.check(
+            client_ip=_ip(102), path=_ORACLE_PATHS[0]
+        )
+        assert oracle_env.lua.calls != [], "the merged call was attempted"
+        assert oracle_env.limiter.calls == [], "the sequential path must NOT run"
+        assert oracle_env.ledger_total() == before + 1
+        assert rl[0] is True, "an ambiguous timeout fails closed"
 
-    @pytest.mark.xfail(strict=True, reason=_KNOWN_FAILING_DOUBLE_CONSUME)
     async def test_timed_out_merged_call_consumes_at_most_once(self, oracle_env: _OracleEnv) -> None:
+        """ADR-0015 guard: a timeout AFTER execution must not double-consume.
+
+        Previously xfail(strict=True) ("flips green when the fallback is made
+        idempotent"). The script now claims a per-request nonce before moving
+        any budget, so the fallback can prove the script ran and fails closed
+        instead of re-consuming.
+        """
         oracle_env.lua.timeout_mode = "after"
         before = oracle_env.ledger_total()
         await oracle_env.check(client_ip=_ip(103), path=_ORACLE_PATHS[0])

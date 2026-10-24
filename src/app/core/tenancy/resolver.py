@@ -33,6 +33,7 @@ from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
 from src.app.core.tenancy.cache import (
     _L1_TENANT_CACHE,
+    _L1_TENANT_NEGATIVE,
     _L1_TENANT_PARSED,
     TENANT_CACHE_TTL,
     _get_tenant_lock,
@@ -169,13 +170,14 @@ async def resolve_tenant_by_slug(
     if not is_valid_slug(slug):
         return None
 
-    # L1: in-memory cache (None value = negative entry).
+    # L1: in-memory caches. D.6: the negative marker lives in its OWN cache, so
+    # a slug scanner can no longer evict real tenants from the positive one.
+    if slug in _L1_TENANT_NEGATIVE:
+        # Negative entry: the tenant is known to be missing, so the database is
+        # not consulted for it.
+        return None
     if slug in _L1_TENANT_CACHE:
         cached_data = _L1_TENANT_CACHE[slug]
-        if cached_data is None:
-            # Negative entry: the tenant is known to be missing, so the
-            # database is not consulted for it.
-            return None
         context = _parse_l1_entry(slug, cached_data)
         if context is not None:
             return context
@@ -186,10 +188,10 @@ async def resolve_tenant_by_slug(
     # L2/L3 under the per-slug stampede lock.
     async with _get_tenant_lock(slug) as lock:
         async with lock:
+            if slug in _L1_TENANT_NEGATIVE:
+                return None
             if slug in _L1_TENANT_CACHE:
                 data = _L1_TENANT_CACHE[slug]
-                if data is None:
-                    return None
                 context = _parse_l1_entry(slug, data)
                 if context is not None:
                     return context
@@ -208,7 +210,8 @@ async def resolve_tenant_by_slug(
                     pipe.get(cache_key)
                     neg_exists, cached = await pipe.execute()
                     if neg_exists:
-                        _L1_TENANT_CACHE[slug] = None
+                        _L1_TENANT_NEGATIVE[slug] = True
+                        _L1_TENANT_CACHE.pop(slug, None)
                         _L1_TENANT_PARSED.pop(slug, None)
                         return None
                     if cached:
@@ -269,7 +272,14 @@ async def resolve_tenant_by_slug(
                     cache_data = tenant_cache_data_from_model(tenant)
 
                 try:
-                    _L1_TENANT_CACHE[slug] = cache_data
+                    if cache_data is not None:
+                        _L1_TENANT_CACHE[slug] = cache_data
+                        _L1_TENANT_NEGATIVE.pop(slug, None)
+                    else:
+                        # D.6: the marker goes to its own cache; the positive
+                        # entry is dropped so a stale payload cannot shadow it.
+                        _L1_TENANT_NEGATIVE[slug] = True
+                        _L1_TENANT_CACHE.pop(slug, None)
                     _L1_TENANT_PARSED.pop(slug, None)
                 except Exception as e:  # noqa: BLE001 - cache write best-effort
                     logger.warning("tenant_l1_cache_write_failed", error=str(e))

@@ -471,7 +471,8 @@ class TestGetViolationStats:
         mock_redis.scan.side_effect = [
             (0, [b"security:violations:1.1.1.1", b"security:violations:2.2.2.2"]),
         ]
-        mock_redis.get.side_effect = [b"5", b"3"]
+        # F-12: the page is read with ONE mget, not one GET per key.
+        mock_redis.mget = AsyncMock(return_value=[b"5", b"3"])
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             stats = await get_violation_stats()
@@ -599,7 +600,7 @@ class TestCheckBanAndRateLimit:
         mock_get_redis.return_value = mock_redis
         mock_get_ban_info.return_value = BanInfo(is_banned=False)
 
-        ban_info, (is_limited, remaining, retry_after, _degraded) = await check_ban_and_rate_limit(
+        ban_info, (is_limited, remaining, retry_after, _degraded), _aggregate = await check_ban_and_rate_limit(
             sample_ip, "rate_limit:test:path", 0, 60
         )
 
@@ -619,7 +620,7 @@ class TestCheckBanAndRateLimit:
         mock_get_redis.return_value = mock_redis
         mock_get_ban_info.return_value = BanInfo(is_banned=False)
 
-        ban_info, (is_limited, remaining, retry_after, _degraded) = await check_ban_and_rate_limit(
+        ban_info, (is_limited, remaining, retry_after, _degraded), _aggregate = await check_ban_and_rate_limit(
             sample_ip, "rate_limit:test:path", -1, 120
         )
 
@@ -639,7 +640,7 @@ class TestCheckBanAndRateLimit:
         mock_get_redis.return_value = mock_redis
         mock_get_ban_info.return_value = BanInfo(is_banned=True, reason="banned for test")
 
-        ban_info, (is_limited, remaining, retry_after, _degraded) = await check_ban_and_rate_limit(
+        ban_info, (is_limited, remaining, retry_after, _degraded), _aggregate = await check_ban_and_rate_limit(
             sample_ip, "rate_limit:test:path", 0, 60
         )
 
@@ -659,7 +660,7 @@ class TestP24NoClientPolicy:
         from src.app.core.config import settings as real_settings
 
         assert real_settings.rate_limit.RATE_LIMIT_FAIL_OPEN is False
-        ban_info, (is_limited, _remaining, _retry_after, _degraded) = await check_ban_and_rate_limit(
+        ban_info, (is_limited, _remaining, _retry_after, _degraded), _aggregate = await check_ban_and_rate_limit(
             sample_ip, "rate_limit:p24", 10, 60
         )
         assert ban_info.is_banned is False
@@ -671,7 +672,7 @@ class TestP24NoClientPolicy:
         from src.app.core.config import settings as real_settings
 
         with patch.object(real_settings.rate_limit, "RATE_LIMIT_FAIL_OPEN", True):
-            ban_info, (is_limited, _remaining, _retry_after, _degraded) = await check_ban_and_rate_limit(
+            ban_info, (is_limited, _remaining, _retry_after, _degraded), _aggregate = await check_ban_and_rate_limit(
                 sample_ip, "rate_limit:p24", 10, 60
             )
         assert ban_info.is_banned is False

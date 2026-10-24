@@ -19,6 +19,7 @@ import posixpath
 import re
 import time
 import unicodedata
+from collections.abc import Iterator
 from concurrent.futures import Executor, ProcessPoolExecutor
 from enum import Enum
 
@@ -32,6 +33,11 @@ from src.app.core.monitoring.r1_unified_metrics import record_attack_scan_pool_f
 from src.app.core.observability.log_sanitizer import LogSanitizer
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
 from src.app.core.utils.ip_utils import get_client_ip
+from src.app.middleware.attack_scan_linear import (
+    build_linear_pattern,
+    build_priority_map,
+    iter_combined_matches,
+)
 from src.app.middleware.body_limit import BodySizeLimitExceeded
 
 logger = get_logger(__name__)
@@ -103,6 +109,19 @@ COMBINED_ATTACK_RE: re.Pattern[bytes] = re.compile(
     rb"|(?P<ssrf_cloud>169\.254\.169\.254)",
     re.IGNORECASE | re.MULTILINE,
 )
+
+# F-1: the four branches whose `.*?` is UNBOUNDED are super-linear under `re`
+# (each start position rescans to end-of-line -> O(n^2); 96 KB -> ~14 s, and
+# the offload does not help because `re` holds the GIL). They are read by the
+# linear scanner in attack_scan_linear.py instead; the remaining thirteen
+# branches stay in `re` and are compiled here with the four REMOVED, so the
+# pattern is derived from COMBINED_ATTACK_RE (it cannot drift) rather than
+# re-spelled. `_GROUP_PRIORITY` restores the alternation order for the merge.
+_LINEAR_ATTACK_RE: re.Pattern[bytes] = re.compile(
+    build_linear_pattern(COMBINED_ATTACK_RE.pattern),
+    re.IGNORECASE | re.MULTILINE,
+)
+_GROUP_PRIORITY: dict[str, int] = build_priority_map(COMBINED_ATTACK_RE.pattern)
 
 # P1-7: necessary-literal prefilter for the combined regex. Each literal is a
 # *necessary* (not sufficient) condition for its group — every byte-string the
@@ -317,6 +336,12 @@ _HEADERS_TO_CHECK: tuple[str, ...] = (
 # can filter scope["headers"] in a single pass without per-name str lookups.
 _HEADERS_TO_CHECK_BYTES: frozenset[bytes] = frozenset(h.encode("latin-1") for h in _HEADERS_TO_CHECK)
 
+# §6: the scan location for each checked header is a pure function of its
+# name, but it used to be rebuilt with an f-string + a latin-1 decode for
+# every scanned header on every request (~6/request). Precomputed once; the
+# membership test at the call site already guarantees the key exists.
+_HEADER_LOCATIONS: dict[bytes, str] = {h.encode("latin-1"): f"header:{h}" for h in _HEADERS_TO_CHECK}
+
 
 # nrgi.3: the only HTTP methods whose body is scanned. Hoisted from the
 # inline tuple literal so the gate is a single named fact rather than a
@@ -327,8 +352,27 @@ _HEADERS_TO_CHECK_BYTES: frozenset[bytes] = frozenset(h.encode("latin-1") for h 
 _BODY_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH"})
 
 
+def _iter_scan_matches(content: bytes) -> Iterator[tuple[int, int, str]]:
+    """``(start, end, group_name)`` in ``COMBINED_ATTACK_RE.finditer`` order.
+
+    F-1: the four branches whose unbounded ``.*?`` makes ``re`` super-linear
+    are read by the linear scanner (``attack_scan_linear``); the other thirteen
+    -- already linear -- stay in ``re``. The merged sequence is identical to
+    the original single-pattern ``finditer`` (the isomorphism is proven by
+    ``tests/unit/middleware/test_attack_scan_linear_differential.py``).
+
+    ``ATTACK_DETECTION_LINEAR_SCAN`` restores the original single-pattern scan
+    -- the pre-fix, super-linear behaviour -- so an operator who suspects the
+    scanner has an immediate, no-deploy kill switch (the same shape as the
+    A-1 prefilter switch).
+    """
+    if settings.attack_detection.ATTACK_DETECTION_LINEAR_SCAN:
+        return iter_combined_matches(content, _LINEAR_ATTACK_RE, _GROUP_PRIORITY)
+    return ((m.start(), m.end(), m.lastgroup or "") for m in COMBINED_ATTACK_RE.finditer(content))
+
+
 def scan_content_for_attacks(content: bytes, location: str, log_full_request: bool = False) -> list[dict]:
-    """Return every attack the combined regex finds in ``content``.
+    """Return every attack the scanner finds in ``content``.
 
     Module level, and it RETURNS its findings instead of appending them to a
     list the caller owns. That is not a style choice: a worker process cannot
@@ -336,16 +380,14 @@ def scan_content_for_attacks(content: bytes, location: str, log_full_request: bo
     must hand its result back (ADR-0016's A-8).
     """
     findings: list[dict] = []
-    for match in COMBINED_ATTACK_RE.finditer(content):
-        group_name = match.lastgroup
+    for start, end, group_name in _iter_scan_matches(content):
         if group_name and group_name in _GROUP_TO_ATTACK:
             pattern_name, attack_type = _GROUP_TO_ATTACK[group_name]
 
             # False positive mitigation for multipart/form-data boundaries
             if pattern_name == "sql_comment_end":
-                match_start = match.start()
-                line_start = content.rfind(b"\n", 0, match_start) + 1
-                line = content[line_start : match.end()]
+                line_start = content.rfind(b"\n", 0, start) + 1
+                line = content[line_start:end]
                 if line.startswith(b"--") and b" " not in line.strip() and len(line.strip()) > 10:
                     continue
 
@@ -679,7 +721,7 @@ class AttackDetectionMiddleware:
             if header_value and header_name in _HEADERS_TO_CHECK_BYTES:
                 self._check_for_patterns(
                     self._sanitize_input(header_value),
-                    f"header:{header_name.decode('latin-1')}",
+                    _HEADER_LOCATIONS[header_name],
                     detected_attacks,
                 )
 
@@ -780,9 +822,18 @@ class AttackDetectionMiddleware:
                         else:
                             # Sanitize then scan — NFKC + zero-width stripping.
                             # P1 FIX: bodies above _BODY_OFFLOAD_THRESHOLD are
-                            # sanitized+scanned in the thread pool so a large
-                            # multipart/JSON payload cannot stall the event loop
-                            # for every concurrent request.
+                            # sanitized+scanned on the loop's default THREAD pool.
+                            # ADR-0008 measured this arm as BEST-EFFORT, not a
+                            # real offload: `re` is pure Python and does not
+                            # release the GIL, so a worker thread holds the
+                            # interpreter lock for the whole match (4KB 1.4x,
+                            # 8KB 1.6x, 32KB 2.3x vs inline). It does not
+                            # recover event-loop responsiveness. The arm that
+                            # does is A-8's PROCESS pool (`self._offload`,
+                            # ADR-0016) — which is OFF by default
+                            # (`ATTACK_DETECTION_BRANCH_PRUNE_OFFLOAD=False`),
+                            # so on a default deployment this is the arm that
+                            # runs, and it does not protect the loop.
                             await self._scan_body(body_to_scan, detected_attacks)
                 except BodySizeLimitExceeded:
                     # S-07 FIX: an oversized body is a SIZE violation, not an
@@ -822,10 +873,16 @@ class AttackDetectionMiddleware:
         1. A-8's worker process, when the offload is enabled. The prefilter
            decision is made HERE, in the parent, because the prefilter is
            cheap and its counter lives in the parent.
-        2. The thread pool, for a body larger than ``_BODY_OFFLOAD_THRESHOLD``
-           that is not offloaded, so a large payload cannot stall the event
-           loop.
+        2. The loop's default THREAD pool, for a body larger than
+           ``_BODY_OFFLOAD_THRESHOLD`` that is not offloaded. ADR-0008
+           measured this as best-effort only — ``re`` holds the GIL, so a
+           thread does not release the interpreter lock and does NOT recover
+           event-loop responsiveness. It is a fallback, not a guard.
         3. The event loop itself, for everything else.
+
+        Arm 1 is the only real offload (ADR-0016), and it is off by default
+        (``ATTACK_DETECTION_BRANCH_PRUNE_OFFLOAD=False``), so on a default
+        deployment arms 2 and 3 are the whole story.
         """
         sanitized_body = self._sanitize_input(content)
         if self._offload is not None:

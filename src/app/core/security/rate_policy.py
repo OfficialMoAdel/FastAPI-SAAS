@@ -1,6 +1,7 @@
 """Shared rate-limit verdicts, key construction, tier policies, and endpoint budgets."""
 
 import hashlib
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -13,6 +14,7 @@ from src.app.core.logger import get_logger
 from src.app.core.middleware_state import get_client_ip_state
 from src.app.core.security.policies import require_rate_policy_fetcher
 from src.app.core.security.rate_limit_cache import get_tier_policy_limits
+from src.app.core.utils.cache import build_tenant_key
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.rate_limit import rate_limiter as default_rate_limiter
 
@@ -109,6 +111,17 @@ def window_reset_seconds(period: int | None) -> int:
     return period - (int(time.time()) % period)
 
 
+#: Engine decision cache, keyed on the CONFIGURED VALUE (§6).
+#:
+#: Not frozen at import: `RATE_LIMIT_ALGORITHM` is read at call time because
+#: the engine fence is a live contract -- tests flip it to prove a
+#: fixed-window operator is not routed through the GCRA composite, and an
+#: operator-facing knob that silently required a restart would be a trap.
+#: Keying the cache on the value keeps the per-call cost at one dict lookup
+#: (no `.lower()` allocation) while preserving that behaviour.
+_GCRA_DECISION_CACHE: dict[str, bool] = {}
+
+
 def uses_gcra() -> bool:
     """Whether the operator configured the GCRA engine.
 
@@ -118,7 +131,14 @@ def uses_gcra() -> bool:
     — otherwise ``RATE_LIMIT_ALGORITHM=fixed_window`` silently gets GCRA on
     the authenticated hot path and fixed window everywhere else.
     """
-    return settings.rate_limit.RATE_LIMIT_ALGORITHM.lower() == "gcra"
+    # §6: the `.lower()` on a constant string was per-call waste. Memoized on
+    # the value, so a runtime change is still honoured (see the cache note).
+    algorithm = settings.rate_limit.RATE_LIMIT_ALGORITHM
+    decision = _GCRA_DECISION_CACHE.get(algorithm)
+    if decision is None:
+        decision = algorithm.lower() == "gcra"
+        _GCRA_DECISION_CACHE[algorithm] = decision
+    return decision
 
 
 async def consume(
@@ -176,8 +196,8 @@ async def consume(
                 # R6 FIX: round UP so sub-second retry windows are not
                 # truncated to 0 (0 triggered the fixed-window formula
                 # upstream, reporting e.g. 400ms as a full period).
-                import math
-
+                # §6: `math` is imported at module scope (a function-local
+                # import re-hits sys.modules on every call).
                 retry_after = int(math.ceil(result.retry_after)) if result.is_limited else 0
                 return result.is_limited, result.remaining, retry_after, False
             except Exception as exc:
@@ -354,8 +374,9 @@ def build_rate_limit_key(
         ip_str = anonymous_ip if anonymous_ip and anonymous_ip != "unknown" else "unknown"
         return f"rate_limit:anonymous:ip:{ip_str}:{path}"
 
-    from src.app.core.utils.cache import build_tenant_key
-
+    # §6: imported at module scope. `utils.cache` does not import this module,
+    # so the hoist cannot create a cycle (verified by the import-linter
+    # contract in CI).
     base_key = f"rate_limit:user:{user_id}:{path}"
     return build_tenant_key(base_key, tenant_id)
 

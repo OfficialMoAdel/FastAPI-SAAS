@@ -69,8 +69,11 @@ class TestF19ScanDedupe:
         """F19: a key repeated by SCAN on a later page counts once, GET once."""
         dup = "security:violations:9.9.9.9"
         mock_redis.scan.side_effect = [(1, [dup]), (0, [dup])]
-        mock_redis.get = AsyncMock(return_value=b"3")
+        # F-12: the dedupe means the second page contributes no key, so mget
+        # is called ONCE with ONE key -- the same single read the per-key loop
+        # made, now batched.
+        mock_redis.mget = AsyncMock(return_value=[b"3"])
         with patch("src.app.core.utils.cache.client", mock_redis):
             stats = await get_violation_stats()
         assert stats == {"total_ips": 1, "total_violations": 3}
-        assert mock_redis.get.await_count == 1
+        assert mock_redis.mget.await_count == 1

@@ -166,6 +166,10 @@ class RequestAdmissionService:
         # everywhere else, so the algorithm gets the last word.
         if settings.security.AUTO_BAN_ENABLED and uses_gcra() and ctx.user_id and ctx.token:
             downgraded_to_anonymous = False
+            # F-10: set only by the branch that folds the anonymous aggregate
+            # ceiling into its composite call; ``None`` means "the ceiling, if
+            # applicable, still has to be evaluated separately below".
+            aggregate: tuple[bool, int, int] | None = None
             (
                 is_blacklisted,
                 limit,
@@ -191,21 +195,43 @@ class RequestAdmissionService:
                     user_id=ctx.user_id,
                     treated_as_anonymous=True,
                 )
-                # S-17 FIX (second site): the GCRA seam performs the SAME
-                # revoked-token downgrade, so the flag has to be set here too.
-                # It was hard-coded False on this branch, which meant the
-                # anonymous aggregate ceiling below was skipped for exactly the
-                # attacker it exists to stop — a caller holding their own
-                # revoked token, now re-keyed into the anonymous bucket.
+                # S-17 FIX (second site): Sets the revoked-token downgrade flag for the GCRA seam.
+                # Previously hard-coded to False, which bypassed the anonymous aggregate ceiling
+                # for requests holding revoked tokens re-keyed into the anonymous bucket.
                 downgraded_to_anonymous = True
             if ban_info.is_banned:
                 return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
         else:
             limit, period, key, downgraded_to_anonymous = await self._resolve_legacy_config(request, ctx)
+            aggregate = None
 
             if settings.security.AUTO_BAN_ENABLED and uses_gcra():
-                ban_info, (is_limited, remaining, retry_after, degraded) = await check_ban_and_rate_limit(
-                    client_ip, key, limit, period
+                # F-10: the anonymous per-IP aggregate ceiling rides in the SAME
+                # round-trip when this request will be metered as anonymous, so
+                # an anonymous caller makes 1 RTT instead of 2. It is offered
+                # only when the ceiling is enabled; the script consumes it only
+                # if the per-path leg allowed (ADR-0015's invariant).
+                #
+                # `downgraded_to_anonymous` is part of the test because the
+                # `ctx.user_id` rebind happens AFTER this call: a revoked token
+                # is re-keyed into the anonymous bucket by the resolver, so it
+                # is anonymous traffic even while ctx still carries the `sub`.
+                aggregate_limit, aggregate_period = settings.rate_limit.ANONYMOUS_IP_AGGREGATE_LIMIT
+                fold_aggregate = (
+                    (not ctx.user_id or downgraded_to_anonymous)
+                    and not api_key_metered
+                    and bool(aggregate_limit)
+                    and aggregate_limit > 0
+                )
+                ban_info, (is_limited, remaining, retry_after, degraded), aggregate = (
+                    await check_ban_and_rate_limit(
+                        client_ip,
+                        key,
+                        limit,
+                        period,
+                        aggregate_limit=aggregate_limit if fold_aggregate else 0,
+                        aggregate_period=aggregate_period if fold_aggregate else 0,
+                    )
                 )
                 if ban_info.is_banned:
                     return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
@@ -219,20 +245,11 @@ class RequestAdmissionService:
                         return AdmissionOutcome("reject_banned", client_ip, ban_info=ban_info)
                 is_limited, remaining, retry_after, degraded = await consume(key, limit, period)
 
-        # S-17 FIX: a revoked token is downgraded to ANONYMOUS inside
-        # _resolve_legacy_config (or, on the GCRA branch, by the ban seam
-        # above). `ctx.user_id` still held the pre-downgrade `sub`, so the
-        # aggregate gate further down (`not ctx.user_id`) saw an authenticated
-        # caller and SKIPPED the anonymous ceiling — for a caller that had just
-        # been re-keyed into the anonymous per-path bucket, under anonymous
-        # limits.
-        #
-        # That is exactly the case the ceiling exists for (the comment above it
-        # spells out the rotation attack it closes). The caller owns their own
-        # revoked token, so bypassing it is attacker-controlled.
-        #
-        # Reported explicitly rather than by mutating ctx inside the resolver:
-        # returning the decision keeps it visible at the one place that made it.
+        # S-17 FIX: Revoked tokens downgrade to anonymous (`_resolve_legacy_config` / GCRA seam).
+        # Previously, `ctx.user_id` retained the pre-downgrade `sub`, causing downstream checks
+        # (`not ctx.user_id`) to treat revoked callers as authenticated and incorrectly skip the
+        # anonymous per-path ceiling (enabling token rotation attacks).
+        # The resolver explicitly reports this decision rather than mutating `ctx` internally to maintain transparency.
         if downgraded_to_anonymous:
             ctx = ctx._replace(user_id=None)
 
@@ -243,29 +260,29 @@ class RequestAdmissionService:
                 limit=limit,
                 period=period,
             )
-
-        # Run-3 N-1 (middleware.rate_limit.anonymous_key_path_scoped):
-        # per-path buckets alone do not bound an anonymous caller, because
-        # sanitize_path collapses only numeric/UUID segments - rotating a string
-        # segment minted a fresh bucket per request, and auto-ban never fired
-        # because no single bucket was ever exhausted.
+        # Run-3 N-1: Per-path buckets alone cannot bound anonymous traffic because `sanitize_path`
+        # only collapses numeric/UUID segments, allowing attackers to rotate string segments and bypass auto-bans.
+        # An IP-keyed aggregate ceiling—applied only to anonymous traffic when the per-path check
+        # passes—enforces a total bound using a constant path token. Authenticated callers are
+        # unaffected (keyed by user ID / tier budget).
         #
-        # An IP-keyed aggregate ceiling, applied only to ANONYMOUS traffic and
-        # only when the per-path bucket did not already reject, bounds the total.
-        # Its key uses a constant path token, so this check cannot itself be
-        # rotated around. Authenticated callers are unaffected: they are already
-        # keyed by user id and covered by their tier budget.
-        if not is_limited and not ctx.user_id and not api_key_metered:
+        # F-10: when the GCRA branch folded the ceiling into its composite call
+        # (`aggregate is not None`), this is a READ of that result — no second
+        # Redis round-trip. Otherwise (fixed-window operators, the authed
+        # composite branch) the ceiling is evaluated separately, exactly as
+        # before. The fold is skipped when the per-path leg already rejected,
+        # which is the same short-circuit the separate call had.
+        if aggregate is None and not is_limited and not ctx.user_id and not api_key_metered:
             aggregate = await self._check_anonymous_aggregate(client_ip)
-            if aggregate is not None and aggregate[0]:
-                # Only the REJECTION is taken from the aggregate ceiling. The
-                # per-path `remaining` header keeps reporting the per-route
-                # budget, which is what a well-behaved client paces against;
-                # overwriting it with the aggregate value changed the documented
-                # header contract for every anonymous caller.
-                is_limited = True
-                remaining = 0
-                retry_after = aggregate[2]
+        if aggregate is not None and aggregate[0]:
+            # Only the REJECTION is taken from the aggregate ceiling. The
+            # per-path `remaining` header keeps reporting the per-route
+            # budget, which is what a well-behaved client paces against;
+            # overwriting it with the aggregate value changed the documented
+            # header contract for every anonymous caller.
+            is_limited = True
+            remaining = 0
+            retry_after = aggregate[2]
 
         verdict = build_verdict(
             key=key,
@@ -278,12 +295,10 @@ class RequestAdmissionService:
         )
         if is_limited:
             if api_key_metered:
-                # Deliberately NOT auto-ban eligible, for the reason
-                # _evaluate_refresh_budget gives: an integration's traffic
-                # typically egresses from ONE shared NAT, so one over-budget
-                # caller would otherwise ban that address - and with it every
-                # other integration behind it - for AUTO_BAN_DURATION. 429 +
-                # Retry-After is the answer; a ban is the wrong tool.
+                # Deliberately excluded from auto-bans (matching `_evaluate_refresh_budget` rationale):
+                # integration traffic typically originates from a shared NAT, so a single over-budget caller
+                # would ban the IP and disrupt all other integrations behind it for `AUTO_BAN_DURATION`.
+                # Returns 429 + Retry-After instead of issuing an IP ban.
                 return AdmissionOutcome("limited", client_ip, verdict)
             return await self._handle_violation(client_ip, verdict)
         return AdmissionOutcome("admit", client_ip, verdict)
@@ -436,13 +451,10 @@ class RequestAdmissionService:
         # A bearer credential wins for metering, which is what g4my's
         # `ctx.token is None` condition already meant and is unchanged here.
         if identity is not None and identity.tier_name:
-            # The owner's TIER is what selects the budget, so it is also what
-            # gates the owner bucket. An identity without one (a cache entry
-            # written before ADR-0023, or an owner with no tier) deliberately
-            # leaves `user_id` None, which routes the request to g4my's
-            # per-source-IP budget below. Taking the owner bucket without a tier
-            # would land in resolve_rate_limits' authenticated fallback
-            # (50/hour) - a 20x tightening sold as a feature.
+            # Owner tier selects the budget and gates the owner bucket. Identities lacking a tier
+            # (legacy ADR-0023 cache entries or tierless owners) keep `user_id` as `None` to route
+            # to g4my's per-source-IP budget. Forcing the owner bucket without a tier would trigger
+            # `resolve_rate_limits`' authenticated fallback (50/hr), causing an unintended 20x restriction.
             user_id = identity.user_id
             tier_name = identity.tier_name
             tier_id_raw = identity.tier_id
@@ -488,19 +500,12 @@ class RequestAdmissionService:
         # one explicit "unknown" bucket instead of colliding with (or
         # fragmenting around) a literal IP-looking string.
         anonymous_ip = raw_ip if isinstance(raw_ip, str) and raw_ip and raw_ip != "unknown" else None
-        # Bead g4my. A caller with an X-API-Key and NO bearer credential has an
-        # authenticated credential, so resolve_rate_limits must not be asked to
-        # guess for it: with no tier identity it lands on DEFAULT_ANONYMOUS_LIMIT
-        # (10 per 3600s), which is what M-7 measured against a Pro account that
-        # answers 1000 with its Bearer token. Same shape as the defaults in
-        # resolve_rate_limits' own fallback chain - a named budget applied
-        # directly, no DB lookup.
-        #
-        # The condition is deliberately narrow. `ctx.token is None` keeps a
-        # request that ALSO presents a bearer credential on the JWT path, and
-        # `user_id is None` keeps a revoked token's S-17 downgrade - which has
-        # just cleared the tier identity above - anonymous, because revoking a
-        # token must never RAISE the caller's budget.
+        # Bead g4my: Callers presenting `X-API-Key` without a bearer credential receive a direct named
+        # budget fallback (mirroring `resolve_rate_limits`) to prevent valid accounts from being incorrectly
+        # restricted to `DEFAULT_ANONYMOUS_LIMIT` (10/3600s vs Pro tier 1000, per M-7).
+        # Conditions are strictly bounded: `ctx.token is None` keeps dual-credential requests on the JWT path,
+        # and `user_id is None` preserves S-17 revoked-token anonymous downgrades
+        # (revocation must never elevate rate limits).
         if ctx.api_key and ctx.token is None and user_id is None:
             api_key_limit, api_key_period = settings.rate_limit.API_KEY_LIMIT
             return api_key_limit, api_key_period, build_api_key_rate_limit_key(ctx.path, anonymous_ip), False

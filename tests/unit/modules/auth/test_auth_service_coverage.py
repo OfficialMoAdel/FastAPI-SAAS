@@ -19,6 +19,7 @@ from fastapi import Response
 from jwt import ExpiredSignatureError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.config import settings
 from src.app.modules.auth.service import AuthService
 from src.app.modules.auth.services.mfa import MFAService
 
@@ -125,10 +126,15 @@ class TestAuthenticateUser:
                 result = await auth_service.authenticate_user("nonexistent@test.com", "wrongpassword", mock_db)
 
                 assert result is None
-                # Verify dummy hash was used for constant-time authentication
+                # Verify dummy hash was used for constant-time authentication.
+                # §8.2: the hash is no longer a frozen literal -- it tracks
+                # BCRYPT_ROUNDS -- so the assertion pins the CONTRACT (the
+                # verified hash IS the dummy for the configured cost) rather
+                # than the bytes of one particular literal.
                 mock_verify.assert_called_once()
                 call_args = mock_verify.call_args[0]
-                assert auth_service._DUMMY_BCRYPT_HASH in str(call_args)
+                assert auth_service._dummy_bcrypt_hash() in str(call_args)
+                assert call_args[1].split("$")[2] == f"{settings.crypt.BCRYPT_ROUNDS:02d}"
 
 
 # ============================================================================

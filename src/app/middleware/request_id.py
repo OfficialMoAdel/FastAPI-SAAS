@@ -6,6 +6,7 @@ Generates a unique request ID for each request and adds it to:
 - Logging context
 """
 
+import logging
 import re
 import uuid
 
@@ -22,17 +23,9 @@ REQUEST_ID_HEADER = "X-Request-ID"
 _REQUEST_ID_HEADER_BYTES = b"x-request-id"
 _REQUEST_ID_PATTERN = re.compile(r"^[a-zA-Z0-9\-]{1,128}$")
 
-#: Where the resolved ID is memoised on the ASGI scope. Three middleware
-#: classes each need the ID for a response they might short-circuit before
-#: ``RequestIDMiddleware`` runs (IPFilter 403, RateLimit 429/503), and each was
-#: calling ``request_id_from_scope`` unconditionally -- which meant every
-#: request drew THREE independent uuid4s and carried THREE different values
-#: through its guards. That is a correctness bug, not a cost one: the ID a
-#: guard logged and the ID it echoed could disagree with the ID the inner
-#: middleware minted, so a single request had no single identity. The scope
-#: is a mutable dict by ASGI convention (routers set ``scope["route_handler"]``,
-#: ``scope["endpoint"]`` the same way), which is what makes memoisation
-#: possible without a signature change to any of the three callers.
+#: Memoize the request ID on the ASGI scope. Previously, three middleware classes
+#: (IPFilter, RateLimit) independently minted uuid4s, causing a correctness bug where
+#: a single request had conflicting identities. The mutable ASGI scope enables memoization without changing signatures.
 _SCOPE_REQUEST_ID_KEY = "fastapi_saas.request_id"
 
 
@@ -115,11 +108,15 @@ class RequestIDMiddleware:
         set_request_id(request.state, request_id)
 
         # Log request with ID
-        logger.debug(
-            "Request started",
-            request_id=request_id,
-            method=request.method,
-            path=scope["path"],
-        )
+        # F-3(a): Guard required. Our level-aware wrapper (`core/logger.py`) allows this check
+        # to skip calls and eager kwargs construction when disabled. Without it, requests pay
+        # full processor chain overhead for log records discarded at WARNING.
+        if logger.is_enabled_for(logging.DEBUG):
+            logger.debug(
+                "Request started",
+                request_id=request_id,
+                method=request.method,
+                path=scope["path"],
+            )
 
         await self.app(scope, receive, wrap_send_with_request_id(send, request_id))

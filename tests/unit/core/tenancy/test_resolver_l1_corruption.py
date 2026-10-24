@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.app.core.db.rls import RLSAuditFailureError
-from src.app.core.tenancy.cache import _L1_TENANT_CACHE, _L1_TENANT_PARSED
+from src.app.core.tenancy.cache import _L1_TENANT_CACHE, _L1_TENANT_NEGATIVE, _L1_TENANT_PARSED
 from src.app.core.tenancy.resolver import resolve_tenant_by_slug
 
 SLUG = "acme"
@@ -95,8 +95,9 @@ class TestCorruptL1Entry:
         with patch("src.app.core.db.rls.bypass_rls", _bypass):
             await resolve_tenant_by_slug(SLUG, session_factory=factory, redis_client=None)
 
-        assert _L1_TENANT_CACHE.get(SLUG) is None  # negative entry, not the corrupt payload
-        assert _L1_TENANT_CACHE.get(SLUG) != _corrupt_payload()
+        # D.6: the negative marker is its own cache; the corrupt payload is gone.
+        assert _L1_TENANT_CACHE.get(SLUG) is None
+        assert SLUG in _L1_TENANT_NEGATIVE
 
     @pytest.mark.asyncio
     async def test_the_double_check_under_the_lock_is_guarded_too(self) -> None:

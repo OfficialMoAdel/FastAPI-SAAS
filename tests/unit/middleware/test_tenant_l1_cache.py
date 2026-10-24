@@ -35,14 +35,14 @@ class TestL1CacheDirectAccess:
         assert _L1_TENANT_CACHE["acme"]["id"] == "tenant-123"
         assert _L1_TENANT_CACHE["acme"]["is_active"] is True
 
-    def test_l1_cache_stores_negative_cache(self):
-        """Verify L1 cache can store None for negative caching."""
-        # Store None (negative cache)
-        _L1_TENANT_CACHE["nonexistent"] = None
+    def test_l1_cache_stores_negative_cache_separately(self):
+        """D.6: negatives have their own cache, so they cannot evict tenants."""
+        from src.app.middleware.tenant import _L1_TENANT_NEGATIVE
 
-        # Retrieve - key exists but value is None
-        assert "nonexistent" in _L1_TENANT_CACHE
-        assert _L1_TENANT_CACHE["nonexistent"] is None
+        _L1_TENANT_NEGATIVE["nonexistent"] = True
+
+        assert "nonexistent" in _L1_TENANT_NEGATIVE
+        assert "nonexistent" not in _L1_TENANT_CACHE
 
     def test_l1_cache_miss(self):
         """Verify L1 cache returns None for missing keys."""
