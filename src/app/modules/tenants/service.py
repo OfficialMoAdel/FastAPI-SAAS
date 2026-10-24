@@ -18,7 +18,7 @@ from src.app.core.logger import get_logger
 from src.app.core.tenancy.cache import TENANT_CACHE_TTL, get_tenant_cache_key
 from src.app.core.tenancy.resolver import negative_cache_key, slug_cache_key
 from src.app.core.utils.cache_guard import cache_guard
-from src.app.modules._base.service import BaseService
+from src.app.modules._base.service import BaseService, fetch_page_with_total
 from src.app.modules.tenants.crud import crud_tenants
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.tenants.schemas import TenantCreate, TenantResponse, TenantUpdate
@@ -172,9 +172,15 @@ class TenantService(BaseService[Tenant]):
         poison_key = f"tenant:invalidation_failed:{tenant_id}"
 
         async def _invalidate_redis() -> None:
-            await cache_client.delete(get_tenant_cache_key(tenant_id))
+            # P2-3/P3-3: one pipeline instead of two sequential deletes. The
+            # slug key is optional, so the pipeline is only built when there
+            # is something to delete.
+            keys = [get_tenant_cache_key(tenant_id)]
             if slug:
-                await cache_client.delete(_get_slug_cache_key(slug))
+                keys.append(_get_slug_cache_key(slug))
+            async with cache_client.client.pipeline(transaction=False) as pipe:
+                pipe.delete(*keys)
+                await pipe.execute()
 
         async def _write_poison_marker() -> None:
             # TENANT_CACHE_TTL bounds the marker exactly as it bounds the
@@ -411,21 +417,22 @@ class TenantService(BaseService[Tenant]):
 
         offset = compute_offset(page, items_per_page)
 
-        kwargs: dict[str, Any] = {
-            "db": self.db,
-            "offset": offset,
-            "limit": items_per_page,
-            "schema_to_select": TenantResponse,
-        }
-
-        if is_active is not None:
-            kwargs["is_active"] = is_active
-
-        from src.app.core.db.rls import bypass_rls
-
-        # Explicit bypass: superuser endpoint lists all tenants across the platform
-        async with bypass_rls(self.db, reason="list_tenants (superuser)"):
-            result: dict[str, Any] = await self.crud.get_multi(**kwargs)
+        # P2-3: one query instead of two. `get_multi` issues the page
+        # SELECT and then a second sequential COUNT(*);
+        # `fetch_page_with_total` builds the identical statement with
+        # COUNT(*) OVER() and returns the same {"data", "total_count"}
+        # shape the router reads. `crud_tenants` is a plain FastCRUD and
+        # "tenants" is not in the RLS TENANT_TABLES list, so the only
+        # filter either path applies is the explicit `is_active` one.
+        filters: dict[str, Any] = {} if is_active is None else {"is_active": is_active}
+        result: dict[str, Any] = await fetch_page_with_total(
+            self.crud,
+            self.db,
+            offset=offset,
+            limit=items_per_page,
+            schema_to_select=TenantResponse,
+            **filters,
+        )
 
         return result
 

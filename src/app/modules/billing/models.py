@@ -8,7 +8,7 @@ import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -171,6 +171,22 @@ class UserSubscription(Base, kw_only=True):
             "tenant_id",
             "user_id",
             "status",
+        ),
+        # Declared to match 04_billing.py exactly (name, column, unique,
+        # predicate). The migration has always created this index, but the ORM
+        # did not, so a schema built from ``Base.metadata.create_all`` — which
+        # is what tests/conftest.py and scripts/init_test_db.py use — had no
+        # unique constraint on ``stripe_subscription_id`` while production
+        # does. One Stripe subscription is meant to map to exactly one local
+        # row (the ``IntegrityError`` race fallback in
+        # billing/webhook/handlers/checkout.py exists to handle that
+        # constraint); the partial predicate keeps nullable columns free to
+        # repeat NULL, as Postgres UNIQUE semantics require.
+        Index(
+            "uq_user_subscriptions_stripe_sub",
+            "stripe_subscription_id",
+            unique=True,
+            postgresql_where=text("stripe_subscription_id IS NOT NULL"),
         ),
     )
 

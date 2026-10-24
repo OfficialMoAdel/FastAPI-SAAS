@@ -46,13 +46,33 @@ def _failing(message: str = "redis down") -> AsyncMock:
     return call
 
 
-def _fails_first_call(message: str = "boom") -> AsyncMock:
-    """Fail the FIRST call, succeed after — a recoverable first-attempt error.
+def _client_with_pipeline(execute_side_effect: Any) -> MagicMock:
+    """A Redis client whose ONE pipeline delete carries the failure.
 
-    Counted, not a side-effect LIST: the tenant family issues two deletes per
-    attempt (id key + slug key), so a two-item list would be exhausted
-    mid-attempt and look like exhaustion rather than recovery.
+    The tenants invalidation batches its keys into a single pipelined delete,
+    so the retry budget is spent on ``pipeline.execute()`` — which is the
+    thing that actually reaches Redis.
     """
+
+    class _Pipe:
+        def __init__(self) -> None:
+            self.delete = MagicMock()
+
+        async def __aenter__(self) -> _Pipe:
+            return self
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+        async def execute(self) -> list[object]:
+            return await execute_side_effect()
+
+    client = MagicMock()
+    client.pipeline = MagicMock(side_effect=lambda transaction=False: _Pipe())
+    return client
+
+
+def _fails_first_call(message: str = "boom") -> AsyncMock:
     state = {"calls": 0}
 
     async def _side_effect(*args: object, **kwargs: object) -> int:
@@ -264,15 +284,16 @@ class TestTenantCallSite:
         service = TenantService(AsyncMock())
         tenant_id = _uuid()
         client = MagicMock()
-        client.client = object()
-        client.delete = _failing()
+        client.client = _client_with_pipeline(_failing())
         client.set = AsyncMock()
 
         with patch("src.app.modules.tenants.service.cache_client", client):
             await service._invalidate_tenant_cache(tenant_id, slug="acme")
 
-        # One retry budget, not an unbounded loop.
-        assert client.delete.await_count == len(INVALIDATION_ATTEMPTS)
+        # One retry budget, not an unbounded loop. The L2 leg is now ONE
+        # pipelined delete, so the attempts are counted on the pipeline's
+        # execute, not on per-key client deletes.
+        assert client.client.pipeline.call_count == len(INVALIDATION_ATTEMPTS)
         # The marker is the DECLARED tenant signal, bounded by the same TTL.
         client.set.assert_awaited_once()
         key, value, kwargs = client.set.call_args.args[0], client.set.call_args.args[1], client.set.call_args.kwargs
@@ -285,8 +306,7 @@ class TestTenantCallSite:
 
         service = TenantService(AsyncMock())
         client = MagicMock()
-        client.client = object()
-        client.delete = _fails_first_call()
+        client.client = _client_with_pipeline(_fails_first_call())
         client.set = AsyncMock()
 
         with patch("src.app.modules.tenants.service.cache_client", client):

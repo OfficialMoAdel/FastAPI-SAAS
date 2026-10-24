@@ -51,6 +51,26 @@ from src.app.middleware.tenant import TenantMiddleware
 stmt = select(Item).where(Item.tenant_id == current_tenant.id)
 ```
 
+### DO: Batch the tenant cache invalidation's Redis work
+
+`TenantService._invalidate_redis` deletes two keys (the tenant key and the
+optional slug key). They are ONE round trip, not two: a
+`pipeline(transaction=False)` with a single `pipe.delete(*keys)` and one
+`execute()`.
+
+```python
+keys = [get_tenant_cache_key(tenant_id)]
+if slug:
+    keys.append(_get_slug_cache_key(slug))
+async with cache_client.client.pipeline(transaction=False) as pipe:
+    pipe.delete(*keys)
+    await pipe.execute()
+```
+
+A Redis outage degrades to the L1-only path (documented in the function
+body); the invalidation retry budget and the poison marker are owned by
+`invalidate_with_exhaustion`, which is unchanged.
+
 ## Module Structure
 
 ```

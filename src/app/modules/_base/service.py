@@ -366,21 +366,31 @@ class BaseService(Generic[T, ReadSchemaT]):
 
         Returns:
             The updated record as a validated ``select_schema`` instance when
-            the schema is configured. ``TenantAwareCRUD.update`` returns the
-            row only when ``return_columns`` is requested (P1-4 changed it to
-            forward FastCRUD's return rather than discard it), so the typed
-            path re-reads via ``get``. Without a schema the legacy union
-            (``T | dict | None``) is returned.
+            the schema is configured, otherwise the legacy FastCRUD union
+            (``T | dict | None`` — narrow at the call site).
+
+        P3-2: the row comes from the UPDATE itself (``return_as_model`` makes
+        FastCRUD add ``RETURNING <all columns>``, execution.py:43-62) instead
+        of a follow-up ``get``, so a typed update costs ONE statement instead
+        of COUNT + UPDATE + SELECT. The pre-flight count still runs inside
+        FastCRUD, so a missing row still raises ``NoResultFound`` before any
+        write — ``None`` here means "no return was requested", exactly as the
+        wrapper contract says, and never "no such row".
         """
         async with self._guard():
-            await self.crud.update(db=self.db, object=kwargs, id=id)
-            # The re-read belongs to the same guarded unit as the write:
-            # for a global-table service (plain FastCRUD) the guard is the
-            # only circuit breaker around this query, and leaving the read
-            # outside it let a degraded database serve the stale row with
-            # no fail-fast. It reads through ``_read`` (not ``get``) so the
-            # guard is not opened twice.
-            return await self._read(id)
+            if self.select_schema is not None:
+                result = await self.crud.update(
+                    db=self.db,
+                    object=kwargs,
+                    id=id,
+                    schema_to_select=self.select_schema,
+                    return_as_model=True,
+                )
+            else:
+                result = await self.crud.update(db=self.db, object=kwargs, id=id)
+        # FastCRUD is the untyped boundary; the union above is what we can
+        # actually promise its return maps onto.
+        return cast("ReadSchemaT | dict[str, Any] | None", result)
 
     async def delete(self, id: Any) -> None:
         """Delete a record by ID.

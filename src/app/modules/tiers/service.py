@@ -21,6 +21,7 @@ from src.app.core.cache.invalidation_exhaustion import (
 )
 from src.app.core.logger import get_logger
 from src.app.core.schemas import MessageResponse
+from src.app.modules._base.service import fetch_page_with_total
 from src.app.modules.tiers.models import Tier
 from src.app.modules.tiers.schemas import TierCreate, TierCreateInternal, TierRead, TierUpdate
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
@@ -115,8 +116,19 @@ class TierService:
             Paginated tiers response
         """
         crud = self.tier_crud
-        tiers_data = await crud.get_multi(
-            db=self.db, offset=(page - 1) * items_per_page, limit=items_per_page, schema_to_select=TierRead
+        # P2-3: one query instead of two. `get_multi` issues the page SELECT
+        # and then a second sequential COUNT(*); `fetch_page_with_total`
+        # builds the identical statement with COUNT(*) OVER() and returns the
+        # same {"data", "total_count"} shape `paginated_response` reads.
+        # Tier has no `tenant_id` (global catalog) and `tier_crud` is a plain
+        # FastCRUD, so no tenant filter is injected either way — the row set
+        # and its ordering are unchanged.
+        tiers_data = await fetch_page_with_total(
+            crud,
+            self.db,
+            offset=(page - 1) * items_per_page,
+            limit=items_per_page,
+            schema_to_select=TierRead,
         )
         response: dict[str, Any] = paginated_response(crud_data=tiers_data, page=page, items_per_page=items_per_page)
         return response

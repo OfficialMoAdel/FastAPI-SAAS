@@ -320,8 +320,9 @@ class TestHermeticDeliveryWithInMemoryProvider:
                     html_content="<p>Fail</p>",
                 )
 
-            # Deferred per EMAIL_RETRY_DELAYS[0]
-            assert exc_info.value.defer_score == 10_000
+            # Deferred per EMAIL_RETRY_DELAYS[0], jittered within the
+            # P3-5 [0.9, 1.1] x base band.
+            assert 9_000 <= exc_info.value.defer_score <= 11_000
             # Not terminal yet: row must stay PENDING (no FAILED write)
             mock_srv.mark_failed.assert_not_awaited()
             mock_srv.mark_sent.assert_not_awaited()

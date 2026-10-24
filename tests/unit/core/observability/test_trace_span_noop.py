@@ -50,7 +50,7 @@ EXPECTED_CALL_SITES: frozenset[tuple[str, int]] = frozenset(
     {
         ("core/db/database.py", 203),
         ("core/db/database.py", 250),
-        ("core/events/worker.py", 34),
+        ("core/events/worker.py", 35),
         ("core/events/bus.py", 407),
     }
 )

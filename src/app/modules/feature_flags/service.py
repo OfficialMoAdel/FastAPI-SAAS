@@ -724,11 +724,22 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         service cannot enumerate from the adapter. SCAN the three key
         shapes directly on the raw client; a down Redis no-ops (fail-open,
         entries expire via TTL).
+
+        P2-2: SCAN stays — it is the correctness source of truth. The
+        decision keys are written by ``cache_client.set`` and are never
+        registered into the ``idx_pattern:*`` sets that
+        ``invalidate_by_pattern`` reads (only ``core/utils/cache/decorator.py``
+        registers), so an index-based purge would delete nothing and serve
+        stale decisions for the full ``CACHE_TTL``. What this does remove is
+        the ROUND TRIPS: every page is collected first and all keys are
+        deleted in ONE pipelined command, instead of a ``delete`` per SCAN
+        page.
         """
         client = cache_client.client
         if client is None:
             return
         try:
+            keys_to_purge: list[str] = []
             for pattern in (
                 f"tenant:*:feature:{flag_key}",
                 f"tenant:*:feature_value:{flag_key}",
@@ -737,10 +748,13 @@ class FeatureFlagService(BaseService[FeatureFlag]):
                 cursor = 0
                 while True:
                     cursor, keys = await client.scan(cursor, match=pattern, count=500)
-                    if keys:
-                        await client.delete(*keys)
+                    keys_to_purge.extend(keys)
                     if cursor == 0:
                         break
+            if keys_to_purge:
+                async with client.pipeline(transaction=False) as pipe:
+                    pipe.delete(*keys_to_purge)
+                    await pipe.execute()
         except Exception as e:
             logger.warning(
                 "Feature flag registry purge failed",

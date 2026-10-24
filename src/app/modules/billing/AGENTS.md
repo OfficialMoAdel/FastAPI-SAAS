@@ -118,6 +118,36 @@ layer `04_billing` — `completed_at`, `claimed_by`, `claimed_at` and the
 correct place per `src/migrations/AGENTS.md`; the "unless the layer is already
 applied in production" clause is what would force a stacked revision later.
 
+### The Stripe-subscription uniqueness invariant
+
+One Stripe subscription maps to exactly one local
+`user_subscriptions` row, enforced by a **partial unique index**:
+
+```
+uq_user_subscriptions_stripe_sub (stripe_subscription_id) UNIQUE
+    WHERE stripe_subscription_id IS NOT NULL
+```
+
+The partial predicate is load-bearing: the column is nullable, and Postgres
+UNIQUE semantics allow any number of NULLs, so pre-subscription rows (which
+have no Stripe id yet) may coexist. Removing the predicate would make the
+second NULL-bearing insert fail.
+
+The index is declared in BOTH layers — `04_billing.py` (migration) and
+`UserSubscription.__table_args__` (ORM). It was migration-only until P1-2,
+which is why the invariant was enforced in production but silently absent
+from any database built with `Base.metadata.create_all` (what
+`tests/conftest.py` and `scripts/init_test_db.py` use). Keep both layers
+in sync: `scripts/checks/index_definition_consistency.py` compares them by
+NAME with no `naming_convention` to catch a drift, and Alembic autogenerate
+cannot see it.
+
+Because the index bounds the pre-flight COUNT to 0 or 1, the
+`stripe_subscription_id=`-filtered updates in
+`billing/webhook/handlers/checkout.py` are safe, and the `IntegrityError`
+race fallback on create is coherent (it exists to handle this exact
+constraint). Do not add a *full* unique index on the column.
+
 ### DO: Cancel subscriptions through `UserSubscriptionService`
 
 `lifecycle.py` has **no** `SubscriptionLifecycleService`; it is a module of

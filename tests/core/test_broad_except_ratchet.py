@@ -168,6 +168,36 @@ import count_broad_excepts as counter  # noqa: E402
 #: arms in ``modules/auth/services/mfa.py`` and ``core/runtime.py`` are
 #: pre-existing sites that only gained noqa annotations in this change;
 #: the counter ignores the annotation, so they contribute no delta.
+#:
+#: 382 -> 384. Raised, deliberately and RE-MEASURED: the two new handlers are
+#: the ADR-0015 idempotency guards in ``core/security/auto_ban.py``. Both are
+#: exception-path guards whose failure has a defined outcome rather than an
+#: unhandled 500:
+#:
+#:   * ``_nonce_was_claimed`` — the nonce probe decides whether the merged
+#:     script may already have executed. A Redis failure there must not
+#:     escalate into a rejected request, so it returns False and the caller
+#:     falls back to the sequential path.
+#:   * ``_duplicate_replay_result`` — a replayed request already spent its
+#:     budget; the replay verdict stands even when the ban-detail read fails,
+#:     so that read is best-effort and the handler returns the allow verdict.
+#:
+#: Both carry a ``noqa: BLE001`` annotation with the reason. The counter
+#: ignores the annotation, so the two sites contribute the 382 -> 384 delta
+#: rather than hiding it behind the noqa.
+#:
+#: 384 -> 382. Back DOWN: those two ADR-0015 guards were narrowed to
+#: ``except RedisError`` once the review asked what a *non-Redis* failure
+#: would mean at those sites. It is not a transient blip — it is a wrong key
+#: type, a bad decode, or a real programming error in the probe itself, and
+#: swallowing it would silently route every request down the sequential
+#: fallback path while looking healthy. The handler now covers only the
+#: failure it was written for (the probe is best-effort against a Redis
+#: outage) and lets a bug in the probe propagate. The dashboard cache claim
+#: guard added in the same round was narrowed the same way, for the same
+#: reason: a failed claim degrades to a recompute only on Redis failure.
+#: This is the direction the ratchet exists for — re-measured with
+#: ``python scripts/count_broad_excepts.py``, not estimated.
 BROAD_EXCEPT_BASELINE = 382
 
 #: The files muse 22 triaged. BLE001 is enforced on each (the per-file-ignores

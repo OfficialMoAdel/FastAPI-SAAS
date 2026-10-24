@@ -29,6 +29,7 @@ Rules of thumb:
 - L1 TTLs must be SHORTER than their L2 counterpart (stale window =
   L1 TTL, bounded by pub/sub fan-out).
 - Any new L1 cache MUST self-register its `InvalidationChannel` with
-  `core/cache/l1_registry.py` (I11) and be added to
-  `import_l1_owner_modules()`.
+  `core/cache/l1.py::register_l1_channel` (I11) and its owner module must be
+  added to `import_l1_owner_modules()` in `src/app/composition.py`, which is
+  the one enumeration the boot depends on.
 - Document a new TTL here in the same PR that introduces it.

@@ -28,6 +28,29 @@ import pytest
 from src.app.modules.tenants.service import TenantService
 
 
+class _FakePipeline:
+    """Stands in for a redis pipeline so the L2 leg stays observable.
+
+    The service batches the tenant keys into ONE pipelined delete, so the L2
+    leg is now seen as a ``delete`` on the pipeline, not on the client.
+    """
+
+    def __init__(self, ran: list[str]) -> None:
+        self._ran = ran
+
+    async def __aenter__(self) -> _FakePipeline:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    def delete(self, *_keys: str) -> None:
+        self._ran.append("l2_delete")
+
+    async def execute(self) -> list[object]:
+        return []
+
+
 async def _exhaustion_passthrough(fn, **_kw):
     """Run the invalidation body so the L2 leg is observable."""
     return await fn()
@@ -44,6 +67,8 @@ async def _run(slug: str | None, *, redis_up: bool) -> list[str]:
     svc = TenantService(MagicMock())
 
     client = MagicMock() if redis_up else None
+    if client is not None:
+        client.pipeline = lambda transaction: _FakePipeline(ran)
     fake_cache = MagicMock()
     fake_cache.client = client
     fake_cache.delete = AsyncMock(side_effect=lambda *a, **k: ran.append("l2_delete"))

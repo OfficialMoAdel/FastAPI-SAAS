@@ -96,6 +96,25 @@ be naive:
 
 See `tests/unit/modules/feature_flags/test_tenant_flag_writes.py`.
 
+### Registry purge is a SCAN, and it is batched (P2-2)
+
+`_purge_registry_caches` deletes fleet-wide decisions for one registry
+row. It SCANs `tenant:*:feature:{key}`, `tenant:*:feature_value:{key}` and
+`tenant:*:features` — deliberately, because the decision keys are written by
+`cache_client.set` and are never registered into the `idx_pattern:*` sets
+that `core/utils/cache/patterns.py:invalidate_by_pattern` reads. Swapping the
+SCAN for the index-based purge would delete nothing and serve stale
+decisions for the full `CACHE_TTL`.
+
+What the purge does batch: every SCAN page is collected first and all matched
+keys are deleted in **one** `client.pipeline(transaction=False)`, instead of
+a `delete` per page. Do not reintroduce a per-page `await client.delete(...)`
+— with N pages that is N round trips, which is exactly what P2-2 removed.
+The delete is a no-op when nothing matched (no empty pipeline).
+
+See `tests/unit/modules/feature_flags/test_verified_flags.py`
+(`test_p2_2_purge_deletes_every_page_in_one_pipeline`).
+
 ### Feature Flag Storage
 ⚠️ The JSONB column is the **fallback tier** of the B7 contract, not the
 primary store. Registry rows (`FeatureFlag` / `FeatureFlagOverride`) are

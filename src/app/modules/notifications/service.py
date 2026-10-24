@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import random
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
@@ -985,7 +986,14 @@ async def send_email_task(
 
                 # Retries remain: defer to the worker with backoff. The row
                 # stays PENDING until the final attempt decides the outcome.
-                delay = EMAIL_RETRY_DELAYS[min(job_try - 1, len(EMAIL_RETRY_DELAYS) - 1)]
+                # P3-5: jitter the delay. A provider-side outage fails a
+                # batch of notifications together, and an unjittered ladder
+                # replays that whole batch in lockstep on the next attempt.
+                # ±10% matches the webhook retry precedent
+                # (webhooks/delivery.py) and the event-bus ladder
+                # (core/events/worker.py), so all three agree.
+                base_delay = EMAIL_RETRY_DELAYS[min(job_try - 1, len(EMAIL_RETRY_DELAYS) - 1)]
+                delay = max(1, int(round(base_delay * random.uniform(0.9, 1.1))))
                 logger.warning(
                     "email_send_retry_scheduled",
                     notification_id=notification_id,

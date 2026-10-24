@@ -16,7 +16,7 @@ from types import ModuleType
 REPO = Path(__file__).resolve().parents[2]
 COUNTER = REPO / "scripts" / "count_source_text_tests.py"
 
-SOURCE_TEXT_TEST_BASELINE = 156
+SOURCE_TEXT_TEST_BASELINE = 162
 
 
 def _load_counter() -> ModuleType:

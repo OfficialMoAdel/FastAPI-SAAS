@@ -118,6 +118,33 @@ class TestTheRealRepository:
         report = gate.build_report(verbose=False)
         assert len(report.shared) >= 20, f"only {len(report.shared)} shared names parsed"
 
+    def test_stripe_subscription_unique_index_is_declared_in_both_layers(self):
+        """The P1-2 parity fix stays pinned.
+
+        ``uq_user_subscriptions_stripe_sub`` was created by 04_billing.py from
+        day one but was never declared on the ORM model, so a schema built
+        from ``Base.metadata.create_all`` — tests/conftest.py and
+        scripts/init_test_db.py both do this — had NO unique constraint on
+        ``user_subscriptions.stripe_subscription_id`` while production does.
+        That is the split-brain this gate exists for, in the one direction a
+        name-only check cannot see (the name was simply absent from the ORM).
+
+        Declaring it moves the name into ``shared`` and therefore into
+        enforcement: a future edit that drops the predicate, the unique flag or
+        the column now fails the gate above instead of silently forking the
+        schema again.
+        """
+        orm = {i.name: i for i in gate.parse_orm_indexes(_REPO / "src/app/modules/billing/models.py")}
+        assert "uq_user_subscriptions_stripe_sub" in orm, "ORM no longer declares the Stripe subscription unique index"
+        definition = orm["uq_user_subscriptions_stripe_sub"]
+        assert definition.columns == ("stripe_subscription_id",)
+        assert definition.unique is True
+        assert definition.partial == "stripe_subscription_id IS NOT NULL"
+
+        report = gate.build_report(verbose=False)
+        assert "uq_user_subscriptions_stripe_sub" in report.shared, "index is not shared across both layers"
+        assert "uq_user_subscriptions_stripe_sub" not in list(report.migration_only)
+
 
 class TestItFailsOnTheDefectItExistsFor:
     def test_a_temporary_collision_is_reported(self, tmp_path):

@@ -1,10 +1,8 @@
-"""User service layer - encapsulates all user business logic.
+"""User service layer — encapsulates all user business logic.
 
-GOD-SERVICE WATCH (P3, deliberate): this module is the largest service in
-the codebase and carries several function-level imports used to dodge
-import cycles. Scope of the agreed remediation is observability/comments
-ONLY — do not split without a dedicated review of the cache/event seams
-that motivate the cycles (see PLAN Round-1 Quality P3)."""
+GOD-SERVICE WATCH (P3): largest service; function-level imports dodge import cycles.
+Remediation scope is observability/comments ONLY — do not split without reviewing
+the cache/event seams (see PLAN Round-1 Quality P3)."""
 
 
 from __future__ import annotations
@@ -185,26 +183,21 @@ class UserService:
             If the email or username already exists (uniform response — the
             field is never disclosed)
         """
-        # SECURITY FIX: Check for duplicates BEFORE expensive password hashing
-        # Prevents DoS via forced bcrypt operations
-        # OPTIMIZATION FIX: Fetch tenant once and reuse throughout method (#16)
-        tenant = get_current_tenant()  # Single fetch, reused throughout
+        # SECURITY FIX: check duplicates before password hashing (prevents DoS via forced bcrypt)
+        # OPTIMIZATION FIX: fetch tenant once, reuse throughout (#16)
+        tenant = get_current_tenant()  # single fetch, reused throughout
 
-        # Optimized: Check for duplicate email or username in single query.
-        # id-only projection — only existence is tested, so no column data
-        # (notably hashed_password) is ever fetched or materialized.
+        # Check duplicate email or username in one query — id-only projection,
+        # so no column data (notably hashed_password) is fetched.
         #
-        # B1: the comparison is CASE-INSENSITIVE, matching the login lookup
-        # (``crud.py`` uses ``func.lower(User.email) == email.lower()``). An
-        # exact-match check was inconsistent with it: a row stored as
-        # ``Victim@X.com`` would not be seen as a duplicate of
-        # ``victim@x.com``, so a second row could be created that the
-        # case-insensitive login lookup then matches BOTH — and because that
-        # lookup ends in ``scalar_one_or_none()``, it raises
-        # ``MultipleResultsFound`` and every login for the address 500s.
-        # The schema normalises the email on create, so the value arriving
-        # here is already lowercase; ``lower()`` additionally covers rows
-        # that predate that validator.
+        # B1: CASE-INSENSITIVE, matching the login lookup
+        # (``crud.py``: ``func.lower(User.email) == email.lower()``). An exact
+        # match would miss ``Victim@X.com`` vs ``victim@x.com``, letting a
+        # second row be created that the case-insensitive lookup then matches
+        # both — and ``scalar_one_or_none()`` raises ``MultipleResultsFound``,
+        # 500ing every login for that address. The schema normalises email on
+        # create (already lowercase); ``lower()`` also covers rows that predate
+        # that validator.
         stmt = select(User.id).where(
             or_(
                 func.lower(User.email) == user.email.lower(),
@@ -222,29 +215,27 @@ class UserService:
         existing_user = dup_result.scalar()
 
         if existing_user:
-            # S-M2: uniform duplicate response — which field collided is an
-            # enumeration oracle for attackers. One generic credentials-taken
-            # error regardless of whether email or username matched.
+            # S-M2: uniform response — which field collided is an enumeration oracle.
+            # One generic credentials-taken error regardless of email or username match.
             raise DuplicateError("credentials", message="An account with these credentials already exists")
 
-        # Hash password and create internal user object
+        # Hash password, create internal user object
         user_dict = user.model_dump()
         user_dict["hashed_password"] = await get_password_hash(password=user_dict["password"])
         del user_dict["password"]
 
-        # Inject tenant_id from context - uses same cached tenant
+        # Inject tenant_id from cached context
         if tenant is not None:
             user_dict["tenant_id"] = tenant.id
 
         user_internal = UserCreateInternal(**user_dict)
 
         try:
-            # B8/H-7-advisory: FastCRUD.create without schema_to_select
-            # returns None (verified against fastcrud 0.20.1 execution.py),
-            # so the old `cast(User, ...)` + `result.id` deref 500'd every
-            # registration. Commit-then-read: flush via commit=False create,
-            # commit, then read back the real ORM row for the payload and
-            # the `-> User` return contract.
+            # B8/H-7-advisory: FastCRUD.create without schema_to_select returns
+            # None (fastcrud 0.20.1 execution.py), so the old `cast(User, ...)` +
+            # `result.id` deref 500'd every registration. Commit-then-read:
+            # create(commit=False), commit, then read back the real ORM row
+            # for the payload and `-> User` contract.
             await self.crud.create(db=self.db, object=user_internal, commit=False)
             await self.db.commit()
             read_stmt = select(User).where(
@@ -261,8 +252,8 @@ class UserService:
             if result is None:
                 raise RuntimeError("User row unreadable immediately after successful commit")
 
-            # SECURITY FIX: Ensure event is published ONLY after successful commit
-            # Capture result data before commit since it may expire after session flush
+            # SECURITY FIX: publish event ONLY after successful commit.
+            # Capture result data before commit (may expire after flush).
             user_event_payload = {
                 "user_id": result.id,
                 "email": result.email,
@@ -270,9 +261,9 @@ class UserService:
                 "tenant_id": str(result.tenant_id),
             }
 
-            # M22: Send verification email automatically upon registration.
-            # Decoupled via injected email_verifier (PR-10): UserService no longer
-            # imports AuthService directly; routers inject the verifier.
+            # M22: send verification email on registration.
+            # Decoupled via injected email_verifier (PR-10): routers inject it,
+            # UserService no longer imports AuthService directly.
             if email_verifier is not None:
                 try:
                     await email_verifier(result.email)
@@ -294,7 +285,7 @@ class UserService:
                         exc_info=exc,
                     )
 
-            # Fire-and-forget task to publish the event safely from async context
+            # Fire-and-forget task publishing the event from async context
             from src.app.core.utils.background_task import create_safe_task
 
             task = create_safe_task(
@@ -303,9 +294,9 @@ class UserService:
             task.add_done_callback(_log_task_error)
 
         except IntegrityError as e:
-            # Handle race condition: duplicate was created between our check and insert.
-            # S-M2: same uniform generic response as the pre-check — the unique
-            # constraint name would otherwise reveal which field collided.
+            # Race: duplicate created between check and insert.
+            # S-M2: same uniform generic response — the unique constraint name
+            # would otherwise reveal which field collided.
             if "uq_user_email_tenant" in str(e) or "uq_user_username_tenant" in str(e):
                 await self.db.rollback()
                 raise DuplicateError("credentials", message="An account with these credentials already exists") from e
@@ -378,15 +369,15 @@ class UserService:
         else:
             user_id = getattr(current_user, "id", None)
             username = getattr(current_user, "username", None)
-            # Optional profile fields are None on partial principals (tests,
-            # minimal payloads). Treat only populated fields as "carried".
+            # Optional fields are None on partial principals (tests, minimal
+            # payloads). Only populated fields count as "carried".
             has_name = getattr(current_user, "name", None) is not None
             has_avatar = getattr(current_user, "profile_image_url", None) is not None
             if has_name and has_avatar:
                 # Attribute-bearing principal (ORM entity, API-key payload):
-                # validate into the real schema so downstream `.get()` access is
-                # safe. FastAPI_saas-wsiy: the MODEL, not its dump -- a dict here
-                # would be re-validated by the route's response model.
+                # validate into the real schema so `.get()` access is safe.
+                # FastAPI_saas-wsiy: the MODEL, not its dump — a dict would be
+                # re-validated by the route's response model.
                 try:
                     return UserRead.model_validate(current_user)
                 except Exception as e:
@@ -395,13 +386,13 @@ class UserService:
         from src.app.modules.users.directory import UserDirectory
 
         try:
-            # Built inside the load path only: a principal that already carries
-            # its profile fields returns above, without needing a session.
+            # Load path only: a principal already carrying profile fields
+            # returned above, no session needed.
             directory = UserDirectory(self.db)
             if user_id is not None:
                 user = await directory.by_id(int(user_id))
                 if user:
-                    # FastAPI_saas-wsiy: the directory already returns a UserRead.
+                    # FastAPI_saas-wsiy: directory already returns a UserRead.
                     return user
             elif username:
                 try:
@@ -515,44 +506,39 @@ class UserService:
         DuplicateError
             If new email/username already taken
         """
-        # SECURITY FIX: Prevent updating soft-deleted users
+        # SECURITY FIX: prevent updating soft-deleted users
         db_user = await self.get_user_for_management(username)
 
         if db_user is None:
             raise ModelNotFoundError("User", username)
         db_username = get_user_attr(db_user, "username")
         db_email = get_user_attr(db_user, "email")
-        # P2-C: cross-tenant ownership via the tenancy seam (soft-404 — a
+        # P2-C: cross-tenant ownership via tenancy seam (soft-404 —
         # cross-tenant username stays invisible instead of leaking existence).
         require_tenant_match(get_user_attr(db_user, "tenant_id"), resource="User", key=username)
 
         # Ownership check (superusers bypass).
-        # Run-3 finding users.read_user.same_tenant_existence_oracle: this path
-        # had the same resolve-then-403/404 split as GET /users/{user_id}. A
-        # non-owner now gets the identical soft-404 a nonexistent user gets, so
-        # the update endpoints cannot be used to confirm co-tenant existence.
+        # Run-3 same_tenant_existence_oracle: this path had the same
+        # resolve-then-403/404 split as GET /users/{user_id}. A non-owner gets
+        # the identical soft-404 as a nonexistent user — update endpoints
+        # cannot confirm co-tenant existence.
         if db_username != current_user.username and not current_user.is_superuser:
             raise ModelNotFoundError("User", username)
-        # Check for duplicate email if changing (exclude soft-deleted users)
+        # Check duplicate email if changing (exclude soft-deleted users).
         #
-        # B1: the comparison is CASE-INSENSITIVE, matching the login lookup
-        # (``crud.py`` uses ``func.lower(User.email) == email.lower()``). An
-        # exact-match check was inconsistent with it: a row stored as
-        # ``Victim@X.com`` would NOT be seen as a duplicate of
-        # ``victim@x.com``, so the update could create a second row that the
-        # case-insensitive login lookup then matches BOTH — and because that
-        # lookup ends in ``scalar_one_or_none()``, it raises
-        # ``MultipleResultsFound`` and every login for the address 500s.
+        # B1: CASE-INSENSITIVE, matching the login lookup
+        # (``crud.py``: ``func.lower(User.email) == email.lower()``). An exact
+        # match misses ``Victim@X.com`` vs ``victim@x.com``, letting a second
+        # row be created that the case-insensitive lookup matches both —
+        # ``scalar_one_or_none()`` raises ``MultipleResultsFound``,
+        # 500ing every login for that address.
         #
-        # The comparison is done here rather than through a FastCRUD
-        # ``email__iexact=`` filter because FastCRUD has no ``iexact``
-        # operator (only ``ilike``), and an unsupported operator resolves to
-        # ``None`` and fails at query time rather than at import time.
+        # Done here rather than FastCRUD ``email__iexact=`` — FastCRUD has no
+        # ``iexact`` (only ``ilike``), and an unsupported operator resolves to
+        # ``None``, failing at query time not import time.
         #
-        # The schema now normalises the email on update (UserUpdate.
-        # normalize_email), so the value arriving here is already lowercase;
-        # the ``lower()`` comparison additionally covers rows that predate
-        # that validator.
+        # UserUpdate.normalize_email normalises email on update (already
+        # lowercase); ``lower()`` also covers rows that predate that validator.
         reason = InvalidationReason.PROFILE_EDIT
         if values.email is not None and values.email != db_email:
             reason = InvalidationReason.CREDENTIAL_CHANGE
@@ -564,7 +550,7 @@ class UserService:
             ):
                 raise DuplicateError("email", values.email)
 
-        # Check for duplicate username if changing (exclude soft-deleted users)
+        # Check duplicate username if changing (exclude soft-deleted users)
         if values.username is not None and values.username != db_username:
             reason = InvalidationReason.CREDENTIAL_CHANGE
             tenant_id_val = get_user_attr(db_user, "tenant_id")
@@ -575,10 +561,20 @@ class UserService:
             ):
                 raise DuplicateError("username", values.username)
 
-        await self.crud.update(db=self.db, object=values, username=db_username, commit=False)
+        # P1-1: write by PK, not username. FastCRUD's pre-flight COUNT doesn't
+        # filter ``is_deleted``, while ``uq_user_username_tenant`` is a partial
+        # index ``(username, tenant_id) WHERE is_deleted = false`` (username
+        # recycling — documented feature, see 01_foundation.py). A soft-deleted
+        # row still counts, so a recycled username raised
+        # ``MultipleResultsFound`` and 500'd. The row above is already
+        # resolved (is_deleted=False, tenant-matched, ownership-checked), so
+        # its PK identifies exactly one row and the ambiguity disappears —
+        # no extra query.
+        db_user_id = get_user_attr(db_user, "id")
+        await self.crud.update(db=self.db, object=values, id=db_user_id, commit=False)
 
-        # 1B: the seam owns the SQL bump + commit + cache in one place, so a
-        # credential change can never bump twice or diverge Redis from the DB.
+        # 1B: seam owns SQL bump + commit + cache — a credential change
+        # can never bump twice or diverge Redis from the DB.
         tenant_id_val = get_user_attr(db_user, "tenant_id")
         await self.invalidate_sessions(db_user, reason, tenant_id=tenant_id_val, commit=True)
         return {"message": "User updated"}
@@ -595,8 +591,8 @@ class UserService:
 
         db_user = await self.crud.get(db=self.db, id=user_id, is_deleted=False)
         if db_user is not None:
-            # PROFILE_EDIT-class change: hash upgrade without plaintext
-            # rotation must NOT force every active session to re-auth.
+            # PROFILE_EDIT-class: hash upgrade without plaintext rotation —
+            # must NOT force every active session to re-auth.
             await self._invalidate_user_cache(db_user, bump_token_version=False, reason=InvalidationReason.PROFILE_EDIT)
 
     async def delete(
@@ -630,21 +626,21 @@ class UserService:
         if not db_user:
             raise ModelNotFoundError("User", username)
 
-        # P2-C: same-username users in other tenants stay invisible — without
-        # this check a superuser from Tenant A could delete Tenant B's user.
+        # P2-C: same-username users in other tenants stay invisible —
+        # without this, a superuser from Tenant A could delete Tenant B's user.
         require_tenant_match(get_user_attr(db_user, "tenant_id"), resource="User", key=username)
 
         if username != current_user.username and not current_user.is_superuser:
-            # Run-3: uniform soft-404 (see update_user) so DELETE cannot be
-            # used to confirm that an identifier is a member of this tenant.
+            # Run-3: uniform soft-404 (see update_user) — DELETE can't
+            # confirm tenant membership.
             raise ModelNotFoundError("User", username)
 
-        # BUG FIX: Previously used two separate auto-committing calls:
+        # BUG FIX: previously two auto-committing calls:
         #   1. crud.update(token_version + 1)  <- auto-commit
-        #   2. crud.delete(username)            <- auto-commit (soft delete)
-        # A crash between them left token_version incremented but is_deleted=False:
-        # old sessions were invalidated but the user could still log in.
-        # Fix: combine both into a single atomic UPDATE, commit once.
+        #   2. crud.delete(username)           <- auto-commit (soft delete)
+        # A crash between them left token_version incremented but
+        # is_deleted=False — old sessions invalidated, user still logs in.
+        # Fix: single atomic UPDATE, commit once.
         from datetime import UTC, datetime
 
         from sqlalchemy import update as sa_update
@@ -652,17 +648,17 @@ class UserService:
         user_id_val = get_user_attr(db_user, "id")
         user_tenant_id = get_user_attr(db_user, "tenant_id")
 
-        # S-06 FIX: the previous `blacklist_token(token=token, ...)` here
-        # blacklisted the CALLER's bearer token, not the deleted user's — so a
-        # superuser deleting someone else revoked their OWN session on every
-        # call, and the deleted user's tokens survived whenever their
-        # token_version was not checked. Its comment claimed it prevented "a
-        # deleted user [keeping] a valid token", which is not what it did.
+        # S-06 FIX: old `blacklist_token(token=token, ...)` blacklisted the
+        # CALLER's bearer token, not the deleted user's — a superuser deleting
+        # someone else revoked their OWN session each call, and the deleted
+        # user's tokens survived unless their token_version was checked. Its
+        # comment claimed it prevented "a deleted user [keeping] a valid token"
+        # — not what it did.
         #
-        # It was also redundant: `invalidate_sessions(..., DELETION, ...)`
-        # below is the canonical seam and already bumps the TARGET's
-        # token_version, which invalidates every one of that user's tokens.
-        # The `token` parameter is gone for the same reason — nothing needed it.
+        # Also redundant: `invalidate_sessions(..., DELETION, ...)` below is
+        # the canonical seam, already bumping the TARGET's token_version and
+        # invalidating all that user's tokens. The `token` parameter is gone
+        # — nothing needed it.
 
         await self.db.execute(
             sa_update(User)
@@ -672,8 +668,8 @@ class UserService:
                 updated_at=datetime.now(UTC),
             )
         )
-        # 1B: the seam owns the SQL bump + commit + cache; the soft-delete
-        # flag staged above commits atomically with the seam's bump.
+        # 1B: seam owns SQL bump + commit + cache; soft-delete flag staged
+        # above commits atomically with the seam's bump.
         await self.invalidate_sessions(
             db_user,
             InvalidationReason.DELETION,
@@ -681,7 +677,7 @@ class UserService:
             commit=True,
         )
 
-        # SECURITY FIX: Add audit log for user deletion (Issue 15)
+        # SECURITY FIX: audit log for user deletion (Issue 15)
         await audit(
             action="user.deleted",
             entity_type="user",
@@ -712,32 +708,36 @@ class UserService:
         ModelNotFoundError
             If user not found
         """
-        # SECURITY FIX: Single query with soft-delete filter (prevents double query)
+        # SECURITY FIX: single query with soft-delete filter (no double query)
         db_user = await self.get_user_for_management(username)
 
         if not db_user:
             raise ModelNotFoundError("User", username)
 
-        # P2-C: cross-tenant hard-delete stays invisible (soft-404, same as
-        # update/delete) so existence is never leaked via 403.
+        # P2-C: cross-tenant hard-delete stays invisible (soft-404, as in
+        # update/delete) — existence never leaked via 403.
         require_tenant_match(get_user_attr(db_user, "tenant_id"), resource="User", key=username)
 
-        # SECURITY FIX: Delete user BEFORE invalidating cache
-        # Prevents stale cache if DB operation fails
+        # SECURITY FIX: delete user before invalidating cache —
+        # prevents stale cache if DB fails
 
-        # S-06 FIX: the `blacklist_token(token=token, ...)` that used to sit
-        # here blacklisted the CALLER's token, not the hard-deleted user's. The
-        # target's own revocation is the `_invalidate_user_cache(...
-        # DELETION, explicit_token_version=...)` block below, which seeds the
-        # post-delete token_version so the target's tokens stop validating.
+        # S-06 FIX: old `blacklist_token(token=token, ...)` blacklisted the
+        # CALLER's token, not the hard-deleted user's. The target's revocation
+        # is `_invalidate_user_cache(..., DELETION,
+        # explicit_token_version=...)` below — seeds post-delete token_version
+        # so the target's tokens stop validating.
 
-        db_username = get_user_attr(db_user, "username")
-        # Capture the pre-delete version BEFORE the row is gone — reading it
+        db_user_id = get_user_attr(db_user, "id")
+        # Capture pre-delete version BEFORE the row is gone — reading it
         # after db_delete risks detached/stale ORM state.
         pre_version = get_user_attr(db_user, "token_version", 0)
-        await self.crud.db_delete(db=self.db, username=db_username)
-        # 1B: the row is gone so no SQL bump is possible; seed Redis with the
-        # pre-delete version + 1 explicitly instead of a stale-dict guess.
+        # P1-1: same reason as update/update_tier — pre-flight COUNT doesn't
+        # filter ``is_deleted`` while the unique index is partial, so a username
+        # filter can match a recycled soft-deleted row and raise
+        # MultipleResultsFound. The PK cannot.
+        await self.crud.db_delete(db=self.db, id=db_user_id)
+        # 1B: row is gone, no SQL bump possible — seed Redis with pre-delete
+        # version + 1 instead of a stale-dict guess.
         try:
             explicit_version = int(pre_version) + 1
         except (TypeError, ValueError):
@@ -777,19 +777,22 @@ class UserService:
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
-        db_username = get_user_attr(db_user, "username")
+        db_user_id = get_user_attr(db_user, "id")
 
-        # Validate tier exists via the canonical TierService
+        # Validate tier via canonical TierService
         tier_svc = TierService(self.db)
         try:
             await tier_svc.get_tier_by_id(values.tier_id)
         except ModelNotFoundError:
             raise ModelNotFoundError("Tier", values.tier_id)
 
-        await self.crud.update(db=self.db, object=values.model_dump(), username=db_username, commit=False)
+        # P1-1: see update — row already resolved, PK identifies it without
+        # the ``is_deleted``-blind COUNT (recycled usernames raise
+        # MultipleResultsFound).
+        await self.crud.update(db=self.db, object=values.model_dump(), id=db_user_id, commit=False)
 
-        # 1B: the seam owns the SQL bump + commit + cache; the reason selects
-        # TIER_CHANGE policy so cached tier claims are invalidated promptly.
+        # 1B: seam owns SQL bump + commit + cache; TIER_CHANGE reason
+        # invalidates cached tier claims promptly.
         await self.invalidate_sessions(
             db_user,
             InvalidationReason.TIER_CHANGE,
@@ -797,7 +800,7 @@ class UserService:
             commit=True,
         )
 
-        # A3 FIX: Handle both ORM objects and dict responses
+        # A3 FIX: handle ORM objects and dict responses
         user_name = get_user_attr(db_user, "name")
         return {"message": f"User {user_name} Tier updated"}
 
@@ -830,14 +833,14 @@ class UserService:
         user_id = get_user_attr(db_user, "id")
         update_payload: dict[str, Any] = {"is_active": is_active}
         if not is_active:
-            # P0-2: Mark as email-verified so the verification service's
+            # P0-2: mark email-verified so the verification service's
             # "already verified but inactive" guard fires for admin-disabled
-            # accounts, even if the user never completed email verification.
+            # accounts (even without completed verification).
             update_payload["is_email_verified"] = True
         await self.crud.update(db=self.db, object=update_payload, id=user_id, commit=False)
 
-        # 1B: DEACTIVATION is bump-class — the seam kills existing JWTs in the
-        # same commit and invalidates all cache entries with the fresh version.
+        # 1B: DEACTIVATION is bump-class — seam kills existing JWTs in the
+        # same commit, invalidates all cache entries with fresh version.
         await self.invalidate_sessions(
             db_user,
             InvalidationReason.DEACTIVATION,
@@ -878,11 +881,10 @@ class UserService:
             commit=False,
         )
 
-        # 1B: honor the docstring contract — the seam bumps token_version so
-        # existing JWTs (which embed tier claims for zero-DB rate limiting)
-        # are invalidated promptly, with the fresh version passed through to
-        # the cache. The tier_id update staged above commits atomically with
-        # the seam's bump.
+        # 1B: seam bumps token_version so existing JWTs (embed tier claims
+        # for zero-DB rate limiting) are invalidated promptly, fresh version
+        # passed to cache. The tier_id update commits atomically with the
+        # seam's bump.
         await self.invalidate_sessions(
             user_id,
             InvalidationReason.TIER_CHANGE,
@@ -910,8 +912,8 @@ class UserService:
         ModelNotFoundError
             If user not found
         """
-        # Eager load User + Tier + RateLimits in single query
-        # joinedload(User.tier).joinedload(Tier.rate_limits) ensures we fetch everything at once
+        # Eager load User + Tier + RateLimits in one query:
+        # joinedload(User.tier).joinedload(Tier.rate_limits) fetches everything at once
         parsed_id = self._parse_user_id(username)
         if parsed_id is not None:
             stmt = (
@@ -925,9 +927,9 @@ class UserService:
                 .options(joinedload(User.tier).joinedload(Tier.rate_limits))
                 .where(User.username == username, User.is_deleted.is_(False))
             )
-        # SECURITY FIX: Filter by tenant to prevent cross-tenant data exposure.
-        # The /{id}/rate-limits route is superuser-only with no RequestContext
-        # (superusers see all tenants), so the unscoped hatch stays here.
+        # SECURITY FIX: filter by tenant to prevent cross-tenant exposure.
+        # /{id}/rate-limits is superuser-only with no RequestContext
+        # (superusers see all tenants), so the unscoped hatch stays.
         tenant = get_current_tenant()
         scope = (
             ExplicitTenant(tenant_id=tenant.id, reason="legacy-criterion:User")
@@ -940,8 +942,8 @@ class UserService:
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
-        # U7: Direct dict construction instead of Pydantic validate+dump
-        # ORM data is already validated, skip redundant Pydantic overhead
+        # U7: direct dict instead of Pydantic validate+dump — ORM data
+        # already validated, skip redundant Pydantic overhead.
         user_dict = {
             "id": db_user.id,
             "created_at": db_user.created_at,
@@ -957,8 +959,8 @@ class UserService:
             user_dict["tier_rate_limits"] = []
             return user_dict
 
-        # Rate limits are already loaded via joinedload
-        # U7: Direct dict construction for rate limits
+        # Rate limits already loaded via joinedload
+        # U7: direct dict for rate limits
         user_dict["tier_rate_limits"] = [
             {
                 "id": rl.id,
@@ -987,17 +989,17 @@ class UserService:
         if not user_with_tier:
             raise ModelNotFoundError("User", username)
 
-        # BUG FIX: Previously returned None if user has no tier, which is misleading
-        # because the user DOES exist. Callers would confuse None with "user not found".
-        # Now returns the user dict without tier_* keys when no tier is assigned.
+        # BUG FIX: previously returned None if no tier — misleading,
+        # since the user DOES exist. Callers confused None with "not found".
+        # Now returns user dict without tier_* keys when no tier assigned.
         if not user_with_tier.get("tier"):
             return user_with_tier
 
-        # Flatten structure to match expected output format
+        # Flatten to expected output format
         user_dict = user_with_tier.copy()
         tier_data = user_dict.pop("tier")
 
-        # Filter out SQLAlchemy internal state
+        # Drop SQLAlchemy internal state
         if "_sa_instance_state" in tier_data:
             del tier_data["_sa_instance_state"]
 

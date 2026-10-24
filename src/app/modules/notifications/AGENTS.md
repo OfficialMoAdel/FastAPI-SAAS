@@ -53,6 +53,23 @@ async def send_notification(..., background_tasks: BackgroundTasks):
     # Returns 202 Accepted - delivery happens async
 ```
 
+### DO: Jitter the retry ladder
+
+`EMAIL_RETRY_DELAYS = (10, 60, 360)` is indexed by `job_try`. The delay is
+jittered ±10% and clamped to at least 1 second:
+
+```python
+base_delay = EMAIL_RETRY_DELAYS[min(job_try - 1, len(EMAIL_RETRY_DELAYS) - 1)]
+delay = max(1, int(round(base_delay * random.uniform(0.9, 1.1))))
+raise Retry(defer=delay) from e
+```
+
+Without the jitter, every email that failed during the same outage retried
+in lockstep — a thundering herd against the SMTP provider that had just
+recovered. This matches the webhook retry (`webhooks/delivery.py`) and the
+event-bus ladder (`core/events/worker.py`). The ladder itself is unchanged.
+Pinned by `tests/unit/core/events/test_p3_retry_jitter.py`.
+
 ## Module Structure
 
 ```

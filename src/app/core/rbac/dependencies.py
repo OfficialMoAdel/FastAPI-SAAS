@@ -440,11 +440,18 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int | UUID)
     Invalidate the cached permissions for a user in a specific tenant.
     Clears both Set-based cache and bitmask cache for backward compatibility.
     Call this when user roles are modified.
+
+    P3-4: the L2 delete lands FIRST and the L1 publish FOLLOWS it, matching
+    the batch path below (GATE 93vx). The previous shape published first and
+    deleted second, which is the inverted order that lets a peer re-read the
+    still-present row and re-cache the very mask being invalidated. The
+    local drop stays unconditional and synchronous: this process must never
+    serve the entry it just invalidated, and pub/sub never echoes to the
+    publisher.
     """
     from src.app.core.redis_provider import get_redis
 
     _bitmask_l1.pop(_bitmask_l1_key(user_id, tenant_id), None)
-    await _publish_bitmask_l1_invalidation(user_id, tenant_id)
 
     redis_client = get_redis()
 
@@ -463,6 +470,12 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int | UUID)
             tenant_id=tenant_id,
             error=str(e),
         )
+        return
+
+    # Only tell the peers after the delete landed: a failed delete leaves them
+    # with whatever they had, and since the row was never deleted what they
+    # hold is still the truth.
+    await _publish_bitmask_l1_invalidation(user_id, tenant_id)
 
 
 async def invalidate_users_permissions_cache_batch(user_ids: list[int], tenant_id: int | UUID) -> None:

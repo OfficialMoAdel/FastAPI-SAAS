@@ -78,8 +78,10 @@ class TestRetryBackoff:
                 await _run_worker({"job_try": 0}, handler)
 
         delays = list(_pkg.settings.events.EVENT_BUS_RETRY_DELAYS) or list(_pkg.EventBus.RETRY_DELAYS)
-        # arq stores the defer in milliseconds (`Retry.defer_score`).
-        assert exc_info.value.defer_score == delays[0] * 1000
+        # arq stores the defer in milliseconds (`Retry.defer_score`). P3-5
+        # jitters the delay within the [0.9, 1.1] x base band, so the first
+        # rung is asserted as a band, not an exact value.
+        assert delays[0] * 1000 * 0.9 <= exc_info.value.defer_score <= delays[0] * 1000 * 1.1
         assert exc_info.value.defer_score != delays[-1] * 1000
 
     async def test_negative_job_try_uses_the_first_delay(self) -> None:
@@ -91,7 +93,7 @@ class TestRetryBackoff:
                 await _run_worker({"job_try": -5}, handler)
 
         delays = list(_pkg.settings.events.EVENT_BUS_RETRY_DELAYS) or list(_pkg.EventBus.RETRY_DELAYS)
-        assert exc_info.value.defer_score == delays[0] * 1000
+        assert delays[0] * 1000 * 0.9 <= exc_info.value.defer_score <= delays[0] * 1000 * 1.1
 
 
 class TestModuleSurface:

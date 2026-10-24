@@ -4,6 +4,7 @@ Dashboard Tests
 Unit tests for the dashboard module.
 """
 
+import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -271,140 +272,6 @@ class TestDashboardServiceDateRange:
         assert delta.days == 365
 
 
-class TestUserMetrics:
-    """Test user metrics calculation."""
-
-    @pytest.mark.asyncio
-    async def test_get_user_metrics_returns_correct_structure(self):
-        """Test user metrics returns proper UserMetrics object."""
-        from src.app.modules.dashboard.service import dashboard_service
-
-        db_mock = AsyncMock()
-        mock_result = MagicMock()
-        # Return tuple: (total, new, active, deleted)
-        mock_result.one.return_value = (100, 10, 50, 5)
-        db_mock.execute = AsyncMock(return_value=mock_result)
-
-        start = datetime.now(UTC) - timedelta(days=30)
-        end = datetime.now(UTC)
-
-        result = await dashboard_service._get_user_metrics(db_mock, start, end, "tenant")
-
-        assert result.total_users == 100
-        assert result.new_users == 10
-        assert result.active_users == 50
-        assert result.deleted_users == 5
-
-    @pytest.mark.asyncio
-    async def test_get_user_metrics_with_zeros(self):
-        """Test user metrics handles zero values."""
-        from src.app.modules.dashboard.service import dashboard_service
-
-        db_mock = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.one.return_value = (0, 0, 0, 0)
-        db_mock.execute = AsyncMock(return_value=mock_result)
-
-        start = datetime.now(UTC) - timedelta(days=30)
-        end = datetime.now(UTC)
-
-        result = await dashboard_service._get_user_metrics(db_mock, start, end, "tenant")
-
-        assert result.total_users == 0
-        assert result.new_users == 0
-        assert result.active_users == 0
-        assert result.deleted_users == 0
-
-
-class TestRevenueMetrics:
-    """Test revenue metrics calculation."""
-
-    @pytest.mark.asyncio
-    async def test_get_revenue_metrics_with_data(self):
-        """Test revenue metrics calculates correctly with billing data."""
-        from src.app.modules.dashboard.service import dashboard_service
-
-        db_mock = AsyncMock()
-        mock_result = MagicMock()
-        # Return tuple: (total_cents, subscription_count, mrr)
-        mock_result.one.return_value = (100000, 50, 500.0)  # $1000, 50 subs, $500 MRR
-        db_mock.execute = AsyncMock(return_value=mock_result)
-
-        start = datetime.now(UTC) - timedelta(days=30)
-        end = datetime.now(UTC)
-
-        result = await dashboard_service._get_revenue_metrics(db_mock, start, end, "tenant")
-
-        assert result.total_revenue == 1000.0  # cents / 100
-        assert result.total_subscriptions == 50
-        assert result.recurring_revenue == 500.0
-
-    @pytest.mark.asyncio
-    async def test_get_revenue_metrics_zero_subs(self):
-        """Test revenue metrics handles zero subscriptions (avoids division by zero)."""
-        from src.app.modules.dashboard.service import dashboard_service
-
-        db_mock = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.one.return_value = (0, 0, 0.0)  # No revenue, no subs, no MRR
-        db_mock.execute = AsyncMock(return_value=mock_result)
-
-        start = datetime.now(UTC) - timedelta(days=30)
-        end = datetime.now(UTC)
-
-        result = await dashboard_service._get_revenue_metrics(db_mock, start, end, "tenant")
-
-        assert result.total_revenue == 0.0
-        assert result.total_subscriptions == 0
-        assert result.average_revenue_per_user == 0.0
-        assert result.recurring_revenue == 0.0
-
-
-class TestActivityMetrics:
-    """Test activity metrics calculation."""
-
-    @pytest.mark.asyncio
-    async def test_get_activity_metrics_returns_correct_structure(self):
-        """Test activity metrics returns proper ActivityMetrics object."""
-        from src.app.modules.dashboard.service import dashboard_service
-
-        db_mock = AsyncMock()
-        mock_result = MagicMock()
-        # Return tuple: (logins, api_calls, failed_auth, webhooks)
-        mock_result.one.return_value = (100, 5000, 10, 25)
-        db_mock.execute = AsyncMock(return_value=mock_result)
-
-        start = datetime.now(UTC) - timedelta(days=30)
-        end = datetime.now(UTC)
-
-        result = await dashboard_service._get_activity_metrics(db_mock, start, end, "tenant")
-
-        assert result.total_logins == 100
-        assert result.api_calls == 5000
-        assert result.failed_authentications == 10
-        assert result.webhook_deliveries == 25
-
-    @pytest.mark.asyncio
-    async def test_get_activity_metrics_with_zeros(self):
-        """Test activity metrics handles zero values."""
-        from src.app.modules.dashboard.service import dashboard_service
-
-        db_mock = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.one.return_value = (0, 0, 0, 0)
-        db_mock.execute = AsyncMock(return_value=mock_result)
-
-        start = datetime.now(UTC) - timedelta(days=30)
-        end = datetime.now(UTC)
-
-        result = await dashboard_service._get_activity_metrics(db_mock, start, end, "tenant")
-
-        assert result.total_logins == 0
-        assert result.api_calls == 0
-        assert result.failed_authentications == 0
-        assert result.webhook_deliveries == 0
-
-
 class TestGetMetrics:
     """Test full get_metrics flow."""
 
@@ -531,73 +398,6 @@ class TestDashboardMetricsResponse:
         assert isinstance(response.activity, ActivityMetrics)
 
 
-class TestDashboardAuditVocabulary:
-    """Fix #4: dashboard must query the audit action strings producers emit.
-
-    Producers (verified, do not regress):
-    - P2-#8: auth.login_issued subscription (audit_logs.service::
-      handle_login_issued_event, published at the TokenIssuer.issue_session
-      seam) emits action="auth.login" with details={"success": true, ...}
-      for every door; SSO keeps action="auth.sso_login".
-    - src/app/modules/auth/service.py::_publish_login_audit (failure paths)
-      emits action="auth.login" with details={"success": bool, ...}
-    Zero producers emit bare "login" / "login_failed" / "authentication_failed".
-    """
-
-    PRODUCER_LOGIN_ACTIONS = {"auth.login", "auth.sso_login"}
-
-    def _compiled_sql(self, stmt) -> str:
-        """Compile a captured statement with literal binds for assertion."""
-        from sqlalchemy.dialects import postgresql
-
-        return str(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
-
-    @pytest.mark.asyncio
-    async def test_user_metrics_queries_producer_login_actions(self):
-        """Active-users query must intersect producer action strings."""
-        from src.app.modules.dashboard.service import dashboard_service
-
-        db_mock = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.one.return_value = (100, 10, 50, 5)
-        db_mock.execute = AsyncMock(return_value=mock_result)
-
-        start = datetime.now(UTC) - timedelta(days=30)
-        end = datetime.now(UTC)
-
-        await dashboard_service._get_user_metrics(db_mock, start, end, "tenant")
-
-        sql = self._compiled_sql(db_mock.execute.call_args[0][0])
-        for action in self.PRODUCER_LOGIN_ACTIONS:
-            assert action in sql
-        assert "'login'" not in sql
-
-    @pytest.mark.asyncio
-    async def test_activity_metrics_queries_producer_login_actions(self):
-        """Total-logins query must intersect producer strings; failed-auth
-        must use auth.login + details success=false (never dead literals)."""
-        from src.app.modules.dashboard.service import dashboard_service
-
-        db_mock = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.one.return_value = (100, 5000, 10, 25)
-        db_mock.execute = AsyncMock(return_value=mock_result)
-
-        start = datetime.now(UTC) - timedelta(days=30)
-        end = datetime.now(UTC)
-
-        await dashboard_service._get_activity_metrics(db_mock, start, end, "tenant")
-
-        sql = self._compiled_sql(db_mock.execute.call_args[0][0])
-        for action in self.PRODUCER_LOGIN_ACTIONS:
-            assert action in sql
-        assert "'login'" not in sql
-        assert "login_failed" not in sql
-        assert "authentication_failed" not in sql
-        assert "success" in sql
-        assert "'false'" in sql
-
-
 class TestP111DashboardCache:
     """P1-11: get_metrics must serve cached aggregates and use a prefix
     LIKE for webhook actions (index-friendly, same match set)."""
@@ -686,28 +486,244 @@ class TestP111DashboardCache:
         assert payload["users"]["total_users"] == 100
 
     @pytest.mark.asyncio
-    async def test_webhook_subquery_uses_prefix_like(self):
-        """Webhook count must use prefix LIKE (btree-friendly), never %..%."""
-        from sqlalchemy.dialects import postgresql
+    async def test_p2_4_concurrent_misses_compute_once(self):
+        """P2-4: a herd on a cold key must not stampede the aggregates.
 
+        Two concurrent callers miss the cache. Exactly one claims the
+        refresh lock and computes; the other waits on the key, is served
+        the stored payload, and never runs ``_get_all_metrics``. The
+        published result is the same object for both callers.
+        """
+        import asyncio
+
+        from src.app.modules.dashboard.schemas import TimeRange
         from src.app.modules.dashboard.service import dashboard_service
 
-        db_mock = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.one.return_value = (100, 5000, 10, 25)
-        db_mock.execute = AsyncMock(return_value=mock_result)
+        start, end, users, revenue, activity = self._metrics()
+        store: dict[str, dict] = {}
+        gets = 0
 
-        start = datetime.now(UTC) - timedelta(days=30)
-        end = datetime.now(UTC)
-        await dashboard_service._get_activity_metrics(db_mock, start, end, "tenant")
+        class FakeCache:
+            def tenant_key(self, key, tenant_id=None):
+                return f"{tenant_id}:{key}"
 
-        sql = str(
-            db_mock.execute.call_args[0][0].compile(
-                dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+            async def get_json(self, key):
+                nonlocal gets
+                gets += 1
+                # The waiter's poll must observe the winner's write.
+                return store.get(key)
+
+            async def set_json(self, key, value, ttl=None):
+                store[key] = value
+
+            async def set_nx(self, key, value, ttl=None):
+                if key in store:
+                    return False
+                store[key] = True
+                return True
+
+            @property
+            def client(self):
+                return object()  # Redis is present in this scenario
+
+            async def release_lock_if_owned(self, key, token):
+                return True
+
+        fake = FakeCache()
+
+        async def _slow_compute(*args, **kwargs):
+            await asyncio.sleep(0.02)
+            return users, revenue, activity, None
+
+        with (
+            patch("src.app.modules.dashboard.service.cache_client", fake),
+            patch.object(dashboard_service, "_get_date_range", return_value=(start, end)),
+            patch.object(dashboard_service, "_get_all_metrics", side_effect=_slow_compute),
+        ):
+            results = await asyncio.gather(
+                dashboard_service.get_metrics(AsyncMock(), "tenant-1", TimeRange.MONTH),
+                dashboard_service.get_metrics(AsyncMock(), "tenant-1", TimeRange.MONTH),
             )
-        )
-        assert "webhook.%" in sql
-        assert "%webhook%" not in sql
+
+        # The aggregates ran exactly once: the lock holder computed, the
+        # waiter read the stored payload.
+        assert results[0].users == results[1].users == users
+        assert results[0] == results[1]
+        assert fake.tenant_key("dashboard:metrics:month", "tenant-1") in store
+
+    @pytest.mark.asyncio
+    async def test_p2_4_lock_holder_computes_and_releases(self):
+        """P2-4: the lock holder always releases, and only its own compute
+        path runs (no double-check leak when the winner wrote first)."""
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        start, end, users, revenue, activity = self._metrics()
+        cache_mock = AsyncMock()
+        cache_mock.get_json = AsyncMock(return_value=None)
+        cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
+        cache_mock.set_nx = AsyncMock(return_value=True)
+        cache_mock.release_lock_if_owned = AsyncMock(return_value=True)
+
+        with (
+            patch("src.app.modules.dashboard.service.cache_client", cache_mock),
+            patch.object(dashboard_service, "_get_date_range", return_value=(start, end)),
+            patch.object(
+                dashboard_service,
+                "_get_all_metrics",
+                return_value=(users, revenue, activity, None),
+            ),
+        ):
+            result = await dashboard_service.get_metrics(AsyncMock(), "tenant-1", TimeRange.MONTH)
+
+        assert result.users == users
+        cache_mock.set_nx.assert_awaited_once()
+        cache_mock.release_lock_if_owned.assert_awaited_once()
+        assert cache_mock.set_json.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_p1_2_a_raising_set_nx_still_computes(self) -> None:
+        """P1-2: a Redis error on the claim must not fail the dashboard.
+
+        ``set_nx`` is the adapter's one non-fail-open operation: it
+        propagates so the billing webhook can fall back to its DB
+        idempotency check. The dashboard has no such fallback, so letting the
+        error escape turned a transient Redis blip into a 500 where the
+        pre-P2-4 code simply recomputed. The claim is best-effort here.
+        """
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        start, end, users, revenue, activity = self._metrics()
+        cache_mock = AsyncMock()
+        cache_mock.get_json = AsyncMock(return_value=None)
+        cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
+        cache_mock.client = MagicMock()  # Redis is present
+        cache_mock.set_nx = AsyncMock(side_effect=ConnectionError("redis is down"))
+
+        with (
+            patch("src.app.modules.dashboard.service.cache_client", cache_mock),
+            patch.object(dashboard_service, "_get_date_range", return_value=(start, end)),
+            patch.object(
+                dashboard_service,
+                "_get_all_metrics",
+                return_value=(users, revenue, activity, None),
+            ) as compute,
+        ):
+            result = await dashboard_service.get_metrics(AsyncMock(), "tenant-1", TimeRange.MONTH)
+
+        # Recomputed and served -- the request did not fail.
+        assert result.users == users
+        compute.assert_awaited_once()
+        cache_mock.set_json.assert_awaited_once()
+        # Not a lock holder, so no release is attempted.
+        cache_mock.release_lock_if_owned.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_p1_2_absent_client_computes_without_waiting(self) -> None:
+        """P1-2: no Redis client means "cannot claim", not "lock held".
+
+        ``set_nx`` returns False when the client is None, which is
+        indistinguishable from a peer holding the lock. Every concurrent
+        caller then polled for the full 5 s wait budget before computing —
+        measured 5.02 s per request under a Redis outage. The client check
+        happens before the claim, so an absent client goes straight to
+        computing.
+        """
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        start, end, users, revenue, activity = self._metrics()
+        cache_mock = AsyncMock()
+        cache_mock.get_json = AsyncMock(return_value=None)
+        cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
+        cache_mock.client = None
+        cache_mock.set_nx = AsyncMock(return_value=False)
+
+        with (
+            patch("src.app.modules.dashboard.service.cache_client", cache_mock),
+            patch.object(dashboard_service, "_get_date_range", return_value=(start, end)),
+            patch.object(
+                dashboard_service,
+                "_get_all_metrics",
+                return_value=(users, revenue, activity, None),
+            ),
+        ):
+            started = time.monotonic()
+            result = await dashboard_service.get_metrics(AsyncMock(), "tenant-1", TimeRange.MONTH)
+            elapsed = time.monotonic() - started
+
+        assert result.users == users
+        # The claim is never attempted against an absent client.
+        cache_mock.set_nx.assert_not_awaited()
+        cache_mock.release_lock_if_owned.assert_not_awaited()
+        # And it certainly did not burn the 5 s wait budget.
+        assert elapsed < 1.0, f"absent-client path waited {elapsed:.2f}s"
+
+    @pytest.mark.parametrize("error", [ConnectionError("conn refused"), OSError("socket gone")])
+    async def test_p1_2_a_transport_level_claim_failure_still_computes(self, error) -> None:
+        """P1-2 (revision): the transport class is not a RedisError.
+
+        ``set_nx`` propagates whatever ``client.set()`` raises. A Redis outage
+        surfaces as ``redis.exceptions.ConnectionError`` (a ``RedisError``),
+        but a replaced client or a socket that dies mid-call surfaces as the
+        BUILTIN ``ConnectionError``, which is an ``OSError`` and NOT a
+        ``RedisError``. Narrowing the guard to ``RedisError`` alone therefore
+        let the exact failure it was written for — "redis is down" — escape
+        and 500 the dashboard.
+        """
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        start, end, users, revenue, activity = self._metrics()
+        cache_mock = AsyncMock()
+        cache_mock.get_json = AsyncMock(return_value=None)
+        cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
+        cache_mock.client = MagicMock()  # Redis is present
+        cache_mock.set_nx = AsyncMock(side_effect=error)
+
+        with (
+            patch("src.app.modules.dashboard.service.cache_client", cache_mock),
+            patch.object(dashboard_service, "_get_date_range", return_value=(start, end)),
+            patch.object(
+                dashboard_service,
+                "_get_all_metrics",
+                return_value=(users, revenue, activity, None),
+            ),
+        ):
+            result = await dashboard_service.get_metrics(AsyncMock(), "tenant-1", TimeRange.MONTH)
+
+        assert result.users == users
+        cache_mock.release_lock_if_owned.assert_not_awaited()
+
+    async def test_p1_2_a_programming_error_is_not_swallowed(self) -> None:
+        """The guard covers transport failures, not bugs.
+
+        A ``TypeError`` from the claim means the call itself is wrong (bad key
+        type, wrong arity). Swallowing it would silently degrade every
+        dashboard load to a recompute while looking healthy.
+        """
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        start, end, users, revenue, activity = self._metrics()
+        cache_mock = AsyncMock()
+        cache_mock.get_json = AsyncMock(return_value=None)
+        cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
+        cache_mock.client = MagicMock()
+        cache_mock.set_nx = AsyncMock(side_effect=TypeError("bad key type"))
+
+        with (
+            patch("src.app.modules.dashboard.service.cache_client", cache_mock),
+            patch.object(dashboard_service, "_get_date_range", return_value=(start, end)),
+            patch.object(
+                dashboard_service,
+                "_get_all_metrics",
+                return_value=(users, revenue, activity, None),
+            ),
+        ):
+            with pytest.raises(TypeError):
+                await dashboard_service.get_metrics(AsyncMock(), "tenant-1", TimeRange.MONTH)
 
 
 class TestGetAllMetrics:

@@ -1,6 +1,7 @@
 """ARQ worker entry point for queued event handlers."""
 
 import asyncio
+import random
 from typing import Any
 
 from arq.worker import Retry
@@ -162,7 +163,15 @@ async def process_event_handler(
             # an empty schedule falls back to the class default because the
             # schedule is indexed below.
             delays = list(_pkg.settings.events.EVENT_BUS_RETRY_DELAYS) or list(_pkg.EventBus.RETRY_DELAYS)
-            raise Retry(defer=delays[min(job_try - 1, len(delays) - 1)]) from e
+            # P3-5: jitter the delay. Every failed handler for a given event
+            # saw the SAME backoff (they share job_try), so a transient
+            # outage that failed a burst of jobs retried that whole burst in
+            # lockstep — a thundering herd against the dependency that just
+            # recovered. ±10% matches the webhook retry precedent
+            # (webhooks/delivery.py) and keeps the ladder's intent.
+            base_delay = delays[min(job_try - 1, len(delays) - 1)]
+            jittered = max(1, int(round(base_delay * random.uniform(0.9, 1.1))))
+            raise Retry(defer=jittered) from e
         finally:
             # SECURITY FIX: Always clear context to prevent leakage between jobs in the same worker
             from src.app.core.tenancy.lifecycle import unbind_tenant

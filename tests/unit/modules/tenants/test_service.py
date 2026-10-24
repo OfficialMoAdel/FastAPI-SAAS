@@ -272,13 +272,18 @@ class TestTenantServiceList:
             "total_count": 1,
         }
 
-        with patch.object(tenant_service, "crud", new_callable=AsyncMock) as mock_crud:
-            mock_crud.get_multi.return_value = mock_response
+        with (
+            patch.object(tenant_service, "crud", new_callable=AsyncMock) as mock_crud,
+            patch("src.app.modules.tenants.service.fetch_page_with_total") as mock_fetch,
+        ):
+            mock_fetch.return_value = mock_response
 
             result = await tenant_service.list_tenants(page=1, items_per_page=10)
 
             assert len(result["data"]) == 1
-            mock_crud.get_multi.assert_called_once()
+            # P2-3: one windowed query, not get_multi's page SELECT + COUNT pair.
+            mock_fetch.assert_awaited_once()
+            mock_crud.get_multi.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_list_tenants_filter_by_active(self, mock_db, mock_tenant):
@@ -292,10 +297,14 @@ class TestTenantServiceList:
             "total_count": 1,
         }
 
-        with patch.object(tenant_service, "crud", new_callable=AsyncMock) as mock_crud:
-            mock_crud.get_multi.return_value = mock_response
+        with (
+            patch.object(tenant_service, "crud", new_callable=AsyncMock) as mock_crud,
+            patch("src.app.modules.tenants.service.fetch_page_with_total") as mock_fetch,
+        ):
+            mock_fetch.return_value = mock_response
 
             await tenant_service.list_tenants(page=1, items_per_page=10, is_active=True)
 
-            call_kwargs = mock_crud.get_multi.call_args.kwargs
+            call_kwargs = mock_fetch.await_args.kwargs
             assert call_kwargs.get("is_active") is True
+            mock_crud.get_multi.assert_not_called()

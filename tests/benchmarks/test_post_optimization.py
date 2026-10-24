@@ -87,6 +87,20 @@ DECIMAL_CEILING = ceiling_from_ops_per_sec(30_000, "json_dumps({Decimal, Decimal
 ORJSON_SIMPLE_CEILING = protocol.Ceiling(20.0, "json_loads(json_dumps(simple_payload))")
 ORJSON_COMPLEX_CEILING = protocol.Ceiling(100.0, "json_loads(json_dumps(complex_payload))")
 HASH_LOOKUP_CEILING = ceiling_from_ops_per_sec(10_000_000, "dict.get over a 10k-entry index")
+#: One ``dict.get`` costs tens of nanoseconds, while the protocol charges two
+#: ``perf_counter`` reads per sample. A single-call sample therefore measures the
+#: clock (~0.2 us on Windows' ~100 ns tick), not the lookup, and the 0.1 us
+#: per-op ceiling becomes a gate on the instrument: it passes on a lucky tick
+#: and fails on an unlucky one. The pre-protocol harness timed a whole loop, and
+#: batching restores that quantity. Each sample below performs
+#: HASH_LOOKUP_BATCH lookups; the per-op figure is the sample divided by the
+#: batch, and HASH_LOOKUP_BATCH_CEILING is the DECLARED per-op ceiling
+#: multiplied by the same batch - a unit conversion, not a retune.
+HASH_LOOKUP_BATCH = 1_000
+HASH_LOOKUP_BATCH_CEILING = protocol.Ceiling(
+    HASH_LOOKUP_CEILING.value_us * HASH_LOOKUP_BATCH,
+    f"dict.get over a 10k-entry index x{HASH_LOOKUP_BATCH}",
+)
 
 
 def _lookup_arm(target_hash: str, index: dict[str, dict[str, Any]]) -> Callable[[], dict[str, Any] | None]:
@@ -94,10 +108,18 @@ def _lookup_arm(target_hash: str, index: dict[str, dict[str, Any]]) -> Callable[
 
     A lambda with default arguments would do the same, but its return type cannot
     be inferred, and the protocol has no way to check a callable it cannot name.
+
+    The arm performs HASH_LOOKUP_BATCH lookups per timed sample: the per-op cost
+    is below the clock's resolution, so timing one lookup through the protocol
+    would report the instrument rather than the code.
     """
+    get = index.get
 
     def lookup() -> dict[str, Any] | None:
-        return index.get(target_hash)
+        found: dict[str, Any] | None = None
+        for _ in range(HASH_LOOKUP_BATCH):
+            found = get(target_hash)
+        return found
 
     return lookup
 
@@ -232,18 +254,21 @@ class TestPasskeyHashLookupPerformance:
                     return cred
             return None
 
-        # Hash lookup (new approach)
-        def hash_lookup() -> dict[str, Any] | None:
-            return credentials_by_hash.get(target_hash)
-
+        # Hash lookup (new approach). Batched per sample; see HASH_LOOKUP_BATCH.
         linear_arm = protocol.measure(linear_lookup, name="linear_scan_10k", iterations=1000)
-        hash_arm = protocol.measure(hash_lookup, name="hash_lookup_10k", iterations=100000)
+        hash_arm = protocol.measure(
+            _lookup_arm(target_hash, credentials_by_hash),
+            name="hash_lookup_10k",
+            iterations=1_000,
+        )
 
-        speedup = linear_arm.best_us / hash_arm.best_us
+        hash_per_op_us = hash_arm.best_us / HASH_LOOKUP_BATCH
+        speedup = linear_arm.best_us / hash_per_op_us
 
         logger.info("Passkey lookup comparison (10k credentials):")
         logger.info("  %s", protocol.render(linear_arm))
         logger.info("  %s", protocol.render(hash_arm))
+        logger.info("  Hash per-op: %.3fus (batch of %d)", hash_per_op_us, HASH_LOOKUP_BATCH)
         logger.info("  Speedup: %.0fx", speedup)
 
         # The ratio IS the O(n) -> O(1) claim and cannot be replaced by a ceiling:
@@ -253,7 +278,7 @@ class TestPasskeyHashLookupPerformance:
         # the fast arm is pinned separately so the speedup cannot be bought by the
         # slow arm getting slower.
         assert speedup >= protocol.NOISE_FLOOR_RATIO, f"Expected >={protocol.NOISE_FLOOR_RATIO}x, got {speedup:.0f}x"
-        protocol.verdict(hash_arm, HASH_LOOKUP_CEILING).assert_passed()
+        protocol.verdict(hash_arm, HASH_LOOKUP_BATCH_CEILING).assert_passed()
 
     def test_hash_lookup_scales(self) -> None:
         """Verify hash lookup is O(1) - same time regardless of size."""
@@ -274,14 +299,18 @@ class TestPasskeyHashLookupPerformance:
             result = protocol.measure(
                 _lookup_arm(target_hash, credentials_by_hash),
                 name=f"hash_lookup_{size}",
-                iterations=50000,
+                iterations=1_000,
             )
-            lookup_times.append(result.best_us)
+            lookup_times.append(result.best_us / HASH_LOOKUP_BATCH)
 
-            logger.info("  Size %d: %s", size, protocol.render(result))
+            logger.info(
+                "  Size %d: %s (%.3f us/op)", size, protocol.render(result), lookup_times[-1]
+            )
 
-        # All lookup times should be similar (dict is O(1), but microsecond-level
-        # measurements on Windows have system noise - 10x threshold)
+        # All lookup times should be similar (dict is O(1)). The 10x bound is
+        # deliberately loose: it has to sit above the protocol's 2x noise floor
+        # and well below the ~50x growth a real O(n) lookup would show across
+        # this 50x size range.
         #
         # THIS IS NOT THE `new < old` FORM, and converting it would make it
         # vacuous. It is an UPPER bound on how much the per-call cost may grow

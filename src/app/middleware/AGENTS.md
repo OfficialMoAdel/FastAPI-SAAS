@@ -29,18 +29,42 @@ uv run pytest tests/unit/middleware/ -v
 
 ## Patterns & Conventions
 
-### DO: Use Starlette BaseHTTPMiddleware
+### DO: Write native ASGI middleware (scope/receive/send)
+
+The hot path here is native ASGI. `BaseHTTPMiddleware.dispatch` pays an
+anyio task-group + memory-stream hop that double-buffers request bodies, so
+it is measurably more expensive per request for no benefit on these
+guards — this is the same call recorded in `src/app/AGENTS.md`.
 
 ```python
-from starlette.middleware.base import BaseHTTPMiddleware
+# Template matching RateLimitMiddleware / BodyLimitMiddleware:
+from starlette.types import ASGIApp, Receive, Scope, Send
 
-class MyMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        # Pre-processing
-        response = await call_next(request)
-        # Post-processing
-        return response
+class MyMiddleware:
+    """Native ASGI middleware."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        # ... guard logic; reject via core.errors.middleware_error_response ...
+        await self.app(scope, receive, send)
 ```
+
+### DON'T: Reach for `BaseHTTPMiddleware`
+
+Every middleware in this package is plain ASGI. Two of them record why:
+`attack_detection.py` notes "P1-6: converted from BaseHTTPMiddleware" and
+`tenant.py` notes "I15: no longer subclasses BaseHTTPMiddleware". If a new
+middleware seems to need `dispatch`, it is the one that has to justify the
+double-buffering — not the other way around.
+
+Registration order is owned by `src/app/core/guard/ordering.py::GUARD_ORDER`
+(pinned by `tests/unit/test_middleware_order.py`) — never add middleware by
+editing call sites.
 
 ### DON'T: Skip tenant context cleanup
 
@@ -229,6 +253,27 @@ THREAD arm — so switching it on would be an unmeasured production change.
 as the in-process scan; the oracle `tests/unit/middleware/test_a8_body_scan_offload.py`
 asserts the two paths produce the same findings, that a pool failure falls back AND
 is counted, and that the breaker opens and stops the offload being used.
+
+### The other arm: the thread pool is best-effort, and it is the default
+
+With the offload **off** (the default), `_scan_body` still has a second arm for
+bodies above `_BODY_OFFLOAD_THRESHOLD`: the loop's default **thread** pool via
+`run_in_executor(None, ...)`. Do not read that as event-loop protection.
+ADR-0008 measured it as **best-effort, not a real offload** — `re` is pure
+Python and does not release the GIL, so a worker thread holds the interpreter
+lock for the whole match:
+
+| body size | inline on loop | offloaded to a thread |
+|---|---|---|
+| 4 KB | 1.2× | 1.4× |
+| 8 KB | 1.3× | 1.6× |
+| 32 KB | 3.2× | 2.3× |
+
+The **process** pool above is the arm that actually recovers responsiveness
+(a separate interpreter, so no GIL contention). So on a default deployment
+neither large-body arm protects the loop, and the correct statement is that
+`_BODY_OFFLOAD_THRESHOLD` bounds *how much* regex runs inline — not that the
+loop stays free.
 
 ## Common Gotchas
 

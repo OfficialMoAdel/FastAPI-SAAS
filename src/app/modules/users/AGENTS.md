@@ -52,6 +52,60 @@ user = await user_service.get_user(username=username, db=db)
 await crud_users.update(db=db, id=user_id, object={"is_deleted": True})
 ```
 
+### DO: Address user writes by `id`, never by `username`
+
+`uq_user_username_tenant` is a PARTIAL unique index —
+`(username, tenant_id) WHERE is_deleted = false` — so a soft-deleted user's
+username can be recycled (see `src/migrations/versions/01_foundation.py`).
+FastCRUD's pre-flight `count()` does NOT filter `is_deleted`, so a write
+filtered on `username=` can match two rows (live + recycled) and raise
+`MultipleResultsFound` → HTTP 500.
+
+```python
+# GOOD - the row is already resolved; its PK identifies exactly one row
+db_user = await user_service.get_user_for_management(username)
+user_id = get_user_attr(db_user, "id")
+await crud_users.update(db=db, object=values, id=user_id, commit=False)
+
+# BAD - a recycled username makes the pre-flight COUNT return 2
+await crud_users.update(db=db, object=values, username=username, commit=False)
+```
+
+This is why `UserService.update`, `update_tier` and `hard_delete` all resolve
+the row first (which also performs the tenant match and the ownership check)
+and then write by `id`. Pinned by
+`tests/unit/modules/users/test_user_service_write_target.py`.
+
+### DO: Invalidate cache — delete in Redis FIRST, then publish the L1 drop
+
+A cache invalidation is two legs, and their ORDER is the correctness
+contract (GATE 93vx):
+
+1. **L2 delete** in Redis (`delete`, usually pipelined);
+2. **L1 publish** telling the other workers to drop their in-process copy.
+
+If the publish goes first, a peer that re-reads in the window between the
+publish and the delete re-caches the value being removed — and that
+resurrected value then lives until the L1 TTL. So the delete lands first,
+and the publish only happens when the delete actually landed.
+
+```python
+# GOOD - drop locally, delete, then publish (batch API, one round trip)
+pending = _auth_info_l1_seam.drop_locally(auth_info_keys)
+await _batch_invalidate_redis(keys)          # the L2 delete
+if pending:
+    await _auth_info_l1_seam.publish_many(pending)
+
+# BAD - publishing before the delete lets a peer resurrect the value
+await _auth_info_l1_seam.publish_many(pending)
+await _batch_invalidate_redis(keys)
+```
+
+Both the batch path (`invalidate_user_cache_batch`) and the single-user path
+(`invalidate_user_cache`) follow this order. Pinned at the wire by
+`tests/unit/modules/_base/test_p3_write_path_rtt.py`, which also asserts that
+a FAILED delete publishes nothing at all.
+
 ## Module Structure
 
 ```

@@ -70,11 +70,19 @@ async def test_get_tiers():
     with (
         patch.object(service, "tier_crud") as crud,
         patch("src.app.modules.tiers.service.paginated_response") as paginated,
+        patch("src.app.modules.tiers.service.fetch_page_with_total") as fetch_page,
     ):
-        crud.get_multi = AsyncMock(return_value={"data": []})
+        fetch_page.return_value = {"data": [], "total_count": 0}
         paginated.return_value = {"items": []}
         result = await service.get_tiers(page=2, items_per_page=5)
-    crud.get_multi.assert_awaited_once()
+    # P2-3: the page fetch is one windowed query, not get_multi's
+    # page SELECT + COUNT pair.
+    fetch_page.assert_awaited_once()
+    crud.get_multi.assert_not_called()
+    _crud, _db = fetch_page.await_args.args[:2]
+    assert fetch_page.await_args.kwargs["offset"] == 5
+    assert fetch_page.await_args.kwargs["limit"] == 5
+    assert fetch_page.await_args.kwargs["schema_to_select"] is TierRead
     paginated.assert_called_once()
     assert result == {"items": []}
 

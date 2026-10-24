@@ -1026,6 +1026,23 @@ class MFAService:
         MFAService._fernet_instance = Fernet(key)
         return MFAService._fernet_instance
 
+    @classmethod
+    def warm(cls) -> None:
+        """Derive the Fernet key eagerly, tolerating a missing key.
+
+        The boot warm-up calls this so a bad ``ENCRYPTION_KEY`` is visible at
+        startup. It is deliberately NOT a hard boot gate: the key is already
+        validated at settings load for production/staging, and refusing to
+        boot in local/dev over it would take the whole app down for a code
+        path (MFA) that may never be exercised. A failure here is logged and
+        the lazy derivation stays lazy, so the request path still raises the
+        same clear ``ValueError`` it always did.
+        """
+        try:
+            cls()._get_fernet()
+        except ValueError as exc:
+            logger.warning("mfa_fernet_warm_skipped", error=str(exc))
+
     async def _encrypt_secret(self, secret: str) -> str:
         """Encrypt TOTP secret for storage using Fernet.
 

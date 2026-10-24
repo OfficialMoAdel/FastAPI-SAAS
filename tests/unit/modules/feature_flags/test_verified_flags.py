@@ -18,10 +18,11 @@ TENANT_B = UUID("22222222-2222-2222-2222-222222222222")
 
 
 class FakeRaw:
-    """Raw-client stand-in supporting SCAN + DELETE for the registry purge."""
+    """Raw-client stand-in supporting SCAN + DELETE + pipeline for the purge."""
 
     def __init__(self) -> None:
         self.data: dict[str, str] = {}
+        self.pipeline_calls: list[list[str]] = []
 
     async def scan(self, cursor: int, match: str, count: int = 500) -> tuple[int, list[str]]:
         import fnmatch
@@ -35,6 +36,29 @@ class FakeRaw:
                 del self.data[key]
                 removed += 1
         return removed
+
+    def pipeline(self, transaction: bool = True) -> "FakePipeline":
+        return FakePipeline(self)
+
+
+class FakePipeline:
+    """Pipeline stand-in that records the one batched DELETE."""
+
+    def __init__(self, raw: FakeRaw) -> None:
+        self._raw = raw
+        self._keys: list[str] = []
+
+    async def __aenter__(self) -> "FakePipeline":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        self._raw.pipeline_calls.append(self._keys)
+
+    def delete(self, *keys: str) -> None:
+        self._keys.extend(keys)
+
+    async def execute(self) -> list[int]:
+        return [await self._raw.delete(*self._keys)]
 
 
 def _svc() -> FeatureFlagService:
@@ -61,6 +85,54 @@ async def test_f1_registry_purge_clears_all_tenants() -> None:
     assert f"tenant:{TENANT_A}:features" not in raw.data
     # Unrelated flag untouched.
     assert f"tenant:{TENANT_A}:feature:other" in raw.data
+
+
+@pytest.mark.asyncio
+async def test_p2_2_purge_deletes_every_page_in_one_pipeline() -> None:
+    """P2-2: the SCAN pages are collected and deleted in ONE pipeline.
+
+    Before, each SCAN page did its own ``await client.delete(*keys)``, so a
+    registry with N pages paid N round trips. The fake records every batch
+    handed to a pipeline, so this pins both properties that matter:
+    every matched key is deleted, and it happens in a single command.
+    """
+    raw = FakeRaw()
+    raw.data = {
+        f"tenant:{TENANT_A}:feature:dark_mode": "true",
+        f"tenant:{TENANT_B}:feature:dark_mode": "false",
+        f"tenant:{TENANT_A}:feature_value:dark_mode": "true",
+        f"tenant:{TENANT_A}:features": "{}",
+        f"tenant:{TENANT_B}:features": "{}",
+        f"tenant:{TENANT_A}:feature:other": "true",
+    }
+    svc = _svc()
+    with patch.object(RedisCacheAdapter, "client", new_callable=PropertyMock, return_value=raw):
+        await svc._purge_registry_caches("dark_mode")
+    # One batched command covers all three patterns.
+    assert len(raw.pipeline_calls) == 1
+    assert sorted(raw.pipeline_calls[0]) == [
+        f"tenant:{TENANT_A}:feature:dark_mode",
+        f"tenant:{TENANT_A}:feature_value:dark_mode",
+        f"tenant:{TENANT_A}:features",
+        f"tenant:{TENANT_B}:feature:dark_mode",
+        f"tenant:{TENANT_B}:features",
+    ]
+    # The purge still removes exactly what it removed before.
+    assert f"tenant:{TENANT_B}:feature:dark_mode" not in raw.data
+    assert f"tenant:{TENANT_B}:features" not in raw.data
+    assert f"tenant:{TENANT_A}:feature:other" in raw.data
+
+
+@pytest.mark.asyncio
+async def test_p2_2_purge_is_a_noop_when_nothing_matches() -> None:
+    """P2-2: an empty match must not open a pipeline (no dead RTT)."""
+    raw = FakeRaw()
+    raw.data = {f"tenant:{TENANT_A}:feature:other": "true"}
+    svc = _svc()
+    with patch.object(RedisCacheAdapter, "client", new_callable=PropertyMock, return_value=raw):
+        await svc._purge_registry_caches("dark_mode")
+    assert raw.pipeline_calls == []
+    assert raw.data == {f"tenant:{TENANT_A}:feature:other": "true"}
 
 
 @pytest.mark.asyncio

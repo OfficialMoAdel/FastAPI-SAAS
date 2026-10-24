@@ -154,15 +154,39 @@ async def test_create() -> None:
 
 
 async def test_update() -> None:
-    """Without a select_schema, update re-reads via crud.get (the tenant
-    CRUD returns None from update, so the row payload comes from re-read)."""
+    """Without a select_schema the CRUD's return is passed through: the
+    TenantAwareCRUD wrapper returns None there, which is the documented
+    contract for an untyped update, NOT a missing row (the pre-flight count
+    still raises NoResultFound before any write)."""
     service, _ = _make_service()
     obj = create_autospec(PasskeyCredential, instance=True)
-    service.crud.get.return_value = obj
+    service.crud.update.return_value = obj
     result = await service.update(id=1, user_id=2)
     assert result is obj
     service.crud.update.assert_awaited_once()
-    service.crud.get.assert_awaited_once()
+    # No follow-up read: the typed path re-read only when a schema is set.
+    service.crud.get.assert_not_awaited()
+
+
+async def test_update_typed_returns_the_row_from_the_update() -> None:
+    """With a select_schema the UPDATE itself returns the row (RETURNING),
+    so no re-read is needed and the row is validated against the schema."""
+    from src.app.modules.auth.schemas import PasskeyCredentialResponse
+
+    db = AsyncMock()
+    service = BaseService(PasskeyCredential, db, select_schema=PasskeyCredentialResponse)
+    service.crud = AsyncMock()
+    row = create_autospec(PasskeyCredential, instance=True)
+    service.crud.update.return_value = row
+
+    result = await service.update(id=1, user_id=2)
+
+    assert result is row
+    service.crud.update.assert_awaited_once()
+    kwargs = service.crud.update.await_args.kwargs
+    assert kwargs["return_as_model"] is True
+    assert kwargs["schema_to_select"] is PasskeyCredentialResponse
+    service.crud.get.assert_not_awaited()
 
 
 async def test_delete() -> None:
