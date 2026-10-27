@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -10,9 +11,17 @@ logger = get_logger(__name__)
 
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
-# sso-cache FIX: single source of truth for the provider-settings cache TTL,
-# used by both the startup warmer and the read write-through path.
+# sso-cache: single source of truth for the provider-settings cache TTL.
+# The write-through in ``get_settings_by_provider`` is the ONLY populator: no
+# ``sso_settings`` startup warmer is registered in ``composition.py`` (it warms
+# tenants and feature flags only). That is why the batch read in
+# ``get_settings_by_providers`` still resolves every miss through the
+# single-provider path: the first call on a cold cache populates it, and every
+# call after that is one MGET.
 _SSO_SETTINGS_CACHE_TTL = 300
+# The provider-settings cache key. ``SSOSettings.provider`` is globally
+# unique and the table carries no tenant column, so the key is provider-only.
+_SSO_SETTINGS_CACHE_PREFIX = "sso_settings:"
 from src.app.core.security.encryption import get_encryption
 from src.app.core.tenancy.context import get_current_tenant  # Needed to get default tenant_id if not passed
 from src.app.modules.audit_logs import audit
@@ -86,11 +95,12 @@ class SSOSettingsService:
         """Get public settings for a provider (no secrets).
 
         sso-cache FIX: a cache miss previously fell through to the DB and
-        returned without repopulating, so reads depended entirely on the
-        startup warmer's 300s entries. Reads now write through with the same
-        TTL, keeping the cache warm and bounded after invalidations.
+        returned without repopulating. Reads now write through with the same
+        TTL, and because no startup warmer exists for this domain the
+        write-through is what keeps the cache warm at all after an
+        invalidation.
         """
-        cache_key = f"sso_settings:{provider}"
+        cache_key = f"{_SSO_SETTINGS_CACHE_PREFIX}{provider}"
         try:
             cached = await cache_client.get_json(cache_key)
             if cached is not None:
@@ -105,31 +115,71 @@ class SSOSettingsService:
         result = SSOSettingsRead.model_validate(settings)
 
         # Write-through so subsequent reads hit the cache (same shape/TTL as warmer).
+        # The payload is the PUBLIC read model dumped — never a hand-assembled
+        # dict — so what lands in Redis is exactly what the read next door can
+        # re-validate. The hand-assembled version omitted created_at, which
+        # ``SSOSettingsRead`` requires, so every "hit" failed validation and
+        # fell back to the DB: the write-through was paying for a write that
+        # could not be read. ``client_id``/``client_secret`` are not on the
+        # public model, so no secret can reach the payload.
         # The adapter is None-safe (noop when Redis is down).
         try:
             await cache_client.set_json(
                 cache_key,
-                {
-                    "id": str(settings.id) if hasattr(settings, "id") else settings["id"],
-                    "provider": (settings.provider if hasattr(settings, "provider") else settings["provider"]),
-                    "is_enabled": bool(
-                        settings.is_enabled if hasattr(settings, "is_enabled") else settings["is_enabled"]
-                    ),
-                    "additional_config": (
-                        (
-                            settings.additional_config
-                            if hasattr(settings, "additional_config")
-                            else settings.get("additional_config")
-                        )
-                        or {}
-                    ),
-                },
+                result.model_dump(mode="json"),
                 ttl=_SSO_SETTINGS_CACHE_TTL,
             )
         except Exception as e:
             logger.warning("SSO settings cache write-through failed", provider=provider, error=str(e))
 
         return result
+
+    async def get_settings_by_providers(
+        self, db: AsyncSession, providers: Sequence[str]
+    ) -> dict[str, SSOSettingsRead]:
+        """Get public settings for MANY providers with one cache round trip.
+
+        The batch form of ``get_settings_by_provider``, for callers that list
+        every supported provider (the ``/sso/providers`` door). The cache is
+        read with ONE ``MGET``; only the providers that missed are resolved
+        through ``get_settings_by_provider``, so per-provider JSON validation
+        and the write-through stay in exactly one place.
+
+        A provider with no settings row is OMITTED from the result — the
+        batch form of the ``ModelNotFoundError`` the single-provider read
+        raises, and what makes a not-configured provider stay disabled. A
+        database failure is not swallowed: only ``ModelNotFoundError`` is
+        caught here.
+
+        Returns:
+            Public settings keyed by provider, in the input provider order.
+        """
+        keys = [f"{_SSO_SETTINGS_CACHE_PREFIX}{provider}" for provider in providers]
+        cached_payloads = await cache_client.get_json_many(keys)
+
+        resolved: dict[str, SSOSettingsRead] = {}
+        missing: list[str] = []
+        for provider, payload in zip(providers, cached_payloads, strict=True):
+            if payload is None:
+                missing.append(provider)
+                continue
+            try:
+                resolved[provider] = SSOSettingsRead.model_validate(payload)
+            except Exception as e:  # noqa: BLE001 - a corrupt cached payload is a MISS, never a 5xx
+                # Same contract as the single-provider read: an unvalidatable
+                # cached payload is a MISS, not an error served to the caller.
+                logger.warning(
+                    "SSO settings cached payload invalid, refetching from DB", provider=provider, error=str(e)
+                )
+                missing.append(provider)
+
+        for provider in missing:
+            try:
+                resolved[provider] = await self.get_settings_by_provider(db, provider)
+            except ModelNotFoundError:
+                continue
+
+        return {provider: resolved[provider] for provider in providers if provider in resolved}
 
     async def get_decrypted_settings(self, db: AsyncSession, provider: str) -> dict[str, Any]:
         """Get settings with decrypted secrets (Internal Use Only).
@@ -254,7 +304,7 @@ class SSOSettingsService:
     async def _invalidate_provider_cache(provider: str) -> None:
         """Delete the Redis cache entry for a single SSO provider."""
         try:
-            await cache_client.delete(f"sso_settings:{provider}")
+            await cache_client.delete(f"{_SSO_SETTINGS_CACHE_PREFIX}{provider}")
         except Exception as e:
             logger.warning("Failed to invalidate SSO settings cache", provider=provider, error=str(e))
 

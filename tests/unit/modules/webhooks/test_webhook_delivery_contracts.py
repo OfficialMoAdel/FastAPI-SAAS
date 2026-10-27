@@ -118,6 +118,7 @@ class TestRecoveryReleasesBeforeEnqueue:
         cache = AsyncMock()
         cache.client = MagicMock()
         cache.set_nx.return_value = True
+        cache.set_nx_many.side_effect = lambda items, ttl: [True] * len(items)
         cache.release_lock_if_owned.return_value = True
 
         order: list[str] = []
@@ -189,6 +190,7 @@ class TestTerminalStateIsNotRedelivered:
         cache = AsyncMock()
         cache.client = MagicMock()
         cache.set_nx.return_value = True
+        cache.set_nx_many.side_effect = lambda items, ttl: [True] * len(items)
         cache.release_lock_if_owned.return_value = True
 
         with (

@@ -248,6 +248,7 @@ class TestProviderSettingsCacheCarriesNoSecrets:
         later reader of that ``provider``.
         """
         from src.app.core.cache.client import cache_client
+        from src.app.modules.auth.schemas import SSOSettingsRead
         from src.app.modules.auth.services.sso_settings import SSOSettingsService
 
         captured: dict = {}
@@ -274,12 +275,45 @@ class TestProviderSettingsCacheCarriesNoSecrets:
         assert not hasattr(public, "client_id")
 
         value = captured["value"]
-        assert set(value) == {"id", "provider", "is_enabled", "additional_config"}, (
-            "the cached payload must be exactly the public projection"
+        assert set(value) == set(SSOSettingsRead.model_fields), (
+            "the cached payload must be exactly the public projection — a key set that differs from the "
+            "public read model either leaks a secret or drops a field the read then cannot re-validate"
         )
         blob = repr(value)
         assert "ENCRYPTED_CID" not in blob, "client_id leaked into the provider cache"
         assert "ENCRYPTED_SECRET" not in blob, "client_secret leaked into the provider cache"
+
+    @pytest.mark.asyncio
+    async def test_the_written_payload_is_readable_by_the_same_read(self) -> None:
+        """COUNTER-TEST: what the write-through stores, the read can validate.
+
+        Without this, a payload missing a required field still satisfies "no
+        secrets" while making every later cache hit fall back to the DB — the
+        write-through pays for a write nobody can read.
+        """
+        from src.app.core.cache.client import cache_client
+        from src.app.modules.auth.schemas import SSOSettingsRead
+        from src.app.modules.auth.services.sso_settings import SSOSettingsService
+
+        captured: dict = {}
+
+        async def _set_json(key, value, ttl=None):
+            captured.update(value=value)
+            return True
+
+        with (
+            patch.object(cache_client, "get_json", new=AsyncMock(return_value=None)),
+            patch.object(cache_client, "set_json", new=_set_json),
+            patch(
+                "src.app.modules.auth.services.sso_settings.crud_sso_settings.get",
+                new=AsyncMock(return_value=self._sso_row()),
+            ),
+        ):
+            await SSOSettingsService().get_settings_by_provider(AsyncMock(), "google")
+
+        roundtripped = SSOSettingsRead.model_validate(captured["value"])
+        assert roundtripped.provider == "google"
+        assert roundtripped.is_enabled is True
 
     def test_cache_key_needs_no_tenant_component(self) -> None:
         """The key is provider-only, and that is correct — the table is global.

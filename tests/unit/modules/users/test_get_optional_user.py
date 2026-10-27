@@ -17,16 +17,6 @@ from src.app.shared.exceptions import UnauthorizedError
 from tests.conftest import MockUser
 
 
-def _dumpable(d):
-    """Wrap a fixture dict as a model-like with .model_dump()."""
-    if d is None:
-        return None
-    m = MagicMock()
-    m.model_dump.return_value = d
-    return m
-
-
-
 @pytest.fixture
 def mock_request():
     """Mock FastAPI Request object."""
@@ -84,7 +74,7 @@ class TestGetOptionalUserWithValidToken:
                     mock_get_tenant.return_value = mock_tenant
 
                     mock_directory = AsyncMock()
-                    mock_directory.auth_info.return_value = _dumpable(mock_user_dict)
+                    mock_directory.auth_info_dict.return_value = (mock_user_dict)
                     MockUserDirectory.return_value = mock_directory
 
                     # Act
@@ -117,7 +107,7 @@ class TestGetOptionalUserWithValidToken:
                     mock_get_tenant.return_value = mock_tenant
 
                     mock_directory = AsyncMock()
-                    mock_directory.auth_info.return_value = _dumpable(mock_user_dict)
+                    mock_directory.auth_info_dict.return_value = (mock_user_dict)
                     MockUserDirectory.return_value = mock_directory
 
                     # Act
@@ -185,7 +175,7 @@ class TestGetOptionalUserRateLimitIntegration:
                     mock_get_tenant.return_value = mock_tenant
 
                     mock_directory = AsyncMock()
-                    mock_directory.auth_info.return_value = _dumpable(mock_user_dict)
+                    mock_directory.auth_info_dict.return_value = (mock_user_dict)
                     MockUserDirectory.return_value = mock_directory
 
                     # Act

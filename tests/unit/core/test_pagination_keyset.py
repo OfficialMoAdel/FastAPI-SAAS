@@ -136,3 +136,41 @@ class TestBuildKeysetResponse:
         resp = build_keyset_response([], 10, get_created_at=lambda r: r, get_id=lambda r: r)
         assert "total" not in resp
         assert "page" not in resp
+
+
+class TestUuidIdColumns:
+    """A UUID primary key (audit_logs) must be bound as a UUID, not a string.
+
+    The cursor is untyped by design, so ``decode_keyset_cursor`` hands back a
+    string for a UUID id. ``PGUUID`` refuses to bind a ``str``, so the seek
+    clause coerces the id to the COLUMN's own Python type.
+    """
+
+    def test_a_uuid_cursor_id_is_coerced_to_uuid(self) -> None:
+        from uuid import uuid4
+
+        from src.app.modules.audit_logs.models import AuditLog
+
+        row_id = uuid4()
+        cursor = encode_keyset_cursor(_ts(0), row_id)
+        decoded = decode_keyset_cursor(cursor)
+        assert decoded[1] == str(row_id), "the cursor itself stays an opaque string"
+
+        clause = keyset_pagination_clause(AuditLog.created_at, AuditLog.id, decoded)
+        assert clause is not None
+        # The BOUND value is what matters: PGUUID's bind processor requires a
+        # uuid.UUID, so a decoded string would raise at execute time.
+        from uuid import UUID
+
+        from sqlalchemy.dialects import postgresql
+
+        compiled = select(AuditLog).where(clause).compile(dialect=postgresql.dialect())
+        bound = [value for value in compiled.params.values() if isinstance(value, UUID)]
+        assert bound == [row_id], "the seek bound a UUID, not the raw cursor string"
+
+    def test_an_uncoercible_id_is_a_value_error(self) -> None:
+        """A cursor minted against another table is malformed (422), not a 500."""
+        from src.app.modules.audit_logs.models import AuditLog
+
+        with pytest.raises(ValueError, match="Malformed keyset cursor id"):
+            keyset_pagination_clause(AuditLog.created_at, AuditLog.id, (_ts(0), "not-a-uuid"))

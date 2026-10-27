@@ -16,16 +16,6 @@ from src.app.core.tenancy.context import TenantContext
 from src.app.shared.exceptions import ForbiddenError, UnauthorizedError
 
 
-def _dumpable(d):
-    """Wrap a fixture dict as a model-like with .model_dump()."""
-    if d is None:
-        return None
-    m = MagicMock()
-    m.model_dump.return_value = d
-    return m
-
-
-
 @pytest.fixture
 def mock_request():
     """Mock FastAPI Request."""
@@ -77,7 +67,7 @@ async def test_case_1_valid_jwt_token(mock_request, mock_db, mock_tenant):
         mock_get_tenant.return_value = mock_tenant
 
         mock_directory = AsyncMock()
-        mock_directory.auth_info.return_value = _dumpable(user_dict)
+        mock_directory.auth_info_dict.return_value = (user_dict)
         MockUserDirectory.return_value = mock_directory
 
         result = await get_optional_auth_context(mock_request, None)
@@ -114,7 +104,7 @@ async def test_case_2_suspended_user_token(mock_request, mock_db, mock_tenant):
         mock_get_tenant.return_value = mock_tenant
 
         mock_directory = AsyncMock()
-        mock_directory.auth_info.return_value = _dumpable(user_dict)
+        mock_directory.auth_info_dict.return_value = (user_dict)
         MockUserDirectory.return_value = mock_directory
 
         with pytest.raises((UnauthorizedError, ForbiddenError)):
@@ -147,7 +137,7 @@ async def test_case_3_deleted_user_token(mock_request, mock_db, mock_tenant):
         mock_get_tenant.return_value = mock_tenant
 
         mock_directory = AsyncMock()
-        mock_directory.auth_info.return_value = _dumpable(user_dict)
+        mock_directory.auth_info_dict.return_value = (user_dict)
         MockUserDirectory.return_value = mock_directory
 
         with pytest.raises((UnauthorizedError, ForbiddenError)):
@@ -181,7 +171,7 @@ async def test_case_4_expired_token_version(mock_request, mock_db, mock_tenant):
         mock_get_tenant.return_value = mock_tenant
 
         mock_directory = AsyncMock()
-        mock_directory.auth_info.return_value = _dumpable(user_dict)
+        mock_directory.auth_info_dict.return_value = (user_dict)
         MockUserDirectory.return_value = mock_directory
 
         with pytest.raises((UnauthorizedError, ForbiddenError)):
@@ -214,7 +204,7 @@ async def test_case_5_tenant_mismatch(mock_request, mock_db, mock_tenant):
         mock_get_tenant.return_value = mock_tenant
 
         mock_directory = AsyncMock()
-        mock_directory.auth_info.return_value = _dumpable(user_dict)
+        mock_directory.auth_info_dict.return_value = (user_dict)
         MockUserDirectory.return_value = mock_directory
 
         with pytest.raises((UnauthorizedError, ForbiddenError)):

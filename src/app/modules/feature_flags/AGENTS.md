@@ -93,6 +93,16 @@ be naive:
   `_invalidate_decision_keys`, so they cannot drift apart again; the bulk
   path previously omitted `feature_value:` and left `get_flag_value`
   serving the pre-bulk value for `CACHE_TTL`.
+- **The single-flight is PROCESS-LOCAL, by design for now.**
+  `_flag_cache_locks` serializes cold-key loads inside one worker only, so N
+  workers can still load the same cold key N times. A distributed single-flight
+  is designed but NOT implemented: `docs/adr/0029-feature-flag-distributed-singleflight.md`
+  fixes the semantics first (who owns recomputation, a 5s claim TTL, a 250ms
+  waiter budget, tri-state claim with fall-through-to-compute, and no
+  stale-while-revalidate), and states why `xfetch_get_or_claim` is not a
+  drop-in. **Do not** wire `xfetch_get_or_claim` into these paths without
+  confronting that ADR: a claimer on the caller-default path has no value to
+  publish, which is exactly the case the script does not model.
 
 See `tests/unit/modules/feature_flags/test_tenant_flag_writes.py`.
 

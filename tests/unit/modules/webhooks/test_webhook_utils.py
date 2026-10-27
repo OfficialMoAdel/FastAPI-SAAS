@@ -42,6 +42,21 @@ class TestVerifyWebhookSignature:
 
         assert result is False
 
+    def test_verify_non_ascii_signature_fails_closed(self) -> None:
+        """A non-ASCII ``v1=`` segment is a NON-MATCH, never a TypeError.
+
+        The header is attacker-controlled on a consumer's verify endpoint, and
+        ``hmac.compare_digest`` raises ``TypeError`` for non-ASCII ``str`` — so
+        this used to escape as an unhandled 500 instead of "invalid
+        signature". A hex digest is ASCII, so the segment cannot match.
+        """
+        secret = "test_secret_123"
+        payload = b'{"user_id": "123"}'
+        timestamp = int(time.time())
+        signature = f"t={timestamp},v1={'\u00f1' * 64}"
+
+        assert verify_webhook_signature(payload, signature, timestamp, secret) is False
+
     def test_verify_wrong_secret(self) -> None:
         """Test verifying with wrong secret."""
         secret = "correct_secret"

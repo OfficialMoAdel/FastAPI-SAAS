@@ -96,3 +96,31 @@ class TestRecoverStuckNotifications:
             recovered = await recover_stuck_notifications({"redis": None})
 
         assert recovered == 0
+
+    async def test_the_page_costs_one_liveness_round_trip(self, mock_db) -> None:
+        """A full page is checked with ONE pipeline, and swept in ONE commit."""
+        rows = [make_stuck_notification(NOTIFICATION_MAX_PENDING_AGE_HOURS + 1) for _ in range(3)]
+        _patch_result(mock_db, rows)
+
+        pipe = MagicMock()
+        pipe.exists = MagicMock(return_value=pipe)
+        pipe.execute = AsyncMock(return_value=[0, 1, 0])
+        pipe.__aenter__ = AsyncMock(return_value=pipe)
+        pipe.__aexit__ = AsyncMock(return_value=False)
+        pool = MagicMock()
+        pool.pipeline = MagicMock(return_value=pipe)
+
+        with (
+            _patch_sweep(mock_db)[0],
+            _patch_sweep(mock_db)[1],
+            patch("src.app.core.utils.queue.pool", pool),
+        ):
+            recovered = await recover_stuck_notifications({})
+
+        assert pipe.exists.call_count == 3, "one EXISTS per row, queued in one pipeline"
+        pool.pipeline.assert_called_once()
+        pipe.execute.assert_awaited_once()
+        # Middle row's job is live, so it keeps its mail.
+        assert recovered == 2
+        assert rows[1].status == NotificationStatus.PENDING
+        mock_db.commit.assert_awaited_once()

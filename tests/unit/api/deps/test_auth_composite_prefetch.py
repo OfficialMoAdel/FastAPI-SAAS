@@ -13,15 +13,6 @@ from src.app.shared.exceptions import ForbiddenError
 from src.app.shared.exceptions import UnauthorizedError as UnauthorizedException
 
 
-def _dumpable(payload):
-    """Wrap a fixture dict so ``.model_dump()`` returns it (directory returns models)."""
-    if payload is None:
-        return None
-    m = MagicMock()
-    m.model_dump.return_value = payload
-    return m
-
-
 def _session_returning(slugs: list[str]) -> AsyncMock:
     """Shape a db so ``execute`` models ``AsyncSession.execute``.
 
@@ -212,8 +203,8 @@ class TestCompositeAuthPrefetch:
         with (
             patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=mock_payload),
             patch(
-                "src.app.modules.users.directory.UserDirectory.auth_info",
-                new=AsyncMock(return_value=_dumpable(mock_user)),
+                "src.app.modules.users.directory.UserDirectory.auth_info_dict",
+                new=AsyncMock(return_value=mock_user),
             ),
             patch(
                 "src.app.core.security.auth_prefetch.execute_composite_auth_prefetch",
@@ -253,8 +244,8 @@ class TestCompositeAuthPrefetch:
         with (
             patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=mock_payload),
             patch(
-                "src.app.modules.users.directory.UserDirectory.auth_info",
-                new=AsyncMock(return_value=_dumpable(mock_user)),
+                "src.app.modules.users.directory.UserDirectory.auth_info_dict",
+                new=AsyncMock(return_value=mock_user),
             ),
             patch(
                 "src.app.core.security.auth_prefetch.execute_composite_auth_prefetch",

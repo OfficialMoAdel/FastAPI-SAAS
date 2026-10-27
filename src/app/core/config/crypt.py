@@ -3,6 +3,7 @@
 import os
 from typing import Literal
 
+from cryptography.fernet import Fernet
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
@@ -90,6 +91,57 @@ class CryptSettings(BaseSettings):
                     f"SECRET_KEY must be at least {MIN_SECRET_KEY_LENGTH} characters for HS256. "
                     "Generate with: openssl rand -hex 32"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def validate_encryption_key_shape(self) -> "CryptSettings":
+        """Reject an ``ENCRYPTION_KEY`` that is not a usable Fernet key.
+
+        WHY THIS EXISTS. ``ENCRYPTION_KEY`` is handed verbatim to
+        ``cryptography.fernet.Fernet`` (``security/encryption.py``
+        ``_get_key_from_settings``), which requires EXACTLY 32 url-safe
+        base64-encoded bytes (44 chars). Nothing validated that until the
+        first encrypt/decrypt call, so a wrong-shaped key booted cleanly and
+        then raised ``ValueError: Fernet key must be 32 url-safe base64-encoded
+        bytes`` on the passkey write path, the Stripe secret read, and the
+        storage-credential read. That is the worst possible failure shape:
+        green deploy, 500 later, on a path nobody exercises in smoke tests.
+
+        The trap this closes is specific and documented in ``.env.example``:
+        ``openssl rand -hex 32`` — the correct generator for ``SECRET_KEY``
+        and ``ENCRYPTION_SALT`` — produces 64 hex chars, which is NOT a Fernet
+        key. Operators reach for it because the two dead helpers that used to
+        live in ``encryption.py`` (``_derive_key``/``_get_salt``) made
+        "passphrase + KDF" look like the intended scheme; they were only ever
+        the SECRET_KEY fallback that was removed on purpose. The message below
+        names the right generator so the fix is one copy-paste away.
+
+        The check is ``Fernet(key)`` itself rather than a regex: a shape
+        approximation would accept values the real constructor rejects, which
+        is precisely the class of bug being closed.
+
+        Absent/empty is allowed here. ``ENCRYPTION_KEY`` is optional in local
+        dev, and ``_get_key_from_settings`` already raises a clear error at use;
+        production/staging presence is enforced separately by
+        ``validate_production_secrets``.
+        """
+        for field_name in ("ENCRYPTION_KEY", "ENCRYPTION_KEY_OLD"):
+            value = getattr(self, field_name)
+            if not value:
+                continue
+            raw = value.get_secret_value()
+            if not raw:
+                continue
+            try:
+                Fernet(raw.encode() if isinstance(raw, str) else raw)
+            except (ValueError, TypeError) as exc:
+                raise ValueError(
+                    f"{field_name} is not a valid Fernet key ({exc}). It must be EXACTLY 32 url-safe "
+                    "base64-encoded bytes (44 chars). `openssl rand -hex 32` produces 64 hex chars and is "
+                    "the WRONG generator for this variable — it is correct for SECRET_KEY and "
+                    "ENCRYPTION_SALT only. Generate the key with: python -c "
+                    '"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+                ) from exc
         return self
 
     @model_validator(mode="after")

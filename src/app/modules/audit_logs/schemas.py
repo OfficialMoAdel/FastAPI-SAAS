@@ -54,6 +54,24 @@ class AuditLogList(BaseList[AuditLogRead]):
     pass
 
 
+class AuditLogKeysetPage(BaseModel):
+    """One keyset page of audit logs.
+
+    Deliberately NOT a ``BaseList``: a keyset page carries no ``total`` and no
+    page number — counting the remaining set is the O(N) work cursor paging
+    exists to avoid, and ``page`` has no meaning without an offset. Clients
+    follow ``next_cursor`` until ``has_next`` is false.
+    """
+
+    items: list[AuditLogRead]
+    next_cursor: str | None = Field(
+        default=None,
+        description="Opaque cursor for the next page; null when this page is the end of the listing",
+    )
+    has_next: bool = Field(description="True when the page was full, i.e. another page probably exists")
+    limit: int = Field(description="Page size that produced this page")
+
+
 # Backward compatibility alias
 AuditLogListResponse = AuditLogList
 

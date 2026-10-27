@@ -79,31 +79,70 @@ async def collect_readiness_results(
     path injects both. When they are omitted, this opens its own session
     and resolves the shared Redis client, which is what a probe outside a
     request (the compatibility alias, an operator script) needs.
+
+    The three probes run CONCURRENTLY. They are independent, each carries its
+    own five-second timeout, and the worst case used to be the SUM of them
+    (15s on a ``/ready`` that a load balancer is waiting on) even when only one
+    dependency was slow. Return order stays
+    ``(database, redis, queue, events_ready)`` — the two route consumers unpack
+    positionally — and the identity of the answer does not depend on which
+    probe finished first.
+
+    ``return_exceptions=True`` is what keeps the contract "one slow dependency
+    must not blank the whole page": without it the first probe to escape its
+    own handler would unwind the gather and the sibling results — already
+    computed — would be discarded. Every escaped exception is turned into that
+    dependency's own failure result below, so ``/ready`` still answers per
+    dependency instead of 500-ing.
     """
     from src.app.core.events import event_bus
 
+    results = await asyncio.gather(
+        _database_probe(db),
+        _redis_probe(redis),
+        check_redis_queue_health(),
+        return_exceptions=True,
+    )
+    database_result = _settled(results[0])
+    redis_result = _settled(results[1])
+    queue_result = _settled(results[2])
+    return database_result, redis_result, queue_result, event_bus.is_ready
+
+
+def _settled(result: HealthResult | BaseException) -> HealthResult:
+    """A probe's settled result, with an escaped exception read as unhealthy.
+
+    The probes catch their own errors; this covers a failure OUTSIDE their
+    ``try`` — opening the probe's session, resolving the Redis client. Mapping
+    it here (rather than letting it propagate) is what makes the per-dependency
+    answer total: ``/ready`` reports WHICH dependency broke even when the break
+    happened before the check could run.
+    """
+    if isinstance(result, HealthResult):
+        return result
+    return HealthResult(status="unhealthy", error=f"Probe crashed: {type(result).__name__}: {result}")
+
+
+async def _database_probe(db: AsyncSession | None) -> HealthResult:
+    """``check_database_health`` over the caller's session, or over a new one."""
     if db is None:
         from src.app.core.db.database import local_session
 
         async with local_session() as session:
-            database_result = await check_database_health(db=session)
-    else:
-        database_result = await check_database_health(db=db)
+            return await check_database_health(db=session)
+    return await check_database_health(db=db)
 
+
+async def _redis_probe(redis: Redis | None) -> HealthResult:
+    """``check_redis_health`` over the caller's client, or over the shared one."""
     if redis is None:
         from src.app.core.redis_provider import get_redis
 
         redis_client = get_redis()
-        redis_result = (
-            await check_redis_health(redis=redis_client)
-            if redis_client is not None
-            else HealthResult(status="degraded", error="Redis not configured")
-        )
-    else:
-        redis_result = await check_redis_health(redis=redis)
-
-    queue_result = await check_redis_queue_health()
-    return database_result, redis_result, queue_result, event_bus.is_ready
+        if redis_client is None:
+            return HealthResult(status="degraded", error="Redis not configured")
+        return await check_redis_health(redis=redis_client)
+    return await check_redis_health(redis=redis)
 
 
 async def check_database_health(db: AsyncSession) -> HealthResult:

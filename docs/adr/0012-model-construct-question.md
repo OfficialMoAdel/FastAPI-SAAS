@@ -58,3 +58,35 @@ API contract owner and security reviewer accept the change on that
 per-endpoint basis.
 
 
+
+## Amendment (Phase 3.1): accepted in principle, NOT adopted in code
+
+`PLAN_FOR_ADVANCED_OPTIMIZATIONS_ROUND_1_VERIFIED.md` §3.1 asked for a
+per-endpoint opt-in that swaps `model_validate` for `model_construct` on
+DB-backed list rows. It was implemented as a measurement first and **not
+adopted**, for three findings:
+
+1. **It is slower on the schemas in question.** `PostRead.model_validate(dict)`
+   measures **3.30 µs** against `PostRead.model_construct(**dict)` at
+   **7.77 µs** — construct is ~2.4× slower, the same direction ADR-0026
+   measured for F-13 Cut 3 (3.37 vs 6.16 µs). It is only faster where
+   validation itself is expensive (`UserRead`'s `EmailStr`, pinned by
+   `tests/unit/core/utils/test_regex_pydantic_optimizations.py`), so "cheaper
+   than validate" is a per-schema fact, not a rule.
+2. **One pre-approved endpoint would change its wire output.** This ADR's table
+   marks the API-key list ACCEPT, but `APIKeyRead.scopes` carries a
+   `mode="before"` validator that decodes the column's JSON text into a list.
+   `model_construct` skips it and serves `"[\"read\"]"` where the endpoint
+   serves `["read"]`. The scope limit in "Decision" (response-integrity, not
+   response-shape) therefore excludes this endpoint regardless of row
+   provenance: any schema with a TRANSFORMING validator is out.
+3. **Nothing uses the path it targets.** `fetch_page_with_total(...,
+   return_as_model=True)` has no production caller today, so there is no
+   round trip to remove; every list endpoint returns dicts and lets FastAPI's
+   response model validate them.
+
+`tests/unit/modules/_base/test_model_construct_adoption.py` pins all three
+(including a scan asserting `model_construct(` is still absent from `src/app`),
+so adopting the cut later requires confronting the numbers and adding a
+per-endpoint parity test first — which is what this ADR says a per-endpoint
+verdict needs anyway.

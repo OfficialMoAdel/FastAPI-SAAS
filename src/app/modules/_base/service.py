@@ -37,7 +37,9 @@ from sqlalchemy.orm import selectinload
 
 from src.app.core.db.scoped import _CRUD_CACHE, execute_scoped, scoped_crud
 from src.app.core.db.tenant_crud import TenantAwareCRUD
+from src.app.core.logger import get_logger
 from src.app.core.pagination import MAX_PER_PAGE
+from src.app.core.resilience.db_circuit_breaker import db_circuit_guard
 from src.app.shared.exceptions import ValidationError
 
 T = TypeVar("T")
@@ -118,8 +120,6 @@ class BaseService(Generic[T, ReadSchemaT]):
         guard here. The branch is fixed at construction (self._needs_guard).
         """
         if self._needs_guard:
-            from src.app.core.resilience.db_circuit_breaker import db_circuit_guard
-
             async with db_circuit_guard():
                 yield
         else:
@@ -192,8 +192,6 @@ class BaseService(Generic[T, ReadSchemaT]):
         if per_page < 1:
             per_page = 1
         if per_page > MAX_PER_PAGE:
-            from src.app.core.logger import get_logger
-
             get_logger(__name__).warning("per_page_clamped", requested=per_page, clamped=MAX_PER_PAGE)
             per_page = MAX_PER_PAGE
         offset = max(0, (page - 1) * per_page)
@@ -238,8 +236,6 @@ class BaseService(Generic[T, ReadSchemaT]):
 
             for relationship in eager_loads:
                 if not hasattr(self.model, relationship):
-                    from src.app.core.logger import get_logger
-
                     get_logger(__name__).warning(
                         "unknown_eager_relationship", rel=relationship, model=self.model.__name__
                     )  # noqa: E501
@@ -460,8 +456,6 @@ async def fetch_page_with_total(
     ``get_multi`` before; plain-FastCRUD callers gain the same fail-fast
     protection).
     """
-    from src.app.core.resilience import db_circuit_guard
-
     validate_pagination_params(offset, limit)
     # The isinstance probe is load-bearing polymorphism, not a sniff to kill:
     # test_windowed_pagination pins parity where a plain FastCRUD over a

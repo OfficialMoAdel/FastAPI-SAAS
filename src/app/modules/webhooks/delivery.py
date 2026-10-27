@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 import random
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -576,6 +577,66 @@ async def _handle_failure(
 # ---------------------------------------------------------------------------
 
 
+async def _claim_recovery_locks(deliveries: Sequence[WebhookDelivery]) -> dict[UUID, str]:
+    """Claim every row's delivery lock for this tick in ONE round trip.
+
+    Why batch at all: the recovery batch exists for the OUTAGE case, where a
+    worker outage leaves up to ``WEBHOOK_RECOVERY_BATCH_SIZE`` rows stuck and
+    the per-row claim cost one Redis round trip each. Claiming the whole page
+    first keeps every ordering invariant of the per-row loop (claim BEFORE
+    enqueue, release BEFORE enqueue, one commit per row) and turns N round
+    trips into one.
+
+    Failure behaviour is the single-key contract, preserved:
+
+    * no Redis client -> no claim is possible, so EVERY row is treated as
+      claimable. That is exactly what the old
+      ``if _cc.client is not None and not claimed`` guard did.
+    * the pipeline errors -> fall back to per-row claims, so one failed batch
+      cannot discard the page's progress. A per-row claim that also errors
+      leaves that row OUT of the map, i.e. skipped for this tick, which is
+      what the old code's ``except`` around the claim produced.
+    * a row whose claim came back False is IN FLIGHT (a running ``deliver()``
+      holds that lock), so it is absent from the map and skipped.
+
+    A crash after claiming leaves those rows claimed for at most the lock TTL
+    (60s). That delays one harvest; it never double-delivers, because the
+    claim is what serializes recovery against an in-flight delivery.
+
+    Returns:
+        ``{delivery_id: ownership_token}`` for the rows THIS tick owns.
+    """
+    from src.app.core.cache.client import cache_client
+
+    tokens = {delivery.id: uuid4().hex for delivery in deliveries}
+    if cache_client.client is None:
+        # Nothing to claim (and nothing to release later): proceed as before.
+        return tokens
+
+    items = [(f"webhook:deliver_lock:{delivery.id}", tokens[delivery.id]) for delivery in deliveries]
+    try:
+        verdicts = await cache_client.set_nx_many(items, ttl=60)
+        if len(verdicts) != len(items):
+            # A short answer would silently attribute verdicts to the wrong
+            # rows, so it is a failed batch, not a partial success.
+            raise ValueError(f"set_nx_many returned {len(verdicts)} verdicts for {len(items)} claims")
+    except Exception as exc:  # noqa: BLE001 - a batch failure degrades to the per-key claim
+        logger.warning("webhook_recovery_claim_batch_failed", rows=len(items), error=str(exc))
+        verdicts = []
+        for key, token in items:
+            try:
+                verdicts.append(await cache_client.set_nx(key, token, ttl=60))
+            except Exception as row_exc:  # noqa: BLE001 - an unclaimable row is skipped this tick
+                logger.warning("webhook_recovery_claim_failed", key=key, error=str(row_exc))
+                verdicts.append(False)
+
+    return {
+        delivery.id: tokens[delivery.id]
+        for delivery, claimed in zip(deliveries, verdicts, strict=True)
+        if claimed
+    }
+
+
 async def recover_stuck_deliveries(ctx: dict[str, Any]) -> int:
     """ARQ periodic job: find PENDING deliveries past their next_retry_at and re-enqueue.
 
@@ -607,10 +668,16 @@ async def recover_stuck_deliveries(ctx: dict[str, Any]) -> int:
 
             result = await db.execute(stmt)
             deliveries = result.scalars().all()
+            # One claim round trip for the page; a row missing from this map is
+            # either in flight (a live deliver() holds the lock) or unclaimable
+            # this tick — both mean "skip", never "enqueue anyway".
+            from src.app.core.cache.client import cache_client as _cc
+
+            claims = await _claim_recovery_locks(deliveries)
             for delivery in deliveries:
-                # F8: claim the delivery lock before re-enqueueing. A running
-                # deliver() holds this same lock, so a failed claim means the
-                # row is in-flight (not stuck) — skip it instead of
+                # F8: the delivery lock is claimed BEFORE re-enqueueing. A
+                # running deliver() holds this same lock, so a failed claim
+                # means the row is in-flight (not stuck) — skip it instead of
                 # double-delivering. The old _job_id-only dedup did not cover
                 # recovery-vs-inflight (different job ids).
                 # F7: per-row isolation — one bad row (or a lost Redis) must
@@ -620,13 +687,11 @@ async def recover_stuck_deliveries(ctx: dict[str, Any]) -> int:
                 # released with an ownership check, so a recovery that
                 # overran its TTL cannot delete the lock the delivery
                 # itself acquired in the meantime.
-                recovery_token = uuid4().hex
+                recovery_token = claims.get(delivery.id)
+                if recovery_token is None:
+                    continue
+                released = False
                 try:
-                    from src.app.core.cache.client import cache_client as _cc
-
-                    claimed = await _cc.set_nx(row_lock_key, recovery_token, ttl=60)
-                    if _cc.client is not None and not claimed:
-                        continue
                     # E6: release the claim BEFORE the enqueue.
                     #
                     # The claim on the DELIVERY lock is the atomic "is a
@@ -638,8 +703,14 @@ async def recover_stuck_deliveries(ctx: dict[str, Any]) -> int:
                     # Releasing first lets the enqueued job take the lock
                     # itself; the ARQ job id (`recover_webhook_{id}`) keeps a
                     # second tick from enqueueing the same row twice.
+                    #
+                    # NOTE: this release is NOT pipelined with the enqueue of
+                    # the same row (the ordering above is the point), and it
+                    # is NOT batched across rows (each release has to happen
+                    # before ITS OWN enqueue).
                     if _cc.client is not None:
                         await _cc.release_lock_if_owned(row_lock_key, recovery_token)
+                        released = True
                     # NOTE: explicit _job_id (ARQ dedup) — two recovery ticks
                     # must not double-enqueue the same row.
                     await redis.enqueue_job(
@@ -661,16 +732,21 @@ async def recover_stuck_deliveries(ctx: dict[str, Any]) -> int:
                     await db.rollback()
                     continue
                 finally:
-                    try:
-                        from src.app.core.cache.client import cache_client as _cc2
-
-                        # Release the claim so the enqueued job's own deliver()
-                        # can acquire the lock at start; TTL bounds a crash leak.
-                        # Best-effort: a failed release only delays one harvest.
-                        if _cc2.client is not None:
-                            await _cc2.release_lock_if_owned(row_lock_key, recovery_token)
-                    except Exception:  # noqa: BLE001
-                        pass
+                    # Safety net ONLY: the happy path already released above,
+                    # and a second release_lock_if_owned would be a guaranteed
+                    # no-op (the Lua script deletes only when the token still
+                    # matches) that still costs a Redis round trip per recovered
+                    # row. So it runs only when the release did NOT happen — a
+                    # row that failed before releasing (enqueue raised, commit
+                    # raised) or one whose release itself raised.
+                    if _cc.client is not None and not released:
+                        try:
+                            # Release the claim so the enqueued job's own deliver()
+                            # can acquire the lock at start; TTL bounds a crash leak.
+                            # Best-effort: a failed release only delays one harvest.
+                            await _cc.release_lock_if_owned(row_lock_key, recovery_token)
+                        except Exception:  # noqa: BLE001
+                            pass
 
     if recovered > 0:
         logger.info("Recovered stuck webhook deliveries", count=recovered)

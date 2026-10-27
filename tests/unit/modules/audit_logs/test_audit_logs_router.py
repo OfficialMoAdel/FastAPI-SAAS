@@ -259,3 +259,93 @@ async def test_export_delegates_criteria_and_streams_unchanged(
     mock_service.create_log.assert_not_called()
     mock_ctx.db.execute.assert_not_awaited()
     mock_ctx.db.stream.assert_not_awaited()
+
+
+# ============================================================================
+# Keyset endpoint (Phase 3.2)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.audit_logs.router.AuditLogService")
+async def test_keyset_endpoint_returns_the_envelope(mock_service_cls, mock_ctx):
+    from src.app.modules.audit_logs.router import list_audit_logs_keyset
+    from src.app.modules.audit_logs.schemas import AuditLogKeysetPage
+
+    log = MagicMock()
+    log.id = uuid4()
+    log.tenant_id = mock_ctx.tenant_id
+    log.user_id = 1
+    log.action = "test.action"
+    log.entity_type = None
+    log.entity_id = None
+    log.details = {}
+    log.ip_address = None
+    log.user_agent = None
+    log.created_at = datetime.now(UTC)
+
+    service = MagicMock()
+    service.query_logs_keyset = AsyncMock(
+        return_value={"items": [log], "next_cursor": "abc", "has_next": True, "limit": 1}
+    )
+    mock_service_cls.return_value = service
+
+    result = await list_audit_logs_keyset(
+        ctx=mock_ctx,
+        action="test.action",
+        user_id=1,
+        entity_type=None,
+        start_date=None,
+        end_date=None,
+        cursor="prev",
+        limit=1,
+    )
+
+    assert isinstance(result, AuditLogKeysetPage)
+    assert result.next_cursor == "abc"
+    assert result.has_next is True
+    assert result.items[0].action == "test.action"
+    # The filters and the cursor are handed straight through.
+    kwargs = service.query_logs_keyset.await_args.kwargs
+    assert kwargs["tenant_id"] == mock_ctx.tenant_id
+    assert kwargs["action"] == "test.action"
+    assert kwargs["cursor"] == "prev"
+    assert kwargs["limit"] == 1
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.audit_logs.router.AuditLogService")
+async def test_keyset_endpoint_maps_a_bad_cursor_to_422(mock_service_cls, mock_ctx):
+    """A malformed cursor is a client error, never a 500."""
+    from src.app.modules.audit_logs.router import list_audit_logs_keyset
+    from src.app.shared.exceptions import UnprocessableRequestError
+
+    service = MagicMock()
+    service.query_logs_keyset = AsyncMock(side_effect=ValueError("Malformed keyset cursor: '!!'"))
+    mock_service_cls.return_value = service
+
+    with pytest.raises(UnprocessableRequestError) as exc_info:
+        await list_audit_logs_keyset(
+            ctx=mock_ctx,
+            action=None,
+            user_id=None,
+            entity_type=None,
+            start_date=None,
+            end_date=None,
+            cursor="!!",
+            limit=10,
+        )
+
+    assert exc_info.value.http_status == 422
+
+
+def test_the_keyset_route_is_declared_before_the_id_route() -> None:
+    """FastAPI matches in declaration order: ``/{log_id}`` would swallow it.
+
+    ``/keyset`` is not a UUID, so a route declared after the path parameter
+    would 422 every call. Same trap ``/actions/list`` and ``/export`` dodge.
+    """
+    from src.app.modules.audit_logs.router import router as audit_router
+
+    paths = [route.path for route in audit_router.routes]
+    assert paths.index("/audit-logs/keyset") < paths.index("/audit-logs/{log_id}")

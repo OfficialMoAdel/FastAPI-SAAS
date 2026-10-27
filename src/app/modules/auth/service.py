@@ -171,11 +171,33 @@ class AuthService:
             )
             return db_user, False
 
-    async def authenticate_user(self, username_or_email: str, password: str, db: AsyncSession) -> dict[str, Any] | None:
+    async def authenticate_user(
+        self,
+        username_or_email: str,
+        password: str,
+        db: AsyncSession,
+        auth_info: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """Authenticate user by checking database and password.
 
         Uses constant-time authentication to prevent timing attacks.
         Always performs bcrypt verification regardless of whether user exists.
+
+        Parameters
+        ----------
+        username_or_email : str
+            Username or email to authenticate.
+        password : str
+            Presented password.
+        db : AsyncSession
+            Database session.
+        auth_info : dict[str, Any] | None
+            The auth payload for this identifier, when the caller ALREADY
+            resolved it. ``login`` resolves it before the lockout check (the
+            lockout key is the user id), so passing it keeps the password
+            check on the same snapshot instead of reading the identifier
+            twice per login. Callers that do not have one omit it and it is
+            resolved here — same payload, same cache/DB path.
 
         Returns
         -------
@@ -184,7 +206,7 @@ class AuthService:
         """
         # Use eager loading to get tier info for JWT claims (enables Zero-DB rate limiting)
         # Use UserService to benefit from auth info caching
-        db_user = await self._resolve_user_auth_info(username_or_email, db)
+        db_user = auth_info if auth_info is not None else await self._resolve_user_auth_info(username_or_email, db)
 
         # SECURITY: Use dummy hash if user not found to prevent timing attacks.
         # This ensures bcrypt verification always takes ~100ms, preventing
@@ -315,7 +337,14 @@ class AuthService:
         # Authenticate (this takes time due to bcrypt)
         # SECURITY FIX: Use normalized_username (already computed for lockout key)
         # to ensure the credential lookup and lockout tracking operate on the same form.
-        user = await self.authenticate_user(username_or_email=normalized_username, password=password, db=db)
+        # The snapshot resolved above (for the lockout key) is handed over, so the
+        # password check reads the SAME row version the lockout decision saw.
+        user = await self.authenticate_user(
+            username_or_email=normalized_username,
+            password=password,
+            db=db,
+            auth_info=auth_info,
+        )
 
         if not user:
             # Charge `resolved_user_id` on wrong passwords for real accounts, even though auth fails.

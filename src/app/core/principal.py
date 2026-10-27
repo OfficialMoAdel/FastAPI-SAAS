@@ -43,7 +43,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from fastapi import Depends, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from src.app.core.config import EnvironmentOption, settings
 from src.app.core.logger import get_logger
@@ -103,6 +103,27 @@ class AuthenticatedUser(BaseModel):
     # deleted. Principal call sites use attribute access; CRUD-row dicts
     # go through get_user_attr. Do NOT re-add subscript access — it hid
     # type errors on the hottest auth path.
+
+    @field_validator("tenant_id", mode="before")
+    @classmethod
+    def _normalize_tenant_id(cls, value: Any) -> Any:
+        """Normalize a UUID-shaped tenant id so every payload source agrees.
+
+        A cached auth payload is JSON, so its ``tenant_id`` comes back as a
+        string while the DB row carries a ``UUID``. Both are accepted (the
+        union below exists so non-UUID tenant ids — ``int`` ids and
+        ``"acme"``-style slugs — keep working), but a principal whose tenant
+        TYPE depended on which cache tier answered is a trap: a comparison
+        like ``Model.tenant_id == current_user.tenant_id`` only binds for the
+        UUID half. Parse UUID-shaped values; pass everything else through
+        untouched so the union still decides.
+        """
+        if value is None or isinstance(value, UUID):
+            return value
+        try:
+            return UUID(str(value))
+        except (ValueError, TypeError, AttributeError):
+            return value
 
 
 class AuthContext(BaseModel):

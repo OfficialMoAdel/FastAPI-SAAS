@@ -217,13 +217,20 @@ async def _load_and_validate_user(
     payload path, which skips verify_token. For the verified path it is a
     cheap same-row re-check (harmless duplicate of verify_token's verdict).
     The registry inversion in jwt_service is untouched (PR-12 DIP).
+
+    Reads the RAW auth payload: ``_create_auth_context`` builds an
+    ``AuthenticatedUser`` from this dict, and that model validates every
+    field the principal exposes. Round-tripping through ``UserAuthInfo``
+    first (validate, then ``model_dump``) validated the same bytes twice and
+    is gone from this per-request path. ADR-0026 still holds — the principal
+    is validated, just once, by the model that owns the contract; this path
+    must NOT switch to ``model_construct``.
     """
     directory = UserDirectory(db)
     if "@" in username_or_email:
-        found = await directory.auth_info(email=username_or_email)
+        user = await directory.auth_info_dict(email=username_or_email)
     else:
-        found = await directory.auth_info(username=username_or_email)
-    user = found.model_dump() if found else None
+        user = await directory.auth_info_dict(username=username_or_email)
 
     if not user:
         raise denial(DenialReason.NO_CREDENTIAL)

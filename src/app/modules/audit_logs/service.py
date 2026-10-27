@@ -16,6 +16,7 @@ from structlog import get_logger
 from src.app.core.db.database import get_db_context
 from src.app.core.db.scoped import execute_scoped, stream_scoped
 from src.app.core.json_utils import json_dumps
+from src.app.core.pagination import build_keyset_response, paginate_keyset
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.core.utils import cache as redis_cache
 from src.app.modules.audit_logs.models import AuditLog
@@ -63,6 +64,10 @@ class AuditFilter(NamedTuple):
     Public because ``AuditLogService.export_count`` takes one: the export-count
     endpoint composes the same filter the export path uses instead of reaching
     into a private shape of this module.
+
+    ``entity_id`` is the one predicate the export surface does not expose; it
+    defaults to ``None`` (no filter) so the export call sites did not change
+    when the list readers started sharing this object.
     """
 
     action: str | None
@@ -70,16 +75,24 @@ class AuditFilter(NamedTuple):
     entity_type: str | None
     start_date: datetime | None
     end_date: datetime | None
+    entity_id: str | None = None
 
 
 def _compose_filters(stmt, f: AuditFilter):
-    """A13: single source of truth for audit-log list/export filters."""
+    """A13: single source of truth for audit-log list/export filters.
+
+    Every reader (offset list, offset list with total, keyset list, export
+    and export count) attaches its predicates here, so a filter can never
+    behave differently on one surface than on another.
+    """
     if f.action is not None:
         stmt = stmt.where(AuditLog.action == f.action)
     if f.user_id is not None:
         stmt = stmt.where(AuditLog.user_id == f.user_id)
     if f.entity_type is not None:
         stmt = stmt.where(AuditLog.entity_type == f.entity_type)
+    if f.entity_id is not None:
+        stmt = stmt.where(AuditLog.entity_id == f.entity_id)
     if f.start_date:
         stmt = stmt.where(AuditLog.created_at >= f.start_date)
     if f.end_date:
@@ -355,20 +368,17 @@ class AuditLogService:
             List of audit log entries with eager-loaded user data
         """
         # AuditLogRead does not project nested user fields; avoid unnecessary LEFT OUTER JOIN
-        query = select(AuditLog)
-
-        if user_id is not None:
-            query = query.where(AuditLog.user_id == user_id)
-        if action is not None:
-            query = query.where(AuditLog.action == action)
-        if entity_type is not None:
-            query = query.where(AuditLog.entity_type == entity_type)
-        if entity_id is not None:
-            query = query.where(AuditLog.entity_id == entity_id)
-        if start_date:
-            query = query.where(AuditLog.created_at >= start_date)
-        if end_date:
-            query = query.where(AuditLog.created_at <= end_date)
+        query = _compose_filters(
+            select(AuditLog),
+            AuditFilter(
+                action=action,
+                user_id=user_id,
+                entity_type=entity_type,
+                start_date=start_date,
+                end_date=end_date,
+                entity_id=entity_id,
+            ),
+        )
 
         # P2-5: tie-breaker on id so equal created_at values order deterministically
         query = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).offset(offset)
@@ -380,6 +390,79 @@ class AuditLogService:
             scope=ExplicitTenant(tenant_id=tenant_id, reason="audit:query_logs"),
         )
         return list(result.unique().scalars().all())
+
+    async def query_logs_keyset(
+        self,
+        tenant_id: UUID,
+        *,
+        user_id: int | None = None,
+        action: str | None = None,
+        entity_type: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        cursor: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Keyset (cursor) page of audit logs — the deep-traversal sibling.
+
+        Constant cost per page: the ``(created_at, id)`` seek is served by
+        ``idx_audit_logs_tenant_created_id`` (``tenant_id, created_at DESC,
+        id DESC``), so row 500_000 costs what row 1 costs. ``query_logs`` /
+        ``query_logs_with_total`` stay for page-jump UIs; this one is for
+        infinite scroll and export-style iteration, and therefore returns NO
+        ``total`` and NO page number (counting the remainder is the exact O(N)
+        work keyset exists to avoid).
+
+        Ordering is fixed ``created_at DESC, id DESC``; ``id`` is the UUIDv7
+        tie-breaker that keeps equal timestamps deterministic. The tenant
+        predicate is applied by ``execute_scoped`` (RLS-independent), and the
+        filters compose onto the seek clause through the same ``AuditFilter``
+        the offset reader uses.
+
+        Args:
+            tenant_id: Tenant scope for the page.
+            user_id: Filter by acting user id.
+            action: Filter by action name.
+            entity_type: Filter by entity type.
+            start_date: Only rows at/after this timestamp.
+            end_date: Only rows at/before this timestamp.
+            cursor: Opaque ``next_cursor`` from the previous page, or None for
+                the newest page.
+            limit: Page size.
+
+        Returns:
+            ``{"items", "next_cursor", "has_next", "limit"}`` — ``items`` are
+            ``AuditLog`` rows (the router serializes them through
+            ``AuditLogRead``).
+
+        Raises:
+            ValueError: If ``cursor`` is malformed — callers surface 422.
+        """
+        stmt = _compose_filters(
+            select(AuditLog),
+            AuditFilter(
+                action=action,
+                user_id=user_id,
+                entity_type=entity_type,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+        )
+        stmt, _decoded = paginate_keyset(stmt, AuditLog.created_at, AuditLog.id, cursor, limit)
+
+        result = await execute_scoped(
+            stmt,
+            db=self.db,
+            model=AuditLog,
+            scope=ExplicitTenant(tenant_id=tenant_id, reason="audit:query_logs_keyset"),
+        )
+        logs = list(result.unique().scalars().all())
+        return build_keyset_response(
+            logs,
+            limit,
+            get_created_at=lambda log: log.created_at,
+            get_id=lambda log: log.id,
+        )
 
     async def query_logs_with_total(
         self,
@@ -402,20 +485,15 @@ class AuditLogService:
         not safe, so the window function is the correct consolidation.
         """
         total_col = func.count().over().label("total")
-        query = select(AuditLog, total_col)
-
-        if user_id is not None:
-            query = query.where(AuditLog.user_id == user_id)
-        if action is not None:
-            query = query.where(AuditLog.action == action)
-        if entity_type is not None:
-            query = query.where(AuditLog.entity_type == entity_type)
-        if entity_id is not None:
-            query = query.where(AuditLog.entity_id == entity_id)
-        if start_date:
-            query = query.where(AuditLog.created_at >= start_date)
-        if end_date:
-            query = query.where(AuditLog.created_at <= end_date)
+        filters = AuditFilter(
+            action=action,
+            user_id=user_id,
+            entity_type=entity_type,
+            start_date=start_date,
+            end_date=end_date,
+            entity_id=entity_id,
+        )
+        query = _compose_filters(select(AuditLog, total_col), filters)
 
         # P2-5: tie-breaker on id so equal created_at values order deterministically
         query = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).offset(offset)
@@ -436,19 +514,7 @@ class AuditLogService:
         # Out-of-range page: window function yields no rows, so total is
         # unavailable. Fall back to a cheap COUNT so pagination metadata stays
         # truthful (total must reflect the filtered set even when the page is empty).
-        count_query = select(func.count()).select_from(AuditLog)
-        if user_id is not None:
-            count_query = count_query.where(AuditLog.user_id == user_id)
-        if action is not None:
-            count_query = count_query.where(AuditLog.action == action)
-        if entity_type is not None:
-            count_query = count_query.where(AuditLog.entity_type == entity_type)
-        if entity_id is not None:
-            count_query = count_query.where(AuditLog.entity_id == entity_id)
-        if start_date:
-            count_query = count_query.where(AuditLog.created_at >= start_date)
-        if end_date:
-            count_query = count_query.where(AuditLog.created_at <= end_date)
+        count_query = _compose_filters(select(func.count()).select_from(AuditLog), filters)
         count_result = await execute_scoped(
             count_query,
             db=self.db,

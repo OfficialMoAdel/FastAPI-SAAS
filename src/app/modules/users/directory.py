@@ -8,9 +8,12 @@ readers must use this, not the service or ``crud_users``.
 
 Return contracts
 ----------------
+- ``auth_info_dict`` is the raw tier-eager auth payload (cache -> DB ->
+  write-through) with NO schema validation: the caller validates.
 - Tier-eager auth payloads (``auth_info`` / ``active`` / ``member``) return
   :class:`UserAuthInfo` — the full ``get_user_with_tier_eager`` dict
   (``hashed_password``, ``token_version``, nested ``tier``) as a model.
+  ``auth_info`` is ``auth_info_dict`` plus that validation.
 - Plain lookups (``by_id`` / ``by_username`` / ``by_email`` / ``profile``) return
   :class:`UserRead`, exactly as ``UserService.get`` / ``get_by_username``
   validated before.
@@ -48,10 +51,23 @@ class UserDirectory:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def auth_info(
+    async def auth_info_dict(
         self, *, username: str | None = None, email: str | None = None, tenant_id: Any = None
-    ) -> UserAuthInfo | None:
-        """Tier-eager auth payload, cached (moved from ``UserService.get_user_auth_info``).
+    ) -> dict[str, Any] | None:
+        """Raw tier-eager auth payload, cached, WITHOUT model validation.
+
+        The single read path behind ``auth_info``: the per-request bearer
+        dependency (``api.deps.auth._load_and_validate_user``) takes the raw
+        dict because it builds an ``AuthenticatedUser`` next, and that model
+        validates the same fields. Validating into ``UserAuthInfo`` first and
+        then ``model_dump()``-ing it back to a dict was a redundant round trip
+        per request — it always changed shape and never changed value.
+
+        The payload shape is guaranteed by PROVENANCE, not by this method:
+        both the cache entry and the DB row are the ``get_user_with_tier_eager``
+        dict (the cache is written from it, guarded by
+        ``assert_user_payload_shape``). Payloads that do not come from that
+        seam must go through ``auth_info`` (or their own validation) instead.
 
         ``tenant_id`` scopes both the cache key and the DB lookup, matching
         ``active`` / ``member``. ``None`` falls back to the ambient tenant
@@ -66,7 +82,7 @@ class UserDirectory:
 
         cached = await UserCacheInvalidator.get_cached_user(cache_key)
         if cached:
-            return UserAuthInfo.model_validate(cached)
+            return cached
 
         user_with_tier = await crud_users.get_user_with_tier_eager(
             db=self.db, username=username, email=email, tenant_id=tenant_id
@@ -75,7 +91,20 @@ class UserDirectory:
             return None
 
         await UserCacheInvalidator.cache_user_auth_info(cache_key, user_with_tier)
-        return UserAuthInfo.model_validate(user_with_tier)
+        return user_with_tier
+
+    async def auth_info(
+        self, *, username: str | None = None, email: str | None = None, tenant_id: Any = None
+    ) -> UserAuthInfo | None:
+        """Tier-eager auth payload, cached, as a validated model.
+
+        The model form for callers that consume ``UserAuthInfo`` fields
+        directly (password/MFA/SSO verification, ``_resolve_user_auth_info``).
+        Reads through ``auth_info_dict``, so there is exactly one cache/DB
+        path no matter which shape the caller needs.
+        """
+        payload = await self.auth_info_dict(username=username, email=email, tenant_id=tenant_id)
+        return UserAuthInfo.model_validate(payload) if payload else None
 
     async def active(
         self,

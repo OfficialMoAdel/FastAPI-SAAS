@@ -21,6 +21,8 @@ def _make_cache(held: bool = True) -> AsyncMock:
     cache = AsyncMock()
     cache.client = MagicMock()
     cache.set_nx.return_value = held
+    # Phase 4.3: recovery claims the whole page with ONE pipelined set_nx_many.
+    cache.set_nx_many.side_effect = lambda items, ttl: [held] * len(items)
     # D8: the lock carries an ownership token and is released with an
     # ownership check, so the release is not a blind delete.
     cache.release_lock_if_owned.return_value = True

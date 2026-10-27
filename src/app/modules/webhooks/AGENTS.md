@@ -232,11 +232,31 @@ the legacy process-global `webhook_circuit` in
 `settings.webhooks.WEBHOOK_RECOVERY_BUFFER_MINUTES` and for which no job is
 running. It runs under `bypass_rls`, selects at most
 `settings.webhooks.WEBHOOK_RECOVERY_BATCH_SIZE` rows `FOR UPDATE SKIP LOCKED`,
-claims the delivery lock per row (an in-flight delivery makes the claim fail
-and the row is skipped), releases the claim **before** enqueueing, and enqueues
-`deliver_webhook_task` with `_job_id=f"recover_webhook_{id}"` so two ticks
-cannot double-enqueue the same row. Each row commits or rolls back on its own,
-so one bad row cannot discard the batch's progress.
+claims the delivery locks for the WHOLE page with one pipelined
+`cache_client.set_nx_many` (`_claim_recovery_locks`; a row whose claim comes
+back `False` has an in-flight delivery and is skipped), releases each claim
+**before** enqueueing its row, and enqueues `deliver_webhook_task` with
+`_job_id=f"recover_webhook_{id}"` so two ticks cannot double-enqueue the same
+row. Each row commits or rolls back on its own, so one bad row cannot discard
+the batch's progress.
+
+Claim batching is the Phase 4.3 change and it keeps every ordering invariant:
+claim before enqueue, release before THAT row's enqueue (never batched — the
+ordering is the point), ownership-token release, per-row commit. Failure
+degradation is the single-key contract: no Redis client → every row is treated
+as claimable and nothing is released; a pipeline error or a short answer →
+per-row `set_nx` claims, so one bad batch cannot discard the page. A crash
+after claiming leaks those claims for at most the 60s TTL, which delays one
+harvest and never double-delivers.
+
+**EXACTLY ONE release per claimed row — never zero, never two.** The
+happy path releases before its own enqueue and sets a `released` flag; the
+`finally` is a SAFETY NET that runs only when that flag is false (the row
+failed before releasing). The duplicate second release this replaced was a
+guaranteed no-op — `release_lock_if_owned` deletes only on token match — so it
+bought nothing and cost a Redis round trip per recovered row, in exactly the
+outage path the batching exists to make cheap. Pinned by
+`test_recovery_claim_batching.py::test_a_failed_enqueue_releases_the_claim_and_continues`.
 
 ## Signing
 

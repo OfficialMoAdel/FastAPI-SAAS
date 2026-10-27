@@ -152,6 +152,15 @@ rg -n "EmailTemplateOverride" src/app/modules/
   destroys deliverable mail. When Redis cannot answer, the sweep degrades to its
   age-only behaviour (and logs it), because never sweeping would leak PENDING rows
   forever — the outbox's bounded-terminal-state contract forbids that.
+  The page is read with ONE pipeline of per-key `EXISTS`
+  (`_notifications_jobs_live`), not one round trip per row and not a variadic
+  `EXISTS` (which returns a COUNT, so mixed live/dead rows could not be split).
+  If the pipeline raises **or answers fewer keys than it was given**, the helper
+  falls back to the per-key `_notification_job_is_live`, so an outage behaves
+  exactly like the old loop. The short-answer check and the `zip(...)` live
+  INSIDE the `try`: the sweep holds `FOR UPDATE SKIP LOCKED` rows, so an
+  exception escaping it rolls back the whole page and NO row reaches a terminal
+  state that tick. The batch keeps ONE commit for the sweep.
 - **A failed notification carries a machine-readable `error_kind`**
   (`Notification.error_kind`, defined in migration layer `07_observability`). The kinds are
   the stable `ERROR_KIND_*` constants in `service.py`: `rate_limited`, `enqueue_error`,

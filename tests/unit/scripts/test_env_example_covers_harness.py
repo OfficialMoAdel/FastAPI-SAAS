@@ -35,14 +35,25 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE = REPO_ROOT / "src" / ".env.example"
 
 #: Sources whose ``os.environ`` reads describe what the perf harness requires.
-#: Deliberately the harness and its fixture only - not src/app, whose settings
-#: are covered by pydantic's own required-field validation, and not every
-#: operator knob, which is a different question.
+#: The harness and its fixture, PLUS the operator probes and the run manifest.
+#:
+#: The probe/manifest entries are not padding: they were the gap. A rewrite of
+#: ``src/.env.example`` dropped REDIS_HOST / REDIS_PORT / REDIS_PASSWORD /
+#: REDIS_RATE_LIMIT_PASSWORD and the PERF_* manifest keys, and this gate stayed
+#: GREEN because it only looked at the locust harness. A gate whose source list
+#: is narrower than its docstring's claim is the exact failure it exists to
+#: prevent, so the list now covers every first-party script that reads the
+#: environment for configuration.
 HARNESS_SOURCES = (
     "scripts/run_perf_baseline.sh",
     "scripts/setup_locust_test_data.py",
+    "scripts/span_cost.py",
+    "scripts/store_rtt_probe.py",
+    "scripts/users_list_probe.py",
+    "scripts/clear_rate_limit_state.py",
     "src/benchmarks/perf_accounts.py",
     "src/benchmarks/run_manifest.py",
+    "src/benchmarks/m2_refresh_commit_ab.py",
     "tests/performance/locustfile.py",
 )
 
@@ -75,7 +86,9 @@ EXEMPT = frozenset(
     }
 )
 
-_PY_ENV_READ = re.compile(r"""(?:os\.environ(?:\.get)?\[?|environ\.get\()\s*["']([A-Z_][A-Z0-9_]*)["']""")
+_PY_ENV_READ = re.compile(
+    r"""(?:os\.environ(?:\.get)?\[?|environ\.get\(|os\.getenv\()\s*["']([A-Z_][A-Z0-9_]*)["']"""
+)
 
 
 def _documented_keys() -> set[str]:
@@ -243,3 +256,165 @@ def test_high_risk_variable_is_documented(name: str) -> None:
         f"{name} is no longer documented in src/.env.example. It is a variable "
         f"that has changed the meaning of a measurement before."
     )
+
+
+# ============================================================================
+# The Settings model is the other half of the contract
+# ============================================================================
+# The harness half above answers "can a clean checkout RUN the harness". These
+# answer "can a clean checkout RUN THE APP", and they exist because the template
+# was rewritten once from memory instead of from the model: 22 real Settings
+# fields went missing (they silently fell back to defaults, including
+# SECURITY_BUDGETS) and 18 keys were declared that bound to nothing
+# (S3_BUCKET_NAME instead of STORAGE_BUCKET, TIER_NAME instead of
+# DEFAULT_FREE_TIER_NAME, eight SSO *_CLIENT_ID/_SECRET that no code reads).
+# Both directions are silent: a missing key looks like a default, a dead key
+# looks configured.
+
+def _bindable_env_names() -> set[str]:
+    """Every env name the Settings tree can bind, honouring each class's prefix.
+
+    Walks ``model_fields`` recursively with the accumulated ``env_prefix``. This
+    is the only reliable source: a hand-maintained list is what drifted.
+    """
+    from pydantic_settings import BaseSettings
+
+    from src.app.core.config import Settings
+
+    seen: set[type] = set()
+
+    def walk(cls: type[BaseSettings], inherited: str) -> set[str]:
+        if cls in seen:
+            return set()
+        seen.add(cls)
+        prefix = inherited + (cls.model_config.get("env_prefix") or "")
+        out: set[str] = set()
+        for name, field in cls.model_fields.items():
+            annotation = field.annotation
+            nested = annotation if isinstance(annotation, type) and issubclass(annotation, BaseSettings) else None
+            if nested is None:
+                for arg in getattr(annotation, "__args__", ()) or ():
+                    if isinstance(arg, type) and issubclass(arg, BaseSettings):
+                        nested = arg
+            if nested is not None:
+                out |= walk(nested, prefix)
+            else:
+                out.add(prefix + name)
+        return out
+
+    return walk(Settings, "")
+
+
+def _required_env_names() -> set[str]:
+    """Settings fields with no default: the app refuses to boot without them."""
+    from pydantic_settings import BaseSettings
+
+    from src.app.core.config import Settings
+
+    seen: set[type] = set()
+
+    def walk(cls: type[BaseSettings], inherited: str) -> set[str]:
+        if cls in seen:
+            return set()
+        seen.add(cls)
+        prefix = inherited + (cls.model_config.get("env_prefix") or "")
+        out: set[str] = set()
+        for name, field in cls.model_fields.items():
+            annotation = field.annotation
+            nested = annotation if isinstance(annotation, type) and issubclass(annotation, BaseSettings) else None
+            if nested is None:
+                for arg in getattr(annotation, "__args__", ()) or ():
+                    if isinstance(arg, type) and issubclass(arg, BaseSettings):
+                        nested = arg
+            if nested is not None:
+                out |= walk(nested, prefix)
+            elif field.is_required():
+                out.add(prefix + name)
+        return out
+
+    return walk(Settings, "")
+
+
+def _directly_read_keys() -> set[str]:
+    """Env keys read by first-party src/ and scripts/ code with ``os.environ``.
+
+    Not Settings fields - the keys that configure a script, a probe or the
+    manifest. A template that omits them leaves an operator with a silent
+    default (the probe scripts fall back to 127.0.0.1 with no warning).
+    """
+    found: set[str] = set()
+    for root in ("src", "scripts"):
+        for path in (REPO_ROOT / root).rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            found |= set(_PY_ENV_READ.findall(path.read_text(encoding="utf-8", errors="ignore")))
+    return found
+
+
+class TestEverySettingsFieldIsDeclared:
+    """A required field missing from the template makes a clean checkout unbootable."""
+
+    def test_required_settings_fields_are_declared(self) -> None:
+        missing = sorted(_required_env_names() - _documented_keys())
+        assert not missing, (
+            f"{missing} are REQUIRED Settings fields (no default) but src/.env.example does not "
+            f"declare them. A clean checkout cannot boot: this is exactly how "
+            f"ADMIN_PASSWORD=replace_me shipped, failing min_length=16 and four complexity "
+            f"validators. Add each with a placeholder that satisfies its validators."
+        )
+
+    def test_no_settings_field_is_missing(self) -> None:
+        """Softer than "required": every field should be visible, not just the mandatory ones.
+
+        A field that is absent silently takes its default. That is how 22 real
+        fields - including SECURITY_BUDGETS - became invisible.
+        """
+        missing = sorted(_bindable_env_names() - _documented_keys())
+        assert not missing, (
+            f"{missing} are Settings fields that src/.env.example never declares, so their "
+            f"effective values are invisible to an operator. Declare each at its default with a "
+            f"note on what it changes."
+        )
+
+
+class TestNoDeadKeys:
+    """A declared key that binds nothing is worse than an absent one.
+
+    It reads as configured. S3_BUCKET_NAME, TIER_NAME and the eight SSO
+    *_CLIENT_ID/_SECRET keys all looked like configuration and were ignored.
+    """
+
+    def test_every_declared_key_is_reachable(self) -> None:
+        bindable = _bindable_env_names()
+        readable = _directly_read_keys()
+        # Keys whose consumers live outside src/ + scripts/ (tests bootstrap,
+        # shell, CI) or that are deliberately documented as inert constants.
+        outside_app = {
+            "TEST_POSTGRES_DB",
+            "TEST_POSTGRES_PORT",
+            "TEST_REDIS_PORT",
+            "TEST_REDIS_PASSWORD",
+            "TEST_ENCRYPTION_KEY",
+            "TEST_ENCRYPTION_SALT",
+            "API_HOST",
+            "PERF_LOGOUT_WEIGHT",
+            "PERF_ROLE_NAME",
+            "PERF_PERMISSION_SLUGS",
+            "PERF_TEST_EMAILS",
+            "PERF_TEST_USER_COUNT",
+            "PERF_TEST_PASSWORD",
+            "PERF_TEST_TENANT",
+            "PERF_STORE_LOCALITY",
+            "PERF_ORCHESTRATOR",
+            "PERF_IMAGE_DIGEST",
+            "PERF_TEST_AI_ENABLED",
+            "PERF_TEST_EMAIL",
+            "DEBUG",
+        }
+        dead = sorted(_documented_keys() - bindable - readable - outside_app)
+        assert not dead, (
+            f"{dead} are declared in src/.env.example but bind no Settings field and are read by "
+            f"no src/ or scripts/ code. Either the name is misspelled (a real field is silently "
+            f"taking its default) or it is decoration that will mislead the next operator. "
+            f"Fix the name, or delete the key and document why in prose."
+        )

@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import random
+from collections.abc import Sequence
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
@@ -1113,6 +1114,10 @@ async def _notification_job_is_live(notification_id: UUID) -> bool:
     degrades the sweep to its age-only behaviour. That is the conservative
     choice for a bounded-terminal-state sweep, and the caller logs the
     degradation.
+
+    The sweep reads a whole page with ``_notifications_jobs_live``; this
+    single-key form is what that batch falls back to when Redis rejects the
+    pipeline, so an outage behaves exactly like the old per-row loop.
     """
     from arq.constants import job_key_prefix
 
@@ -1130,6 +1135,63 @@ async def _notification_job_is_live(notification_id: UUID) -> bool:
             error=str(exc),
         )
         return False
+
+
+async def _notifications_jobs_live(notification_ids: Sequence[UUID]) -> dict[UUID, bool]:
+    """Liveness for a whole page of notifications in ONE Redis round trip.
+
+    Same contract as ``_notification_job_is_live``, per row, but the page is
+    read with a pipeline of per-key ``EXISTS`` instead of one round trip per
+    row. It is deliberately NOT a variadic ``EXISTS key1 key2 ...``: Redis
+    returns the COUNT of existing keys for that form, so a page with mixed
+    live and dead rows could not be split.
+
+    Failure handling keeps the single-key semantics:
+      * no queue client -> every row is not live (nothing was ever queued);
+      * the pipeline raises -> fall back to the per-key check, so an outage
+        still yields False per row instead of aborting the sweep.
+
+    Returns:
+        One entry per input id, in input order.
+    """
+    if not notification_ids:
+        return {}
+
+    from arq.constants import job_key_prefix
+
+    from src.app.core.utils.queue import pool as arq_pool
+
+    if arq_pool is None:
+        return dict.fromkeys(notification_ids, False)
+
+    keys = [job_key_prefix + str(notification_id) for notification_id in notification_ids]
+    try:
+        async with arq_pool.pipeline(transaction=False) as pipe:
+            for key in keys:
+                pipe.exists(key)
+            results = await pipe.execute()
+        # A pipeline answer is one result per queued command, in submission
+        # order. The length check and the zip are INSIDE the try on purpose: a
+        # short answer (a pipeline that answered fewer commands than it was
+        # given) must degrade to the per-key check like any other pipeline
+        # failure, not raise `zip() argument 2 is shorter than argument 1` out
+        # of the recovery sweep. The sweep holds FOR UPDATE SKIP LOCKED rows, so
+        # an escaping exception rolls back the whole page and NO row reaches a
+        # terminal state that tick — the opposite of the contract below.
+        if len(results) != len(keys):
+            raise ValueError(f"pipeline answered {len(results)} EXISTS for {len(keys)} keys")
+        verdicts = {
+            notification_id: bool(live)
+            for notification_id, live in zip(notification_ids, results, strict=True)
+        }
+    except Exception as exc:  # noqa: BLE001 - an outage degrades to the per-key check, never aborts the sweep
+        logger.warning("notification_job_liveness_batch_failed", keys=len(keys), error=str(exc))
+        return {
+            notification_id: await _notification_job_is_live(notification_id)
+            for notification_id in notification_ids
+        }
+
+    return verdicts
 
 
 async def recover_stuck_notifications(ctx: dict[str, Any]) -> int:
@@ -1190,12 +1252,16 @@ async def recover_stuck_notifications(ctx: dict[str, Any]) -> int:
 
             result = await db.execute(stmt)
             notifications = result.scalars().all()
+            # One round trip for the whole page, then one commit for the
+            # sweep. A page whose jobs are all dead still costs one Redis
+            # read, not one per row.
+            jobs_live = await _notifications_jobs_live([notification.id for notification in notifications])
             for notification in notifications:
                 # D3: only sweep a row whose enqueue is provably lost. A row
                 # whose ARQ job still exists is queued or deferred — the
                 # worker will still deliver it, so sweeping it would destroy
                 # deliverable mail.
-                if await _notification_job_is_live(notification.id):
+                if jobs_live[notification.id]:
                     logger.info(
                         "notification_recovery_skipped_job_still_live",
                         notification_id=str(notification.id),

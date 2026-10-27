@@ -28,16 +28,12 @@ Usage:
 
 from __future__ import annotations
 
-import base64
-import os
 from functools import lru_cache
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-from src.app.core.config import EnvironmentOption, settings
+from src.app.core.config import settings
 from src.app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -45,10 +41,6 @@ logger = get_logger(__name__)
 # Current encryption version
 CURRENT_VERSION = 1
 VERSION_PREFIX = b"v1:"
-
-# SECURITY: Generate a random fallback salt per process if not configured
-# This ensures dev environments work but production should always set ENCRYPTION_SALT
-_FALLBACK_SALT: bytes | None = None
 
 
 class EncryptionError(Exception):
@@ -69,41 +61,6 @@ class DecryptionError(Exception):
         super().__init__(self.message)
 
 
-def _get_salt() -> bytes:
-    """Get encryption salt from config or generate secure fallback.
-
-    Raises ValueError in production if ENCRYPTION_SALT is not configured.
-    """
-    global _FALLBACK_SALT
-
-    if settings.crypt.ENCRYPTION_SALT:
-        return bytes(settings.crypt.ENCRYPTION_SALT.get_secret_value().encode())
-
-    # SECURITY: Fail fast in production if salt not configured
-    if settings.env.ENVIRONMENT == EnvironmentOption.PRODUCTION:
-        raise ValueError("ENCRYPTION_SALT must be set in production. Generate with: openssl rand -hex 32")
-
-    # Fallback: generate random salt per process (dev/staging only)
-    if _FALLBACK_SALT is None:
-        _FALLBACK_SALT = os.urandom(32)
-        logger.warning(
-            "ENCRYPTION_SALT not configured. Using random per-process salt (dev only). "
-            "Encrypted data will be unrecoverable after restart!"
-        )
-    return _FALLBACK_SALT
-
-
-def _derive_key(secret: str, salt: bytes) -> bytes:
-    """Derive a Fernet key from a secret string."""
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=salt,
-        iterations=1300000,
-    )
-    return base64.urlsafe_b64encode(kdf.derive(secret.encode()))
-
-
 def _get_key_from_settings() -> bytes:
     """Get or derive Fernet key from settings."""
     key_str = settings.crypt.ENCRYPTION_KEY.get_secret_value() if settings.crypt.ENCRYPTION_KEY else None
@@ -120,16 +77,25 @@ def _get_key_from_settings() -> bytes:
 
 
 def _get_previous_key_from_settings() -> bytes | None:
-    """Get previous key from settings for rotation support."""
-    prev_key_str = getattr(settings, "ENCRYPTION_KEY_OLD", None) or getattr(settings, "ENCRYPTION_KEY_PREVIOUS", None)
-    if prev_key_str and hasattr(prev_key_str, "get_secret_value"):
-        prev_key_value = prev_key_str.get_secret_value()
-        if prev_key_value:
-            try:
-                return prev_key_value.encode() if isinstance(prev_key_value, str) else prev_key_value
-            except Exception as e:
-                logger.warning("Invalid ENCRYPTION_KEY_OLD format", error=e)
-    return None
+    """Get previous key from settings for rotation support.
+
+    Reads the NESTED path (``settings.crypt.``), not the flat one. The flat
+    form resolves through ``Settings.__getattr__``, which no static analyser can
+    see through and which ``tests/unit/core/config/test_flat_settings_access.py``
+    ratchets against in ``src/app`` — so the old spelling both hid the read from
+    mypy and quietly added a new flat-access site.
+    """
+    prev = settings.crypt.ENCRYPTION_KEY_OLD
+    if prev is None:
+        return None
+    prev_key_value = prev.get_secret_value()
+    if not prev_key_value:
+        return None
+    try:
+        return prev_key_value.encode() if isinstance(prev_key_value, str) else prev_key_value
+    except Exception as e:
+        logger.warning("Invalid ENCRYPTION_KEY_OLD format", error=e)
+        return None
 
 
 class CredentialEncryption:
@@ -254,9 +220,25 @@ class CredentialEncryption:
 
             return decrypted
         except InvalidToken as e:
-            logger.warning("Decryption failed: invalid token (tampered or wrong key)")
+            # The old message said "data may be tampered or encrypted with
+            # different key", which sends an operator hunting an attacker when
+            # the overwhelmingly likelier cause is a rotated ENCRYPTION_KEY.
+            # The two are indistinguishable to Fernet (both are just a failed
+            # HMAC), so the message must not pick one: it names BOTH causes, puts
+            # the mundane one first, and points at the rotation check.
+            logger.warning(
+                "decryption_invalid_token",
+                extra={"operation": "decrypt"},
+                # Tell the operator which key state produced this verdict, without
+                # leaking key material: whether a rotation key is configured at
+                # all is the single most useful fact here.
+                has_previous_key=_get_previous_key_from_settings() is not None,
+            )
             raise DecryptionError(
-                "Failed to decrypt: data may be tampered or encrypted with different key",
+                "Failed to decrypt: this row was encrypted with a different key. The usual cause is a "
+                "rotated ENCRYPTION_KEY (ciphertext written before the rotation); if the key did NOT "
+                "change, treat the data as tampered. To rotate safely, keep the old key in "
+                "ENCRYPTION_KEY_OLD until every row has been re-encrypted.",
                 e,
             ) from e
         except Exception as e:

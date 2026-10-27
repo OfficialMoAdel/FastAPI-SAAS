@@ -93,7 +93,30 @@ def _verify_canonical_bytes(
         return False
 
     expected = hmac_sha256_hex(secret, f"{ts}.".encode() + canonical)
-    return any(hmac.compare_digest(expected, c) for c in v1_sigs)
+    return any(_digests_match(expected, candidate) for candidate in v1_sigs)
+
+
+def _digests_match(expected_hex: str, candidate: str) -> bool:
+    """Constant-time hex-digest comparison that cannot raise on hostile input.
+
+    ``hmac.compare_digest`` raises ``TypeError`` when a ``str`` argument
+    contains non-ASCII characters, and ``candidate`` comes verbatim from the
+    ``X-Webhook-Signature`` header — so one non-ASCII byte after ``v1=`` used
+    to turn "invalid signature" into an unhandled error on a consumer's verify
+    endpoint, where the header is attacker-chosen. A hex digest is ASCII by
+    construction, so a non-ASCII candidate can only be a NON-match; it is
+    rejected here without weakening the comparison of real candidates.
+    """
+    try:
+        candidate_bytes = candidate.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    # ``expected_hex`` needs no guard: it is ``hmac_sha256_hex``'s output, which
+    # ``bytes.hex()`` renders as lowercase ASCII by construction. Encoding it
+    # cannot fail, so wrapping it would suggest a reachable branch that does not
+    # exist. The asymmetry with ``candidate`` is the point — one side is
+    # attacker-chosen, the other is computed here.
+    return hmac.compare_digest(expected_hex.encode("ascii"), candidate_bytes)
 
 
 def verify_signature(

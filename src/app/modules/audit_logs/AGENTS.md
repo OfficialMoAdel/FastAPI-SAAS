@@ -58,38 +58,48 @@ class AuditLog(Base):
 Use `await audit(...)` from the module facade for feature audit events. It owns validation, attribution, sanitization, and delivery policy; see Delivery Policy below. `AuditLogService.create_log()` remains a low-level direct-write API used internally by exports.
 
 ### Log Query with Filters
-✅ DO: Support filtering by action, user, entity, date range
+✅ DO: go through the service, and let it compose the filters
 ```python
-# src/app/modules/audit_logs/router.py (lines 24-75)
-@router.get("", response_model=AuditLogListResponse)
-async def list_audit_logs(
-    action: Optional[str] = Query(None),
-    user_id: Optional[UUID] = Query(None),
-    entity_type: Optional[str] = Query(None),
-    start_date: Optional[datetime] = Query(None),
-    end_date: Optional[datetime] = Query(None),
-    limit: int = Query(100, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
-) -> AuditLogListResponse:
-    """List audit logs for the current tenant with filters."""
-    query = select(AuditLog).where(AuditLog.tenant_id == current_tenant.id)
-
-    if action:
-        query = query.where(AuditLog.action == action)
-    if user_id:
-        query = query.where(AuditLog.user_id == user_id)
-    if entity_type:
-        query = query.where(AuditLog.entity_type == entity_type)
-    if start_date:
-        query = query.where(AuditLog.created_at >= start_date)
-    if end_date:
-        query = query.where(AuditLog.created_at <= end_date)
-
-    query = query.order_by(AuditLog.created_at.desc())
-    # ... pagination and execution
+# src/app/modules/audit_logs/router.py
+logs, total = await AuditLogService(ctx.db).query_logs_with_total(
+    tenant_id=ctx.tenant_id, user_id=user_id, action=action,
+    entity_type=entity_type, start_date=start_date, end_date=end_date,
+    limit=pagination.limit, offset=pagination.offset,
+)
+return build_paginated_response(items=logs, total=total, page=pagination.page, per_page=pagination.per_page)
 ```
+❌ DON'T: rebuild the filter predicates at a call site. Every reader (offset
+list, offset list with total, keyset list, export, export count) attaches them
+through the one `AuditFilter` + `_compose_filters` pair, so a filter cannot
+behave differently on one surface than on another.
+
+### Keyset pagination for deep traversal (Phase 3.2)
+
+`GET /api/v1/audit-logs/keyset` is the sibling of `GET /api/v1/audit-logs`:
+same filters, same fixed order (`created_at DESC, id DESC`), but each page costs
+one index seek instead of OFFSET's scan-and-discard.
+
+```python
+page = await AuditLogService(ctx.db).query_logs_keyset(
+    tenant_id=ctx.tenant_id, action=action, cursor=cursor, limit=limit,
+)
+# {"items": [...], "next_cursor": "..." | None, "has_next": bool, "limit": int}
+```
+
+- **No `total`, no page number.** Counting the remainder is the O(N) work keyset
+exists to avoid; the offset endpoint stays for page-jump UIs.
+- **`next_cursor` iff the page was full.** A short page is the end of the
+listing; a page that is exactly full costs the client ONE extra empty request
+rather than the server a look-ahead query on every page.
+- **The seek is STRICT** (`created_at < c OR (created_at = c AND id < i)`). A
+non-strict `<=` would re-serve the cursor row on every page.
+- **`id` is the UUIDv7 tie-breaker**, so equal timestamps page deterministically.
+The cursor is untyped, so `keyset_pagination_clause` coerces the decoded id to
+the COLUMN's Python type — `PGUUID` refuses to bind the raw string.
+- **A malformed cursor is a 422**, not a 500: core raises `ValueError`, the
+router maps it to `UnprocessableRequestError`.
+- Served by `idx_audit_logs_tenant_created_id` (`tenant_id, created_at DESC,
+id DESC`); `src/scripts/verify_indexes.py` asserts it on a live database.
 
 ### Stream audit exports
 
@@ -128,7 +138,8 @@ The canonical `audit()` call awaits buffer acceptance or its database fallback. 
 
 ### Schemas
 - Response: `AuditLogResponse` - Single log entry
-- List: `AuditLogListResponse` - Paginated list with filters
+- List: `AuditLogListResponse` - Paginated list with filters (offset + total)
+- Keyset: `AuditLogKeysetPage` - One cursor page: `items`, `next_cursor`, `has_next`, `limit` (no total, no page)
 
 ## JIT Index Hints
 

@@ -133,6 +133,19 @@ slow holder whose lock already expired delete the lock a DIFFERENT worker
 acquired in the meantime. There is deliberately no blind-delete fallback: a
 lock that cannot be released expires on its own TTL.
 
+**Batch reads are `get_json_many`, not a loop of `get_json`.** It is one
+`MGET` with the SAME fail-open contract and one entry per input key, in input
+order; a key that is absent, corrupt, or unreadable is a `None` MISS and never
+hides the other keys in the batch. Batch at the seam, not by reaching through
+`cache_client.client`.
+
+**Batch CLAIMS are `set_nx_many`, and they do NOT fail open.** One pipeline of
+`SET ... NX EX`, one verdict per item, in input order. Like `set_nx`, a
+backend error PROPAGATES: "the key was taken" and "the claim could not be
+made" are different answers, and the one caller (webhook recovery) needs to
+tell them apart to fall back to per-key claims rather than dropping a page. A
+missing client returns all-False.
+
 ### Tenancy & RLS
 Tenant context lives in contextvars (`core/tenancy/context.py` — bind with `bound_tenant`/`bind_tenant`, release with `unbind_tenant`); Postgres RLS scoping via `core/db/rls.py` (`set_rls_context`, `rls_context`, `bypass_rls`). Background jobs use `core/worker/rls_context.py`.
 
@@ -178,6 +191,8 @@ rg -n "async def .*ctx" src/app/core/worker/functions.py
 ## Common Gotchas
 
 - **Strict typing**: `core.*` runs with `disallow_untyped_defs = true` (mypy override) — type every function.
+- **`ENCRYPTION_KEY` must be a Fernet key, and settings LOAD now enforces it.** `CryptSettings.validate_encryption_key_shape` constructs `Fernet(key)` itself (not a regex, which would accept what the constructor rejects), for `ENCRYPTION_KEY` and `ENCRYPTION_KEY_OLD`. The trap is that `openssl rand -hex 32` — correct for `SECRET_KEY` and `ENCRYPTION_SALT` — produces 64 hex chars, which Fernet rejects; that value used to boot cleanly and then raise on the first passkey write or Stripe-secret read. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Absent is still allowed in local dev (`_get_key_from_settings` raises a clear error at use). **Do not** re-add a KDF fallback that derives the key from `SECRET_KEY`: it was removed deliberately, it would make a `SECRET_KEY` rotation silently destroy every ciphertext, and it is what made "hex passphrase" look intended.
+- **`AuthenticatedUser.tenant_id` is normalized, not trusted.** A before-validator parses UUID-shaped values (a JSON cache payload carries the tenant as a string, the DB row as a `UUID`) and passes everything else through untouched, so `int` tenant ids and `"acme"`-style slugs still validate. All three construction paths (DB payload, auth cache, `UserRead.model_dump()` on the API-key path) now yield a `UUID`; no path writes a principal's tenant from a JWT claim. The union stays because `enforce_superuser_tenant_rule` compares the RAW value and supports legacy ids. Pinned by `TestTenantIdTypeIsStableAcrossPayloadSources`.
 - **Sessions**: always via DI (`async_get_db`); never construct sessions in routes.
 - **Async only**: no blocking I/O; bcrypt/DB hashing already run in executors.
 - **UTC**: use `datetime.now(UTC)`, never `datetime.utcnow()`.

@@ -16,6 +16,7 @@ this seam is for the common case, not a Redis re-implementation.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Protocol, cast
 
 from src.app.core.logger import get_logger
@@ -63,6 +64,28 @@ class CacheClient(Protocol):
         """Delete keys; return the number removed."""
         ...  # pragma: no cover - Protocol
 
+    async def set_nx_many(self, items: Sequence[tuple[str, str]], ttl: int) -> list[bool]:
+        """Claim MANY keys in ONE pipeline of ``SET ... NX EX``.
+
+        Returns exactly one verdict per input item, in input order: ``True``
+        means this caller acquired the key, ``False`` means somebody else holds
+        it.
+
+        Deliberately NOT fail-open, unlike the read methods on this interface:
+        "the key was taken" and "the claim could not be made" are different
+        answers, and a caller that cannot tell them apart is in trouble. A
+        backend error therefore PROPAGATES so the caller can fall back to
+        per-key claims (webhook recovery does exactly that) instead of silently
+        dropping a whole page. With no client at all the answer is all-False —
+        nothing can be claimed, which is a truthful verdict rather than an
+        error.
+
+        A SHORT answer (fewer verdicts than items) is a failed batch, not a
+        partial success: callers must length-check before pairing verdicts with
+        items.
+        """
+        ...  # pragma: no cover - Protocol
+
     async def release_lock_if_owned(self, key: str, token: str) -> bool:
         """Release a lock ONLY if this caller still owns it.
 
@@ -90,6 +113,17 @@ class CacheClient(Protocol):
 
     async def get_json(self, key: str) -> Any | None:
         """Get and deserialize JSON value at ``key``, or None."""
+        ...  # pragma: no cover - Protocol
+
+    async def get_json_many(self, keys: Sequence[str]) -> list[Any | None]:
+        """Get and deserialize MANY JSON values in ONE round trip.
+
+        Returns exactly one entry per input key, in input order. A key that
+        is absent, holds an undecodable payload, or could not be read at all
+        yields None: the cache is a read-ahead optimisation, so a backend
+        outage reads as a batch of misses and the caller falls back to its
+        source.
+        """
         ...  # pragma: no cover - Protocol
 
     async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None:
@@ -178,6 +212,29 @@ class RedisCacheAdapter:
             logger.warning("cache_delete_failed", keys=list(keys), error=str(e))
             return 0
 
+    async def set_nx_many(self, items: Sequence[tuple[str, str]], ttl: int) -> list[bool]:
+        """Claim many keys with ONE pipeline of ``SET ... NX EX``.
+
+        Deliberately NOT fail-open (see the protocol docstring): the caller
+        decides what an outage means, and the one production caller (webhook
+        recovery) falls back to per-key claims rather than dropping a whole
+        page of rows.
+        """
+        from src.app.core.redis_provider import get_redis
+
+        if not items:
+            return []
+        client = get_redis()
+        if client is None:
+            return [False] * len(items)
+        # No try/except by design: like ``set_nx``, a claim that could not be
+        # ATTEMPTED must not masquerade as "somebody else holds it".
+        async with client.pipeline(transaction=False) as pipe:
+            for key, token in items:
+                pipe.set(key, token, ex=ttl, nx=True)
+            results = await pipe.execute()
+        return [bool(result) for result in results]
+
     async def release_lock_if_owned(self, key: str, token: str) -> bool:
         """Release a lock only if this caller still owns it.
 
@@ -241,6 +298,40 @@ class RedisCacheAdapter:
 
             _get_logger(__name__).debug("cache_json_decode_failed", key=key, error=str(e))
             return None
+
+    async def get_json_many(self, keys: Sequence[str]) -> list[Any | None]:
+        """Read several JSON values with ONE ``MGET``.
+
+        The batch sibling of ``get_json``: same fail-open contract (an
+        unreadable backend reads as a miss, never as an error), one round
+        trip instead of one per key. ``MGET`` answers per key, which is why
+        this is not a variadic ``EXISTS``-style command.
+        """
+        from src.app.core.json_utils import json_loads
+        from src.app.core.redis_provider import get_redis
+
+        if not keys:
+            return []
+        client = get_redis()
+        if client is None:
+            return [None] * len(keys)
+        try:
+            blobs = await client.mget(list(keys))
+        except Exception as e:  # noqa: BLE001 - the cache must never fail a request
+            logger.warning("cache_mget_failed", key_count=len(keys), error=str(e))
+            return [None] * len(keys)
+
+        decoded: list[Any | None] = []
+        for blob in blobs:
+            if blob is None:
+                decoded.append(None)
+                continue
+            try:
+                decoded.append(json_loads(blob))
+            except Exception as e:  # noqa: BLE001 - a corrupt value reads as a miss
+                logger.debug("cache_json_decode_failed", error=str(e))
+                decoded.append(None)
+        return decoded
 
     async def set_json(self, key: str, value: Any, ttl: int | None = _DEFAULT_TTL) -> None:
         from src.app.core.json_utils import json_dumps

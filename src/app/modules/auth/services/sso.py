@@ -697,24 +697,29 @@ class SSOService:
                 logger.warning("Username collision during SSO registration", username=username, attempt=attempt + 1)
 
     async def get_enabled_providers(self, db: AsyncSession) -> list[dict[str, Any]]:
-        """List all available SSO providers with their status."""
+        """List all available SSO providers with their status.
+
+        One batched settings read for the whole list: the per-provider loop it
+        replaced cost one cache round trip per provider, and the answer is
+        needed for all four at once or not at all.
+        """
         from src.app.modules.auth.services.sso_settings import sso_settings_service
 
-        providers_list = []
         supported_providers = [SSOProvider.GOOGLE, SSOProvider.GITHUB, SSOProvider.MICROSOFT, SSOProvider.APPLE]
+        configured = await sso_settings_service.get_settings_by_providers(
+            db, [provider.value for provider in supported_providers]
+        )
 
+        providers_list = []
         for provider in supported_providers:
-            is_enabled = False
-            try:
-                sso_settings = await sso_settings_service.get_settings_by_provider(db, provider.value)
-                is_enabled = sso_settings.is_enabled
-            except ModelNotFoundError:
-                pass
-
+            provider_settings = configured.get(provider.value)
             providers_list.append(
                 {
+                    # A provider with no settings row is not configured, which
+                    # is the same answer the per-provider ModelNotFoundError
+                    # produced: present in the list, disabled.
                     "name": provider,
-                    "enabled": is_enabled,
+                    "enabled": provider_settings.is_enabled if provider_settings else False,
                     "display_name": provider.value.title(),
                 }
             )

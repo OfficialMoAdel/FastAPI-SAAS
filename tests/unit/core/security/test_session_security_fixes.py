@@ -319,7 +319,7 @@ class TestTriStateBlacklist:
             patch("src.app.api.deps.auth.UserDirectory") as mock_us,
         ):
             svc = mock_us.return_value
-            svc.auth_info = AsyncMock(return_value=_dumpable(user))
+            svc.auth_info_dict = AsyncMock(return_value=user)
 
             with pytest.raises(Exception) as exc_info:
                 await get_auth_context(request, "tok")
@@ -358,7 +358,7 @@ class TestTriStateBlacklist:
             patch("src.app.api.deps.auth.UserDirectory") as mock_us,
         ):
             svc = mock_us.return_value
-            svc.auth_info = AsyncMock(return_value=_dumpable(user))
+            svc.auth_info_dict = AsyncMock(return_value=user)
             ctx = await get_auth_context(request, "tok")
             assert ctx.user.id == 1
             mock_fb.assert_not_awaited()
@@ -388,7 +388,7 @@ class TestTriStateBlacklist:
             patch("src.app.api.deps.auth.UserDirectory") as mock_us,
         ):
             svc = mock_us.return_value
-            svc.auth_info = AsyncMock(return_value=_dumpable(user))
+            svc.auth_info_dict = AsyncMock(return_value=user)
             with pytest.raises(Exception) as exc_info:
                 await get_auth_context(request, "tok")
             mock_fb.assert_awaited_once()

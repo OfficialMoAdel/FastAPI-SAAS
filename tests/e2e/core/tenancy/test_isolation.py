@@ -592,6 +592,14 @@ class TestTenantIsolationE2E:
             with (
                 patch("src.app.middleware.tenant.local_session", get_testing_session_local()),
                 patch("src.app.core.db.database.async_engine", new=test_async_engine),
+                # The composite seam below is only reached when auto-ban is ON
+                # and the GCRA engine is configured. Pinning the switch keeps
+                # this load test measuring TENANT ISOLATION: with auto-ban off
+                # (an operator dotenv may do that) admission falls through to
+                # the real ``consume()``, the 100 parallel requests hit the
+                # anonymous 10/3600 budget and the test fails with a wall of
+                # 429s that have nothing to do with leakage.
+                patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True),
                 patch(
                     "src.app.core.security.request_admission.check_ban_and_rate_limit",
                     new_callable=AsyncMock,

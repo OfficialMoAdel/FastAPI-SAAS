@@ -250,3 +250,180 @@ class TestSSOSettingsServiceValidProviders:
         )
 
         assert settings.provider == provider
+
+
+# ============================================================================
+# Batch provider reads (Phase 1.2)
+# ============================================================================
+
+PROVIDERS_UNDER_TEST = ("google", "github", "microsoft", "apple")
+
+
+def _public_payload(provider: str, *, enabled: bool = True, row_id: int = 1) -> dict:
+    """The PUBLIC projection the cache holds (no client id/secret)."""
+    return {
+        "id": row_id,
+        "provider": provider,
+        "is_enabled": enabled,
+        "additional_config": {"hd": "example.com"},
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "updated_at": datetime(2026, 1, 2, tzinfo=UTC),
+    }
+
+
+def _db_row(provider: str, *, enabled: bool = True, row_id: int = 2) -> dict:
+    """A full DB row: it carries the encrypted secrets the read must project away."""
+    return {
+        "id": row_id,
+        "provider": provider,
+        "client_id": b"ENCRYPTED_CID",
+        "client_secret": b"ENCRYPTED_SECRET",
+        "is_enabled": enabled,
+        "additional_config": {},
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "updated_at": datetime(2026, 1, 2, tzinfo=UTC),
+    }
+
+
+class TestSSOSettingsServiceBatchRead:
+    """``get_settings_by_providers`` is the batch form of the single read."""
+
+    @staticmethod
+    def _crud_get(**rows):
+        """A ``crud.get`` that answers per provider (missing key -> None)."""
+
+        async def _get(db, provider):
+            return rows.get(provider)
+
+        return _get
+
+    @pytest.mark.asyncio
+    async def test_all_hits_are_one_cache_round_trip_and_no_db_read(self):
+        """The headline of 1.2: four providers, one MGET, zero queries."""
+        from src.app.core.cache.client import cache_client
+
+        service = SSOSettingsService()
+        payloads = [_public_payload(provider) for provider in PROVIDERS_UNDER_TEST]
+        db_get = AsyncMock()
+
+        with (
+            patch.object(cache_client, "get_json_many", new=AsyncMock(return_value=payloads)) as mget,
+            patch("src.app.modules.auth.services.sso_settings.crud_sso_settings.get", new=db_get),
+        ):
+            result = await service.get_settings_by_providers(AsyncMock(), list(PROVIDERS_UNDER_TEST))
+
+        assert list(result) == list(PROVIDERS_UNDER_TEST)
+        assert all(settings.is_enabled for settings in result.values())
+        mget.assert_awaited_once_with([f"sso_settings:{provider}" for provider in PROVIDERS_UNDER_TEST])
+        db_get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_mixed_hits_and_misses_only_read_the_missing_providers(self):
+        """A miss costs a per-provider read; a hit costs nothing extra."""
+        from src.app.core.cache.client import cache_client
+
+        service = SSOSettingsService()
+        payloads = [_public_payload("google"), None, _public_payload("microsoft"), None]
+        db_get = AsyncMock(side_effect=self._crud_get(github=_db_row("github"), apple=_db_row("apple")))
+
+        with (
+            patch.object(cache_client, "get_json_many", new=AsyncMock(return_value=payloads)),
+            patch("src.app.modules.auth.services.sso_settings.crud_sso_settings.get", new=db_get),
+            patch.object(cache_client, "set_json", new=AsyncMock()),
+        ):
+            result = await service.get_settings_by_providers(AsyncMock(), list(PROVIDERS_UNDER_TEST))
+
+        assert list(result) == list(PROVIDERS_UNDER_TEST), "provider order must survive the batch"
+        assert [call.kwargs["provider"] for call in db_get.await_args_list] == ["github", "apple"]
+        # Cache ids vs DB ids prove which source answered for each provider.
+        assert result["google"].id == 1
+        assert result["github"].id == 2
+
+    @pytest.mark.asyncio
+    async def test_a_cache_outage_falls_back_to_the_db_for_every_provider(self):
+        """Read-ahead cache contract: an outage is a batch of misses, not an error."""
+        from src.app.core.cache.client import cache_client
+
+        service = SSOSettingsService()
+        db_get = AsyncMock(side_effect=self._crud_get(**{p: _db_row(p) for p in PROVIDERS_UNDER_TEST}))
+
+        with (
+            patch.object(cache_client, "get_json_many", new=AsyncMock(return_value=[None] * 4)),
+            patch("src.app.modules.auth.services.sso_settings.crud_sso_settings.get", new=db_get),
+            patch.object(cache_client, "set_json", new=AsyncMock()),
+        ):
+            result = await service.get_settings_by_providers(AsyncMock(), list(PROVIDERS_UNDER_TEST))
+
+        assert list(result) == list(PROVIDERS_UNDER_TEST)
+        assert db_get.await_count == 4
+
+    @pytest.mark.asyncio
+    async def test_a_db_failure_is_not_swallowed(self):
+        """Only a missing row is an expected outcome; a broken DB is not."""
+        from src.app.core.cache.client import cache_client
+
+        service = SSOSettingsService()
+        db_get = AsyncMock(side_effect=RuntimeError("db down"))
+
+        with (
+            patch.object(cache_client, "get_json_many", new=AsyncMock(return_value=[None] * 4)),
+            patch("src.app.modules.auth.services.sso_settings.crud_sso_settings.get", new=db_get),
+        ):
+            with pytest.raises(RuntimeError, match="db down"):
+                await service.get_settings_by_providers(AsyncMock(), list(PROVIDERS_UNDER_TEST))
+
+    @pytest.mark.asyncio
+    async def test_an_unconfigured_provider_is_omitted(self):
+        """The batch form of ``ModelNotFoundError``: absent, not empty settings."""
+        from src.app.core.cache.client import cache_client
+
+        service = SSOSettingsService()
+        db_get = AsyncMock(side_effect=self._crud_get(**{p: _db_row(p) for p in PROVIDERS_UNDER_TEST[:-1]}))
+
+        with (
+            patch.object(cache_client, "get_json_many", new=AsyncMock(return_value=[None] * 4)),
+            patch("src.app.modules.auth.services.sso_settings.crud_sso_settings.get", new=db_get),
+            patch.object(cache_client, "set_json", new=AsyncMock()),
+        ):
+            result = await service.get_settings_by_providers(AsyncMock(), list(PROVIDERS_UNDER_TEST))
+
+        assert list(result) == list(PROVIDERS_UNDER_TEST[:-1])
+        assert "apple" not in result
+
+    @pytest.mark.asyncio
+    async def test_a_malformed_cached_payload_is_refetched(self):
+        """A cached value the read model rejects is a MISS, same as the single read."""
+        from src.app.core.cache.client import cache_client
+
+        service = SSOSettingsService()
+        payloads = [{"provider": "google"}, _public_payload("github")]  # missing id/created_at
+        db_get = AsyncMock(side_effect=self._crud_get(google=_db_row("google")))
+
+        with (
+            patch.object(cache_client, "get_json_many", new=AsyncMock(return_value=payloads)),
+            patch("src.app.modules.auth.services.sso_settings.crud_sso_settings.get", new=db_get),
+            patch.object(cache_client, "set_json", new=AsyncMock()),
+        ):
+            result = await service.get_settings_by_providers(AsyncMock(), ["google", "github"])
+
+        assert list(result) == ["google", "github"]
+        assert result["google"].id == 2, "the malformed entry must come from the DB"
+        assert result["github"].id == 1, "the valid entry must come from the cache"
+        db_get.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_an_empty_provider_list_reads_nothing(self):
+        from src.app.core.cache.client import cache_client
+
+        service = SSOSettingsService()
+        db_get = AsyncMock()
+
+        with (
+            patch.object(cache_client, "get_json_many", new=AsyncMock(return_value=[])) as mget,
+            patch("src.app.modules.auth.services.sso_settings.crud_sso_settings.get", new=db_get),
+        ):
+            result = await service.get_settings_by_providers(AsyncMock(), [])
+
+        assert result == {}
+        mget.assert_awaited_once_with([])
+        db_get.assert_not_awaited()

@@ -130,6 +130,11 @@ def encode_keyset_cursor(created_at: datetime, id: int | str) -> str:
 def decode_keyset_cursor(cursor: str) -> tuple[datetime, int | str]:
     """Decode an opaque keyset cursor back to ``(created_at, id)``.
 
+    The id comes back as an ``int`` when it is all digits and as a ``str``
+    otherwise, because the cursor is opaque and carries no type. UUID-id
+    tables therefore receive a string here; ``keyset_pagination_clause``
+    coerces it to the id column's own Python type before it is bound.
+
     Raises:
         ValueError: If the cursor is not valid base64, is malformed, or
             contains an unparsable timestamp — callers should surface 422.
@@ -140,10 +145,34 @@ def decode_keyset_cursor(cursor: str) -> tuple[datetime, int | str]:
         created_at = datetime.fromisoformat(created_at_str)
     except (ValueError, UnicodeDecodeError, binascii.Error) as e:
         raise ValueError(f"Malformed keyset cursor: {cursor[:32]!r}") from e
-    # Numeric ids (the integer PKs every adopted site uses) round-trip as
-    # ints so SQLAlchemy binds them against Integer columns directly.
+    # Numeric ids (the integer PKs most sites use) round-trip as ints so
+    # SQLAlchemy binds them against Integer columns directly.
     row_id: int | str = int(id_str) if id_str.isdigit() else id_str
     return created_at, row_id
+
+
+def _cursor_id_for_column(id_col: Any, row_id: int | str) -> Any:
+    """Coerce a decoded cursor id to the id column's own Python type.
+
+    The cursor is opaque, so ``decode_keyset_cursor`` cannot tell a ``UUID``
+    id (``audit_logs``, write-ahead tables) from an integer one. The COLUMN
+    knows, so the source of truth is ``id_col.type.python_type`` rather than a
+    per-call parameter: a ``PGUUID`` column has to be bound with a
+    ``uuid.UUID``, and binding the decoded string raises at execute time.
+
+    A value that cannot be coerced means the cursor did not come from this
+    table, which is a malformed-cursor error (422), not a 500.
+    """
+    try:
+        python_type = id_col.type.python_type
+    except (AttributeError, NotImplementedError):  # exotic/custom column type
+        return row_id
+    if isinstance(row_id, python_type):
+        return row_id
+    try:
+        return python_type(row_id)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"Malformed keyset cursor id: {row_id!r}") from e
 
 
 def keyset_pagination_clause(
@@ -159,7 +188,8 @@ def keyset_pagination_clause(
     row-range seek the ``(tenant_id, created_at DESC, id DESC)`` index serves
     in O(limit) instead of OFFSET's O(offset) scan-and-discard.
     """
-    created_at, row_id = cursor
+    created_at, decoded_id = cursor
+    row_id = _cursor_id_for_column(id_col, decoded_id)
     return or_(
         created_at_col < created_at,
         and_(
@@ -239,12 +269,11 @@ def paginate_keyset(
     Raises:
         ValueError: If ``cursor`` is malformed (surface as 422 to clients).
 
-    Remaining OFFSET adoption sites (10 at time of writing — each keeps its
-    offset endpoint for page-jump UIs and gains a sibling keyset endpoint as
-    traffic warrants):
-    1. modules/audit_logs/service.py (query_logs / query_logs_with_total —
-       first planned adoption; its COUNT(*) OVER() single-query pattern is
-       the reference)
+    Remaining OFFSET adoption sites (each keeps its offset endpoint for
+    page-jump UIs and gains a sibling keyset endpoint as traffic warrants):
+    1. modules/audit_logs/service.py query_logs / query_logs_with_total
+       (ADOPTED — query_logs_keyset + GET /audit-logs/keyset; its
+       COUNT(*) OVER() single-query pattern is the reference)
     2. modules/posts/service.py get_posts (adopted — get_posts_keyset)
     3. modules/notifications list paths
     4. modules/users list paths

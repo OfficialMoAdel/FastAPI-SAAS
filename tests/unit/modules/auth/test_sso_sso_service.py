@@ -68,15 +68,36 @@ async def test_get_authorization_url_disabled_provider(mock_get_settings, servic
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.auth.services.sso_settings.sso_settings_service.get_settings_by_provider")
+@patch("src.app.modules.auth.services.sso_settings.sso_settings_service.get_settings_by_providers")
 async def test_get_enabled_providers(mock_get_settings, service, mock_db):
-    mock_get_settings.return_value.is_enabled = True
+    mock_get_settings.return_value = {
+        provider: MagicMock(is_enabled=True) for provider in ("google", "github", "microsoft", "apple")
+    }
 
     providers = await service.get_enabled_providers(mock_db)
 
     assert len(providers) == 4
     for p in providers:
         assert p["enabled"] is True
+    # The whole list is resolved with ONE batched read, not four.
+    mock_get_settings.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.auth.services.sso_settings.sso_settings_service.get_settings_by_providers")
+async def test_get_enabled_providers_keeps_an_unconfigured_provider_disabled(mock_get_settings, service, mock_db):
+    """A provider with no settings row is listed but disabled — its order too."""
+    mock_get_settings.return_value = {"github": MagicMock(is_enabled=True)}
+
+    providers = await service.get_enabled_providers(mock_db)
+
+    assert [p["name"] for p in providers] == [
+        SSOProvider.GOOGLE,
+        SSOProvider.GITHUB,
+        SSOProvider.MICROSOFT,
+        SSOProvider.APPLE,
+    ]
+    assert [p["enabled"] for p in providers] == [False, True, False, False]
 
 
 @pytest.mark.asyncio

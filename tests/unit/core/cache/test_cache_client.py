@@ -7,11 +7,12 @@ to the shared client at call time (observing test patches of
 ``utils.cache.client``, the same contract as ``redis_provider.get_redis``).
 """
 
+from collections.abc import Sequence
 from unittest.mock import AsyncMock
 
 import pytest
 
-from src.app.core.cache.client import RedisCacheAdapter, cache_client
+from src.app.core.cache.client import CacheClient, RedisCacheAdapter, cache_client
 
 
 class InMemoryCacheAdapter:
@@ -31,6 +32,23 @@ class InMemoryCacheAdapter:
             return False
         self._store[key] = value
         return True
+
+    async def set_nx_many(self, items: Sequence[tuple[str, str]], ttl: int) -> list[bool]:
+        """Batch claim, matching the adapter's contract exactly.
+
+        Per-key verdicts in input order; a key already held answers False. The
+        fake has no expiry, so ``ttl`` is ignored — but the ALL-OR-NOTHING
+        semantics of a real pipeline do NOT apply here: Redis ``SET NX`` is
+        per-key, so a batch can legitimately be partly claimed.
+        """
+        verdicts: list[bool] = []
+        for key, value in items:
+            if key in self._store:
+                verdicts.append(False)
+                continue
+            self._store[key] = value
+            verdicts.append(True)
+        return verdicts
 
     async def delete(self, *keys: str) -> int:
         removed = sum(1 for k in keys if k in self._store)
@@ -88,6 +106,52 @@ class TestContractBothAdapters:
         assert await fake_adapter.set_nx("lock", "1", ttl=60) is True
         assert await fake_adapter.set_nx("lock", "1", ttl=60) is False
         assert await fake_adapter.get("lock") == "1"
+
+    @pytest.mark.asyncio
+    async def test_set_nx_many_is_per_key_not_all_or_nothing(self, fake_adapter):
+        """Redis SET NX is per key, so a batch can be PARTLY claimed.
+
+        The in-memory fake has to agree with the adapter here: a fake that
+        treated the batch as all-or-nothing would make a caller's per-row
+        skip logic pass in tests and fail in production.
+        """
+        assert await fake_adapter.set_nx("held", "other", ttl=60) is True
+
+        verdicts = await fake_adapter.set_nx_many([("held", "mine"), ("free", "mine")], ttl=60)
+
+        assert verdicts == [False, True]
+        assert await fake_adapter.get("held") == "other", "a lost claim must not overwrite"
+        assert await fake_adapter.get("free") == "mine"
+
+    def test_the_fake_satisfies_the_protocol(self, fake_adapter) -> None:
+        """The Protocol is the seam; a fake missing a method is not a second adapter.
+
+        ``set_nx_many`` was added to the adapter and NOT to the Protocol, so
+        mypy reported "CacheClient has no attribute 'set_nx_many'" while
+        production code called it through the concrete singleton. This asserts
+        the interface surface the fake claims to implement.
+        """
+        required = {
+            "get",
+            "get_strict",
+            "set",
+            "set_nx",
+            "set_nx_many",
+            "delete",
+            "release_lock_if_owned",
+            "exists",
+            "tenant_key",
+            "get_json",
+            "get_json_many",
+            "set_json",
+        }
+        # The production adapter must expose everything the Protocol declares.
+        assert required <= set(dir(RedisCacheAdapter))
+        # And the fake must cover the subset it implements for tests.
+        assert required - {"get_strict", "get_json", "get_json_many", "set_json", "release_lock_if_owned"} <= set(
+            dir(fake_adapter)
+        )
+        assert hasattr(CacheClient, "set_nx_many"), "set_nx_many must be part of the Protocol"
 
 
 class TestRedisAdapterDelegation:
@@ -160,6 +224,48 @@ class TestRedisAdapterDelegation:
 
         await cache_client.set_json("k", {"num": 123}, ttl=60)
         _redis_mock.set.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_get_json_many_is_one_mget_in_input_order(self, _redis_mock):
+        # All hits: one round trip, payloads decoded, order preserved.
+        _redis_mock.mget = AsyncMock(return_value=['{"a": 1}', None, '{"c": 3}'])
+
+        values = await cache_client.get_json_many(["k1", "k2", "k3"])
+
+        assert values == [{"a": 1}, None, {"c": 3}]
+        _redis_mock.mget.assert_awaited_once_with(["k1", "k2", "k3"])
+        _redis_mock.get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_get_json_many_treats_a_corrupt_value_as_a_miss(self, _redis_mock):
+        # A decode failure must not hide the OTHER keys in the batch.
+        _redis_mock.mget = AsyncMock(return_value=["not json", '{"c": 3}'])
+
+        values = await cache_client.get_json_many(["k1", "k2"])
+
+        assert values == [None, {"c": 3}]
+
+    @pytest.mark.asyncio
+    async def test_get_json_many_fails_open_on_a_redis_outage(self, _redis_mock):
+        # D4: a cache outage reads as a batch of misses, never as an error.
+        _redis_mock.mget = AsyncMock(side_effect=RuntimeError("redis down"))
+
+        values = await cache_client.get_json_many(["k1", "k2"])
+
+        assert values == [None, None]
+
+    @pytest.mark.asyncio
+    async def test_get_json_many_without_a_client_is_safe(self, monkeypatch):
+        monkeypatch.setattr("src.app.core.utils.cache.client", None)
+
+        assert await cache_client.get_json_many(["k1", "k2"]) == [None, None]
+
+    @pytest.mark.asyncio
+    async def test_get_json_many_with_no_keys_never_touches_redis(self, _redis_mock):
+        _redis_mock.mget = AsyncMock(return_value=[])
+
+        assert await cache_client.get_json_many([]) == []
+        _redis_mock.mget.assert_not_awaited()
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

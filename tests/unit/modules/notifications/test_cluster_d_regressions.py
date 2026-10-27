@@ -288,8 +288,8 @@ class TestRecoverySweepProvesTheEnqueueIsLost:
             patch("src.app.core.db.database.get_db_context", return_value=db_ctx),
             patch("src.app.core.db.rls.bypass_rls", return_value=bypass),
             patch(
-                "src.app.modules.notifications.service._notification_job_is_live",
-                new=AsyncMock(return_value=True),
+                "src.app.modules.notifications.service._notifications_jobs_live",
+                new=AsyncMock(return_value={stuck.id: True}),
             ),
         ):
             recovered = await recover_stuck_notifications({})
@@ -322,8 +322,8 @@ class TestRecoverySweepProvesTheEnqueueIsLost:
             patch("src.app.core.db.database.get_db_context", return_value=db_ctx),
             patch("src.app.core.db.rls.bypass_rls", return_value=bypass),
             patch(
-                "src.app.modules.notifications.service._notification_job_is_live",
-                new=AsyncMock(return_value=False),
+                "src.app.modules.notifications.service._notifications_jobs_live",
+                new=AsyncMock(return_value={stuck.id: False}),
             ),
         ):
             recovered = await recover_stuck_notifications({})
@@ -414,6 +414,117 @@ class TestRecoverySweepProvesTheEnqueueIsLost:
             live = await _notification_job_is_live(uuid4())
 
         assert live is False
+
+
+class TestBatchLivenessReadsThePageInOneRoundTrip:
+    """The sweep asks Redis once per PAGE, not once per row (Phase 1.1)."""
+
+    @staticmethod
+    def _pool(results: list[int]) -> tuple[MagicMock, MagicMock]:
+        """An ARQ pool whose pipeline answers ``results`` in order."""
+        pipe = MagicMock()
+        pipe.exists = MagicMock(return_value=pipe)
+        pipe.execute = AsyncMock(return_value=results)
+        pipe.__aenter__ = AsyncMock(return_value=pipe)
+        pipe.__aexit__ = AsyncMock(return_value=False)
+        pool = MagicMock()
+        pool.pipeline = MagicMock(return_value=pipe)
+        return pool, pipe
+
+    @pytest.mark.asyncio
+    async def test_a_mixed_page_is_resolved_per_key_from_one_pipeline(self):
+        """A variadic EXISTS would return a COUNT and could not split the page."""
+        from src.app.modules.notifications.service import _notifications_jobs_live
+
+        live_id, dead_id, also_dead_id = uuid4(), uuid4(), uuid4()
+        pool, pipe = self._pool([1, 0, 0])
+
+        with patch("src.app.core.utils.queue.pool", pool):
+            result = await _notifications_jobs_live([live_id, dead_id, also_dead_id])
+
+        assert result == {live_id: True, dead_id: False, also_dead_id: False}
+        pool.pipeline.assert_called_once_with(transaction=False)
+        pipe.execute.assert_awaited_once()
+        # The per-key fallback must not run while the pipeline answers.
+        pool.exists.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_every_queued_command_is_a_single_job_key(self):
+        """Same ``arq:job:{id}`` key format as the single-key helper."""
+        from src.app.modules.notifications.service import _notifications_jobs_live
+
+        first, second = uuid4(), uuid4()
+        pool, pipe = self._pool([1, 1])
+
+        with patch("src.app.core.utils.queue.pool", pool):
+            await _notifications_jobs_live([first, second])
+
+        keys = [call.args[0] for call in pipe.exists.call_args_list]
+        assert keys == [f"arq:job:{first}", f"arq:job:{second}"]
+
+    @pytest.mark.asyncio
+    async def test_a_pipeline_failure_falls_back_to_the_per_key_check(self):
+        """An outage must degrade to the old behaviour, not abort the sweep."""
+        from src.app.modules.notifications.service import _notifications_jobs_live
+
+        first, second = uuid4(), uuid4()
+        pool = MagicMock()
+        pool.pipeline = MagicMock(side_effect=RuntimeError("redis down"))
+        pool.exists = AsyncMock(return_value=1)
+
+        with patch("src.app.core.utils.queue.pool", pool):
+            result = await _notifications_jobs_live([first, second])
+
+        assert result == {first: True, second: True}
+        assert pool.exists.await_count == 2, "the fallback must still check each key"
+
+    @pytest.mark.asyncio
+    async def test_a_short_pipeline_answer_falls_back_instead_of_raising(self):
+        """A short answer is a failed batch, not a per-row verdict.
+
+        The zip used to live OUTSIDE the try, so a pipeline that answered fewer
+        commands than it was given raised `zip() argument 2 is shorter than
+        argument 1` straight out of the recovery sweep. The sweep holds FOR
+        UPDATE SKIP LOCKED rows, so that exception rolled back the page and NO
+        row reached a terminal state — the opposite of the documented
+        degradation. The webhook sibling already length-checked; this pins the
+        same behaviour here.
+        """
+        from src.app.modules.notifications.service import _notifications_jobs_live
+
+        first, second = uuid4(), uuid4()
+        pool, pipe = self._pool([1])  # two keys queued, one verdict returned
+        pool.exists = AsyncMock(return_value=0)  # the per-key fallback says "not live"
+
+        with patch("src.app.core.utils.queue.pool", pool):
+            result = await _notifications_jobs_live([first, second])
+
+        assert result == {first: False, second: False}
+        assert pool.exists.await_count == 2, "a short answer must fall back per key"
+        pipe.execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_queue_client_means_no_row_is_live(self):
+        from src.app.modules.notifications.service import _notifications_jobs_live
+
+        first, second = uuid4(), uuid4()
+
+        with patch("src.app.core.utils.queue.pool", None):
+            result = await _notifications_jobs_live([first, second])
+
+        assert result == {first: False, second: False}
+
+    @pytest.mark.asyncio
+    async def test_an_empty_page_never_touches_redis(self):
+        from src.app.modules.notifications.service import _notifications_jobs_live
+
+        pool = MagicMock()
+
+        with patch("src.app.core.utils.queue.pool", pool):
+            result = await _notifications_jobs_live([])
+
+        assert result == {}
+        pool.pipeline.assert_not_called()
 
 
 # =============================================================================

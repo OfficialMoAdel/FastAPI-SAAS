@@ -43,6 +43,22 @@ built from `secrets.token_bytes(32)`, so it validates for **no** input.
   phase, off the event loop. Measured **~1.5 s at boot**, then **15.7 µs** per
   later call. A bad `ENCRYPTION_KEY` now fails at boot rather than as a 500 on
   someone's first login.
+
+  **Correction (2026-10-26).** The "fails at boot" claim above was, at the
+  time it was written, true only of the MFA derivation and false of the path
+  that actually raises. `MFAService.warm()` deliberately *swallows* the error
+  (see its docstring), and `CredentialEncryption` — the class behind
+  `encrypt_column`/`decrypt_column` and `encrypt_credential`/`decrypt_credential`
+  — was never constructed at startup. So a wrong-shaped key booted cleanly and
+  raised `ValueError: Fernet key must be 32 url-safe base64-encoded bytes` on
+  the passkey write path, the Stripe secret read, or the storage-credential
+  read. The guarantee now comes from `CryptSettings.validate_encryption_key_shape`,
+  a settings-load validator that constructs `Fernet(key)` itself — it fires for
+  every process that loads settings (app, ARQ worker, alembic, operator
+  scripts), not just the ones that run the app lifespan. `mfa_fernet_warm`
+  stays a non-gating warm-up on purpose: MFA is a code path that may never be
+  exercised, and refusing to boot in local dev over it would be worse than the
+  clear error the lazy derivation already raises.
 - **WebAuthn verification offloaded** via `asyncio.to_thread` at both call
   sites — the pattern the same file already uses for
   `encryption.decrypt_credential`.
@@ -72,6 +88,36 @@ documented mutation-isolation contract for `get_cached_user` callers — at
 
 `test_the_rejected_cuts_stay_rejected` pins both measurements so a future agent
 cannot re-propose them without confronting the numbers.
+
+### §10 — ACCEPT (later): drop the intermediate model, not the validation
+
+Cuts 3 and 4 were rejected because they keep the same shape and remove the
+validator. A different cut removes the SHAPE: `_load_and_validate_user` now
+reads `UserDirectory.auth_info_dict()` (the raw `get_user_with_tier_eager`
+dict) and hands it straight to `AuthenticatedUser(**dict)` instead of going
+`dict -> UserAuthInfo.model_validate -> model_dump -> AuthenticatedUser(**dump)`.
+The two hops it deletes are exactly the measured 3.37 µs + 3.35 µs; the
+7.36 µs `AuthenticatedUser(**dump)` stays, so the principal is still validated
+once — Cut 4's correctness objection (a nested `tier` MODEL raising
+`dict_type`) does not arise, because the input is the dict, not the model.
+
+Two consequences worth keeping:
+
+- The raw payload's shape is guaranteed by provenance (cache and DB rows are
+  both the `get_user_with_tier_eager` dict), so ADR-0012's "trusted rows" rule
+  is satisfied without `model_construct`.
+- `AuthenticatedUser.tenant_id` gained a before-validator that parses
+  UUID-shaped strings: with the intermediate model gone, a JSON cache payload
+  would otherwise leave the principal's tenant as a `str` while the DB path
+  produced a `UUID`, and any `Model.tenant_id == current_user.tenant_id` site
+  would bind for only one of them.
+
+The other three `UserDirectory.auth_info` callers still get the model.
+
+`tests/unit/api/deps/test_auth.py::TestBearerPathReadsTheRawAuthPayload` pins
+the equivalence (`UserAuthInfo.model_validate` is patched to raise and the
+request path still resolves), so this cut cannot quietly re-grow the round
+trip.
 
 ## Re-open condition
 

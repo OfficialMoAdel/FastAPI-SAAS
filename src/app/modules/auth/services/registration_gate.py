@@ -73,6 +73,13 @@ async def is_self_registration_allowed(
             reason="FIRST_USER_REGISTRATION_TOKEN is unset; empty tenants cannot be self-registered",
         )
         return False
-    if not registration_token or not hmac.compare_digest(registration_token, expected):
+    # Compared as BYTES, not str: ``hmac.compare_digest`` raises TypeError on a
+    # non-ASCII str, and the presented token is caller-chosen - one non-ASCII
+    # character would turn "invalid bootstrap token" into a 500. Equal tokens
+    # still encode to equal bytes, so the predicate and the constant-time
+    # property are unchanged.
+    if not registration_token or not hmac.compare_digest(
+        registration_token.encode("utf-8"), expected.encode("utf-8")
+    ):
         return False
     return True

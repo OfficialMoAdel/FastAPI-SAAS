@@ -262,13 +262,21 @@ def client():
     # Cleanup after test
     reset_rate_limiter()
 
+@patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True)
 @patch("src.app.core.security.request_admission.check_ban_and_rate_limit")
 def test_rate_limit_headers_allowed(mock_combined, client):
     """Test that rate limit headers are set correctly when request is allowed.
 
     H-3: the hot path now runs ban+GCRA in one combined call; mock the new
     seam. Decorators inject bottom-up, so the FIRST arg is the check_ban
-    mock — set its return_value rather than rebinding the name."""
+    mock — set its return_value rather than rebinding the name.
+
+    ``AUTO_BAN_ENABLED`` is PINNED here (as its sibling tests already did):
+    with the operator's auto-ban switched off, admission takes the
+    non-composite branch and calls the REAL ``consume()``, so this test
+    silently measured the limiter instead of the mocked seam and failed on any
+    machine whose dotenv disables auto-ban. A test must not depend on the
+    ambient configuration to reach the code path it names."""
     mock_combined.return_value = (BanInfo(is_banned=False), (False, 5, 0, False), None)
 
     response = client.get("/")
@@ -279,11 +287,13 @@ def test_rate_limit_headers_allowed(mock_combined, client):
     assert response.headers["X-RateLimit-Remaining"] == "5"
 
 
+@patch("src.app.core.security.request_admission.settings.security.AUTO_BAN_ENABLED", True)
 @patch("src.app.core.security.request_admission.check_ban_and_rate_limit")
 def test_rate_limit_headers_exceeded(mock_combined, client):
     """Test that rate limit headers are set correctly when limit is exceeded.
 
-    H-3: mock the combined ban+GCRA seam (see test_rate_limit_headers_allowed)."""
+    H-3: mock the combined ban+GCRA seam (see test_rate_limit_headers_allowed).
+    ``AUTO_BAN_ENABLED`` is pinned for the same reason stated there."""
     limit = 10
     mock_combined.return_value = (BanInfo(is_banned=False), (True, 0, 10, False), None)
 

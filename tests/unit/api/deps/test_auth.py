@@ -8,6 +8,7 @@ API key service) are mocked.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -258,7 +259,7 @@ async def test_get_auth_context_cached_success() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         ctx = await get_auth_context(request, "tok")
     assert ctx.user.id == 1
 
@@ -274,7 +275,7 @@ async def test_get_auth_context_verify_token_success() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         ctx = await get_auth_context(request, "tok")
     assert ctx.user.id == 2
 
@@ -289,7 +290,7 @@ async def test_get_auth_context_user_not_found() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=None)
+        directory.auth_info_dict = AsyncMock(return_value=None)
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, "tok")
 
@@ -305,7 +306,7 @@ async def test_get_auth_context_inactive() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, "tok")
 
@@ -321,7 +322,7 @@ async def test_get_auth_context_deleted() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, "tok")
 
@@ -337,7 +338,7 @@ async def test_get_auth_context_version_mismatch() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, "tok")
 
@@ -354,7 +355,7 @@ async def test_get_auth_context_tenant_mismatch() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(ForbiddenException):
             await get_auth_context(request, "tok")
 
@@ -378,7 +379,7 @@ async def test_get_auth_context_superuser_tenant_ok() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         ctx = await get_auth_context(request, "tok")
     assert ctx.user.id == 2
 
@@ -574,7 +575,7 @@ async def test_get_auth_context_cached_email_user() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         ctx = await get_auth_context(request, "tok")
     assert ctx.user.id == 1
 
@@ -590,7 +591,7 @@ async def test_get_auth_context_cached_no_user() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=None)
+        directory.auth_info_dict = AsyncMock(return_value=None)
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, "tok")
 
@@ -607,7 +608,7 @@ async def test_get_auth_context_cached_deleted() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, "tok")
 
@@ -624,7 +625,7 @@ async def test_get_auth_context_cached_version_mismatch() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(UnauthorizedException):
             await get_auth_context(request, "tok")
 
@@ -656,7 +657,7 @@ async def test_get_optional_auth_context_user_lookup_exception() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(side_effect=RuntimeError("db down"))
+        directory.auth_info_dict = AsyncMock(side_effect=RuntimeError("db down"))
         with pytest.raises(UnauthorizedException):
             await get_optional_auth_context(request, None)
 
@@ -709,7 +710,7 @@ async def test_verify_optional_cached_email_success() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
     assert result is not None
     assert result.user.id == 1
@@ -727,7 +728,7 @@ async def test_verify_optional_cached_no_user() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=None)
+        directory.auth_info_dict = AsyncMock(return_value=None)
         with pytest.raises(UnauthorizedException):
             await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
@@ -745,7 +746,7 @@ async def test_verify_optional_cached_deleted() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(UnauthorizedException):
             await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
@@ -763,7 +764,7 @@ async def test_verify_optional_cached_version_mismatch() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(UnauthorizedException):
             await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
@@ -801,7 +802,7 @@ async def test_verify_optional_success() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         ctx = await _verify_optional_bearer_token("tok", _make_db(), request, None)
     assert ctx is not None
     assert ctx.user.id == 2
@@ -818,7 +819,7 @@ async def test_verify_optional_inactive() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(UnauthorizedException):
             await _verify_optional_bearer_token("tok", _make_db(), request, None)
 
@@ -836,7 +837,7 @@ async def test_verify_optional_tenant_mismatch() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(ForbiddenException):
             await _verify_optional_bearer_token("tok", _make_db(), request, tenant)
 
@@ -911,7 +912,7 @@ async def test_get_optional_bearer_success() -> None:
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
         directory = mock_ud.return_value
-        directory.auth_info = AsyncMock(return_value=_dumpable(user))
+        directory.auth_info_dict = AsyncMock(return_value=user)
         ctx = await get_optional_auth_context(request, None)
     assert ctx is not None
     assert ctx.user.id == 2
@@ -1003,7 +1004,7 @@ async def test_resolve_principal_required_success() -> None:
         patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        mock_ud.return_value.auth_info = AsyncMock(return_value=_dumpable(user))
+        mock_ud.return_value.auth_info_dict = AsyncMock(return_value=user)
         ctx = await resolve_principal(request, _make_db(), token="valid_tok", policy=REQUIRED)
     assert ctx is not None
     assert ctx.user.id == 10
@@ -1040,7 +1041,7 @@ async def test_resolve_principal_optional_success() -> None:
         patch("src.app.api.deps.auth.get_current_tenant", return_value=_bound_tenant()),
         patch("src.app.api.deps.auth.UserDirectory") as mock_ud,
     ):
-        mock_ud.return_value.auth_info = AsyncMock(return_value=_dumpable(user))
+        mock_ud.return_value.auth_info_dict = AsyncMock(return_value=user)
         result = await resolve_principal(request, _make_db(), token="valid_tok", policy=OPTIONAL)
     assert result is not None
     assert result.user.id == 10
@@ -1148,3 +1149,289 @@ async def test_enforce_rejects_unverifiable_request_shape() -> None:
     user = AuthenticatedUser(id=1, email="a@b.com", api_key_id="k1", api_key_scopes=["admin"])
     with pytest.raises(ForbiddenException):
         enforce_api_key_scope(user, None)
+
+
+# =============================================================================
+# Phase 2.1 — the bearer path reads the RAW auth payload
+# =============================================================================
+
+_PROFILE_TENANT = UUID("11111111-1111-4111-8111-111111111111")
+
+
+def _db_payload(**overrides: Any) -> dict:
+    """A ``get_user_with_tier_eager`` dict as the DB hands it over."""
+    payload: dict = {
+        "id": 11,
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "updated_at": None,
+        "name": "Test User",
+        "username": "testuser",
+        "email": "test@example.com",
+        "profile_image_url": None,
+        "tenant_id": _PROFILE_TENANT,
+        "tier_id": 3,
+        "hashed_password": "$2b$12$" + "x" * 53,
+        "is_superuser": False,
+        "is_deleted": False,
+        "is_active": True,
+        "is_email_verified": True,
+        "token_version": 4,
+        "tier": {
+            "id": 3,
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+            "updated_at": None,
+            "name": "Free",
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _cache_payload(**overrides: Any) -> dict:
+    """The same row after a JSON round trip (cache): str tenants, ISO timestamps."""
+    payload = _db_payload(**overrides)
+    payload["tenant_id"] = str(payload["tenant_id"])
+    payload["created_at"] = payload["created_at"].isoformat()
+    if isinstance(payload.get("tier"), dict):
+        payload["tier"] = {**payload["tier"], "created_at": payload["tier"]["created_at"].isoformat()}
+    return payload
+
+
+def _patch_directory(*, cached: dict | None, db_row: dict | None = None):
+    """Patch the directory's two sources; return the collaborators for assertions."""
+    return (
+        patch(
+            "src.app.modules.users.directory.UserCacheInvalidator.get_cached_user",
+            new=AsyncMock(return_value=cached),
+        ),
+        patch(
+            "src.app.modules.users.directory.crud_users.get_user_with_tier_eager",
+            new=AsyncMock(return_value=db_row),
+        ),
+        patch(
+            "src.app.modules.users.directory.UserCacheInvalidator.cache_user_auth_info",
+            new=AsyncMock(),
+        ),
+    )
+
+
+class TestBearerPathReadsTheRawAuthPayload:
+    """One validation, not two: ``AuthenticatedUser`` is the validator."""
+
+    @pytest.mark.asyncio
+    async def test_cache_and_db_payloads_build_the_same_principal(self) -> None:
+        """Every TYPED field is coerced identically, whichever source answered."""
+        from src.app.api.deps.auth import _load_and_validate_user
+
+        cache_patch, _, _ = _patch_directory(cached=_cache_payload())
+        with cache_patch:
+            cached_user = await _load_and_validate_user(_make_db(), "test@example.com", 4)
+
+        _, db_patch, write_patch = _patch_directory(cached=None, db_row=_db_payload())
+        with db_patch, write_patch:
+            db_user = await _load_and_validate_user(_make_db(), "test@example.com", 4)
+
+        cached_principal = AuthenticatedUser(**cached_user)
+        db_principal = AuthenticatedUser(**db_user)
+
+        assert cached_principal.model_dump(exclude={"tier"}) == db_principal.model_dump(exclude={"tier"})
+        assert cached_principal.tier is not None and db_principal.tier is not None
+        assert {
+            key: value for key, value in cached_principal.tier.items() if key not in ("created_at", "updated_at")
+        } == {
+            key: value for key, value in db_principal.tier.items() if key not in ("created_at", "updated_at")
+        }
+
+    @pytest.mark.asyncio
+    async def test_the_untyped_tier_bag_keeps_its_source_timestamp_representation(self) -> None:
+        """Pinned difference: JSON has no datetime, so the cache carries ISO strings.
+
+        ``AuthenticatedUser.tier`` is a ``dict[str, Any]`` bag, so its values are
+        the only place where cache and DB payloads can disagree — every typed
+        field is coerced by the principal itself. Nothing on this path reads the
+        tier timestamps (tier consumers use ``tier_id`` and ``tier["name"]``);
+        if that ever changes, normalize HERE rather than adding a validator to
+        the per-request principal.
+        """
+        from src.app.api.deps.auth import _load_and_validate_user
+
+        cache_patch, _, _ = _patch_directory(cached=_cache_payload())
+        with cache_patch:
+            cached_user = await _load_and_validate_user(_make_db(), "test@example.com", 4)
+
+        _, db_patch, write_patch = _patch_directory(cached=None, db_row=_db_payload())
+        with db_patch, write_patch:
+            db_user = await _load_and_validate_user(_make_db(), "test@example.com", 4)
+
+        cached_tier = AuthenticatedUser(**cached_user).tier
+        db_tier = AuthenticatedUser(**db_user).tier
+        assert cached_tier is not None and db_tier is not None
+        assert isinstance(cached_tier["created_at"], str)
+        assert isinstance(db_tier["created_at"], datetime)
+        assert cached_tier["created_at"] == db_tier["created_at"].isoformat()
+
+    @pytest.mark.asyncio
+    async def test_the_request_path_does_not_validate_through_user_auth_info(self) -> None:
+        """A ``UserAuthInfo`` round trip here is the thing Phase 2.1 removed."""
+        from src.app.api.deps.auth import _load_and_validate_user
+
+        cache_patch, _, _ = _patch_directory(cached=_cache_payload())
+        with (
+            patch(
+                "src.app.modules.users.directory.UserAuthInfo.model_validate",
+                side_effect=AssertionError("the bearer path re-validated through UserAuthInfo"),
+            ),
+            cache_patch,
+        ):
+            user = await _load_and_validate_user(_make_db(), "test@example.com", 4)
+
+        assert user["id"] == 11
+
+    @pytest.mark.asyncio
+    async def test_a_cache_hit_does_not_touch_the_database(self) -> None:
+        from src.app.api.deps.auth import _load_and_validate_user
+
+        cache_patch, db_patch, write_patch = _patch_directory(cached=_cache_payload())
+        with cache_patch, db_patch as db_get, write_patch:
+            await _load_and_validate_user(_make_db(), "test@example.com", 4)
+
+        db_get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_miss_writes_through_and_returns_the_db_row(self) -> None:
+        from src.app.api.deps.auth import _load_and_validate_user
+
+        cache_patch, db_patch, write_patch = _patch_directory(cached=None, db_row=_db_payload())
+        with cache_patch, db_patch, write_patch as write:
+            user = await _load_and_validate_user(_make_db(), "testuser", 4)
+
+        assert user["id"] == 11
+        write.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tenant", "expected"),
+        [
+            (_PROFILE_TENANT, _PROFILE_TENANT),
+            # JSON cache payload: a UUID-shaped STRING must arrive as the UUID,
+            # or a principal's tenant type would depend on which tier answered.
+            (str(_PROFILE_TENANT), _PROFILE_TENANT),
+            # Non-UUID ids are legal (int tenant ids / slugs). The union's
+            # smart mode renders a bare int as its string form, which is the
+            # behaviour the principal has always had.
+            (7, "7"),
+        ],
+    )
+    async def test_every_tenant_id_shape_yields_a_usable_principal(self, tenant: Any, expected: Any) -> None:
+        from src.app.api.deps.auth import _load_and_validate_user
+
+        cache_patch, _, _ = _patch_directory(cached=_cache_payload(tenant_id=tenant))
+        with cache_patch:
+            user = await _load_and_validate_user(_make_db(), "test@example.com", 4)
+
+        assert AuthenticatedUser(**user).tenant_id == expected
+
+    @pytest.mark.asyncio
+    async def test_a_tier_dict_and_none_both_survive(self) -> None:
+        from src.app.api.deps.auth import _load_and_validate_user
+
+        cache_patch, _, _ = _patch_directory(cached=_cache_payload())
+        with cache_patch:
+            with_tier = AuthenticatedUser(**(await _load_and_validate_user(_make_db(), "test@example.com", 4)))
+
+        none_patch, _, _ = _patch_directory(cached=_cache_payload(tier=None, tier_id=None))
+        with none_patch:
+            without_tier = AuthenticatedUser(**(await _load_and_validate_user(_make_db(), "test@example.com", 4)))
+
+        assert with_tier.tier is not None and with_tier.tier["name"] == "Free"
+        assert without_tier.tier is None
+
+    @pytest.mark.asyncio
+    async def test_extra_payload_keys_never_reach_the_principal(self) -> None:
+        """``hashed_password`` travels in the payload; it must not ride along."""
+        from src.app.api.deps.auth import _load_and_validate_user
+
+        cache_patch, _, _ = _patch_directory(cached=_cache_payload())
+        with cache_patch:
+            user = await _load_and_validate_user(_make_db(), "test@example.com", 4)
+
+        principal = AuthenticatedUser(**user)
+        assert not hasattr(principal, "hashed_password")
+        assert "hashed_password" not in principal.model_dump()
+
+    @pytest.mark.asyncio
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("payload_overrides", "payload_version", "reason"),
+        [
+            ({"is_active": False}, 4, DenialReason.INACTIVE_USER),
+            ({"is_deleted": True}, 4, DenialReason.DELETED_USER),
+            ({}, 99, DenialReason.STALE_TOKEN_VERSION),
+        ],
+    )
+    async def test_the_liveness_and_version_gates_still_read_the_raw_payload(
+        self, payload_overrides: dict, payload_version: int, reason: DenialReason
+    ) -> None:
+        """The raw payload is data, not a bypass: same gates, same verdicts."""
+        from src.app.api.deps.auth import _load_and_validate_user
+
+        cache_patch, _, _ = _patch_directory(cached=_cache_payload(**payload_overrides))
+        with cache_patch:
+            with pytest.raises(UnauthorizedException) as exc_info:
+                await _load_and_validate_user(_make_db(), "test@example.com", payload_version)
+
+        # The SPECIFIC verdict, not merely "something was refused".
+        assert str(exc_info.value.detail) == DENIAL_TABLE[reason].message
+
+
+class TestTenantIdTypeIsStableAcrossPayloadSources:
+    """The principal's ``tenant_id`` TYPE must not depend on which tier answered.
+
+    ``AuthenticatedUser.tenant_id`` is ``UUID | str | int | None``. The union is
+    load-bearing — ``enforce_superuser_tenant_rule`` deliberately compares the
+    RAW value and supports legacy int / slug ids, pinned by
+    ``tests/unit/core/rbac/test_superuser_tenant_rule.py``. But it means the field
+    can hold four types, and a comparison like
+    ``Model.tenant_id == current_user.tenant_id`` binds only for the UUID half.
+
+    The trap is real in one direction and was closed by the before-validator: the
+    auth cache stores JSON, so a cached payload carries the tenant as a STRING
+    while the DB row carries a ``UUID``. These tests pin that both now produce a
+    UUID, so a future change cannot silently reintroduce the split.
+    """
+
+    def test_db_and_cached_payloads_yield_the_same_tenant_type(self) -> None:
+        db_principal = AuthenticatedUser(**_db_payload())
+        cached_principal = AuthenticatedUser(**_cache_payload())
+
+        assert isinstance(db_principal.tenant_id, UUID)
+        assert isinstance(cached_principal.tenant_id, UUID)
+        assert type(db_principal.tenant_id) is type(cached_principal.tenant_id)
+        assert db_principal.tenant_id == cached_principal.tenant_id
+
+    def test_the_api_key_path_also_yields_a_uuid(self) -> None:
+        """``UserRead.model_dump()`` hands over a UUID; the validator must keep it."""
+        from src.app.modules.users.schemas import UserRead
+
+        payload = _db_payload()
+        payload.pop("hashed_password", None)
+        payload.pop("token_version", None)
+        principal = AuthenticatedUser(**UserRead.model_validate(payload).model_dump())
+
+        assert isinstance(principal.tenant_id, UUID)
+
+    @pytest.mark.parametrize("legacy", [7, "acme-corp"])
+    def test_non_uuid_tenant_ids_still_pass_through_unchanged(self, legacy: object) -> None:
+        """Anti-over-fix: the union exists so legacy int/slug tenants keep working.
+
+        Narrowing the field to ``UUID`` would break tenants the tenant-binding
+        rule explicitly supports, so the validator parses UUID-SHAPED values only.
+        """
+        principal = AuthenticatedUser(id=1, email="u@example.com", tenant_id=legacy)  # type: ignore[arg-type]
+
+        assert principal.tenant_id == legacy
+        assert type(principal.tenant_id) is type(legacy)
+
+    def test_an_absent_tenant_stays_none(self) -> None:
+        """A genuinely tenant-less principal must not be coerced into a value."""
+        assert AuthenticatedUser(id=1, email="u@example.com").tenant_id is None

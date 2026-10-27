@@ -1,5 +1,6 @@
 """SSO router - HTTP handlers for OAuth2 authentication endpoints."""
 
+import hmac
 from typing import Annotated, Any
 
 import httpx
@@ -27,6 +28,28 @@ from src.app.shared.exceptions import (
 )
 
 router = APIRouter(prefix="/account/sso", tags=["sso"])
+
+
+def _states_match(presented: str | None, cookie_state: str | None) -> bool:
+    """Constant-time login-CSRF state check that is TOTAL on hostile input.
+
+    ``hmac.compare_digest`` raises ``TypeError`` when a ``str`` argument holds
+    non-ASCII characters, and BOTH sides here are attacker-chosen: ``state``
+    arrives in the query string or form body (percent-decoded UTF-8) and the
+    cookie is latin-1-decoded straight off the Cookie header. One non-ASCII
+    byte (``?state=%C3%A9`` plus any ``sso_state`` cookie) therefore turned
+    "state mismatch" into an unhandled 500 on an UNAUTHENTICATED endpoint -
+    the same defect ``modules/webhooks/signer.py::_digests_match`` fixes for
+    the signature header.
+
+    Comparing the UTF-8 BYTES keeps the comparison constant-time, cannot
+    raise, and is the same predicate: equal strings encode to equal bytes, and
+    unequal ones never compare equal.
+    """
+    if not cookie_state:
+        return False
+    return hmac.compare_digest((presented or "").encode("utf-8"), cookie_state.encode("utf-8"))
+
 
 def _with_cleared_cookie(exc: _DomainAppException) -> _DomainAppException:
     """Attach ``sso_state``-clearing cookie hygiene to a domain error.
@@ -215,10 +238,7 @@ async def handle_callback(
     token is delivered via HttpOnly cookie (set inside _access_only_response).
     """
     # Login CSRF Protection Constraint
-    import hmac
-
-    cookie_state = request.cookies.get("sso_state")
-    if not cookie_state or not hmac.compare_digest(state or "", cookie_state or ""):
+    if not _states_match(state, request.cookies.get("sso_state")):
         raise _with_cleared_cookie(
             _DomainValidationError("State mismatch or missing session cookie (Login CSRF detection)")
         )
@@ -271,10 +291,7 @@ async def handle_post_callback(
     The `user` field contains JSON with name info on first authorization only.
     """
     # Login CSRF Protection Constraint
-    import hmac
-
-    cookie_state = request.cookies.get("sso_state")
-    if not cookie_state or not hmac.compare_digest(state or "", cookie_state or ""):
+    if not _states_match(state, request.cookies.get("sso_state")):
         raise _with_cleared_cookie(
             _DomainValidationError("State mismatch or missing session cookie (Login CSRF detection)")
         )

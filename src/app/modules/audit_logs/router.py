@@ -1,25 +1,30 @@
-from typing import Any
-
 """Audit Logs API Router."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from src.app.api.deps import RequestContextDep
-from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
+from src.app.core.pagination import (
+    DEFAULT_PER_PAGE,
+    MAX_PER_PAGE,
+    PaginationParams,
+    build_paginated_response,
+    get_pagination_params,
+)
 from src.app.core.rbac import Permission, requires_permission
 from src.app.modules.audit_logs.schemas import (
     AuditExportCriteria,
+    AuditLogKeysetPage,
     AuditLogList,
     AuditLogResponse,
     ExportCountResponse,
 )
 from src.app.modules.audit_logs.service import EXPORT_MAX_RECORDS, AuditFilter, AuditLogService
-from src.app.shared.exceptions import ModelNotFoundError
+from src.app.shared.exceptions import ModelNotFoundError, UnprocessableRequestError
 
 router = APIRouter(prefix="/audit-logs", tags=["audit-logs"])
 
@@ -67,6 +72,62 @@ async def list_audit_logs(
     )
 
     return build_paginated_response(items=logs, total=total, page=pagination.page, per_page=pagination.per_page)
+
+
+# Declared BEFORE ``/{log_id}`` on purpose: FastAPI matches routes in
+# declaration order, so a keyset route declared after the UUID path parameter
+# would be captured by it and every call would 422 on "keyset" not being a
+# UUID. Same reason ``/actions/list`` and ``/export`` precede it.
+@router.get(
+    "/keyset",
+    response_model=AuditLogKeysetPage,
+    dependencies=[Depends(requires_permission(Permission.AUDIT_LOGS_VIEW_ONLY))],
+)
+async def list_audit_logs_keyset(
+    ctx: RequestContextDep,
+    action: str | None = Query(None, description="Filter by action"),
+    user_id: int | None = Query(None, description="Filter by user ID"),
+    entity_type: str | None = Query(None, description="Filter by entity type"),
+    start_date: datetime | None = Query(None, description="Filter from date"),
+    end_date: datetime | None = Query(None, description="Filter to date"),
+    cursor: str | None = Query(None, description="Opaque next_cursor from the previous page"),
+    limit: int = Query(
+        default=DEFAULT_PER_PAGE,
+        ge=1,
+        le=MAX_PER_PAGE,
+        description=f"Page size (max {MAX_PER_PAGE})",
+    ),
+) -> AuditLogKeysetPage:
+    """Keyset-paginated audit logs for the current tenant.
+
+    The sibling of ``GET /audit-logs`` for deep or infinite-scroll traversal:
+    every page costs a single index seek instead of OFFSET's scan-and-discard,
+    so page 10_000 is as cheap as page 1. Ordering is fixed
+    ``created_at DESC, id DESC`` and filters behave identically to the offset
+    endpoint.
+
+    The response carries ``next_cursor`` and ``has_next`` but deliberately NO
+    ``total`` and no page number — use the offset endpoint when the UI needs
+    page jumps or a count.
+    """
+    audit_service = AuditLogService(ctx.db)
+    try:
+        page = await audit_service.query_logs_keyset(
+            tenant_id=ctx.tenant_id,
+            user_id=user_id,
+            action=action,
+            entity_type=entity_type,
+            start_date=start_date,
+            end_date=end_date,
+            cursor=cursor,
+            limit=limit,
+        )
+    except ValueError as e:
+        # A malformed cursor is a client error (422), never a 500. The pagination
+        # helpers raise ValueError because core must not depend on HTTP; the
+        # domain 422 lives here.
+        raise UnprocessableRequestError(str(e)) from e
+    return AuditLogKeysetPage(**page)
 
 
 @router.get(

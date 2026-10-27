@@ -94,6 +94,7 @@ uv run python -c "from src.app.main import app; print([r.path for r in app.route
 - **Admin protection:** Everything under `v1/admin/` requires superuser via `dependencies=[Depends(get_current_superuser)]` — keep it that way.
 - **Single OpenAPI hook:** Customize schemas in `api/openapi.py`, not by patching `app.openapi` elsewhere.
 - **Optional auth:** Some endpoints accept anonymous requests — use the optional-auth dep from `deps/auth.py` rather than hand-rolling token parsing.
+- **The bearer path consumes the RAW auth payload.** `_load_and_validate_user` calls `UserDirectory.auth_info_dict()` and hands the dict to `_create_auth_context`, which builds `AuthenticatedUser(**user)`. That model is the ONE validator on this path: the old `UserAuthInfo.model_validate` → `model_dump()` round trip validated the same bytes twice and is gone (ADR-0026 still forbids `model_construct` here — validate once, not zero times). Liveness, `is_deleted` and `token_version` are checked on the raw dict in the same function, and a repo-wide `UserDirectory.auth_info` mock no longer intercepts this path — mock `auth_info_dict` returning a plain dict.
 
 ## Pre-PR Checks
 

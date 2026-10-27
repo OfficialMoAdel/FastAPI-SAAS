@@ -198,7 +198,37 @@ import count_broad_excepts as counter  # noqa: E402
 #: reason: a failed claim degrades to a recompute only on Redis failure.
 #: This is the direction the ratchet exists for — re-measured with
 #: ``python scripts/count_broad_excepts.py``, not estimated.
-BROAD_EXCEPT_BASELINE = 382
+#:
+#: 382 -> 386. Raised, deliberately and RE-MEASURED, by the Phase 1 batching
+#: work (PLAN_FOR_ADVANCED_OPTIMIZATIONS_ROUND_1_VERIFIED). All four are
+#: DEGRADATION guards on a path that must not turn a cache/queue outage into a
+#: failed request, and all four carry a ``noqa: BLE001`` with the reason:
+#:
+#:   * core/cache/client.py (2) - the new ``get_json_many`` batch read. The
+#:     ``MGET`` failure reads as a batch of misses and an undecodable value
+#:     reads as a single miss, exactly like the single-key ``get_json`` beside
+#:     it: the cache is read-ahead, so an outage must never fail a request.
+#:   * modules/auth/services/sso_settings.py (1) - an unvalidatable cached
+#:     provider payload is a MISS and is refetched from the DB; serving a 5xx
+#:     because Redis held a stale shape would make the cache a liability.
+#:   * modules/notifications/service.py (1) - the batched job-liveness probe.
+#:     A pipeline failure falls back to the per-key check rather than aborting
+#:     the recovery sweep, which is the same contract the single-key probe
+#:     already had.
+#:
+#: 386 -> 388. Raised, deliberately and RE-MEASURED, by the Phase 4.3 webhook
+#: recovery claim batching (`modules/webhooks/delivery.py::_claim_recovery_locks`).
+#: Both are DEGRADATION guards on a path whose failure has a defined outcome, and
+#: both carry a ``noqa: BLE001`` with that reason:
+#:
+#:   * the BATCHED claim — a pipeline failure must fall back to per-key claims
+#:     rather than discarding a whole page of stuck deliveries;
+#:   * the per-key FALLBACK claim — a row that still cannot be claimed is skipped
+#:     for this tick, exactly what the pre-batching per-row handler did.
+#:
+#: Neither may propagate: the recovery cron exists for the outage case, so an
+#: outage there must degrade one row at a time, not abort the sweep.
+BROAD_EXCEPT_BASELINE = 388
 
 #: The files muse 22 triaged. BLE001 is enforced on each (the per-file-ignores
 #: in pyproject.toml no longer blanket-exempt them), so these are also the

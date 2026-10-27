@@ -60,6 +60,14 @@ async def ready(
 - Database: Check connection via `db.execute(text("SELECT 1"))`
 - Redis: Check via `redis.ping()`
 - Queue: Check ARQ worker status
+- The three probes run CONCURRENTLY (`asyncio.gather`), so a `/ready` costs the
+  SLOWEST probe rather than the sum of three five-second timeouts. Return order
+  stays `(database, redis, queue, events_ready)` because both route consumers
+  unpack positionally, and each probe keeps its own timeout and failure result.
+  `gather(return_exceptions=True)` is deliberate: an exception that escapes a
+  probe's own handler becomes that dependency's `unhealthy` result instead of
+  blanking the other two answers (and the page) — a lock failure here must not
+  look like a total outage.
 
 ## Touch Points / Key Files
 

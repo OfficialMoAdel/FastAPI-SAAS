@@ -41,10 +41,18 @@ def test_encryption_keys_present_no_warning(caplog):
     """Verify no warning is logged when encryption keys are present."""
     import logging
 
+    from cryptography.fernet import Fernet
+
     caplog.set_level(logging.WARNING)
 
+    # A REAL Fernet key: the settings now validate the shape at load, because a
+    # wrong-shaped key used to boot cleanly and then raise on the first
+    # encrypt/decrypt (see tests/unit/core/config/test_encryption_key_shape.py).
+    # "k" * 32 was a placeholder that could never encrypt anything.
     CryptSettings(
-        SECRET_KEY=SecretStr("s" * 32), ENCRYPTION_KEY=SecretStr("k" * 32), ENCRYPTION_SALT=SecretStr("s" * 16)
+        SECRET_KEY=SecretStr("s" * 32),
+        ENCRYPTION_KEY=SecretStr(Fernet.generate_key().decode()),
+        ENCRYPTION_SALT=SecretStr("s" * 16),
     )
 
     assert "SECURITY: Encryption keys (ENCRYPTION_KEY, ENCRYPTION_SALT) are missing" not in caplog.text

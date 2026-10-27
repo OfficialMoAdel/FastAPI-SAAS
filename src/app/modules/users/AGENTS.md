@@ -45,12 +45,36 @@ user = await user_service.get_user(username=username, db=db)
 ```
 
 ### DO: Soft delete users
-
 ```python
 # Users are soft-deleted (is_deleted=True)
 # Password reset on reactivation
 await crud_users.update(db=db, id=user_id, object={"is_deleted": True})
 ```
+
+### DO: Pick the auth payload SHAPE the caller actually needs
+
+`UserDirectory` exposes the tier-eager payload in two forms, and they are one
+read path with one cache entry:
+
+```python
+# Raw dict — the per-request bearer path. The caller validates.
+user = await UserDirectory(db).auth_info_dict(email=email)
+
+# Validated model — password/MFA/SSO verification, _resolve_user_auth_info.
+found = await UserDirectory(db).auth_info(email=email)  # UserAuthInfo | None
+```
+
+`auth_info_dict` skips `UserAuthInfo` on purpose: `api.deps.auth` builds an
+`AuthenticatedUser` from the dict next, so validating into the model and
+`model_dump()`-ing it back validated the same bytes twice per request
+(Phase 2.1). Its payload shape is guaranteed by PROVENANCE — both the cache
+entry and the DB row are the `get_user_with_tier_eager` dict — so anything
+else (an external or attacker-influenced payload) must go through `auth_info`
+or its own validation instead. The only place the two shapes can disagree is
+the untyped `tier` bag: JSON has no `datetime`, so a cached copy carries ISO
+strings while the DB row carries `datetime`. Nothing reads those timestamps
+(tier consumers use `tier_id` and `tier["name"]`); if that changes, normalize
+at the reader rather than adding a validator to the hot principal path.
 
 ### DO: Address user writes by `id`, never by `username`
 
