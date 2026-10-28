@@ -618,7 +618,19 @@ async def blacklist_tokens(
                 expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
                 try:
                     if not tenant_id:
-                        tenant_id = await _resolve_tenant_id_for_token(payload, db)
+                        try:
+                            tenant_id = await _resolve_tenant_id_for_token(payload, db)
+                        except Exception as e:
+                            # A resolution failure must NOT skip revocation. The
+                            # fail-closed Redis path below is what guarantees the
+                            # token dies; letting the exception reach the outer
+                            # handler skipped it entirely and logged a warning,
+                            # so a logout could report success while the token
+                            # stayed valid. Treat it as "no tenant known".
+                            _jwt_logger.warning(
+                                "tenant_resolution_failed_for_blacklist", error=str(e)
+                            )
+                            tenant_id = None
                         if not tenant_id:
                             _jwt_logger.warning("Could not determine tenant_id for token blacklisting")
                             # P0 FIX (fail-closed): still blacklist in Redis even without

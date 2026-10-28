@@ -77,22 +77,56 @@ times. The subquery is an aggregate with **no GROUP BY**, so it yields
 exactly one row (all zeros for an empty window), which keeps the merged
 statement's `result.one()` valid.
 
-**Keep the predicates byte-identical when editing either side.** The scalar
-subqueries still exist for the per-group getters, and the parity between the
-two spellings is pinned by
-`tests/unit/modules/dashboard/test_p4_audit_grouped_scan.py`.
+**Keep the predicates byte-identical when editing either side.** There is ONE
+activity spelling in this module (`_audit_grouped_subquery`); the old
+`_activity_subqueries` builder was deleted because it had no production caller
+and restated these predicates in a form nothing executed.
+
+The one remaining dual spelling is the **parity oracle**:
+`_user_subqueries(audit=None)` builds `active_users` as its own scalar subquery
+via `audit_logs.trail.login_activity_subquery`, and
+`test_p4_audit_grouped_scan.py::TestTheParityOracle` compiles it against the
+grouped scan's `FILTER`. Production NEVER takes that branch —
+`_get_all_metrics` always passes `audit=`. It exists solely so a change to one
+spelling that shifts the number is caught by a test. Do not route production
+through it, and do not delete it as "dead": deleting it removes the only
+independent check on the grouped scan.
+
+### Revenue ratios: the denominator is the meaning
+
+`average_revenue_per_user` divides `total_revenue` by **`total_users`**;
+`average_revenue_per_subscriber` divides the same numerator by
+**`total_subscriptions`**. Each field is named for its denominator.
+
+They were previously the same number: ARPU divided by subscriptions, so it
+coincided with a per-user figure only for tenants where every user holds
+exactly one subscription. `total_users` was already in the same statement
+(column 0), so the fix reads it from there — no extra column, no extra query,
+and the positional layout is unchanged.
+
+**Windows:** `total_revenue` is scoped to the requested range;
+`total_users` and `total_subscriptions` are CURRENT snapshots. Both ratios
+therefore mean "this range's revenue over the current base", which is the
+standard ARPU reading and is stated in the schema descriptions. If a
+per-range-active-user figure is ever needed, it needs a new numerator-scoped
+denominator — not a different divisor on this one.
 
 ### Caching
 - `get_metrics` caches per `(tenant_id, time_range)` via `cache_client`
 - Cache key: `cache_client.tenant_key(f"dashboard:metrics:{time_range.value}", tenant_id)`
-- A cold (or just-expired) key is **single-flighted** (P2-4): the first caller
-  claims `{cache_key}:refresh` with `cache_client.set_nx` and computes; the
-  others poll the key and are served the stored payload. A waiter that
-  outlives `_METRICS_REFRESH_WAIT_SECONDS` (5s) computes anyway rather than
-  stalling the dashboard. The lock is the adapter's own `set_nx` +
-  `release_lock_if_owned` pair, so the documented `get_json`/`set_json` seam
-  and the stored payload type are unchanged. The compute half lives in
-  `_compute_metrics`, which `get_metrics` calls inside the lock.
+- A cold (or just-expired) key is **single-flighted** (P2-4) through
+  `cache_client.read_through(...)` — the ONE read-through seam in
+  `src/app/core/cache/read_through.py`, shared with the tier-policy read.
+  The seam claims `{cache_key}:refresh`, lets one caller compute, and serves
+  the rest the published payload; a waiter that outlives
+  `_METRICS_REFRESH_WAIT_SECONDS` computes anyway rather than stalling.
+- `_compute_metrics` is the `fetch` half and does **not** write to the cache:
+  the seam owns publishing, which is what lets one place decide whether a
+  computed value may be stored at all (`ReadThroughPolicy.should_cache`).
+- The claim TTL (`_METRICS_REFRESH_LOCK_TTL`) and the wait budget
+  (`_METRICS_REFRESH_WAIT_SECONDS`) are passed separately, and the seam
+  refuses a policy where the wait outlives the claim — a waiter that outlives
+  the claim it waits on would compute alongside the next claimer.
 
 ### Time Ranges
 - `today` / `week` / `month` (default) / `quarter` / `year` / `all`

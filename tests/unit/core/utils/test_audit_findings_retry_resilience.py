@@ -14,7 +14,6 @@ Each test pins one behaviour change so it cannot be silently reverted:
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -101,14 +100,30 @@ class TestStripeBudget:
 
 
 class TestWebhookJitter:
-    """#2 — the exact ladder re-enqueues every endpoint at the same second."""
+    """#2 — the exact ladder re-enqueues every endpoint at the same second.
 
-    def test_random_is_imported(self) -> None:
-        assert re.search(r"^import random$", DELIVERY.read_text(encoding="utf-8"), re.M)
+    The jitter ARITHMETIC moved into ``core/utils/retry_policy.py`` so the three
+    job ladders (webhook, event bus, notification email) share one expression;
+    they previously used ``ceil`` here and ``round`` elsewhere, so the same
+    nominal jitter produced delays up to a second apart. The intent below is
+    unchanged — the delay IS jittered — but it is now asserted against the
+    shared policy rather than against a local ``random.uniform`` call, because
+    the local call no longer exists by design.
+    """
 
-    def test_delay_is_jittered(self) -> None:
+    def test_the_webhook_path_delegates_its_jitter(self) -> None:
         src = DELIVERY.read_text(encoding="utf-8")
-        assert "random.uniform(0.9, 1.1)" in src, "the retry delay must be jittered"
+        assert "jittered_delay(" in src, "the retry delay must go through the shared jitter"
+        assert "random.uniform" not in src, (
+            "a local jitter expression is how the three ladders drifted apart"
+        )
+
+    def test_the_shared_jitter_uses_a_ten_percent_band(self) -> None:
+        from src.app.core.utils.retry_policy import JITTER_FRACTION
+
+        assert JITTER_FRACTION == 0.1, "the operator-visible band is +/-10%"
+        policy = Path("src/app/core/utils/retry_policy.py").read_text(encoding="utf-8")
+        assert "JITTER_FRACTION" in policy
 
     @pytest.mark.asyncio
     async def test_jitter_varies_and_stays_within_10_percent(self) -> None:

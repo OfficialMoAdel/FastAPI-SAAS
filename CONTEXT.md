@@ -110,6 +110,15 @@ persistence grilling loop, 2026-09-22.)
   alias using the same dependency policy. Seam: `resolve_readiness_status()` in
   `src/app/core/health.py`.
 
+  **Gating vs diagnosis is a distinction, not an inconsistency.**
+  `GET /api/health` is a DIAGNOSTIC surface: it always answers 200 and reports
+  `ok` / `degraded` / `error` in the body. It must not be wired into a
+  readiness probe — a 200 there means the process answered, not that it can
+  serve. Orchestrators target `/api/v1/ready`, which is the only surface that
+  fails with 503. `/api/health*` is tenant-exempt (so a probe needs no tenant
+  slug) but stays behind `ip_filter` and `attack_detection`, because it runs
+  five live probes per call.
+
 - **Event registration** — the application wiring step that supplies the
   complete handler batch to `EventBus.register_handlers()`. `EventBus` owns the
   private registry, readiness flag, reset, and handler count; application code

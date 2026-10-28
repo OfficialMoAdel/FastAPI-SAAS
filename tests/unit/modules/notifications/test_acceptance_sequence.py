@@ -149,10 +149,15 @@ class TestRateLimitRefusalIsIdenticalOnBothDoors:
                 await service.send_email(tenant_id, "user@example.com", "welcome", {})
             warnings = _refusal_warnings(mock_logger)
 
-        assert warnings == [(
-            "notification_rate_limit_exceeded",
-            {"tenant_id": str(tenant_id), "reason": LIMIT_REASON},
-        )]
+        # ``retry_after`` is part of the warning now: the refusal names the
+        # window that produced it, so the log line and the Retry-After header
+        # cannot disagree.
+        assert len(warnings) == 1
+        event, kwargs = warnings[0]
+        assert event == "notification_rate_limit_exceeded"
+        assert kwargs["tenant_id"] == str(tenant_id)
+        assert kwargs["reason"] == LIMIT_REASON
+        assert 0 < kwargs["retry_after"] <= 60, kwargs
 
         added = db.add.call_args.args[0]
         assert added.status == NotificationStatus.FAILED
@@ -183,10 +188,15 @@ class TestRateLimitRefusalIsIdenticalOnBothDoors:
                 })
             warnings = _refusal_warnings(mock_logger)
 
-        assert warnings == [(
-            "notification_rate_limit_exceeded",
-            {"tenant_id": str(tenant_id), "reason": LIMIT_REASON},
-        )]
+        # ``retry_after`` is part of the warning now: the refusal names the
+        # window that produced it, so the log line and the Retry-After header
+        # cannot disagree.
+        assert len(warnings) == 1
+        event, kwargs = warnings[0]
+        assert event == "notification_rate_limit_exceeded"
+        assert kwargs["tenant_id"] == str(tenant_id)
+        assert kwargs["reason"] == LIMIT_REASON
+        assert 0 < kwargs["retry_after"] <= 60, kwargs
 
         added = db.add.call_args.args[0]
         assert added.status == NotificationStatus.FAILED
@@ -222,5 +232,17 @@ class TestRateLimitRefusalIsIdenticalOnBothDoors:
                 })
             event_warnings = _refusal_warnings(mock_logger)
 
-        assert direct_warnings == event_warnings
+        # The two doors must agree on WHICH refusal happened. ``retry_after``
+        # is a window remainder derived from the clock, so two calls a moment
+        # apart can legitimately differ by a second — it is checked for range,
+        # not equality, or this test would flake on a window boundary.
         assert direct_warnings, "both doors must actually warn"
+        assert len(direct_warnings) == len(event_warnings)
+        for (d_event, d_kwargs), (e_event, e_kwargs) in zip(
+            direct_warnings, event_warnings, strict=True
+        ):
+            assert d_event == e_event
+            assert d_kwargs["reason"] == e_kwargs["reason"]
+            assert d_kwargs["tenant_id"] == e_kwargs["tenant_id"]
+            assert 0 < d_kwargs["retry_after"] <= 60
+            assert 0 < e_kwargs["retry_after"] <= 60

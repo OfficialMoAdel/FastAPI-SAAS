@@ -667,3 +667,126 @@ class TestFailedNotificationsCarryAnErrorKind:
         from src.app.modules.notifications.schemas import NotificationRead
 
         assert "error_kind" in NotificationRead.model_fields
+
+
+# =============================================================================
+# D6 — the 429 names the window that refused, not a fixed default
+# =============================================================================
+
+
+class TestTheRefusalNamesTheWindowThatRefused:
+    """``Retry-After`` must describe the wall the client actually hit.
+
+    The email policy has a 60 s window and a 3600 s window. The refusal used to
+    be raised as ``RateLimitExceededError(message)`` with no ``retry_after``, so
+    the exception's 60 s default was emitted for BOTH — an hourly refusal told
+    the client to retry in 60 s, and it was refused again for up to another 59
+    minutes. A wrong ``Retry-After`` is worse than none: it makes an
+    honouring client burn its retry budget against the same wall.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_hourly_refusal_carries_the_hourly_wait(self):
+        """The engine's own retry hint is preferred when it supplies one."""
+        service = NotificationService(db=AsyncMock())
+
+        async def _consume(key, limit, period, **kwargs):
+            # Only the hour window refuses, with the engine's precise answer.
+            limited = ":hour:" in key
+            return (limited, 0, 1847 if limited else 0, False)
+
+        with patch("src.app.modules.notifications.service.consume", side_effect=_consume):
+            refusal = await service._rate_limited(uuid4(), "a@b.c", "welcome")
+
+        assert refusal is not None
+        reason, retry_after = refusal
+        assert "per hour" in reason
+        assert retry_after == 1847, "the engine's own retry_after must survive"
+
+    @pytest.mark.asyncio
+    async def test_a_zero_hint_falls_back_to_the_window_reset_not_the_full_period(self):
+        """Fixed-window returns 0; the wait is the REMAINDER of the window.
+
+        Passing the full period (what the webhook sibling does) overstates the
+        wait by up to ``period - 1`` seconds. The remainder is the same value
+        ``build_verdict`` uses for ``Retry-After`` elsewhere.
+        """
+        from src.app.core.security.rate_policy import window_reset_seconds
+
+        service = NotificationService(db=AsyncMock())
+
+        async def _consume(key, limit, period, **kwargs):
+            limited = ":hour:" in key
+            return (limited, 0, 0, False)  # engine reports no hint
+
+        with patch("src.app.modules.notifications.service.consume", side_effect=_consume):
+            refusal = await service._rate_limited(uuid4(), "a@b.c", "welcome")
+
+        assert refusal is not None
+        _, retry_after = refusal
+        assert 0 < retry_after <= 3600
+        # Derived from the same helper the rest of the codebase uses.
+        assert retry_after == window_reset_seconds(3600)
+
+    @pytest.mark.asyncio
+    async def test_the_minute_refusal_carries_a_minute_scale_wait(self):
+        """A minute-window refusal must NOT be reported as an hour."""
+        service = NotificationService(db=AsyncMock())
+
+        async def _consume(key, limit, period, **kwargs):
+            limited = ":min:" in key
+            return (limited, 0, 0, False)
+
+        with patch("src.app.modules.notifications.service.consume", side_effect=_consume):
+            refusal = await service._rate_limited(uuid4(), "a@b.c", "welcome")
+
+        assert refusal is not None
+        reason, retry_after = refusal
+        assert "per minute" in reason
+        assert 0 < retry_after <= 60, f"minute window must not report an hour wait: {retry_after}"
+
+    @pytest.mark.asyncio
+    async def test_the_raised_exception_carries_the_window_and_the_header_shows_it(self):
+        """End to end: the 429's Retry-After equals the refusing window's wait."""
+        db = AsyncMock()
+        db.add = MagicMock()
+        db.commit = AsyncMock()
+        service = NotificationService(db=db)
+
+        async def _consume(key, limit, period, **kwargs):
+            limited = ":hour:" in key
+            return (limited, 0, 1847 if limited else 0, False)
+
+        with (
+            patch("src.app.modules.notifications.service.consume", side_effect=_consume),
+            pytest.raises(RateLimitExceededError) as exc_info,
+        ):
+            await service._accept_notification(uuid4(), "a@b.c", "welcome", {})
+
+        exc = exc_info.value
+        assert exc.retry_after == 1847
+        assert exc.http_headers()["Retry-After"] == "1847", (
+            "the header must name the hourly wait, not the 60s default"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_refusal_row_records_the_wait_for_operators(self):
+        """The FAILED outbox row is the audit trace; it must carry the window."""
+        db = AsyncMock()
+        db.add = MagicMock()
+        db.commit = AsyncMock()
+        service = NotificationService(db=db)
+
+        async def _consume(key, limit, period, **kwargs):
+            limited = ":hour:" in key
+            return (limited, 0, 1847 if limited else 0, False)
+
+        with (
+            patch("src.app.modules.notifications.service.consume", side_effect=_consume),
+            pytest.raises(RateLimitExceededError),
+        ):
+            await service._accept_notification(uuid4(), "a@b.c", "welcome", {})
+
+        added = db.add.call_args.args[0]
+        assert added.error_kind == ERROR_KIND_RATE_LIMITED
+        assert "per hour" in added.error_message

@@ -59,10 +59,10 @@ class TestSetexUsage:
         rl_path = Path(__file__).parents[4] / "src" / "app" / "modules" / "rate_limits" / "service.py"
         source = rl_path.read_text()
 
-        # P2-B: the tier-list read path delegates writes to get_with_lock
-        # (lock-based stampede protection); the atomic SETEX itself lives in
-        # stampede._refresh_cache — the single writer for that key.
-        assert "get_with_lock" in source
+        # P2-B: the tier-list read path is a read-through single-flight: the
+        # miss path claims the key, one caller fetches, and the value is stored
+        # atomically (SETEX via the adapter's ``set``).
+        assert "read_through" in source
         stampede_path = (
             Path(__file__).parents[4] / "src" / "app" / "core" / "utils" / "cache" / "stampede.py"
         )

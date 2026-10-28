@@ -16,9 +16,10 @@ this seam is for the common case, not a Redis re-implementation.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol, cast
 
+from src.app.core.cache.read_through import ReadThroughPolicy, read_through
 from src.app.core.logger import get_logger
 from src.app.core.utils.cache.keys import build_tenant_key
 
@@ -128,6 +129,28 @@ class CacheClient(Protocol):
 
     async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None:
         """Serialize and set JSON value at ``key`` with optional TTL."""
+        ...  # pragma: no cover - Protocol
+
+    async def read_through(
+        self,
+        key: str,
+        fetch: Callable[[], Awaitable[Any]],
+        *,
+        ttl: int,
+        policy: Any = None,
+    ) -> Any:
+        """Return the cached value at ``key``, computing it once if absent.
+
+        The interface for the choreography every caching caller was writing by
+        hand. ``policy`` is a
+        :class:`~src.app.core.cache.read_through.ReadThroughPolicy` naming the
+        five decisions (claim scope, freshness, give-up budget, claim TTL, and
+        whether the produced value may be published).
+
+        ``key`` must already be scoped by the caller (``tenant_key``), so this
+        method never chooses a namespace and cannot publish one tenant's value
+        into a public slot.
+        """
         ...  # pragma: no cover - Protocol
 
 # P2-4: fail-safe default TTL (5 min, the TENANT-cache convention) so a
@@ -339,8 +362,28 @@ class RedisCacheAdapter:
         serialized = json_dumps(value, as_str=True)
         await self.set(key, serialized, ttl=ttl)
 
+    async def read_through(
+        self,
+        key: str,
+        fetch: Callable[[], Awaitable[Any]],
+        *,
+        ttl: int,
+        policy: Any = None,
+    ) -> Any:
+        """Delegate to :func:`src.app.core.cache.read_through.read_through`.
+
+        The choreography lives in its own module so it can be tested against a
+        fake without a Redis client, and so the adapter stays a thin delegation
+        layer like every other method here. ``self`` is passed as the cache, so
+        the claim primitives resolve through this adapter (and therefore
+        observe the same late-bound client the rest of the seam does).
+        """
+        from src.app.core.cache.read_through import read_through as _read_through
+
+        return await _read_through(self, key, fetch, ttl=ttl, policy=policy)
+
 # Module-level singleton — the adapter is stateless (all delegation is
 # call-time resolved), matching the provider/dependency pattern.
 cache_client = RedisCacheAdapter()
 
-__all__ = ["CacheClient", "RedisCacheAdapter", "cache_client"]
+__all__ = ["CacheClient", "ReadThroughPolicy", "RedisCacheAdapter", "cache_client", "read_through"]

@@ -27,6 +27,27 @@ svc = RateLimitService(db)
 rate_limits = await svc.get_rate_limits_by_tier_id(tier_id)
 ```
 
+### DO: Single-flight the tier-policy read through the cache seam
+
+`get_rate_limits_by_tier_id` is the hot read behind every rate-limit decision,
+so its cold miss is single-flighted:
+
+```python
+await cache_client.read_through(
+    cache_key, _fetch, ttl=_TIER_POLICY_CACHE_TTL,
+    policy=ReadThroughPolicy(
+        give_up_seconds=_TIER_POLICY_GIVE_UP_SECONDS,
+        lock_ttl_seconds=_TIER_POLICY_LOCK_TTL_SECONDS,
+    ),
+)
+```
+
+`src/app/core/cache/read_through.py` is the ONE read-through seam (also used by
+the dashboard). Two budgets are passed separately on purpose: the claim TTL and
+the waiter's patience. The seam rejects a policy where the waiter outlives the
+claim, because that waiter then computes alongside the next claimer. The retired
+`stampede.get_with_lock` used a single `lock_timeout` for both.
+
 ### DON'T: Hardcode rate limits
 
 ```python

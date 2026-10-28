@@ -31,12 +31,33 @@ class UserMetrics(BaseModel):
 
 
 class RevenueMetrics(BaseModel):
-    """Revenue-related metrics."""
+    """Revenue-related metrics.
 
-    total_revenue: float = Field(description="Total revenue in time range")
-    recurring_revenue: float = Field(description="Monthly recurring revenue (MRR)")
-    average_revenue_per_user: float = Field(description="ARPU in time range")
-    total_subscriptions: int = Field(description="Active subscriptions")
+    The two ratio fields share one numerator (``total_revenue``) and differ
+    only in denominator, so each is named for the base it divides by. Both
+    denominators are CURRENT snapshots (non-deleted users, active
+    subscriptions) while the numerator is scoped to the requested range —
+    that asymmetry is the standard ARPU reading and is stated here so the
+    numbers cannot be misread as "per user active in this range".
+    """
+
+    total_revenue: float = Field(description="Total revenue in the requested time range")
+    recurring_revenue: float = Field(description="Monthly recurring revenue (MRR) across current active subscriptions")
+    average_revenue_per_user: float = Field(
+        description=(
+            "ARPU: range revenue ÷ the tenant's current non-deleted users "
+            "(total_users). Zero when the tenant has no users."
+        )
+    )
+    average_revenue_per_subscriber: float = Field(
+        default=0.0,
+        description=(
+            "ARPS: range revenue ÷ current active subscriptions "
+            "(total_subscriptions). Zero when there are none. This is the "
+            "figure average_revenue_per_user used to publish."
+        ),
+    )
+    total_subscriptions: int = Field(description="Current active subscriptions (not range-scoped)")
 
 
 class ActivityMetrics(BaseModel):
@@ -74,7 +95,8 @@ class DashboardMetricsResponse(BaseModel):
                 "revenue": {
                     "total_revenue": 45000.00,
                     "recurring_revenue": 38000.00,
-                    "average_revenue_per_user": 50.56,
+                    "average_revenue_per_user": 36.00,
+                    "average_revenue_per_subscriber": 60.00,
                     "total_subscriptions": 750,
                 },
                 "activity": {

@@ -359,11 +359,18 @@ async def _claim_refresh_lock(client: Any, lock_key: str, token: str) -> bool:
 async def _await_refreshed_value(client: Any, cache_key: str) -> bytes | str | None:
     """Poll for the value that the refresh owner is publishing.
 
-    Backoff mirrors ``stampede.get_with_lock`` (exponential, capped, jittered)
+    Backoff mirrors ``core.cache.read_through`` (exponential, capped, jittered)
     so waiters spread out instead of re-reading in lockstep, and the whole
     wait stays inside the claim TTL. ``None`` means the owner never published
     — it failed, or its claim expired — and the caller computes its own value,
     which is slower but still correct.
+
+    The constants below are still declared locally because this decorator's
+    budget (``_REFRESH_WAIT_TIMEOUT``) and its claim TTL
+    (``_REFRESH_CLAIM_TTL``) are tuned for endpoint caching and are deliberately
+    tighter than the read-through defaults. They are the same NUMBERS today;
+    if they ever need to diverge, this stays a local override rather than a
+    sixth policy.
     """
     elapsed = 0.0
     delay = _REFRESH_WAIT_BASE_DELAY

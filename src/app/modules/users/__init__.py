@@ -60,14 +60,52 @@ async def _users_token_version_lookup(username_or_email: str) -> int | None:
 
 
 async def _users_tenant_lookup(username_or_email: str, db: Any) -> Any | None:
-    from sqlalchemy import select
+    """Resolve a token subject's tenant WITHOUT an active tenant context.
 
+    This is the BOOTSTRAP read: it answers "which tenant does this principal
+    belong to" on the token path, *before* any tenant is known. It therefore
+    cannot be tenant-scoped — the scope is the ANSWER, not an input — which is
+    why it does NOT delegate to ``UserDirectory``/``crud_users.get``. Those are
+    fail-closed on a missing context (``TenantContextError``), and
+    ``jwt_service._resolve_tenant_id_for_token`` only reaches this function
+    AFTER ``get_current_tenant()`` returned None. Delegating would make the
+    fallback raise on every call.
+
+    What it MUST still enforce, and previously did not:
+
+    * ``is_deleted = false`` — a soft-deleted principal must not resolve a
+      tenant. This was the real asymmetry with ``crud_users.get``: the same
+      identifier resolved differently depending on which door read it.
+    * ``lower()`` on both sides — ``users/crud.py`` lowercases, so the two
+      doors must agree on what counts as the same identifier.
+
+    The bypass is explicit rather than tribal: ``Unscoped`` names the reason
+    in the audit log, and ``execute_scoped`` applies the shared DB circuit
+    guard the hand-built ``db.execute`` skipped.
+    """
+    from sqlalchemy import func, select
+
+    from src.app.core.db.scoped import execute_scoped
+    from src.app.core.tenancy.scope import Unscoped
     from src.app.modules.users.models import User
 
+    lowered = username_or_email.lower()
     stmt = (
-        select(User.tenant_id).where((User.username == username_or_email) | (User.email == username_or_email)).limit(1)
+        select(User.tenant_id)
+        .where(
+            (func.lower(User.username) == lowered) | (func.lower(User.email) == lowered),
+            User.is_deleted.is_(False),
+        )
+        .limit(1)
     )
-    result = await db.execute(stmt)
+    # Unscoped is the documented escape hatch for a context-free system read;
+    # `idx_users_lower_username` serves the username arm of the OR.
+    result = await execute_scoped(
+        stmt,
+        db=db,
+        model=User,
+        scope=Unscoped(reason="jwt-tenant-resolution"),
+    )
     return result.scalar()
 
 

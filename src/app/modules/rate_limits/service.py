@@ -11,8 +11,8 @@ from src.app.core.cache.invalidation_exhaustion import (
     InvalidationPolicy,
     invalidate_with_exhaustion,
 )
+from src.app.core.cache.read_through import ReadThroughPolicy
 from src.app.core.logger import get_logger
-from src.app.core.redis_provider import get_redis
 from src.app.modules._base.service import BaseService
 from src.app.modules.rate_limits.models import RateLimit
 from src.app.modules.rate_limits.schemas import (
@@ -26,6 +26,15 @@ from src.app.modules.tiers.service import TierService
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 logger = get_logger(__name__)
+
+#: Read-through budgets for the tier-policy list. The cache TTL is the value's
+#: lifetime; the give-up budget is how long a loser waits before computing
+#: anyway; the claim TTL is how long a crashed winner's claim survives. The
+#: seam enforces ``give_up < lock_ttl`` so a waiter never races the next
+#: claimer. Before the seam these were one number (``lock_timeout=10``).
+_TIER_POLICY_CACHE_TTL = 3600
+_TIER_POLICY_GIVE_UP_SECONDS = 2.0
+_TIER_POLICY_LOCK_TTL_SECONDS = 10
 
 #: The rate-limit key family's DECLARED exhaustion policy. Same stale-window
 #: concern as tiers, same log-only choice: the error record is the signal and
@@ -113,21 +122,31 @@ class RateLimitService(BaseService[RateLimit]):
         """
         cache_key = f"rate_limits:tier:{tier_id}"
 
-        # P2-B: lock-based stampede protection. Concurrent cold misses for
-        # the same tier used to fan out into N identical DB queries; now a
-        # single worker fetches while the rest wait on the lock (the
-        # provider client is passed explicitly so the get_redis seam stays
-        # the one this service reads).
-        from src.app.core.utils.cache import get_with_lock
-
+        # P2-B: single-flight the cold miss through the ONE read-through seam.
+        # Concurrent misses for the same tier used to fan out into N identical
+        # DB queries; now the seam claims the key, lets one caller fetch, and
+        # serves the rest the stored value.
+        #
+        # The seam decides the two budgets separately, which the previous
+        # ``get_with_lock`` call did not: it used one ``lock_timeout`` for both
+        # the claim's TTL and the waiter's patience, so a waiter gave up at the
+        # exact moment the claim became claimable by someone else.
         async def _fetch() -> dict[str, Any]:
             data = await self.get_page_with_total(tier_id=tier_id)
             return cast(dict[str, Any], data)
 
-        client = get_redis()
-        if client is None:
-            return await _fetch()
-        return cast(dict[str, Any], await get_with_lock(cache_key, _fetch, ttl=3600, client=client))
+        return cast(
+            dict[str, Any],
+            await cache_client.read_through(
+                cache_key,
+                _fetch,
+                ttl=_TIER_POLICY_CACHE_TTL,
+                policy=ReadThroughPolicy(
+                    give_up_seconds=_TIER_POLICY_GIVE_UP_SECONDS,
+                    lock_ttl_seconds=_TIER_POLICY_LOCK_TTL_SECONDS,
+                ),
+            ),
+        )
 
     async def create_rate_limit(self, tier_name: str, rate_limit: RateLimitCreate) -> dict[str, Any]:
         """Create a new rate limit for a tier.

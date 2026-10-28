@@ -16,9 +16,10 @@ from redis.asyncio import ConnectionPool
 
 from src.app.core import redis_provider as redis_factory
 from src.app.core import setup
+from src.app.core.cache.read_through import read_through
 from src.app.core.config import settings
 from src.app.core.utils import cache as cache_module
-from src.app.core.utils.cache import cache, get_with_lock
+from src.app.core.utils.cache import cache
 
 # =============================================================================
 # Tests from test_cache_lock.py
@@ -26,50 +27,57 @@ from src.app.core.utils.cache import cache, get_with_lock
 
 
 @pytest.mark.asyncio
-async def test_cache_lock_backoff_logic():
-    """Verify that get_with_lock uses exponential backoff when waiting."""
+async def test_read_through_backoff_logic():
+    """Verify that the read-through waiter uses exponential backoff.
+
+    The waiter's backoff used to live in ``stampede.get_with_lock``, which was
+    retired in favour of ``core/cache/read_through.py`` — the ONE read-through
+    implementation. Same schedule is pinned here against the surviving code:
+    0.05 -> 0.1 -> 0.2, deterministic (no jitter).
+    """
 
     key = "test:lock:key"
-    ttl = 60
-    lock_timeout = 10
 
-    # Mock Redis
-    mock_redis = AsyncMock()
+    class LosingCache:
+        """A backend where this caller never wins the claim."""
 
-    # 1. Initial check: Cache miss (returns None)
-    # 2. Lock acquire: Fails (returns False) -> enters wait loop
-    # 3. Wait loop 1: Cache check returns None
-    # 4. Wait loop 2: Cache check returns None
-    # 5. Wait loop 3: Cache check returns Valid Data
-    mock_redis.get.side_effect = [
-        None,  # Initial check
-        None,  # Check inside wait loop 1
-        None,  # Check inside wait loop 2
-        b'{"data": "success"}',  # Check inside wait loop 3
-    ]
+        def __init__(self) -> None:
+            self.reads = 0
+            self.client = object()  # Redis is present
 
-    mock_redis.set.return_value = False  # Lock acquisition failed
+        async def get_json(self, key):
+            self.reads += 1
+            # 1. initial miss. The claim was LOST, so the waiter polls: reads
+            # 2 and 3 miss and read 4 is the winner's value — exactly three
+            # sleeps at 0.05 / 0.1 / 0.2, the schedule being pinned.
+            if self.reads >= 4:
+                return {"data": "success"}
+            return None
+
+        async def set_nx(self, key, value, ttl):
+            return False  # the claim is held elsewhere
+
+        async def set_json(self, key, value, ttl=None):
+            pass
+
+        async def release_lock_if_owned(self, key, token):
+            return False
 
     fetch_func = AsyncMock()
 
-    with patch("src.app.core.utils.cache.client", mock_redis):
-        # Patch asyncio.sleep to track delays and avoid actual waiting
-        with patch("src.app.core.utils.cache.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-            # Patch random.uniform to return 0 (no jitter) for deterministic assertions
-            with patch("src.app.core.utils.cache.random.uniform", return_value=0.0):
-                result = await get_with_lock(key, fetch_func, ttl, lock_timeout)
+    with patch("src.app.core.cache.read_through.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with patch("src.app.core.cache.read_through._random_uniform", return_value=0.0):
+            result = await read_through(LosingCache(), key, fetch_func, ttl=60)
 
-                assert result == {"data": "success"}
+            assert result == {"data": "success"}
+            fetch_func.assert_not_awaited(), "the waiter was served the winner's value"
 
-                # Check call args
-                sleep_times = [call.args[0] for call in mock_sleep.call_args_list]
-                print(f"Sleep times: {sleep_times}")
-
-                # Verify exponential backoff: 0.05 -> 0.1 -> 0.2
-                assert len(sleep_times) == 3
-                assert sleep_times[0] == 0.05
-                assert sleep_times[1] == 0.1
-                assert sleep_times[2] == 0.2
+            # Verify exponential backoff: 0.05 -> 0.1 -> 0.2
+            sleep_times = [call.args[0] for call in mock_sleep.call_args_list]
+            assert len(sleep_times) == 3
+            assert sleep_times[0] == 0.05
+            assert sleep_times[1] == 0.1
+            assert sleep_times[2] == 0.2
 
 
 # =============================================================================

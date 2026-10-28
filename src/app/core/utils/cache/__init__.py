@@ -88,7 +88,6 @@ from .patterns import (  # noqa: E402,F401
 from .stampede import (  # noqa: E402,F401
     _refresh_cache,
     _refresh_cache_with_lock,
-    get_with_lock,
     get_with_stampede_protection,
 )
 from .tenant_index import (  # noqa: E402,F401

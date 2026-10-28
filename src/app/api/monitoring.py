@@ -6,7 +6,6 @@ Provides Prometheus metrics export and health check endpoints for monitoring.
 from __future__ import annotations
 
 import asyncio
-import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -102,35 +101,91 @@ async def check_database(request: Request | None = None) -> dict[str, str | floa
 
 
 async def check_redis(request: Request | None = None) -> dict[str, str | float | bool]:
-    """Check Redis connectivity."""
-    start_time = time.perf_counter()
-    try:
-        from src.app.core.redis_provider import get_redis
+    """Check Redis connectivity.
 
-        redis_client = get_redis()
+    Delegates the probe to ``core/health.check_redis_health`` — the canonical
+    implementation — and re-shapes the result into this endpoint's contract.
 
-        if redis_client is None:
-            return {"status": "disabled", "message": "Redis not configured"}
+    Before this, the probe called ``redis_client.ping()`` directly with NO
+    ``asyncio.wait_for``. The shared pool's own ``socket_timeout``
+    (``REDIS_CACHE_SOCKET_TIMEOUT``, 5 s by default and configurable up to
+    30 s) plus ``retry_on_timeout=True`` meant the worst case was a MULTIPLE of
+    an operator-tunable timeout, not a fixed budget — so the slowest dependency
+    was also the one with the least predictable ceiling, on the endpoint a load
+    balancer waits on. ``check_redis_health`` wraps the identical call in
+    ``wait_for(..., timeout=5.0)``, which is the budget the sibling probes use.
 
-        await redis_client.ping()
-        latency = time.perf_counter() - start_time
-        return {"status": "healthy", "latency_ms": round(latency * 1000, 2)}
-    except Exception as e:  # noqa: BLE001 - P1-17: probes report degraded, never raise
-        # str(e) from redis-py carries the host, port, and username. Class
-        # name only on the wire; full text in the log.
-        _log_probe_failure("redis", str(e), _request_id_of(request))
-        return {
-            "status": "unhealthy",
-            "error": type(e).__name__,
-            "latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
-        }
+    The three-state answer is preserved: ``disabled`` when no client is
+    installed, ``healthy`` or ``unhealthy`` from the canonical probe.
+    """
+    from src.app.core.health import check_redis_health
+    from src.app.core.redis_provider import get_redis
+
+    redis_client = get_redis()
+    if redis_client is None:
+        return {"status": "disabled", "message": "Redis not configured"}
+
+    result = await check_redis_health(redis=redis_client)
+    payload: dict[str, str | float | bool] = {
+        "status": result.status,
+        "latency_ms": round(result.latency_ms, 2) if result.latency_ms is not None else 0,
+    }
+    if result.error:
+        # core/health's `error` embeds the redis-py message, which carries the
+        # host, port, and username. Publish only the exception class name; the
+        # full text goes to the log, correlated by request_id.
+        _log_probe_failure("redis", result.error, _request_id_of(request))
+        payload["error"] = _class_name_of(result.error)
+    return payload
 
 
 async def check_worker_queue(request: Request | None = None) -> dict[str, str | float | bool]:
-    """Check ARQ worker queue status."""
-    try:
-        from src.app.core.utils.queue import get_queue_size
+    """Check ARQ worker queue status.
 
+    Reports DEPTH plus the configured worker/job ceilings. This answers a
+    different question from ``core/health.check_redis_queue_health``, which
+    pings to answer LIVENESS — depth is a backlog signal an operator needs and
+    ``ProbeCheck`` models deliberately (``queue_size`` / ``workers`` /
+    ``max_jobs``). The two probes are therefore kept side by side: swapping this
+    one for the ping would drop three published fields and call it a fix.
+
+    What WAS wrong here: ``get_queue_size()`` returns ``0`` when the pool is
+    ``None`` (``core/utils/queue.py``), so an UNINITIALISED queue reported
+    ``healthy`` with a depth of zero — indistinguishable from "enabled and
+    empty". ``check_redis_queue_health`` correctly answers ``degraded`` for the
+    same condition, and readiness treats only ``healthy`` as ready. The guard
+    below closes that asymmetry without giving up the depth payload.
+
+    An operator who disabled queues on purpose gets ``disabled``, not
+    ``degraded``: ``REDIS_QUEUE_ENABLED=False`` is a supported configuration,
+    and reporting it as a fault would page someone about a choice they made.
+    """
+    from src.app.core.utils.queue import get_queue_size, pool
+
+    if pool is None:
+        # A missing pool has two very different meanings, and conflating them
+        # either hides an outage or invents one.
+        if not settings.redis_queue.REDIS_QUEUE_ENABLED:
+            return {
+                "status": "disabled",
+                "message": "Queue disabled by configuration",
+                "queue_size": 0,
+                "workers": settings.arq.ARQ_WORKERS,
+                "max_jobs": settings.arq.ARQ_MAX_JOBS,
+            }
+        # Enabled but not installed: ARQ is not consuming anything. Not a
+        # healthy empty queue. Reported per probe (this endpoint always
+        # answers 200; readiness is the surface that turns ``degraded`` into
+        # a 503).
+        return {
+            "status": "degraded",
+            "message": "Queue pool not initialized",
+            "queue_size": 0,
+            "workers": settings.arq.ARQ_WORKERS,
+            "max_jobs": settings.arq.ARQ_MAX_JOBS,
+        }
+
+    try:
         queue_size = await get_queue_size()
         return {
             "status": "healthy",
@@ -185,11 +240,28 @@ async def check_dlq_size(request: Request | None = None) -> dict[str, str | floa
 
 @router.get("/health", response_model=HealthCheckResponse, response_model_exclude_unset=True)
 async def health_check(request: Request = None) -> HealthCheckResponse:  # type: ignore[assignment]
-    """Health check endpoint.
+    """Health check endpoint — DIAGNOSTIC, not the traffic gate.
 
     Returns overall system health with component-level checks. Every probe
     failure is reported as an exception CLASS NAME only; see
     ``api/monitoring_schemas.ProbeCheck`` for why.
+
+    **Status semantics are deliberately diagnostic:** this route always answers
+    HTTP 200 and carries the verdict in the body (``status`` is ``ok`` /
+    ``degraded`` / ``error``). It is a reporting surface for an operator or a
+    dashboard, not an admission decision.
+
+    **The traffic gate is ``GET /api/v1/ready``** (and its alias
+    ``/api/health/ready``), which returns 503 unless EVERY required dependency
+    is healthy. A load balancer or Kubernetes readiness probe must be pointed at
+    ``/api/v1/ready``: wiring this route into ``readinessProbe`` would keep a
+    pod with a dead database in rotation, because the 200 here says "I answered"
+    and not "I can serve".
+
+    ``/api/health`` is tenant-exempt (``middleware/tenant.py``) so an
+    orchestrator does not need to know a tenant slug, but it is deliberately NOT
+    exempt from ``ip_filter`` or ``attack_detection``: it runs five live probes
+    and is the most expensive path to serve per byte.
     """
     # Run all health checks in parallel
     results = await asyncio.gather(

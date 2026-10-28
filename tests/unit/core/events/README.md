@@ -8,7 +8,7 @@ Comprehensive unit test suite for R1-UNIFIED performance optimizations covering 
 |-------------|-----------|------------|--------|
 | **P1-1**: Event Bus Idempotency | `test_event_idempotency.py` | 10 | ✅ All Passing |
 | **P2-1**: Session Pipeline Eviction | `test_session_pipeline.py` | 11 | ✅ All Passing |
-| **P2-2**: XFetch Lua Script | `test_xfetch_lua.py` | 9 | ✅ All Passing |
+| **P2-2**: XFetch Lua Script | `tests/unit/core/test_xfetch_lua.py` | 12 | ✅ All Passing |
 | **P2-3**: RBAC Redis Cache | `test_rbac_cache.py` | 11 | ✅ All Passing |
 | **P3-1**: DLQ Bounded Size | `test_dlq_bounded.py` | 8 | ✅ All Passing |
 | **P3-2**: Passkey Column Select | `test_passkey_column.py` | 10 | ✅ All Passing |
@@ -31,7 +31,7 @@ uv run pytest tests/unit/r1_unified/test_event_idempotency.py -v
 uv run pytest tests/unit/r1_unified/test_session_pipeline.py -v
 
 # XFetch Lua Script (P2-2)
-uv run pytest tests/unit/r1_unified/test_xfetch_lua.py -v
+uv run pytest tests/unit/core/test_xfetch_lua.py -v
 
 # RBAC Redis Cache (P2-3)
 uv run pytest tests/unit/r1_unified/test_rbac_cache.py -v
@@ -107,7 +107,12 @@ uv run pytest tests/unit/r1_unified/ --cov=src/app --cov-report=term-missing --c
 
 ### P2-2: XFetch Lua Script Optimization
 
-**File**: `test_xfetch_lua.py` (9 tests)
+**File**: `tests/unit/core/test_xfetch_lua.py` (12 tests)
+
+> This suite used to exist as three byte-for-byte near-duplicates
+> (`tests/unit/core/`, `tests/unit/core/cache/`, `tests/unit/core/events/`),
+> all covering the same script. The two redundant copies were deleted; the
+> surviving one is the most complete (12 tests vs 9).
 
 **Optimization**: Combines GET+TTL into single Lua script execution, reducing roundtrips from 2 to 1.
 

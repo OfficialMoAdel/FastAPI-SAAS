@@ -12,6 +12,25 @@ import pytest
 from fastapi import status
 
 
+def _with_read_through(cache):
+    """Let a cache double drive the REAL read-through seam.
+
+    ``get_metrics`` now calls ``cache_client.read_through`` instead of spelling
+    the claim/poll choreography out inline. The doubles in this file still pin
+    the PRIMITIVES (``set_nx``, ``release_lock_if_owned``, ``get_json`` /
+    ``set_json``), so the method has to run the real implementation over the
+    double — an auto-created ``AsyncMock`` would return a mock payload and
+    every assertion below would be measuring nothing.
+    """
+    from src.app.core.cache.read_through import read_through
+
+    async def _read_through(key, fetch, *, ttl, policy=None):
+        return await read_through(cache, key, fetch, ttl=ttl, policy=policy)
+
+    cache.read_through = _read_through
+    return cache
+
+
 class TestDashboardEndpoint:
     """Test dashboard metrics endpoint."""
 
@@ -438,7 +457,7 @@ class TestP111DashboardCache:
             revenue=revenue,
             activity=activity,
         )
-        cache_mock = AsyncMock()
+        cache_mock = _with_read_through(AsyncMock())
         cache_mock.get_json = AsyncMock(return_value=cached.model_dump(mode="json"))
 
         with (
@@ -458,7 +477,7 @@ class TestP111DashboardCache:
         from src.app.modules.dashboard.service import dashboard_service
 
         start, end, users, revenue, activity = self._metrics()
-        cache_mock = AsyncMock()
+        cache_mock = _with_read_through(AsyncMock())
         cache_mock.get_json = AsyncMock(return_value=None)
         # tenant_key is sync on the real adapter — keep it sync on the mock.
         cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
@@ -529,7 +548,7 @@ class TestP111DashboardCache:
             async def release_lock_if_owned(self, key, token):
                 return True
 
-        fake = FakeCache()
+        fake = _with_read_through(FakeCache())
 
         async def _slow_compute(*args, **kwargs):
             await asyncio.sleep(0.02)
@@ -559,7 +578,7 @@ class TestP111DashboardCache:
         from src.app.modules.dashboard.service import dashboard_service
 
         start, end, users, revenue, activity = self._metrics()
-        cache_mock = AsyncMock()
+        cache_mock = _with_read_through(AsyncMock())
         cache_mock.get_json = AsyncMock(return_value=None)
         cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
         cache_mock.set_nx = AsyncMock(return_value=True)
@@ -595,7 +614,7 @@ class TestP111DashboardCache:
         from src.app.modules.dashboard.service import dashboard_service
 
         start, end, users, revenue, activity = self._metrics()
-        cache_mock = AsyncMock()
+        cache_mock = _with_read_through(AsyncMock())
         cache_mock.get_json = AsyncMock(return_value=None)
         cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
         cache_mock.client = MagicMock()  # Redis is present
@@ -634,7 +653,7 @@ class TestP111DashboardCache:
         from src.app.modules.dashboard.service import dashboard_service
 
         start, end, users, revenue, activity = self._metrics()
-        cache_mock = AsyncMock()
+        cache_mock = _with_read_through(AsyncMock())
         cache_mock.get_json = AsyncMock(return_value=None)
         cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
         cache_mock.client = None
@@ -676,7 +695,7 @@ class TestP111DashboardCache:
         from src.app.modules.dashboard.service import dashboard_service
 
         start, end, users, revenue, activity = self._metrics()
-        cache_mock = AsyncMock()
+        cache_mock = _with_read_through(AsyncMock())
         cache_mock.get_json = AsyncMock(return_value=None)
         cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
         cache_mock.client = MagicMock()  # Redis is present
@@ -707,7 +726,7 @@ class TestP111DashboardCache:
         from src.app.modules.dashboard.service import dashboard_service
 
         start, end, users, revenue, activity = self._metrics()
-        cache_mock = AsyncMock()
+        cache_mock = _with_read_through(AsyncMock())
         cache_mock.get_json = AsyncMock(return_value=None)
         cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
         cache_mock.client = MagicMock()
@@ -758,7 +777,11 @@ class TestGetAllMetrics:
         assert len(stmt.selected_columns) == 11
         assert (users.total_users, users.new_users, users.active_users, users.deleted_users) == (100, 10, 50, 2)
         assert (revenue.total_revenue, revenue.recurring_revenue, revenue.total_subscriptions) == (1000.0, 800.0, 50)
-        assert revenue.average_revenue_per_user == 20.0
+        # The row carries total_users=100 and total_subscriptions=50, so the two
+        # ratios must differ. Before the ARPU fix both were 20.0 (1000/50) and
+        # average_revenue_per_user was silently dividing by subscriptions.
+        assert revenue.average_revenue_per_user == 10.0
+        assert revenue.average_revenue_per_subscriber == 20.0
         assert (activity.total_logins, activity.api_calls) == (500, 10000)
         assert (activity.failed_authentications, activity.webhook_deliveries) == (5, 100)
         assert min_created is None
@@ -793,7 +816,7 @@ class TestGetAllMetrics:
         start = datetime.now(UTC) - timedelta(days=30)
         end = datetime.now(UTC)
         db_mock = self._db(self._row())
-        cache_mock = AsyncMock()
+        cache_mock = _with_read_through(AsyncMock())
         cache_mock.get_json = AsyncMock(return_value=None)
         cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
 
@@ -818,7 +841,7 @@ class TestGetAllMetrics:
 
         earliest = datetime.now(UTC) - timedelta(days=200)
         db_mock = self._db(self._row(min_created=earliest))
-        cache_mock = AsyncMock()
+        cache_mock = _with_read_through(AsyncMock())
         cache_mock.get_json = AsyncMock(return_value=None)
         cache_mock.tenant_key = MagicMock(side_effect=lambda key, tenant_id=None: f"{tenant_id}:{key}")
 
@@ -836,3 +859,76 @@ class TestGetAllMetrics:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestRevenueRatiosAreNamedForTheirDenominator:
+    """ARPU must divide by users; the per-subscriber figure keeps the old math.
+
+    The defect this pins: ``average_revenue_per_user`` was published as
+    ``total_revenue / total_subscriptions``. The two numbers coincide only for
+    a tenant where every user holds exactly one subscription, so the field lied
+    for every other tenant — while ``total_users`` sat beside it in the same
+    response, unused.
+
+    The fix must NOT be a silent rename (that breaks the documented response
+    contract the endpoint was added for): ARPU changes divisor, and the old
+    figure survives under a name that is true.
+    """
+
+    @staticmethod
+    def _row(total_users: int, total_subs: int, revenue_cents: int) -> tuple:
+        """A merged row shaped [4 user | 3 revenue | 4 activity]."""
+        return (total_users, 0, 0, 0, revenue_cents, total_subs, 0.0, 0, 0, 0, 0)
+
+    @staticmethod
+    async def _map(row: tuple):
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        result = MagicMock()
+        result.one.return_value = row
+        db_mock.execute = AsyncMock(return_value=result)
+        return await dashboard_service._get_all_metrics(
+            db_mock, datetime.now(UTC) - timedelta(days=30), datetime.now(UTC), "tenant"
+        )
+
+    @pytest.mark.asyncio
+    async def test_arpu_divides_by_users_not_subscriptions(self) -> None:
+        users, revenue, _, _ = await self._map(self._row(total_users=100, total_subs=50, revenue_cents=100_000))
+
+        assert users.total_users == 100
+        assert revenue.average_revenue_per_user == 10.0, "1000.0 revenue / 100 users"
+        assert revenue.average_revenue_per_subscriber == 20.0, "1000.0 revenue / 50 subscriptions"
+
+    @pytest.mark.asyncio
+    async def test_the_two_ratios_diverge_when_one_user_holds_many_subscriptions(self) -> None:
+        """The regression case: 1 user, 4 subscriptions.
+
+        Under the old math ARPU read as revenue/4 and under-reported by 4x.
+        """
+        _, revenue, _, _ = await self._map(self._row(total_users=1, total_subs=4, revenue_cents=40_000))
+
+        assert revenue.average_revenue_per_user == 400.0
+        assert revenue.average_revenue_per_subscriber == 100.0
+
+    @pytest.mark.asyncio
+    async def test_both_ratios_are_zero_without_a_denominator(self) -> None:
+        """No users and no subscriptions must be 0.0, never ZeroDivisionError."""
+        _, revenue, _, _ = await self._map(self._row(total_users=0, total_subs=0, revenue_cents=500))
+
+        assert revenue.average_revenue_per_user == 0.0
+        assert revenue.average_revenue_per_subscriber == 0.0
+        assert revenue.total_revenue == 5.0
+
+    @pytest.mark.asyncio
+    async def test_arpu_uses_the_user_count_from_the_same_statement(self) -> None:
+        """The divisor must come from column 0 of the merged row, not a second query.
+
+        Guards the wiring: ``_get_all_metrics`` passes ``users.total_users``
+        into the revenue mapper. If someone drops that argument the divisor
+        silently falls back to 0 and ARPU becomes 0.0 for every tenant.
+        """
+        _, revenue, _, _ = await self._map(self._row(total_users=25, total_subs=5, revenue_cents=50_000))
+
+        assert revenue.average_revenue_per_user == 20.0, "500.0 / 25 users"
+        assert revenue.average_revenue_per_subscriber == 100.0, "500.0 / 5 subs"

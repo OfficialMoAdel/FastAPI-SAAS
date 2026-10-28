@@ -8,18 +8,14 @@ Tests cover:
 - Environment-based profiler enablement
 """
 
-from collections import defaultdict
-
 import pytest
 from sqlalchemy import create_engine
 
 from src.app.core.db.profiler import (
-    _request_queries,
-    end_request_tracking,
     get_query_stats,
     is_profiler_enabled,
+    normalize_query_for_pattern,
     reset_query_tracker,
-    start_request_tracking,
     track_global_query,
 )
 
@@ -37,10 +33,8 @@ def mock_async_engine():
 def reset_state():
     """Reset global state before and after each test."""
     reset_query_tracker()
-    _request_queries.set(None)
     yield
     reset_query_tracker()
-    _request_queries.set(None)
 
 
 class TestQueryNormalization:
@@ -48,10 +42,9 @@ class TestQueryNormalization:
 
     def test_normalize_query_basic(self):
         """Test basic query normalization with string literals."""
-        from src.app.core.db.profiler import _normalize_query
 
         query = "SELECT * FROM users WHERE name = 'John' AND age = 25"
-        result = _normalize_query(query)
+        result = normalize_query_for_pattern(query)
 
         assert "'?'" in result
         assert "'John'" not in result
@@ -59,17 +52,15 @@ class TestQueryNormalization:
 
     def test_normalize_query_numbers(self):
         """Test normalization of numeric values."""
-        from src.app.core.db.profiler import _normalize_query
 
         query = "SELECT * FROM posts WHERE id = 123 AND status = 1"
-        result = _normalize_query(query)
+        result = normalize_query_for_pattern(query)
 
         # Numbers should be replaced with ?
         assert "123" not in result or result.count("?") >= 2
 
     def test_normalize_query_complex(self):
         """Test normalization of complex query."""
-        from src.app.core.db.profiler import _normalize_query
 
         query = """
             SELECT u.name, p.title
@@ -77,7 +68,7 @@ class TestQueryNormalization:
             JOIN posts p ON u.id = p.user_id
             WHERE u.status = 'active' AND p.created_at > '2024-01-01'
         """
-        result = _normalize_query(query)
+        result = normalize_query_for_pattern(query)
 
         # Structure should be preserved
         assert "SELECT" in result
@@ -121,68 +112,6 @@ class TestQueryTracking:
 
         assert "SELECT * FROM users" in stats
         assert stats["SELECT * FROM users"]["count"] == 10
-
-
-class TestRequestTracking:
-    """Tests for per-request query tracking."""
-
-    def test_start_request_tracking(self):
-        """Test starting request tracking."""
-        start_request_tracking()
-
-        queries = _request_queries.get()
-        assert queries is not None
-        assert isinstance(queries, defaultdict)
-
-    def test_end_request_tracking_no_tracking(self):
-        """Test ending tracking when not started."""
-        result = end_request_tracking("/test")
-
-        assert result == {}
-
-    def test_end_request_tracking_with_n_plus_1(self):
-        """Test detecting N+1 pattern in request."""
-        start_request_tracking()
-
-        # Simulate repeated queries (N+1 pattern)
-        queries = _request_queries.get()
-        queries["SELECT * FROM users WHERE id = ?"] = 5
-        queries["SELECT * FROM posts"] = 1
-
-        patterns = end_request_tracking("/api/users", threshold=3)
-
-        assert "SELECT * FROM users WHERE id = ?" in patterns
-        assert patterns["SELECT * FROM users WHERE id = ?"] == 5
-        assert "SELECT * FROM posts" not in patterns
-
-    def test_end_request_tracking_below_threshold(self):
-        """Test no N+1 detection below threshold."""
-        start_request_tracking()
-
-        queries = _request_queries.get()
-        queries["SELECT * FROM users"] = 2
-
-        patterns = end_request_tracking("/api/users", threshold=3)
-
-        assert patterns == {}
-
-    def test_request_tracking_isolation(self):
-        """Test that request tracking is isolated per request."""
-        # Start first request
-        start_request_tracking()
-        queries1 = _request_queries.get()
-        queries1["query1"] = 5
-
-        # End first request
-        end_request_tracking("/request1")
-
-        # Start second request
-        start_request_tracking()
-        queries2 = _request_queries.get()
-
-        # Should be a fresh tracker
-        assert "query1" not in queries2
-        assert queries2["query2"] == 1  # New query starts at 1
 
 
 class TestProfilerEnablement:
@@ -249,124 +178,103 @@ class TestCrossRequestTracking:
 
 
 class TestIntegration:
-    """Integration tests for the profiler."""
+    """Cross-request tracker: the surface that survived the deletion.
 
-    def test_full_request_lifecycle(self):
-        """Test complete request tracking lifecycle."""
-        # Start tracking
-        start_request_tracking()
+    The per-request tracker these tests used to exercise was deleted (nothing
+    started it; the middleware owns per-request counting). What remains, and
+    what matters operationally, is the CROSS-request view: a pattern no single
+    request repeats but that recurs across the process.
+    """
 
-        # Simulate some queries
-        queries = _request_queries.get()
-        queries["SELECT * FROM users WHERE id = ?"] = 10
-        queries["UPDATE users SET last_seen = ?"] = 1
-
-        # End tracking
-        patterns = end_request_tracking("/api/users/1", threshold=5)
-
-        # Verify N+1 detected
-        assert len(patterns) == 1
-        assert "SELECT * FROM users WHERE id = ?" in patterns
-        assert patterns["SELECT * FROM users WHERE id = ?"] == 10
-
-        # Verify tracking cleared
-        assert _request_queries.get() is None
-
-    def test_multiple_requests_sequential(self):
-        """Test tracking multiple requests sequentially."""
-        # Request 1
-        start_request_tracking()
-        queries1 = _request_queries.get()
-        queries1["query_a"] = 5
-        end_request_tracking("/request1")
-
-        # Request 2
-        start_request_tracking()
-        queries2 = _request_queries.get()
-        queries2["query_b"] = 3
-        patterns = end_request_tracking("/request2", threshold=2)
-
-        assert "query_b" in patterns
-        assert "query_a" not in patterns
-
-
-"""Tests for query profiler isolation.
-
-Ensures query tracking is properly isolated between requests.
-"""
-
-
-import pytest
-
-
-class TestRequestTracking:  # noqa: F811
-    """Tests for request-level query tracking isolation."""
-
-    @pytest.fixture(autouse=True)
-    def reset_query_tracker(self):
-        """Reset query tracker before and after each test."""
-        from src.app.core.db.profiler import reset_query_tracker
-
-        reset_query_tracker()
-        yield
-        reset_query_tracker()
-
-    @pytest.mark.asyncio
-    async def test_request_tracking_isolation(self):
-        """Verify query stats are isolated between requests."""
-        from src.app.core.db.profiler import (
-            _query_tracker,
-            get_query_stats,
-            reset_query_tracker,
-        )
-
-        # Simulate first request with 3 queries
-        reset_query_tracker()
-        _query_tracker["SELECT * FROM users"] = {"count": 3, "first_seen_at": "2024-01-01T00:00:00"}
-        _query_tracker["SELECT * FROM posts"] = {"count": 2, "first_seen_at": "2024-01-01T00:00:00"}
-
-        stats1 = get_query_stats()
-        assert len(stats1) == 2
-
-        # Simulate second request - should start fresh
-        reset_query_tracker()
-        _query_tracker["SELECT * FROM tenants"] = {"count": 1, "first_seen_at": "2024-01-01T00:00:00"}
-
-        stats2 = get_query_stats()
-        assert len(stats2) == 1, f"Expected 1 query, got {len(stats2)}"
-
-    def test_concurrent_requests_isolated(self):
-        """Verify concurrent requests don't share query counts."""
-        from src.app.core.db.profiler import (
-            _query_tracker,
-            get_query_stats,
-            reset_query_tracker,
-        )
-
-        # Reset at start
-        reset_query_tracker()
-
-        # Simulate request A
-        _query_tracker["SELECT A"] = {"count": 1, "first_seen_at": "2024-01-01T00:00:00"}
-        stats_a = get_query_stats()
-        assert len(stats_a) == 1
-
-        # Simulate request B (concurrent - would reset in real middleware)
-        reset_query_tracker()
-        _query_tracker["SELECT B"] = {"count": 1, "first_seen_at": "2024-01-01T00:00:00"}
-        _query_tracker["SELECT B2"] = {"count": 1, "first_seen_at": "2024-01-01T00:00:00"}
-        stats_b = get_query_stats()
-        assert len(stats_b) == 2
-
-        # Request A's stats should not be affected (already captured)
-        # In real use, each request gets fresh tracker via reset
-
-    def test_empty_stats_after_reset(self):
-        """Verify stats are empty after reset."""
-        from src.app.core.db.profiler import _query_tracker, get_query_stats, reset_query_tracker
-
-        _query_tracker["Some query"] = {"count": 1, "first_seen_at": "2024-01-01T00:00:00"}
-        reset_query_tracker()
+    def test_a_recurring_pattern_is_counted_across_calls(self):
+        """The tracker accumulates across separate "requests"."""
+        for _ in range(4):
+            track_global_query("SELECT * FROM users WHERE id = 1")
 
         stats = get_query_stats()
-        assert len(stats) == 0
+        assert len(stats) == 1
+        assert next(iter(stats.values()))["count"] == 4
+
+    def test_distinct_literals_are_the_same_pattern(self):
+        """This is the capability that was rescued from the deleted tracker.
+
+        ``id = 1`` and ``id = 2`` are one N+1 pattern, not two queries. The
+        middleware's per-request counts use the SAME normaliser, so both
+        detectors agree on what "the same query" means.
+        """
+        track_global_query("SELECT * FROM users WHERE id = 1")
+        track_global_query("SELECT * FROM users WHERE id = 2")
+        track_global_query("SELECT * FROM users WHERE name = 'bob'")
+
+        stats = get_query_stats()
+        assert len(stats) == 2, f"expected two patterns, got {sorted(stats)}"
+        assert "?" in " ".join(stats), "literals must be collapsed to a placeholder"
+
+
+def test_empty_stats_after_reset():
+    """Verify stats are empty after reset."""
+    from src.app.core.db.profiler import _query_tracker
+
+    _query_tracker["Some query"] = {"count": 1, "first_seen_at": "2024-01-01T00:00:00"}
+    reset_query_tracker()
+
+    assert len(get_query_stats()) == 0
+
+
+class TestTheLivePerRequestDetectorCollapsesLiterals:
+    """The capability that was rescued before the dead tracker was deleted.
+
+    ``core/db/profiler`` used to hold a SECOND per-request tracker whose only
+    distinguishing feature was ``_normalize_query``: it collapses string and
+    numeric literals, so ``WHERE id = 1`` and ``WHERE id = 2`` are one N+1
+    pattern. The tracker had no production caller, but the LIVE detector in
+    ``middleware/query_profiler.py`` bucketed on whitespace alone — so an N+1
+    with varying values counted as N distinct queries and was never reported.
+
+    Deleting the dead tracker without first moving the normaliser would have
+    removed the capability instead of the code. These tests pin the merge.
+    """
+
+    def test_varying_values_are_one_pattern(self) -> None:
+        from src.app.middleware.query_profiler import QueryStats
+
+        stats = QueryStats()
+        for user_id in (1, 2, 3, 4):
+            stats.add_query(f"SELECT * FROM users WHERE id = {user_id}", {}, 1.0)
+
+        assert len(stats.query_counts) == 1, (
+            f"an N+1 with varying values must be ONE pattern, got "
+            f"{list(stats.query_counts)}"
+        )
+        assert next(iter(stats.query_counts.values())) == 4
+
+    def test_string_literals_collapse_too(self) -> None:
+        from src.app.middleware.query_profiler import QueryStats
+
+        stats = QueryStats()
+        stats.add_query("SELECT * FROM t WHERE name = 'alice'", {}, 1.0)
+        stats.add_query("SELECT * FROM t WHERE name = 'bob'", {}, 1.0)
+
+        assert len(stats.query_counts) == 1
+        assert "'?'" in next(iter(stats.query_counts))
+
+    def test_genuinely_different_queries_stay_separate(self) -> None:
+        """The normaliser must not collapse across different shapes."""
+        from src.app.middleware.query_profiler import QueryStats
+
+        stats = QueryStats()
+        stats.add_query("SELECT * FROM users WHERE id = 1", {}, 1.0)
+        stats.add_query("SELECT * FROM posts WHERE id = 1", {}, 1.0)
+
+        assert len(stats.query_counts) == 2
+
+    def test_the_detail_field_still_shows_the_real_statement(self) -> None:
+        """A reader debugging a slow query needs the literal, not the pattern."""
+        from src.app.middleware.query_profiler import QueryStats
+
+        stats = QueryStats()
+        stats.add_query("SELECT * FROM users WHERE id = 42", {}, 1.0)
+
+        assert "42" in stats.queries[0]["normalized"], (
+            "the human-facing detail must keep the bound value"
+        )

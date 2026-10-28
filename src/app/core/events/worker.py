@@ -1,12 +1,12 @@
 """ARQ worker entry point for queued event handlers."""
 
 import asyncio
-import random
 from typing import Any
 
 from arq.worker import Retry
 
 from src.app.core import events as _pkg
+from src.app.core.utils.retry_policy import retry_delay
 
 
 async def process_event_handler(
@@ -124,8 +124,14 @@ async def process_event_handler(
         except Exception as e:
             handler_full_name = f"{handler_module}.{handler_name}"
 
-            # Check if max retries exceeded
-            if job_try >= _pkg.EventBus.MAX_RETRIES:
+            # The ceiling is checked BEFORE the ladder is resolved, and that
+            # order is load-bearing: this handler runs on the FAILURE path, so
+            # it must not depend on more settings reads than it needs. A1 (see
+            # test_event_handler_worker) covers the case where the settings
+            # read itself raises — resolving a schedule we are not going to use
+            # would turn that into an AttributeError and lose the real cause.
+            max_tries = _pkg.EventBus.MAX_RETRIES
+            if job_try >= max_tries:
                 _pkg.logger.error(
                     "ARQ event handler max retries exceeded - moving to DLQ",
                     event_name=event_name,
@@ -149,29 +155,29 @@ async def process_event_handler(
                 event_name=event_name,
                 handler=handler_full_name,
                 attempt=job_try,
-                max_attempts=_pkg.EventBus.MAX_RETRIES,
+                max_attempts=max_tries,
                 error=str(e),
             )
             # K3 FIX: arq only re-runs jobs that raise arq.worker.Retry (or
             # CancelledError/RetryJob). A bare raise of a plain exception sets
             # result=e, finish=True and DELETES the job -> zero retries. Raise
             # Retry with the configured backoff so the job re-runs.
+            #
             # F10: resolve the backoff live (same fallback the bus uses) — the
             # old class-attr read ignored EVENT_BUS_RETRY_DELAYS overrides, so
             # web and worker disagreed on retry cadence. The knob lives on the
-            # `events` component, so it is read through that namespace (H-7);
-            # an empty schedule falls back to the class default because the
-            # schedule is indexed below.
+            # `events` component, so it is read through that namespace (H-7).
+            #
+            # §7: the schedule arithmetic (clamp, index, jitter) is the shared
+            # ``retry_delay`` policy. The LADDER stays caller-supplied because
+            # this caller reads it live from settings.
             delays = list(_pkg.settings.events.EVENT_BUS_RETRY_DELAYS) or list(_pkg.EventBus.RETRY_DELAYS)
-            # P3-5: jitter the delay. Every failed handler for a given event
-            # saw the SAME backoff (they share job_try), so a transient
-            # outage that failed a burst of jobs retried that whole burst in
-            # lockstep — a thundering herd against the dependency that just
-            # recovered. ±10% matches the webhook retry precedent
-            # (webhooks/delivery.py) and keeps the ladder's intent.
-            base_delay = delays[min(job_try - 1, len(delays) - 1)]
-            jittered = max(1, int(round(base_delay * random.uniform(0.9, 1.1))))
-            raise Retry(defer=jittered) from e
+            delay = retry_delay(delays, job_try, max_tries=max_tries)
+            # Not None: the ceiling check above already returned for the only
+            # case that produces None. Asserting the invariant keeps mypy
+            # honest without inventing a branch that cannot run.
+            assert delay is not None
+            raise Retry(defer=delay) from e
         finally:
             # SECURITY FIX: Always clear context to prevent leakage between jobs in the same worker
             from src.app.core.tenancy.lifecycle import unbind_tenant

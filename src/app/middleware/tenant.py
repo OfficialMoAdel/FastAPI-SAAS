@@ -88,7 +88,24 @@ __all__ = [
 from src.app.core.middleware_exempt import COMMON_EXEMPT_PATHS
 from src.app.core.middleware_exempt import is_path_exempt as _shared_is_path_exempt
 
-_TENANT_EXTRA_EXEMPT: frozenset[str] = frozenset({"/api/v1/app_configuration", "/api/metrics"})
+# The /api/health family is tenant-exempt ONLY, not shared-common. It is the
+# compatibility alias documented as an orchestrator surface
+# (modules/health/AGENTS.md, CONTEXT.md), mounted by the monitoring router at
+# /api rather than under /api/v1 — so it is a distinct path family that was
+# absent from COMMON_EXEMPT_PATHS. Without this, a tenant-less probe got 400.
+#
+# Why not COMMON: /api/health runs FIVE live probes (database and Redis round
+# trips) and always answers 200, whereas /api/v1/health is a static response.
+# Exempting it globally would also lift ip_filter and attack_detection for the
+# cheapest-to-call, most-expensive-to-serve path in the app. A probe source
+# that must be IP-exempt is an operator decision, not a default.
+_TENANT_HEALTH_ALIAS_EXEMPT: frozenset[str] = frozenset(
+    {"/api/health", "/api/health/live", "/api/health/ready"}
+)
+
+_TENANT_EXTRA_EXEMPT: frozenset[str] = (
+    frozenset({"/api/v1/app_configuration", "/api/metrics"}) | _TENANT_HEALTH_ALIAS_EXEMPT
+)
 TENANT_EXEMPT_PATHS: frozenset[str] = COMMON_EXEMPT_PATHS | _TENANT_EXTRA_EXEMPT
 
 # S-M2 NOTE: registration is NOT exempt — requests to /api/v1/account/register

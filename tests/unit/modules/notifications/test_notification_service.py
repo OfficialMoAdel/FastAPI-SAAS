@@ -166,7 +166,11 @@ async def test_send_email_rate_limit_exceeded(mock_rate_limiter, service, mock_d
     with pytest.raises(RateLimitExceededError) as exc_info:
         await service.send_email(t_id, "user@test.com", "welcome", {})
 
-    assert exc_info.value.retry_after == 60
+    # The MINUTE window refuses here, so the wait must be a minute-scale
+    # remainder — not the exception's flat 60 s default. The old assertion
+    # (``retry_after == 60``) pinned that default, and the same default was
+    # emitted for an HOURLY refusal, telling clients to retry into the wall.
+    assert 0 < exc_info.value.retry_after <= 60
 
     # P2-7: the service door now writes a FAILED audit row before raising,
     # matching the event-door semantics.

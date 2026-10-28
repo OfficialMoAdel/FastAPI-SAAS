@@ -129,11 +129,15 @@ class BaseService(Generic[T, ReadSchemaT]):
     async def _read(self, id: Any) -> ReadSchemaT | dict[str, Any] | None:
         """Read one record WITHOUT opening the circuit-breaker guard.
 
-        The caller owns the guard. ``update`` needs to re-read inside the
-        same guarded unit as its write, and nesting ``get`` (which opens its
-        own guard) would claim the HALF_OPEN probe slot twice — the second
-        claim is refused, so a half-open database would fail the update with
-        a 503 instead of letting the single probe through.
+        The caller owns the guard. ``get`` is the only caller: it opens the
+        guard once and delegates the read here, so the guard count stays at
+        one per call.
+
+        (The docstring used to say ``update`` needed this to re-read inside its
+        write's guarded unit. That stopped being true with P3-2: ``update`` now
+        takes the row from the UPDATE itself via ``return_as_model=True``, so it
+        never re-reads. A comment describing a caller that no longer exists is
+        how the next reader is misled into nesting guards.)
         """
         if self.select_schema is not None:
             result = await self.crud.get(

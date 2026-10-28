@@ -74,13 +74,13 @@ async def get_{{ module_name }}(
     service: {{ ModelName }}ServiceDep,
 ) -> {{ ModelName }}Read:
     """Get a {{ module_name }} by ID."""
-    # tenant filter injected from request context by the CRUD seam
-    result = await service.crud.get(
-        db=service.db,
-        id=id,
-        schema_to_select={{ ModelName }}Read,  # type: ignore[arg-type]
-    )
-    if not result:
+    # The canonical read, not a reach-through: ``service.get`` applies the
+    # configured ``select_schema`` and the circuit-breaker guard. The old
+    # template queried the CRUD handle directly from the HTTP layer with a
+    # type-ignore on the schema argument, which duplicated the read contract
+    # one layer too high and left ``BaseService.get`` with no caller at all.
+    result = await service.get(id)
+    if result is None:
         raise ModelNotFoundError("{{ ModelName }}", id)
     return {{ ModelName }}Read.model_validate(result)
 

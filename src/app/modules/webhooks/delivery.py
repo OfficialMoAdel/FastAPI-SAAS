@@ -20,8 +20,6 @@ here (the standalone module was merged in).
 
 from __future__ import annotations
 
-import math
-import random
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -37,6 +35,7 @@ from src.app.core.db.rls import bypass_rls
 from src.app.core.logger import get_logger
 from src.app.core.security.encryption import decrypt_data
 from src.app.core.security.url_validator import SSRFProtectionError, validate_webhook_url
+from src.app.core.utils.retry_policy import jittered_delay
 from src.app.modules._base import ModelNotFoundError
 from src.app.modules.audit_logs import AuditGuarantee, audit
 from src.app.modules.webhooks.http_client import get_webhook_http_client
@@ -547,20 +546,21 @@ async def _handle_failure(
         # whole PENDING set in one pass.
         #
         # +/-10% is enough to decorrelate without disturbing the operator-
-        # visible schedule. `with_retry(jitter=True)` exists for exactly this
-        # reason, but the webhook ladder bypasses with_retry and uses its own
-        # schedule, so it never inherited the jitter.
-        retry_delay = max(1, int(math.ceil(raw_delay * random.uniform(0.9, 1.1))))
-        delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=retry_delay)
+        # visible schedule. The arithmetic is the shared
+        # ``retry_policy.jittered_delay``: this site used ``ceil`` while the
+        # event bus and notification workers used ``round``, so the same nominal
+        # jitter produced delays up to a second apart across the three ladders.
+        retry_seconds = jittered_delay(raw_delay)
+        delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=retry_seconds)
         delivery.status = WebhookDeliveryStatus.PENDING
 
         logger.warning(
             "webhook_retry_scheduled",
             delivery_id=str(delivery.id),
-            retry_delay=retry_delay,
+            retry_delay=retry_seconds,
             attempt_count=delivery.attempt_count,
         )
-        return (delivery.id, retry_delay, delivery.tenant_id)
+        return (delivery.id, retry_seconds, delivery.tenant_id)
 
     # Max retries exhausted
     delivery.status = WebhookDeliveryStatus.FAILED

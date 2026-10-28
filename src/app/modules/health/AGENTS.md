@@ -78,6 +78,33 @@ async def ready(
 - Compatibility alias: `src/app/api/monitoring.py` - `/api/health`,
   `/api/health/live`, `/api/health/ready`
 
+## Two surfaces, two jobs — do not conflate them
+
+| route | job | status code |
+|---|---|---|
+| `GET /api/v1/ready` | **traffic gate** | 200 only when every dependency is healthy, else 503 |
+| `GET /api/health/ready` | gate alias, same policy | same as above |
+| `GET /api/health` | **diagnostic** | always 200; verdict is in the body (`ok`/`degraded`/`error`) |
+
+A Kubernetes `readinessProbe` must target `/api/v1/ready`. Pointing it at
+`/api/health` keeps a pod with a dead database in rotation, because the 200
+there means "I answered", not "I can serve". The prose in
+`api/monitoring.py::health_check` says the same thing next to the code.
+`tests/unit/api/test_monitoring.py::TestDiagnosticVersusGatingSurface` pins the
+asymmetry, so a consistency refactor cannot flatten it.
+
+### Tenant exemption is per-middleware, deliberately
+
+`/api/health*` is exempt from **tenant resolution only** (see
+`_TENANT_HEALTH_ALIAS_EXEMPT` in `src/app/middleware/tenant.py`), so an
+orchestrator does not need a tenant slug. It is **not** in
+`COMMON_EXEMPT_PATHS`, so `ip_filter` and `attack_detection` still apply: these
+routes run five live probes and are the most expensive path to serve per byte,
+and exempting them everywhere would make the cheapest request the costliest
+work. Before the tenant exemption existed the alias answered 400 to any
+caller with no `X-Tenant-ID` — i.e. to every orchestrator — while the docs
+above called it an orchestrator surface.
+
 ## JIT Index Hints
 
 - Find health endpoints: `rg -n "@router\.(get|post)" src/app/modules/health/`

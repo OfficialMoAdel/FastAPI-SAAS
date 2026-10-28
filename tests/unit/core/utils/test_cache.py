@@ -16,6 +16,7 @@ import pytest
 from pydantic import BaseModel
 from redis.asyncio import Redis
 
+from src.app.core.cache.read_through import ReadThroughPolicy, read_through
 from src.app.core.exceptions.cache_exceptions import (
     CacheIdentificationInferenceError,
     InvalidRequestError,
@@ -43,7 +44,6 @@ from src.app.core.utils.cache import (
     delete_tenant_cache,
     get_tenant_cache,
     get_tenant_index_size,
-    get_with_lock,
     get_with_stampede_protection,
     invalidate_by_pattern,
     invalidate_tenant_cache,
@@ -381,6 +381,39 @@ async def test_refresh_cache_ok(client: MagicMock) -> None:
     assert await _refresh_cache("k", fetch, 100) == {"x": 1}
 
 
+def _stub_cache(*, client: Any | object = object(), hit: bytes | None = None, get_sequence: list | None = None):
+    """A minimal CacheClient double for driving the REAL read-through seam.
+
+    The doubles below pin the seam's choreography (claim, double-check,
+    ownership release, publish), so they must drive the real
+    ``core.cache.read_through.read_through`` over scripted primitives — an
+    auto-created AsyncMock would answer every step with a mock and the
+    assertions would measure nothing.
+    """
+    from unittest.mock import MagicMock
+
+    from src.app.core.json_utils import json_loads
+
+    raw = list(get_sequence) if get_sequence is not None else [hit]
+
+    async def _get_json(key):
+        # ``get_json`` is the DESERIALISING primitive — a double that hands back
+        # raw bytes is standing in for ``get``, not ``get_json``, and would make
+        # every assertion below compare bytes to a dict.
+        value = raw.pop(0) if len(raw) > 1 else (raw[0] if raw else None)
+        if value is None:
+            return None
+        return json_loads(value) if isinstance(value, bytes | str) else value
+
+    cache = MagicMock()
+    cache.client = client
+    cache.get_json = AsyncMock(side_effect=_get_json)
+    cache.set_nx = AsyncMock(return_value=True)
+    cache.set_json = AsyncMock()
+    cache.release_lock_if_owned = AsyncMock(return_value=True)
+    return cache
+
+
 async def test_refresh_cache_with_lock_no_client() -> None:
     with patch.object(cache_mod, "client", None):
         fetch = AsyncMock(return_value={"x": 1})
@@ -392,52 +425,75 @@ async def test_refresh_cache_with_lock_ok(client: MagicMock) -> None:
     assert await _refresh_cache_with_lock("k", fetch, 100, "lk") == {"x": 1}
 
 
-async def test_get_with_lock_no_client() -> None:
-    with patch.object(cache_mod, "client", None):
-        fetch = AsyncMock(return_value={"a": 1})
-        assert await get_with_lock("k", fetch) == {"a": 1}
+async def test_read_through_no_client() -> None:
+    """No backend: compute (and attempt to publish)."""
+    fetch = AsyncMock(return_value={"a": 1})
+    cache = _stub_cache(client=None)
+    assert await read_through(cache, "k", fetch, ttl=100) == {"a": 1}
+    fetch.assert_awaited_once()
 
 
-async def test_get_with_lock_hit(client: MagicMock) -> None:
-    client.get = AsyncMock(return_value='{"a": 1}')
-    assert await get_with_lock("k", AsyncMock()) == {"a": 1}
+async def test_read_through_hit() -> None:
+    """A warm key is served without calling fetch."""
+    cache = _stub_cache(hit=b'{"a": 1}')
+    fetch = AsyncMock()
+    assert await read_through(cache, "k", fetch, ttl=100) == {"a": 1}
+    fetch.assert_not_awaited()
 
 
-async def test_get_with_lock_miss_acquired(client: MagicMock) -> None:
-    # lock acquired, double-check get returns None -> fetch + cache (lines 687-691)
-    client.get = AsyncMock(side_effect=[None, None])
-    client.set = AsyncMock(return_value=True)
+async def test_read_through_claim_won_fetches_and_publishes() -> None:
+    """The claim winner computes once and stores the value."""
+    cache = _stub_cache()
     fetch = AsyncMock(return_value={"b": 2})
-    result = await get_with_lock("k", fetch, ttl=100)
+    result = await read_through(cache, "k", fetch, ttl=100)
     assert result == {"b": 2}
+    cache.set_json.assert_awaited_once()
+    args, kwargs = cache.set_json.await_args
+    assert args[0] == "k" and args[1] == {"b": 2}
+    assert kwargs.get("ttl") == 100
+    # The claim was ownership-released.
+    cache.release_lock_if_owned.assert_awaited_once()
 
 
-async def test_get_with_lock_double_check_hit(client: MagicMock) -> None:
-    # lock acquired, double-check get finds cached -> returns cached (line 684)
-    client.get = AsyncMock(side_effect=[None, b'{"cached": 1}'])
-    client.set = AsyncMock(return_value=True)
+async def test_read_through_double_check_hit() -> None:
+    """A peer published between our miss and our claim: serve it, no fetch."""
+    cache = _stub_cache(get_sequence=[None, b'{"cached": 1}'])
     fetch = AsyncMock(return_value={"fresh": 2})
-    result = await get_with_lock("k", fetch, ttl=100)
+    result = await read_through(cache, "k", fetch, ttl=100)
     assert result == {"cached": 1}
     fetch.assert_not_awaited()
 
 
-async def test_get_with_lock_miss_locked_then_available(client: MagicMock) -> None:
-    client.get = AsyncMock(side_effect=[None, None, '{"c": 3}'])
-    client.set = AsyncMock(return_value=False)  # lock not acquired
+async def test_read_through_claim_lost_then_peer_publishes() -> None:
+    """A loser waits, then is served the winner's value."""
+    cache = _stub_cache(get_sequence=[None, None, None, b'{"c": 3}'])
+    cache.set_nx = AsyncMock(return_value=False)
     fetch = AsyncMock(return_value={"c": 3})
-    with patch("src.app.core.utils.cache.asyncio.sleep", new=AsyncMock()):
-        result = await get_with_lock("k", fetch, ttl=100, lock_timeout=0.01)
+    with (
+        patch("src.app.core.cache.read_through.asyncio.sleep", new=AsyncMock()),
+        patch("src.app.core.cache.read_through._random_uniform", return_value=0.0),
+    ):
+        result = await read_through(
+            cache, "k", fetch, ttl=100, policy=ReadThroughPolicy(give_up_seconds=0.5)
+        )
     assert result == {"c": 3}
+    fetch.assert_not_awaited()
 
 
-async def test_get_with_lock_miss_timeout_fetch(client: MagicMock) -> None:
-    client.get = AsyncMock(return_value=None)
-    client.set = AsyncMock(return_value=False)
+async def test_read_through_claim_lost_budget_spent_computes_anyway() -> None:
+    """Give-up budget exhausted: compute rather than stall."""
+    cache = _stub_cache(get_sequence=[None, None, None, None])
+    cache.set_nx = AsyncMock(return_value=False)
     fetch = AsyncMock(return_value={"d": 4})
-    with patch("src.app.core.utils.cache.asyncio.sleep", new=AsyncMock()):
-        result = await get_with_lock("k", fetch, ttl=100, lock_timeout=0.01)
+    with (
+        patch("src.app.core.cache.read_through.asyncio.sleep", new=AsyncMock()),
+        patch("src.app.core.cache.read_through._random_uniform", return_value=0.0),
+    ):
+        result = await read_through(
+            cache, "k", fetch, ttl=100, policy=ReadThroughPolicy(give_up_seconds=0.01)
+        )
     assert result == {"d": 4}
+    fetch.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1010,14 +1066,6 @@ async def test_get_with_stampede_miss_polling_hit(client: MagicMock) -> None:
     ):
         settings.r1_unified.XFETCH_USE_LUA_SCRIPT = False
         result = await get_with_stampede_protection("k", AsyncMock(), ttl=3600)
-    assert result == {"c": 3}
-
-
-async def test_get_with_lock_polling_hit(client: MagicMock) -> None:
-    client.get = AsyncMock(side_effect=[None, b'{"c": 3}'])
-    client.set = AsyncMock(return_value=False)  # lock not acquired
-    with patch("src.app.core.utils.cache.asyncio.sleep", new=AsyncMock()):
-        result = await get_with_lock("k", AsyncMock(), ttl=100, lock_timeout=0.01)
     assert result == {"c": 3}
 
 

@@ -1976,6 +1976,44 @@ Canonical readiness probe. It checks the database, Redis, ARQ queue, and EventBu
 
 `/api/health/ready` remains a compatibility alias with the same dependency policy and HTTP status semantics.
 
+### GET /api/health (diagnostic — NOT a readiness probe)
+
+Per-component report with latency, pool sizing, queue depth, cache hit rates and
+dead-letter-queue size. Useful for dashboards and for an operator asking *which*
+dependency is unhealthy.
+
+**It always answers HTTP 200** and carries the verdict in the body
+(`status`: `ok` / `degraded` / `error`). Do not wire it into a load balancer or a
+Kubernetes `readinessProbe`: a 200 here means the process answered, not that it
+can serve. A pod with an unreachable database still gets a 200 from this route.
+Point readiness at `/api/v1/ready`, which is the only surface that fails with
+503.
+
+```json
+{
+  "status": "error",
+  "timestamp": "2024-01-15T10:30:05Z",
+  "checks": {
+    "database": {"status": "unhealthy", "error": "OperationalError", "latency_ms": 5001.2},
+    "redis": {"status": "healthy", "latency_ms": 1.1},
+    "worker_queue": {"status": "healthy", "queue_size": 0, "workers": 4, "max_jobs": 10},
+    "cache_metrics": {"status": "healthy", "xfetch_hit_rate": 91.4, "rbac_hit_rate": 99.2},
+    "dlq_size": {"status": "healthy", "dlq_size": 0, "dlq_size_pct": 0.0, "threshold_exceeded": false}
+  }
+}
+```
+
+Two properties are deliberate and are pinned by tests
+(`tests/unit/api/test_monitoring.py::TestDiagnosticVersusGatingSurface`):
+
+- **Failure is reported by class name only** (`"OperationalError"`), never
+  `str(e)`. The full text carries the DSN, the statement and the credentials; it
+  goes to the log line correlated by `X-Request-ID`.
+- **The route is tenant-exempt but not anonymously cheap.** It needs no
+  `X-Tenant-ID`, so an orchestrator does not have to know a tenant slug, but
+  `ip_filter` and `attack_detection` still apply — it runs five live probes per
+  call.
+
 ### GET /api/v1/health/detailed
 
 Detailed health check with system metrics. Useful for monitoring dashboards.

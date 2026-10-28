@@ -2,7 +2,6 @@
 
 import asyncio
 import hashlib
-import random
 from collections.abc import Sequence
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
@@ -20,6 +19,7 @@ from src.app.core.db.scoped import execute_scoped
 from src.app.core.security.rate_policy import consume
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.core.utils.retry import with_retry
+from src.app.core.utils.retry_policy import retry_delay
 from src.app.modules.notifications.models import EmailTemplateOverride, Notification, NotificationStatus
 from src.app.modules.notifications.template_cache import (
     get_cached_template,
@@ -95,6 +95,34 @@ jinja_env = SandboxedEnvironment(loader=FileSystemLoader(str(TEMPLATE_DIR)), aut
 # compiled twice) are harmless; rendering holds no locks.
 _MAX_CACHED_TEMPLATES = 256
 _COMPILED_TEMPLATE_CACHE: dict[str, Template] = {}
+
+
+def _refusal_wait(retry_after: int, period: int) -> int:
+    """Seconds to wait after a refusal: the engine's answer, or the window reset.
+
+    ``core.security.rate_policy.consume`` already returns the precise wait for
+    the window that refused (third element), derived from the window the engine
+    is actually running. That value is preferred.
+
+    The fallback covers the engines that report ``0``: the fixed-window
+    implementation in ``core/utils/rate_limit.py`` returns ``0`` and leaves the
+    remainder to the caller, which is what ``window_reset_seconds`` exists for.
+    Passing the FULL period instead (as the webhook sibling does) overstates a
+    refusal by up to ``period - 1`` seconds, so it is deliberately not used
+    here.
+
+    Args:
+        retry_after: The engine's retry hint; ``0`` when it did not supply one.
+        period: The refusing window's length in seconds.
+
+    Returns:
+        A positive number of seconds to wait.
+    """
+    if retry_after > 0:
+        return int(retry_after)
+    from src.app.core.security.rate_policy import window_reset_seconds
+
+    return window_reset_seconds(period)
 
 
 class NotificationService:
@@ -236,7 +264,7 @@ class NotificationService:
         tenant_id: UUID | None,
         to_email: str,
         template_name: str | None = None,
-    ) -> str | None:
+    ) -> tuple[str, int] | None:
         """Check the shared email rate-limit policy (P2-7).
 
         Both doors into the email pipeline (send_email service door and
@@ -269,8 +297,11 @@ class NotificationService:
                 tenant's general bucket.
 
         Returns:
-            The limit reason when rate-limited (e.g. "100 emails per minute"),
-            or None when the request is within budget.
+            ``(reason, retry_after_seconds)`` when rate-limited, or ``None``
+            when the request is within budget. The reason is the
+            human-readable limit (e.g. "1000 emails per hour"); the second
+            element is the wait for the window that REFUSED, so the caller's
+            ``Retry-After`` names the real wall instead of a fixed default.
         """
         # D1: the auth bucket is a separate key namespace, so a general
         # send can never consume an auth send's budget (and vice versa).
@@ -288,7 +319,15 @@ class NotificationService:
         # Cross the one rate-policy seam so these budgets honour
         # RATE_LIMIT_ALGORITHM like every other consumer (they previously
         # pinned the fixed-window engine regardless of configuration).
-        (is_limited_min, _, _, _), (is_limited_hour, _, _, _) = await asyncio.gather(
+        #
+        # The engine's own ``retry_after`` (third element) is kept, not
+        # discarded: it is the precise wait for the window that refused. The
+        # previous code unpacked it away and the caller fell back to the
+        # exception's 60 s default, so an HOURLY refusal instructed a client to
+        # retry in 60 s — and it was refused again for up to another 59
+        # minutes. A wrong Retry-After is worse than none: it makes the client
+        # burn its retry budget against the same wall.
+        (is_limited_min, _, retry_after_min, _), (is_limited_hour, _, retry_after_hour, _) = await asyncio.gather(
             consume(
                 rate_limit_key_min,
                 EMAIL_RATE_LIMIT_PER_MINUTE,
@@ -306,14 +345,20 @@ class NotificationService:
                 tenant_id=str(tenant_id),
                 bucket=bucket,
             )
-            return f"{EMAIL_RATE_LIMIT_PER_MINUTE} emails per minute"
+            return (
+                f"{EMAIL_RATE_LIMIT_PER_MINUTE} emails per minute",
+                _refusal_wait(retry_after_min, EMAIL_RATE_LIMIT_MINUTE_WINDOW_SECONDS),
+            )
         if is_limited_hour:
             logger.warning(
                 "notification_rate_limit_exceeded_hour",
                 tenant_id=str(tenant_id),
                 bucket=bucket,
             )
-            return f"{EMAIL_RATE_LIMIT_PER_HOUR} emails per hour"
+            return (
+                f"{EMAIL_RATE_LIMIT_PER_HOUR} emails per hour",
+                _refusal_wait(retry_after_hour, EMAIL_RATE_LIMIT_HOUR_WINDOW_SECONDS),
+            )
         return None
 
     async def _create_and_enqueue(
@@ -462,14 +507,16 @@ class NotificationService:
         # D1: the template name selects the rate-limit bucket — auth-critical
         # templates draw on their own, so a tenant that exhausted its general
         # email budget cannot block its own authentication mail.
-        limit_reason = await self._rate_limited(tenant_id, to_email, template_name)
-        if limit_reason is not None:
+        refusal = await self._rate_limited(tenant_id, to_email, template_name)
+        if refusal is not None:
             from src.app.shared.exceptions import RateLimitExceededError
 
+            limit_reason, retry_after = refusal
             logger.warning(
                 "notification_rate_limit_exceeded",
                 tenant_id=str(tenant_id),
                 reason=limit_reason,
+                retry_after=retry_after,
             )
             # Create FAILED outbox record so there is an audit trace.
             notification = Notification(
@@ -488,7 +535,13 @@ class NotificationService:
             notification.error_kind = ERROR_KIND_RATE_LIMITED
             self.db.add(notification)
             await self.db.commit()
-            raise RateLimitExceededError(f"Rate limit exceeded: {limit_reason}")
+            # The window that refused names its own wait. Omitting this used
+            # the exception's 60 s default for BOTH windows, so an hourly
+            # refusal told the client to retry in 60 s and it was refused
+            # again for up to another 59 minutes.
+            raise RateLimitExceededError(
+                f"Rate limit exceeded: {limit_reason}", retry_after=retry_after
+            )
 
         return await self._create_and_enqueue(tenant_id, to_email, template_name, context, user_id)
 
@@ -972,7 +1025,17 @@ async def send_email_task(
                 job_try: int = ctx.get("job_try", 1)
                 max_tries = settings.arq.ARQ_MAX_TRIES
 
-                if job_try >= max_tries:
+                # §7: the schedule arithmetic (clamp, index, jitter) is the
+                # shared ``retry_delay`` policy, and it answers the ceiling
+                # question too: ``None`` means no attempt remains. This copy
+                # previously had NO clamp, so a malformed ``job_try`` selected
+                # the LONGEST delay here and the FIRST one in the event bus.
+                # The ladder stays local (this caller's is a module constant,
+                # not a setting) and the terminal ACTION stays local (only this
+                # caller marks the row FAILED).
+                delay = retry_delay(EMAIL_RETRY_DELAYS, job_try, max_tries=max_tries)
+
+                if delay is None:
                     logger.error(
                         "email_send_failed",
                         notification_id=notification_id,
@@ -987,14 +1050,6 @@ async def send_email_task(
 
                 # Retries remain: defer to the worker with backoff. The row
                 # stays PENDING until the final attempt decides the outcome.
-                # P3-5: jitter the delay. A provider-side outage fails a
-                # batch of notifications together, and an unjittered ladder
-                # replays that whole batch in lockstep on the next attempt.
-                # ±10% matches the webhook retry precedent
-                # (webhooks/delivery.py) and the event-bus ladder
-                # (core/events/worker.py), so all three agree.
-                base_delay = EMAIL_RETRY_DELAYS[min(job_try - 1, len(EMAIL_RETRY_DELAYS) - 1)]
-                delay = max(1, int(round(base_delay * random.uniform(0.9, 1.1))))
                 logger.warning(
                     "email_send_retry_scheduled",
                     notification_id=notification_id,

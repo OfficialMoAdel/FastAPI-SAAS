@@ -43,6 +43,9 @@ async def _release_lock(client: Any, lock_key: str, token: str | None) -> None:
         await client.delete(lock_key)
 
 
+# DEPRECATED: zero production callers. This XFetch reader lived in stampede.py
+# because that's where the Lua scripts it uses live, but it had no call site.
+# It will be retired when its test coverage moves into ``read_through``.
 async def get_with_stampede_protection(
     key: str,
     fetch_func: Callable[[], Any],
@@ -219,87 +222,9 @@ async def _refresh_cache(key: str, fetch_func: Callable[[], Any], ttl: int, clie
     return data
 
 
-async def get_with_lock(
-    key: str,
-    fetch_func: Callable[[], Any],
-    ttl: int = 3600,
-    lock_timeout: int = 10,
-    base_delay: float = 0.05,
-    max_delay: float = 1.0,
-    jitter: float = 0.25,
-    client: Any | None = None,
-) -> Any:
-    """Get cached value with lock-based stampede protection.
-
-    Uses a distributed lock to ensure only one process refreshes the cache
-    at a time. Other processes wait for the lock holder to complete.
-
-    Best for high-contention keys where data is expensive to compute.
-
-    Args:
-        key: Cache key
-        fetch_func: Async function to fetch fresh data if cache miss
-        ttl: Time-to-live in seconds
-        lock_timeout: Maximum time to hold lock in seconds
-        base_delay: Initial wait delay in seconds (default: 50ms)
-        max_delay: Maximum wait delay in seconds (default: 1s)
-        jitter: Jitter factor (0-1) to randomize wait time (default: 0.25)
-        client: Explicit Redis client (default: the ``utils.cache.client``
-            global). Lets callers on the provider seam (``get_redis()``)
-            keep their seam instead of the module global.
-
-    Returns
-    -------
-        Cached or freshly fetched value
-    """
-    client = client if client is not None else _state.client
-    if client is None:
-        return await fetch_func()
-
-    # Try cache first
-    cached = await client.get(key)
-    if cached is not None:
-        return _state.json_loads(cached)
-
-    # Cache miss - try to acquire lock
-    lock_key = f"{key}:lock"
-    lock_token = await _acquire_lock(client, lock_key, lock_timeout)
-
-    if lock_token is not None:
-        try:
-            # Double-check cache after acquiring lock
-            cached = await client.get(key)
-            if cached is not None:
-                return _state.json_loads(cached)
-
-            # We got the lock - fetch and cache
-            data = await fetch_func()
-            # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder
-            serialized = _state.json_dumps(data)
-            await client.setex(key, ttl, serialized)
-            return data
-        finally:
-            await _release_lock(client, lock_key, lock_token)
-    else:
-        # Another process has the lock - wait and retry with exponential backoff
-        elapsed = 0.0
-        delay = base_delay
-
-        while elapsed < lock_timeout:
-            # Add jitter to prevent thundering herd on lock release
-            # Randomize delay by +/- jitter factor
-            actual_delay = delay * (1 + _state.random.uniform(-jitter, jitter))
-
-            await _state.asyncio.sleep(actual_delay)
-            elapsed += actual_delay
-
-            cached = await client.get(key)
-            if cached is not None:
-                return _state.json_loads(cached)
-
-            # Exponential backoff: double the delay, capped at max_delay
-            delay = min(delay * 2, max_delay)
-
-        # Lock timeout - fetch anyway
-        _state.stampede_logger.warning("Cache lock timeout, fetching anyway", key=key)
-        return await fetch_func()
+# ``get_with_lock`` lived here (a second, near-identical read-through
+# implementation: same double-check, same jittered backoff, but ONE number
+# for both the claim TTL and the waiter budget). It was retired in favour of
+# ``core/cache/read_through.py``, which the dashboard and the tier-policy
+# read now share. The two helpers above are still used by
+# ``get_with_stampede_protection``.

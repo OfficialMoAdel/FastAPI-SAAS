@@ -51,7 +51,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.app.core.config import EnvironmentOption, settings
 from src.app.core.db.database import async_engine
-from src.app.core.db.profiler import track_global_query
+from src.app.core.db.profiler import normalize_query_for_pattern, track_global_query
 from src.app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -79,12 +79,25 @@ class QueryStats:
 
     def add_query(self, statement: str, params: dict, duration_ms: float) -> None:
         """Record a query execution."""
-        # Normalize statement for deduplication (remove whitespace variations)
-        normalized = " ".join(statement.split())
+        # Normalize for deduplication. Two passes, deliberately:
+        #
+        #  * whitespace collapse — the cheap part, and what the ``normalized``
+        #    detail field shows a reader;
+        #  * literal collapse — ``WHERE id = 1`` and ``WHERE id = 2`` are the
+        #    SAME pattern and must bucket together, or N+1 detection misses the
+        #    case it exists for.
+        #
+        # The literal pass used to live only in ``core/db/profiler.py``, whose
+        # per-request tracker had no production caller — so the live detector
+        # here bucketed by whitespace alone and counted an N+1 with varying
+        # values as N distinct queries. Merging the normalisation into this,
+        # the LIVE path, is what lets the dead tracker be deleted without
+        # losing the capability.
+        normalized = normalize_query_for_pattern(statement)
 
         query_info = {
             "statement": statement[:500],  # Truncate very long queries
-            "normalized": normalized[:200],
+            "normalized": " ".join(statement.split())[:200],
             "params": str(params)[:200] if params else None,
             "duration_ms": round(duration_ms, 2),
         }

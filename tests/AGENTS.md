@@ -73,7 +73,6 @@ tests/unit/
 │   ├── test_redis_key_registry.py # Redis key management
 │   ├── test_session_pipeline.py   # Session pipeline
 │   ├── test_templates.py          # Template rendering
-│   └── test_xfetch_lua.py         # Lua script execution
 ├── middleware/                    # Middleware tests
 │   ├── test_attack_detection.py  # Attack detection
 │   ├── test_ip_cache.py           # IP caching

@@ -1,13 +1,23 @@
 """Probe responses must not publish raw exception text; /metrics still must.
 
 The leak this pins: ``/api/health`` returned ``"error": str(e)`` inside a
-200 body, so a caller who supplied a tenant slug could read the failed
-statement, the DSN, and the connection password out of a health check. The
-tenant middleware 400s a request with no ``X-Tenant-ID`` (the exempt set
-lists ``/health``, not ``/api/health``), so reaching the probe requires
-supplying a guessable tenant slug. That makes this a defence-in-depth
-issue, MEDIUM: reachable by any caller who can name a tenant, but not
-reached by a caller presenting no tenant header at all.
+200 body, so a caller could read the failed statement, the DSN, and the
+connection password out of a health check.
+
+Reachability changed, and it moved in the direction that makes this MORE
+critical, not less. When this file was written, ``/api/health`` was absent
+from the tenant exempt set, so the tenant middleware 400'd a request with no
+``X-Tenant-ID`` and reaching the probe required naming a guessable tenant
+slug — "defence in depth, MEDIUM". ``/api/health*`` is now tenant-exempt (see
+``_TENANT_HEALTH_ALIAS_EXEMPT`` in ``middleware/tenant.py``) so an
+orchestrator can call it, which means ANY unauthenticated caller can reach
+the full five-probe response with no credential and no slug. There is no
+longer a header standing between an anonymous client and this payload, so the
+redaction assertions below are the only thing keeping the DSN and the
+connection password off the wire. Treat a failure here as HIGH.
+
+``ip_filter`` and ``attack_detection`` still apply to these routes: the
+exemption is tenant-only by design.
 
 Every secret assertion here is an ABSENCE assertion. A test that only checked
 "the class name is present" would pass against the leaky code, because the
@@ -132,7 +142,13 @@ def test_health_probe_publishes_class_name_and_no_exception_text(
     assert probe_events, "probe failure was not logged at all"
     logged_errors = {rec["probe"]: rec["error"] for rec in probe_events}
     assert logged_errors["database"] == DB_LEAK
-    assert logged_errors["redis"] == REDIS_LEAK
+    # The redis probe now delegates to ``core/health.check_redis_health``, which
+    # formats its error as ``"<ClassName>: <text>"`` — the same shape the
+    # database probe already used. The RAW driver text must still reach the log
+    # intact; only the prefix is new, and it is what lets ``_class_name_of``
+    # reduce the published value to a bare class name.
+    assert logged_errors["redis"] == f"ConnectionRefusedError: {REDIS_LEAK}"
+    assert REDIS_LEAK in logged_errors["redis"], "the raw driver text must not be lost"
     assert {rec["probe"] for rec in probe_events} >= {"database", "redis"}
     assert all(rec.get("request_id") for rec in probe_events), "log lines must carry request_id"
 
@@ -159,13 +175,37 @@ def test_health_probe_never_exposes_a_raw_exception_field(
                 assert field != "error_detail", f"probe {probe} grew a raw-error field"
 
 
-def test_health_probe_without_tenant_header_is_400_and_leaks_nothing(client, failing_database_probe) -> None:
-    """No ``X-Tenant-ID`` -> 400 before the probe runs, and the 400 is inert."""
+def test_health_probe_without_tenant_header_is_tenant_exempt(client, failing_database_probe) -> None:
+    """No ``X-Tenant-ID`` -> the probe still RUNS, and still leaks nothing.
+
+    ``/api/health`` is the compatibility alias the orchestration docs name as
+    an orchestrator surface, mounted by the monitoring router at ``/api``
+    rather than under ``/api/v1``. It was absent from the tenant exempt set, so
+    a tenant-less probe got 400 — which made the alias unusable by any caller
+    that does not already know a tenant slug (i.e. every orchestrator).
+
+    The redaction contract is unchanged and is what this test still guards: a
+    probe runs WITHOUT a tenant, so nothing tenant-specific may reach it.
+    """
     response = client.get("/api/health")
+
+    assert response.status_code == 200, response.text
+    _assert_no_internals(response.text)
+    assert failing_database_probe.await_count == 1, (
+        "a tenant-exempt probe must run; a 400 here means the alias is unreachable"
+    )
+
+
+def test_health_probe_requires_a_tenant_header_on_the_canonical_surface(client) -> None:
+    """Non-exempt routes keep the 400 — the exemption must not go wide.
+
+    ``/api/v1/dashboard`` is a tenant-scoped read: it must still refuse a
+    request with no tenant rather than resolving an implicit one.
+    """
+    response = client.get("/api/v1/dashboard")
 
     assert response.status_code == 400, response.text
     _assert_no_internals(response.text)
-    assert failing_database_probe.await_count == 0, "probe must not run on a rejected request"
 
 
 def test_metrics_gives_superuser_the_full_exception_text(client) -> None:

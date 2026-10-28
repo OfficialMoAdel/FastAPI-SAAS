@@ -1,9 +1,10 @@
 """{{ ModelName }} service layer - business logic."""
 
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.pagination import MAX_PER_PAGE
 from src.app.core.principal import AuthenticatedUser
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
@@ -79,7 +80,14 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         create_data = data.model_dump()
         create_data["user_id"] = current_user.id
 
-        return await self.create(**create_data)
+        # ``BaseService.create`` is declared as the honest union
+        # ``ReadSchemaT | dict | None`` because a subclass may omit
+        # ``select_schema``. This service always passes one (see ``__init__``),
+        # so the union collapses to the Read schema; the cast states that
+        # invariant instead of widening the generated signature. mypy cannot
+        # see through the generic, and a generated module MUST pass the repo's
+        # own ``mypy src/`` gate.
+        return cast("{{ ModelName }}Read", await self.create(**create_data))
 
     async def list_{{ module_name }}s(
         self,
@@ -98,11 +106,32 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         Returns
         -------
         dict
-            Paginated list
+            ``{"data": [...], "total_count": N}`` — the shape
+            ``router.py.j2`` reads with ``.get("data")`` / ``.get("total_count")``.
+
+        B4: this used to call ``get_multi``, which returns a LIST. The router
+        template then called ``.get("data")`` on it, so every generated list
+        endpoint raised ``AttributeError`` on its first request — and the
+        declared ``-> dict`` return made the generated module fail ``mypy``
+        before it ever ran. ``get_page_with_total`` is the single-round-trip
+        paginated fetch (page + ``COUNT(*) OVER()`` in ONE statement) and
+        returns exactly the dict both sides expect.
         """
-        return await self.get_multi(
-            page=page,
-            per_page=items_per_page,
+        # Clamp exactly as ``get_multi`` did: this path bypasses its guards,
+        # so an unbounded ``items_per_page`` would be a free way to ask for the
+        # whole table (and a deep OFFSET is O(offset) in PostgreSQL).
+        if page < 1:
+            page = 1
+        if items_per_page < 1:
+            items_per_page = 1
+        if items_per_page > MAX_PER_PAGE:
+            items_per_page = MAX_PER_PAGE
+
+        return await self.get_page_with_total(
+            offset=(page - 1) * items_per_page,
+            limit=items_per_page,
+            schema_to_select={{ ModelName }}Read,
+            return_as_model=True,
         )
 
     async def update_{{ module_name }}(
@@ -146,9 +175,11 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         if existing_user_id != current_user.id:
             raise ForbiddenError("You don't have permission to update this {{ module_name }}")
 
-        # Update (typed path re-reads and returns the Read schema)
+        # Update (typed path returns the row from the UPDATE itself)
         update_data = data.model_dump(exclude_unset=True, exclude_none=True)
-        return await self.update(id, **update_data)
+        # Same invariant as ``create``: ``select_schema`` is configured, so
+        # ``update`` returns the Read schema rather than the FastCRUD dict.
+        return cast("{{ ModelName }}Read", await self.update(id, **update_data))
 
     async def delete_{{ module_name }}(
         self,

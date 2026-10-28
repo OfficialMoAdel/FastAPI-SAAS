@@ -1,6 +1,5 @@
-import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -29,68 +28,77 @@ def service(mock_db):
     return RateLimitService(mock_db)
 
 
+def _seam_cache(*, hit: dict | None = None):
+    """A CacheClient double that drives the REAL read-through seam.
+
+    The tier-policy read used to call ``stampede.get_with_lock`` with a raw
+    Redis client, so these tests asserted on ``get``/``setex``. It now goes
+    through ``cache_client.read_through``, so the double has to expose the
+    seam's primitives (``get_json`` / ``set_nx`` / ``set_json`` /
+    ``release_lock_if_owned``) and let the real implementation run over them.
+    """
+    from src.app.core.cache.read_through import read_through
+
+    cache = MagicMock()
+    cache.client = object()  # Redis is present
+    cache.get_json = AsyncMock(return_value=hit)
+    cache.set_nx = AsyncMock(return_value=True)
+    cache.set_json = AsyncMock()
+    cache.release_lock_if_owned = AsyncMock(return_value=True)
+
+    async def _read_through(key, fetch, *, ttl, policy=None):
+        return await read_through(cache, key, fetch, ttl=ttl, policy=policy)
+
+    cache.read_through = _read_through
+    return cache
+
+
 @pytest.mark.asyncio
 async def test_get_rate_limits_by_tier_id_cache_miss(service):
-    """Test that cache miss triggers DB query and sets cache."""
+    """A cold key fetches once and publishes the value with the policy TTL."""
 
-    # Mock Redis - patch at the module level where it's imported
-    mock_redis = AsyncMock()
-    with patch("src.app.modules.rate_limits.service.get_redis", return_value=mock_redis):
-        mock_redis.get.return_value = None  # Cache miss
+    page_fetch = AsyncMock(return_value=RATE_LIMITS_DATA)
+    cache = _seam_cache()
 
-        # Mock page fetch (P0-5: single-RTT windowed COUNT seam)
-        page_fetch = AsyncMock(return_value=RATE_LIMITS_DATA)
-        with patch.object(service, "get_page_with_total", page_fetch):
+    with (
+        patch("src.app.modules.rate_limits.service.cache_client", cache),
+        patch.object(service, "get_page_with_total", page_fetch),
+    ):
+        result = await service.get_rate_limits_by_tier_id(TIER_ID)
 
-            # Execute
-            result = await service.get_rate_limits_by_tier_id(TIER_ID)
+    assert result == RATE_LIMITS_DATA
+    page_fetch.assert_awaited_once()
 
-            # Verify result
-            assert result == RATE_LIMITS_DATA
+    # The value was published once, under the tier-policy key, with the
+    # declared TTL — the single writer is the seam, not the caller.
+    cache.set_json.assert_awaited_once()
+    args, kwargs = cache.set_json.await_args
+    assert args[0] == CACHE_KEY
+    assert args[1] == RATE_LIMITS_DATA
+    assert kwargs.get("ttl") == 3600
 
-            # Verify Redis interactions (P2-B: get_with_lock reads once, then
-            # re-reads after acquiring the refresh lock — double-checked
-            # locking, so a miss costs exactly two GETs)
-            assert mock_redis.get.call_count == 2
-            mock_redis.get.assert_called_with(CACHE_KEY)
-            mock_redis.setex.assert_called_once()
-
-            # Verify args
-            call_args = mock_redis.setex.call_args
-            assert call_args[0][0] == CACHE_KEY
-            assert call_args[0][1] == 3600  # TTL
-
-            # Verify DB called
-            page_fetch.assert_awaited_once()
+    # The claim was taken and ownership-released.
+    cache.set_nx.assert_awaited_once()
+    cache.release_lock_if_owned.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_get_rate_limits_by_tier_id_cache_hit(service):
-    """Test that cache hit returns cached data and skips DB."""
+    """A warm key is served from the cache without touching the DB."""
 
-    cached_data = json.dumps(RATE_LIMITS_DATA)
+    page_fetch = AsyncMock(return_value=RATE_LIMITS_DATA)
+    cache = _seam_cache(hit=RATE_LIMITS_DATA)
 
-    # Mock Redis - patch at the module level where it's imported
-    mock_redis = AsyncMock()
-    with patch("src.app.modules.rate_limits.service.get_redis", return_value=mock_redis):
-        mock_redis.get.return_value = cached_data  # Cache hit
+    with (
+        patch("src.app.modules.rate_limits.service.cache_client", cache),
+        patch.object(service, "get_page_with_total", page_fetch),
+    ):
+        result = await service.get_rate_limits_by_tier_id(TIER_ID)
 
-        # Mock CRUD
-        with patch.object(service, "crud") as mock_crud:
-            mock_crud.get_multi = AsyncMock()
-
-            # Execute
-            result = await service.get_rate_limits_by_tier_id(TIER_ID)
-
-            # Verify result
-            assert result == RATE_LIMITS_DATA
-
-            # Verify Redis interactions
-            mock_redis.get.assert_called_once_with(CACHE_KEY)
-            mock_redis.setex.assert_not_called()
-
-            # Verify DB NOT called
-            mock_crud.get_multi.assert_not_called()
+    assert result == RATE_LIMITS_DATA
+    page_fetch.assert_not_awaited()
+    cache.set_json.assert_not_awaited()
+    cache.set_nx.assert_not_awaited(), "a hit must not take the claim"
 
 
 @pytest.mark.asyncio

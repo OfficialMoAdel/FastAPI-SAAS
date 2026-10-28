@@ -4,18 +4,15 @@ Dashboard Service
 Business logic for generating dashboard metrics and analytics.
 """
 
-import asyncio
-import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import uuid4
 
-from redis.exceptions import RedisError
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from src.app.core.cache.client import cache_client
+from src.app.core.cache.read_through import ReadThroughPolicy
 from src.app.core.db.scoped import criterion
 from src.app.core.logger import get_logger
 from src.app.core.resilience.db_circuit_breaker import db_circuit_guard
@@ -123,6 +120,14 @@ class DashboardService:
         an aggregate with no GROUP BY, so it always yields exactly one row —
         including when the window is empty (every count is 0), which is what
         keeps the merged statement's ``result.one()`` safe.
+
+        This is the ONLY activity spelling in the module. The per-group
+        ``_activity_subqueries`` builder that predated it was deleted: it had
+        no production caller (its single reference was a test) and it restated
+        these same four predicates in a form nothing executed, so an edit there
+        would have changed no number while reading as live code. The login
+        vocabulary and the ``details->>'success'`` extraction still live in
+        one place — ``audit_logs.trail`` — and this method consumes them.
         """
         window = (
             criterion(AuditLog, tenant_id),
@@ -199,6 +204,14 @@ class DashboardService:
         # 3. Active users — login-row contract owned by audit_logs.trail (I9).
         # When the caller already opened the grouped audit scan, read it from
         # there so audit_logs is scanned once, not twice.
+        #
+        # The ``audit is None`` branch is the PARITY ORACLE, not a production
+        # path: ``_get_all_metrics`` always supplies the grouped subquery, so
+        # this branch is reachable only from tests. It earns its place because
+        # it is a second, independent spelling of the same predicate, and
+        # ``test_p4_audit_grouped_scan`` compiles both and compares them — the
+        # only way to catch a change to one side that silently changes the
+        # number. Keeping it is deliberate; do not route production through it.
         active_sub = (
             audit.c.active_users
             if audit is not None
@@ -272,60 +285,41 @@ class DashboardService:
         return (total_rev_sub, subs_count_sub, mrr_sub)
 
     @staticmethod
-    def _row_to_revenue_metrics(row, offset: int = 0) -> RevenueMetrics:
+    def _row_to_revenue_metrics(row, offset: int = 0, total_users: int = 0) -> RevenueMetrics:
+        """Map the three revenue columns to :class:`RevenueMetrics`.
+
+        The two ratio fields divide the SAME numerator by DIFFERENT
+        denominators, and each field is named for the denominator it uses.
+        Before this, ``average_revenue_per_user`` divided by
+        ``total_subscriptions`` — so it coincided with a per-user figure only
+        for tenants where every user holds exactly one subscription.
+
+        ``total_users`` comes from the user group at the head of the same
+        statement (column 0), so taking the divisor from it costs no extra
+        SQL, no extra column, and no change to the positional layout.
+
+        Window note: ``total_revenue`` is bounded by the requested range;
+        ``total_users`` is the tenant's current non-deleted base and
+        ``total_subscriptions`` is the current active snapshot. Neither
+        denominator is range-scoped, so both ratios read as "this range's
+        revenue over the current base" — which is the standard ARPU reading
+        and is stated in the schema descriptions so it cannot be
+        misread as a per-range-active-user figure.
+        """
         total_cents = row[offset] or 0
         total_revenue = total_cents / 100.0
         total_subs = row[offset + 1] or 0
         mrr = float(row[offset + 2] or 0.0)
-        avg_revenue = (total_revenue / total_subs) if total_subs > 0 else 0.0
+        avg_revenue_per_user = (total_revenue / total_users) if total_users > 0 else 0.0
+        avg_revenue_per_subscriber = (total_revenue / total_subs) if total_subs > 0 else 0.0
 
         return RevenueMetrics(
             total_revenue=total_revenue,
             recurring_revenue=mrr,
-            average_revenue_per_user=avg_revenue,
+            average_revenue_per_user=avg_revenue_per_user,
+            average_revenue_per_subscriber=avg_revenue_per_subscriber,
             total_subscriptions=total_subs,
         )
-
-    @staticmethod
-    def _activity_subqueries(
-        start: datetime | ColumnElement[datetime],
-        end_date: datetime,
-        tenant_id: str,
-    ) -> tuple:
-        """Build the 4 activity-aggregate scalar subqueries (no I/O)."""
-        # 1. Total logins — login-row contract owned by audit_logs.trail (I9)
-        logins_sub = login_activity_subquery(tenant_id, start, end_date, metric="logins")
-
-        # 2. API calls
-        api_calls_sub = (
-            select(func.count(AuditLog.id))
-            .where(
-                criterion(AuditLog, tenant_id),
-                AuditLog.created_at >= start,
-                AuditLog.created_at <= end_date,
-            )
-            .scalar_subquery()
-        )
-
-        # 3. Failed auth — action/success extraction owned by audit_logs.trail (I9)
-        failed_auth_sub = login_activity_subquery(tenant_id, start, end_date, metric="failed_auth")
-
-        # Webhook deliveries - webhook audit actions live in the dotted
-        # `webhook.*` namespace (e.g. webhook.ssrf_blocked). Prefix LIKE
-        # keeps the match set identical to `%webhook%` while using the
-        # idx_audit_tenant_action (tenant_id, action) btree range scan
-        # instead of a sequential scan.
-        webhook_sub = (
-            select(func.count(AuditLog.id))
-            .where(
-                criterion(AuditLog, tenant_id),
-                AuditLog.created_at >= start,
-                AuditLog.created_at <= end_date,
-                AuditLog.action.like("webhook.%"),
-            )
-            .scalar_subquery()
-        )
-        return (logins_sub, api_calls_sub, failed_auth_sub, webhook_sub)
 
     @staticmethod
     def _row_to_activity_metrics(row, offset: int = 0) -> ActivityMetrics:
@@ -371,7 +365,7 @@ class DashboardService:
             result = await db.execute(select(*columns))
             row = result.one()
         users = self._row_to_user_metrics(row, 0)
-        revenue = self._row_to_revenue_metrics(row, 4)
+        revenue = self._row_to_revenue_metrics(row, 4, total_users=users.total_users)
         activity = self._row_to_activity_metrics(row, 7)
         min_created = row[11] if include_min_created else None
         return users, revenue, activity, min_created
@@ -390,83 +384,44 @@ class DashboardService:
             DashboardMetricsResponse with all metrics
         """
         cache_key = cache_client.tenant_key(f"dashboard:metrics:{time_range.value}", tenant_id)
-        cached = await cache_client.get_json(cache_key)
-        if cached is not None:
-            return DashboardMetricsResponse.model_validate(cached)
 
-        # P2-4: single-flight the miss. A cold (or just-expired) key used to
-        # let every concurrent caller recompute the same aggregates — the
-        # dashboard is DASHBOARD_READ-gated, so the herd is the tenant's own
-        # viewers hitting the 60s boundary together. The first caller claims
-        # a short lock on the key and computes; the others wait on the key
-        # (double-checked after the claim) and are served the stored payload.
-        # The claim/release primitives are the adapter's own (`set_nx` +
-        # `release_lock_if_owned`), so the get_json/set_json seam this module
-        # documents is preserved — unlike `get_with_lock`, which would move
-        # the read off that seam and change the stored payload type.
-        # A caller that cannot claim the lock computes anyway once the
-        # wait budget is spent: a duplicated query is cheaper than a stalled
-        # dashboard.
-        lock_key = f"{cache_key}:refresh"
-        lock_token = uuid4().hex
-        # P1-2: "cannot claim" must be distinguishable from "lock held".
-        # `set_nx` returns False BOTH when the key is taken and when Redis is
-        # unavailable, and it PROPAGATES a Redis error (the adapter's one
-        # non-fail-open operation, so the billing webhook can fall back to its
-        # DB idempotency check). Treating either as "a peer is computing"
-        # meant a Redis outage or blip turned a dashboard load into a 5 s
-        # stall or a 500, where the pre-P2-4 code simply recomputed. So the
-        # claim is tri-state:
-        #   True  -> we hold the lock, compute and release
-        #   False -> a peer holds it, wait on the key
-        #   None  -> no usable verdict (no client, or the claim errored),
-        #            so fall straight through to computing.
-        claim: bool | None = None
-        if cache_client.client is not None:
-            try:
-                claim = await cache_client.set_nx(lock_key, lock_token, self._METRICS_REFRESH_LOCK_TTL)
-            except (RedisError, OSError) as e:  # a failed claim degrades to a plain recompute
-                # RedisError covers the redis-py transport failures; OSError
-                # covers the connection-refused/reset class that surfaces as a
-                # builtin ConnectionError when the client is replaced or the
-                # socket goes away mid-call. Both mean "the claim could not be
-                # made", which is the one answer this call site can act on.
-                logger.warning("dashboard_refresh_claim_failed", error=str(e))
-        if claim is True:
-            try:
-                cached = await cache_client.get_json(cache_key)
-                if cached is None:
-                    cached = await self._compute_metrics(db, tenant_id, time_range, cache_key)
-            finally:
-                await cache_client.release_lock_if_owned(lock_key, lock_token)
-        elif claim is False:
-            deadline = time.monotonic() + self._METRICS_REFRESH_WAIT_SECONDS
-            while True:
-                await asyncio.sleep(self._METRICS_REFRESH_POLL_SECONDS)
-                cached = await cache_client.get_json(cache_key)
-                if cached is not None:
-                    break
-                if time.monotonic() >= deadline:
-                    cached = await self._compute_metrics(db, tenant_id, time_range, cache_key)
-                    break
-        else:
-            cached = await self._compute_metrics(db, tenant_id, time_range, cache_key)
-
-        return DashboardMetricsResponse.model_validate(cached)
+        # P2-4: single-flight the miss through the ONE read-through seam. A cold
+        # (or just-expired) key used to let every concurrent caller recompute the
+        # same aggregates — the dashboard is DASHBOARD_READ-gated, so the herd is
+        # the tenant's own viewers hitting the 60 s boundary together.
+        #
+        # This block used to spell the choreography out here (tri-state claim,
+        # double-check, bounded poll, ownership-checked release). It is now the
+        # shared implementation in ``core/cache/read_through.py``, which the
+        # other caching call sites use too — so the give-up budget, the claim
+        # TTL and the "no usable verdict means compute" rule are decided once.
+        #
+        # The two budgets stay SEPARATE and the seam enforces
+        # ``give_up < claim TTL``: a waiter that outlives the claim it waits on
+        # would compute alongside the next claimer.
+        payload = await cache_client.read_through(
+            cache_key,
+            lambda: self._compute_metrics(db, tenant_id, time_range),
+            ttl=self.METRICS_CACHE_TTL,
+            policy=ReadThroughPolicy(
+                give_up_seconds=self._METRICS_REFRESH_WAIT_SECONDS,
+                lock_ttl_seconds=self._METRICS_REFRESH_LOCK_TTL,
+            ),
+        )
+        return DashboardMetricsResponse.model_validate(payload)
 
     async def _compute_metrics(
         self,
         db: AsyncSession,
         tenant_id: str,
         time_range: TimeRange,
-        cache_key: str,
     ) -> dict[str, Any]:
-        """Compute the aggregates and store them; return the JSON payload.
+        """Compute the aggregates and return the serialisable payload.
 
-        Split out of :meth:`get_metrics` so the single-flight lock wraps only
-        the expensive part. Returns the serialisable payload, which the caller
-        validates into the response model — the same shape
-        ``set_json``/``get_json`` round-trip.
+        Called only by :meth:`get_metrics` as the ``fetch`` half of the
+        read-through seam, so it deliberately does NOT write to the cache: the
+        seam owns publishing, which is what lets one place decide whether a
+        computed value may be stored at all.
         """
         end_date = datetime.now(UTC)
         if time_range == TimeRange.ALL:
@@ -496,9 +451,10 @@ class DashboardService:
             revenue=revenue_metrics,
             activity=activity_metrics,
         )
-        payload = response.model_dump(mode="json")
-        await cache_client.set_json(cache_key, payload, ttl=self.METRICS_CACHE_TTL)
-        return payload
+        # No set_json here: the read-through seam owns publishing, so a caller
+        # that decided not to cache (``should_cache``) cannot have its value
+        # stored behind its back.
+        return response.model_dump(mode="json")
 
 
 # Singleton instance

@@ -16,6 +16,18 @@ The single listener pair now lives in ``QueryProfilerMiddleware``
 That listener feeds BOTH consumers: its own per-request ``QueryStats`` and
 the global tracker here, via :func:`track_global_query`.
 
+What this module does NOT own: per-request tracking. It used to carry a second
+per-request tracker (``start_request_tracking`` / ``end_request_tracking`` /
+``_track_request_query`` / ``get_request_query_stats`` plus a ContextVar).
+Nothing ever started it — the only listener calls ``track_global_query``, and
+every call site of those four names was a test. A docstring here claimed the
+listener called ``_track_request_query``; it did not, and per-request N+1
+detection was already live in the middleware the whole time. The four names are
+gone; the one thing that was genuinely unique to them —
+:func:`normalize_query_for_pattern`, which collapses literals so ``id = 1`` and
+``id = 2`` bucket together — was MERGED into the middleware's live counts
+before the deletion, so the capability survived the code.
+
 Why keep the global tracker at all, when per-request tracking already exists?
 They answer different questions. Per-request tracking sees an N+1 inside one
 request. The global tracker sees a query pattern that no single request
@@ -37,15 +49,14 @@ an hour every ~1000 queries, so a process that never calls the reset does
 not grow without limit.
 
 Provides:
-- Slow query detection and logging
-- N+1 query pattern detection (per-request and global)
+- Cross-request N+1 query pattern detection
+- :func:`normalize_query_for_pattern` — the ONE pattern key, shared with the
+  middleware's per-request counts
 - Query execution time tracking
 """
 
 import re
 import time
-from collections import defaultdict
-from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
@@ -66,10 +77,6 @@ _query_tracker: dict[str, dict[str, Any]] = {}
 from contextlib import nullcontext
 
 _query_tracker_lock = nullcontext()
-# Per-request query tracking using ContextVar for async safety
-_request_queries: ContextVar[dict[str, int] | None] = ContextVar("request_queries", default=None)
-
-
 # The engine listener pair that used to live here (setup_query_profiler) was
 # the SECOND full profiler: it registered the same before/after cursor-execute
 # events on the same engine as QueryProfilerMiddleware, behind the same
@@ -92,11 +99,15 @@ def track_global_query(statement: str, n_plus_1_threshold: int = 3) -> None:
         statement: Raw SQL statement.
         n_plus_1_threshold: Warn when the same pattern reaches this count.
     """
-    _track_query(_normalize_query(statement), n_plus_1_threshold, detailed_logs=False)
+    _track_query(normalize_query_for_pattern(statement), n_plus_1_threshold, detailed_logs=False)
 
 
-def _normalize_query(statement: str) -> str:
-    """Normalize SQL statement for N+1 detection.
+def normalize_query_for_pattern(statement: str) -> str:
+    """Normalize SQL statement into an N+1 pattern key.
+
+    Shared with ``middleware/query_profiler.py``, which uses it to bucket its
+    per-request counts: this is the ONE normalisation, so the cross-request and
+    per-request detectors cannot disagree about what "the same query" means.
 
     Strips out specific values while preserving query structure.
     This allows detection of repeated query patterns.
@@ -226,112 +237,11 @@ def is_profiler_enabled(environment: str) -> bool:
     return environment.lower() in ("local", "development", "dev", "staging")
 
 
-def start_request_tracking() -> None:
-    """Start tracking queries for the current request.
-
-    Call this at the beginning of each request (e.g., in middleware)
-    to enable per-request N+1 detection.
-    """
-    _request_queries.set(defaultdict(int))
-    logger.debug("Request query tracking started")
-
-
-def end_request_tracking(
-    request_path: str,
-    threshold: int = 3,
-    detailed_logs: bool = False,
-) -> dict[str, int]:
-    """End tracking and report N+1 patterns for the current request.
-
-    Call this at the end of each request (e.g., in middleware finally block)
-    to detect and log N+1 query patterns.
-
-    Args:
-        request_path: The URL path of the request (for logging)
-        threshold: Minimum count to trigger N+1 warning (default: 3)
-        detailed_logs: If True, log all repeated queries, not just threshold violations
-
-    Returns:
-        Dictionary of detected N+1 patterns and their counts
-    """
-    queries = _request_queries.get()
-    if queries is None:
-        return {}
-
-    n_plus_1_patterns: dict[str, int] = {}
-
-    for query_pattern, count in queries.items():
-        if count >= threshold:
-            n_plus_1_patterns[query_pattern] = count
-            logger.warning(
-                "request_n_plus_1_detected",
-                count=count,
-                path=request_path,
-                pattern=query_pattern[:200] + ("..." if len(query_pattern) > 200 else ""),
-            )
-        elif detailed_logs and count > 1:
-            logger.info(
-                "request_query_repeated",
-                count=count,
-                path=request_path,
-                pattern=query_pattern[:200] + ("..." if len(query_pattern) > 200 else ""),
-            )
-
-    # Clear the request tracking
-    _request_queries.set(None)
-    logger.debug("request_query_tracking_ended", found=len(n_plus_1_patterns))
-
-    return n_plus_1_patterns
-
-
-def _track_request_query(
-    normalized_statement: str,
-    n_plus_1_threshold: int,
-) -> None:
-    """Track a query for per-request N+1 detection.
-
-    This is called by the SQLAlchemy event listener for each executed query.
-
-    Args:
-        normalized_statement: Normalized SQL statement
-        n_plus_1_threshold: Threshold for warning (used for immediate logging)
-    """
-    queries = _request_queries.get()
-    if queries is None:
-        return  # Not in a tracked request context
-
-    queries[normalized_statement] += 1
-
-    # Optional: Log immediately when threshold is hit for real-time detection
-    if queries[normalized_statement] == n_plus_1_threshold:
-        logger.warning(
-            "request_n_plus_1_threshold_reached",
-            count=n_plus_1_threshold,
-            pattern=normalized_statement[:200] + ("..." if len(normalized_statement) > 200 else ""),
-        )
-
-
-def get_request_query_stats() -> dict[str, int] | None:
-    """Get current request's query statistics.
-
-    Useful for debugging during request processing.
-
-    Returns:
-        Dictionary of query patterns to execution counts, or None if not tracking
-    """
-    queries = _request_queries.get()
-    if queries is None:
-        return None
-    return dict(queries)
-
-
 # Export all public functions
 __all__ = [
     "track_global_query",
     "reset_query_tracker",
     "get_query_stats",
     "is_profiler_enabled",
-    "start_request_tracking",
-    "end_request_tracking",
-    "get_request_query_stats",
+    "normalize_query_for_pattern",
 ]
