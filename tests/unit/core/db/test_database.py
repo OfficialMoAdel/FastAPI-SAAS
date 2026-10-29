@@ -150,7 +150,7 @@ async def test_add_to_tenant_index_ttl():
 
         index_key = f"tenant_index:{tenant_id}"
         mock_pipeline.sadd.assert_called_with(index_key, cache_key)
-        mock_pipeline.expire.assert_any_call(index_key, ttl)
+        mock_pipeline.expire.assert_any_call(index_key, ttl * 2)
 
 
 @pytest.mark.asyncio

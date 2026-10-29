@@ -28,7 +28,6 @@ MODULES_DIR = ROOT / "src" / "app" / "modules"
 ALLOWLIST: dict[str, str] = {
     "_base": "shared BaseService/CRUD base classes, not an API module",
     "health": "liveness/readiness router only, no service or models",
-    "storage": "storage backend adapters (local/S3), no HTTP surface",
 }
 
 CANONICAL_REQUIRED = ("router.py", "service.py")

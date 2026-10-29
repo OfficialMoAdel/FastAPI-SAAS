@@ -816,7 +816,7 @@ C3_DB_CALLERS: frozenset[tuple[str, str]] = frozenset(
         ("src/app/modules/auth/router.py", "verify_email"),
         ("src/app/modules/auth/routers/mfa.py", "complete_mfa_login"),
         ("src/app/modules/auth/routers/passkey.py", "login_complete"),
-        ("src/app/modules/auth/services/magic_link.py", "get_magic_link_service"),
+        ("src/app/modules/auth/routers/magic_link.py", "get_magic_link_service"),
         ("src/app/modules/auth/routers/sso.py", "list_providers"),
         ("src/app/modules/auth/routers/sso.py", "initiate_sso"),
         ("src/app/modules/auth/routers/sso.py", "initiate_sso_alias"),

@@ -475,3 +475,28 @@ async def _release_if_owned(key: str, lock_token: str) -> bool:
     except Exception as e:
         _pkg.logger.error("compare_and_delete failed for webhook lock", error=str(e))
         return False
+
+async def is_event_processed(event_id: str) -> bool:
+    """Public facade: has this Stripe event already been processed?
+
+    Delegates through the package namespace so test patches on either the
+    private implementation or this wrapper stay authoritative.
+    """
+    return await _pkg._is_event_processed(event_id)
+
+
+async def try_acquire_event_lock(event_id: str) -> tuple[EventLockResult, str]:
+    """Public facade: acquire the processing claim for ``event_id``."""
+    return await _pkg._try_acquire_event_lock(event_id)
+
+
+async def release_webhook_event_lock(
+    event_id: str,
+    *,
+    lock_token: str | None = None,
+    escalate: bool = True,
+) -> bool:
+    """Public facade: release (and if needed escalate cleanup of) a claim."""
+    return await _pkg._release_webhook_event_lock(
+        event_id, lock_token=lock_token, escalate=escalate
+    )

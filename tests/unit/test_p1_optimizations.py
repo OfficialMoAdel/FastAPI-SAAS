@@ -104,51 +104,25 @@ async def test_tenant_sharded_invalidation_logic():
         assert "tenant_index:1:user" in indices
 
     # 2. Test invalidate_tenant_cache with prefix (Optimization)
-    mock_pipeline.reset_mock()
-    mock_client.smembers = AsyncMock(return_value={b"tenant:1:user:profile"})
-    mock_pipeline.execute = AsyncMock(return_value=[1, 1, 1])
+    mock_client.evalsha = AsyncMock(return_value=1)
 
     with patch("src.app.core.utils.cache.client", mock_client):
         # Invalidate "user" prefix
-        await cache.invalidate_tenant_cache(tenant_id=1, prefix="user")
+        result = await cache.invalidate_tenant_cache(tenant_id=1, prefix="user")
 
-        # Should fetch from prefix index "tenant_index:1:user"
-        mock_client.smembers.assert_called_with("tenant_index:1:user")
-
-        # Should remove from global index too
-        mock_pipeline.srem.assert_called_with("tenant_index:1", "tenant:1:user:profile")
-
-        # Should delete the keys
-        mock_pipeline.delete.assert_any_call("tenant:1:user:profile")
+        assert result == 1
+        args = mock_client.evalsha.await_args.args
+        assert args[1:] == (2, "tenant_index:1:user", "tenant_index:1", "user")
 
     # 3. Test invalidate_tenant_cache FULL (no prefix)
-    mock_pipeline.reset_mock()
-    mock_client.smembers = AsyncMock(return_value={b"tenant:1:user:profile", b"tenant:1:settings:main"})
+    mock_client.evalsha = AsyncMock(return_value=2)
 
     with patch("src.app.core.utils.cache.client", mock_client):
-        await cache.invalidate_tenant_cache(tenant_id=1)
+        result = await cache.invalidate_tenant_cache(tenant_id=1)
 
-        # Should fetch from global index "tenant_index:1"
-        mock_client.smembers.assert_called_with("tenant_index:1")
-
-        # Should delete keys
-        # pipe.delete(*keys) is called with multiple keys
-        # Verify that delete was called with the keys we expect
-        delete_calls = mock_pipeline.delete.call_args_list
-        # We expect at least one delete call for the keys, and one for the index
-
-        # Find the call that deletes the keys (it should have the keys as args)
-        keys_deleted = False
-        for call in delete_calls:
-            args = call[0]
-            if "tenant:1:user:profile" in args and "tenant:1:settings:main" in args:
-                keys_deleted = True
-                break
-
-        assert keys_deleted, "Keys were not passed to delete command"
-
-        # Should delete global index
-        mock_pipeline.delete.assert_any_call("tenant_index:1")
+        assert result == 2
+        args = mock_client.evalsha.await_args.args
+        assert args[1:] == (1, "tenant_index:1", "tenant_index:1:*")
 
 
 # ==================== Pattern Invalidation ====================
@@ -189,14 +163,13 @@ async def test_pattern_invalidation_logic():
         mock_pipeline.execute.assert_called_once()
 
         # 2. Invalidate by pattern
-        mock_pipeline.reset_mock()
-        mock_pipeline.execute.return_value = [5, 1]  # 5 keys deleted, 1 index deleted
+        mock_client.evalsha = AsyncMock(return_value=5)
 
         deleted_count = await cache.invalidate_by_pattern("user:*:profile")
 
         assert deleted_count == 5
-        mock_pipeline.delete.assert_any_call(b"user:123:profile")
-        mock_pipeline.execute.assert_called_once()
+        args = mock_client.evalsha.await_args.args
+        assert args[1:] == (1, "idx_pattern:user:_STAR_:profile")
 
 
 @pytest.mark.asyncio

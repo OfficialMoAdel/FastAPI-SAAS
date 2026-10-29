@@ -10,8 +10,10 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from src.app.modules.tasks.schemas import Job, TaskCreate
+from src.app.shared.exceptions import ValidationError as DomainValidationError
 
 # F9: the deterministic job id is scoped by the tenant, so the tenant is
 # required — a tenant-less caller collapsed every tenant-less caller onto one
@@ -44,6 +46,22 @@ def mock_job_info():
 
 class TestTaskServiceCreate:
     """Tests for task creation."""
+
+    @pytest.mark.parametrize("message", ["", "   ", "\n\t"])
+    def test_schema_rejects_blank_messages(self, message):
+        with pytest.raises(PydanticValidationError):
+            TaskCreate(message=message)
+
+    def test_schema_strips_surrounding_whitespace(self):
+        assert TaskCreate(message="  hello  ").message == "hello"
+
+    @pytest.mark.asyncio
+    async def test_service_rejects_blank_message_for_non_http_callers(self):
+        from src.app.modules.tasks.service import task_service
+
+        data = TaskCreate.model_construct(message="   ")
+        with pytest.raises(DomainValidationError, match="cannot be empty"):
+            await task_service.create_task(data, tenant_id=TENANT_ID)
 
     @pytest.mark.asyncio
     async def test_create_task_success(self, mock_job):

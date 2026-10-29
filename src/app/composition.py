@@ -6,6 +6,7 @@ FastAPI application assembly.
 """
 
 import asyncio
+import secrets
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import _AsyncGeneratorContextManager, asynccontextmanager
 from functools import partial
@@ -245,11 +246,17 @@ async def _start_cache_warmer(done: asyncio.Event) -> None:
             if cache.client:
                 # Distributed lock to prevent all workers from hitting DB simultaneously
                 lock_key = "system:startup:cache_warmup_lock"
-                acquired = await cache.client.set(lock_key, "1", nx=True, ex=300)
+                lock_token = secrets.token_hex(16)
+                acquired = await cache.client.set(lock_key, lock_token, nx=True, ex=300)
                 if acquired:
-                    logger.info("Acquired startup cache warming lock, starting warmup...")
-                    await warm_caches()
-                    logger.info("Startup cache warmup complete.")
+                    from src.app.core.cache.client import cache_client
+
+                    try:
+                        logger.info("Acquired startup cache warming lock, starting warmup...")
+                        await warm_caches()
+                        logger.info("Startup cache warmup complete.")
+                    finally:
+                        await cache_client.release_lock_if_owned(lock_key, lock_token)
                 else:
                     logger.debug("Another worker is handling cache warmup, skipping.")
             else:

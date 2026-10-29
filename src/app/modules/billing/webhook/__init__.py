@@ -62,7 +62,10 @@ from .idempotency import (  # noqa: E402,F401
     _is_event_processed,
     _release_webhook_event_lock,
     _try_acquire_event_lock,
+    is_event_processed,
     mark_event_processed,
+    release_webhook_event_lock,
+    try_acquire_event_lock,
 )
 from .ingest import derive_and_attach_tenant, ingest_webhook  # noqa: E402,F401
 from .locks import (  # noqa: E402,F401

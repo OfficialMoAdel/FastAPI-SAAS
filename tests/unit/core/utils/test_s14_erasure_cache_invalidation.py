@@ -16,6 +16,9 @@ computed `global_index_key` and then never used it, with a comment conceding the
 fallback "should" happen and declining to implement it. The fix is implemented
 here — a shard miss now falls back to the global index and filters by prefix —
 AND the caller's prefix is corrected to match the writer.
+
+The drain is now one atomic Lua script, so the fallback is asserted against the
+script source rather than against Python control flow that no longer exists.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from pathlib import Path
 TENANT_INDEX = Path("src/app/core/utils/cache/tenant_index.py")
 POSTS_ROUTER = Path("src/app/modules/posts/router.py")
 DECORATOR = Path("src/app/core/utils/cache/decorator.py")
+LUA_MANAGER = Path("src/app/core/utils/lua_manager.py")
 
 
 def _fn(path: Path, name: str) -> ast.AsyncFunctionDef:
@@ -33,19 +37,31 @@ def _fn(path: Path, name: str) -> ast.AsyncFunctionDef:
     return next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == name)
 
 
+def _lua_script(name: str) -> str:
+    text = LUA_MANAGER.read_text(encoding="utf-8")
+    marker = f'"{name}": """'
+    start = text.index(marker) + len(marker)
+    end = text.index('"""', start)
+    return text[start:end]
+
+
 class TestShardMissFallsBackToTheGlobalIndex:
     def test_the_fallback_is_actually_implemented(self) -> None:
-        """The concession in the old comment ("we should fall back") must be code."""
-        fn = _fn(TENANT_INDEX, "invalidate_tenant_cache")
-        src = ast.unparse(fn)
-        assert "global_index_key" in src
-        # A real fallback reads the global set and filters it.
-        assert src.count("smembers") >= 2, "the global index is never read as a fallback"
+        """A shard miss must read the global set and remove evicted members."""
+        src = _lua_script("cache_tenant_prefix_drain")
+        assert "SMEMBERS', global_key" in src, "the global index is never read as a fallback"
+        assert "SREM', global_key" in src, "evicted members must leave the global index"
+        assert "':' .. member .. ':'" in src, "matching must stay at colon boundaries"
 
     def test_fallback_only_triggers_on_an_empty_shard(self) -> None:
         """Falling back unconditionally would do a full sweep on every call."""
+        src = _lua_script("cache_tenant_prefix_drain")
+        assert "if not from_shard then" in src, "the fallback must be gated on an empty shard"
+
+    def test_invalidation_delegates_to_the_atomic_prefix_drain(self) -> None:
         src = ast.unparse(_fn(TENANT_INDEX, "invalidate_tenant_cache"))
-        assert "if not keys" in src, "the fallback must be gated on an empty shard"
+        assert "cache_tenant_prefix_drain" in src
+        assert "global_index_key" in src, "the script must receive the global index key"
 
 
 class TestErasureCallerUsesTheWritersShardName:

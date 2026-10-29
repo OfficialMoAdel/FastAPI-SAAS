@@ -270,23 +270,18 @@ if (config.environment !== 'production') {
 
 ## Environment Variables
 
-Configuration can be customized via environment variables:
+The service reads only the application identity and environment settings:
 
 ```bash
-# Application
 APP_NAME="My SaaS App"
 APP_VERSION="2.0.0"
 ENVIRONMENT=production
-
-# Theme
-THEME_PRIMARY_COLOR="#3B82F6"
-THEME_SECONDARY_COLOR="#10B981"
-THEME_DARK_MODE_ENABLED=true
-THEME_DEFAULT=light
-
-# Maintenance
-MAINTENANCE_MODE=false
 ```
+
+`APP_NAME` and `APP_VERSION` come from `settings.app`; `ENVIRONMENT` comes
+from `settings.env`. Theme values and `maintenance_mode` are emitted from
+schema defaults, not environment variables, so `THEME_*` and
+`MAINTENANCE_MODE` have no effect here.
 
 ## Maintenance Notes
 
@@ -342,7 +337,7 @@ async def get_app_configuration():
 
 - **Health Module:** `src/app/modules/health/` - System health checks
 - **Feature Flags Module:** `src/app/modules/feature_flags/` - Database-backed feature flags
-- **Core Config:** `src/app/core/config.py` - Environment variable settings
+- **Core Config:** `src/app/core/config/` - Environment variable settings
 
 ## API Versioning
 
@@ -371,18 +366,8 @@ async def get_app_configuration():
 
 ### Maintenance Mode
 
-The `maintenance_mode` flag can be used to:
-- Display maintenance page to users
-- Prevent new signups
-- Block non-essential API calls
-- Show status message
-
-```python
-# In service
-maintenance_mode = getattr(settings, "MAINTENANCE_MODE", False)
-```
-
-Set via environment variable:
-```bash
-MAINTENANCE_MODE=true
-```
+`maintenance_mode` is currently hardcoded to `False` in `service.py`. There is
+no setting or environment variable wired to it. The field exists in the
+response so clients can render maintenance UI against a stable contract, but
+the backend does not enforce maintenance mode or block requests. Adding real
+enforcement is future work and requires an explicit configuration source.

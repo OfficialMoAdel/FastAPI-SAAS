@@ -146,6 +146,25 @@ made" are different answers, and the one caller (webhook recovery) needs to
 tell them apart to fall back to per-key claims rather than dropping a page. A
 missing client returns all-False.
 
+**Invalidation indexes: two families, derived TTLs, atomic drains.** The
+`idx_pattern:{pattern}` sets (pattern index) and the
+`tenant_index:{tid}` + `tenant_index:{tid}:{prefix}` sets (tenant global +
+shard index) are metadata ABOUT data keys and are deliberately NOT merged.
+Every index writer derives its TTL via
+`core/utils/cache/index_policy.py::index_ttl` — 2× the data TTL — so the index
+always outlives the keys it describes; a dead member is harmless (deleting an
+expired key is a no-op), an early-expired index is not (a later write finds it
+empty and misses still-live keys). Invalidation (`invalidate_by_pattern`,
+`invalidate_tenant_cache`) is ONE server-side Lua script per family
+(`cache_pattern_drain`, `cache_tenant_prefix_drain`, `cache_tenant_global_drain`
+in `lua_manager.py::LuaScriptManager.BUILTIN_SCRIPTS`) that reads the index,
+deletes members, cleans the index, and returns the deleted count — never a
+Python SMEMBERS-then-pipeline sequence, which races with writers between the
+read and the delete. The tenant prefix drain keeps the S-14 guarantee: an
+empty shard falls back to the global index with a colon-boundary prefix match
+(`_matches_prefix`) before returning 0. See `docs/cache-ttl.md` for the full
+index table.
+
 ### Tenancy & RLS
 Tenant context lives in contextvars (`core/tenancy/context.py` — bind with `bound_tenant`/`bind_tenant`, release with `unbind_tenant`); Postgres RLS scoping via `core/db/rls.py` (`set_rls_context`, `rls_context`, `bypass_rls`). Background jobs use `core/worker/rls_context.py`.
 

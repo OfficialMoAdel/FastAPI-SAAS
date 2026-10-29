@@ -4,8 +4,8 @@ Components are imported lazily to avoid circular imports.
 Cross-module imports MUST use the package root (P1-20: ruff TID252 bans
 deep `tenants.service` / `tenants.router` imports outside this package):
     from src.app.modules.tenants import TenantService, get_tenant_service
+    from src.app.modules.tenants import Tenant, crud_tenants
     from src.app.modules.tenants import router as tenants_router
-    from src.app.modules.tenants.crud import crud_tenants
 """
 
 from typing import TYPE_CHECKING

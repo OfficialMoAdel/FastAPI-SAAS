@@ -98,7 +98,12 @@ services, routers, models and crud via `__getattr__`, with an
 ```python
 from src.app.modules.users import UserService
 from src.app.modules.tenants import TenantService, get_tenant_service
+from src.app.modules.tenants import Tenant, crud_tenants
 ```
+This applies to crud and models too, not just services: auth SSO imports
+`crud_tenants` and `Tenant` through the tenants package root (the facade's
+`__getattr__` lazy-exports both), never via
+`src.app.modules.tenants.crud` / `.models` deep paths.
 Sanctioned seams (each documented where it lives): auth → `users.UserService`
 (identity lookup); rbac + billing webhooks → `users.UserService`
 (membership seam, tier downgrade); `api/deps` → `users.UserService` (request

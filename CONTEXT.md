@@ -298,6 +298,15 @@ persistence grilling loop, 2026-09-22.)
   Seam: `StorageService(db, admin=None)` constructor injection in
   `src/app/modules/storage/service.py`.
 
+- **Service construction** — a DB-bound service gets its dependency factory in
+  `router.py`, typed with `Depends(async_get_db)`, so the service file stays
+  free of FastAPI `Depends` (Q-M4, `src/app/modules/_base/service.py:17-22`).
+  A stateless service is a module-level singleton with a plain accessor
+  (`def get_<name>_service() -> <Name>Service: return <name>_service`). The
+  generator's `get_<module>_service(db)` factory lives in `router.py` with the
+  `Depends(async_get_db)` typing; `service.py` emits no factory at all and
+  must not grow `Depends` imports of its own.
+
 - **Storage provider construction** — the OUTBOUND half of the storage Seam,
   and a decided seam of its own: `src/app/clients/storage/` owns the
   `StorageProvider` interface, the three real vendor adapters (`S3Storage`,

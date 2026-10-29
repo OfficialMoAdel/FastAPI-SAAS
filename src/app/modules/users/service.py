@@ -1008,10 +1008,3 @@ class UserService:
 
         return user_dict
 
-
-def get_user_service(db: AsyncSession) -> UserService:
-    """Dependency injection factory for UserService.
-
-    H-4: repository layer deleted — the service owns its data access via
-    FastCRUD (``crud_users``) directly, same as every other module."""
-    return UserService(db)

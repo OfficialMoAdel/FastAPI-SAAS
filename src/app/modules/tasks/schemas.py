@@ -1,6 +1,10 @@
 """Task schemas - job-related data models."""
 
-from pydantic import BaseModel
+from typing import Annotated
+
+from pydantic import BaseModel, StringConstraints
+
+TaskMessage = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class Job(BaseModel):
@@ -12,7 +16,7 @@ class Job(BaseModel):
 class TaskCreate(BaseModel):
     """Task creation request schema."""
 
-    message: str
+    message: TaskMessage
 
 
 class TaskStatus(BaseModel):

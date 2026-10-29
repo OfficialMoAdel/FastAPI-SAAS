@@ -215,8 +215,3 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
             raise ForbiddenError("You don't have permission to delete this {{ module_name }}")
 
         await self.crud.delete(db=self.db, id=id)
-
-
-def get_{{ module_name }}_service(db: AsyncSession) -> {{ ModelName }}Service:
-    """Dependency injection factory for {{ ModelName }}Service."""
-    return {{ ModelName }}Service(db)

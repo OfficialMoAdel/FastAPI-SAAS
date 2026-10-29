@@ -36,3 +36,27 @@ Rules of thumb:
   added to `import_l1_owner_modules()` in `src/app/composition.py`, which is
   the one enumeration the boot depends on.
 - Document a new TTL here in the same PR that introduces it.
+
+## Cache index TTLs
+
+The Redis invalidation indexes are metadata ABOUT data keys, so their TTL is
+derived, never chosen independently: every index writer passes its data TTL
+through `core/utils/cache/index_policy.py::index_ttl` (2× the data TTL). An
+index that expires at or before its data key lets a later write find an empty
+index and miss still-live keys (stale reads); a dead index member is harmless
+— deleting an expired key is a no-op.
+
+There are TWO index families and they are deliberately not merged:
+
+| Family | Keys | Written by | Drained by |
+|---|---|---|---|
+| Pattern index | `idx_pattern:{pattern}` (set of member keys) | `register_key_patterns`, `set_cache_with_patterns` | `invalidate_by_pattern` (`cache_pattern_drain` Lua) |
+| Tenant index | `tenant_index:{tid}` (global) + `tenant_index:{tid}:{prefix}` (shards) | `set_tenant_cache`, `add_to_tenant_index`, the endpoint cache decorator | `invalidate_tenant_cache` (`cache_tenant_prefix_drain` / `cache_tenant_global_drain` Lua) |
+
+Drain = one atomic server-side Lua script (registered in
+`core/utils/lua_manager.py::LuaScriptManager.BUILTIN_SCRIPTS`) that reads the
+index, deletes the members, cleans the index itself, and returns the deleted
+count — never a Python SMEMBERS-then-pipeline sequence, which races with
+writers between the read and the delete. The tenant prefix drain keeps the
+S-14 guarantee: an empty shard falls back to the global index and filters by
+colon-boundary prefix match before giving up.

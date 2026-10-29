@@ -1,6 +1,7 @@
 """Tenant cache index — set-based O(|S|) invalidation with prefix sharding."""
 
 from src.app.core.utils import cache as _state
+from src.app.core.utils.cache.index_policy import index_ttl
 
 
 def _matches_prefix(cache_key: str, prefix: str) -> bool:
@@ -44,76 +45,34 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
         return 0
 
     # P1-1: Hierarchical Tenant Index Sharding
-    # If prefix is provided, use the sharded index instead of filtering the global index
+    # If prefix is provided, use the sharded index instead of filtering the global index.
+    #
+    # Both drain paths are atomic Lua scripts. The previous Python shape
+    # (SMEMBERS -> pipeline delete) had a write-after-snapshot window: a writer
+    # could SADD a key after the snapshot but before the index deletion, leaving
+    # that live cache key unreachable. The scripts keep snapshot, index cleanup,
+    # and data-key deletion in one server-side step.
     if prefix:
         index_key = _state._tenant_prefix_index_key(tenant_id, prefix)
         global_index_key = _state._tenant_index_key(tenant_id)
+        deleted = await _state.get_lua_manager().execute(
+            client,
+            "cache_tenant_prefix_drain",
+            [index_key, global_index_key],
+            [prefix],
+        )
     else:
         index_key = _state._tenant_index_key(tenant_id)
-        global_index_key = None
+        # S-14: the script falls back to the global index when the requested
+        # shard is empty, matching the business prefix at colon boundaries.
+        deleted = await _state.get_lua_manager().execute(
+            client,
+            "cache_tenant_global_drain",
+            [index_key],
+            [f"tenant_index:{tenant_id}:*"],
+        )
 
-    # smembers returns bytes when decode_responses=False
-    raw_keys = await client.smembers(index_key)  # type: ignore[misc]
-    keys: set[str] = {k.decode("utf-8") if isinstance(k, bytes) else k for k in raw_keys}
-
-    # S-14 FIX: fall back to the GLOBAL index when the shard is empty.
-    #
-    # The previous code computed `global_index_key` and then never used it,
-    # with a comment conceding the fallback "should" happen and declining to
-    # implement it ("Let's assume migration has run"). That assumption does not
-    # hold: the only production writer of `tenant_index:*` is the @cache
-    # decorator, so any key whose shard name differs from what the caller
-    # passes is permanently unreachable.
-    #
-    # A concrete instance: `posts.erase_db_post` asked for the shard
-    # `v2:user_post_cache:{username}:{id}` while the writer shards on
-    # `_format_prefix(key_prefix, kwargs)` -> `user_post_cache:{username}`.
-    # Empty shard -> `return 0`, silently.
-    #
-    # The filter must match on the key's TAIL, not its head. Members of the
-    # global index are FULL cache keys (`tenant:{tid}:user:{uid}:v2:...`), so a
-    # `k.startswith(prefix)` test is unconditionally False -- the first
-    # version of this fallback was dead code that added a full SMEMBERS
-    # round-trip on every shard miss while matching nothing.
-    if not keys and prefix and global_index_key:
-        fallback_raw = await client.smembers(global_index_key)  # type: ignore[misc]
-        all_keys = {k.decode("utf-8") if isinstance(k, bytes) else k for k in fallback_raw}
-        keys = {k for k in all_keys if _matches_prefix(k, prefix)}
-
-    if not keys:
-        return 0
-
-    # P-M5: collect ALL sharded-index keys via SCAN *before* opening the
-    # pipeline. The previous shape issued SCAN round-trips while the pipeline
-    # was open, serializing network I/O that is independent of the pipeline's
-    # purpose and stretching the pipeline's lifetime across every SCAN page.
-    sharded_index_keys: list[str] = []
-    if not prefix:
-        # BUG FIX (retained): clear all sharded indexes for the tenant to
-        # prevent orphaned empty sets.
-        cursor = 0
-        while True:
-            cursor, sharded_keys = await client.scan(cursor, match=f"tenant_index:{tenant_id}:*", count=100)
-            sharded_index_keys.extend(k.decode("utf-8") if isinstance(k, bytes) else k for k in sharded_keys)
-            if cursor == 0:
-                break
-
-    # Delete all matching keys in ONE pipeline for efficiency
-    async with client.pipeline(transaction=False) as pipe:
-        pipe.delete(*keys)
-
-        # Remove deleted keys from the index we used
-        pipe.delete(index_key)
-
-        # If we used a sharded index, we must ALSO remove these keys from the global index
-        if prefix and global_index_key:
-            pipe.srem(global_index_key, *keys)
-        elif sharded_index_keys:
-            pipe.delete(*sharded_index_keys)
-
-        results = await pipe.execute()
-
-    return results[0] if results else 0
+    return int(deleted or 0)
 
 
 def _tenant_index_key(tenant_id: int | str) -> str:
@@ -150,7 +109,11 @@ _DEFAULT_INDEX_TTL = 7200
 
 
 async def add_to_tenant_index(
-    tenant_id: int | str, cache_key: str, ttl: int | None = _DEFAULT_INDEX_TTL
+    tenant_id: int | str,
+    cache_key: str,
+    ttl: int | None = _DEFAULT_INDEX_TTL,
+    *,
+    prefix: str | None = None,
 ) -> bool:
     """Add a cache key to the tenant's index set.
 
@@ -162,6 +125,10 @@ async def add_to_tenant_index(
         cache_key: The cache key to add to the index
         ttl: Time-to-live for the index sets in seconds
             (defaults to 2h; pass 0/None to opt out)
+        prefix: Business prefix used to choose the shard. Pass this for keys
+            built by the cache decorator (which may be user-scoped). The legacy
+            positional fallback only understands ``tenant:{tid}:{prefix}:...``
+            keys and exists for callers that have not migrated.
 
     Returns
     -------
@@ -173,30 +140,39 @@ async def add_to_tenant_index(
 
     index_key = _tenant_index_key(tenant_id)
 
-    # Try to determine prefix for sharded index
-    # key format: tenant:{id}:{prefix}:...
-    parts = cache_key.split(":", 3)
-    prefix_index_key = None
-    if len(parts) >= 3 and parts[0] == "tenant":
-        prefix = parts[2]
-        prefix_index_key = _tenant_prefix_index_key(tenant_id, prefix)
+    if prefix is None:
+        # Legacy key format: tenant:{id}:{prefix}:...
+        parts = cache_key.split(":", 3)
+        if len(parts) >= 3 and parts[0] == "tenant":
+            prefix = parts[2]
+
+    prefix_index_key = _tenant_prefix_index_key(tenant_id, prefix) if prefix else None
+    # P1-9: an index must outlive the data key. This writer previously used the
+    # exact data TTL, which recreated the stale-read hole the other writers
+    # avoid.
+    index_expiry = index_ttl(ttl) if ttl else None
 
     async with client.pipeline(transaction=False) as pipe:
         pipe.sadd(index_key, cache_key)
-        if ttl:
-            pipe.expire(index_key, ttl)
+        if index_expiry:
+            pipe.expire(index_key, index_expiry)
 
         if prefix_index_key:
             pipe.sadd(prefix_index_key, cache_key)
-            if ttl:
-                pipe.expire(prefix_index_key, ttl)
+            if index_expiry:
+                pipe.expire(prefix_index_key, index_expiry)
 
         await pipe.execute()
 
     return True
 
 
-async def remove_from_tenant_index(tenant_id: int | str, cache_key: str) -> bool:
+async def remove_from_tenant_index(
+    tenant_id: int | str,
+    cache_key: str,
+    *,
+    prefix: str | None = None,
+) -> bool:
     """Remove a cache key from the tenant's index set.
 
     Should be called when a specific tenant key is deleted.
@@ -205,6 +181,10 @@ async def remove_from_tenant_index(tenant_id: int | str, cache_key: str) -> bool
     Args:
         tenant_id: Tenant identifier
         cache_key: The cache key to remove from the index
+        prefix: Business prefix used to choose the shard. Pass this for keys
+            built by the cache decorator (which may be user-scoped). The legacy
+            positional fallback only understands ``tenant:{tid}:{prefix}:...``
+            keys and exists for callers that have not migrated.
 
     Returns
     -------
@@ -216,11 +196,12 @@ async def remove_from_tenant_index(tenant_id: int | str, cache_key: str) -> bool
 
     index_key = _tenant_index_key(tenant_id)
 
-    parts = cache_key.split(":", 3)
-    prefix_index_key = None
-    if len(parts) >= 3 and parts[0] == "tenant":
-        prefix = parts[2]
-        prefix_index_key = _tenant_prefix_index_key(tenant_id, prefix)
+    if prefix is None:
+        parts = cache_key.split(":", 3)
+        if len(parts) >= 3 and parts[0] == "tenant":
+            prefix = parts[2]
+
+    prefix_index_key = _tenant_prefix_index_key(tenant_id, prefix) if prefix else None
 
     async with client.pipeline(transaction=False) as pipe:
         pipe.srem(index_key, cache_key)
@@ -264,12 +245,12 @@ async def set_tenant_cache(
     async with client.pipeline(transaction=False) as pipe:
         pipe.setex(cache_key, ttl, value)
         pipe.sadd(_tenant_index_key(tenant_id), cache_key)
-        pipe.expire(_tenant_index_key(tenant_id), ttl * 2)
+        pipe.expire(_tenant_index_key(tenant_id), index_ttl(ttl))
 
         # Also add to prefix-sharded index
         sharded_index_key = _tenant_prefix_index_key(tenant_id, prefix)
         pipe.sadd(sharded_index_key, cache_key)
-        pipe.expire(sharded_index_key, ttl * 2)
+        pipe.expire(sharded_index_key, index_ttl(ttl))
         await pipe.execute()
 
     return True

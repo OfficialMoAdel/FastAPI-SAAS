@@ -71,6 +71,12 @@ class TestAllowListIsLive:
             "and silently exempts the module the day that name returns"
         )
 
+    def test_storage_is_not_exempt_and_conforms(self) -> None:
+        """Storage has an HTTP surface, so its old reason was false."""
+        checker = _load_checker()
+        assert "storage" not in checker.ALLOWLIST
+        assert checker.check_module(checker.MODULES_DIR / "storage") == []
+
     def test_stale_entry_fails_the_gate(self) -> None:
         """A stale entry must exit non-zero, not print a warning."""
         checker = _load_checker()

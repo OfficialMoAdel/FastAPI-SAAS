@@ -12,6 +12,7 @@ from src.app.core.logger import get_logger
 from src.app.core.schemas import MessageResponse
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.core.utils.cache import cache
+from src.app.core.utils.cache.decorator import scoped_invalidation_pattern
 from src.app.core.utils.cache.tenant_index import invalidate_tenant_cache
 from src.app.modules.posts import PostService
 from src.app.modules.posts.schemas import PostCreate, PostRead, PostUpdate
@@ -76,15 +77,15 @@ async def write_post(
     _require_post_owner(username, ctx)
     result = await service.create_post(post, ctx.user)
 
-    from src.app.core.utils.cache.decorator import _format_prefix, _scoped_invalidation_pattern
     from src.app.core.utils.cache.patterns import invalidate_by_pattern
 
     try:
         tenant = get_current_tenant()
         # Truthiness, not `is not None`: NO_TENANT is falsy by design, and
         # scoping by its UUID-zero id would name an index nothing registers.
-        scoped = _scoped_invalidation_pattern(
-            _format_prefix("user_posts:{username}:*", {"username": username}),
+        scoped = scoped_invalidation_pattern(
+            "user_posts:{username}:*",
+            {"username": username},
             str(tenant.tenant_id) if tenant else None,
             ctx.user.id,
         )

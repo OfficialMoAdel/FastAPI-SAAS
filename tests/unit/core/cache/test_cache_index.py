@@ -34,6 +34,9 @@ def create_mock_redis_with_pipeline() -> tuple[AsyncMock, AsyncMock]:
     mock_redis = AsyncMock()
     mock_pipeline = AsyncMock()
     mock_redis.scan = AsyncMock(return_value=(0, []))
+    # Invalidation is one atomic Lua script. The script returns the number of
+    # data keys it deleted; individual tests override this.
+    mock_redis.evalsha = AsyncMock(return_value=0)
 
     @asynccontextmanager
     async def mock_pipeline_cm(**kwargs):  # noqa: ANN003
@@ -202,95 +205,65 @@ class TestInvalidateTenantCache:
     async def test_returns_zero_when_index_empty(self) -> None:
         """Should return 0 when no keys in index."""
         mock_redis = AsyncMock()
-        mock_redis.smembers.return_value = set()
+        mock_redis.evalsha = AsyncMock(return_value=0)
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await invalidate_tenant_cache(1)
 
             assert result == 0
-            mock_redis.smembers.assert_called_once_with("tenant_index:1")
+            args = mock_redis.evalsha.await_args.args
+            assert args[1:] == (1, "tenant_index:1", "tenant_index:1:*")
 
     @pytest.mark.asyncio
-    async def test_uses_smembers_not_scan(self) -> None:
-        """Verify SMEMBERS is used instead of SCAN - O(|S|) not O(K)."""
-        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
-        mock_redis.smembers.return_value = {"tenant:1:user:42", "tenant:1:user:43"}
-        mock_pipeline.execute.return_value = [2, 2]  # delete count, srem count
+    async def test_uses_atomic_global_drain(self) -> None:
+        """Verify the global index drain is delegated to one atomic script."""
+        mock_redis, _ = create_mock_redis_with_pipeline()
+        mock_redis.evalsha.return_value = 2
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await invalidate_tenant_cache(1)
 
-            # Should use smembers
-            mock_redis.smembers.assert_called_once()
-
-            # Should use scan, but only to clean up orphaned sharded indexes, not for data key lookup
-            mock_redis.scan.assert_called_with(0, match="tenant_index:1:*", count=100)
-
-            # Should delete found keys
             assert result == 2
+            args = mock_redis.evalsha.await_args.args
+            assert args[1:] == (1, "tenant_index:1", "tenant_index:1:*")
 
     @pytest.mark.asyncio
     async def test_deletes_all_keys_and_removes_from_index(self) -> None:
-        """Verify all keys are deleted and index is cleared."""
-        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
-        keys = {"tenant:1:user:42", "tenant:1:user:43", "tenant:1:perm:100"}
-        mock_redis.smembers.return_value = keys
-        mock_pipeline.execute.return_value = [3, 1]  # delete keys count, delete index count
+        """Verify the script owns key and index deletion."""
+        mock_redis, _ = create_mock_redis_with_pipeline()
+        mock_redis.evalsha.return_value = 3
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await invalidate_tenant_cache(1)
 
             assert result == 3
-
-            # Verify pipeline operations - delete is called multiple times now
-            # First call deletes the keys, second call deletes the index
-            assert mock_pipeline.delete.call_count == 2
-            first_delete_args = set(mock_pipeline.delete.call_args_list[0][0])
-            assert first_delete_args == keys
+            args = mock_redis.evalsha.await_args.args
+            assert args[1:] == (1, "tenant_index:1", "tenant_index:1:*")
 
     @pytest.mark.asyncio
     async def test_prefix_filtering_works(self) -> None:
-        """Verify prefix filtering uses sharded index."""
-        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
-        user_keys = {"tenant:1:user:42", "tenant:1:user:43"}
-        mock_redis.smembers.return_value = user_keys
-        mock_pipeline.execute.return_value = [2, 1, 2]  # delete keys, delete sharded index, srem from global
+        """Verify prefix filtering uses the sharded index and global fallback."""
+        mock_redis, _ = create_mock_redis_with_pipeline()
+        mock_redis.evalsha.return_value = 2
 
         with patch("src.app.core.utils.cache.client", mock_redis):
-            await invalidate_tenant_cache(1, prefix="user")
+            result = await invalidate_tenant_cache(1, prefix="user")
 
-            # Now uses sharded index directly, so smembers is called on tenant_index:1:user
-            mock_redis.smembers.assert_called_once_with("tenant_index:1:user")
-
-            # Should only delete user: keys
-            delete_args = set(mock_pipeline.delete.call_args_list[0][0])
-            assert "tenant:1:user:42" in delete_args
-            assert "tenant:1:user:43" in delete_args
+            assert result == 2
+            args = mock_redis.evalsha.await_args.args
+            assert args[1:] == (2, "tenant_index:1:user", "tenant_index:1", "user")
 
     @pytest.mark.asyncio
     async def test_prefix_no_match_returns_zero(self) -> None:
-        """Should return 0 when neither the shard nor the global index matches.
-
-        S-14: an empty SHARD now falls back to the global tenant index before
-        giving up. That fallback was the "strictly speaking we should" comment
-        in tenant_index.py that was never implemented, and it is why
-        `posts.erase_db_post` silently failed to evict a GDPR-erased post: its
-        prefix did not match the writer's shard, so the lookup hit an empty set
-        and returned 0.
-
-        So smembers is called for the shard AND (on a miss) for the global
-        index. The RESULT is unchanged here — 0 — because neither holds a match.
-        """
+        """Should return 0 when neither the shard nor the global index matches."""
         mock_redis, _ = create_mock_redis_with_pipeline()
-        mock_redis.smembers.return_value = set()
+        mock_redis.evalsha.return_value = 0
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await invalidate_tenant_cache(1, prefix="nonexistent")
             assert result == 0
-
-        called = [c.args[0] for c in mock_redis.smembers.call_args_list]
-        assert "tenant_index:1:nonexistent" in called, "the shard must be consulted first"
-        assert "tenant_index:1" in called, "S-14: an empty shard must fall back to the global index"
+            args = mock_redis.evalsha.await_args.args
+            assert args[1:] == (2, "tenant_index:1:nonexistent", "tenant_index:1", "nonexistent")
 
 
 class TestMatchesPrefix:
@@ -323,20 +296,21 @@ class TestMatchesPrefix:
 
     @pytest.mark.asyncio
     async def test_global_fallback_evicts_user_scoped_key(self) -> None:
-        """The fallback must reach keys whose shard name does not match."""
-        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
-        target = "tenant:1:user:7:v2:user_post_cache:alice:42"
-        other_user = "tenant:1:user:8:v2:user_post_cache:alice:42"
-        other_prefix = "tenant:1:user:7:v2:user_post_cache:bob:42"
-        mock_redis.smembers.side_effect = [set(), {target, other_user, other_prefix}]
-        mock_pipeline.execute.return_value = [2, 1, 2]
+        """The fallback must be delegated with the shard and global index."""
+        mock_redis, _ = create_mock_redis_with_pipeline()
+        mock_redis.evalsha.return_value = 2
 
         with patch("src.app.core.utils.cache.client", mock_redis):
-            await invalidate_tenant_cache(1, prefix="user_post_cache:alice")
+            result = await invalidate_tenant_cache(1, prefix="user_post_cache:alice")
 
-            delete_args = set(mock_pipeline.delete.call_args_list[0][0])
-            assert delete_args == {target, other_user}
-            assert other_prefix not in delete_args
+            assert result == 2
+            args = mock_redis.evalsha.await_args.args
+            assert args[1:] == (
+                2,
+                "tenant_index:1:user_post_cache:alice",
+                "tenant_index:1",
+                "user_post_cache:alice",
+            )
 
 
 class TestGetTenantIndexSize:
@@ -387,20 +361,16 @@ class TestTenantIsolation:
     @pytest.mark.asyncio
     async def test_invalidate_tenant_a_leaves_tenant_b_intact(self) -> None:
         """Invalidating tenant A should not affect tenant B's keys."""
-        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
-        tenant_a_keys = {"tenant:1:user:42", "tenant:1:user:43"}
-        mock_redis.smembers.return_value = tenant_a_keys
-        mock_pipeline.execute.return_value = [2, 2]
+        mock_redis, _ = create_mock_redis_with_pipeline()
+        mock_redis.evalsha.return_value = 2
 
         with patch("src.app.core.utils.cache.client", mock_redis):
-            await invalidate_tenant_cache(1)
+            result = await invalidate_tenant_cache(1)
 
-            # Verify only tenant 1 index was queried
-            mock_redis.smembers.assert_called_once_with("tenant_index:1")
-
-            # Verify tenant 2's index was never touched
-            for call in mock_redis.smembers.call_args_list:
-                assert "tenant_index:2" not in str(call)
+            assert result == 2
+            args = mock_redis.evalsha.await_args.args
+            assert args[1:] == (1, "tenant_index:1", "tenant_index:1:*")
+            assert "tenant_index:2" not in str(args)
 
 
 class TestAtomicOperations:
@@ -431,15 +401,14 @@ class TestAtomicOperations:
             mock_pipeline.execute.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_invalidate_uses_non_transactional_pipeline(self) -> None:
-        """Verify invalidation uses non-transactional pipeline."""
+    async def test_invalidate_uses_atomic_script(self) -> None:
+        """Verify invalidation is one server-side atomic operation."""
         mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
-        mock_redis.smembers.return_value = {"tenant:1:key:1"}
-        mock_pipeline.execute.return_value = [1, 1]
+        mock_redis.evalsha.return_value = 1
 
         with patch("src.app.core.utils.cache.client", mock_redis):
-            await invalidate_tenant_cache(1)
+            result = await invalidate_tenant_cache(1)
 
-            # Verify pipeline commands were called (delete is called twice now)
-            assert mock_pipeline.delete.call_count == 2
-            mock_pipeline.execute.assert_called_once()
+            assert result == 1
+            mock_redis.evalsha.assert_awaited_once()
+            assert mock_pipeline.delete.call_count == 0

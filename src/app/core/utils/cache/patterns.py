@@ -9,6 +9,7 @@ from collections.abc import Callable  # noqa: F401  (annotation parity with mono
 from typing import Any
 
 from src.app.core.utils import cache as _state
+from src.app.core.utils.cache.index_policy import index_ttl
 
 
 def _pattern_index_key(pattern: str) -> str:
@@ -44,7 +45,7 @@ async def register_key_patterns(
             # An index expiring at-or-before the data key lets a later write
             # find an empty index and miss still-live keys (stale reads);
             # dead index members are harmless (deleting an expired key is a no-op).
-            pipe.expire(idx_key, ttl * 2)
+            pipe.expire(idx_key, index_ttl(ttl))
         await pipe.execute()
 
 
@@ -66,21 +67,10 @@ async def invalidate_by_pattern(pattern: str) -> int:
         return 0
 
     idx_key = _pattern_index_key(pattern)
-    # Get all keys registered for this pattern
-    keys = await client.smembers(idx_key)  # type: ignore[misc]
-
-    if not keys:
-        return 0
-
-    async with client.pipeline(transaction=False) as pipe:
-        # Delete the actual cached keys
-        pipe.delete(*keys)
-        # Delete the index set itself (it's done its job)
-        pipe.delete(idx_key)
-        results = await pipe.execute()
-
-    # First result is number of keys deleted by delete(*keys)
-    return results[0] if results else 0
+    # The drain is one script so a writer cannot SADD a key after the snapshot
+    # but before the index deletion and lose its index entry.
+    deleted = await _state.get_lua_manager().execute(client, "cache_pattern_drain", [idx_key])
+    return int(deleted or 0)
 
 
 async def set_cache_with_patterns(
@@ -114,7 +104,7 @@ async def set_cache_with_patterns(
                 idx_key = _pattern_index_key(pattern)
                 pipe.sadd(idx_key, key)
                 # P1-9: index TTL is 2x the data TTL (see register_key_patterns).
-                pipe.expire(idx_key, ttl * 2)
+                pipe.expire(idx_key, index_ttl(ttl))
         await pipe.execute()
 
     return True

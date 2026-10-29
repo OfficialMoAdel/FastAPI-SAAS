@@ -86,7 +86,13 @@ DECIMAL_CEILING = ceiling_from_ops_per_sec(30_000, "json_dumps({Decimal, Decimal
 #: reasoning is recorded here rather than left implicit.
 ORJSON_SIMPLE_CEILING = protocol.Ceiling(20.0, "json_loads(json_dumps(simple_payload))")
 ORJSON_COMPLEX_CEILING = protocol.Ceiling(100.0, "json_loads(json_dumps(complex_payload))")
-HASH_LOOKUP_CEILING = ceiling_from_ops_per_sec(10_000_000, "dict.get over a 10k-entry index")
+#: 5M ops/sec = 0.2 us per dict.get over a 10k-entry index. The 10M ops/sec
+#: (0.1 us) derivation passes on faster hosts but fails on perf-local
+#: (Python 3.9, Windows) where dict.get measures ~0.136 us per op (~7.3M ops/s)
+#: with a spread ratio that exceeds the 2.0x noise floor. 5M ops/sec keeps a
+#: ~1.5x margin on the slowest target host while still catching a real
+#: regression (any host where dict.get exceeds 0.2 us per op).
+HASH_LOOKUP_CEILING = ceiling_from_ops_per_sec(5_000_000, "dict.get over a 10k-entry index")
 #: One ``dict.get`` costs tens of nanoseconds, while the protocol charges two
 #: ``perf_counter`` reads per sample. A single-call sample therefore measures the
 #: clock (~0.2 us on Windows' ~100 ns tick), not the lookup, and the 0.1 us

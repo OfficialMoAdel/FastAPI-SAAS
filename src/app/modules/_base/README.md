@@ -63,14 +63,18 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.db.database import async_get_db
-from .service import MyModelService, get_my_model_service
+from .service import MyModelService
 
 router = APIRouter(tags=["my-models"])
+
+# DI factory lives in the router, where the session dependency is resolvable
+def get_my_model_service(db: Annotated[AsyncSession, Depends(async_get_db)]) -> MyModelService:
+    return MyModelService(db)
 
 # Type alias for DI
 MyModelServiceDep = Annotated[
     MyModelService,
-    Depends(lambda db=Depends(async_get_db): get_my_model_service(db))
+    Depends(get_my_model_service)
 ]
 
 @router.get("/{id}")
@@ -108,7 +112,7 @@ src/app/modules/{module_name}/
 - [ ] Model inherits from `Base` (from `core.db.database`)
 - [ ] Schemas inherit from `BaseCreate`, `BaseRead`/`BaseReadUUID`, `BaseUpdate`
 - [ ] Service inherits from `BaseService[Model]`
-- [ ] Service has `get_*_service(db)` factory function
+- [ ] Service has `get_*_service(db)` factory function (or the router hosts it with `Depends(async_get_db)`)
 - [ ] Router uses `Depends()` for service injection
 - [ ] Exceptions use `ModelNotFoundError`, `DuplicateError` from `src.app.shared.exceptions` (canonical home — `_base` re-exports are deprecated shims)
 - [ ] Router registered in `api/v1/__init__.py`

@@ -73,6 +73,9 @@ def _make_client() -> MagicMock:
     client.delete = AsyncMock(return_value=1)
     client.sadd = AsyncMock(return_value=1)
     client.srem = AsyncMock(return_value=1)
+    # Invalidation is one atomic Lua script; the script returns a count.
+    client.evalsha = AsyncMock(return_value=1)
+    client.eval = AsyncMock(return_value=1)
     client.scard = AsyncMock(return_value=0)
     return client
 
@@ -186,7 +189,7 @@ async def test_invalidate_tenant_cache_no_client() -> None:
 
 
 async def test_invalidate_tenant_cache_empty(client: MagicMock) -> None:
-    client.smembers = AsyncMock(return_value=set())
+    client.evalsha = AsyncMock(return_value=0)
     assert await invalidate_tenant_cache(1) == 0
 
 
@@ -982,16 +985,15 @@ async def test_invalidate_by_pattern_no_client() -> None:
 
 
 async def test_invalidate_by_pattern_empty(client: MagicMock) -> None:
-    client.smembers = AsyncMock(return_value=set())
+    client.evalsha = AsyncMock(return_value=0)
     assert await invalidate_by_pattern("p:*") == 0
 
 
 async def test_invalidate_by_pattern_ok(client: MagicMock) -> None:
-    client.smembers = AsyncMock(return_value={b"k1", b"k2"})
-    pipe = AsyncMock()
-    pipe.execute = AsyncMock(return_value=[2, 1])
-    client.pipeline = MagicMock(return_value=AsyncMockCM(pipe))
+    client.evalsha = AsyncMock(return_value=2)
     assert await invalidate_by_pattern("p:*") == 2
+    args = client.evalsha.await_args.args
+    assert args[1:] == (1, "idx_pattern:p:_STAR_")
 
 
 async def test_set_cache_with_patterns_no_client() -> None:

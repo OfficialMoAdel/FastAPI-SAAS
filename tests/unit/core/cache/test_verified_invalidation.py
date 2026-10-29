@@ -292,7 +292,7 @@ async def test_f3_extra_keys_match_real_key_shape(fake: FakeRedis) -> None:
 
 
 @pytest.mark.asyncio
-async def test_f35_lock_released_when_write_fails(fake: FakeRedis) -> None:
+async def test_f35_lock_not_blind_deleted_when_release_fails(fake: FakeRedis) -> None:
     fake.fail_execute = True
     fake.data["k:refresh_lock"] = "1"
     with patch("src.app.core.utils.cache.client", fake), _no_lua():
@@ -305,4 +305,4 @@ async def test_f35_lock_released_when_write_fails(fake: FakeRedis) -> None:
         req.state.cache_refresh_lock_key = "k:refresh_lock"
         result = await ep(req, i=1)
         assert getattr(result, "status_code", None) == 200  # fail-open
-        assert "k:refresh_lock" not in fake.data
+        assert fake.data["k:refresh_lock"] == "1"  # TTL backstop, no blind delete

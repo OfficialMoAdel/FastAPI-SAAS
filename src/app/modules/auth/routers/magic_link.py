@@ -8,8 +8,12 @@ import hashlib
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.db.database import async_get_db
 from src.app.core.security.budgets import Identity, SecurityAction, check
+from src.app.core.utils.cache import async_get_redis
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.auth.schemas import (
     LoginMFAResponse,
@@ -18,9 +22,25 @@ from src.app.modules.auth.schemas import (
     MagicLinkSendResponse,
     MagicLinkVerifyRequest,
 )
-from src.app.modules.auth.services.magic_link import MagicLinkService, get_magic_link_service
+from src.app.modules.auth.services.magic_link import MagicLinkService
 
 router = APIRouter(prefix="/auth/magic-link", tags=["magic-link"])
+
+
+async def get_magic_link_service(
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    redis: Annotated[Redis, Depends(async_get_redis)],
+) -> MagicLinkService:
+    """Factory function for dependency injection.
+
+    Args:
+        db: Async database session.
+        redis: Async Redis client.
+
+    Returns:
+        MagicLinkService instance.
+    """
+    return MagicLinkService(db=db, redis=redis)
 
 
 @router.post(

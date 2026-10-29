@@ -232,8 +232,10 @@ import count_broad_excepts as counter  # noqa: E402
 #: removal (cards 11) deleted five blind handlers in
 #: ``modules/rbac/service.py``. The ratchet only permits progress downward, so
 #: the constant moves with the tree rather than keeping a ceiling the tree has
-#: already left behind.
-BROAD_EXCEPT_BASELINE = 384
+#: already left behind. 2026-10-29: 384 -> 383 — removing the refresh-lock
+#: blind-delete fallback in ``core/utils/cache/decorator.py`` deleted its
+#: nested ``except Exception``.
+BROAD_EXCEPT_BASELINE = 383
 
 #: The files muse 22 triaged. BLE001 is enforced on each (the per-file-ignores
 #: in pyproject.toml no longer blanket-exempt them), so these are also the

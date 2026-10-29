@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Any
 
-from fastapi import Depends, Request
+from fastapi import Request
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,10 +18,8 @@ if TYPE_CHECKING:
     from src.app.core.security.pending_token_store import PendingTokenStore
 
 from src.app.core.config import settings
-from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
 from src.app.core.security.tokens import get_magic_link_manager
-from src.app.core.utils.cache import async_get_redis
 from src.app.modules.auth.errors import (
     InvalidMagicLinkError,
     MagicLinkAlreadyUsedError,
@@ -450,19 +448,3 @@ class MagicLinkService:
             response=response,
         )
         return issued.access_response()
-
-
-async def get_magic_link_service(
-    db: Annotated[AsyncSession, Depends(async_get_db)],
-    redis: Annotated[Redis, Depends(async_get_redis)],
-) -> MagicLinkService:
-    """Factory function for dependency injection.
-
-    Args:
-        db: Async database session.
-        redis: Async Redis client.
-
-    Returns:
-        MagicLinkService instance.
-    """
-    return MagicLinkService(db=db, redis=redis)

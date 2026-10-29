@@ -763,6 +763,112 @@ class LuaScriptManager:
             end
             return cleared
         """,
+        # Cache invalidation: atomic pattern-index drain.
+        #
+        # The previous Python implementation did SMEMBERS -> DEL index -> DEL
+        # members. A writer that SADDed a key after the SMEMBERS snapshot but
+        # before the index DEL left that cache key without an index entry, so a
+        # later invalidation could not reach it. Keeping the snapshot, index
+        # deletion, and member deletion in one script removes that window.
+        "cache_pattern_drain": """
+            -- KEYS[1]: pattern index set (idx_pattern:*)
+            -- Returns: number of cache keys deleted
+            local index_key = KEYS[1]
+            local members = redis.call('SMEMBERS', index_key)
+            if #members == 0 then
+                redis.call('DEL', index_key)
+                return 0
+            end
+            redis.call('DEL', index_key)
+            local deleted = 0
+            for i = 1, #members do
+                deleted = deleted + redis.call('DEL', members[i])
+            end
+            return deleted
+        """,
+        # Cache invalidation: atomic tenant prefix-shard drain.
+        #
+        # Preserves the S-14 fallback: when the requested shard is empty, match
+        # the business prefix against the global index at colon boundaries.
+        # The shard index is deleted and its captured members are removed from
+        # the global index in the same atomic step as the data-key deletion.
+        "cache_tenant_prefix_drain": """
+            -- KEYS[1]: tenant prefix shard (tenant_index:{tid}:{prefix})
+            -- KEYS[2]: tenant global index (tenant_index:{tid})
+            -- ARGV[1]: business prefix
+            -- Returns: number of cache keys deleted
+            local shard_key = KEYS[1]
+            local global_key = KEYS[2]
+            local prefix = ARGV[1]
+            local members = redis.call('SMEMBERS', shard_key)
+            local from_shard = #members > 0
+            if not from_shard then
+                members = redis.call('SMEMBERS', global_key)
+                local matches = {}
+                local needle = ':' .. prefix .. ':'
+                for i = 1, #members do
+                    local member = members[i]
+                    if string.find(':' .. member .. ':', needle, 1, true) then
+                        table.insert(matches, member)
+                    end
+                end
+                members = matches
+            end
+            if #members == 0 then
+                redis.call('DEL', shard_key)
+                return 0
+            end
+            redis.call('DEL', shard_key)
+            local deleted = 0
+            for i = 1, #members do
+                local member = members[i]
+                redis.call('SREM', global_key, member)
+                deleted = deleted + redis.call('DEL', member)
+            end
+            return deleted
+        """,
+        # Cache invalidation: atomic full-tenant drain.
+        #
+        # Deletes the global index and its captured data keys, then prunes the
+        # captured members from every remaining prefix shard. Pruning (rather
+        # than blindly deleting every shard key) keeps a concurrent writer's
+        # newly-created shard index alive. Empty shards are removed so full
+        # invalidation still clears orphaned indexes.
+        "cache_tenant_global_drain": """
+            -- KEYS[1]: tenant global index (tenant_index:{tid})
+            -- ARGV[1]: SCAN pattern for tenant shard indexes
+            -- Returns: number of cache keys deleted
+            local global_key = KEYS[1]
+            local pattern = ARGV[1]
+            local members = redis.call('SMEMBERS', global_key)
+            if #members == 0 then
+                redis.call('DEL', global_key)
+                return 0
+            end
+            redis.call('DEL', global_key)
+            local deleted = 0
+            for i = 1, #members do
+                deleted = deleted + redis.call('DEL', members[i])
+            end
+            local cursor = '0'
+            local iterations = 0
+            repeat
+                local reply = redis.call('SCAN', cursor, 'MATCH', pattern, 'COUNT', 100)
+                cursor = reply[1]
+                local shard_keys = reply[2]
+                for i = 1, #shard_keys do
+                    local shard_key = shard_keys[i]
+                    for j = 1, #members do
+                        redis.call('SREM', shard_key, members[j])
+                    end
+                    if redis.call('SCARD', shard_key) == 0 then
+                        redis.call('DEL', shard_key)
+                    end
+                end
+                iterations = iterations + 1
+            until cursor == '0' or iterations >= 1000
+            return deleted
+        """,
     }
 
     def __init__(self) -> None:

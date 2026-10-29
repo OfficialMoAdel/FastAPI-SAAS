@@ -9,6 +9,7 @@ from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_arq
 from src.app.modules.tasks.schemas import Job, TaskCreate, TaskStatus
 from src.app.shared.exceptions import ServiceUnavailableError
+from src.app.shared.exceptions import ValidationError as DomainValidationError
 
 logger = get_logger(__name__)
 
@@ -36,7 +37,7 @@ class TaskService:
         """
         message = data.message
         if not message or not message.strip():
-            raise ValueError("Task message cannot be empty")
+            raise DomainValidationError("Task message cannot be empty")
 
         arq = get_arq()
         if arq is None:

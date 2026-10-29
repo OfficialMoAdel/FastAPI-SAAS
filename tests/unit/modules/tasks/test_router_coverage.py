@@ -11,6 +11,7 @@ from src.app.modules.tasks import router as tasks_router
 from src.app.modules.tasks.schemas import Job, TaskStatus
 from src.app.modules.tasks.service import QueueUnavailableError, task_service
 from src.app.shared.exceptions import ModelNotFoundError
+from src.app.shared.exceptions import ValidationError as DomainValidationError
 
 
 def _make_ctx(tenant_id=None):
@@ -43,11 +44,15 @@ async def test_create_task_queue_unavailable(ctx):
             await tasks_router.create_task(body=MagicMock(message="hello"), ctx=ctx)
 
 
-async def test_create_task_value_error(ctx):
-    with patch.object(task_service, "create_task", AsyncMock(side_effect=ValueError("boom"))):
-        # P1-19: the ValueError→500 converter is gone — unexpected errors
-        # propagate to the global catch-all (500).
-        with pytest.raises(ValueError, match="boom"):
+async def test_create_task_domain_validation_error(ctx):
+    with patch.object(
+        task_service,
+        "create_task",
+        AsyncMock(side_effect=DomainValidationError("Task message cannot be empty")),
+    ):
+        # P1-19: router no longer converts — the domain error propagates to
+        # the central EXCEPTION_HANDLERS table (400).
+        with pytest.raises(DomainValidationError, match="cannot be empty"):
             await tasks_router.create_task(body=MagicMock(message="hello"), ctx=ctx)
 
 

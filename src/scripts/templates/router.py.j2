@@ -3,6 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import AuthenticatedUser, get_current_user, tenant_dependency
 from src.app.core.db.database import async_get_db
@@ -13,15 +14,21 @@ from src.app.modules.{{ module_name }}.schemas import (
     {{ ModelName }}Read,
     {{ ModelName }}Update,
 )
-from src.app.modules.{{ module_name }}.service import {{ ModelName }}Service, get_{{ module_name }}_service
+from src.app.modules.{{ module_name }}.service import {{ ModelName }}Service
 from src.app.shared.exceptions import ModelNotFoundError
 
 router = APIRouter(prefix="/{{ module_name }}s", tags=["{{ module_name }}s"])
 
+
+def get_{{ module_name }}_service(db: Annotated[AsyncSession, Depends(async_get_db)]) -> {{ ModelName }}Service:
+    """Dependency injection factory for {{ ModelName }}Service."""
+    return {{ ModelName }}Service(db)
+
+
 # Type alias for dependency injection
 {{ ModelName }}ServiceDep = Annotated[
     {{ ModelName }}Service,
-    Depends(lambda db=Depends(async_get_db): get_{{ module_name }}_service(db))
+    Depends(get_{{ module_name }}_service)
 ]
 
 

@@ -58,7 +58,7 @@ async def handle_webhook_event(event: StripeEvent) -> dict[str, str]:
     # The Redis SET NX lock is only a 300s in-flight guard; a Stripe
     # redelivery arriving after that window must be rejected by the terminal
     # marker instead of re-executing the handler.
-    if await _pkg._is_event_processed(event_id):
+    if await _pkg.is_event_processed(event_id):
         _pkg.logger.info("Event durably processed, skipping redelivery", event_id=event_id)
         return {"status": "already_processed"}
 
@@ -72,7 +72,7 @@ async def handle_webhook_event(event: StripeEvent) -> dict[str, str]:
     # acked "handled" while the in-flight original had not yet succeeded. Had
     # that original then failed, Stripe had already been told "success", never
     # retried, and the event was silently lost.
-    lock_result, lock_token = await _pkg._try_acquire_event_lock(event_id)
+    lock_result, lock_token = await _pkg.try_acquire_event_lock(event_id)
     if lock_result is not EventLockResult.ACQUIRED:
         _pkg.logger.info(
             "Event not acquirable, reporting disposition",

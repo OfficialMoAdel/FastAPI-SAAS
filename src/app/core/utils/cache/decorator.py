@@ -14,6 +14,7 @@ from src.app.core.exceptions.cache_exceptions import (
     MissingClientError,
 )
 from src.app.core.utils import cache as _state
+from src.app.core.utils.cache.index_policy import index_ttl
 
 # P-M1: cache-key version. v2 = fail-closed write path (entries are only
 # ever response-model-filtered bytes). Pre-v2 entries may hold unfiltered
@@ -93,6 +94,19 @@ def _scoped_invalidation_pattern(pattern: str, tenant_id: str | None, user_id: A
     if tenant_id is None:
         return f"public:{pattern}"
     return _state.build_tenant_key(pattern, tenant_id)
+
+
+def scoped_invalidation_pattern(
+    pattern: str, kwargs: dict[str, Any], tenant_id: str | None, user_id: Any
+) -> str:
+    """Build the public, fully scoped pattern name used by both cache sides.
+
+    ``@cache`` registers invalidation patterns through this exact scoping
+    (tenant/user namespacing), and a router that must invalidate explicitly
+    has no other public way to reproduce that name. Keep the formatting and
+    scoping rules here so the two sides cannot drift.
+    """
+    return _scoped_invalidation_pattern(_format_prefix(pattern, kwargs), tenant_id, user_id)
 
 
 @functools.lru_cache(maxsize=256)
@@ -407,10 +421,8 @@ async def _release_refresh_lock(client: Any, request: Request) -> None:
             args=[token],
         )
     except Exception:  # pragma: no cover - best effort; the claim TTL backstops it
-        try:
-            await client.delete(lock_key)
-        except Exception:
-            pass
+        # Never blind-delete: the claim may already belong to another worker.
+        return
 
 
 async def _try_get_cached(
@@ -742,7 +754,7 @@ def cache(  # noqa: C901
                                     pipe.sadd(idx_key, cache_key)
                                     # P1-9: index outlives the data key (tenant-index
                                     # convention at the tenant branches below).
-                                    pipe.expire(idx_key, expiration * 2)
+                                    pipe.expire(idx_key, index_ttl(expiration))
 
                             # ISSUE 2 FIX: Register tenant-scoped keys for invalidate_tenant_cache()
                             if cache_key.startswith("tenant:"):
@@ -750,7 +762,7 @@ def cache(  # noqa: C901
                                 if len(parts) >= 2:
                                     tenant_id = parts[1]
                                     pipe.sadd(_state._tenant_index_key(tenant_id), cache_key)
-                                    pipe.expire(_state._tenant_index_key(tenant_id), expiration * 2)
+                                    pipe.expire(_state._tenant_index_key(tenant_id), index_ttl(expiration))
 
                                     # Also add to prefix-sharded index.
                                     # NOTE: shard by the business prefix (key_prefix), NOT parts[2] —
@@ -760,7 +772,7 @@ def cache(  # noqa: C901
                                         tenant_id, _format_prefix(key_prefix, kwargs)
                                     )
                                     pipe.sadd(sharded_idx_key, cache_key)
-                                    pipe.expire(sharded_idx_key, expiration * 2)
+                                    pipe.expire(sharded_idx_key, index_ttl(expiration))
 
                             await pipe.execute()
                     except Exception as e:

@@ -330,7 +330,7 @@ class SSOService:
                     raise ValidationError("SSO state carries a malformed tenant id") from None
 
             if tenant_id:
-                from src.app.modules.tenants.crud import crud_tenants
+                from src.app.modules.tenants import crud_tenants
 
                 tenant_result = await crud_tenants.get(db, id=tenant_id)
                 if tenant_result:
@@ -339,7 +339,7 @@ class SSOService:
                         # Need to fetch actual model for set_current_tenant
                         from sqlalchemy import select
 
-                        from src.app.modules.tenants.models import Tenant as TenantModel
+                        from src.app.modules.tenants import Tenant as TenantModel
 
                         query = select(TenantModel).where(TenantModel.id == tenant_id)
                         result = await db.execute(query)
@@ -539,8 +539,8 @@ class SSOService:
                         current_tenant = get_current_tenant()
                         if not current_tenant:
                             # Auto-create a personal tenant for organic SSO signups
+                            from src.app.modules.tenants import Tenant as TenantModel
                             from src.app.modules.tenants import get_tenant_service
-                            from src.app.modules.tenants.models import Tenant as TenantModel
                             from src.app.modules.tenants.schemas import TenantCreate
 
                             tenant_svc = get_tenant_service(db)

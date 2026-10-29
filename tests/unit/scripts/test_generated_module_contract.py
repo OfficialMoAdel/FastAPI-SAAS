@@ -168,6 +168,39 @@ class TestTheCanonicalReadHasACaller:
         assert 'raise ModelNotFoundError("{{ ModelName }}", id)' in router
 
 
+class TestTheServiceFileStaysDependsFree:
+    """The DI factory belongs to the router, where the session dep is resolvable."""
+
+    def test_the_service_template_emits_no_factory(self) -> None:
+        service = _template("service.py.j2")
+
+        assert "get_" not in service or "def get_{{ module_name }}_service" not in service, (
+            "the DI factory must live in router.py; service.py must not "
+            "re-export a factory the router wraps in Depends"
+        )
+        assert "Depends" not in service, (
+            "service.py must stay free of FastAPI imports"
+        )
+
+    def test_the_router_hosts_the_factory_with_the_session_dep(self) -> None:
+        router = _template("router.py.j2")
+
+        assert "def get_{{ module_name }}_service(" in router, (
+            "the factory must be defined in router.py"
+        )
+        assert "Depends(async_get_db)" in router, (
+            "the factory must take the session through Depends(async_get_db) "
+            "instead of a lambda-default Depends"
+        )
+        assert "Depends(get_{{ module_name }}_service)" in router, (
+            "the ServiceDep alias must reference the named factory"
+        )
+        assert "Depends(lambda" not in router, (
+            "a lambda-default dependency hides the session from FastAPI's "
+            "dependency graph and defeats override_for"
+        )
+
+
 class TestTheTemplatesSurviveAMypyRun:
     """The end-to-end gate: generate a real module, then type-check it.
 

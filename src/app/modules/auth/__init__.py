@@ -52,8 +52,8 @@ if TYPE_CHECKING:
 
     from src.app.modules.auth import models as _models
     from src.app.modules.auth import service as _service
+    from src.app.modules.auth.routers.magic_link import get_magic_link_service as get_magic_link_service
     from src.app.modules.auth.services.magic_link import MagicLinkService as MagicLinkService
-    from src.app.modules.auth.services.magic_link import get_magic_link_service as get_magic_link_service
     from src.app.modules.auth.services.mfa import MFAService as MFAService
     from src.app.modules.auth.services.mfa import get_mfa_service as get_mfa_service
     from src.app.modules.auth.services.passkey import PasskeyService as PasskeyService
@@ -124,10 +124,15 @@ def __getattr__(name: str) -> Any:
             else passkey_service
         )
 
-    if name in ("MagicLinkService", "get_magic_link_service"):
-        from src.app.modules.auth.services.magic_link import MagicLinkService, get_magic_link_service
+    if name == "MagicLinkService":
+        from src.app.modules.auth.services.magic_link import MagicLinkService
 
-        return MagicLinkService if name == "MagicLinkService" else get_magic_link_service
+        return MagicLinkService
+
+    if name == "get_magic_link_service":
+        from src.app.modules.auth.routers.magic_link import get_magic_link_service
+
+        return get_magic_link_service
 
     if name in ("MFAService", "get_mfa_service"):
         from src.app.modules.auth.services.mfa import MFAService, get_mfa_service
