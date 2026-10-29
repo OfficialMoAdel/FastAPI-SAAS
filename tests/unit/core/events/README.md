@@ -1,6 +1,6 @@
 # R1-UNIFIED Performance Optimizations - Unit Tests
 
-Comprehensive unit test suite for R1-UNIFIED performance optimizations covering 7 critical optimization patterns.
+Comprehensive unit test suite for R1-UNIFIED performance optimizations covering 6 critical optimization patterns.
 
 ## Test Summary
 
@@ -9,11 +9,9 @@ Comprehensive unit test suite for R1-UNIFIED performance optimizations covering 
 | **P1-1**: Event Bus Idempotency | `test_event_idempotency.py` | 10 | ✅ All Passing |
 | **P2-1**: Session Pipeline Eviction | `test_session_pipeline.py` | 11 | ✅ All Passing |
 | **P2-2**: XFetch Lua Script | `tests/unit/core/test_xfetch_lua.py` | 12 | ✅ All Passing |
-| **P2-3**: RBAC Redis Cache | `test_rbac_cache.py` | 11 | ✅ All Passing |
 | **P3-1**: DLQ Bounded Size | `test_dlq_bounded.py` | 8 | ✅ All Passing |
 | **P3-2**: Passkey Column Select | `test_passkey_column.py` | 10 | ✅ All Passing |
 | **P4-1**: Circuit Breaker TOCTOU | `test_circuit_toctou.py` | 9 | ✅ All Passing |
-| **Total** | 7 files | **68 tests** | ✅ **100% Pass Rate** |
 
 ## Running Tests
 
@@ -32,9 +30,6 @@ uv run pytest tests/unit/r1_unified/test_session_pipeline.py -v
 
 # XFetch Lua Script (P2-2)
 uv run pytest tests/unit/core/test_xfetch_lua.py -v
-
-# RBAC Redis Cache (P2-3)
-uv run pytest tests/unit/r1_unified/test_rbac_cache.py -v
 
 # DLQ Bounded Size (P3-1)
 uv run pytest tests/unit/r1_unified/test_dlq_bounded.py -v
@@ -132,33 +127,6 @@ uv run pytest tests/unit/r1_unified/ --cov=src/app --cov-report=term-missing --c
 - Probabilistic early refresh prevents cache stampede
 - Fallback to GET+TTL when Lua fails
 - Feature flag `XFETCH_USE_LUA_SCRIPT` controls behavior
-
----
-
-### P2-3: RBAC Redis Cache Optimization
-
-**File**: `test_rbac_cache.py` (11 tests)
-
-**Optimization**: Caches role permissions in Redis to avoid repeated database queries.
-
-**Test Cases**:
-1. ✅ Cache hit avoids database query
-2. ✅ Cache miss queries database and caches result
-3. ✅ Cache key format correct (`rbac:perms:{tenant_id}:{role_id}`)
-4. ✅ Cache TTL configurable via settings
-5. ✅ Feature flag disables cache
-6. ✅ Cache read error falls back to database
-7. ✅ Cache write error continues operation
-8. ✅ Cache invalidation on permission add
-9. ✅ Cache invalidation on permission remove
-10. ✅ Tenant isolation (different cache keys per tenant)
-11. ✅ Empty permissions not cached (avoid cache pollution)
-
-**Key Assertions**:
-- Cache hit: no database query executed
-- Cache miss: database queried and result cached
-- Cache invalidated on permission changes
-- Feature flag `RBAC_USE_REDIS_CACHE` controls behavior
 
 ---
 
@@ -284,7 +252,6 @@ All optimizations are controlled by feature flags in `settings.r1_unified`:
 |------|---------|--------------|
 | `EVENT_BUS_USE_LUA_IDEMPOTENCY` | `True` | P1-1: Event idempotency Lua script |
 | `XFETCH_USE_LUA_SCRIPT` | `True` | P2-2: XFetch Lua script |
-| `RBAC_USE_REDIS_CACHE` | `True` | P2-3: RBAC Redis cache |
 | `DLQ_USE_BOUNDED_SIZE` | `True` | P3-1: DLQ bounded size |
 | `PASSKEY_USE_COLUMN_SELECT` | `True` | P3-2: Passkey column select |
 | `CIRCUIT_BREAKER_USE_DOUBLE_CHECK` | `True` | P4-1: Circuit breaker TOCTOU fix |
@@ -304,10 +271,6 @@ All optimizations are controlled by feature flags in `settings.r1_unified`:
 **P2-2: XFetch Lua**
 - Reduces roundtrips from 2 to 1 (50% reduction)
 - Probabilistic refresh prevents cache stampede
-
-**P2-3: RBAC Cache**
-- Eliminates database queries for cached permissions
-- Configurable TTL (default 3600s)
 
 **P3-1: DLQ Bounded**
 - Prevents unbounded memory growth

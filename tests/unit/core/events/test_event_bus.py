@@ -9,11 +9,13 @@ Tests cover:
 """
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from src.app.core.events import EventBus, EventPriority, event_bus
+from src.app.core.utils.circuit_breaker import CircuitBreaker, CircuitState
 
 
 @pytest.fixture
@@ -459,3 +461,67 @@ class TestCriticalFailureDLQ:
             priority=EventPriority.NORMAL,
         )
         assert result is None
+
+
+class TestARQProbeRelease:
+    """A cancelled ARQ enqueue must release the HALF_OPEN probe it claimed."""
+
+    @pytest.mark.asyncio
+    async def test_batch_enqueue_cancellation_releases_probe(
+        self, fresh_event_bus, mock_arq_queue
+    ) -> None:
+        fresh_event_bus.set_arq_queue(mock_arq_queue)
+
+        breaker = CircuitBreaker(name="event-bus-batch-probe", failure_threshold=1, recovery_timeout=60.0)
+        await breaker.record_failure(RuntimeError("down"))
+        breaker._last_failure_time = time.time() - breaker.recovery_timeout - 1
+        assert breaker.state == CircuitState.HALF_OPEN
+
+        async def handler_one(data: dict) -> None:
+            pass
+
+        async def handler_two(data: dict) -> None:
+            pass
+
+        with (
+            patch("src.app.core.events.arq_circuit", breaker),
+            patch(
+                "src.app.core.events.arq_adapter.enqueue_batch_jobs",
+                new=AsyncMock(side_effect=asyncio.CancelledError()),
+            ),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await fresh_event_bus._publish_async_batch(
+                    "cancelled.batch.event",
+                    {},
+                    [handler_one, handler_two],
+                    EventPriority.NORMAL,
+                )
+
+        assert breaker._probe_in_progress is False
+
+    @pytest.mark.asyncio
+    async def test_single_enqueue_cancellation_releases_probe(
+        self, fresh_event_bus, mock_arq_queue
+    ) -> None:
+        fresh_event_bus.set_arq_queue(mock_arq_queue)
+        mock_arq_queue.enqueue_job.side_effect = asyncio.CancelledError()
+
+        breaker = CircuitBreaker(name="event-bus-single-probe", failure_threshold=1, recovery_timeout=60.0)
+        await breaker.record_failure(RuntimeError("down"))
+        breaker._last_failure_time = time.time() - breaker.recovery_timeout - 1
+        assert breaker.state == CircuitState.HALF_OPEN
+
+        async def handler_one(data: dict) -> None:
+            pass
+
+        with patch("src.app.core.events.arq_circuit", breaker):
+            with pytest.raises(asyncio.CancelledError):
+                await fresh_event_bus._publish_async(
+                    "cancelled.single.event",
+                    {},
+                    [handler_one],
+                    EventPriority.NORMAL,
+                )
+
+        assert breaker._probe_in_progress is False

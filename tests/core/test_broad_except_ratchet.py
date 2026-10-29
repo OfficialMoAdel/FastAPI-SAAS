@@ -228,7 +228,12 @@ import count_broad_excepts as counter  # noqa: E402
 #:
 #: Neither may propagate: the recovery cron exists for the outage case, so an
 #: outage there must degrade one row at a time, not abort the sweep.
-BROAD_EXCEPT_BASELINE = 388
+#: Measured count. 2026-10-29: re-measured 388 -> 384 after the RBAC L2
+#: removal (cards 11) deleted five blind handlers in
+#: ``modules/rbac/service.py``. The ratchet only permits progress downward, so
+#: the constant moves with the tree rather than keeping a ceiling the tree has
+#: already left behind.
+BROAD_EXCEPT_BASELINE = 384
 
 #: The files muse 22 triaged. BLE001 is enforced on each (the per-file-ignores
 #: in pyproject.toml no longer blanket-exempt them), so these are also the

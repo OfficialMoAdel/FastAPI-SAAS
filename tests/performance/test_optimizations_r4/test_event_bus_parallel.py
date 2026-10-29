@@ -21,11 +21,25 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.app.core.events import EventBus, EventPriority
+
+
+@asynccontextmanager
+async def _refusing_gate() -> AsyncIterator[bool]:
+    """Stand-in for ``CircuitBreaker.probe_gate`` while the circuit is OPEN.
+
+    The real gate is an async context manager: it yields False while OPEN and
+    releases the HALF_OPEN probe on exit. Patching ``allow_single_flight``
+    instead would leave the bus calling a plain MagicMock and the fallback
+    would never run, which is a test defect rather than a bus defect.
+    """
+    yield False
 
 
 class TestP14EventBusPrerequisites:
@@ -228,8 +242,8 @@ class TestP14EventBusIsomorphism:
             patch("src.app.core.events.settings") as mock_settings,
         ):
             mock_circuit.is_closed = False  # Circuit OPEN
-            # K9: gate is the async allow_single_flight() probe
-            mock_circuit.allow_single_flight = AsyncMock(return_value=False)
+            # K9: the gate is probe_gate(), not allow_single_flight()
+            mock_circuit.probe_gate = _refusing_gate
             mock_settings.r1_unified.EVENT_BUS_USE_BATCH_ENQUEUE = False
 
             await bus._publish_async(

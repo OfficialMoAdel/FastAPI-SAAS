@@ -22,6 +22,7 @@ from src.app.core.utils.cache import (
     set_tenant_cache,
     tenant_cache_key,
 )
+from src.app.core.utils.cache.tenant_index import _matches_prefix
 
 
 def create_mock_redis_with_pipeline() -> tuple[AsyncMock, AsyncMock]:
@@ -290,6 +291,52 @@ class TestInvalidateTenantCache:
         called = [c.args[0] for c in mock_redis.smembers.call_args_list]
         assert "tenant_index:1:nonexistent" in called, "the shard must be consulted first"
         assert "tenant_index:1" in called, "S-14: an empty shard must fall back to the global index"
+
+
+class TestMatchesPrefix:
+    """Test prefix matching against the real versioned cache-key shapes."""
+
+    @pytest.mark.parametrize(
+        "cache_key",
+        [
+            "public:v2:user_post_cache:alice:42",
+            "tenant:1:v2:user_post_cache:alice:42",
+            "tenant:1:user:7:v2:user_post_cache:alice:42",
+        ],
+    )
+    def test_matches_prefix_in_all_key_shapes(self, cache_key: str) -> None:
+        assert _matches_prefix(cache_key, "user_post_cache:alice")
+
+    @pytest.mark.parametrize(
+        "prefix",
+        [
+            "",
+            "user_post_cache:bob",
+            "post_cache",
+            "other_cache",
+            "user_post_cache:alice:42:extra",
+        ],
+    )
+    def test_rejects_non_matching_prefixes(self, prefix: str) -> None:
+        cache_key = "tenant:1:user:7:v2:user_post_cache:alice:42"
+        assert not _matches_prefix(cache_key, prefix)
+
+    @pytest.mark.asyncio
+    async def test_global_fallback_evicts_user_scoped_key(self) -> None:
+        """The fallback must reach keys whose shard name does not match."""
+        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
+        target = "tenant:1:user:7:v2:user_post_cache:alice:42"
+        other_user = "tenant:1:user:8:v2:user_post_cache:alice:42"
+        other_prefix = "tenant:1:user:7:v2:user_post_cache:bob:42"
+        mock_redis.smembers.side_effect = [set(), {target, other_user, other_prefix}]
+        mock_pipeline.execute.return_value = [2, 1, 2]
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            await invalidate_tenant_cache(1, prefix="user_post_cache:alice")
+
+            delete_args = set(mock_pipeline.delete.call_args_list[0][0])
+            assert delete_args == {target, other_user}
+            assert other_prefix not in delete_args
 
 
 class TestGetTenantIndexSize:

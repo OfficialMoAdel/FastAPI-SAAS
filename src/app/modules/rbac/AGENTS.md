@@ -115,7 +115,13 @@ rg -n "UserRole" src/app/modules/rbac/
 
 - **Tenant isolation**: Roles are tenant-scoped - no cross-tenant access
 - **System roles**: Cannot be modified or deleted (is_system=True)
-- **Permission cache**: Permissions may be cached - allow for propagation delay
+- **Permission cache**: Role-permission lookups use a process-local L1 cache (30s TTL) with no Redis L2 or pub/sub. Other workers may serve stale grants/revocations for up to 30s; do not assume cross-worker invalidation.
+- **`RoleService(redis_client=...)` is deprecated and ignored**: the L2 tier was
+  removed because no production caller ever supplied a client. The argument is
+  kept only so existing constructors keep working; passing one emits a
+  `DeprecationWarning` and changes nothing. Do not re-add a Redis tier behind
+  that name — the bitmask path in `core/rbac/dependencies.py` is the only
+  distributed permission cache.
 - **Superuser bypass**: Superusers bypass all permission checks
 - **Cascade deletes**: Deleting role removes all user assignments
 - **The bitmask singleflight owns its own session**: `core/rbac/dependencies.py`

@@ -7,17 +7,8 @@ from pydantic import SecretStr
 from redis.asyncio import ConnectionPool
 
 from src.app.core import setup
-from src.app.core.config import AppSettings, CryptSettings, R1UnifiedSettings
+from src.app.core.config import AppSettings, CryptSettings
 from src.app.core.redis_provider import close_redis_pool, get_redis_pool
-
-# ==================== Config Defaults ====================
-
-
-def test_rbac_cache_ttl_default():
-    """Verify RBAC cache TTL default is 1 hour (3600 seconds)."""
-    settings = R1UnifiedSettings()
-    assert settings.RBAC_CACHE_TTL_SECONDS == 3600
-
 
 # ==================== Config Secrets ====================
 

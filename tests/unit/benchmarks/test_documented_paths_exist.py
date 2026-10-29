@@ -84,7 +84,15 @@ def _tracked_files(*globs: str) -> list[Path]:
     out = _git("ls-files", *globs)
     if not out:
         return []
-    return [REPO_ROOT / line for line in out.splitlines() if line]
+    tracked = [REPO_ROOT / line for line in out.splitlines() if line]
+    # A file can be tracked in the index and absent from the working tree: a
+    # deletion is a two-step state (``git rm``/``rm`` then commit), and until
+    # the commit lands ``ls-files`` still reports it. Reading it raises
+    # FileNotFoundError and the whole scan dies on a file the author already
+    # removed. The scan is over documents that exist, so skip the absent ones;
+    # once the deletion is committed the index entry disappears and nothing is
+    # silently exempted.
+    return [path for path in tracked if path.exists()]
 
 
 def _tracked_docs() -> list[Path]:

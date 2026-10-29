@@ -4,22 +4,22 @@ from src.app.core.utils import cache as _state
 
 
 def _matches_prefix(cache_key: str, prefix: str) -> bool:
-    """Does a FULL cache key belong to the business prefix ``prefix``?
+    """Does a FULL cache key contain the business prefix ``prefix``?
 
     Index members are complete keys built by ``decorator._build_cache_key``:
-    ``public:{prefix}:{id}`` or ``tenant:{tid}:{user}:{prefix}:{id}``. The
-    business prefix is therefore a SEGMENT after the namespace and version
-    tokens, never a leading substring -- which is why ``startswith`` matched
-    nothing.
 
-    Matching on ``:{prefix}`` at a segment boundary keeps the test correct for
-    both the user-scoped and tenant-scoped shapes without having to know which
-    one it is looking at.
+    - ``public:{version}:{prefix}:{id}``
+    - ``tenant:{tid}:{version}:{prefix}:{id}``
+    - ``tenant:{tid}:user:{uid}:{version}:{prefix}:{id}``
+
+    The prefix position varies with the key shape, and the prefix itself may
+    contain colons (``user_post_cache:{username}``), so slicing at a fixed
+    segment cannot work. Wrapping both sides in ``:`` and testing containment
+    matches the prefix only at segment boundaries, at any depth.
     """
     if not prefix:
         return False
-    tail = cache_key.split(":", 3)[-1]
-    return tail == prefix or tail.startswith(f"{prefix}:")
+    return f":{prefix}:" in f":{cache_key}:"
 
 
 async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = None) -> int:

@@ -392,23 +392,18 @@ class R1UnifiedE2EValidator:
             )
 
     async def test_rbac_permissions_caching(self) -> None:
-        """Test P2-3: RBAC permissions Redis caching."""
+        """Test that RBAC permission caching is process-local L1 only."""
         start = time.perf_counter()
-        test_name = "rbac_permissions_caching"
+        test_name = "rbac_l1_cache"
 
         try:
-            # Check feature flags exist without importing RBAC service (avoids circular import)
-            from src.app.core.config import R1UnifiedSettings
-
-            r1_settings = R1UnifiedSettings()
-            has_cache_flag = hasattr(r1_settings, "RBAC_USE_REDIS_CACHE")
-            has_ttl_setting = hasattr(r1_settings, "RBAC_CACHE_TTL_SECONDS")
+            # Import inside the test to avoid a module-level circular import.
+            from src.app.modules.rbac.service import _L1_RBAC_CACHE
 
             details = {
-                "rbac_cache_flag_exists": has_cache_flag,
-                "rbac_cache_ttl_exists": has_ttl_setting,
-                "cache_ttl_value": getattr(r1_settings, "RBAC_CACHE_TTL_SECONDS", None),
-                "feature_ready": has_cache_flag and has_ttl_setting,
+                "l1_cache_maxsize": _L1_RBAC_CACHE.maxsize,
+                "l1_cache_ttl": _L1_RBAC_CACHE.ttl,
+                "feature_ready": _L1_RBAC_CACHE.maxsize == 500 and _L1_RBAC_CACHE.ttl == 30.0,
             }
 
             duration = (time.perf_counter() - start) * 1000
@@ -607,8 +602,6 @@ class R1UnifiedE2EValidator:
             required_flags = [
                 "EVENT_BUS_USE_LUA_IDEMPOTENCY",
                 "XFETCH_USE_LUA_SCRIPT",
-                "RBAC_USE_REDIS_CACHE",
-                "RBAC_CACHE_TTL_SECONDS",
                 "SESSION_MAX_EVICTION_BATCH_SIZE",
                 "DLQ_USE_BOUNDED_SIZE",
                 "DLQ_MAX_SIZE",

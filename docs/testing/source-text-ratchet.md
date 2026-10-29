@@ -10,7 +10,7 @@ cannot be deleted in one change. The number must go DOWN, not to zero.
 
 ## Baseline
 
-    SOURCE_TEXT_TEST_BASELINE = 162
+    SOURCE_TEXT_TEST_BASELINE = 167
 
 The baseline is enforced by `tests/core/test_source_text_ratchet.py`, which
 imports `scripts/count_source_text_tests.py` and fails when the measured
@@ -26,6 +26,31 @@ count exceeds the constant above.
 > observed returncode), but the copied `.py` path is what the counter's
 > heuristic sees, so it is counted rather than exempted. Recorded so the
 > increase is traceable to a file rather than looking like drift.
+
+> **Note on the 162 → 167 step (run-1 cards 5–9).** The rise was already
+> present on `HEAD` (`5345baef`) when the run-1 cards 10–14 work started, and
+> the baseline had simply not been re-measured — the same drift this document
+> describes at 115 → 116. Six assertions, three files, all legitimate
+> structural checks:
+>
+> - `tests/unit/core/utils/test_retry_policy.py` — four assertions in
+>   `TestTheThreeCallSitesShareThePolicy`. They pin that the event-bus worker,
+>   the email worker and the webhook delivery each route their delay through the
+>   shared `retry_delay` / `jittered_delay` policy and do not re-implement
+>   `uniform(...)` locally. The property under test IS call-site adoption: a
+>   re-implemented jitter that happens to compute the same numbers on the day
+>   of the test is exactly the defect the policy was extracted to prevent, so
+>   there is no behavioural observation that distinguishes the two.
+> - `tests/unit/core/utils/test_audit_findings_retry_resilience.py` — one
+>   assertion: `delivery` must delegate its jitter, i.e. `random.uniform` is
+>   absent from the module. Same property, stated as an absence.
+> - `tests/unit/modules/_base/test_model_construct_adoption.py` — one
+>   assertion: ADR-0012's factual claim (production code does not call
+>   `model_construct(`), re-asserted as a gate so an adoption cannot land
+>   without updating the ADR.
+>
+> No new source-text assertion was added by the cards 10–14 work itself, and
+> none of the three files above was touched by it.
 
 ## Exemptions
 

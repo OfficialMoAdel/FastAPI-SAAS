@@ -21,7 +21,6 @@ from src.app.api.deps.auth import (
     AuthenticatedUser,
     _create_auth_context,
     _is_token_blacklisted_with_fallback,
-    _verify_optional_bearer_token,
     api_key_scope_allows,
     enforce_api_key_scope,
     get_auth_context,
@@ -668,7 +667,7 @@ async def test_verify_optional_revoked() -> None:
     request = _make_request()
     request.state.is_token_blacklisted = True
     with pytest.raises(UnauthorizedException):
-        await _verify_optional_bearer_token("tok", _make_db(), request, None)
+        await resolve_principal(request, _make_db(), token="tok", policy=OPTIONAL)
 
 
 async def test_verify_optional_wrong_type() -> None:
@@ -679,7 +678,7 @@ async def test_verify_optional_wrong_type() -> None:
     payload = {"jti": "j1", "token_type": "refresh", "sub": "u"}
     with patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload):
         with pytest.raises(UnauthorizedException):
-            await _verify_optional_bearer_token("tok", _make_db(), request, None)
+            await resolve_principal(request, _make_db(), token="tok", policy=OPTIONAL)
 
 
 async def test_verify_optional_no_sub() -> None:
@@ -690,7 +689,7 @@ async def test_verify_optional_no_sub() -> None:
     payload = {"jti": "j1", "token_type": "access"}
     with patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload):
         with pytest.raises(UnauthorizedException):
-            await _verify_optional_bearer_token("tok", _make_db(), request, None)
+            await resolve_principal(request, _make_db(), token="tok", policy=OPTIONAL)
 
 
 async def test_verify_optional_cached_email_success() -> None:
@@ -711,7 +710,7 @@ async def test_verify_optional_cached_email_success() -> None:
     ):
         directory = mock_ud.return_value
         directory.auth_info_dict = AsyncMock(return_value=user)
-        result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
+        result = await resolve_principal(request, _make_db(), token="tok", policy=OPTIONAL)
     assert result is not None
     assert result.user.id == 1
 
@@ -730,7 +729,7 @@ async def test_verify_optional_cached_no_user() -> None:
         directory = mock_ud.return_value
         directory.auth_info_dict = AsyncMock(return_value=None)
         with pytest.raises(UnauthorizedException):
-            await _verify_optional_bearer_token("tok", _make_db(), request, None)
+            await resolve_principal(request, _make_db(), token="tok", policy=OPTIONAL)
 
 
 async def test_verify_optional_cached_deleted() -> None:
@@ -748,7 +747,7 @@ async def test_verify_optional_cached_deleted() -> None:
         directory = mock_ud.return_value
         directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(UnauthorizedException):
-            await _verify_optional_bearer_token("tok", _make_db(), request, None)
+            await resolve_principal(request, _make_db(), token="tok", policy=OPTIONAL)
 
 
 async def test_verify_optional_cached_version_mismatch() -> None:
@@ -766,7 +765,7 @@ async def test_verify_optional_cached_version_mismatch() -> None:
         directory = mock_ud.return_value
         directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(UnauthorizedException):
-            await _verify_optional_bearer_token("tok", _make_db(), request, None)
+            await resolve_principal(request, _make_db(), token="tok", policy=OPTIONAL)
 
 
 async def test_verify_optional_verify_token_none() -> None:
@@ -777,7 +776,7 @@ async def test_verify_optional_verify_token_none() -> None:
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=None)),
     ):
         with pytest.raises(UnauthorizedException):
-            await _verify_optional_bearer_token("tok", _make_db(), request, None)
+            await resolve_principal(request, _make_db(), token="tok", policy=OPTIONAL)
 
 
 async def test_verify_optional_verify_token_exception() -> None:
@@ -788,7 +787,7 @@ async def test_verify_optional_verify_token_exception() -> None:
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(side_effect=ValueError("bad"))),
     ):
         with pytest.raises(UnauthorizedException):
-            await _verify_optional_bearer_token("tok", _make_db(), request, None)
+            await resolve_principal(request, _make_db(), token="tok", policy=OPTIONAL)
 
 
 async def test_verify_optional_success() -> None:
@@ -803,7 +802,7 @@ async def test_verify_optional_success() -> None:
     ):
         directory = mock_ud.return_value
         directory.auth_info_dict = AsyncMock(return_value=user)
-        ctx = await _verify_optional_bearer_token("tok", _make_db(), request, None)
+        ctx = await resolve_principal(request, _make_db(), token="tok", policy=OPTIONAL)
     assert ctx is not None
     assert ctx.user.id == 2
 
@@ -821,7 +820,7 @@ async def test_verify_optional_inactive() -> None:
         directory = mock_ud.return_value
         directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(UnauthorizedException):
-            await _verify_optional_bearer_token("tok", _make_db(), request, None)
+            await resolve_principal(request, _make_db(), token="tok", policy=OPTIONAL)
 
 
 async def test_verify_optional_tenant_mismatch() -> None:
@@ -839,7 +838,7 @@ async def test_verify_optional_tenant_mismatch() -> None:
         directory = mock_ud.return_value
         directory.auth_info_dict = AsyncMock(return_value=user)
         with pytest.raises(ForbiddenException):
-            await _verify_optional_bearer_token("tok", _make_db(), request, tenant)
+            await resolve_principal(request, _make_db(), token="tok", policy=OPTIONAL, current_tenant=tenant)
 
 
 async def test_verify_optional_state_none_runs_db_fallback() -> None:
@@ -859,7 +858,7 @@ async def test_verify_optional_state_none_runs_db_fallback() -> None:
         ) as mock_fb,
     ):
         with pytest.raises(UnauthorizedException):
-            await _verify_optional_bearer_token("tok", _make_db(), request, None)
+            await resolve_principal(request, _make_db(), token="tok", policy=OPTIONAL)
     mock_fb.assert_awaited_once()
 
 

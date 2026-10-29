@@ -62,6 +62,14 @@ class TestGetUserPermissionsCacheKey:
         key2 = _get_bitmask_cache_key(user_id=1, tenant_id=200)
         assert key1 != key2
 
+    def test_version_hash_stability(self):
+        """Permission version hash should be stable across calls."""
+        from src.app.core.rbac.bitmask import PermissionBitmask
+
+        first = PermissionBitmask.get_permission_version_hash()
+        second = PermissionBitmask.get_permission_version_hash()
+        assert first == second
+
 
 class TestGetUserPermissions:
     """Tests for database permission fetching."""

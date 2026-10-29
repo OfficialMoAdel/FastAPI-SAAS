@@ -117,21 +117,19 @@ class TestL1RBACCacheComprehensive:
         _L1_RBAC_CACHE[f"{tenant_id}:{role_id}"] = perm_dicts
 
         mock_db = AsyncMock()
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(side_effect=AssertionError("Redis not called"))
 
-        with patch("src.app.modules.rbac.service.settings") as mock_settings:
-            with patch("src.app.modules.rbac.service.record_rbac_cache_hit"):
-                mock_settings.RBAC_USE_REDIS_CACHE = True
-                service = RoleService(db=mock_db, tenant_id=tenant_id, redis_client=mock_redis)
-                permissions = await service.get_role_permissions(role_id)
+        with patch("src.app.modules.rbac.service.record_rbac_cache_hit") as mock_hit:
+            service = RoleService(db=mock_db, tenant_id=tenant_id)
+            permissions = await service.get_role_permissions(role_id)
 
         assert len(permissions) == 1
         assert permissions[0].slug == "users:read"
+        mock_hit.assert_called_once()
+        mock_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_cache_invalidation_clears_l1_and_l2(self):
-        """Verify cache invalidation clears both L1 and L2."""
+    async def test_cache_invalidation_clears_l1(self):
+        """Verify cache invalidation clears L1 without touching Redis."""
         from src.app.modules.rbac.service import _L1_RBAC_CACHE, RoleService
 
         tenant_id = "tenant-inv"
@@ -139,14 +137,11 @@ class TestL1RBACCacheComprehensive:
         _L1_RBAC_CACHE[f"{tenant_id}:{role_id}"] = [{"id": 1, "slug": "test"}]
 
         mock_db = AsyncMock()
-        mock_redis = AsyncMock()
-        mock_redis.delete = AsyncMock()
 
-        service = RoleService(db=mock_db, tenant_id=tenant_id, redis_client=mock_redis)
+        service = RoleService(db=mock_db, tenant_id=tenant_id)
         await service._invalidate_role_cache(role_id)
 
         assert f"{tenant_id}:{role_id}" not in _L1_RBAC_CACHE
-        mock_redis.delete.assert_called_once()
 
 
 class TestTokenNegativeCacheTTL:
@@ -255,14 +250,13 @@ class TestFeatureFlagsEnabled:
     """Verify all R1-UNIFIED feature flags are enabled by default."""
 
     def test_all_feature_flags_enabled(self):
-        """Verify all 7 feature flags default to True."""
+        """Verify remaining R1-UNIFIED feature flags default to True."""
         from src.app.core.config import settings
 
         # Only check flags that actually exist in R1UnifiedSettings
         flags_true = [
             ("EVENT_BUS_USE_LUA_IDEMPOTENCY", True),
             ("EVENT_BUS_USE_BATCH_ENQUEUE", True),
-            ("RBAC_USE_REDIS_CACHE", True),
         ]
 
         for flag_name, expected in flags_true:

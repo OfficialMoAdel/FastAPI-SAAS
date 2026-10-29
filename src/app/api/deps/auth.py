@@ -391,6 +391,23 @@ def enforce_api_key_scope(user: AuthenticatedUser, request: Request | None) -> N
         raise denial(DenialReason.SCOPE_MISSING, scope=_required_api_key_scope(method))
 
 
+async def _resolve_api_key_auth_context(
+    request: Request,
+    db: AsyncSession,
+    api_key_user: AuthenticatedUser | None,
+    current_tenant: Any,
+) -> AuthContext:
+    """Resolve the API-key principal, validating the key if it was not pre-resolved."""
+    if api_key_user is None or not isinstance(api_key_user, AuthenticatedUser):
+        api_key = request.headers.get("X-API-Key")
+        if api_key:
+            api_key_user = await get_user_by_api_key(api_key, db, request)
+    if api_key_user is None:
+        raise denial(DenialReason.INVALID_API_KEY)
+    enforce_api_key_scope(api_key_user, request)
+    return _create_auth_context(api_key_user, None, current_tenant, db)
+
+
 async def resolve_principal(
     request: Request,
     db: AsyncSession | None = None,
@@ -404,7 +421,7 @@ async def resolve_principal(
 
     This is the ONE resolve-principal seam (architecture candidate 2) unifying:
     - required Bearer token auth (`get_auth_context`)
-    - optional Bearer token auth (`_verify_optional_bearer_token`)
+    - optional Bearer token auth (`get_optional_auth_context`)
     - API key auth (`get_user_by_api_key`)
     - optional auth dispatcher (`get_optional_auth_context`)
 
@@ -432,22 +449,8 @@ async def resolve_principal(
             from src.app.core.db.database import get_db_context
 
             async with get_db_context() as _db:
-                if api_key_user is None or not isinstance(api_key_user, AuthenticatedUser):
-                    api_key = request.headers.get("X-API-Key") if request is not None else None
-                    if api_key:
-                        api_key_user = await get_user_by_api_key(api_key, _db, request)
-                if api_key_user is None:
-                    raise denial(DenialReason.INVALID_API_KEY)
-                enforce_api_key_scope(api_key_user, request)
-                return _create_auth_context(api_key_user, None, current_tenant, _db)
-        if api_key_user is None or not isinstance(api_key_user, AuthenticatedUser):
-            api_key = request.headers.get("X-API-Key") if request is not None else None
-            if api_key:
-                api_key_user = await get_user_by_api_key(api_key, db, request)  # type: ignore[arg-type]
-        if api_key_user is None:
-            raise denial(DenialReason.INVALID_API_KEY)
-        enforce_api_key_scope(api_key_user, request)
-        return _create_auth_context(api_key_user, None, current_tenant, db)  # type: ignore[arg-type]
+                return await _resolve_api_key_auth_context(request, _db, api_key_user, current_tenant)
+        return await _resolve_api_key_auth_context(request, db, api_key_user, current_tenant)
     # 2. Bearer Token extraction & length check
     if token is None or not token:
         token = await _resolve_bearer_token(request, token or "")
@@ -589,29 +592,6 @@ async def get_user_by_api_key(
         return AuthenticatedUser(**user_dict)  # type: ignore[arg-type]
 
     return None
-
-
-async def _verify_optional_bearer_token(
-    token_value: str,
-    request: Request,
-    db: AsyncSession | None = None,
-    current_tenant: Any = None,
-) -> AuthContext | None:
-    """Verify optional bearer token using the unified resolve_principal seam."""
-    return await resolve_principal(
-        request=request,
-        db=db,
-        token=token_value,
-        policy=OPTIONAL,
-        current_tenant=current_tenant,
-    )
-    return await resolve_principal(
-        request=request,
-        db=db,
-        token=token_value,
-        policy=OPTIONAL,
-        current_tenant=current_tenant,
-    )
 
 
 async def get_optional_auth_context(

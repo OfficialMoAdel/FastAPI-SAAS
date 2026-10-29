@@ -640,64 +640,67 @@ class EventBus:
             # virtual HALF_OPEN is_closed was True for everyone, letting all
             # concurrent publishes flood the recovering queue; now exactly one
             # probe enqueue passes and everyone else uses the sync fallback.
-            if not await _pkg.arq_circuit.allow_single_flight():
-                _pkg.logger.warning(
-                    "ARQ circuit breaker open - falling back to sync execution",
-                    event_name=event_name,
-                    handler=handler.__name__,
-                )
-                # B8: route through the shared fallback so failures land in
-                # the DLQ (the old inline block only logged them — during a
-                # Redis outage, exactly when the circuit is open, log-only
-                # meant permanent silent loss). Degradation policy: inline,
-                # never dropped (see the module docstring).
-                fallback_ok = await self._sync_fallback_handler(
-                    event_name, handler, data, reason="circuit open"
-                )
-                return (fallback_ok, handler, None if fallback_ok else Exception("sync fallback failed"))
+            # The gate releases the HALF_OPEN probe on every exit path,
+            # including cancellation, so a cancelled enqueue cannot wedge it.
+            async with _pkg.arq_circuit.probe_gate() as allowed:
+                if not allowed:
+                    _pkg.logger.warning(
+                        "ARQ circuit breaker open - falling back to sync execution",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                    )
+                    # B8: route through the shared fallback so failures land in
+                    # the DLQ (the old inline block only logged them — during a
+                    # Redis outage, exactly when the circuit is open, log-only
+                    # meant permanent silent loss). Degradation policy: inline,
+                    # never dropped (see the module docstring).
+                    fallback_ok = await self._sync_fallback_handler(
+                        event_name, handler, data, reason="circuit open"
+                    )
+                    return (fallback_ok, handler, None if fallback_ok else Exception("sync fallback failed"))
 
-            try:
-                # Type assertion: we checked _arq_queue earlier
-                assert self._arq_queue is not None, "ARQ queue should be set"
-                # SECURITY FIX: Unified queue naming with _publish_async_batch.
-                # Batch jobs prepend 'arq:queue' prefix; single jobs must match to avoid worker misses.
-                from src.app.core.events.arq_adapter import get_queue_name
+                try:
+                    # Type assertion: we checked _arq_queue earlier
+                    assert self._arq_queue is not None, "ARQ queue should be set"
+                    # SECURITY FIX: Unified queue naming with _publish_async_batch.
+                    # Batch jobs prepend 'arq:queue' prefix; single jobs must match to avoid worker misses.
+                    from src.app.core.events.arq_adapter import get_queue_name
 
-                q_name = get_queue_name(priority)
-                await self._arq_queue.enqueue_job(
-                    "process_event_handler",
-                    event_name,
-                    handler.__module__,
-                    handler.__name__,
-                    data,
-                    _queue_name=q_name,
-                )
-                await _pkg.arq_circuit.record_success()
-                _pkg.logger.debug(
-                    "Event handler queued",
-                    event_name=event_name,
-                    handler=handler.__name__,
-                    priority=priority,
-                )
-                return (True, handler, None)
-            except Exception as e:
-                await _pkg.arq_circuit.record_failure(e)
-                _pkg.logger.error(
-                    "Event handler queue failed",
-                    event_name=event_name,
-                    handler=handler.__name__,
-                    error=str(e),
-                    exc_info=True,
-                )
-                # B8: enqueue failure also routes through the shared fallback
-                # (the old code only returned the failure tuple — handler was
-                # never run, contradicting the documented B8 contract and the
-                # parallel-enqueue test). DLQ write on fallback failure happens
-                # inside _sync_fallback_handler.
-                fallback_ok = await self._sync_fallback_handler(
-                    event_name, handler, data, reason="queue failure"
-                )
-                return (fallback_ok, handler, None if fallback_ok else e)
+                    q_name = get_queue_name(priority)
+                    await self._arq_queue.enqueue_job(
+                        "process_event_handler",
+                        event_name,
+                        handler.__module__,
+                        handler.__name__,
+                        data,
+                        _queue_name=q_name,
+                    )
+                    await _pkg.arq_circuit.record_success()
+                    _pkg.logger.debug(
+                        "Event handler queued",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                        priority=priority,
+                    )
+                    return (True, handler, None)
+                except Exception as e:
+                    await _pkg.arq_circuit.record_failure(e)
+                    _pkg.logger.error(
+                        "Event handler queue failed",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                        error=str(e),
+                        exc_info=True,
+                    )
+                    # B8: enqueue failure also routes through the shared fallback
+                    # (the old code only returned the failure tuple — handler was
+                    # never run, contradicting the documented B8 contract and the
+                    # parallel-enqueue test). DLQ write on fallback failure happens
+                    # inside _sync_fallback_handler.
+                    fallback_ok = await self._sync_fallback_handler(
+                        event_name, handler, data, reason="queue failure"
+                    )
+                    return (fallback_ok, handler, None if fallback_ok else e)
 
         # Enqueue all handlers in parallel
         results = await asyncio.gather(
@@ -713,7 +716,9 @@ class EventBus:
         # counts overall success and handles gather-level surprises.
         overall_ok = True
         for i, result in enumerate(results):
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
+                if not isinstance(result, Exception):
+                    raise result
                 handler = handlers[i]
                 # asyncio.gather caught an unexpected exception that escaped
                 # enqueue_handler's own guards — extremely unlikely (its body
@@ -827,39 +832,42 @@ class EventBus:
         if not self._arq_queue:
             raise RuntimeError("ARQ queue not configured")
 
-        # Check circuit breaker once for the batch (K9 FIX: single-flight gate)
-        if not await _pkg.arq_circuit.allow_single_flight():
-            _pkg.logger.warning("ARQ circuit breaker open during batch enqueue", event_name=event_name)
-            # Fallback to sync execution for all handlers — degradation
-            # policy: inline, never dropped (see the module docstring).
-            return await self._publish_sync(event_name, data, handlers, priority=priority)
+        # Check circuit breaker once for the batch (K9 FIX: single-flight gate).
+        # The gate releases the HALF_OPEN probe on every exit path, including
+        # cancellation, so a cancelled enqueue cannot wedge it.
+        async with _pkg.arq_circuit.probe_gate() as allowed:
+            if not allowed:
+                _pkg.logger.warning("ARQ circuit breaker open during batch enqueue", event_name=event_name)
+                # Fallback to sync execution for all handlers — degradation
+                # policy: inline, never dropped (see the module docstring).
+                return await self._publish_sync(event_name, data, handlers, priority=priority)
 
-        from src.app.core.events.arq_adapter import enqueue_batch_jobs
+            from src.app.core.events.arq_adapter import enqueue_batch_jobs
 
-        try:
-            await enqueue_batch_jobs(
-                self._arq_queue,
-                event_name=event_name,
-                handlers=handlers,
-                data=data,
-                priority=priority,
-            )
-            await _pkg.arq_circuit.record_success()
+            try:
+                await enqueue_batch_jobs(
+                    self._arq_queue,
+                    event_name=event_name,
+                    handlers=handlers,
+                    data=data,
+                    priority=priority,
+                )
+                await _pkg.arq_circuit.record_success()
 
-            _pkg.logger.debug(
-                "Batch event handlers queued", event_name=event_name, count=len(handlers), priority=priority
-            )
-            return True
+                _pkg.logger.debug(
+                    "Batch event handlers queued", event_name=event_name, count=len(handlers), priority=priority
+                )
+                return True
 
-        except Exception as e:
-            await _pkg.arq_circuit.record_failure(e)
-            _pkg.logger.error(
-                "Batch event handler queue failed",
-                event_name=event_name,
-                error=str(e),
-                exc_info=True,
-            )
-            raise  # Re-raise to trigger fallback
+            except Exception as e:
+                await _pkg.arq_circuit.record_failure(e)
+                _pkg.logger.error(
+                    "Batch event handler queue failed",
+                    event_name=event_name,
+                    error=str(e),
+                    exc_info=True,
+                )
+                raise  # Re-raise to trigger fallback
 
     def get_handlers(self, event_name: str) -> list[Callable[..., Coroutine[Any, Any, None]]]:
         """Get all handlers registered for an event.

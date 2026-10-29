@@ -91,49 +91,36 @@ class TestL1CacheE2E:
         logger.info("✅ PASSED: L1 cache reduces Redis calls")
 
     @pytest.mark.asyncio
-    async def test_rbac_l1_cache_reduces_redis_calls(self, log_section):
-        """E2E: Verify RBAC L1 cache reduces Redis calls for permission checks."""
-        log_section("RBAC L1 Cache Redis Reduction")
+    async def test_rbac_l1_cache_avoids_database_query(self, log_section):
+        """E2E: Verify RBAC L1 hits do not touch the database."""
+        log_section("RBAC L1 Cache Hit")
 
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import AsyncMock
+        from uuid import uuid4
 
         from src.app.modules.rbac.service import _L1_RBAC_CACHE, RoleService
 
-        # Clear cache
         _L1_RBAC_CACHE.clear()
-        redis_call_count = 0
-
-        async def mock_redis_get(key):
-            nonlocal redis_call_count
-            redis_call_count += 1
-            logger.info(f"Redis GET called (call #{redis_call_count}): {key}")
-            return '[{"id": 1, "slug": "read", "description": "Read", "created_at": "2024-01-01T00:00:00", "updated_at": "2024-01-01T00:00:00"}]'  # noqa: E501
-
-        mock_redis = AsyncMock()
-        mock_redis.get = mock_redis_get
-        mock_db = AsyncMock()
-
-        tenant_id = "tenant-e2e"
+        tenant_id = uuid4()
         role_id = 100
+        _L1_RBAC_CACHE[f"{tenant_id}:{role_id}"] = [
+            {"id": 1, "slug": "read", "description": "Read"}
+        ]
 
-        with patch("src.app.modules.rbac.service.settings") as mock_settings:
-            with patch("src.app.modules.rbac.service.record_rbac_cache_hit"):
-                mock_settings.RBAC_USE_REDIS_CACHE = True
-                service = RoleService(db=mock_db, tenant_id=tenant_id, redis_client=mock_redis)
+        mock_db = AsyncMock()
+        service = RoleService(db=mock_db, tenant_id=tenant_id)
 
-                # First call - should hit Redis
-                logger.info("Call 1: Expecting Redis hit...")
-                perms1 = await service.get_role_permissions(role_id)
-                assert redis_call_count == 1
-                logger.info(f"Call 1: {len(perms1)} permissions, Redis calls={redis_call_count}")
+        logger.info("Call 1: Expecting L1 cache hit...")
+        perms1 = await service.get_role_permissions(role_id)
+        assert len(perms1) == 1
+        logger.info(f"Call 1: {len(perms1)} permissions")
 
-                # Second call - should hit L1 cache
-                logger.info("Call 2: Expecting L1 cache hit...")
-                perms2 = await service.get_role_permissions(role_id)
-                assert redis_call_count == 1, "Redis should NOT be called on L1 hit"
-                logger.info(f"Call 2: {len(perms2)} permissions, Redis calls={redis_call_count}")
+        logger.info("Call 2: Expecting L1 cache hit...")
+        perms2 = await service.get_role_permissions(role_id)
+        assert len(perms2) == 1
+        mock_db.execute.assert_not_awaited()
 
-        logger.info("✅ PASSED: RBAC L1 cache reduces Redis calls")
+        logger.info("✅ PASSED: RBAC L1 cache serves without database access")
 
 
 class TestTokenBlacklistE2E:
@@ -166,7 +153,6 @@ class TestFeatureFlagsE2E:
 
         flags_true = {
             "EVENT_BUS_USE_LUA_IDEMPOTENCY": settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY,
-            "RBAC_USE_REDIS_CACHE": settings.RBAC_USE_REDIS_CACHE,
             "DLQ_USE_BOUNDED_SIZE": settings.DLQ_USE_BOUNDED_SIZE,
             "PASSKEY_USE_COLUMN_SELECT": settings.PASSKEY_USE_COLUMN_SELECT,
             "CIRCUIT_BREAKER_USE_DOUBLE_CHECK": settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK,

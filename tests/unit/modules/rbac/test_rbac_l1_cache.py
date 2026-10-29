@@ -3,6 +3,7 @@
 Tests the in-memory TTLCache layer for role permissions.
 """
 
+import warnings
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -64,64 +65,27 @@ class TestL1CacheHit:
 
         # Create service with mocked dependencies
         mock_db = AsyncMock()
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(side_effect=AssertionError("Redis should not be called"))
         mock_db.execute = AsyncMock(side_effect=AssertionError("DB should not be called"))
 
-        with patch("src.app.modules.rbac.service.settings") as mock_settings:
-            with patch("src.app.modules.rbac.service.record_rbac_cache_hit"):
-                mock_settings.RBAC_USE_REDIS_CACHE = True
+        with patch("src.app.modules.rbac.service.record_rbac_cache_hit") as mock_hit:
+            service = RoleService(db=mock_db, tenant_id=tenant_id)
 
-                service = RoleService(db=mock_db, tenant_id=tenant_id, redis_client=mock_redis)
-
-                # Act
-                permissions = await service.get_role_permissions(role_id)
+            # Act
+            permissions = await service.get_role_permissions(role_id)
 
         # Assert
         assert len(permissions) == 1
         assert permissions[0].slug == "read"
-
-
-class TestL1CacheMissL2Hit:
-    """Test L1 miss but L2 (Redis) hit."""
-
-    @pytest.mark.asyncio
-    async def test_l2_hit_populates_l1(self):
-        """Verify L2 hit populates L1 cache."""
-        tenant_id = "tenant-xyz"
-        role_id = 20
-        l1_key = f"{tenant_id}:{role_id}"
-
-        # L1 is empty
-        assert l1_key not in _L1_RBAC_CACHE
-
-        # Mock Redis with cached data
-        mock_db = AsyncMock()
-        mock_redis = AsyncMock()
-        cached_data = '[{"id": 5, "slug": "admin", "description": "Admin", "created_at": "2024-01-01T00:00:00", "updated_at": "2024-01-01T00:00:00"}]'  # noqa: E501
-        mock_redis.get = AsyncMock(return_value=cached_data)
-
-        with patch("src.app.modules.rbac.service.settings") as mock_settings:
-            with patch("src.app.modules.rbac.service.record_rbac_cache_hit"):
-                mock_settings.RBAC_USE_REDIS_CACHE = True
-
-                service = RoleService(db=mock_db, tenant_id=tenant_id, redis_client=mock_redis)
-
-                # Act
-                permissions = await service.get_role_permissions(role_id)
-
-        # Assert - L1 should now be populated
-        assert l1_key in _L1_RBAC_CACHE
-        assert len(permissions) == 1
-        assert permissions[0].slug == "admin"
+        mock_hit.assert_called_once()
+        mock_db.execute.assert_not_called()
 
 
 class TestCacheInvalidation:
-    """Test cache invalidation clears both L1 and L2."""
+    """Test cache invalidation clears L1 only."""
 
     @pytest.mark.asyncio
-    async def test_invalidate_role_clears_l1_and_l2(self):
-        """Verify role invalidation clears both L1 and L2 caches."""
+    async def test_invalidate_role_clears_l1(self):
+        """Verify role invalidation clears L1 without touching Redis."""
         tenant_id = "tenant-inv"
         role_id = 30
         l1_key = f"{tenant_id}:{role_id}"
@@ -130,19 +94,16 @@ class TestCacheInvalidation:
         _L1_RBAC_CACHE[l1_key] = [{"id": 1, "slug": "test"}]
         assert l1_key in _L1_RBAC_CACHE
 
-        # Mock Redis
+        # Mock DB
         mock_db = AsyncMock()
-        mock_redis = AsyncMock()
-        mock_redis.delete = AsyncMock()
 
-        service = RoleService(db=mock_db, tenant_id=tenant_id, redis_client=mock_redis)
+        service = RoleService(db=mock_db, tenant_id=tenant_id)
 
         # Act
         await service._invalidate_role_cache(role_id)
 
         # Assert
         assert l1_key not in _L1_RBAC_CACHE
-        mock_redis.delete.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_invalidate_all_clears_tenant_entries(self):
@@ -158,10 +119,8 @@ class TestCacheInvalidation:
         assert f"{tenant_id}:2" in _L1_RBAC_CACHE
 
         mock_db = AsyncMock()
-        mock_redis = AsyncMock()
-        mock_redis.scan = AsyncMock(return_value=(0, []))
 
-        service = RoleService(db=mock_db, tenant_id=tenant_id, redis_client=mock_redis)
+        service = RoleService(db=mock_db, tenant_id=tenant_id)
 
         # Act
         await service._invalidate_all_role_caches()
@@ -170,3 +129,18 @@ class TestCacheInvalidation:
         assert f"{tenant_id}:1" not in _L1_RBAC_CACHE
         assert f"{tenant_id}:2" not in _L1_RBAC_CACHE
         assert "other-tenant:1" in _L1_RBAC_CACHE
+
+
+class TestRedisClientDeprecation:
+    """The L2 Redis tier is gone; the constructor argument must say so."""
+
+    def test_redis_client_argument_warns(self):
+        """Passing a client warns instead of silently pretending to use it."""
+        with pytest.warns(DeprecationWarning, match="redis_client"):
+            RoleService(db=AsyncMock(), tenant_id="tenant-x", redis_client=AsyncMock())
+
+    def test_omitting_redis_client_is_silent(self):
+        """The supported construction path emits no warning."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            RoleService(db=AsyncMock(), tenant_id="tenant-x")

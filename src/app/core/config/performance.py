@@ -49,16 +49,10 @@ class R1UnifiedSettings(BaseSettings):
     XFETCH_USE_LUA_SCRIPT: bool = False
     """Use Lua script for atomic GET+TTL in XFetch (P2-2). (Off by default due to performance)"""
 
-    RBAC_USE_REDIS_CACHE: bool = True
-    """Use Redis caching for RBAC permission checks (P5)."""
-
     TOKEN_NEGATIVE_CACHE_TTL: int = 60
     """TTL in seconds for token blacklist negative cache (LOW-2).
     Reduced to 60 seconds to prevent delay in invalidation.
     """
-
-    RBAC_CACHE_TTL_SECONDS: int = 3600
-    """TTL in seconds for RBAC permission cache. Default 1 hour (3600 seconds)."""
 
     # Circuit breaker settings
     CIRCUIT_BREAKER_USE_DOUBLE_CHECK: bool = True
