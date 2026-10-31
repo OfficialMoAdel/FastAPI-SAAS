@@ -191,3 +191,30 @@ class TestTheUsersPathDeletesBeforeItPublishes:
         assert any(
             verb == "set" and "invalidation_failed" in str(args) for verb, args in redis.commands
         ), f"the exhaustion policy must write the poison marker, got {redis.commands}"
+
+
+class TestInvalidateManyIsASinglePass:
+    """R2-16: the method ran its own per-key loop and then called drop_locally,
+    so every key was encoded/parsed/dropped twice — and a one-shot iterator was
+    exhausted by the first loop, leaving the publish with no payloads at all.
+    """
+
+    async def test_a_one_shot_iterator_is_dropped_and_published(self) -> None:
+        cache, store, channel = _seam()
+        store["k1"] = {"id": 1}
+        store["k2"] = {"id": 2}
+
+        await cache.invalidate_many(key for key in ["k1", "k2"])
+
+        assert "k1" not in store, "the local drop must still happen"
+        assert "k2" not in store
+        assert channel.published_batches == [["k1", "k2"]], (
+            "remote invalidation must not be skipped for an iterator"
+        )
+
+    async def test_exactly_one_batch_is_published(self) -> None:
+        cache, _store, channel = _seam()
+
+        await cache.invalidate_many(["a", "b", "c"])
+
+        assert channel.published_batches == [["a", "b", "c"]], "one round trip, one batch"

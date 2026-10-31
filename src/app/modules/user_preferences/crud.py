@@ -12,6 +12,7 @@ from typing import Any
 
 from fastcrud import FastCRUD
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.modules.user_preferences.models import DEFAULT_PREFERENCES, UserPreferences
@@ -22,6 +23,13 @@ from src.app.modules.user_preferences.schemas import (
     UserPreferencesUpdate,
     UserPreferencesUpdateInternal,
 )
+
+# R2-13: the ONLY preference columns whose contract allows an explicit null.
+# ``UserPreferencesUpdate`` advertises these as ``str | None``, so a client
+# sending ``null`` is asking to CLEAR them — dropping it made a documented
+# reset impossible. Every other column keeps skipping ``None``: it is NOT NULL,
+# and writing ``None`` there fails at flush instead of clearing.
+NULLABLE_PREFERENCE_COLUMNS: frozenset[str] = frozenset({"quiet_hours_start", "quiet_hours_end"})
 
 
 class CRUDUserPreferences(
@@ -80,7 +88,22 @@ class CRUDUserPreferences(
             preferences=DEFAULT_PREFERENCES.copy(),
         )
         db.add(new_prefs)
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            # R2-20: two concurrent first accesses can both miss the SELECT and
+            # both INSERT; the loser hits the unique constraint on user_id. That
+            # is not a 500 — the winner's row is the answer. The failed
+            # transaction MUST be rolled back before the re-read, or the session
+            # keeps using it.
+            await db.rollback()
+            winner = await self.get_by_user(db=db, user_id=user_id)
+            if winner is None:
+                # The winner was deleted between the rollback and the re-read.
+                # Surface the original failure instead of fabricating a detached
+                # instance that no row backs.
+                raise
+            return winner
         await db.refresh(new_prefs)
         return new_prefs
 
@@ -108,11 +131,15 @@ class CRUDUserPreferences(
         # Merge updates into existing preferences
         current_prefs = prefs.preferences.copy() if prefs.preferences else {}
         for key, value in updates.items():
+            if hasattr(prefs, key) and key != "preferences":
+                if value is None and key not in NULLABLE_PREFERENCE_COLUMNS:
+                    continue
+                setattr(prefs, key, value)
+                continue
+            # JSON-bag keys cannot hold a meaningful null: the response merges
+            # the bag verbatim, so a stored ``None`` would be echoed back.
             if value is not None:
-                if hasattr(prefs, key) and key != "preferences":
-                    setattr(prefs, key, value)
-                else:
-                    current_prefs[key] = value
+                current_prefs[key] = value
 
         # Update the preferences column
         prefs.preferences = current_prefs

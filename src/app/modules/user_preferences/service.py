@@ -13,8 +13,9 @@ Handles:
 
 import asyncio
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import filetype  # type: ignore[import-untyped]
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +36,45 @@ logger = get_logger(__name__)
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 
+#: Marker every profile image key starts with. The replacement cleanup and
+#: ``delete_profile_image`` both recover the storage key from the stored URL
+#: through this prefix, so the key layout and the cleanup must agree.
+_PROFILE_KEY_MARKER = "users/{user_id}/profile."
+
+
+def _profile_key_from_url(url: str | None, user_id: int) -> str | None:
+    """Recover this user's profile-image storage key from its public URL.
+
+    Returns ``None`` for an unrecognised URL so the caller can fail soft
+    instead of deleting a key it did not verify.
+    """
+    if not url:
+        return None
+    base_url = url.split("?")[0]
+    marker = _PROFILE_KEY_MARKER.format(user_id=user_id)
+    if marker not in base_url:
+        return None
+    return base_url[base_url.find(marker) :]
+
+
+async def _delete_object_quietly(storage: ProfileImageStore, path: str, *, user_id: int) -> None:
+    """Delete a storage object, logging instead of raising.
+
+    Cleanup runs after the request has already succeeded, so it must never turn
+    a good upload into an error: an orphaned object is bounded (one per upload),
+    a broken ``profile_image_url`` is not.
+    """
+    try:
+        if await storage.exists(path):
+            await storage.delete(path)
+    except Exception as e:  # noqa: BLE001 - best-effort cleanup by contract
+        logger.warning(
+            "Failed to delete profile image object",
+            user_id=user_id,
+            error=str(e),
+            path=path,
+        )
+
 
 def _build_preferences_response(prefs: Any) -> dict[str, Any]:
     """Merge defaults, stored JSON preferences, and explicit columns (I14).
@@ -46,9 +86,17 @@ def _build_preferences_response(prefs: Any) -> dict[str, Any]:
     if prefs.preferences:
         result.update(prefs.preferences)
 
-    # Merge explicit columns
+    # Merge explicit columns. These WIN over the JSON bag: the columns are the
+    # authoritative storage for every setting that also exists as a column, so
+    # a stale bag key can never shadow the value the API actually enforces.
     result.update(
         {
+            # R2-26: `email_notifications` is the public JSON field; the column
+            # `email_notifications_enabled` is what delivery reads. They were two
+            # settings where only the column gated anything, so the JSON field was
+            # a no-op the API still accepted and echoed. It is now an ALIAS — this
+            # line is what makes the public field tell the truth.
+            "email_notifications": prefs.email_notifications_enabled,
             "email_notifications_enabled": prefs.email_notifications_enabled,
             "push_notifications_enabled": prefs.push_notifications_enabled,
             "disabled_notification_types": prefs.disabled_notification_types,
@@ -178,8 +226,27 @@ class PreferencesService:
         Returns:
             dict: Updated user preferences.
         """
-        # Convert update schema to dict, excluding None values
-        update_dict = updates.model_dump(exclude_unset=True, exclude_none=True)
+        # R2-13: keep explicit nulls. `exclude_none` made every nullable field
+        # (quiet_hours_start/end) impossible to clear, even though the schema
+        # advertises `str | None` — so a null is a request, not an absence. The
+        # CRUD layer decides which columns may actually take it.
+        update_dict = updates.model_dump(exclude_unset=True)
+
+        # R2-26: `email_notifications` (JSON bag) and `email_notifications_enabled`
+        # (column) were duplicate settings where only the column gated delivery.
+        # The public JSON field is now an alias of the column, so a client that
+        # sends it changes delivery instead of writing an inert bag key.
+        if "email_notifications" in update_dict:
+            legacy_value = update_dict.pop("email_notifications")
+            if "email_notifications_enabled" in update_dict:
+                if update_dict["email_notifications_enabled"] != legacy_value:
+                    logger.warning(
+                        "conflicting_notification_preference_fields",
+                        user_id=user_id,
+                        used="email_notifications_enabled",
+                    )
+            else:
+                update_dict["email_notifications_enabled"] = legacy_value
 
         # Handle enum conversion
         if "theme" in update_dict and hasattr(update_dict["theme"], "value"):
@@ -236,77 +303,79 @@ class PreferencesService:
                 f"File too large ({size / 1024 / 1024:.1f} MB). Max size: {MAX_IMAGE_SIZE_BYTES / 1024 / 1024:.0f} MB"
             )
 
-        # 3. SECURITY: Validate actual file content via magic bytes (prevents Content-Type spoofing).
-        # An attacker can set Content-Type: image/jpeg but upload a malicious script.
-        # `filetype` reads the file signature bytes to determine true type.
-        try:
-            import filetype  # type: ignore[import-untyped]
-
-            header_chunk = await file.read(261)  # 261 bytes is enough for filetype detection
-            await file.seek(0)
-            detected_kind = filetype.guess(header_chunk)
+        # 3. SECURITY: Validate actual file content via magic bytes (prevents
+        # Content-Type spoofing). An attacker can set Content-Type: image/jpeg but
+        # upload a malicious script; `filetype` reads the file signature instead.
+        #
+        # R2-19: `filetype` is a declared dependency, so it is imported at module
+        # scope. The old in-function import caught ImportError and CARRIED ON with
+        # magic-byte validation silently disabled — a missing dependency must fail
+        # loudly, not quietly downgrade a security check.
+        header_chunk = await file.read(261)  # 261 bytes is enough for filetype detection
+        await file.seek(0)
+        detected_kind = filetype.guess(header_chunk)
+        if detected_kind is None or detected_kind.mime not in ALLOWED_IMAGE_TYPES:
             detected_mime = detected_kind.mime if detected_kind else None
-            if detected_mime not in ALLOWED_IMAGE_TYPES:
-                raise ValidationError(
-                    f"File content does not match an allowed image type. Detected: {detected_mime or 'unknown'}"
-                )
-        except ImportError:
-            logger.warning("filetype library not available; skipping magic-byte validation")
+            raise ValidationError(
+                f"File content does not match an allowed image type. Detected: {detected_mime or 'unknown'}"
+            )
 
         # 4. Get User record first
         user = await crud_users.get(db=db, id=user_id)
         if not user:
             raise ModelNotFoundError("User", user_id)
 
-        # 4. Prepare storage — tenant-aware provider from storage settings.
+        old_url = user.get("profile_image_url") if isinstance(user, dict) else getattr(user, "profile_image_url", None)
+
+        # 5. Prepare storage — tenant-aware provider from storage settings.
         # P2-#10: provider acquisition goes through the storage admin facade
         # (tenant-aware, cached, credentials decrypted there). Deliberately
         # NOT StorageService.put(): profile images are not File entities — no
-        # quota/File-row semantics, and the stable users/{uid}/profile.{ext}
-        # path enables old-image cleanup.
+        # quota/File-row semantics.
         tenant_ctx = get_current_tenant()
         if tenant_ctx is None:
             raise PreferenceStorageError("upload", "Tenant context not available")
         storage = await _resolve_image_store(db, tenant_ctx.tenant_id, image_store)
 
-        filename = file.filename or "image.png"
-        file_ext = filename.split(".")[-1] if "." in filename else "png"
-        new_path = f"users/{user_id}/profile.{file_ext}"
+        # R2-18: the extension comes from the DETECTED type, never from the
+        # client-supplied filename. `filename.split(".")[-1]` cannot produce a
+        # ".." segment, but it CAN contain "/" and corrupt the
+        # `users/{uid}/profile.` cleanup marker that both the replacement cleanup
+        # below and delete_profile_image rely on.
+        file_ext = str(detected_kind.extension)
+        # Defence in depth: the extension becomes a path segment, so a future
+        # ALLOWED_IMAGE_TYPES entry must not be able to smuggle a separator in.
+        if not file_ext.isalnum() or len(file_ext) > 5:
+            raise ValidationError("Unsupported image extension")
 
-        # 5. Check for old image and delete if extension changed
-        old_url = user.get("profile_image_url") if isinstance(user, dict) else getattr(user, "profile_image_url", None)
-        if old_url:
-            base_url = old_url.split("?")[0]
-            marker = f"users/{user_id}/profile."
-            if marker in base_url:
-                old_path = base_url[base_url.find(marker) :]
-                # If the new path has a different extension, the old image would be orphaned
-                if old_path and old_path != new_path:
-                    try:
-                        if await storage.exists(old_path):
-                            await storage.delete(old_path)
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to delete old profile image during upload",
-                            user_id=user_id,
-                            error=str(e),
-                            path=old_path,
-                        )
+        # R2-14: versioned key + upload-first.
+        #
+        # A fixed `profile.{ext}` key made an atomic replace impossible: with an
+        # unchanged extension the upload OVERWROTE the only copy (nothing to roll
+        # back to), and with a changed extension the old object was deleted BEFORE
+        # the new upload — so a failed upload left `profile_image_url` pointing at
+        # a deleted object. A per-upload suffix makes the swap atomic: the DB
+        # reference moves to a fully-written object, and the previous object is
+        # dropped only once nothing points at it.
+        new_path = f"users/{user_id}/profile.{file_ext}.{uuid4().hex}"
 
         # UploadFile.file IS a binary file-like object
         result = await storage.upload(file.file, new_path, file.content_type)
-
         if not result.success:
             logger.error("Failed to upload image for user", user_id=user_id, error=result.error)
             raise PreferenceStorageError("upload", result.error or "Unknown error")
 
-        # 6. Get URL
-        # For this purpose, we assume get_url gives us a usable URL.
         image_url = await storage.get_url(new_path)
 
-        # 7. Update User record
-        # Update user.profile_image_url
-        await crud_users.update(db=db, object={"profile_image_url": image_url}, id=user_id)
+        # 6. Point the user at the new object FIRST. Until this commits, the old
+        #    object is still the referenced one and must stay untouched.
+        try:
+            await crud_users.update(db=db, object={"profile_image_url": image_url}, id=user_id)
+        except Exception:
+            # The DB still names the old object, so the object we just wrote is
+            # unreferenced. Drop it and re-raise the real failure.
+            await _delete_object_quietly(storage, new_path, user_id=user_id)
+            raise
 
         # Invalidate the profile/auth caches — profile_image_url is embedded
         # in both (user:profile:* and user:auth:*); without this the old URL
@@ -316,6 +385,12 @@ class PreferencesService:
             bump_token_version=False,
             reason=InvalidationReason.PROFILE_EDIT,
         )
+
+        # 7. Only now is the previous object unreferenced. Best-effort: a failed
+        #    cleanup leaves an orphan, never a broken image.
+        previous_path = _profile_key_from_url(old_url, user_id)
+        if previous_path is not None and previous_path != new_path:
+            await _delete_object_quietly(storage, previous_path, user_id=user_id)
 
         return {"image_url": image_url, "message": "Profile image uploaded successfully"}
 
@@ -350,22 +425,8 @@ class PreferencesService:
             return
 
         # Extract precise path from URL to accurately find it (avoid guessing extensions)
-        base_url = old_url.split("?")[0]
-        marker = f"users/{user_id}/profile."
-
-        if marker in base_url:
-            old_path = base_url[base_url.find(marker) :]
-            try:
-                if await storage.exists(old_path):
-                    await storage.delete(old_path)
-            except Exception as e:
-                logger.warning(
-                    "Failed to delete profile image",
-                    user_id=user_id,
-                    error=str(e),
-                    path=old_path,
-                )
-        else:
+        old_path = _profile_key_from_url(old_url, user_id)
+        if old_path is None:
             # Conservative path: fail soft on unrecognized URL formats to preserve the audit
             # trail and prevent orphaning storage objects without a verified key.
             logger.warning(
@@ -374,6 +435,7 @@ class PreferencesService:
                 url=old_url,
             )
             return
+        await _delete_object_quietly(storage, old_path, user_id=user_id)
         # Update User record to nullify image_url
         await crud_users.update(
             db=db,

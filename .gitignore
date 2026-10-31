@@ -217,3 +217,4 @@ AUDIT_*.md
 tests/benchmarks/results
 locust_baseline_NON_REPRESENTATIVE.md
 mcp.json
+.opencodereview

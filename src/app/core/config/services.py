@@ -95,6 +95,11 @@ class DefaultRateLimitSettings(BaseSettings):
         # magic link send per email hash (was the anonymous-email path of
         # the deleted rate_limiter_dependency: 3/min, anti-enumeration)
         "magic_link_send": (3, 60),
+        # R2-24: magic-link verification per client IP. Generous enough that a
+        # user retrying a link is never locked out (the token is one-shot, so a
+        # legitimate retry is a different token), far below a flood. Not a
+        # brute-force control: 256-bit token entropy makes guessing infeasible.
+        "magic_link_verify": (30, 60),
         "passkey_login": (10, 60),
         # Refresh-token probing per client IP (C1: middleware-level budget so
         # rotation-marker guessing floods get an early 429 at the edge; the
@@ -116,6 +121,7 @@ class DefaultRateLimitSettings(BaseSettings):
         "mfa_verify_global",
         "mfa_mutate",
         "magic_link_send",
+        "magic_link_verify",
         "passkey_login",
         "refresh",
     }

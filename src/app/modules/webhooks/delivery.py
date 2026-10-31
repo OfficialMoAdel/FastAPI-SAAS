@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -199,11 +199,11 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
     _lock_token = uuid4().hex
     _lock_held = await cache_client.set_nx(_lock_key, _lock_token, ttl=60)
     if cache_client.client is not None and not _lock_held:
-            logger.info("Webhook delivery already in progress, skipping", delivery_id=delivery_id)
-            existing = await db.get(WebhookDelivery, delivery_id)
-            if not existing:
-                raise ModelNotFoundError("WebhookDelivery", delivery_id)
-            return existing
+        logger.info("Webhook delivery already in progress, skipping", delivery_id=delivery_id)
+        existing = await db.get(WebhookDelivery, delivery_id)
+        if not existing:
+            raise ModelNotFoundError("WebhookDelivery", delivery_id)
+        return existing
 
     # D6: the HALF_OPEN probe slot and the breaker that holds it are declared
     # before the try so the finally below can release the slot on EVERY exit
@@ -674,7 +674,15 @@ async def recover_stuck_deliveries(ctx: dict[str, Any]) -> int:
             from src.app.core.cache.client import cache_client as _cc
 
             claims = await _claim_recovery_locks(deliveries)
-            for delivery in deliveries:
+            # R1-BUG-2: snapshot identity BEFORE the loop. A per-row rollback
+            # expires EVERY instance in the identity map (SQLAlchemy's
+            # ``_restore_snapshot`` expires all states on a root rollback, even
+            # with ``expire_on_commit=False``), so reading ``delivery.id`` on the
+            # next iteration initiated IO outside the greenlet and raised
+            # ``MissingGreenlet`` — from OUTSIDE the per-row try, which aborted
+            # the whole recovery tick instead of skipping one row.
+            rows = [(delivery.id, delivery.tenant_id) for delivery in deliveries]
+            for delivery_id, delivery_tenant_id in rows:
                 # F8: the delivery lock is claimed BEFORE re-enqueueing. A
                 # running deliver() holds this same lock, so a failed claim
                 # means the row is in-flight (not stuck) — skip it instead of
@@ -682,12 +690,12 @@ async def recover_stuck_deliveries(ctx: dict[str, Any]) -> int:
                 # recovery-vs-inflight (different job ids).
                 # F7: per-row isolation — one bad row (or a lost Redis) must
                 # not discard the whole batch's progress; commit per row.
-                row_lock_key = f"webhook:deliver_lock:{delivery.id}"
+                row_lock_key = f"webhook:deliver_lock:{delivery_id}"
                 # D8: the recovery claim carries an OWNERSHIP TOKEN and is
                 # released with an ownership check, so a recovery that
                 # overran its TTL cannot delete the lock the delivery
                 # itself acquired in the meantime.
-                recovery_token = claims.get(delivery.id)
+                recovery_token = claims.get(delivery_id)
                 if recovery_token is None:
                     continue
                 released = False
@@ -715,18 +723,27 @@ async def recover_stuck_deliveries(ctx: dict[str, Any]) -> int:
                     # must not double-enqueue the same row.
                     await redis.enqueue_job(
                         "deliver_webhook_task",
-                        delivery_id=str(delivery.id),
-                        tenant_id=str(delivery.tenant_id),
-                        _job_id=f"recover_webhook_{delivery.id}",
+                        delivery_id=str(delivery_id),
+                        tenant_id=str(delivery_tenant_id),
+                        _job_id=f"recover_webhook_{delivery_id}",
                     )
-                    # Update next_retry_at to prevent immediate re-selection if job takes a while
-                    delivery.next_retry_at = datetime.now(UTC) + timedelta(minutes=10)
+                    # Update next_retry_at to prevent immediate re-selection if
+                    # job takes a while. A Core UPDATE (not an ORM mutation) so
+                    # the write never depends on this instance's load state: a
+                    # previous row's rollback may have expired it, and the
+                    # flush-time PK read would be an implicit IO inside commit.
+                    await db.execute(
+                        update(WebhookDelivery)
+                        .where(WebhookDelivery.id == delivery_id)
+                        .values(next_retry_at=datetime.now(UTC) + timedelta(minutes=10))
+                        .execution_options(synchronize_session=False)
+                    )
                     await db.commit()
                     recovered += 1
                 except Exception as row_exc:  # noqa: BLE001
                     logger.error(
                         "webhook_recovery_row_failed",
-                        delivery_id=str(delivery.id),
+                        delivery_id=str(delivery_id),
                         error=str(row_exc),
                     )
                     await db.rollback()

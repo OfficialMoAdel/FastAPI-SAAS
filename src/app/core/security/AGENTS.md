@@ -128,6 +128,17 @@ L1 seam, which owns BOTH the policy list and the compiled per-path map.
 Popping only the list left the map serving the OLD limits for up to its own
 300 s TTL, in the very process that performed the write.
 
+**Adding a budget is a two-file act, and the boot gate enforces it.** A new
+`SecurityAction` in `budgets.py::BUDGETS` must also appear in
+`settings.rate_limit.SECURITY_BUDGETS` and — when it declares the default
+`fail_closed=True` — in `SECURITY_BUDGETS_FAIL_CLOSED`. `validate_budget_definitions()`
+runs at web and worker boot and refuses to start otherwise, in BOTH directions,
+so a budget cannot boot clean and then fail open on a Redis outage. Operators
+who pin the dict in `.env` must add the entry; `src/.env.example` carries the
+canonical set. `tests/unit/core/security/test_security_budget_contract.py`
+pins each action's exact leg shape and golden key, so adding one is a visible
+edit there too.
+
 ## Touch Points
 
 - **Password hashing**: `password.py::get_password_hash` / `verify_password` (also `needs_rehash`)

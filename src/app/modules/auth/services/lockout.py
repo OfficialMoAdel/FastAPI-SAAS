@@ -93,7 +93,23 @@ return new_attempts
         return await self.is_locked_by_key(redis, self.resolve_key(redis, user_id, submitted))
 
     async def record_failed_attempt_for_key(self, redis: Redis, key: str) -> int:
-        """Record a failed login attempt against a specific counter key."""
+        """Record a failed login attempt against a specific counter key.
+
+        R1-LOCKOUT — the failure posture here is deliberately NOT the same as
+        ``is_locked_by_key``, and that is safe:
+
+        * ``is_locked_by_key`` fails CLOSED (returns ``True``) on a Redis error,
+          and the login path calls it FIRST (``auth/service.py``), so a Redis
+          outage already refuses every login before any counter is read.
+        * This method returns ``1`` on a Redis error because the increment is a
+          *recording* step: there is no counter to write, and the value only
+          feeds logging/telemetry. Raising here would add an exception path to a
+          login that is already blocked, buying no security and losing the
+          response.
+
+        Making this method raise would therefore not close a bypass; it would
+        only convert an already-refused login into a differently-shaped error.
+        """
         try:
             result = await redis.eval(  # type: ignore[misc]
                 self._INCREMENT_LUA,

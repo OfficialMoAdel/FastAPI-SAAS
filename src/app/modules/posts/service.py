@@ -209,6 +209,29 @@ class PostService(BaseService[Post]):
 
         return db_post
 
+    async def _get_post_for_mutation(
+        self,
+        post_id: int,
+        current_user: AuthenticatedUser,
+    ) -> dict[str, Any]:
+        """Fetch a post the caller is allowed to mutate, or raise 404.
+
+        R1-BUG-3: the fetch used to filter on ``id + is_deleted`` only and then
+        raise ``ForbiddenError`` for a non-owner, so a same-tenant peer could tell
+        "exists but is not mine" (403) from "does not exist" (404). Scoping the
+        fetch to the caller makes both answers identical — the same uniform-404
+        convention ``hard_delete`` already uses for tenant mismatches.
+        """
+        filters: dict[str, Any] = {"id": post_id, "is_deleted": False}
+        if not current_user.is_superuser:
+            filters["created_by_user_id"] = current_user.id
+        db_post: dict[str, Any] | None = await self.crud.get(
+            db=self.db, schema_to_select=PostRead, **filters
+        )
+        if db_post is None:
+            raise ModelNotFoundError("Post", post_id)
+        return db_post
+
     async def update_post(
         self,
         post_id: int,
@@ -234,19 +257,23 @@ class PostService(BaseService[Post]):
         Raises
         ------
         ModelNotFoundError
-            If post not found
+            If the post does not exist OR is not owned by the caller. R1-BUG-3:
+            both cases answer 404 on purpose — a distinguishable 403 let a
+            same-tenant peer confirm a post they cannot update.
         ForbiddenError
-            If current user doesn't own this post (Q-M1: shared domain
-            exception; HTTP mapping is owned by core/errors.py)
+            Only reachable if the owner-scoped fetch is bypassed (defence in
+            depth via ``_check_ownership``); not an observable API response.
         """
-        db_post = await self.crud.get(db=self.db, id=post_id, is_deleted=False, schema_to_select=PostRead)
-        if db_post is None:
-            raise ModelNotFoundError("Post", post_id)
+        db_post = await self._get_post_for_mutation(post_id, current_user)
 
         # Ownership check
         created_by_user_id = (
             db_post.get("created_by_user_id") if isinstance(db_post, dict) else db_post.created_by_user_id
         )
+        # Defence in depth: the scoped fetch above already limits a non-superuser
+        # to their own posts, so this cannot fire for them. It stays as the ONE
+        # ownership seam rather than being deleted, so a future change to the
+        # filter cannot silently drop the enforcement.
         await self._check_ownership(
             current_user.id,
             created_by_user_id,
@@ -278,19 +305,20 @@ class PostService(BaseService[Post]):
         Raises
         ------
         ModelNotFoundError
-            If post not found
+            If the post does not exist OR is not owned by the caller. R1-BUG-3:
+            both cases answer 404 on purpose — a distinguishable 403 let a
+            same-tenant peer confirm a post they cannot delete.
         ForbiddenError
-            If current user doesn't own this post (Q-M1: shared domain
-            exception; HTTP mapping is owned by core/errors.py)
+            Only reachable if the owner-scoped fetch is bypassed (defence in
+            depth via ``_check_ownership``); not an observable API response.
         """
-        db_post = await self.crud.get(db=self.db, id=post_id, is_deleted=False, schema_to_select=PostRead)
-        if db_post is None:
-            raise ModelNotFoundError("Post", post_id)
+        db_post = await self._get_post_for_mutation(post_id, current_user)
 
         # Ownership check
         created_by_user_id = (
             db_post.get("created_by_user_id") if isinstance(db_post, dict) else db_post.created_by_user_id
         )
+        # Defence in depth: see update_post — the scoped fetch is the enforcement.
         await self._check_ownership(
             current_user.id,
             created_by_user_id,

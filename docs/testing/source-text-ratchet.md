@@ -95,6 +95,17 @@ structure, so it is recorded rather than exempted.
   `test_the_verification_is_offloaded` counts the `await asyncio.to_thread(...)`
   verification call sites in `passkey.py`, which is the F-13 off-loop proof.
 
+**2026-10-30: raised 167 -> 168, deliberately and RE-MEASURED.** Two
+assertions landed with the user-preferences migration backfill
+(`test_the_notification_dedup_backfill_is_one_way` and
+`test_the_notification_dedup_backfill_is_scoped_to_an_explicit_json_opt_out`
+in `tests/unit/migrations/test_user_preferences_quiet_hours_parity.py`).
+They assert on the migration SQL source text — the property under test IS
+the DDL structure (the backfill may only turn delivery off, and only for an
+explicit JSON opt-out), so there is no behavioural observation that
+distinguishes a correct re-implementation. Counted rather than converted;
+net +1 after line relocations in the same file.
+
 **2026-10-22: re-measured 156, and the ratchet is now enforced in the suite.**
 The four Cluster regression files (`auth/test_cluster_a_regressions.py`,
 `users/test_cluster_b_regressions.py`, `rbac/test_cluster_c_regressions.py`,

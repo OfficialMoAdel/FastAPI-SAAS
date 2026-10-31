@@ -10,10 +10,21 @@ class SecuritySettings(BaseSettings):
     """Security and performance optimization settings."""
 
     # IP Filtering Configuration
-    # Enable/disable IP whitelist checking. When enabled, only IPs in the whitelist are allowed.
+    #
+    # R2-12: the whitelist is a TRUST list, not an allow-list. A whitelisted IP
+    # short-circuits the remaining IP checks and (optionally) the rate limiter;
+    # a non-whitelisted IP falls through and is still admitted unless it is
+    # blacklisted. This is the behaviour middleware/ip_filter.py implements, the
+    # e2e test test_non_whitelisted_ip_allowed_if_not_blacklisted pins, and the
+    # perf stack relies on. The previous description claimed the opposite, which
+    # would have turned every deployment into an allow-list outage.
     IP_WHITELIST_ENABLED: bool = Field(
         default=False,
-        description="Enable IP whitelist filtering. Only allows requests from whitelisted IPs.",
+        description=(
+            "Enable the IP trust list. Whitelisted IPs skip the remaining IP checks "
+            "and may bypass rate limiting. Non-whitelisted IPs are still allowed "
+            "unless they are blacklisted — this is not an allow-list."
+        ),
     )
     # Enable/disable IP blacklist checking. When enabled, IPs in the blacklist are blocked.
     IP_BLACKLIST_ENABLED: bool = Field(

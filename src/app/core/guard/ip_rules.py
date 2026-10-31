@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from cachetools import TTLCache
+from redis.exceptions import RedisError
 
 from src.app.core.config import settings
 from src.app.core.exceptions.cache_exceptions import MissingClientError
@@ -59,9 +60,31 @@ _ip_status_negative_cache: TTLCache[str, tuple[bool, bool]] = TTLCache(
     ttl=_IP_STATUS_NEGATIVE_TTL,
 )
 
+# R2-11: monotonic epoch for the negative-status cache.
+#
+# ``check_ip_status`` reads Redis and then STORES a clean result. A writer can
+# land in that gap: it writes the new rule and invalidates the cache, and the
+# reader then stores the stale ``(False, False)`` AFTER the invalidation — so a
+# freshly banned IP stays admitted for the full negative TTL. Capturing the
+# epoch before the Redis read and re-checking it before the store closes the
+# window.
+#
+# A single global epoch (rather than per-IP generations) is deliberate: it needs
+# no per-IP state that would itself have to be bounded, and a writer bumping it
+# can only cause another IP's in-flight reader to SKIP a cache fill — a missed
+# optimization, never a stale hit. Writes and the store check are synchronous,
+# so no lock is needed on the event loop.
+_ip_status_epoch = 0
+
 
 def invalidate_ip_status_cache(ip_address: str | None = None) -> None:
-    """Drop one or all clean-status negative-cache entries."""
+    """Drop one or all clean-status negative-cache entries.
+
+    Bumps the epoch first, so a reader that is already in flight cannot
+    re-populate the entry this call just dropped (R2-11).
+    """
+    global _ip_status_epoch
+    _ip_status_epoch += 1
     if ip_address is None:
         _ip_status_negative_cache.clear()
     else:
@@ -214,6 +237,11 @@ class IPFilterService:
         if cached is not None:
             return cached
 
+        # R2-11: snapshot the epoch BEFORE the read. If a writer invalidates the
+        # cache while this read is in flight, the store below is skipped — the
+        # stale entry would otherwise outlive the invalidation by the full TTL.
+        epoch = _ip_status_epoch
+
         black_key = f"{self.BLACKLIST_PREFIX}{ip_address}"
         white_key = f"{self.WHITELIST_PREFIX}{ip_address}"
         async with get_redis_client() as client:
@@ -234,7 +262,7 @@ class IPFilterService:
                     idx += 1
                 if settings.security.IP_WHITELIST_ENABLED and results and idx < len(results):
                     is_whitelisted = bool(results[idx] > 0)
-                if not is_blacklisted and not is_whitelisted:
+                if not is_blacklisted and not is_whitelisted and _ip_status_epoch == epoch:
                     _ip_status_negative_cache[ip_address] = (False, False)
                 return is_blacklisted, is_whitelisted
         return False, False
@@ -265,12 +293,18 @@ class IPFilterService:
                         pipe.get(key)
                         pipe.ttl(key)
                     results = await pipe.execute()
-        except MissingClientError:
+        except (MissingClientError, RedisError):
             # The client is never substituted with None — it RAISES (see
             # get_redis_client). A Redis outage must read as an empty list,
             # not as a 500: the sibling _clear_list already answers 0 in the
             # same situation, and the admin list endpoint has nothing to
             # report when the store is unreachable.
+            #
+            # R2-15: this contract is pinned by
+            # tests/unit/core/guard/test_ip_rules_redis_outage.py. It used to
+            # catch only MissingClientError, so a REAL outage (ConnectionError /
+            # TimeoutError, both RedisError subclasses) escaped as a 500 while
+            # the comment above promised otherwise.
             return []
 
         entries: list[dict[str, Any]] = []
@@ -280,7 +314,11 @@ class IPFilterService:
             if data:
                 entry = json_loads(data)
                 if ttl > 0:
-                    entry["expires_at"] = datetime.now(UTC).timestamp() + ttl
+                    # R2-25: ISO like `added_at`, not a float epoch. Pydantic
+                    # normalised the epoch on the response path, so this was
+                    # never a security issue — it was two shapes for one field
+                    # in the same payload.
+                    entry["expires_at"] = (datetime.now(UTC) + timedelta(seconds=ttl)).isoformat()
                 entries.append(entry)
         return entries
 
@@ -304,7 +342,10 @@ class IPFilterService:
                     if cursor == 0:
                         break
                 return int(await client.delete(*keys)) if keys else 0
-        except MissingClientError:
+        except (MissingClientError, RedisError):
+            # R2-15: same contract as _get_list — an unreachable store reads as
+            # "nothing to clear", never as a 500. A real ConnectionError is a
+            # RedisError and used to escape here.
             return 0
 
 

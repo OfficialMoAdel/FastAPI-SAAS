@@ -18,6 +18,13 @@ if TYPE_CHECKING:
 
 
 # Default preferences structure
+#
+# R2-26: `email_notifications` here is the PUBLIC response default only. The
+# authoritative storage is the `email_notifications_enabled` column, which is
+# what `notifications/service.py` gates delivery on, and which
+# `_build_preferences_response` lets WIN over this bag. The API accepts
+# `email_notifications` on update as an alias of that column, so writing it can
+# no longer leave an inert value in the bag.
 DEFAULT_PREFERENCES = {
     "theme": "system",
     "language": "en",

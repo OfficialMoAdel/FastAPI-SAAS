@@ -7,7 +7,6 @@ the cache/event seams (see PLAN Round-1 Quality P3)."""
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, cast
 
@@ -274,24 +273,16 @@ class UserService:
                         user_id=result.id,
                     )
 
-            def _log_task_error(task: asyncio.Task) -> None:
-                """Log errors from background event tasks so they are not silently swallowed."""
-                exc = task.exception() if not task.cancelled() else None
-                if exc is not None:
-                    logger.error(
-                        "Background event publish failed",
-                        action="user.created",
-                        error=str(exc),
-                        exc_info=exc,
-                    )
-
-            # Fire-and-forget task publishing the event from async context
+            # Fire-and-forget task publishing the event from async context.
+            # R2-17: `create_safe_task` already installs the ONE failure handler;
+            # a second done-callback here logged every failure twice. The action
+            # name travels through `log_context` instead.
             from src.app.core.utils.background_task import create_safe_task
 
-            task = create_safe_task(
-                event_bus.publish("user.created", user_event_payload, priority=EventPriority.NORMAL)
+            create_safe_task(
+                event_bus.publish("user.created", user_event_payload, priority=EventPriority.NORMAL),
+                log_context={"action": "user.created"},
             )
-            task.add_done_callback(_log_task_error)
 
         except IntegrityError as e:
             # Race: duplicate created between check and insert.

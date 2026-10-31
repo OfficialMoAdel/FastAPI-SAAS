@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import Request
 from redis.asyncio import Redis
+from sqlalchemy.exc import InterfaceError, OperationalError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
@@ -27,8 +29,25 @@ from src.app.modules.auth.errors import (
 )
 from src.app.modules.auth.schemas import LoginMFAResponse, LoginTokenResponse, MagicLinkSendResponse
 from src.app.modules.auth.services.tokens import TokenIssuer
+from src.app.shared.exceptions import ServiceUnavailableError
 
 logger = get_logger(__name__)
+
+# R2-21: the magic-link email is dispatched through the notification/outbox seam
+# (``request_notification`` -> ``event_bus.publish``), never sent inline. The
+# response field was hardcoded ``False`` on every path, which told the client the
+# mail was already on the wire.
+#
+# It must be the SAME value on ALL paths, including the anti-enumeration padding
+# returns: a ``True`` on the success path and ``False`` on the "no such user"
+# path would BE the enumeration oracle the 0.15s constant-time pad exists to
+# prevent.
+_MAY_BE_DELAYED = True
+
+#: DB failures worth telling the client to retry (R2-22). A retryable outage is
+#: not a bad token: mapping it to ``InvalidMagicLinkError`` (400) tells the client
+#: to stop retrying and masks the 503 the pool-timeout handler already produces.
+_TRANSIENT_DB_ERRORS = (SQLAlchemyTimeoutError, OperationalError, InterfaceError)
 
 
 class MagicLinkService:
@@ -89,7 +108,7 @@ class MagicLinkService:
             )
             return MagicLinkSendResponse(
                 message="If an account exists, a magic link has been sent",
-                may_be_delayed=False,
+                may_be_delayed=_MAY_BE_DELAYED,
             )
 
         # Check if user is active (check both deleted AND active status)
@@ -104,63 +123,67 @@ class MagicLinkService:
             )
             return MagicLinkSendResponse(
                 message="If an account exists, a magic link has been sent",
-                may_be_delayed=False,
+                may_be_delayed=_MAY_BE_DELAYED,
             )
+
+        # R2-23: resolve the tenant BEFORE minting the token. The guard used to
+        # run AFTER `manager.create`, so a user with no tenant left a live
+        # 15-minute Redis token behind on every attempt, and a later failure in
+        # `create_magic_link` orphaned one the same way.
+        #
+        # Tenant-stamped fail-closed: without the owner's tenant the DB row
+        # would be invisible to every RLS context after the H1 migration.
+        send_tenant = user.get("tenant_id")
+        if send_tenant is None:
+            raise ServiceUnavailableError("Magic link setup is currently unavailable.")
+
+        user_id_val = user["id"] if isinstance(user, dict) else user.id
 
         # Generate and store token in Redis
         manager = self._get_magic_link_manager()
         from src.app.core.security.tokens import TokenGenerator
 
         token = TokenGenerator.generate_magic_link_token()
-        await manager.create(
-            token=token,
-            data={
-                "email": email,
-                "action": "login",
-                "extra_data": {
-                    "user_id": user["id"],
-                    "ip_address": ip_address,
-                    "user_agent": user_agent,
-                },
-            },
-        )
-
-        # Store in database for audit trail with hashed token (H-14).
-        # Tenant-stamped fail-closed: without the owner's tenant the row
-        # would be invisible to every RLS context after the H1 migration.
-        from src.app.shared.exceptions import ServiceUnavailableError as _SvcUnavailable
-
-        send_tenant = user.get("tenant_id")
-        if send_tenant is None:
-            raise _SvcUnavailable("Magic link setup is currently unavailable.")
-        from src.app.modules.auth.crud import create_magic_link
-
         try:
+            await manager.create(
+                token=token,
+                data={
+                    "email": email,
+                    "action": "login",
+                    "extra_data": {
+                        "user_id": user_id_val,
+                        "ip_address": ip_address,
+                        "user_agent": user_agent,
+                    },
+                },
+            )
+
+            # Store in database for audit trail with hashed token (H-14).
+            from src.app.modules.auth.crud import create_magic_link
+
             await create_magic_link(
                 db=self.db,
-                user_id=user["id"],
+                user_id=user_id_val,
                 tenant_id=send_tenant,
                 token=token,
                 action="login",
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
+
+            # Queue email for delivery (async task)
+            await self._queue_magic_link_email(
+                email=email,
+                token=token,
+                user_id=user_id_val,
+                tenant_id=str(send_tenant),
+            )
         except Exception as e:
-            logger.error("Failed to store magic link in DB", exc_info=True)
-            from src.app.shared.exceptions import ServiceUnavailableError
-
+            logger.error("Failed to set up magic link", exc_info=True)
+            # R2-23: the token must not outlive the failure that orphaned it —
+            # it is a live 15-minute credential the user will never receive.
+            await self._discard_magic_link_token(manager, token)
             raise ServiceUnavailableError("Magic link setup is currently unavailable.") from e
-
-        user_tenant = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
-        user_id_val = user["id"] if isinstance(user, dict) else user.id
-
-        # Queue email for delivery (async task)
-        await self._queue_magic_link_email(
-            email=email,
-            token=token,
-            user_id=user_id_val,
-            tenant_id=str(user_tenant) if user_tenant else None,
-        )
 
         logger.info(
             "Magic link created and email queued",
@@ -172,7 +195,7 @@ class MagicLinkService:
 
         return MagicLinkSendResponse(
             message="If an account exists, a magic link has been sent",
-            may_be_delayed=False,
+            may_be_delayed=_MAY_BE_DELAYED,
         )
 
     async def verify_magic_link(
@@ -261,11 +284,22 @@ class MagicLinkService:
             # but the lock must be released before the next step runs.
             await self._rollback_quietly()
             raise
+        except _TRANSIENT_DB_ERRORS as exc:
+            # R2-22: a retryable outage is not a bad token. This used to fall
+            # into the broad clause below and become InvalidMagicLinkError
+            # (400) — telling the client to stop retrying and masking the 503
+            # the SQLAlchemyTimeoutError handler already maps to.
+            logger.error("Transient DB failure while marking magic link used", exc_info=True)
+            await self._rollback_quietly()
+            raise ServiceUnavailableError(
+                "Magic link verification is temporarily unavailable. Please try again."
+            ) from exc
         except Exception:
+            # Not a token problem and not a known-retryable outage: a genuine
+            # defect. Surface it as one instead of reporting a bad token.
             logger.error("Failed to mark magic link used in DB", exc_info=True)
             await self._rollback_quietly()
-            # DB failure → do NOT consume Redis token, let user retry
-            raise InvalidMagicLinkError("Temporary error, please try again")
+            raise
         # Step 3: NOW consume the Redis token (safe — DB is marked)
         consumed_data = await manager.consume(token)
         if consumed_data is None:
@@ -422,6 +456,19 @@ class MagicLinkService:
             tenant_id=tenant_id,
             user_id=user_id,
         )
+
+    async def _discard_magic_link_token(self, manager: PendingTokenStore, token: str) -> None:
+        """Remove a token whose setup failed after it was minted (R2-23).
+
+        A stray token is unreachable — the user never receives the email — but it
+        is still a live 15-minute credential, so a failed setup must not leave
+        one behind. A cleanup failure is logged, never raised: the caller is
+        already failing with the real cause.
+        """
+        try:
+            await manager.delete(token)
+        except Exception as e:  # noqa: BLE001 - cleanup is best-effort by contract
+            logger.warning("Failed to discard orphaned magic link token", error=str(e))
 
     async def _create_auth_tokens(
         self,

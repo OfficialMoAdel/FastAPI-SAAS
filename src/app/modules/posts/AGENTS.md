@@ -50,9 +50,17 @@ class PostService(BaseService[Post]):
 ```
 
 ### Ownership Checking
-- All update/delete operations call `_check_ownership()`, which delegates to
-  the core ownership seam (`core/security/ownership.py::require_resource_ownership`)
-- Raises `ForbiddenError` if user is not owner; superusers bypass via the seam
+- All update/delete operations call `_get_post_for_mutation()`, which scopes the
+  fetch to `created_by_user_id` for non-superusers
+- **A non-owner gets 404, not 403** — "exists but is not mine" and "does not
+  exist" must be indistinguishable, or a same-tenant peer can confirm a post they
+  cannot touch. `hard_delete` already used the same uniform-404 convention for
+  tenant mismatches
+- `_check_ownership()` still runs as defence in depth and delegates to the core
+  ownership seam (`core/security/ownership.py::require_resource_ownership`); with
+  the scoped fetch it is unreachable through the API, so its `ForbiddenError` is
+  not an observable response. Superusers bypass via the seam and their fetch
+  stays unfiltered
 - Use `TenantContext` dependency injection for tenant_id
 
 ### Database Operations

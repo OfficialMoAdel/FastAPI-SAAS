@@ -60,6 +60,7 @@ class TestShippedTableIsSelfConsistent:
             SecurityAction.MFA_VERIFY_ACCOUNT,
             SecurityAction.PASSKEY_LOGIN,
             SecurityAction.MAGIC_LINK_SEND,
+            SecurityAction.MAGIC_LINK_VERIFY,
             SecurityAction.REFRESH,
         }
         open_budgets = {a for a, d in BUDGETS.items() if not d.fail_closed}

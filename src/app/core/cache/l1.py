@@ -284,20 +284,13 @@ class L1Cache:
 
         A ``None`` key means "everything", locally and on the wire — the
         broadcast token — exactly as in :meth:`invalidate`.
+
+        R2-16: this delegates to :meth:`drop_locally` EXACTLY ONCE. It used to
+        run the same per-key encode/parse/drop loop itself first and then call
+        ``drop_locally(keys)``, which doubled the work and silently dropped
+        remote invalidation for a one-shot iterator (the first loop exhausted it,
+        so the publish carried no payloads).
         """
-        payloads: list[str] = []
-        for key in keys:
-            if key is None:
-                self.clear()
-                payloads.append(BROADCAST_TOKEN)
-                continue
-            encoded = self._codec.encode(key)
-            normalized = self._codec.parse(encoded)
-            if normalized is BROADCAST:
-                self.clear()
-            elif normalized is not IGNORE:
-                self.drop(normalized)
-            payloads.append(encoded)
         await self.publish_many(self.drop_locally(keys))
 
     def drop_locally(self, keys: Sequence[Hashable | None]) -> list[str]:

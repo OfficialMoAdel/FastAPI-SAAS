@@ -235,7 +235,15 @@ import count_broad_excepts as counter  # noqa: E402
 #: already left behind. 2026-10-29: 384 -> 383 — removing the refresh-lock
 #: blind-delete fallback in ``core/utils/cache/decorator.py`` deleted its
 #: nested ``except Exception``.
-BROAD_EXCEPT_BASELINE = 383
+#: 383 -> 384. Raised, deliberately and RE-MEASURED, by the new
+#: ``_discard_magic_link_token`` cleanup guard in
+#: ``modules/auth/services/magic_link.py`` (R2-23). A failed setup must not
+#: leave a live 15-minute Redis token behind, so the discard is best-effort:
+#: a Redis failure there is logged, never raised, and the caller still fails
+#: with the real cause. It carries ``# noqa: BLE001 - cleanup is best-effort
+#: by contract``; the counter ignores the annotation, so this site contributes
+#: the 383 -> 384 delta. Re-measured with scripts/count_broad_excepts.py.
+BROAD_EXCEPT_BASELINE = 384
 
 #: The files muse 22 triaged. BLE001 is enforced on each (the per-file-ignores
 #: in pyproject.toml no longer blanket-exempt them), so these are also the

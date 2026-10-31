@@ -118,6 +118,12 @@ async def verify_magic_link(
     from src.app.core.utils.ip_utils import get_client_ip
 
     ip_address = get_client_ip(request)
+    # R2-24: /send charges MAGIC_LINK_SEND; /verify charged nothing, so the last
+    # step of the flow was the only un-metered one. Keyed on the source IP: the
+    # email is only known after the token is peeked, and a flood of invalid
+    # tokens would never reach that point. Token entropy makes guessing
+    # infeasible, so this is a cheap-DoS bound, not a brute-force control.
+    await check(SecurityAction.MAGIC_LINK_VERIFY, Identity(ip=ip_address))
     result = await service.verify_magic_link(
         token=body.token, ip_address=ip_address, response=response, request=request
     )

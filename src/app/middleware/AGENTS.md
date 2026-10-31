@@ -105,7 +105,8 @@ Key decisions (documented inline in main.py):
 ## Touch Points / Key Files
 
 - Attack detection: `attack_detection.py` — config `ATTACK_DETECTION_ENABLED`, `ATTACK_DETECTION_MODE` (log/block/ban), `ATTACK_DETECTION_LOG_FULL_REQUEST`
-- IP filter: `ip_filter.py` — Redis-backed, exact-key IP allowlist/blocklist (no CIDR ranges), auto-ban integration
+- IP filter: `ip_filter.py` — Redis-backed, exact-key IP **trust list** + blocklist (no CIDR ranges), auto-ban integration. `IP_WHITELIST_ENABLED` marks whitelisted IPs as trusted (they early-return and may bypass rate limiting); non-whitelisted IPs still fall through and are admitted unless blacklisted. It is NOT an allowlist — see `core/config/security.py` and `tests/e2e/core/security/test_ip_filtering.py::test_non_whitelisted_ip_allowed_if_not_blacklisted`.
+- IP filter outage posture: a `MissingClientError` **or** any `redis.exceptions.RedisError` (ConnectionError / TimeoutError) from the IP backend is rejected fail-closed with `middleware_reject("admission_unavailable")` → 503. Catching only `MissingClientError` meant a real outage escaped the middleware as a 500. The admin IP-list readers keep the OPPOSITE, separately pinned contract (`[]` / `0`) — see `tests/unit/core/guard/test_ip_rules_redis_outage.py`.
 - Rate limit: `rate_limit.py` — GCRA (Redis), per-user/tier limits
 - Query profiler: `query_profiler.py` — `QUERY_PROFILER_ENABLED`, `QUERY_PROFILER_SLOW_THRESHOLD_MS`; adds `X-Query-Count`/`X-Query-Time` headers
 - Tenant: `tenant.py` — header validation → tenant context → RLS session variables

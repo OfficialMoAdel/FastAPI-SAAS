@@ -57,20 +57,38 @@ class PreferencesService:
 - Profile image: null (can upload)
 
 ### Notification Preferences
-- `email_notifications_enabled`: Toggle email notifications (default: true)
+- `email_notifications_enabled`: Toggle email notifications (default: true) — **the authoritative field**
 - `push_notifications_enabled`: Toggle push notifications (default: true)
 - `disabled_notification_types`: List of notification types to skip (default: [])
 - `quiet_hours_enabled`: Enable quiet hours (default: false)
-- `quiet_hours_start`: Start time in HH:MM format (e.g., "22:00")
-- `quiet_hours_end`: End time in HH:MM format (e.g., "07:00")
+- `quiet_hours_start`: Start time in HH:MM format (e.g., "22:00"); nullable, and an explicit `null` CLEARS it
+- `quiet_hours_end`: End time in HH:MM format (e.g., "07:00"); nullable, and an explicit `null` CLEARS it
 - Quiet hours support same-day (22:00-23:59) and cross-day (22:00-07:00) ranges
 - Integration: Notifications module calls `should_send_notification()` before sending
+- **`email_notifications` is an ALIAS of `email_notifications_enabled`.** The JSON
+  bag still carries `email_notifications` as the public response default
+  (`DEFAULT_PREFERENCES`), but `notifications/service.py` gates delivery on the
+  COLUMN only. `service.update_preferences` translates the public field onto the
+  column before it reaches the CRUD layer, and `_build_preferences_response`
+  lets the column WIN over the bag. Before this, sending
+  `{"email_notifications": false}` returned `false` and kept sending mail. Do
+  not reintroduce a write path that stores the JSON key: it would be a no-op the
+  API still echoes back. The backfill for existing opt-outs lives in
+  `src/migrations/versions/05_content_storage.py` (the layer that creates the
+  table) and is one-way: it can only turn delivery OFF.
 
 ### Profile Image Upload
-- Images stored via `files` module
-- Stored at: `{tenant_id}/{user_id}/profile/{filename}`
-- Supports: PNG, JPG, WebP (max 5MB)
-- URL stored in preferences
+- Stored through the tenant-aware storage provider — NOT the `files` module: a
+  profile image is not a `File` entity (no quota or File-row semantics)
+- Key: `users/{user_id}/profile.{ext}.{uuid4().hex}` — **versioned per upload**,
+  which is what makes replacement atomic: upload the new object, repoint the DB,
+  then delete the previous object. A fixed `profile.{ext}` key made that
+  impossible (an unchanged extension overwrote the only copy)
+- `{ext}` comes from the DETECTED magic-byte type, never the client filename
+- Supports: PNG, JPG, GIF, WebP (max 5MB)
+- URL stored on `users.profile_image_url`
+- Cleanup marker: every key starts with `users/{user_id}/profile.` —
+  `_profile_key_from_url` is the ONE place that recovers a key from the URL
 
 ## Touch Points / Key Files
 
@@ -100,6 +118,15 @@ class PreferencesService:
 - Preferences are user-scoped (not tenant-scoped)
 - Test isolation issue: Default preferences may leak between tests
 - Notification preferences have init=False - set via database updates, not constructor
+- **Explicit `null` clears a nullable column and is skipped everywhere else.**
+  `service.update_preferences` keeps explicit nulls (`exclude_unset` only);
+  `crud.update_preferences` lets `None` through ONLY for
+  `NULLABLE_PREFERENCE_COLUMNS` (`quiet_hours_start`, `quiet_hours_end`). Every
+  other column keeps skipping it (NOT NULL → would fail at flush), and JSON-bag
+  keys keep skipping it (the response merges the bag verbatim, so a stored
+  `None` would be echoed back).
+- `get_or_create` handles the concurrent-first-access race: the loser of the
+  unique-constraint INSERT rolls back and re-reads the winner instead of 500ing
 - Quiet hours validation prevents start == end (must be different times)
 - Notification module calls `should_send_notification()` before sending emails
 - **`quiet_hours_start` / `quiet_hours_end` are `String(5)` columns and that is load-bearing** (`models.py:90,95`). Three call sites depend on it: `crud.py:113` writes them with a `setattr` of `"22:00"`-shaped strings, the consumer at `notifications/service.py:611-612` calls `time.fromisoformat(prefs.quiet_hours_start)`, and the schemas type them `str | None`. On a database built by `alembic` those columns are `sa.Time(timezone=True)` (`migrations/versions/05_content_storage.py:103-104`), and MEASURED (`perf-results/RESULT-20261018-9cmn/`, bead `FastAPI_saas-9cmn`): the INSERT is refused with a `DatatypeMismatchError` on the bind type even when both columns are bound NULL, so `get_or_create` cannot create the row at all; a row that does exist reads back as `datetime.time`, and `time.fromisoformat` then raises a **`TypeError`** — which the `except ValueError` at `service.py:631` does NOT catch, so the exception escapes `should_send_notification`. `UserPreferencesRead` does not catch it either, because Pydantic coerces `time` into the `str` it declares, so the API happily serialises a value the notification path cannot parse. The same probe against a `create_all` database accepted every write and read, which is why development never sees it. **Fixed in `FastAPI_saas-nqk6`**, on the decision that the MODEL stays and the MIGRATION moves (a quiet-hours window is "22:00 to 07:00" — not an instant, no date, cross-day is the ordinary case, so the string is the right domain shape). The fix is in the layer that creates the table: `migrations/versions/05_content_storage.py` now declares `sa.String(length=5)`. Because the schema is not shipped yet, the database is dropped and rebuilt (`DROP SCHEMA public CASCADE` + `alembic upgrade head`) rather than repaired in place — `src/migrations/AGENTS.md` says a schema change extends the relevant layer rather than stacking a new revision "unless the layer is already applied in production". If layer 05 is ever applied in production, the rule reverses and the fix becomes a correction plus a revision that alters the existing columns. The consumer's `except ValueError` at `service.py:631` is deliberately left alone: with a text column `fromisoformat` can only raise `ValueError`, so widening it to catch `TypeError` would be handling an impossible scenario and would hide the exact regression the oracle exists to catch. **Do not "widen" these columns, or convert the ORM to `Mapped[datetime.time]`, without changing all three call sites.**

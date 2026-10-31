@@ -161,8 +161,10 @@ async def _start_permission_catalog_reconcile() -> None:
     missing only degrades *new permission grants* for one slug. Tearing down a
     serving process for that would be disproportionate, so the error is loud in
     the log and the migration remains the authoritative repair path.
-    phase the successor mapping is applied when any role actually holds
-    ``files:manage`` (a legacy database, or one carrying operator-created rows).
+
+    This phase also re-points role grants across a renamed permission: the
+    successor mapping is applied when any role still holds a stale slug (a legacy
+    database, or one carrying operator-created rows).
     """
     from src.app.core.db.database import local_session
     from src.app.modules.rbac.catalog import (

@@ -249,6 +249,17 @@ per-row `set_nx` claims, so one bad batch cannot discard the page. A crash
 after claiming leaks those claims for at most the 60s TTL, which delays one
 harvest and never double-delivers.
 
+**Snapshot `(id, tenant_id)` BEFORE the loop.** A per-row rollback runs
+SQLAlchemy's `_restore_snapshot`, which expires EVERY instance in the identity
+map — primary keys included — even with `expire_on_commit=False`. Reading
+`delivery.id` on the next iteration therefore initiated IO outside the greenlet
+and raised `MissingGreenlet` from OUTSIDE the per-row `try`, so one bad row
+aborted the whole tick instead of being skipped. The loop uses the snapshot for
+the lock key, the claim lookup, the enqueue and the log, and writes
+`next_retry_at` with a Core `UPDATE ... execution_options(synchronize_session=False)`
+rather than an ORM mutation, so the write never depends on an expired instance's
+load state.
+
 **EXACTLY ONE release per claimed row — never zero, never two.** The
 happy path releases before its own enqueue and sets a `released` flag; the
 `finally` is a SAFETY NET that runs only when that flag is false (the row
@@ -437,6 +448,16 @@ rg -n "trigger_webhooks|handle_webhook_trigger_event|webhook_event_adapter" src/
   `_invalidate_endpoints_cache`, which deletes the per-tenant index
   `webhook:tenant_endpoints:{tenant_id}` and every key in it. Entries are
   cached for 300 s under `webhook:active_endpoints:{tenant_id}:{event_type}`.
+- **`_serialize_endpoint` / `_deserialize_endpoint` are ONE contract in two
+  halves, and a cache HIT must be behaviourally identical to a MISS.** Every key
+  the serializer writes has to be restored, including `id` and `description` —
+  both are `init=False` on the model, so the deserializer assigns them AFTER
+  construction. `_SERIALIZED_ENDPOINT_KEYS` is the declared key set and
+  `tests/unit/modules/webhooks/test_active_endpoints_cache.py` asserts the
+  round trip against it. Dropping `id` made `trigger_webhooks` insert a
+  `WebhookDelivery` with a NULL `webhook_endpoint_id` (NOT NULL), so every
+  trigger inside the 300 s TTL aborted. **When you add a field, add it to both
+  halves and to `_SERIALIZED_ENDPOINT_KEYS`.**
 - **The plaintext secret exists exactly once.** It is returned by the create
   and rotate responses. `WebhookEndpointRead` has no secret field, and the
   signing-secret view endpoint returns a masked preview.

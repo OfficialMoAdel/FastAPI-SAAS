@@ -579,6 +579,7 @@ class TestWebhookServiceDelivery:
     async def test_retry_delivery(self, webhook_service, mock_db, mock_webhook_delivery):
         """Test manual retry of a delivery."""
         mock_webhook_delivery.status = WebhookDeliveryStatus.FAILED
+        mock_webhook_delivery.error_message = "connection reset by peer"
         mock_db.get.return_value = mock_webhook_delivery
 
         with patch("src.app.modules.webhooks.delivery.enqueue", new_callable=AsyncMock) as mock_enqueue:
@@ -586,6 +587,8 @@ class TestWebhookServiceDelivery:
 
         assert result.status == WebhookDeliveryStatus.PENDING
         assert result.attempt_count == 0
+        # R1-RETRY: the old failure message must not describe the new attempt.
+        assert result.error_message is None
         mock_enqueue.assert_called_once_with(mock_webhook_delivery.id)
 
     @pytest.mark.asyncio

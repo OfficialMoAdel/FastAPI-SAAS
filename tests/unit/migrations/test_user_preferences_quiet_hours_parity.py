@@ -101,6 +101,26 @@ def _create_table_block(source: str, table: str) -> str:
     raise AssertionError(f"{table} create_table not found")
 
 
+def _executed_sql(source: str, function: str = "upgrade") -> list[str]:
+    """String literals handed to ``op.execute(...)`` inside one migration function."""
+    tree = ast.parse(source)
+    func = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == function
+    )
+    statements: list[str] = []
+    for node in ast.walk(func):
+        if not isinstance(node, ast.Call):
+            continue
+        target = node.func
+        if isinstance(target, ast.Attribute) and target.attr == "execute":
+            statements.extend(
+                arg.value for arg in node.args if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+            )
+    return statements
+
+
 def _column_declaration(block: str, table: str, column: str) -> str:
     """The whole `sa.Column("<column>", ...)` text, parens balanced.
 
@@ -506,3 +526,34 @@ def _function_source(path: Path, function: str) -> str:
         if isinstance(node, ast.FunctionDef) and node.name == function:
             return ast.unparse(node)
     raise AssertionError(f"{path} has no function {function}")
+
+
+# --------------------------------------------------------------------------
+# R2-26: the duplicate email-notification setting is collapsed ONE-WAY
+# --------------------------------------------------------------------------
+def test_the_notification_dedup_backfill_is_one_way() -> None:
+    """The backfill may only ever turn delivery OFF.
+
+    ``user_preferences`` carries the email-notification setting twice: the public
+    JSON field and the ``email_notifications_enabled`` column that
+    ``notifications/service.py`` actually gates on. The application now treats the
+    JSON field as an ALIAS of the column, and this statement reconciles rows that
+    predate the alias.
+
+    Propagating ``false`` honours an explicit opt-out. Propagating ``true`` would
+    re-subscribe a user who opted out through the column — the exact failure the
+    alias exists to stop. Consent is one-way, so the direction is pinned here.
+    """
+    joined = " ".join(_executed_sql(MIGRATION.read_text(encoding="utf-8"))).lower()
+
+    assert "email_notifications_enabled = false" in joined
+    assert "email_notifications_enabled = true" not in joined
+    assert "= 'true'" not in joined, "only the false direction may be propagated"
+
+
+def test_the_notification_dedup_backfill_is_scoped_to_an_explicit_json_opt_out() -> None:
+    """Only a row that literally says ``false`` in the bag is touched."""
+    joined = " ".join(_executed_sql(MIGRATION.read_text(encoding="utf-8"))).lower()
+
+    assert "preferences ->> 'email_notifications'" in joined, "the legacy field is the source"
+    assert "= 'false'" in joined, "an absent or true value must be left alone"

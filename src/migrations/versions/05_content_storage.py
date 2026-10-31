@@ -134,6 +134,34 @@ def upgrade() -> None:
         "CREATE INDEX idx_user_preferences_preferences_gin ON user_preferences USING GIN (preferences jsonb_path_ops)"
     )
 
+    # R2-26: collapse the duplicate email-notification setting.
+    #
+    # `user_preferences` stored `email_notifications` twice: as the JSON field
+    # `preferences->>'email_notifications'` and as the `email_notifications_enabled`
+    # column, the only one `notifications/service.py` gated delivery on. A client
+    # sending `{"email_notifications": false}` got `false` back but kept receiving
+    # mail.
+    #
+    # The application now treats the JSON field as an alias of the column
+    # (`user_preferences/service.py`), so new rows cannot hold contradictory values.
+    # This statement reconciles pre-alias rows, one-way: only `false` propagates.
+    # Turning email on from the legacy field could mail a user who opted out via
+    # the column.
+    #
+    # It runs after `create_table`, matching nothing on a fresh build. It lives in
+    # the creating layer because the schema is pre-release and the database is
+    # rebuilt, not patched (`src/migrations/AGENTS.md`); already-migrated databases
+    # never re-run this layer, so historical JSON opt-outs persist while the column
+    # still wins on read.
+    op.execute(
+        """
+        UPDATE user_preferences
+           SET email_notifications_enabled = false
+         WHERE (preferences ->> 'email_notifications') = 'false'
+           AND email_notifications_enabled IS NOT false
+        """
+    )
+
     # ===== FEATURE_FLAGS =====
     op.create_table(
         "feature_flags",

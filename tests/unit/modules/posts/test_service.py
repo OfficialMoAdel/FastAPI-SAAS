@@ -270,8 +270,40 @@ class TestPostServiceUpdate:
             mock_crud.update.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_post_other_user_gets_not_found(self, mock_db, mock_user, post_update):
+        """R1-BUG-3: a same-tenant peer cannot tell "not mine" from "absent".
+
+        The scoped fetch returns nothing for a post the caller does not own, so
+        the response is the same 404 as a genuinely missing id.
+        """
+        from src.app.modules.posts.service import PostService
+        from src.app.shared.exceptions import ModelNotFoundError
+
+        service = PostService(mock_db)
+        other_user = mock_user.model_copy(update={"id": 999, "username": "otheruser"})
+
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
+            mock_crud.get.return_value = None
+
+            with pytest.raises(ModelNotFoundError):
+                await service.update_post(
+                    post_id=1,
+                    values=post_update,
+                    current_user=other_user,
+                )
+
+            filters = mock_crud.get.call_args.kwargs
+            assert filters["created_by_user_id"] == 999, "the fetch must be owner-scoped"
+            mock_crud.update.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_update_post_forbidden_for_other_user(self, mock_db, mock_user, mock_post, post_update):
-        """Test that updating another user's post raises the domain ForbiddenError (Q-M1)."""
+        """Defence in depth: the ownership seam still refuses if the filter is bypassed.
+
+        Q-M1 — the domain ``ForbiddenError`` is the shared exception the seam
+        raises; with the R1-BUG-3 scoped fetch it is not reachable through the
+        API, and this test pins that the seam itself still works.
+        """
         from src.app.modules.posts.service import PostService
         from src.app.shared.exceptions import ForbiddenError
 
@@ -279,6 +311,7 @@ class TestPostServiceUpdate:
         other_user = mock_user.model_copy(update={"id": 999, "username": "otheruser"})
 
         with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
+            # Simulates a filter regression: the row comes back despite the scope.
             mock_crud.get.return_value = mock_post
 
             with pytest.raises(ForbiddenError):
@@ -287,6 +320,23 @@ class TestPostServiceUpdate:
                     values=post_update,
                     current_user=other_user,
                 )
+
+    @pytest.mark.asyncio
+    async def test_update_post_superuser_fetch_is_not_owner_scoped(
+        self, mock_db, mock_superuser, mock_post, post_update
+    ):
+        """R1-BUG-3: the superuser path stays unfiltered by design."""
+        from src.app.modules.posts.service import PostService
+
+        service = PostService(mock_db)
+
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
+            mock_crud.get.return_value = mock_post
+
+            await service.update_post(post_id=1, values=post_update, current_user=mock_superuser)
+
+            filters = mock_crud.get.call_args.kwargs
+            assert "created_by_user_id" not in filters
 
 
 class TestPostServiceDelete:
@@ -349,7 +399,27 @@ class TestPostServiceDelete:
             mock_crud.delete.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_delete_post_other_user_gets_not_found(self, mock_db, mock_user):
+        """R1-BUG-3: delete answers 404 for "not mine" exactly as for "absent"."""
+        from src.app.modules.posts.service import PostService
+        from src.app.shared.exceptions import ModelNotFoundError
+
+        service = PostService(mock_db)
+        other_user = mock_user.model_copy(update={"id": 999, "username": "otheruser"})
+
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
+            mock_crud.get.return_value = None
+
+            with pytest.raises(ModelNotFoundError):
+                await service.delete_post(post_id=1, current_user=other_user)
+
+            filters = mock_crud.get.call_args.kwargs
+            assert filters["created_by_user_id"] == 999, "the fetch must be owner-scoped"
+            mock_crud.delete.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_delete_post_forbidden_for_other_user(self, mock_db, mock_user, mock_post):
+        """Defence in depth: the ownership seam still refuses if the filter is bypassed."""
         """Test that deleting another user's post raises the domain ForbiddenError (Q-M1)."""
         from src.app.modules.posts.service import PostService
         from src.app.shared.exceptions import ForbiddenError

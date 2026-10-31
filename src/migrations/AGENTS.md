@@ -366,6 +366,32 @@ Two consequences worth stating because they look like contradictions and are not
 - **The oracle asserts the database ACCEPTS a value the ORM accepts.** An oracle that only asserts "the two declarations agree" would be satisfied by the shrink and would have passed against the defect. `tests/unit/migrations/test_width_parity_storage_and_audit.py` therefore drives a 501- and a 4096-character `User-Agent` at the declared column type and requires that neither be refused.
 - **Both columns were corrected in the layer that creates them, not by a new revision.** They are only reachable through `create_table`, so the quiet-hours and width fixes stay in layers 05/02 and the database is rebuilt per the two-file rule above. `notifications.error_kind` follows the same rule: it is declared in layer 07's `create_table` and the database is rebuilt while the layer is still pre-release. The head is `08_enable_rls_policies`; `scripts/checks/migration_graph.py` enforces one linear head. The oracle pins that shape too, so a later reader who reaches for `alter_column()` on a quiet-hours column fails the test rather than silently creating a second convention.
 
+### Data backfills live in the creating layer while the schema is pre-release
+
+`05_content_storage.py` also carries a DATA statement (not a schema change): the
+R2-26 backfill that propagates an explicit JSON `email_notifications: false` onto
+the `email_notifications_enabled` column that delivery actually reads. It sits in
+the creating layer for the same reason the quiet-hours and width fixes do — the
+schema is not shipped, so the database is dropped and rebuilt rather than patched
+in place.
+
+Its direction is ONE-WAY (it can only turn delivery OFF, never ON) because turning
+email on from a legacy field could re-subscribe a user who opted out through the
+column; `tests/unit/migrations/test_user_preferences_quiet_hours_parity.py` pins
+that property. Two consequences to keep in mind:
+
+- On a fresh build the statement matches nothing, because `create_table` has just
+  created an empty table. It is there so a database built from a dump (or one
+  created by `create_all` and then stamped) reconciles too.
+- An already-migrated database never re-runs this layer, so its historical JSON
+  opt-outs stay in the bag. That is acceptable only because the application lets
+  the COLUMN win on read; the alias in `user_preferences/service.py` is what makes
+  the stored duplicate inert.
+
+If layer 05 is ever applied in production, the rule reverses: the backfill becomes
+a repair revision on top of the chain, and the head assertions in that oracle move
+with it.
+
 Write `op.execute` statements **literally, not in a loop**. A migration is read by a human during an incident and grepped by the oracle; a loop hides both the table and the cast.
 
 **Revision ids must fit alembic's `alembic_version.version_num VARCHAR(32)`.** A 41-character id made the entire `alembic upgrade head` **roll back** (not just fail the head) because alembic runs the chain in a single transaction — measured in a discarded first attempt, recorded in `tests/unit/migrations/`. Keep ids at 32 characters or shorter; `09_passkey_and_quiet_hours` (27) is the precedent.

@@ -227,3 +227,82 @@ class TestOrderingInvariantsSurvive:
         assert len(released_keys) == 2, "one release per claimed row, no more"
         assert db.rollback.await_count == 1
         assert db.commit.await_count == 1
+
+
+class _ExpiringDelivery:
+    """An ORM instance whose mapped attributes are expired by a rollback.
+
+    A root ``Session.rollback()`` runs ``_restore_snapshot``, which expires
+    EVERY state in the identity map — including primary keys — even when the
+    session was built with ``expire_on_commit=False``. Reading such an
+    attribute outside the greenlet raises ``MissingGreenlet``. This double
+    raises instead, so a test proves the loop never touches it after a
+    rollback.
+    """
+
+    def __init__(self, delivery_id: int, tenant_id: str) -> None:
+        self._values = {"id": delivery_id, "tenant_id": tenant_id}
+        self._expired = False
+
+    def expire(self) -> None:
+        self._expired = True
+
+    def __getattr__(self, name: str) -> object:
+        if name not in ("id", "tenant_id"):
+            raise AttributeError(name)
+        if self._expired:
+            raise RuntimeError("MissingGreenlet: expired attribute read outside the greenlet")
+        return self._values[name]
+
+
+def _expire_all(rows: list[_ExpiringDelivery]):
+    def _expire() -> None:
+        for row in rows:
+            row.expire()
+
+    return _expire
+
+
+class TestARollbackDoesNotPoisonTheNextRow:
+    """R1-BUG-2: per-row isolation must survive the rollback that isolates it.
+
+    The old loop read ``delivery.id`` for the lock key, the claim lookup and the
+    enqueue OUTSIDE the per-row try. After a rollback expired the page, the next
+    iteration's first read raised from outside the try, so one bad row aborted
+    the whole tick instead of being skipped.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_second_row_is_recovered_after_the_first_row_rolls_back(self) -> None:
+        rows = [_ExpiringDelivery(1, "tenant-1"), _ExpiringDelivery(2, "tenant-2")]
+        db = _db(rows)
+        db.rollback.side_effect = _expire_all(rows)
+        redis = AsyncMock()
+        redis.enqueue_job.side_effect = [RuntimeError("arq down"), MagicMock()]
+
+        recovered = await _run({"redis": redis}, db, _cache([True, True]))
+
+        assert recovered == 1, "row 1 failed and rolled back; row 2 must still be recovered"
+        assert db.rollback.await_count == 1
+        enqueued = [call.kwargs["delivery_id"] for call in redis.enqueue_job.await_args_list]
+        assert enqueued == ["1", "2"], "row 2 was attempted after the rollback expired the page"
+
+    @pytest.mark.asyncio
+    async def test_the_row_retry_window_is_written_as_a_statement(self) -> None:
+        """The next_retry_at write is a Core UPDATE, not an ORM mutation.
+
+        An ORM mutation after a rollback needs the instance's primary key at
+        flush time, which is an implicit IO the coroutine cannot perform.
+        """
+        rows = [_ExpiringDelivery(1, "tenant-1"), _ExpiringDelivery(2, "tenant-2")]
+        db = _db(rows)
+        db.rollback.side_effect = _expire_all(rows)
+        redis = AsyncMock()
+        redis.enqueue_job.side_effect = [RuntimeError("arq down"), MagicMock()]
+
+        await _run({"redis": redis}, db, _cache([True, True]))
+
+        update_calls = [
+            call for call in db.execute.await_args_list if call.args and getattr(call.args[0], "is_update", False)
+        ]
+        assert len(update_calls) == 1, "the retry window is written with an UPDATE statement"

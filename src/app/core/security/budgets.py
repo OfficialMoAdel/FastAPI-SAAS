@@ -134,6 +134,7 @@ class SecurityAction(StrEnum):
     MFA_MUTATE = "mfa_mutate"
     PASSKEY_LOGIN = "passkey_login"
     MAGIC_LINK_SEND = "magic_link_send"
+    MAGIC_LINK_VERIFY = "magic_link_verify"
     REFRESH = "refresh"
     AI_CHAT = "ai_chat"
 
@@ -275,6 +276,16 @@ BUDGETS: Mapping[SecurityAction, BudgetDef] = {
     SecurityAction.MAGIC_LINK_SEND: BudgetDef(
         action=SecurityAction.MAGIC_LINK_SEND,
         legs=(Leg(KeyKind.EMAIL, "magic_link_send"),),
+    ),
+    # R2-24: the verify door was the only un-metered step in the magic-link
+    # flow. Keyed on the IP, NOT the token: a per-token counter gives an
+    # attacker a fresh budget for every guess, and the email is only known
+    # after the token is peeked — so a flood of invalid tokens would never be
+    # metered by an email-keyed leg. 256-bit token entropy makes guessing
+    # infeasible; this bounds cheap DoS.
+    SecurityAction.MAGIC_LINK_VERIFY: BudgetDef(
+        action=SecurityAction.MAGIC_LINK_VERIFY,
+        legs=(Leg(KeyKind.IP, "magic_link_verify", required=False),),
     ),
     SecurityAction.MFA_MUTATE: BudgetDef(
         action=SecurityAction.MFA_MUTATE,

@@ -5,6 +5,7 @@ stored in Redis. Whitelisted IPs bypass restrictions, blacklisted IPs are blocke
 """
 
 from fastapi import Request
+from redis.exceptions import RedisError
 from starlette.types import ASGIApp
 
 from src.app.core.config import settings
@@ -111,10 +112,10 @@ class IPFilterMiddleware:
         # response here; setdefault keeps the inner middleware's header
         # authoritative on pass-through responses.
         send = wrap_send_with_request_id(send, request_id_from_scope(scope))
-# C-1: scope["path"] is exactly what Request(scope).url.path reads on this
-# Starlette version, and taking it directly is the cheaper form. The Request
-# is still built here because state/headers/method are still needed; only
-# the path read moves. tests/unit/middleware/test_c1_scope_path_oracle.py.
+        # C-1: scope["path"] is exactly what Request(scope).url.path reads on this
+        # Starlette version, and taking it directly is the cheaper form. The Request
+        # is still built here because state/headers/method are still needed; only
+        # the path read moves. tests/unit/middleware/test_c1_scope_path_oracle.py.
         path = scope["path"]
 
         # Skip exempt paths
@@ -143,7 +144,11 @@ class IPFilterMiddleware:
             # unavailable admission backend.
             try:
                 is_blacklisted, is_whitelisted = await self._filter_service.check_ip_status(client_ip)
-            except MissingClientError:
+            except (MissingClientError, RedisError):
+                # R2-15: a REAL outage (ConnectionError / TimeoutError) is a
+                # RedisError, and it used to escape this middleware as a 500
+                # instead of the fail-closed 503 the missing-client case already
+                # produced. Both mean "admission backend unavailable".
                 logger.exception("IP list backend unavailable", client_ip=client_ip)
                 from src.app.core.errors import middleware_reject
 

@@ -88,6 +88,25 @@ def _glob_match(text: str, pattern: str) -> bool:
     return bool(pat.match(text))
 
 
+# R1-BUG-1: every key ``_serialize_endpoint`` emits. The round-trip test
+# asserts this exact set, so a field added to one half without the other fails
+# the suite instead of silently degrading a cache hit.
+_SERIALIZED_ENDPOINT_KEYS = frozenset(
+    {
+        "id",
+        "tenant_id",
+        "url",
+        "event_type",
+        "secret",
+        "signing_secret",
+        "is_active",
+        "old_signing_secret",
+        "old_secret_expires_at",
+        "description",
+    }
+)
+
+
 def _serialize_endpoint(ep: WebhookEndpoint) -> dict[str, Any]:
     secret_hex = None
     secret = getattr(ep, "secret", None)
@@ -95,7 +114,10 @@ def _serialize_endpoint(ep: WebhookEndpoint) -> dict[str, Any]:
         secret_hex = secret.hex() if isinstance(secret, bytes | bytearray) else str(secret)
     old_expires = getattr(ep, "old_secret_expires_at", None)
     return {
-        "id": str(ep.id),
+        # ``str(None)`` is the truthy string "None", which a deserializer would
+        # then try to parse as a UUID. Only a transient instance has no id, and
+        # it must serialize as an absent value, not as text.
+        "id": None if ep.id is None else str(ep.id),
         "tenant_id": str(ep.tenant_id),
         "url": str(ep.url),
         "event_type": ep.event_type,
@@ -109,6 +131,17 @@ def _serialize_endpoint(ep: WebhookEndpoint) -> dict[str, Any]:
 
 
 def _deserialize_endpoint(data: dict[str, Any]) -> WebhookEndpoint:
+    """Rebuild the endpoint a cache MISS would have returned.
+
+    A cache hit must be behaviourally identical to a miss, so every key
+    ``_serialize_endpoint`` writes has to be restored here. ``id`` and
+    ``description`` are declared ``init=False`` on the model, so they cannot
+    travel through the constructor — they are assigned afterwards.
+
+    R1-BUG-1: without ``id``, ``trigger_webhooks`` inserted a ``WebhookDelivery``
+    with a NULL ``webhook_endpoint_id`` (NOT NULL), so every trigger inside the
+    300s cache TTL aborted instead of delivering.
+    """
     secret_val = data.get("secret")
     if isinstance(secret_val, bytes):
         secret_str = secret_val.decode("utf-8", errors="replace")
@@ -124,6 +157,11 @@ def _deserialize_endpoint(data: dict[str, Any]) -> WebhookEndpoint:
         signing_secret=data.get("signing_secret"),
         is_active=data.get("is_active", True),
     )
+    # init=False fields: the constructor cannot carry them.
+    raw_id = data.get("id")
+    if raw_id is not None:
+        ep.id = UUID(str(raw_id))
+    ep.description = data.get("description")
     if data.get("old_signing_secret"):
         ep.old_signing_secret = data["old_signing_secret"]
     if data.get("old_secret_expires_at"):
@@ -611,6 +649,9 @@ class WebhookService:
         delivery.status = WebhookDeliveryStatus.PENDING
         delivery.attempt_count = 0
         delivery.next_retry_at = None
+        # R1-RETRY: the previous failure's message must not outlive the requeue —
+        # a delivery that then succeeds would still report the old error.
+        delivery.error_message = None
 
         await self.db.commit()
         await delivery_module.enqueue(delivery.id)

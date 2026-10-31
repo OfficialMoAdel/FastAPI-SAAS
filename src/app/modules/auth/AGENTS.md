@@ -102,9 +102,35 @@ raise InvalidMagicLinkError()          # → 400 via the EXCEPTION_HANDLERS tabl
 
 Logout resolves the session id from the access token (`sid` claim → `jti` fallback) and calls `session_manager.invalidate_session`; revocation failures are logged, not masked. Tokens themselves are blacklisted via `core.security.blacklist_tokens` (both access + refresh).
 
+### Magic link: response honesty and failure cleanup
+
+- `MagicLinkSendResponse.may_be_delayed` is `True` on EVERY path, including the
+  anti-enumeration padding returns for a non-existent or inactive user. The mail
+  is dispatched through the notification/outbox seam
+  (`core/events/notifications.py::request_notification`), never sent inline. The
+  field must not differ between paths: a `True` on the success path and `False`
+  on the "no such user" path would BE the enumeration oracle the 0.15s
+  constant-time pad exists to prevent.
+- The tenant guard runs BEFORE the Redis token is minted, and any failure after
+  creation deletes the token (`_discard_magic_link_token`). A missing tenant used
+  to leave a live 15-minute credential behind on every attempt.
+- A transient DB failure while claiming the link is a **503**
+  (`ServiceUnavailableError`), not a bad token. `InvalidMagicLinkError` maps to
+  400 and tells the client to stop retrying; `SQLAlchemyTimeoutError` already has
+  a global 503 handler that the old broad `except Exception` was masking. Only a
+  genuinely unexpected exception still becomes a 500.
+
 ### Security seams to respect
 
 - Rate limiting: `rate_limit.py::check_auth_rate_limit` dependency on auth endpoints
+- Security budgets: `/auth/magic-link/send` charges `MAGIC_LINK_SEND` (email-hash
+  keyed) and `/auth/magic-link/verify` charges `MAGIC_LINK_VERIFY` (IP keyed,
+  30/60). The verify door was previously un-metered. It is keyed on the IP, not
+  the token: a per-token counter gives an attacker a fresh budget per guess, and
+  the email is only known after the token is peeked. Adding a budget means
+  adding it to `settings.rate_limit.SECURITY_BUDGETS` (and
+  `SECURITY_BUDGETS_FAIL_CLOSED`) as well as `budgets.py` — the boot gate
+  refuses to start otherwise, and `src/.env.example` carries the canonical set.
 - Lockout: `LoginLockoutPolicy` (ban-before-refresh semantics enforced)
 - Client IP: always via `core.utils.ip_utils.get_client_ip` (proxy-aware)
 - Request state: read guard-set values (`client_ip`, `ip_whitelisted`,

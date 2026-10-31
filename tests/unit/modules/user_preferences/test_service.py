@@ -28,7 +28,13 @@ class TestPreferencesService:
 
     @pytest.fixture
     def mock_prefs_record(self):
-        """Create a mock UserPreferences database record."""
+        """Create a mock UserPreferences database record.
+
+        R2-26: the response merges explicit COLUMNS last, and
+        ``email_notifications`` now comes from ``email_notifications_enabled``,
+        so the mock has to model the columns — otherwise the response carries a
+        MagicMock where a bool belongs.
+        """
         record = MagicMock()
         record.user_id = 1
         record.preferences = {
@@ -40,6 +46,12 @@ class TestPreferencesService:
             "date_format": "MM/DD/YYYY",
             "currency": "USD",
         }
+        record.email_notifications_enabled = True
+        record.push_notifications_enabled = False
+        record.disabled_notification_types = []
+        record.quiet_hours_enabled = False
+        record.quiet_hours_start = None
+        record.quiet_hours_end = None
         record.updated_at = datetime.now(UTC)
         return record
 
@@ -66,6 +78,12 @@ class TestPreferencesService:
         """Test get_preferences fills missing keys with defaults."""
         partial_record = MagicMock()
         partial_record.preferences = {"theme": "dark"}  # Only one key set
+        partial_record.email_notifications_enabled = True
+        partial_record.push_notifications_enabled = True
+        partial_record.disabled_notification_types = []
+        partial_record.quiet_hours_enabled = False
+        partial_record.quiet_hours_start = None
+        partial_record.quiet_hours_end = None
         partial_record.updated_at = datetime.now(UTC)
 
         with patch("src.app.modules.user_preferences.service.crud_user_preferences") as mock_crud:
@@ -84,6 +102,12 @@ class TestPreferencesService:
         """Test get_preferences with empty preferences returns all defaults."""
         empty_record = MagicMock()
         empty_record.preferences = None
+        empty_record.email_notifications_enabled = True
+        empty_record.push_notifications_enabled = True
+        empty_record.disabled_notification_types = []
+        empty_record.quiet_hours_enabled = False
+        empty_record.quiet_hours_start = None
+        empty_record.quiet_hours_end = None
         empty_record.updated_at = datetime.now(UTC)
 
         with patch("src.app.modules.user_preferences.service.crud_user_preferences") as mock_crud:
@@ -135,6 +159,13 @@ class TestPreferencesService:
                 "language": "fr",
                 "email_notifications": False,
             }
+            # R2-26: the alias wrote the COLUMN, so the row reflects that.
+            updated_record.email_notifications_enabled = False
+            updated_record.push_notifications_enabled = True
+            updated_record.disabled_notification_types = []
+            updated_record.quiet_hours_enabled = False
+            updated_record.quiet_hours_start = None
+            updated_record.quiet_hours_end = None
             updated_record.updated_at = datetime.now(UTC)
 
             mock_crud.update_preferences = AsyncMock(return_value=updated_record)
@@ -144,6 +175,11 @@ class TestPreferencesService:
             assert result["theme"] == "dark"
             assert result["language"] == "fr"
             assert result["email_notifications"] is False
+            # R2-26: the public field is an ALIAS of the delivery column, so the
+            # write must land on the column and never in the JSON bag.
+            sent = mock_crud.update_preferences.call_args.kwargs["updates"]
+            assert sent["email_notifications_enabled"] is False
+            assert "email_notifications" not in sent
 
     @pytest.mark.asyncio
     async def test_update_preferences_empty_update_returns_current(self, service, mock_db, mock_prefs_record):
