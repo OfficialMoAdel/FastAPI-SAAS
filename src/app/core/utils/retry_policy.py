@@ -45,12 +45,16 @@ def jittered_delay(seconds: float, *, jitter: bool = True) -> int:
     delay must never be truncated toward an immediate retry, and the floor of
     1 s stops a sub-second value becoming a hot loop.
 
-    Callers that index their own schedule (the webhook delivery path has an
-    ``override_delay`` for the circuit-open case, which bypasses the ladder
-    entirely) use this directly; ``retry_delay`` is the ladder-shaped wrapper.
+    BOTH branches ceil. The un-jittered branch used ``int(seconds)``, which did
+    exactly the truncation the sentence above forbids: for 1.9 it answered 1
+    while the jittered branch answered 2, so the schedule a test pinned and the
+    schedule production ran disagreed for every fractional input. Callers index
+    their own ladder (the webhook delivery path has an ``override_delay`` for the
+    circuit-open case, which bypasses the ladder entirely) and use this
+    directly; ``retry_delay`` is the ladder-shaped wrapper.
     """
     if not jitter:
-        return max(1, int(seconds))
+        return max(1, int(math.ceil(seconds)))
     return max(
         1,
         int(math.ceil(seconds * random.uniform(1 - JITTER_FRACTION, 1 + JITTER_FRACTION))),
@@ -80,6 +84,15 @@ def retry_delay(
     Returns:
         The delay in whole seconds, or ``None`` when no retry remains and the
         caller should run its terminal branch.
+
+    ``None`` has TWO causes — the caller's ceiling was reached, and the ladder
+    was empty (an operator can configure one away) — and a caller that treats
+    ``None`` as "exhausted only" is relying on something this function does not
+    promise. The event-bus worker does exactly that behind an ``assert``, which
+    only holds because ITS fallback (``settings.events.EVENT_BUS_RETRY_DELAYS or
+    EventBus.RETRY_DELAYS``) guarantees a non-empty ladder. A caller that cannot
+    guarantee one must distinguish the two itself (``job_try >= max_tries``) or
+    treat ``None`` as terminal; an ``assert`` under ``python -O`` is not a guard.
 
     A malformed counter is CLAMPED to the first attempt rather than trusted.
     ``job_try`` indexes the ladder, so ``0`` or a negative would select the

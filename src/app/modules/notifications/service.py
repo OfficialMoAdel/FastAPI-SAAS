@@ -16,7 +16,7 @@ from structlog import get_logger
 
 from src.app.clients.notifications import EmailMessage, SMTPProvider, get_email_provider  # noqa: F401
 from src.app.core.db.scoped import execute_scoped
-from src.app.core.security.rate_policy import consume
+from src.app.core.security.rate_policy import consume, window_reset_seconds
 from src.app.core.tenancy.scope import ExplicitTenant
 from src.app.core.utils.retry import with_retry
 from src.app.core.utils.retry_policy import retry_delay
@@ -120,8 +120,6 @@ def _refusal_wait(retry_after: int, period: int) -> int:
     """
     if retry_after > 0:
         return int(retry_after)
-    from src.app.core.security.rate_policy import window_reset_seconds
-
     return window_reset_seconds(period)
 
 

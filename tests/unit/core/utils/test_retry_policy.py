@@ -88,15 +88,25 @@ class TestJitterIsOneExpression:
 
         With no jitter, a fractional delay must round UP. ``round(0.5)`` is 0 in
         Python's banker's rounding, which would have scheduled an immediate
-        retry.
+        retry — and ``int(1.9)`` is 1, the same truncation one step later. BOTH
+        branches ceil, so the un-jittered schedule a test pins here is the one
+        production runs.
         """
         assert jittered_delay(0.5, jitter=False) == 1
-        assert jittered_delay(1.2, jitter=False) == 1
-        assert jittered_delay(1.9, jitter=False) == 1
-        assert jittered_delay(2.1, jitter=False) == 2
+        assert jittered_delay(1.2, jitter=False) == 2
+        assert jittered_delay(1.9, jitter=False) == 2
+        assert jittered_delay(2.1, jitter=False) == 3
 
     def test_jitter_can_be_disabled_for_exact_schedules(self) -> None:
         assert jittered_delay(60, jitter=False) == 60
+
+    def test_both_branches_agree_on_a_fractional_delay(self) -> None:
+        """The un-jittered branch used ``int()``, so 1.9 answered 1 while the
+        jittered branch answered 2 — the documented "never truncate toward an
+        immediate retry" rule held in one branch only."""
+        with patch("src.app.core.utils.retry_policy.random.uniform", return_value=1.0):
+            for nominal in (1.2, 1.5, 1.9):
+                assert jittered_delay(nominal, jitter=False) == jittered_delay(nominal, jitter=True)
 
     def test_a_burst_decorrelates(self) -> None:
         """The point of jitter: N simultaneous failures must not align."""

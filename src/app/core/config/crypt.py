@@ -133,8 +133,12 @@ class CryptSettings(BaseSettings):
             if not raw:
                 continue
             try:
-                Fernet(raw.encode() if isinstance(raw, str) else raw)
-            except (ValueError, TypeError) as exc:
+                # ``raw`` is ``SecretStr.get_secret_value()``, so it is always
+                # ``str`` and ``.encode()`` is always correct; ``Fernet`` raises
+                # ``ValueError`` (never ``TypeError``) for a malformed key, so the
+                # catch mirrors exactly what the constructor rejects.
+                Fernet(raw.encode())
+            except ValueError as exc:
                 raise ValueError(
                     f"{field_name} is not a valid Fernet key ({exc}). It must be EXACTLY 32 url-safe "
                     "base64-encoded bytes (44 chars). `openssl rand -hex 32` produces 64 hex chars and is "

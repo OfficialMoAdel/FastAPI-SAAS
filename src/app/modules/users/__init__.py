@@ -25,10 +25,14 @@ __all__ = [
 # Register user domain security lookups with core.security (DIP seam / PR-12)
 from typing import TYPE_CHECKING, Any
 
+from src.app.core.logger import get_logger
 from src.app.core.security.jwt_service import (
     register_token_version_lookup,
     register_user_tenant_lookup,
+    subject_log_ref,
 )
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     # Static-only re-exports: gives mypy real classes for the lazy
@@ -90,23 +94,52 @@ async def _users_tenant_lookup(username_or_email: str, db: Any) -> Any | None:
     from src.app.modules.users.models import User
 
     lowered = username_or_email.lower()
+    # ONE arm per lookup, chosen by SHAPE, because each arm has to match an
+    # index that exists. The username arm is served by the global functional
+    # index ``idx_users_lower_username`` (01_foundation.py:114). The email arm's
+    # only index is ``idx_users_tenant_lower_email`` = (tenant_id, lower(email)),
+    # and this statement deliberately carries NO tenant_id predicate — the
+    # tenant is the ANSWER here — so PostgreSQL cannot use it; an OR of the two
+    # arms cannot be answered by a BitmapOr either, so the whole lookup degraded
+    # to a sequential scan of ``users`` on the token-revocation path (every
+    # logout/refresh of a token with no ``tenant_id`` claim). Choosing one arm
+    # by shape is also what ``_users_token_version_lookup`` above already does,
+    # so both doors classify an identifier the same way.
+    identifier_column = User.email if "@" in username_or_email else User.username
     stmt = (
         select(User.tenant_id)
         .where(
-            (func.lower(User.username) == lowered) | (func.lower(User.email) == lowered),
+            func.lower(identifier_column) == lowered,
             User.is_deleted.is_(False),
         )
-        .limit(1)
+        # Deterministic, and observable when it cannot be. ``username``/``email``
+        # are unique only PER TENANT (``uq_user_username_tenant`` /
+        # ``uq_user_email_tenant`` both include tenant_id), so the same
+        # identifier can legitimately exist in two tenants — a normal SaaS case.
+        # A bare ``LIMIT 1`` returned an ARBITRARY one, and that value flows into
+        # ``TokenBlacklist.tenant_id`` and the blacklist cache key. Ordering by
+        # the primary key makes the choice stable; fetching a SECOND row is what
+        # makes the ambiguity visible instead of silent (one round trip either
+        # way — ``limit(2)`` instead of ``limit(1)``).
+        .order_by(User.id)
+        .limit(2)
     )
-    # Unscoped is the documented escape hatch for a context-free system read;
-    # `idx_users_lower_username` serves the username arm of the OR.
     result = await execute_scoped(
         stmt,
         db=db,
         model=User,
         scope=Unscoped(reason="jwt-tenant-resolution"),
     )
-    return result.scalar()
+    matches = result.scalars().all()
+    if len(matches) > 1:
+        # The subject is PII, so only the non-reversible reference is logged.
+        logger.warning(
+            "jwt_tenant_resolution_ambiguous",
+            subject_ref=subject_log_ref(lowered),
+            matches=len(matches),
+            resolved_tenant_id=str(matches[0]),
+        )
+    return matches[0] if matches else None
 
 
 async def get_user_tenant_id(db: Any, user_id: int) -> Any | None:

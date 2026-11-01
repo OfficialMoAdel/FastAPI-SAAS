@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from src.scripts.verify_indexes import EXPECTED_INDEXES, check_indexes, indexed_columns
+from src.scripts.verify_indexes import EXPECTED_INDEXES, check_indexes, index_predicate, indexed_columns
 
 _REPO = Path(__file__).resolve().parents[3]
 
@@ -40,6 +40,32 @@ class TestIndexedColumns:
         definition = "CREATE INDEX i ON public.t USING btree (tenant_id, created_at DESC) WHERE (is_deleted = false)"
         assert indexed_columns(definition) == ["tenant_id", "created_at"]
 
+    def test_a_partial_index_without_a_trailing_sort_op_still_parses(self) -> None:
+        """The WHERE clause's paren is not the column list's.
+
+        ``rpartition(")")`` cut at the LAST paren — the predicate's — and
+        returned ``["username", "tenant_id)"]``, so a perfectly correct schema
+        produced a spurious "wrong columns" failure. The trailing ``DESC`` in
+        the test above is exactly the shape that hid it.
+        """
+        definition = (
+            "CREATE UNIQUE INDEX uq_user_username_tenant ON public.users "
+            "USING btree (username, tenant_id) WHERE (is_deleted = false)"
+        )
+        assert indexed_columns(definition) == ["username", "tenant_id"]
+
+    def test_a_definition_without_a_column_list_is_empty(self) -> None:
+        assert indexed_columns("garbage") == []
+
+
+class TestIndexPredicate:
+    def test_a_plain_index_has_no_predicate(self) -> None:
+        assert index_predicate("CREATE INDEX i ON public.t USING btree (tenant_id, created_at) ") is None
+
+    def test_a_partial_index_reports_its_where_clause(self) -> None:
+        definition = "CREATE INDEX i ON public.t USING btree (tenant_id) WHERE (is_deleted = false)"
+        assert index_predicate(definition) == "(is_deleted = false)"
+
 
 class TestCheckIndexes:
     @staticmethod
@@ -60,6 +86,28 @@ class TestCheckIndexes:
         )
         problems = check_indexes(missing_one)
         assert problems == [f"missing: {EXPECTED_INDEXES[0][1]} on {EXPECTED_INDEXES[0][0]}"]
+
+    def test_a_partial_index_under_the_expected_name_is_not_a_pass(self) -> None:
+        """A predicate the query does not filter on cannot serve it.
+
+        ``idx_files_tenant_active`` is the documented example: same columns as
+        the list index, filtered on ``is_deleted``, and the list never filters
+        it. Reporting a green SUCCESS there is the false positive this script
+        exists to prevent, and the static gate
+        (``scripts/checks/index_predicate_coverage.py``) already rejects any
+        index carrying a predicate.
+        """
+        definitions = self._definitions(*(index for _table, index, _cols in EXPECTED_INDEXES))
+        table, index, columns = next(entry for entry in EXPECTED_INDEXES if entry[1] == "idx_files_tenant_created")
+        definitions[(table, index)] = (
+            f"CREATE INDEX {index} ON public.{table} USING btree "
+            f"({', '.join(columns)}) WHERE (is_deleted = false)"
+        )
+
+        problems = check_indexes(definitions)
+
+        assert len(problems) == 1
+        assert problems[0].startswith(f"partial index: {index} on {table}")
 
     def test_wrong_leading_columns_are_reported_as_wrong(self) -> None:
         """Same name, unusable index: name-only lookup would call this present."""

@@ -44,7 +44,6 @@ class DashboardService:
     # wait budget recomputes rather than stalling the dashboard.
     _METRICS_REFRESH_LOCK_TTL = 15
     _METRICS_REFRESH_WAIT_SECONDS = 5.0
-    _METRICS_REFRESH_POLL_SECONDS = 0.05
 
     async def _get_date_range(
         self, db: AsyncSession, time_range: TimeRange, tenant_id: str
@@ -285,7 +284,7 @@ class DashboardService:
         return (total_rev_sub, subs_count_sub, mrr_sub)
 
     @staticmethod
-    def _row_to_revenue_metrics(row, offset: int = 0, total_users: int = 0) -> RevenueMetrics:
+    def _row_to_revenue_metrics(row, offset: int = 0, *, total_users: int) -> RevenueMetrics:
         """Map the three revenue columns to :class:`RevenueMetrics`.
 
         The two ratio fields divide the SAME numerator by DIFFERENT
@@ -296,7 +295,11 @@ class DashboardService:
 
         ``total_users`` comes from the user group at the head of the same
         statement (column 0), so taking the divisor from it costs no extra
-        SQL, no extra column, and no change to the positional layout.
+        SQL, no extra column, and no change to the positional layout. It is
+        keyword-only and REQUIRED: a default of ``0`` made a forgotten argument
+        produce ``average_revenue_per_user = 0.0`` — a plausible-looking wrong
+        number published with no error, which is worse than a TypeError at the
+        call site. The only production caller always passes it.
 
         Window note: ``total_revenue`` is bounded by the requested range;
         ``total_users`` is the tenant's current non-deleted base and

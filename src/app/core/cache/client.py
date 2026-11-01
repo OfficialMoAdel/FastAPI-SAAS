@@ -137,7 +137,7 @@ class CacheClient(Protocol):
         fetch: Callable[[], Awaitable[Any]],
         *,
         ttl: int,
-        policy: Any = None,
+        policy: ReadThroughPolicy | None = None,
     ) -> Any:
         """Return the cached value at ``key``, computing it once if absent.
 
@@ -368,7 +368,7 @@ class RedisCacheAdapter:
         fetch: Callable[[], Awaitable[Any]],
         *,
         ttl: int,
-        policy: Any = None,
+        policy: ReadThroughPolicy | None = None,
     ) -> Any:
         """Delegate to :func:`src.app.core.cache.read_through.read_through`.
 

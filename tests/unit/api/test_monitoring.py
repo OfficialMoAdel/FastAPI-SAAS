@@ -499,3 +499,52 @@ class TestDiagnosticVersusGatingSurface:
         assert isinstance(res, JSONResponse)
         assert res.status_code == 503
         assert json.loads(bytes(res.body))["reason"] == "degraded"
+
+
+# ============================================================================
+# latency_ms is the measurement, or absent — never a 0 placeholder
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_a_failed_probe_publishes_its_measured_latency() -> None:
+    """An unhealthy probe reports how long the failure took.
+
+    Publishing ``0`` for "not measured" made a measured failure look instant,
+    so an alert keyed on non-zero error latency could never fire.
+    """
+    with (
+        patch("src.app.core.db.database.local_session") as mock_session_factory,
+        patch("src.app.core.health.check_database_health") as mock_probe,
+    ):
+        mock_session_factory.return_value.__aenter__.return_value = AsyncMock()
+        mock_probe.return_value = HealthResult(status="unhealthy", latency_ms=4321.0, error="OperationalError: x")
+
+        res = await check_database()
+
+    assert res["status"] == "unhealthy"
+    assert res["latency_ms"] == 4321.0
+    assert res["error"] == "OperationalError"
+
+
+@pytest.mark.asyncio
+async def test_an_unmeasured_probe_omits_the_field_instead_of_zero() -> None:
+    with (
+        patch("src.app.core.db.database.local_session") as mock_session_factory,
+        patch("src.app.core.health.check_database_health") as mock_probe,
+    ):
+        mock_session_factory.return_value.__aenter__.return_value = AsyncMock()
+        mock_probe.return_value = HealthResult(status="degraded", error="Pool not initialized")
+
+        res = await check_database()
+
+    assert "latency_ms" not in res, "an unmeasured latency must be absent, not 0"
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_redis_probe_carries_no_latency() -> None:
+    """The disabled payload never had one, and still must not."""
+    with patch("src.app.core.redis_provider.get_redis", return_value=None):
+        res = await check_redis()
+
+    assert res == {"status": "disabled", "message": "Redis not configured"}

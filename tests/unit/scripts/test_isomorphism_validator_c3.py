@@ -361,7 +361,7 @@ class TestNoHandlerReadsASession:
                     permitted.setdefault(f"{rel}:{fname}", []).append(f"{line} {what}")
         assert permitted == {
             "src/app/modules/audit_logs/service.py:flush_audit_log_buffer": ["736 .rollback"],
-            "src/app/modules/webhooks/delivery.py:recover_stuck_deliveries": ["749 .rollback"],
+            "src/app/modules/webhooks/delivery.py:recover_stuck_deliveries": ["783 .rollback"],
         }
 
     def test_a_rollback_is_not_mistaken_for_a_read(self, validator: Any) -> None:

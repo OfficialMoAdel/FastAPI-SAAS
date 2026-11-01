@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps import AuthenticatedUser, get_current_user, tenant_dependency
 from src.app.core.db.database import async_get_db
+from src.app.core.pagination import PaginationParams, get_pagination_params
 from src.app.core.tenancy.context import TenantContext
 from src.app.modules.{{ module_name }}.schemas import (
     {{ ModelName }}Create,
@@ -53,23 +54,31 @@ async def list_{{ module_name }}s(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     current_tenant: Annotated[TenantContext, Depends(tenant_dependency)],
     service: {{ ModelName }}ServiceDep,
-    page: int = 1,
-    per_page: int = 20,
+    pagination: Annotated[PaginationParams, Depends(get_pagination_params)],
 ) -> dict:
     """List {{ module_name }}s for the current tenant."""
     result = await service.list_{{ module_name }}s(
-        page=page,
-        items_per_page=per_page,
+        page=pagination.page,
+        items_per_page=pagination.per_page,
     )
     data = result.get("data", [])
     total = result.get("total_count", 0)
+    # The envelope must describe what was ACTUALLY fetched. Echoing the raw
+    # query params made it lie whenever they were clamped: ``?per_page=500``
+    # returned ``MAX_PER_PAGE`` rows while reporting ``per_page=500``, and
+    # ``has_next = page * per_page < total`` then said ``False`` for a page with
+    # rows still behind it (page 2 computed ``offset=500`` and came back empty,
+    # so rows 101-150 were unreachable at that page size).
+    # ``get_pagination_params`` is the single validation surface: it enforces
+    # ``ge=1`` / ``le=MAX_PER_PAGE`` and the shared deep-offset ceiling, so the
+    # values read here are already the effective ones.
     return {
         "items": data,
         "total": total,
-        "page": page,
-        "per_page": per_page,
-        "has_next": page * per_page < total,
-        "has_previous": page > 1,
+        "page": pagination.page,
+        "per_page": pagination.per_page,
+        "has_next": pagination.page * pagination.per_page < total,
+        "has_previous": pagination.page > 1,
     }
 
 

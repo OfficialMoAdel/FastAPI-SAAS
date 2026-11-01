@@ -171,7 +171,11 @@ def _cursor_id_for_column(id_col: Any, row_id: int | str) -> Any:
         return row_id
     try:
         return python_type(row_id)
-    except (TypeError, ValueError) as e:
+    except (TypeError, ValueError, AttributeError) as e:
+        # AttributeError is what ``uuid.UUID(<int>)`` raises: the constructor
+        # runs ``hex.replace(...)`` on its argument before any length/format
+        # check, so an all-digit cursor id against a UUID column (audit_logs)
+        # escaped here as a 500 instead of the 422 this function promises.
         raise ValueError(f"Malformed keyset cursor id: {row_id!r}") from e
 
 

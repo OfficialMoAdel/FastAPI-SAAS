@@ -232,10 +232,11 @@ the legacy process-global `webhook_circuit` in
 `settings.webhooks.WEBHOOK_RECOVERY_BUFFER_MINUTES` and for which no job is
 running. It runs under `bypass_rls`, selects at most
 `settings.webhooks.WEBHOOK_RECOVERY_BATCH_SIZE` rows `FOR UPDATE SKIP LOCKED`,
-claims the delivery locks for the WHOLE page with one pipelined
-`cache_client.set_nx_many` (`_claim_recovery_locks`; a row whose claim comes
-back `False` has an in-flight delivery and is skipped), releases each claim
-**before** enqueueing its row, and enqueues `deliver_webhook_task` with
+claims the delivery locks `_RECOVERY_CLAIM_WINDOW` rows at a time with one
+pipelined `cache_client.set_nx_many` (`_claim_recovery_locks`, which takes IDS
+from the pre-loop snapshot; a row whose claim comes back `False` has an
+in-flight delivery and is skipped), releases each claim **before** enqueueing
+its row, and enqueues `deliver_webhook_task` with
 `_job_id=f"recover_webhook_{id}"` so two ticks cannot double-enqueue the same
 row. Each row commits or rolls back on its own, so one bad row cannot discard
 the batch's progress.
@@ -245,9 +246,16 @@ claim before enqueue, release before THAT row's enqueue (never batched — the
 ordering is the point), ownership-token release, per-row commit. Failure
 degradation is the single-key contract: no Redis client → every row is treated
 as claimable and nothing is released; a pipeline error or a short answer →
-per-row `set_nx` claims, so one bad batch cannot discard the page. A crash
-after claiming leaks those claims for at most the 60s TTL, which delays one
-harvest and never double-delivers.
+per-row `set_nx` claims, so one bad batch cannot discard the page.
+
+The claim is a LIVENESS TEST, so its age is bounded: it is taken one window at
+a time, immediately before the rows it guards. Claiming the whole page under a
+single 60 s TTL let a later row's claim expire before its turn came, silently
+reopening the race the claim exists to close. The TTL stays 60 s rather than
+being stretched to cover the page, because it is also the crash-leak bound.
+`released` is the RESULT of `release_lock_if_owned`, never an assumption: that
+call swallows Redis errors and returns `False`, and a hard-coded `True` skipped
+the `finally` safety net and left the claim held for the full TTL.
 
 **Snapshot `(id, tenant_id)` BEFORE the loop.** A per-row rollback runs
 SQLAlchemy's `_restore_snapshot`, which expires EVERY instance in the identity

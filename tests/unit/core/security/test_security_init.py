@@ -452,7 +452,9 @@ async def test_resolve_tenant_from_context() -> None:
 async def test_resolve_tenant_from_db() -> None:
     db = _make_db()
     result = MagicMock()
-    result.scalar = MagicMock(return_value=4)
+    # The lookup reads up to TWO rows (``limit(2)``) so that an ambiguous
+    # subject is observable rather than silently resolved to an arbitrary one.
+    result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[4])))
     db.execute = AsyncMock(return_value=result)
     with patch("src.app.core.tenancy.context.get_current_tenant", return_value=None):
         assert await _resolve_tenant_id_for_token({"sub": "u"}, db) == 4

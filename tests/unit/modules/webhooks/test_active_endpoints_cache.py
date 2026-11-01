@@ -121,6 +121,7 @@ class TestEndpointCacheRoundTrip:
         endpoint.description = "primary CRM hook"
         endpoint.old_signing_secret = "previous-secret"
         endpoint.old_secret_expires_at = datetime(2030, 1, 1, tzinfo=UTC)
+        endpoint.endpoint_metadata = {"crm": "hubspot", "team": "growth"}
         return endpoint
 
     def test_serializer_emits_exactly_the_declared_key_set(self) -> None:
@@ -144,6 +145,7 @@ class TestEndpointCacheRoundTrip:
         assert restored.old_signing_secret == original.old_signing_secret
         assert restored.old_secret_expires_at == original.old_secret_expires_at
         assert restored.description == original.description
+        assert restored.endpoint_metadata == original.endpoint_metadata
 
     def test_a_transient_endpoint_serializes_an_absent_id(self) -> None:
         """``str(None)`` would be the truthy string "None" and fail UUID parsing."""

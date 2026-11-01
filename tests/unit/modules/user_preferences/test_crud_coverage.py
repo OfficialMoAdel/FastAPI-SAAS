@@ -20,6 +20,25 @@ def _make_crud() -> tuple[CRUDUserPreferences, AsyncMock]:
     return crud, db
 
 
+def _savepoint(db: AsyncMock) -> MagicMock:
+    """Make ``db.begin_nested()`` usable as an async context manager.
+
+    ``get_or_create`` scopes its INSERT to a savepoint so the loser of the
+    insert race unwinds only that statement; ``__aexit__`` returning False is
+    what the real ``AsyncSessionTransaction`` does for a nested block whose body
+    raised (roll the savepoint back, then re-raise).
+
+    ``AsyncSession.begin_nested`` is a SYNC method returning an async context
+    manager, so it is mocked as ``MagicMock``; an ``AsyncMock`` would return a
+    coroutine that cannot be used with ``async with``.
+    """
+    nested = MagicMock()
+    nested.__aenter__ = AsyncMock(return_value=nested)
+    nested.__aexit__ = AsyncMock(return_value=False)
+    db.begin_nested = MagicMock(return_value=nested)
+    return nested
+
+
 async def test_get_by_user_found() -> None:
     crud, db = _make_crud()
     prefs = UserPreferences(user_id=1)
@@ -46,12 +65,14 @@ async def test_get_or_create_existing() -> None:
 
 async def test_get_or_create_new() -> None:
     crud, db = _make_crud()
+    _savepoint(db)
     db.execute.return_value = _make_result(scalar_one_or_none=None)
     result = await crud.get_or_create(db=db, user_id=3)
     assert result is not None
     assert result.user_id == 3
     assert result.preferences is not None
     db.add.assert_called_once()
+    db.flush.assert_awaited_once()
     db.commit.assert_awaited_once()
     db.refresh.assert_awaited_once()
 
@@ -138,32 +159,39 @@ async def test_get_or_create_loser_of_the_insert_race_returns_the_winner() -> No
     from sqlalchemy.exc import IntegrityError
 
     crud, db = _make_crud()
+    _savepoint(db)
     winner = UserPreferences(user_id=10, preferences={"theme": "light"})
-    # First SELECT: nobody has a row yet. SELECT after the rollback: the winner.
+    # First SELECT: nobody has a row yet. SELECT after the savepoint: the winner.
     db.execute.side_effect = [
         _make_result(scalar_one_or_none=None),
         _make_result(scalar_one_or_none=winner),
     ]
-    db.commit.side_effect = IntegrityError("INSERT", {}, Exception("duplicate key"))
+    db.flush.side_effect = IntegrityError("INSERT", {}, Exception("duplicate key"))
 
     result = await crud.get_or_create(db=db, user_id=10)
 
     assert result is winner
-    db.rollback.assert_awaited_once()
+    # The recovery is scoped to the savepoint: unwinding the CALLER's whole
+    # transaction would discard unrelated pending work in the same unit of work.
+    db.rollback.assert_not_awaited()
+    db.commit.assert_not_awaited()
     db.refresh.assert_not_awaited()
 
 
 async def test_get_or_create_reraises_when_the_winner_vanished() -> None:
-    """A rollback followed by a missing row is a real failure, not a result."""
+    """A savepoint rollback followed by a missing row is a real failure."""
     import pytest
     from sqlalchemy.exc import IntegrityError
 
     crud, db = _make_crud()
+    _savepoint(db)
     db.execute.side_effect = [
         _make_result(scalar_one_or_none=None),
         _make_result(scalar_one_or_none=None),
     ]
-    db.commit.side_effect = IntegrityError("INSERT", {}, Exception("duplicate key"))
+    db.flush.side_effect = IntegrityError("INSERT", {}, Exception("duplicate key"))
 
     with pytest.raises(IntegrityError):
         await crud.get_or_create(db=db, user_id=11)
+
+    db.rollback.assert_not_awaited()

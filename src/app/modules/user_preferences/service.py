@@ -41,6 +41,20 @@ MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 #: through this prefix, so the key layout and the cleanup must agree.
 _PROFILE_KEY_MARKER = "users/{user_id}/profile."
 
+#: Public JSON preference field -> the delivery COLUMN it aliases.
+#:
+#: The column is what actually gates a channel, so a public field that only
+#: wrote the JSON bag was an inert no-op the API still accepted and echoed —
+#: the response could report ``false`` while delivery kept sending. Every
+#: channel that exists as BOTH a bag key and a column belongs here, and the
+#: read path (``_build_preferences_response``) and the write path
+#: (``update_preferences``) must both consult it, or the two halves disagree
+#: again for whichever channel was forgotten.
+_NOTIFICATION_ALIASES: tuple[tuple[str, str], ...] = (
+    ("email_notifications", "email_notifications_enabled"),
+    ("push_notifications", "push_notifications_enabled"),
+)
+
 
 def _profile_key_from_url(url: str | None, user_id: int) -> str | None:
     """Recover this user's profile-image storage key from its public URL.
@@ -63,15 +77,30 @@ async def _delete_object_quietly(storage: ProfileImageStore, path: str, *, user_
     Cleanup runs after the request has already succeeded, so it must never turn
     a good upload into an error: an orphaned object is bounded (one per upload),
     a broken ``profile_image_url`` is not.
+
+    ``delete()`` is called directly, with no ``exists()`` probe in front of it:
+    every provider's delete is already idempotent for a missing key (S3/Azure
+    return success, local checks existence), while ``exists()`` has failure
+    modes of its own — the S3 adapter re-raises anything that is not a 404, so a
+    403/5xx/network blip skipped the delete entirely and leaked the object.
+    Failures arrive as ``StorageResult(success=False)`` rather than exceptions,
+    so the result is inspected here instead of being dropped.
     """
     try:
-        if await storage.exists(path):
-            await storage.delete(path)
+        result = await storage.delete(path)
     except Exception as e:  # noqa: BLE001 - best-effort cleanup by contract
         logger.warning(
             "Failed to delete profile image object",
             user_id=user_id,
             error=str(e),
+            path=path,
+        )
+        return
+    if not result.success:
+        logger.warning(
+            "Failed to delete profile image object",
+            user_id=user_id,
+            error=result.error,
             path=path,
         )
 
@@ -89,16 +118,22 @@ def _build_preferences_response(prefs: Any) -> dict[str, Any]:
     # Merge explicit columns. These WIN over the JSON bag: the columns are the
     # authoritative storage for every setting that also exists as a column, so
     # a stale bag key can never shadow the value the API actually enforces.
+    #
+    # R2-26/R2-27: each public JSON field is an ALIAS of the delivery column
+    # (``_NOTIFICATION_ALIASES``). They used to be two settings where only the
+    # column gated anything, so the JSON field was a no-op the API still
+    # accepted and echoed — and because only the email pair was aliased, the
+    # push pair could contradict itself in one payload
+    # (``push_notifications: false`` next to ``push_notifications_enabled:
+    # true``). Both spellings are published from the SAME column, so they can
+    # never disagree again.
+    for public_field, column_field in _NOTIFICATION_ALIASES:
+        column_value = getattr(prefs, column_field)
+        result[public_field] = column_value
+        result[column_field] = column_value
+
     result.update(
         {
-            # R2-26: `email_notifications` is the public JSON field; the column
-            # `email_notifications_enabled` is what delivery reads. They were two
-            # settings where only the column gated anything, so the JSON field was
-            # a no-op the API still accepted and echoed. It is now an ALIAS — this
-            # line is what makes the public field tell the truth.
-            "email_notifications": prefs.email_notifications_enabled,
-            "email_notifications_enabled": prefs.email_notifications_enabled,
-            "push_notifications_enabled": prefs.push_notifications_enabled,
             "disabled_notification_types": prefs.disabled_notification_types,
             "quiet_hours_enabled": prefs.quiet_hours_enabled,
             "quiet_hours_start": prefs.quiet_hours_start,
@@ -232,21 +267,33 @@ class PreferencesService:
         # CRUD layer decides which columns may actually take it.
         update_dict = updates.model_dump(exclude_unset=True)
 
-        # R2-26: `email_notifications` (JSON bag) and `email_notifications_enabled`
-        # (column) were duplicate settings where only the column gated delivery.
-        # The public JSON field is now an alias of the column, so a client that
-        # sends it changes delivery instead of writing an inert bag key.
-        if "email_notifications" in update_dict:
-            legacy_value = update_dict.pop("email_notifications")
-            if "email_notifications_enabled" in update_dict:
-                if update_dict["email_notifications_enabled"] != legacy_value:
-                    logger.warning(
-                        "conflicting_notification_preference_fields",
-                        user_id=user_id,
-                        used="email_notifications_enabled",
-                    )
-            else:
-                update_dict["email_notifications_enabled"] = legacy_value
+        # R2-26/R2-27: each public JSON field is an ALIAS of the delivery column
+        # (``_NOTIFICATION_ALIASES``). A client that sends the public name must
+        # change delivery instead of writing an inert bag key.
+        #
+        # ``model_dump(exclude_unset=True)`` keeps EXPLICIT NULLS, so key
+        # PRESENCE is the wrong test for the column half: a client that
+        # serializes every optional field sends ``email_notifications_enabled:
+        # null`` alongside a meaningful ``email_notifications: false``. Testing
+        # presence treated that null as an instruction, discarded the alias
+        # value, logged a bogus conflict, and the CRUD layer then skipped the
+        # null (NOT NULL column) — the request silently did nothing. An explicit
+        # null therefore means "not provided", which is exactly how the CRUD
+        # layer already treats nulls for NOT NULL columns.
+        for public_field, column_field in _NOTIFICATION_ALIASES:
+            if public_field not in update_dict:
+                continue
+            alias_value = update_dict.pop(public_field)
+            if alias_value is None:
+                continue
+            if update_dict.get(column_field) is None:
+                update_dict[column_field] = alias_value
+            elif update_dict[column_field] != alias_value:
+                logger.warning(
+                    "conflicting_notification_preference_fields",
+                    user_id=user_id,
+                    used=column_field,
+                )
 
         # Handle enum conversion
         if "theme" in update_dict and hasattr(update_dict["theme"], "value"):
@@ -342,7 +389,11 @@ class PreferencesService:
         # ".." segment, but it CAN contain "/" and corrupt the
         # `users/{uid}/profile.` cleanup marker that both the replacement cleanup
         # below and delete_profile_image rely on.
-        file_ext = str(detected_kind.extension)
+        #
+        # No ``str()`` wrapper: ``str(None)`` is the truthy string "None", which
+        # passes both checks below and would become the path segment. The raw
+        # value with an empty-string fallback makes the guard actually reject it.
+        file_ext = detected_kind.extension or ""
         # Defence in depth: the extension becomes a path segment, so a future
         # ALLOWED_IMAGE_TYPES entry must not be able to smuggle a separator in.
         if not file_ext.isalnum() or len(file_ext) > 5:
@@ -365,11 +416,17 @@ class PreferencesService:
             logger.error("Failed to upload image for user", user_id=user_id, error=result.error)
             raise PreferenceStorageError("upload", result.error or "Unknown error")
 
-        image_url = await storage.get_url(new_path)
-
         # 6. Point the user at the new object FIRST. Until this commits, the old
         #    object is still the referenced one and must stay untouched.
+        #
+        #    ``get_url`` is INSIDE the guard on purpose: the S3 provider fails
+        #    closed on presigning errors (it raises rather than emitting an empty
+        #    URL), and a raise between the upload and this try orphaned the
+        #    object we had just written — nothing referenced it and nothing would
+        #    ever clean it up. Covering upload-then-reference as one step keeps
+        #    the rollback total.
         try:
+            image_url = await storage.get_url(new_path)
             await crud_users.update(db=db, object={"profile_image_url": image_url}, id=user_id)
         except Exception:
             # The DB still names the old object, so the object we just wrote is
@@ -435,13 +492,18 @@ class PreferencesService:
                 url=old_url,
             )
             return
-        await _delete_object_quietly(storage, old_path, user_id=user_id)
-        # Update User record to nullify image_url
+        # Same invariant as the upload path, in the same order: repoint the DB
+        # first, delete the object second. Deleting first meant a failed UPDATE
+        # left ``profile_image_url`` naming an object that no longer existed —
+        # exactly the dangling reference the upload ordering was changed to
+        # eliminate. ``_delete_object_quietly`` never raises, so the cleanup can
+        # safely run last.
         await crud_users.update(
             db=db,
             object={"profile_image_url": None},
             id=user_id,
         )
+        await _delete_object_quietly(storage, old_path, user_id=user_id)
 
         # Invalidate the profile/auth caches (same rationale as upload path).
         await UserCacheInvalidator.invalidate_user_cache(

@@ -115,8 +115,6 @@ async def verify_magic_link(
     - 400: Token is invalid or expired
     - 410: Token was already used
     """
-    from src.app.core.utils.ip_utils import get_client_ip
-
     ip_address = get_client_ip(request)
     # R2-24: /send charges MAGIC_LINK_SEND; /verify charged nothing, so the last
     # step of the flow was the only un-metered one. Keyed on the source IP: the

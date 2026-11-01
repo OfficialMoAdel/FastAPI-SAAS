@@ -29,7 +29,16 @@ from src.app.modules.user_preferences.schemas import (
 # sending ``null`` is asking to CLEAR them — dropping it made a documented
 # reset impossible. Every other column keeps skipping ``None``: it is NOT NULL,
 # and writing ``None`` there fails at flush instead of clearing.
-NULLABLE_PREFERENCE_COLUMNS: frozenset[str] = frozenset({"quiet_hours_start", "quiet_hours_end"})
+#
+# Derived from the model rather than restated as a literal: a new nullable
+# preference column would otherwise be silently MISSING from the set, so a
+# client's explicit ``null`` would be skipped (200 returned, old value kept)
+# instead of clearing the column. Keys can only reach this set through
+# ``UserPreferencesUpdate.model_dump(exclude_unset=True)``, so deriving cannot
+# widen what a client is able to clear.
+NULLABLE_PREFERENCE_COLUMNS: frozenset[str] = frozenset(
+    column.name for column in UserPreferences.__table__.columns if column.nullable
+)
 
 
 class CRUDUserPreferences(
@@ -87,23 +96,31 @@ class CRUDUserPreferences(
             user_id=user_id,
             preferences=DEFAULT_PREFERENCES.copy(),
         )
-        db.add(new_prefs)
         try:
-            await db.commit()
-        except IntegrityError:
             # R2-20: two concurrent first accesses can both miss the SELECT and
             # both INSERT; the loser hits the unique constraint on user_id. That
-            # is not a 500 — the winner's row is the answer. The failed
-            # transaction MUST be rolled back before the re-read, or the session
-            # keeps using it.
-            await db.rollback()
+            # is not a 500 — the winner's row is the answer.
+            #
+            # The INSERT is scoped to a SAVEPOINT so the recovery unwinds ONLY
+            # this statement. A root ``db.rollback()`` discarded the caller's
+            # whole request-scoped unit of work and expired every object it had
+            # loaded, even though the successful path would have committed that
+            # work — a first-access collision is not a reason to throw away
+            # unrelated pending writes. The failed transaction still has to be
+            # unwound before the re-read, or the session keeps using it; the
+            # savepoint is what does that without reaching past this INSERT.
+            async with db.begin_nested():
+                db.add(new_prefs)
+                await db.flush()
+        except IntegrityError:
             winner = await self.get_by_user(db=db, user_id=user_id)
             if winner is None:
-                # The winner was deleted between the rollback and the re-read.
-                # Surface the original failure instead of fabricating a detached
-                # instance that no row backs.
+                # The winner was deleted between the savepoint rollback and the
+                # re-read. Surface the original failure instead of fabricating a
+                # detached instance that no row backs.
                 raise
             return winner
+        await db.commit()
         await db.refresh(new_prefs)
         return new_prefs
 

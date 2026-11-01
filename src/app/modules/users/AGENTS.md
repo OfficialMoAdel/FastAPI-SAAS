@@ -170,6 +170,18 @@ rg -n "user_roles" src/app/modules/users/
 - **Tenant isolation**: Always filter by tenant_id
 - **Soft deletes**: Use is_deleted flag, not hard delete
 - **Username uniqueness**: Per-tenant, not global
+- **The JWT tenant lookup reads ONE index arm per call.** `_users_tenant_lookup`
+  (the context-free bootstrap read on the token path) picks `User.email` or
+  `User.username` by identifier shape — the same classification
+  `_users_token_version_lookup` uses. An `OR` of both arms cannot be served by
+  either arm's index: `idx_users_lower_username` is global, but the email index
+  is `(tenant_id, lower(email))` and this read deliberately carries no
+  `tenant_id` predicate (the tenant is the ANSWER), so the `OR` forced a
+  sequential scan of `users` on every logout/refresh of a token with no
+  `tenant_id` claim. Because usernames/emails are unique only per tenant, the
+  read is also `ORDER BY users.id LIMIT 2` — deterministic, and the second row
+  is what makes an ambiguous subject observable (`jwt_tenant_resolution_ambiguous`,
+  logged with a `subject_log_ref` hash, never the identifier).
 - **Superuser access**: Superusers see all users
 - **Profile updates**: Some fields restricted (email, tenant_id)
 - **Email is normalised on CREATE *and* UPDATE** — `UserBase.normalize_email` (create) and `UserUpdate.normalize_email` / `UserUpdateInternal.normalize_email` (update) both strip + lowercase. The unique index `uq_user_email_tenant` is case-SENSITIVE, so the update path's duplicate check (`UserService._email_taken`) is case-INSENSITIVE on purpose, matching the login lookup (`crud.py`: `func.lower(User.email) == email.lower()`). **Why this matters**: the check must be at least as strict as the lookup that reads it. If the check were exact-match, `Victim@X.com` could be written beside `victim@x.com`; the case-insensitive login lookup would then match BOTH rows and — ending in `scalar_one_or_none()` — raise `MultipleResultsFound`, 500-ing every login for that address. Do not "simplify" the duplicate check back to an exact comparison.

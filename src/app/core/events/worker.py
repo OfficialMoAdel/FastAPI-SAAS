@@ -173,9 +173,15 @@ async def process_event_handler(
             # this caller reads it live from settings.
             delays = list(_pkg.settings.events.EVENT_BUS_RETRY_DELAYS) or list(_pkg.EventBus.RETRY_DELAYS)
             delay = retry_delay(delays, job_try, max_tries=max_tries)
-            # Not None: the ceiling check above already returned for the only
-            # case that produces None. Asserting the invariant keeps mypy
-            # honest without inventing a branch that cannot run.
+            # Not None HERE — but not for the reason the old comment gave. The
+            # ceiling check inside ``retry_delay`` is not the only source of
+            # ``None``: an empty ladder produces it too, and a comment claiming
+            # otherwise is how the invariant quietly becomes an assumption. What
+            # actually guarantees a non-empty ladder is the line above: the
+            # settings read falls back to ``EventBus.RETRY_DELAYS``, a literal
+            # non-empty list. If that fallback is ever removed, this assert is
+            # the only thing left encoding the contract (and under ``python -O``
+            # it is not even that), so it stays paired with the fallback.
             assert delay is not None
             raise Retry(defer=delay) from e
         finally:

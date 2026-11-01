@@ -6,10 +6,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.cache.client import cache_client
 from src.app.core.logger import get_logger
+from src.app.core.security.encryption import get_encryption
+from src.app.core.tenancy.context import get_current_tenant  # Needed to get default tenant_id if not passed
+from src.app.modules.audit_logs import audit
+from src.app.modules.auth.crud import crud_sso_settings
+from src.app.modules.auth.models import SSOSettings
+from src.app.modules.auth.schemas import (
+    SSOSettingsCreate,
+    SSOSettingsCreateInternal,
+    SSOSettingsRead,
+    SSOSettingsUpdate,
+)
+from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 logger = get_logger(__name__)
-
-from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 
 # sso-cache: single source of truth for the provider-settings cache TTL.
 # The write-through in ``get_settings_by_provider`` is the ONLY populator: no
@@ -22,17 +32,6 @@ _SSO_SETTINGS_CACHE_TTL = 300
 # The provider-settings cache key. ``SSOSettings.provider`` is globally
 # unique and the table carries no tenant column, so the key is provider-only.
 _SSO_SETTINGS_CACHE_PREFIX = "sso_settings:"
-from src.app.core.security.encryption import get_encryption
-from src.app.core.tenancy.context import get_current_tenant  # Needed to get default tenant_id if not passed
-from src.app.modules.audit_logs import audit
-from src.app.modules.auth.crud import crud_sso_settings
-from src.app.modules.auth.models import SSOSettings
-from src.app.modules.auth.schemas import (
-    SSOSettingsCreate,
-    SSOSettingsCreateInternal,
-    SSOSettingsRead,
-    SSOSettingsUpdate,
-)
 
 
 class SSOSettingsService:

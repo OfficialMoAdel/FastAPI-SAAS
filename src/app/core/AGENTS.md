@@ -162,8 +162,12 @@ deletes members, cleans the index, and returns the deleted count — never a
 Python SMEMBERS-then-pipeline sequence, which races with writers between the
 read and the delete. The tenant prefix drain keeps the S-14 guarantee: an
 empty shard falls back to the global index with a colon-boundary prefix match
-(`_matches_prefix`) before returning 0. See `docs/cache-ttl.md` for the full
-index table.
+performed by the script itself (`string.find(':' .. member .. ':', ':' ..
+prefix .. ':', 1, true)`) before returning 0. The Python
+`tenant_index._matches_prefix` states the same rule and is unit-tested, but it
+has **no production caller** — the Lua script is authoritative, so an edit to
+the matching rule must land there and the helper must follow it. See
+`docs/cache-ttl.md` for the full index table.
 
 ### Tenancy & RLS
 Tenant context lives in contextvars (`core/tenancy/context.py` — bind with `bound_tenant`/`bind_tenant`, release with `unbind_tenant`); Postgres RLS scoping via `core/db/rls.py` (`set_rls_context`, `rls_context`, `bypass_rls`). Background jobs use `core/worker/rls_context.py`.

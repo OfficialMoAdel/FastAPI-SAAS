@@ -4,7 +4,7 @@ from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.pagination import MAX_PER_PAGE
+from src.app.core.pagination import DEFAULT_PER_PAGE, PaginationParams
 from src.app.core.principal import AuthenticatedUser
 from src.app.shared.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
@@ -92,7 +92,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
     async def list_{{ module_name }}s(
         self,
         page: int = 1,
-        items_per_page: int = 20,
+        items_per_page: int = DEFAULT_PER_PAGE,
     ) -> dict[str, Any]:
         """List {{ module_name }}s for the current tenant.
 
@@ -117,20 +117,33 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         paginated fetch (page + ``COUNT(*) OVER()`` in ONE statement) and
         returns exactly the dict both sides expect.
         """
-        # Clamp exactly as ``get_multi`` did: this path bypasses its guards,
-        # so an unbounded ``items_per_page`` would be a free way to ask for the
-        # whole table (and a deep OFFSET is O(offset) in PostgreSQL).
-        if page < 1:
-            page = 1
-        if items_per_page < 1:
-            items_per_page = 1
-        if items_per_page > MAX_PER_PAGE:
-            items_per_page = MAX_PER_PAGE
+        # Clamp and bound through the ONE pagination policy. This path bypasses
+        # ``get_multi``'s guards, so the caps have to be carried across — but by
+        # ``PaginationParams``, not by hand: it floors page/per_page, caps
+        # per_page at ``MAX_PER_PAGE``, AND rejects an offset above its own
+        # ``_MAX_OFFSET`` ceiling (a deep OFFSET is O(offset) in PostgreSQL, and
+        # the repo caps it at 100_000). The hand-rolled clamps that used to sit
+        # here bounded ``items_per_page`` only, so ``?page=1000000000`` still
+        # issued an OFFSET of ~2e10 — the exact deep scan the comment claimed to
+        # prevent — and silently ignored the repo-wide cap. The domain 422 it
+        # raises is the same one ``get_pagination_params`` produces at the HTTP
+        # edge, so both doors answer identically.
+        pagination = PaginationParams(page=page, per_page=items_per_page)
 
         return await self.get_page_with_total(
-            offset=(page - 1) * items_per_page,
-            limit=items_per_page,
+            offset=pagination.offset,
+            limit=pagination.limit,
             schema_to_select={{ ModelName }}Read,
+            # Deterministic page order. ``fetch_page_with_total`` forwards these
+            # straight to ``crud.select``, which emits NO ``ORDER BY`` when
+            # ``sort_columns`` is None — and PostgreSQL is then free to return
+            # rows in any order per query, so consecutive pages could duplicate
+            # or skip rows and the router's ``has_next`` became meaningless.
+            # ``created_at DESC, id DESC`` is the repo's pagination order (see
+            # the keyset contract in ``core/pagination.py``), and every
+            # generated model carries both columns.
+            sort_columns=["created_at", "id"],
+            sort_orders=["desc", "desc"],
             return_as_model=True,
         )
 

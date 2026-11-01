@@ -103,6 +103,7 @@ _SERIALIZED_ENDPOINT_KEYS = frozenset(
         "old_signing_secret",
         "old_secret_expires_at",
         "description",
+        "endpoint_metadata",
     }
 )
 
@@ -127,6 +128,11 @@ def _serialize_endpoint(ep: WebhookEndpoint) -> dict[str, Any]:
         "old_signing_secret": getattr(ep, "old_signing_secret", None),
         "old_secret_expires_at": old_expires.isoformat() if old_expires else None,
         "description": getattr(ep, "description", None),
+        # Plain JSON, so it travels like every other field. Dropping it made a
+        # cache HIT return ``endpoint_metadata = None`` while a MISS returned the
+        # real column — a divergence that stays invisible until something reads
+        # it, which is exactly when it would matter.
+        "endpoint_metadata": getattr(ep, "endpoint_metadata", None),
     }
 
 
@@ -134,9 +140,10 @@ def _deserialize_endpoint(data: dict[str, Any]) -> WebhookEndpoint:
     """Rebuild the endpoint a cache MISS would have returned.
 
     A cache hit must be behaviourally identical to a miss, so every key
-    ``_serialize_endpoint`` writes has to be restored here. ``id`` and
-    ``description`` are declared ``init=False`` on the model, so they cannot
-    travel through the constructor — they are assigned afterwards.
+    ``_serialize_endpoint`` writes has to be restored here. ``id``,
+    ``description`` and ``endpoint_metadata`` are declared ``init=False`` on the
+    model, so they cannot travel through the constructor — they are assigned
+    afterwards.
 
     R1-BUG-1: without ``id``, ``trigger_webhooks`` inserted a ``WebhookDelivery``
     with a NULL ``webhook_endpoint_id`` (NOT NULL), so every trigger inside the
@@ -162,6 +169,7 @@ def _deserialize_endpoint(data: dict[str, Any]) -> WebhookEndpoint:
     if raw_id is not None:
         ep.id = UUID(str(raw_id))
     ep.description = data.get("description")
+    ep.endpoint_metadata = data.get("endpoint_metadata")
     if data.get("old_signing_secret"):
         ep.old_signing_secret = data["old_signing_secret"]
     if data.get("old_secret_expires_at"):

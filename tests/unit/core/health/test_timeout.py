@@ -77,3 +77,53 @@ async def test_check_database_health_operational_error():
     result = await health.check_database_health(mock_db)
     assert result.status == "unhealthy"
     assert "OperationalError" in str(result.error)
+
+
+# ============================================================================
+# A failed probe still measured something — report it
+# ============================================================================
+
+
+class TestAFailedProbeStillReportsItsLatency:
+    """``latency_ms`` is the measurement, not a success-only decoration.
+
+    The failure branches used to return ``HealthResult(status="unhealthy",
+    error=...)`` with no latency at all, and the monitoring endpoints mapped
+    that ``None`` to ``latency_ms: 0``. An alert keyed on "slow then failed"
+    therefore read 0 for every failure — indistinguishable from an instant one.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_timed_out_database_probe_reports_elapsed_time(self) -> None:
+        mock_db = AsyncMock()
+
+        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            result = await health.check_database_health(mock_db)
+
+        assert result.status == "unhealthy"
+        assert result.latency_ms is not None
+        assert result.latency_ms >= 0
+
+    @pytest.mark.asyncio
+    async def test_a_failed_redis_probe_reports_elapsed_time(self) -> None:
+        mock_redis = AsyncMock()
+
+        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            result = await health.check_redis_health(mock_redis)
+
+        assert result.status == "unhealthy"
+        assert result.latency_ms is not None
+
+    @pytest.mark.asyncio
+    async def test_a_probe_that_never_ran_reports_no_latency(self) -> None:
+        """The uninitialised queue pool is degraded, and nothing was measured.
+
+        This is the case the wire format must distinguish from a measured zero:
+        the field is omitted rather than published as 0.
+        """
+        with patch("src.app.core.utils.queue.pool", None):
+            result = await health.check_redis_queue_health()
+
+        assert result.status == "degraded"
+        assert result.latency_ms is None
+        assert "latency_ms" not in result.to_dict()

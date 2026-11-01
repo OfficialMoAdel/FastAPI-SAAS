@@ -17,6 +17,16 @@ def _matches_prefix(cache_key: str, prefix: str) -> bool:
     contain colons (``user_post_cache:{username}``), so slicing at a fixed
     segment cannot work. Wrapping both sides in ``:`` and testing containment
     matches the prefix only at segment boundaries, at any depth.
+
+    NOT the live implementation. The S-14 global-index fallback now runs inside
+    the ``cache_tenant_prefix_drain`` Lua script (``lua_manager.py``), which
+    matches with ``string.find(':' .. member .. ':', ':' .. prefix .. ':', 1,
+    true)`` — the same colon-boundary rule, executed atomically with the drain.
+    The LUA SCRIPT IS AUTHORITATIVE; this Python form has no production caller
+    (only ``tests/unit/core/cache/test_cache_index.py``) and is kept as the
+    readable, unit-tested statement of the rule. An edit to the matching rule
+    must land in the Lua script, and this helper must follow it — never the
+    other way round, or the two matchers drift with the untested one winning.
     """
     if not prefix:
         return False
@@ -102,16 +112,23 @@ def _tenant_prefix_index_key(tenant_id: int | str, prefix: str) -> str:
     return f"tenant_index:{tenant_id}:{prefix}"
 
 
-# P2-B: index sets default to a 2h expiry — a missing ttl must never leave
-# a non-expiring index set behind (unbounded growth). Pass ttl=0/None
+# P2-B: index sets default to a bounded expiry — a missing ttl must never
+# leave a non-expiring index set behind (unbounded growth). Pass ttl=0/None
 # explicitly to opt out for a caller-managed lifecycle.
-_DEFAULT_INDEX_TTL = 7200
+#
+# This is a DATA-key TTL, not an index TTL. ``index_ttl`` doubles it, so the
+# default keeps an index set alive for 2h while the data it describes lives 1h —
+# the rule ``cache/index_policy.py`` states and every other writer follows. The
+# constant used to be 7200 and was passed straight to ``EXPIRE``, so the same
+# number meant "index TTL" here and "data TTL" in ``set_tenant_cache``; the
+# effective index lifetime is unchanged by stating it the other way round.
+_DEFAULT_DATA_TTL = 3600
 
 
 async def add_to_tenant_index(
     tenant_id: int | str,
     cache_key: str,
-    ttl: int | None = _DEFAULT_INDEX_TTL,
+    ttl: int | None = _DEFAULT_DATA_TTL,
     *,
     prefix: str | None = None,
 ) -> bool:
@@ -123,8 +140,12 @@ async def add_to_tenant_index(
     Args:
         tenant_id: Tenant identifier
         cache_key: The cache key to add to the index
-        ttl: Time-to-live for the index sets in seconds
-            (defaults to 2h; pass 0/None to opt out)
+        ttl: Time-to-live of the DATA key this entry describes, in seconds. The
+            index sets are given ``index_ttl(ttl)`` (2x) so they always outlive
+            the data: an index that expires first makes still-live keys
+            unreachable, which is the stale-read hole P1-9 closed. Pass 0/None
+            to opt out of the expiry for a caller-managed lifecycle.
+            (Default: 1h of data -> 2h of index.)
         prefix: Business prefix used to choose the shard. Pass this for keys
             built by the cache decorator (which may be user-scoped). The legacy
             positional fallback only understands ``tenant:{tid}:{prefix}:...``

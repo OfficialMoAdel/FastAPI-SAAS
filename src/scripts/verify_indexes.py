@@ -54,6 +54,32 @@ EXPECTED_INDEXES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 )
 
 
+def _column_list_bounds(indexdef: str) -> tuple[int, int] | None:
+    """Offsets of the outer parentheses around an index's column list.
+
+    A depth counter, not ``rpartition(")")``. A partial index's definition ENDS
+    with the WHERE clause's own parentheses, so the LAST ``)`` is not the column
+    list's: ``(username, tenant_id) WHERE (is_deleted = false)`` used to parse as
+    ``["username", "tenant_id)"]``, and the checker then reported a spurious
+    "wrong columns" on a perfectly correct schema.
+
+    Returns ``None`` when the definition carries no balanced parenthesised group.
+    """
+    start = indexdef.find("(")
+    if start == -1:
+        return None
+    depth = 0
+    for position in range(start, len(indexdef)):
+        character = indexdef[position]
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                return start, position
+    return None
+
+
 def indexed_columns(indexdef: str) -> list[str]:
     """Column names in an ``indexdef``'s parenthesised list, sort order stripped.
 
@@ -62,14 +88,37 @@ def indexed_columns(indexdef: str) -> list[str]:
     dropped on purpose: PostgreSQL can scan an index backwards, so the sort
     order is not what makes a keyset seek possible — the COLUMN LIST is.
     """
-    _, _, remainder = indexdef.partition("(")
-    body, _, _ = remainder.rpartition(")")
+    bounds = _column_list_bounds(indexdef)
+    if bounds is None:
+        return []
+    body = indexdef[bounds[0] + 1 : bounds[1]]
     columns: list[str] = []
     for part in body.split(","):
         name = part.strip().split(" ")[0].strip('"').strip()
         if name:
             columns.append(name)
     return columns
+
+
+def index_predicate(indexdef: str) -> str | None:
+    """The ``WHERE`` predicate of a partial index, or None for a plain index.
+
+    A partial index only serves a query that filters on the SAME predicate. None
+    of ``EXPECTED_INDEXES`` does — every entry describes an UNFILTERED list — so
+    a predicate on the named index means it cannot serve that query however
+    correct its column list looks. Reporting it as a pass is the exact failure
+    this script exists to prevent (see the ``idx_files_tenant_active`` note
+    above), and the static gate already applies the rule
+    (``scripts/checks/index_predicate_coverage.py``: ``covers()`` returns False
+    for any index carrying a predicate).
+    """
+    bounds = _column_list_bounds(indexdef)
+    if bounds is None:
+        return None
+    remainder = indexdef[bounds[1] + 1 :].strip()
+    if not remainder.upper().startswith("WHERE"):
+        return None
+    return remainder[len("WHERE") :].strip() or remainder
 
 
 def check_indexes(indexdefs: Mapping[tuple[str, str], str]) -> list[str]:
@@ -84,6 +133,13 @@ def check_indexes(indexdefs: Mapping[tuple[str, str], str]) -> list[str]:
         definition = indexdefs.get((table, index))
         if definition is None:
             problems.append(f"missing: {index} on {table}")
+            continue
+        predicate = index_predicate(definition)
+        if predicate is not None:
+            problems.append(
+                f"partial index: {index} on {table} is filtered by {predicate!r}, which none of the "
+                "expected queries filters on"
+            )
             continue
         actual = indexed_columns(definition)
         if actual[: len(columns)] != list(columns):
@@ -106,8 +162,21 @@ async def verify() -> int:
     engine = create_async_engine(url)
     try:
         async with engine.connect() as conn:
-            result = await conn.execute(text("SELECT tablename, indexname, indexdef FROM pg_indexes"))
-            found = {(row[0], row[1]): row[2] for row in result.fetchall()}
+            # ``pg_indexes`` spans EVERY schema in the database, so an unscoped
+            # read lets a same-named index in a schema the application never
+            # uses satisfy the check — a false SUCCESS, the one outcome this
+            # script exists to prevent. Scope to the schema the app runs in
+            # (``current_schema()``; nothing in this repo overrides
+            # ``search_path``) and name it in the output.
+            result = await conn.execute(
+                text(
+                    "SELECT schemaname, tablename, indexname, indexdef FROM pg_indexes "
+                    "WHERE schemaname = current_schema()"
+                )
+            )
+            rows = result.fetchall()
+            found = {(row[1], row[2]): row[3] for row in rows}
+            inspected_schema = rows[0][0] if rows else None
 
             if not found:
                 print("ERROR: no indexes visible — wrong database or empty schema")
@@ -118,7 +187,7 @@ async def verify() -> int:
                 print(f"ERROR: {problem}")
             if problems:
                 return 1
-            print(f"SUCCESS: all {len(EXPECTED_INDEXES)} expected indexes found.")
+            print(f"SUCCESS: all {len(EXPECTED_INDEXES)} expected indexes found in schema {inspected_schema!r}.")
             return 0
     finally:
         await engine.dispose()
@@ -128,4 +197,4 @@ if __name__ == "__main__":
     raise SystemExit(asyncio.run(verify()))
 
 
-__all__ = ("EXPECTED_INDEXES", "check_indexes", "indexed_columns", "verify")
+__all__ = ("EXPECTED_INDEXES", "check_indexes", "index_predicate", "indexed_columns", "verify")

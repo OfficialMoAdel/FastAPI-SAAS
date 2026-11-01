@@ -40,11 +40,16 @@ def _compiled(stmt) -> str:
     return str(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
 
 
-def _fake_db(scalar_value=None) -> AsyncMock:
-    db = AsyncMock()
+def _result(rows: list) -> MagicMock:
+    """A Result whose ``scalars().all()`` answers ``rows``."""
     result = MagicMock()
-    result.scalar.return_value = scalar_value
-    db.execute = AsyncMock(return_value=result)
+    result.scalars.return_value.all.return_value = list(rows)
+    return result
+
+
+def _fake_db(*tenant_ids) -> AsyncMock:
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_result(list(tenant_ids)))
     return db
 
 
@@ -80,7 +85,7 @@ class TestTheReadIsUnscopedOnPurpose:
         with patch(
             "src.app.core.db.scoped.execute_scoped", new_callable=AsyncMock
         ) as execute_scoped:
-            execute_scoped.return_value = MagicMock(scalar=MagicMock(return_value=None))
+            execute_scoped.return_value = _result([])
             await _users_tenant_lookup("someone@example.com", db)
 
         scope = execute_scoped.await_args.kwargs["scope"]
@@ -100,9 +105,9 @@ class TestTheReadEnforcesTheSameGuardsAsTheCanonicalRead:
         """
         from src.app.modules.users import _users_tenant_lookup
 
-        db = _fake_db(None)
+        db = _fake_db()
         with patch("src.app.core.db.scoped.execute_scoped", new_callable=AsyncMock) as execute_scoped:
-            execute_scoped.return_value = MagicMock(scalar=MagicMock(return_value=None))
+            execute_scoped.return_value = _result([])
             await _users_tenant_lookup("someone@example.com", db)
 
         sql = _compiled(execute_scoped.await_args.args[0])
@@ -111,7 +116,7 @@ class TestTheReadEnforcesTheSameGuardsAsTheCanonicalRead:
         )
 
     @pytest.mark.asyncio
-    async def test_both_identifier_arms_are_case_insensitive(self) -> None:
+    async def test_the_identifier_is_lowercased(self) -> None:
         """``users/crud.py`` lowercases; this read must agree.
 
         Compares the compiled predicate shape rather than a live row, because
@@ -121,12 +126,38 @@ class TestTheReadEnforcesTheSameGuardsAsTheCanonicalRead:
 
         db = _fake_db(uuid4())
         with patch("src.app.core.db.scoped.execute_scoped", new_callable=AsyncMock) as execute_scoped:
-            execute_scoped.return_value = MagicMock(scalar=MagicMock(return_value=None))
+            execute_scoped.return_value = _result([])
             await _users_tenant_lookup("Someone@Example.COM", db)
 
         sql = _compiled(execute_scoped.await_args.args[0])
-        assert "lower(users.username) = 'someone@example.com'" in sql
         assert "lower(users.email) = 'someone@example.com'" in sql
+
+    @pytest.mark.asyncio
+    async def test_one_index_arm_per_lookup(self) -> None:
+        """An OR of both arms cannot be served by either arm's index.
+
+        ``idx_users_lower_username`` is global, but the email index is
+        ``(tenant_id, lower(email))`` and this read carries no tenant predicate
+        (the tenant is the ANSWER), so the email arm had no usable index and the
+        OR forced a sequential scan of ``users`` on the token-revocation path.
+        Each shape now reads through the one index that can serve it — the same
+        classification ``_users_token_version_lookup`` already applies.
+        """
+        from src.app.modules.users import _users_tenant_lookup
+
+        cases = (
+            ("someone@example.com", "lower(users.email) =", "lower(users.username) ="),
+            ("someone", "lower(users.username) =", "lower(users.email) ="),
+        )
+        for identifier, expected_arm, absent_arm in cases:
+            db = _fake_db()
+            with patch("src.app.core.db.scoped.execute_scoped", new_callable=AsyncMock) as execute_scoped:
+                execute_scoped.return_value = _result([])
+                await _users_tenant_lookup(identifier, db)
+
+            sql = _compiled(execute_scoped.await_args.args[0])
+            assert expected_arm in sql, sql
+            assert absent_arm not in sql, f"one arm only, or neither index can serve the OR: {sql}"
 
     @pytest.mark.asyncio
     async def test_it_selects_only_the_tenant_column(self) -> None:
@@ -135,7 +166,7 @@ class TestTheReadEnforcesTheSameGuardsAsTheCanonicalRead:
 
         db = _fake_db(uuid4())
         with patch("src.app.core.db.scoped.execute_scoped", new_callable=AsyncMock) as execute_scoped:
-            execute_scoped.return_value = MagicMock(scalar=MagicMock(return_value=None))
+            execute_scoped.return_value = _result([])
             await _users_tenant_lookup("someone@example.com", db)
 
         stmt = execute_scoped.await_args.args[0]
@@ -191,3 +222,59 @@ class TestAFailedResolutionStillRevokes:
         )
         members = [member for entries in written for member, _ in entries]
         assert "jti:jti-1" in members, f"the revoked member must be the jti key: {members}"
+
+
+class TestAmbiguousSubjectsResolveDeterministically:
+    """``username``/``email`` are unique only PER TENANT.
+
+    ``uq_user_username_tenant`` and ``uq_user_email_tenant`` both include
+    ``tenant_id``, so the same identifier can legitimately exist in two tenants
+    — a normal SaaS case, not a corrupt database. A bare ``LIMIT 1`` with no
+    ``ORDER BY`` returned an ARBITRARY one, and that value flows into
+    ``TokenBlacklist.tenant_id`` and the blacklist cache key.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_lowest_id_wins(self) -> None:
+        from src.app.modules.users import _users_tenant_lookup
+
+        first, second = uuid4(), uuid4()
+        db = _fake_db(first, second)
+
+        assert await _users_tenant_lookup("someone@example.com", db) == first
+
+    @pytest.mark.asyncio
+    async def test_the_read_is_ordered_by_primary_key(self) -> None:
+        from src.app.modules.users import _users_tenant_lookup
+
+        db = _fake_db()
+        with patch("src.app.core.db.scoped.execute_scoped", new_callable=AsyncMock) as execute_scoped:
+            execute_scoped.return_value = _result([])
+            await _users_tenant_lookup("someone@example.com", db)
+
+        sql = _compiled(execute_scoped.await_args.args[0])
+        assert "ORDER BY users.id" in sql
+        assert "LIMIT 2" in sql, "a second row is what makes the ambiguity observable"
+
+    @pytest.mark.asyncio
+    async def test_an_ambiguous_subject_is_logged_without_the_identifier(self) -> None:
+        """The subject is PII; only the non-reversible reference may be logged."""
+        from src.app.modules.users import _users_tenant_lookup
+
+        db = _fake_db(uuid4(), uuid4())
+        with patch("src.app.modules.users.logger") as mock_logger:
+            await _users_tenant_lookup("someone@example.com", db)
+
+        mock_logger.warning.assert_called_once()
+        event = mock_logger.warning.call_args.args[0]
+        assert event == "jwt_tenant_resolution_ambiguous"
+        assert "someone@example.com" not in str(mock_logger.warning.call_args)
+
+    @pytest.mark.asyncio
+    async def test_a_single_match_logs_nothing(self) -> None:
+        from src.app.modules.users import _users_tenant_lookup
+
+        with patch("src.app.modules.users.logger") as mock_logger:
+            await _users_tenant_lookup("someone@example.com", _fake_db(uuid4()))
+
+        mock_logger.warning.assert_not_called()

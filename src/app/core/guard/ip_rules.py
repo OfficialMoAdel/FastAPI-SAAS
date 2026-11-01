@@ -305,6 +305,12 @@ class IPFilterService:
             # catch only MissingClientError, so a REAL outage (ConnectionError /
             # TimeoutError, both RedisError subclasses) escaped as a 500 while
             # the comment above promised otherwise.
+            #
+            # Soft is not silent: an empty list is also what a genuinely empty
+            # list looks like, so an operator needs the log line to tell a
+            # misconfigured or unreachable store from "no rules configured".
+            # The sibling writers above already warn on the same condition.
+            logger.warning("IP list read failed: Redis unavailable", prefix=prefix)
             return []
 
         entries: list[dict[str, Any]] = []
@@ -346,6 +352,12 @@ class IPFilterService:
             # R2-15: same contract as _get_list — an unreachable store reads as
             # "nothing to clear", never as a 500. A real ConnectionError is a
             # RedisError and used to escape here.
+            #
+            # Logged for the same reason as the read path: "cleared 0" is also
+            # what "there was nothing to clear" returns, and an admin who just
+            # asked to clear a blacklist needs to be able to see which one
+            # happened.
+            logger.warning("IP list clear failed: Redis unavailable", prefix=prefix)
             return 0
 
 

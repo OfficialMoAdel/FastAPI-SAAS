@@ -63,6 +63,17 @@ def resolve_readiness_status(
     return "degraded"
 
 
+def _elapsed_ms(start: float) -> float:
+    """Milliseconds since ``start``, for BOTH probe outcomes.
+
+    A failed probe used to report no latency at all, so the published
+    ``latency_ms`` became ``0`` on every failure and an alert keyed on "slow
+    then failed" could not fire. The elapsed time is measured either way; only
+    the STATUS differs.
+    """
+    return (time.perf_counter() - start) * 1000
+
+
 async def collect_readiness_results(
     *,
     db: AsyncSession | None = None,
@@ -159,17 +170,24 @@ async def check_database_health(db: AsyncSession) -> HealthResult:
             await db.execute(text("SELECT 1"))
 
         await asyncio.wait_for(_check(), timeout=5.0)
-        latency_ms = (time.perf_counter() - start) * 1000
-        return HealthResult(status="healthy", latency_ms=latency_ms)
+        return HealthResult(status="healthy", latency_ms=_elapsed_ms(start))
     except TimeoutError:
         LOGGER.exception("Database health check timed out")
-        return HealthResult(status="unhealthy", error="Database check timed out. Timeout after 5.0s")
+        return HealthResult(
+            status="unhealthy",
+            latency_ms=_elapsed_ms(start),
+            error="Database check timed out. Timeout after 5.0s",
+        )
     except OperationalError as e:
         LOGGER.exception(f"Database operational error: {e}")
-        return HealthResult(status="unhealthy", error=f"OperationalError: {e}")
+        return HealthResult(status="unhealthy", latency_ms=_elapsed_ms(start), error=f"OperationalError: {e}")
     except Exception as e:
         LOGGER.exception(f"Database health check failed with error: {e}")
-        return HealthResult(status="unhealthy", error=f"Unexpected: {type(e).__name__}: {e}")
+        return HealthResult(
+            status="unhealthy",
+            latency_ms=_elapsed_ms(start),
+            error=f"Unexpected: {type(e).__name__}: {e}",
+        )
 
 
 async def check_redis_health(redis: Redis) -> HealthResult:
@@ -182,14 +200,17 @@ async def check_redis_health(redis: Redis) -> HealthResult:
     start = time.perf_counter()
     try:
         await asyncio.wait_for(redis.ping(), timeout=5.0)
-        latency_ms = (time.perf_counter() - start) * 1000
-        return HealthResult(status="healthy", latency_ms=latency_ms)
+        return HealthResult(status="healthy", latency_ms=_elapsed_ms(start))
     except TimeoutError:
         LOGGER.exception("Redis health check timed out")
-        return HealthResult(status="unhealthy", error="Redis check timed out. Timeout after 5.0s")
+        return HealthResult(
+            status="unhealthy",
+            latency_ms=_elapsed_ms(start),
+            error="Redis check timed out. Timeout after 5.0s",
+        )
     except Exception as e:
         LOGGER.exception(f"Redis health check failed with error: {e}")
-        return HealthResult(status="unhealthy", error=f"{type(e).__name__}: {e}")
+        return HealthResult(status="unhealthy", latency_ms=_elapsed_ms(start), error=f"{type(e).__name__}: {e}")
 
 
 async def check_redis_queue_health() -> HealthResult:
@@ -209,11 +230,14 @@ async def check_redis_queue_health() -> HealthResult:
     try:
         # ArqRedis has built-in ping method
         await asyncio.wait_for(pool.ping(), timeout=5.0)
-        latency_ms = (time.perf_counter() - start) * 1000
-        return HealthResult(status="healthy", latency_ms=latency_ms)
+        return HealthResult(status="healthy", latency_ms=_elapsed_ms(start))
     except TimeoutError:
         LOGGER.exception("Redis queue health check timed out")
-        return HealthResult(status="unhealthy", error="Redis queue check timed out. Timeout after 5.0s")
+        return HealthResult(
+            status="unhealthy",
+            latency_ms=_elapsed_ms(start),
+            error="Redis queue check timed out. Timeout after 5.0s",
+        )
     except Exception as e:
         LOGGER.exception(f"Redis queue health check failed with error: {e}")
-        return HealthResult(status="unhealthy", error=f"{type(e).__name__}: {e}")
+        return HealthResult(status="unhealthy", latency_ms=_elapsed_ms(start), error=f"{type(e).__name__}: {e}")

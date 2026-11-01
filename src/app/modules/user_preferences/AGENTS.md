@@ -113,6 +113,16 @@ class PreferencesService:
 
 - PreferencesService does NOT inherit from BaseService (pending migration)
 - New users get default preferences automatically
+- **Profile-image ordering invariant: repoint the DB first, delete the object
+  second** — on BOTH paths (`upload_profile_image`, `delete_profile_image`).
+  Deleting first leaves `profile_image_url` naming an object that no longer
+  exists when the UPDATE fails. `_delete_object_quietly` never raises, so the
+  cleanup can always run last, and it calls `delete()` directly (idempotent on
+  every provider) instead of probing `exists()` first — that probe re-raises
+  non-404 errors on S3, which skipped the delete and leaked the object.
+- `get_url()` is INSIDE the upload's rollback guard: the S3 provider fails
+  closed on presigning errors, and a raise between the upload and the reference
+  orphaned the object with nothing left to clean it up.
 - Profile image upload requires files module integration
 - Image upload is optional - can keep null
 - Preferences are user-scoped (not tenant-scoped)
@@ -121,12 +131,28 @@ class PreferencesService:
 - **Explicit `null` clears a nullable column and is skipped everywhere else.**
   `service.update_preferences` keeps explicit nulls (`exclude_unset` only);
   `crud.update_preferences` lets `None` through ONLY for
-  `NULLABLE_PREFERENCE_COLUMNS` (`quiet_hours_start`, `quiet_hours_end`). Every
-  other column keeps skipping it (NOT NULL → would fail at flush), and JSON-bag
-  keys keep skipping it (the response merges the bag verbatim, so a stored
-  `None` would be echoed back).
-- `get_or_create` handles the concurrent-first-access race: the loser of the
-  unique-constraint INSERT rolls back and re-reads the winner instead of 500ing
+  `NULLABLE_PREFERENCE_COLUMNS`, which is DERIVED from the model
+  (`column.nullable`) rather than restated as a literal, so a new nullable
+  column cannot be silently left out. Every other column keeps skipping it
+  (NOT NULL → would fail at flush), and JSON-bag keys keep skipping it (the
+  response merges the bag verbatim, so a stored `None` would be echoed back).
+- **A channel's public JSON field is an ALIAS of its delivery column.**
+  `_NOTIFICATION_ALIASES` (`email_notifications` →
+  `email_notifications_enabled`, `push_notifications` →
+  `push_notifications_enabled`) is consulted by BOTH halves — the read merge in
+  `_build_preferences_response` and the write remap in `update_preferences`. A
+  channel that exists as both a bag key and a column and is missing from that
+  table is a no-op field the API accepts and echoes while delivery keeps
+  sending, and the two spellings can contradict each other in one payload. On
+  the write side an explicit `null` for the COLUMN half means "not provided"
+  (key presence is the wrong test: `exclude_unset` keeps explicit nulls, so a
+  client that serializes every optional field would otherwise discard the
+  meaningful alias value).
+- `get_or_create` handles the concurrent-first-access race inside a
+  **SAVEPOINT**: the loser of the unique-constraint INSERT unwinds only that
+  statement and re-reads the winner instead of 500ing. It must never root-
+  `rollback()` — that discards the caller's whole request-scoped unit of work
+  and expires every object it had loaded.
 - Quiet hours validation prevents start == end (must be different times)
 - Notification module calls `should_send_notification()` before sending emails
 - **`quiet_hours_start` / `quiet_hours_end` are `String(5)` columns and that is load-bearing** (`models.py:90,95`). Three call sites depend on it: `crud.py:113` writes them with a `setattr` of `"22:00"`-shaped strings, the consumer at `notifications/service.py:611-612` calls `time.fromisoformat(prefs.quiet_hours_start)`, and the schemas type them `str | None`. On a database built by `alembic` those columns are `sa.Time(timezone=True)` (`migrations/versions/05_content_storage.py:103-104`), and MEASURED (`perf-results/RESULT-20261018-9cmn/`, bead `FastAPI_saas-9cmn`): the INSERT is refused with a `DatatypeMismatchError` on the bind type even when both columns are bound NULL, so `get_or_create` cannot create the row at all; a row that does exist reads back as `datetime.time`, and `time.fromisoformat` then raises a **`TypeError`** — which the `except ValueError` at `service.py:631` does NOT catch, so the exception escapes `should_send_notification`. `UserPreferencesRead` does not catch it either, because Pydantic coerces `time` into the `str` it declares, so the API happily serialises a value the notification path cannot parse. The same probe against a `create_all` database accepted every write and read, which is why development never sees it. **Fixed in `FastAPI_saas-nqk6`**, on the decision that the MODEL stays and the MIGRATION moves (a quiet-hours window is "22:00 to 07:00" — not an instant, no date, cross-day is the ordinary case, so the string is the right domain shape). The fix is in the layer that creates the table: `migrations/versions/05_content_storage.py` now declares `sa.String(length=5)`. Because the schema is not shipped yet, the database is dropped and rebuilt (`DROP SCHEMA public CASCADE` + `alembic upgrade head`) rather than repaired in place — `src/migrations/AGENTS.md` says a schema change extends the relevant layer rather than stacking a new revision "unless the layer is already applied in production". If layer 05 is ever applied in production, the rule reverses and the fix becomes a correction plus a revision that alters the existing columns. The consumer's `except ValueError` at `service.py:631` is deliberately left alone: with a text column `fromisoformat` can only raise `ValueError`, so widening it to catch `TypeError` would be handling an impossible scenario and would hide the exact regression the oracle exists to catch. **Do not "widen" these columns, or convert the ORM to `Mapped[datetime.time]`, without changing all three call sites.**

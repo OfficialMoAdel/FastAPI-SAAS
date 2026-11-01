@@ -86,10 +86,17 @@ async def check_database(request: Request | None = None) -> dict[str, str | floa
 
     payload: dict[str, str | float | bool] = {
         "status": result.status,
-        "latency_ms": round(result.latency_ms, 2) if result.latency_ms is not None else 0,
         "pool_size": settings.postgres.DB_POOL_SIZE,
         "max_overflow": settings.postgres.DB_MAX_OVERFLOW,
     }
+    # Publish the measured elapsed time whenever there is one — including on
+    # FAILURE, which is what an alert keyed on "slow then failed" reads. A
+    # ``latency_ms: 0`` placeholder cannot be told apart from "measured zero"
+    # and silently blanked that signal; when nothing was measured (a probe that
+    # never ran, e.g. the degraded queue-pool branch) the field is omitted and
+    # ``ProbeCheck.latency_ms`` defaults to None on the wire.
+    if result.latency_ms is not None:
+        payload["latency_ms"] = round(result.latency_ms, 2)
     if result.error:
         # core/health's `error` embeds the driver message, which for
         # SQLAlchemy/asyncpg carries the statement, the DSN, and the
@@ -126,10 +133,11 @@ async def check_redis(request: Request | None = None) -> dict[str, str | float |
         return {"status": "disabled", "message": "Redis not configured"}
 
     result = await check_redis_health(redis=redis_client)
-    payload: dict[str, str | float | bool] = {
-        "status": result.status,
-        "latency_ms": round(result.latency_ms, 2) if result.latency_ms is not None else 0,
-    }
+    payload: dict[str, str | float | bool] = {"status": result.status}
+    # Same rule as the database probe: report the measurement when there is one
+    # (healthy AND unhealthy), omit the field when the probe never produced one.
+    if result.latency_ms is not None:
+        payload["latency_ms"] = round(result.latency_ms, 2)
     if result.error:
         # core/health's `error` embeds the redis-py message, which carries the
         # host, port, and username. Publish only the exception class name; the

@@ -306,3 +306,91 @@ class TestARollbackDoesNotPoisonTheNextRow:
             call for call in db.execute.await_args_list if call.args and getattr(call.args[0], "is_update", False)
         ]
         assert len(update_calls) == 1, "the retry window is written with an UPDATE statement"
+
+
+class TestAClaimOnlyMeansSomethingWhileItIsFresh:
+    """The claim is a LIVENESS TEST, so its age must be bounded.
+
+    Claiming the whole page up front under a single 60 s TTL meant a later row's
+    claim could expire before its turn came: the tick would then enqueue a row
+    whose live ``deliver()`` had already re-taken the lock. Claims are therefore
+    taken one WINDOW at a time, immediately before the rows they guard, while
+    the outage case still collapses from one round trip per row to one per
+    window.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_page_larger_than_the_window_is_claimed_in_windows(self) -> None:
+        from src.app.modules.webhooks.delivery import _RECOVERY_CLAIM_WINDOW
+
+        rows = [_delivery(index) for index in range(1, _RECOVERY_CLAIM_WINDOW * 2 + 1)]
+        cache = _cache([])
+
+        async def _claim(items, ttl: int) -> list[bool]:
+            # A verdict per claim, like the real pipeline.
+            return [True] * len(items)
+
+        cache.set_nx_many.side_effect = _claim
+
+        recovered = await _run({"redis": AsyncMock()}, _db(rows), cache)
+
+        assert recovered == len(rows)
+        assert cache.set_nx_many.await_count == 2, "one claim round trip per window, not per page"
+        for call in cache.set_nx_many.await_args_list:
+            assert call.kwargs["ttl"] == 60, "the TTL stays the crash-leak bound"
+            assert len(call.args[0]) <= _RECOVERY_CLAIM_WINDOW
+        cache.set_nx.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_the_window_is_claimed_immediately_before_its_rows(self) -> None:
+        """No row may be processed before the claim that guards it."""
+        from src.app.modules.webhooks.delivery import _RECOVERY_CLAIM_WINDOW
+
+        rows = [_delivery(index) for index in range(1, _RECOVERY_CLAIM_WINDOW + 2)]
+        order: list[str] = []
+        cache = _cache([True] * len(rows))
+        redis = AsyncMock()
+
+        async def _claim(items, ttl: int) -> list[bool]:
+            order.append("claim")
+            return [True] * len(items)
+
+        async def _enqueue(*args, **kwargs) -> MagicMock:
+            order.append(f"enqueue:{kwargs['delivery_id']}")
+            return MagicMock()
+
+        cache.set_nx_many.side_effect = _claim
+        redis.enqueue_job.side_effect = _enqueue
+
+        await _run({"redis": redis}, _db(rows), cache)
+
+        # Row 11 is the first row of the SECOND window, so a second claim must
+        # precede it.
+        second_claim_at = [index for index, event in enumerate(order) if event == "claim"][1]
+        assert order.index(f"enqueue:{_RECOVERY_CLAIM_WINDOW + 1}") > second_claim_at
+
+
+class TestAFailedReleaseIsRetried:
+    """``release_lock_if_owned`` swallows Redis errors and returns False.
+
+    Setting the released flag unconditionally therefore skipped the ``finally``
+    safety net and left the claim held for the full 60 s TTL — during which the
+    job we are about to enqueue finds the lock taken and skips the delivery.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_release_that_reports_failure_is_attempted_again(self) -> None:
+        cache = _cache([True])
+        cache.release_lock_if_owned.side_effect = [False, True]
+
+        await _run({"redis": AsyncMock()}, _db([_delivery(1)]), cache)
+
+        assert cache.release_lock_if_owned.await_count == 2, "the finally net must see the failure"
+
+    @pytest.mark.asyncio
+    async def test_a_release_that_succeeds_is_not_attempted_again(self) -> None:
+        cache = _cache([True])
+
+        await _run({"redis": AsyncMock()}, _db([_delivery(1)]), cache)
+
+        assert cache.release_lock_if_owned.await_count == 1, "a successful release costs one round trip"

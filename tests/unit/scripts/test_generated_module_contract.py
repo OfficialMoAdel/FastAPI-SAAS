@@ -100,13 +100,46 @@ class TestTheListEndpointShapeMatches:
         Routing the template through ``get_page_with_total`` therefore has to
         carry the caps across, or a generated endpoint gains a free way to ask
         for the whole table (and a deep OFFSET is O(offset) in PostgreSQL).
+
+        The caps are carried by ``PaginationParams`` — the repo's ONE policy —
+        rather than by hand. The hand-rolled clamps this test used to pin
+        bounded ``items_per_page`` only, so ``?page=1000000000`` still issued an
+        OFFSET of ~2e10 and bypassed the repo-wide ``_MAX_OFFSET`` ceiling. The
+        policy floors page/per_page, caps per_page, AND rejects a deep offset.
         """
         service = _template("service.py.j2")
 
-        assert "from src.app.core.pagination import MAX_PER_PAGE" in service
-        assert "if page < 1:" in service
-        assert "if items_per_page < 1:" in service
-        assert "if items_per_page > MAX_PER_PAGE:" in service
+        assert "from src.app.core.pagination import DEFAULT_PER_PAGE, PaginationParams" in service
+        assert "pagination = PaginationParams(page=page, per_page=items_per_page)" in service
+        assert "offset=pagination.offset," in service
+        assert "limit=pagination.limit," in service
+
+    def test_the_list_method_orders_the_page_deterministically(self) -> None:
+        """Without an ORDER BY, consecutive pages may duplicate or skip rows.
+
+        ``fetch_page_with_total`` forwards ``sort_columns`` to ``crud.select``,
+        which emits no ``ORDER BY`` at all when it is None — so PostgreSQL is
+        free to return rows in any order per query and the router's
+        ``has_next`` stops meaning anything.
+        """
+        service = _template("service.py.j2")
+
+        assert 'sort_columns=["created_at", "id"],' in service
+        assert 'sort_orders=["desc", "desc"],' in service
+
+    def test_the_router_builds_the_envelope_from_the_effective_page_size(self) -> None:
+        """Echoing the requested params makes the envelope lie when they clamp.
+
+        ``?per_page=500`` returned MAX_PER_PAGE rows while reporting
+        ``per_page=500``, and ``has_next`` then said False for a page with rows
+        still behind it. The dependency's values are the effective ones.
+        """
+        router = _template("router.py.j2")
+
+        assert "pagination: Annotated[PaginationParams, Depends(get_pagination_params)]" in router
+        assert '"page": pagination.page,' in router
+        assert '"per_page": pagination.per_page,' in router
+        assert "pagination.page * pagination.per_page < total" in router
 
     def test_the_router_reads_the_dict_keys_the_service_provides(self) -> None:
         router = _template("router.py.j2")
