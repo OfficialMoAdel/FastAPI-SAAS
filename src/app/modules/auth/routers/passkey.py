@@ -96,11 +96,17 @@ async def list_credentials(
     pagination: Annotated[PaginationParams, Depends(get_pagination_params)],
 ):
     """List user's passkey credentials (paginated)."""
-    credentials = await passkey_service.list_credentials(db=ctx.db, user_id=ctx.user_id)
-    start = pagination.offset
-    page_items = credentials[start : start + pagination.limit]
+    page = await passkey_service.list_credentials_page(
+        db=ctx.db,
+        user_id=ctx.user_id,
+        offset=pagination.offset,
+        limit=pagination.limit,
+    )
     return build_paginated_response(
-        items=page_items, total=len(credentials), page=pagination.page, per_page=pagination.per_page
+        items=page["data"],
+        total=int(page["total_count"]),
+        page=pagination.page,
+        per_page=pagination.per_page,
     )
 
 

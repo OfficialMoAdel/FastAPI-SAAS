@@ -156,3 +156,11 @@ class TestFabricateJobTenant:
     def test_uuid_passthrough(self) -> None:
         tid = UUID("11111111-1111-1111-1111-111111111111")
         assert fabricate_job_tenant(tid).tenant_id == tid
+
+    def test_int_is_interpreted_as_a_uuid_integer(self) -> None:
+        """UUID(str(5)) raises; int tenant ids must not be stringified."""
+        assert fabricate_job_tenant(5).tenant_id == UUID(int=5)
+
+    def test_negative_int_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            fabricate_job_tenant(-1)

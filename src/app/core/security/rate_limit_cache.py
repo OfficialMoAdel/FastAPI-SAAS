@@ -65,7 +65,8 @@ async def get_tier_policy(tier_id: int) -> list[dict[str, Any]] | None:
         return _tier_policy_l1[tier_id]
     redis_client = get_redis()
     if redis_client is None:
-        _tier_policy_l1[tier_id] = None
+        # "No client" is an outage, not a policy answer. Negative-caching it
+        # kept serving no-policy for 300s after Redis recovered.
         return None
 
     try:
@@ -142,7 +143,9 @@ async def warm_policy_cache(tier_policies: dict[int, list[dict[str, Any]]]) -> i
     redis_client = get_redis()
     if redis_client is None:
         _pkg_logger.warning(
-            "Warm policy cache degraded: Redis unavailable; seeded L1 only",
+            "rate_limit_policy_cache_warm_degraded",
+            reason="redis_unavailable",
+            seeded_l1=True,
             tiers=len(tier_policies),
         )
         return 0

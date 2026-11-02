@@ -132,7 +132,9 @@ class TestWebhookServiceTrigger:
 
             mock_result = MagicMock()
             mock_result.scalars.return_value.all.return_value = [mock_delivery]
-            mock_db.execute = AsyncMock(return_value=mock_result)
+            existence_result = MagicMock()
+            existence_result.scalars.return_value.all.return_value = [mock_webhook_endpoint.id]
+            mock_db.execute = AsyncMock(side_effect=[existence_result, mock_result])
 
             # Mock enqueue via the delivery module (what trigger actually calls)
             with patch("src.app.modules.webhooks.delivery.enqueue", new_callable=AsyncMock) as mock_enqueue:
@@ -175,7 +177,9 @@ class TestWebhookServiceTrigger:
 
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [mock_delivery]
-        mock_db.execute = AsyncMock(return_value=mock_result)
+        existence_result = MagicMock()
+        existence_result.scalars.return_value.all.return_value = [mock_webhook_endpoint.id]
+        mock_db.execute = AsyncMock(side_effect=[existence_result, mock_result])
 
         with patch("src.app.modules.webhooks.delivery.enqueue", new_callable=AsyncMock):
             result = await webhook_service.trigger_webhooks(
@@ -210,7 +214,9 @@ class TestWebhookServiceTrigger:
 
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [mock_delivery]
-        mock_db.execute = AsyncMock(return_value=mock_result)
+        existence_result = MagicMock()
+        existence_result.scalars.return_value.all.return_value = [mock_webhook_endpoint.id]
+        mock_db.execute = AsyncMock(side_effect=[existence_result, mock_result])
 
         with (
             patch(

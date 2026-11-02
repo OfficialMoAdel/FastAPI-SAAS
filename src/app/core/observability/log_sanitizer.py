@@ -36,7 +36,8 @@ class LogSanitizer:
     # must NOT appear here or nested-dict tests regress to [REDACTED].
     _SENSITIVE_KEY_RE: re.Pattern[str] = re.compile(
         r"(?i)(password|passwd|pwd|secret|token|api[_-]?key|apikey|"
-        r"auth|credential|private[_-]?key)"
+        r"credential|private[_-]?key|authorization|"
+        r"(?:^|[_-])auth(?:$|[_-])|x-auth(?:$|[_-][a-z0-9_-]*))"
     )
 
     # Pre-compiled patterns for performance

@@ -172,7 +172,7 @@ class SigningSecretViewResponse(BaseModel):
 
     webhook_endpoint_id: UUID
     signing_secret: str
-    created_at: datetime
+    endpoint_created_at: datetime
     message: str = "Store this secret securely. It will not be shown again."
 
 
@@ -196,6 +196,7 @@ class SigningSecretRotateResponse(BaseModel):
     old_secret_expires_at: datetime
     grace_period_seconds: int
     message: str = (
-        "Secret rotated successfully. Old secret is invalidated immediately. "
-        "Update your webhook consumer before rotating."
+        "Secret rotated successfully. The previous secret remains valid until "
+        "old_secret_expires_at. Update your webhook consumer before the grace "
+        "period elapses."
     )

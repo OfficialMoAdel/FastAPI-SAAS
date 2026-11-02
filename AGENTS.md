@@ -29,8 +29,9 @@ uv run alembic upgrade head
 # Stale allow-list entries fail the build.
 uv run python scripts/checks/module_structure.py
 
-# Fails if a log template has an empty slot ("Failed to upload file :").
-# Remove the slot entirely since structlog renders braces literally.
+# Fails if a log template has an empty slot ("Failed to upload file :",
+# "Warmer= | error="). Remove the slot entirely since structlog renders
+# braces literally; pass values as structured fields.
 uv run python scripts/checks/log_templates.py
 
 # Fails if production code contains comments added just to satisfy test greps.

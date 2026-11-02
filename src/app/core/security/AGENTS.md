@@ -123,6 +123,11 @@ tier that is not configured is a configuration mistake and is logged
 (`rate_limit_tier_not_configured`); the anonymous fallback is not. The period
 is floored at 1s, so a 429 always carries a `Retry-After`.
 
+A missing Redis client is an outage, not a policy answer: `get_tier_policy`
+returns `None` without negative-caching that case, so a recovered client is
+used immediately. A missing KEY in a reachable Redis is still negative-cached
+for the policy TTL.
+
 **Invalidation:** `rate_limit_cache.invalidate_tier_policy` goes through the
 L1 seam, which owns BOTH the policy list and the compiled per-path map.
 Popping only the list left the map serving the OLD limits for up to its own
@@ -201,6 +206,15 @@ rg -n "log_security_event|SecurityEventType" src/app/
 - **Token-version bump** (password change / global logout) invalidates all issued tokens — don't bypass
 - **Cache warmup**: blacklist cache is warmed at startup (`composition.py::_warm_token_blacklist_cache`, run in the composition lifespan), capped by `settings.app.TOKEN_BLACKLIST_WARMUP_LIMIT` (0 disables); warmup failure is fail-closed in production
 - **SSRF**: all outbound webhook URLs pass `url_validator.validate_webhook_url`
+- **Resolver failures are validation failures**: `validate_webhook_url` wraps
+  the whole `OSError` family around `getaddrinfo` — `socket.gaierror`
+  (NXDOMAIN), `socket.timeout`/`TimeoutError`, and `EAI_AGAIN` — as
+  `SSRFProtectionError`. Catching only `gaierror` let a transient resolver
+  timeout escape the seam, so `validate_url_ssrf` could not translate it and
+  creating or updating a webhook answered **500** instead of a 4xx. Pinned by
+  `tests/unit/core/security/test_url_validator_dns_failures.py`.
+- **Never weaken the pinning contract**: the function always resolves and
+  returns a pinned IP, or raises. It does not return `None`.
 - **Whitelist ≠ trust**: a whitelisted IP skips the blacklist and (when
   `IP_WHITELIST_BYPASS_RATE_LIMIT`) rate limiting, but is still authenticated
   and authorized like any other caller. Whitelist membership is an admission

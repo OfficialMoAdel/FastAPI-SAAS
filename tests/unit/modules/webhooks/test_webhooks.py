@@ -94,12 +94,14 @@ async def test_trigger_webhooks_bulk_insert_concurrency(webhook_service, mock_db
         patch("src.app.modules.webhooks.service.decrypt_data", return_value="secret"),
         patch("src.app.modules.webhooks.delivery.enqueue", new_callable=AsyncMock) as mock_enqueue,
     ):
-        # Mock DB execute to return "created" deliveries with IDs
-        # We need to simulate the RETURNING clause result
+        # Mock DB execute: first the stale-cache existence check, then the
+        # INSERT ... RETURNING result.
+        existence_result = MagicMock()
+        existence_result.scalars.return_value.all.return_value = [ep.id for ep in endpoints]
         mock_result = MagicMock()
         mock_deliveries = [MagicMock(id=uuid4()) for _ in range(3)]
         mock_result.scalars.return_value.all.return_value = mock_deliveries
-        mock_db.execute.return_value = mock_result
+        mock_db.execute.side_effect = [existence_result, mock_result]
 
         # EXECUTE
         deliveries = await webhook_service.trigger_webhooks(
@@ -111,8 +113,9 @@ async def test_trigger_webhooks_bulk_insert_concurrency(webhook_service, mock_db
         # 1. Should have called get_active_endpoints
         webhook_service.get_active_endpoints.assert_called_once()
 
-        # 2. Should have called db.execute ONCE (the bulk insert)
-        assert mock_db.execute.call_count == 1
+        # 2. Should have called db.execute TWICE: the existence check and the
+        # bulk insert (not once per endpoint).
+        assert mock_db.execute.call_count == 2
         call_args = mock_db.execute.call_args[0][0]
         assert "INSERT" in str(call_args)
 

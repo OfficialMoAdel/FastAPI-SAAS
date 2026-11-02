@@ -275,6 +275,30 @@ class TestLogSanitizer:
             # ("sk_test_123" survives) encoded the leak the fix closes.
             assert result["auth"]["metadata"]["api_key"] == "[REDACTED]"
 
+        def test_auth_key_matching_uses_token_boundaries(self) -> None:
+            """Only real credential keys are redacted, not words like author."""
+            data = {
+                "author": "alice",
+                "authority": "example.org",
+                "author_name": "Alice",
+                "auth_token": "secret-token",
+                "x-auth-token": "secret-header",
+                "x-auth-signature": "secret-signature",
+                "authorization": "Bearer secret",
+                "auth": "secret-auth",
+            }
+            result = LogSanitizer.sanitize_dict(data)
+
+            assert result["author"] == "alice"
+            assert result["authority"] == "example.org"
+            assert result["author_name"] == "Alice"
+            assert result["auth_token"] == "[REDACTED]"
+            assert result["x-auth-token"] == "[REDACTED]"
+            assert result["x-auth-signature"] == "[REDACTED]"
+            assert result["authorization"] == "Bearer [REDACTED]"
+            assert "secret" not in result["authorization"]
+            assert result["auth"] == "[REDACTED]"
+
         def test_list_sanitization(self) -> None:
             """Test lists are sanitized."""
             data = [

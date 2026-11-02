@@ -111,7 +111,7 @@ def is_metadata_ip(ip: str) -> bool:
     return any(ip_obj in network for network in METADATA_NETWORKS)
 
 
-async def validate_webhook_url(url: str, allow_internal: bool = False) -> str | None:
+async def validate_webhook_url(url: str, allow_internal: bool = False) -> str:
     """Validate a URL is safe for outbound webhook requests and return its safe resolved IP address.
 
     Performs the following checks:
@@ -130,8 +130,12 @@ async def validate_webhook_url(url: str, allow_internal: bool = False) -> str | 
 
     Returns
     -------
-        str | None: The safe resolved IP address to use for connection,
-        or None when internal URLs are allowed and no pinning was performed.
+        str: The safe resolved IP address to pin the connection to.
+
+        A pinned IP is ALWAYS returned — ``allow_internal`` only relaxes which
+        ranges are blocked, and the hostname is still resolved so the caller
+        gets a pin-able address. This function never returns ``None``; an
+        unresolvable or blocked host raises ``SSRFProtectionError``.
 
     Raises
     ------
@@ -167,8 +171,17 @@ async def validate_webhook_url(url: str, allow_internal: bool = False) -> str | 
         # Get all IP addresses for the hostname (non-blocking via thread pool)
         addr_info = await asyncio.to_thread(socket.getaddrinfo, hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         resolved_ips = {info[4][0] for info in addr_info}
-    except socket.gaierror as e:
-        raise SSRFProtectionError(f"Could not resolve hostname '{hostname}': {e}")
+    except OSError as e:
+        # `socket.gaierror` (NXDOMAIN / no A record) and `socket.timeout`
+        # (an alias of the builtin ``TimeoutError``) are BOTH ``OSError``
+        # subclasses. Catching only ``gaierror`` let a transient resolver
+        # timeout — or an ``EAI_AGAIN`` burst — escape this seam, so
+        # ``validate_url_ssrf`` could not translate it and creating or
+        # updating a webhook answered 500 instead of a 4xx validation error.
+        # A 500 also invites the client to retry a request that will keep
+        # failing. Every resolver failure is a validation failure for the URL
+        # being checked, so they all map to the same domain error.
+        raise SSRFProtectionError(f"Could not resolve hostname '{hostname}': {e}") from e
 
     # Full blocked-range check normally; metadata-only check when internal
     # URLs are allowed (private ranges stay reachable, IMDS never is).

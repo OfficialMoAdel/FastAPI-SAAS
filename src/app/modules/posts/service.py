@@ -39,16 +39,15 @@ class PostService(BaseService[Post]):
         """Check if current user owns the resource.
 
         Item 8: delegates to the ONE ownership seam
-        (:func:`require_resource_ownership`) — superusers bypass. Keeps the
-        int-coercion guard so a string/int mismatch across ORM/dict rows can
-        never bypass ownership (uncoercible targets fail closed).
+        (:func:`require_resource_ownership`) — superusers bypass. The owner id
+        must already be an int: coercing with ``int()`` truncated floats
+        (``int(1.9) == 1``), which could make a foreign post look owned.
+        Anything else fails closed.
         """
+        if isinstance(target_user_id, bool) or not isinstance(target_user_id, int):
+            raise ForbiddenError("You do not have permission to modify this post.")
         try:
-            target = int(target_user_id)
-        except (TypeError, ValueError):
-            raise ForbiddenError("You do not have permission to modify this post.") from None
-        try:
-            require_resource_ownership(target, current_user_id, is_superuser)
+            require_resource_ownership(target_user_id, current_user_id, is_superuser)
         except ForbiddenError:
             raise ForbiddenError("You do not have permission to modify this post.") from None
 

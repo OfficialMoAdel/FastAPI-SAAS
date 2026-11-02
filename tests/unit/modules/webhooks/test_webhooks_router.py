@@ -358,7 +358,7 @@ async def test_get_signing_secret(mock_service_cls, mock_db, mock_tenant, mock_u
         return_value={
             "webhook_endpoint_id": endpoint_id,
             "signing_secret": "whsec_a1b2c3d4e5f6g7h8i9j0",
-            "created_at": datetime.now(UTC),
+            "endpoint_created_at": datetime.now(UTC),
         }
     )
     mock_service_cls.return_value = mock_service
@@ -371,6 +371,7 @@ async def test_get_signing_secret(mock_service_cls, mock_db, mock_tenant, mock_u
     assert result.signing_secret != "whsec_a1b2c3d4e5f6g7h8i9j0"
     assert result.signing_secret.startswith("whsec_")
     assert "…" in result.signing_secret
+    assert result.endpoint_created_at is not None
 
 
 @pytest.mark.asyncio
@@ -385,6 +386,7 @@ async def test_rotate_signing_secret(mock_service_cls, mock_db, mock_tenant, moc
             "rotated_at": datetime.now(UTC),
             "old_secret_expires_at": datetime.now(UTC),
             "grace_period_seconds": 300,
+            "message": "Secret rotated successfully. The previous secret remains valid until the grace period elapses.",
         }
     )
     mock_service_cls.return_value = mock_service
@@ -395,3 +397,6 @@ async def test_rotate_signing_secret(mock_service_cls, mock_db, mock_tenant, moc
     )
 
     assert result.new_signing_secret == "new-secret"
+    assert result.message == (
+        "Secret rotated successfully. The previous secret remains valid until the grace period elapses."
+    )

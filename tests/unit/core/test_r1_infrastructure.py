@@ -12,6 +12,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from redis.exceptions import RedisError
 
 from src.app.core.monitoring import (
     R1UnifiedMetrics,
@@ -173,24 +174,24 @@ class TestLuaScriptManager:
         assert manager.get_script("idempotency_check").loaded is True
 
     @pytest.mark.asyncio
-    async def test_execute_noscript_fallback_when_load_fails(self) -> None:
-        """Test NOSCRIPT error falls back to EVAL when SCRIPT LOAD fails."""
+    async def test_execute_noscript_load_failure_does_not_eval(self) -> None:
+        """A failed reload must not be papered over with EVAL."""
         manager = LuaScriptManager()
         mock_redis = AsyncMock()
         mock_redis.evalsha = AsyncMock(side_effect=Exception("NOSCRIPT No matching script"))
-        mock_redis.script_load = AsyncMock(side_effect=Exception("SCRIPT LOAD failed"))
+        mock_redis.script_load = AsyncMock(side_effect=RedisError("SCRIPT LOAD failed"))
         mock_redis.eval = AsyncMock(return_value="fallback_result")
 
-        result = await manager.execute(
-            mock_redis,
-            "idempotency_check",
-            keys=["key1"],
-            args=["300", "1"],
-        )
+        with pytest.raises(LuaScriptError, match="Failed to load script"):
+            await manager.execute(
+                mock_redis,
+                "idempotency_check",
+                keys=["key1"],
+                args=["300", "1"],
+            )
 
-        assert result == "fallback_result"
         mock_redis.script_load.assert_called_once()
-        mock_redis.eval.assert_called_once()
+        mock_redis.eval.assert_not_called()
         assert manager.get_script("idempotency_check").loaded is False
 
     @pytest.mark.asyncio

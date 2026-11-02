@@ -43,13 +43,16 @@ async def job_tenant_context(
     # A6: save/set/restore and the minimal-context fabrication live behind
     # the tenancy lifecycle seam — this adapter only owns the DB session.
     with preserved_tenant():
-        bind_tenant(fabricate_job_tenant(tenant_id))
+        tenant = fabricate_job_tenant(tenant_id)
+        bind_tenant(tenant)
 
         async with local_session() as session:
             # Use rls_context so tenant variables survive transactions and commits.
+            # The GUC must carry the SAME canonical UUID the context was built
+            # from; str(int_id) would not match the UUID form used elsewhere.
             user_id_str = str(user_id) if user_id else None
-            async with rls_context(session, str(tenant_id), user_id_str):
-                logger.debug("job_rls_context_set", tenant_id=tenant_id, user_id=user_id_str)
+            async with rls_context(session, str(tenant.tenant_id), user_id_str):
+                logger.debug("job_rls_context_set", tenant_id=str(tenant.tenant_id), user_id=user_id_str)
                 yield session
 
 

@@ -671,7 +671,7 @@ async def test_reset_logs_info(registry, mock_circuit_breaker):
         await registry.reset("test_circuit")
 
         args = " ".join(str(a) for a in mock_info.call_args[0])
-        assert "Reset circuit breaker" in args
+        assert "circuit_breaker_reset" in args
 
 
 @pytest.mark.asyncio
@@ -683,7 +683,7 @@ async def test_reset_all_logs_info(registry_with_circuits):
         await registry.reset_all()
 
         args = " ".join(str(a) for a in mock_info.call_args[0])
-        assert "Reset all circuit breakers:" in args
+        assert "circuit_breakers_reset_all" in args
 
 
 # ============================================================================

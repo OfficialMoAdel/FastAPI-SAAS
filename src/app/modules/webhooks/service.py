@@ -41,6 +41,7 @@ from src.app.modules.webhooks.delivery import (
 from src.app.modules.webhooks.delivery import (
     WEBHOOK_RETRY_DELAYS as WEBHOOK_RETRY_DELAYS,
 )
+from src.app.modules.webhooks.exceptions import WebhookSecretUnavailableError
 from src.app.modules.webhooks.models import (
     WebhookDelivery,
     WebhookDeliveryStatus,
@@ -516,6 +517,32 @@ class WebhookService:
         if not endpoints:
             return []
 
+        # The endpoint cache can be up to 300s stale relative to another
+        # worker's delete. Inserting a delivery for an endpoint that no longer
+        # exists raises a FK violation and aborts the WHOLE batch, so verify
+        # the cached ids still exist before the bulk insert and drop only the
+        # stale rows.
+        endpoint_ids = [endpoint.id for endpoint in endpoints]
+        existing_stmt = select(WebhookEndpoint.id).where(WebhookEndpoint.id.in_(endpoint_ids))
+        existing_result = await execute_scoped(
+            existing_stmt,
+            db=self.db,
+            model=WebhookEndpoint,
+            scope=ExplicitTenant(tenant_id, reason="legacy-criterion:WebhookEndpoint"),
+        )
+        live_endpoint_ids = set(existing_result.scalars().all())
+        stale_count = len(endpoint_ids) - len(live_endpoint_ids)
+        if stale_count:
+            logger.warning(
+                "webhook_endpoints_stale_in_cache",
+                tenant_id=str(tenant_id),
+                event_type=event_type,
+                stale_count=stale_count,
+            )
+            endpoints = [endpoint for endpoint in endpoints if endpoint.id in live_endpoint_ids]
+        if not endpoints:
+            return []
+
         # Prepare deliveries for bulk insert.
         # NOTE: the signature is computed at SEND time per attempt in
         # delivery.py (Stripe-style `t=,v1=` over the canonical bytes) and
@@ -704,7 +731,9 @@ class WebhookService:
         Returns
         -------
         dict
-            Dictionary with webhook_endpoint_id, signing_secret, and created_at
+            Dictionary with webhook_endpoint_id, signing_secret, and
+            endpoint_created_at (the endpoint row's creation time, not a
+            secret-specific timestamp)
 
         Raises
         ------
@@ -736,20 +765,21 @@ class WebhookService:
                 # signing_secret is ALWAYS stored encrypted via encrypt_data.
                 # On any decryption failure we must NOT fall back to returning the
                 # ciphertext blob (it would leak the encrypted secret to the caller).
-                # Raise so the caller gets a clean error instead of sensitive data.
-                raise ValueError(f"Cannot decrypt webhook signing_secret for endpoint {endpoint.id}.") from e
+                # Raise a domain exception so the central handler labels the
+                # response instead of emitting an untranslated ValueError -> 500.
+                raise WebhookSecretUnavailableError(endpoint.id) from e
 
         if not secret:
             return {
                 "webhook_endpoint_id": endpoint.id,
                 "signing_secret": "",
-                "created_at": endpoint.created_at,
+                "endpoint_created_at": endpoint.created_at,
             }
 
         return {
             "webhook_endpoint_id": endpoint.id,
             "signing_secret": secret,
-            "created_at": endpoint.created_at,
+            "endpoint_created_at": endpoint.created_at,
         }
 
     async def rotate_signing_secret(
@@ -774,12 +804,16 @@ class WebhookService:
         tenant_id : int
             ID of the tenant
         grace_period_seconds : int
-            Reserved for future grace period support (default: 300/5min)
+            How long the previous secret remains valid after rotation, in
+            seconds (default: 300, i.e. 5 minutes). ``0`` invalidates the
+            previous secret immediately.
 
         Returns
         -------
         dict
-            Dictionary with new_signing_secret and rotation timestamp
+            Dictionary with new_signing_secret, rotated_at,
+            old_secret_expires_at, grace_period_seconds, and a message
+            describing the actual grace window.
 
         Raises
         ------
@@ -816,12 +850,26 @@ class WebhookService:
 
         await self.db.commit()
         await self._invalidate_endpoints_cache(endpoint.tenant_id)
+
+        if grace_period_seconds > 0:
+            message = (
+                "Secret rotated successfully. The previous secret remains valid until "
+                f"{expires_at.isoformat()} ({grace_period_seconds} seconds). "
+                "Update your webhook consumer before the grace period elapses."
+            )
+        else:
+            message = (
+                "Secret rotated successfully. The previous secret was invalidated "
+                "immediately (grace_period_seconds=0)."
+            )
+
         return {
             "webhook_endpoint_id": endpoint.id,
             "new_signing_secret": new_secret,
             "rotated_at": rotated_at,
             "old_secret_expires_at": expires_at,
             "grace_period_seconds": grace_period_seconds,
+            "message": message,
         }
 
 

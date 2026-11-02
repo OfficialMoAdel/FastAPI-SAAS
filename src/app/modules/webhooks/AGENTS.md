@@ -136,11 +136,14 @@ row and delivered by the normal pipeline. The per-tier rate limit is checked
   `SigningSecretViewResponse`. The **plaintext is never returned**: the router
   masks it (`{first 6}…{last 4}`, or `******` for a short value). The
   plaintext is shown exactly once, at creation or rotation.
+  `endpoint_created_at` is the endpoint row's creation time, **not** the
+  secret's creation time (rotation does not change the endpoint row).
 - `POST /api/v1/webhooks/{endpoint_id}/signing-secret/rotate` — `WEBHOOKS_MANAGE`.
   Request `SigningSecretRotateRequest`: `grace_period_seconds` (0–86400,
-  default 300). Response `SigningSecretRotateResponse`:
-  `webhook_endpoint_id`, `new_signing_secret` (plaintext), `rotated_at`,
-  `old_secret_expires_at`, `grace_period_seconds`.
+  default 300; `0` invalidates the previous secret immediately). Response
+  `SigningSecretRotateResponse`: `webhook_endpoint_id`, `new_signing_secret`
+  (plaintext), `rotated_at`, `old_secret_expires_at`, `grace_period_seconds`,
+  and `message` describing the actual grace window.
 
 ```bash
 curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -159,6 +162,7 @@ src/app/modules/webhooks/
 ├── signer.py          # canonical bytes + t=,v1= signature scheme
 ├── utils.py           # SSRF validation, consumer-side verify, secret generation
 ├── http_client.py     # shared httpx client with SSRF-safe pinned-IP transport
+├── exceptions.py      # WebhookSecretUnavailableError (declares its own HTTP mapping)
 ├── models.py          # WebhookEndpoint, WebhookDelivery
 ├── schemas.py         # Pydantic request/response schemas
 └── AGENTS.md          # This file
@@ -166,6 +170,16 @@ src/app/modules/webhooks/
 
 There is **no** `crud.py` in this module — the service issues its own
 SQLAlchemy statements through `execute_scoped`.
+
+`exceptions.py` follows the `billing/exceptions.py` pattern: each class
+declares `http_status` / `response_code` / `log_message` beside itself, so
+`core/errors.py` needs no row for this family and no import of this module.
+`WebhookSecretUnavailableError` is raised when a stored `signing_secret`
+cannot be decrypted — a corrupt row or mismatched key material, never caller
+input. It answers `500` with the `INTERNAL_ERROR` envelope code and a generic
+public message (rotate the secret); the endpoint id stays on the instance for
+the log line. Returning the ciphertext instead is never acceptable, so the
+read fails. Pinned by `tests/unit/modules/webhooks/test_webhook_secret_unavailable.py`.
 
 ## Delivery & retry behaviour
 
@@ -473,9 +487,10 @@ rg -n "trigger_webhooks|handle_webhook_trigger_event|webhook_event_adapter" src/
   `rotate_signing_secret` moves the current secret to `old_signing_secret`,
   writes the new one, and sets `old_secret_expires_at = rotated_at +
   grace_period_seconds`. While that deadline has not passed, `deliver` appends
-  a second `v1=` segment for the old secret. Note that the rotate response
-  *message* still says the old secret is invalidated immediately — the
-  behaviour above is what the code does.
+  a second `v1=` segment for the old secret. The rotate response's `message`
+  is derived from the actual window (including `old_secret_expires_at`), and
+  `grace_period_seconds=0` states that the old secret was invalidated
+  immediately.
 - **A decryption failure must not leak the ciphertext.**
   `get_signing_secret` raises instead of returning the encrypted blob.
 - **A circuit-open skip is not an attempt.** `attempt_count` is not

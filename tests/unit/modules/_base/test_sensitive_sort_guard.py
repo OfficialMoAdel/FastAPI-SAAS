@@ -91,8 +91,8 @@ async def test_get_multi_still_rejects_sensitive_column_in_mixed_list() -> None:
 
 
 async def test_get_multi_allows_legitimate_string_sort_on_plain_path() -> None:
-    """The fix must not reject harmless input: a string naming a real,
-    non-sensitive column is forwarded to the CRUD layer untouched."""
+    """The fix must not reject harmless input: a bare string is normalized to
+    a one-element list so FastCRUD cannot iterate its characters."""
     service, db = _make_service()
     service.crud.get_multi.return_value = {"data": []}
 
@@ -100,7 +100,23 @@ async def test_get_multi_allows_legitimate_string_sort_on_plain_path() -> None:
 
     assert result == []
     service.crud.get_multi.assert_awaited_once()
-    assert service.crud.get_multi.await_args.kwargs["sort_columns"] == "created_at"
+    assert service.crud.get_multi.await_args.kwargs["sort_columns"] == ["created_at"]
+    assert service.crud.get_multi.await_args.kwargs["sort_orders"] == ["desc"]
+
+
+async def test_get_multi_rejects_mismatched_sort_orders_length() -> None:
+    """A shorter sort_orders list must not silently truncate sort_columns."""
+    service, db = _make_service()
+    db.execute = AsyncMock()
+
+    with pytest.raises(ValidationError, match="same length"):
+        await service.get_multi(
+            eager_loads=["user"],
+            sort_columns=["created_at", "id"],
+            sort_orders=["desc"],
+        )
+
+    db.execute.assert_not_awaited()
 
 
 async def test_get_multi_allows_legitimate_list_sort_on_plain_path() -> None:

@@ -254,7 +254,7 @@ class CircuitBreakerRegistry:
         async with self._get_lock():
             spec.breaker.reset()
 
-        logger.info("Reset circuit breaker:", name=name)
+        logger.info("circuit_breaker_reset", name=name)
         return True
 
     async def reset_all(self) -> int:
@@ -269,7 +269,7 @@ class CircuitBreakerRegistry:
                 spec.breaker.reset()
 
         count = len(self._breakers)
-        logger.info("Reset all circuit breakers: total", count=count)
+        logger.info("circuit_breakers_reset_all", count=count)
         return count
 
     def get_stats(self) -> dict[str, Any]:

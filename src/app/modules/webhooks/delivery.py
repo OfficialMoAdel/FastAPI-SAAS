@@ -209,7 +209,10 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
     # before the try so the finally below can release the slot on EVERY exit
     # path — including the ones that never reach the gate.
     breaker: Any = None
-    probe_claimed = False
+    # The LEASE this delivery claimed, or None. The gate returns an ownership
+    # token (not a bool), so the release below cannot clear a claim another
+    # delivery took after this one's admission.
+    probe_claimed: int | None = None
 
     try:
         # Get delivery record (skips selectinload if endpoint is already pre-resolved)
@@ -257,9 +260,9 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
         # probe); the deliveries that are not the probe are deferred to the
         # retry ladder, exactly as an OPEN circuit defers them.
         # Fast path: CLOSED admits without the lock and owns no probe. Every
-        # other state goes through the gate, which returns the claim flag.
+        # other state goes through the gate, which returns the lease token.
         if breaker.state == CircuitState.CLOSED:
-            allowed, probe_claimed = True, False
+            allowed, probe_claimed = True, None
         else:
             allowed, probe_claimed = await breaker.allow_single_flight_with_claim()
         if not allowed:
@@ -294,7 +297,9 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
         # failure, the SSRF early return, a cancellation). A claim that is
         # never released blocks this endpoint's next recovery window.
         # `probe_claimed` comes from the gate itself: a call admitted while
-        # CLOSED does not own a probe and must not release one on exit.
+        # CLOSED does not own a probe and must not release one on exit. The
+        # release is ownership-checked, so it is a no-op when the lease has
+        # already been released or belongs to a newer claim.
 
         # W1+W2+S-4 FIX: serialize and sign AT SEND TIME, per attempt.
         #
@@ -497,7 +502,7 @@ async def deliver(db: AsyncSession, delivery_id: UUID, endpoint: WebhookEndpoint
         # next recovery window (the delivery ladder would defer every
         # delivery for a whole window).
         if probe_claimed and breaker is not None:
-            breaker.release_probe()
+            breaker.release_probe(probe_claimed)
         # F6: every exit path releases the claim (covers the raises the
         # inline releases missed: missing endpoint, re-fetch miss,
         # decrypt/commit/breaker failures). Double-release is a harmless

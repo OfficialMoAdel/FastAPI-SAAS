@@ -66,6 +66,42 @@ async def test_rotate_signing_secret_saves_old(webhook_service, mock_db):
     assert new_raw_secret != old_raw_secret
     assert decrypt_data(endpoint.signing_secret) == new_raw_secret
 
+    # The message must describe the actual grace window, not immediate expiry.
+    assert "300 seconds" in res["message"]
+    assert endpoint.old_secret_expires_at.isoformat() in res["message"]
+
+
+@pytest.mark.asyncio
+async def test_rotate_signing_secret_zero_grace_invalidates_immediately(webhook_service, mock_db):
+    """A zero grace period is reported as immediate invalidation."""
+    endpoint_id = uuid4()
+    tenant_id = uuid4()
+    endpoint = WebhookEndpoint(
+        tenant_id=tenant_id,
+        url="https://example.com/webhook",
+        event_type="test.event",
+        secret="legacy_secret",
+        signing_secret=encrypt_data("old_secret_key_64_chars_hex_encoded_value_here_12345"),
+        is_active=True,
+    )
+    endpoint.id = endpoint_id
+
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = endpoint
+    mock_db.execute.return_value = mock_result
+
+    res = await webhook_service.rotate_signing_secret(
+        endpoint_id=endpoint_id,
+        tenant_id=tenant_id,
+        grace_period_seconds=0,
+    )
+
+    assert res["grace_period_seconds"] == 0
+    assert res["old_secret_expires_at"] == res["rotated_at"]
+    assert "invalidated immediately" in res["message"]
+    assert "grace_period_seconds=0" in res["message"]
+    assert res["new_signing_secret"] not in res["message"]
+
 
 @pytest.mark.asyncio
 async def test_trigger_webhooks_persists_null_signature_during_grace_period(webhook_service, mock_db):
@@ -107,9 +143,11 @@ async def test_trigger_webhooks_persists_null_signature_during_grace_period(webh
     mock_delivery.status = WebhookDeliveryStatus.PENDING
     mock_delivery.tenant_id = tenant_id
 
+    existence_result = MagicMock()
+    existence_result.scalars.return_value.all.return_value = [endpoint.id]
     mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = [mock_delivery]
-    mock_db.execute.return_value = mock_result
+    mock_db.execute.side_effect = [existence_result, mock_result]
 
     res = await webhook_service.trigger_webhooks(tenant_id, event_type, payload)
     assert len(res) == 1
@@ -176,9 +214,11 @@ async def test_trigger_webhooks_persists_null_signature_after_expiration(webhook
     mock_delivery.status = WebhookDeliveryStatus.PENDING
     mock_delivery.tenant_id = tenant_id
 
+    existence_result = MagicMock()
+    existence_result.scalars.return_value.all.return_value = [endpoint.id]
     mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = [mock_delivery]
-    mock_db.execute.return_value = mock_result
+    mock_db.execute.side_effect = [existence_result, mock_result]
 
     await webhook_service.trigger_webhooks(tenant_id, event_type, payload)
 

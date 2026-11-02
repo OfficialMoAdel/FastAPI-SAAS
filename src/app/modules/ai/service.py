@@ -848,9 +848,9 @@ class ChatCompletionService:
             raise ChatCompletionError("No fallback provider available", "no_fallback", model)
 
         try:
-            logger.debug("Calling AI provider with model=, temperature=", model=model, temperature=turn.temperature)
+            logger.debug("ai_provider_call", model=model, temperature=turn.temperature)
             result = await with_fallback(_primary_call, _fallback_call, error_msg="Primary AI completion failed")
-            logger.info("Chat completion successful, tokens=", val=result.get("token_count"))
+            logger.info("ai_chat_completion_succeeded", token_count=result.get("token_count"))
         except (AIProviderError, ChatCompletionError) as e:
             # P2.20 FIX: the user message was already committed above. On LLM
             # failure it would be left as a dangling turn with no assistant reply,

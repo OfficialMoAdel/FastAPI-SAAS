@@ -13,7 +13,7 @@ import asyncio
 import secrets
 import time
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, TypedDict, overload
 
 from cachetools import TTLCache
 from redis.exceptions import RedisError
@@ -967,6 +967,7 @@ async def get_all_banned_ips() -> list[dict]:
     try:
         # Scan for all ban keys
         banned = []
+        seen: set[str] = set()
         cursor = 0
 
         while True:
@@ -987,7 +988,9 @@ async def get_all_banned_ips() -> list[dict]:
                         # "security:ban:" substring, so replace() was only
                         # latently wrong; removeprefix states the intent.
                         ip = key_str.removeprefix("security:ban:")
-                        ips.append(ip)
+                        if ip not in seen:
+                            ips.append(ip)
+                            seen.add(ip)
 
                     # Fetch all ban data concurrently
                     # asyncio.gather achieves the same multiplexing network efficiency
@@ -1043,7 +1046,25 @@ async def get_all_banned_ips() -> list[dict]:
         return []
 
 
-async def get_violation_stats(client_ip: str | None = None) -> dict:
+class ViolationTotals(TypedDict):
+    total_ips: int
+    total_violations: int
+
+
+class IPViolationStats(TypedDict):
+    ip: str
+    violations: int
+
+
+@overload
+async def get_violation_stats(client_ip: None = None) -> ViolationTotals: ...
+
+
+@overload
+async def get_violation_stats(client_ip: str) -> IPViolationStats: ...
+
+
+async def get_violation_stats(client_ip: str | None = None) -> ViolationTotals | IPViolationStats:
     """Get violation statistics.
 
     Args:
@@ -1078,8 +1099,9 @@ async def get_violation_stats(client_ip: str | None = None) -> dict:
 
         while True:
             cursor, keys = await redis_client.scan(cursor, match="security:violations:*", count=100)
-            fresh = [k for k in keys if k not in seen]
-            seen.update(keys)
+            normalized_keys = [k.decode() if isinstance(k, bytes) else k for k in keys]
+            fresh = [k for k in normalized_keys if k not in seen]
+            seen.update(normalized_keys)
             total_ips += len(fresh)
 
             if fresh:

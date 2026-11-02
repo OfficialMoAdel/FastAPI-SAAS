@@ -435,3 +435,26 @@ class TestPostServiceDelete:
                     post_id=1,
                     current_user=other_user,
                 )
+
+
+class TestPostOwnershipTypeSafety:
+    """Ownership checks must not coerce floats or strings into user ids."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target_user_id", [1.9, "1", True])
+    async def test_non_int_target_user_id_is_forbidden(self, mock_db, target_user_id):
+        from src.app.modules.posts.service import PostService
+        from src.app.shared.exceptions import ForbiddenError
+
+        service = PostService(mock_db)
+
+        with pytest.raises(ForbiddenError):
+            await service._check_ownership(1, target_user_id)
+
+    @pytest.mark.asyncio
+    async def test_matching_int_target_user_id_is_allowed(self, mock_db):
+        from src.app.modules.posts.service import PostService
+
+        service = PostService(mock_db)
+
+        await service._check_ownership(1, 1)

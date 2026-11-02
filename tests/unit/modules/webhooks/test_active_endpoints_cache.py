@@ -184,9 +184,11 @@ class TestEndpointCacheRoundTrip:
         # A real cache payload, produced by the real serializer.
         mock_redis.get.return_value = json_dumps([_serialize_endpoint(endpoint)], as_str=True)
 
+        existence_result = MagicMock()
+        existence_result.scalars.return_value.all.return_value = [endpoint_id]
         stored = MagicMock()
         stored.scalars.return_value.all.return_value = [MagicMock(id=uuid4(), tenant_id=tenant_id)]
-        mock_db.execute.return_value = stored
+        mock_db.execute.side_effect = [existence_result, stored]
 
         with (
             patch("src.app.core.redis_provider.get_redis", return_value=mock_redis),
@@ -194,13 +196,49 @@ class TestEndpointCacheRoundTrip:
         ):
             await service.trigger_webhooks(tenant_id, "user.created", {"k": "v"})
 
-        # The only SQL on a cache hit is the delivery INSERT — no endpoint SELECT.
-        insert_stmt = mock_db.execute.await_args_list[0].args[0]
+        # On a cache hit, SQL is one lightweight endpoint-existence check plus
+        # the delivery INSERT — not one endpoint SELECT per delivery.
+        insert_stmt = mock_db.execute.await_args_list[1].args[0]
         params = insert_stmt.compile().params
         bound_endpoint_id = next(
             value for key, value in params.items() if key.startswith("webhook_endpoint_id")
         )
         assert bound_endpoint_id == endpoint_id, "a cache hit must still bind the real endpoint id"
+
+    @pytest.mark.asyncio
+    async def test_a_stale_cached_endpoint_is_skipped_before_insert(self) -> None:
+        """A deleted endpoint inside another worker's TTL must not abort the batch."""
+        mock_db = AsyncMock()
+        service = WebhookService(mock_db)
+        tenant_id = uuid4()
+
+        endpoint = WebhookEndpoint(
+            tenant_id=tenant_id,
+            url="https://example.com/hook",
+            event_type="user.created",
+            secret="s",
+            signing_secret="ss",
+            is_active=True,
+        )
+        endpoint.id = uuid4()
+
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = json_dumps([_serialize_endpoint(endpoint)], as_str=True)
+
+        existence_result = MagicMock()
+        existence_result.scalars.return_value.all.return_value = []
+        mock_db.execute.side_effect = [existence_result]
+
+        with (
+            patch("src.app.core.redis_provider.get_redis", return_value=mock_redis),
+            patch("src.app.modules.webhooks.delivery.enqueue", new=AsyncMock()) as mock_enqueue,
+        ):
+            result = await service.trigger_webhooks(tenant_id, "user.created", {"k": "v"})
+
+        assert result == []
+        assert mock_db.execute.await_count == 1
+        mock_db.commit.assert_not_awaited()
+        mock_enqueue.assert_not_awaited()
 
 
 class TestPreResolvedDelivery:

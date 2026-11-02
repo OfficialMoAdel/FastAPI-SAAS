@@ -167,7 +167,10 @@ class CryptSettings(BaseSettings):
         if env_value is None:
             # M-4: use python-dotenv's parser instead of hand-rolled line
             # splitting (handles quoting/escaping consistently with the loader).
-            src_dir_env = Path(__file__).resolve().parents[2] / ".env"
+            # parents: [0]=config, [1]=core, [2]=app, [3]=src — the repo's
+            # dotenv file lives at src/.env, so parents[2] pointed at
+            # src/app/.env and never resolved.
+            src_dir_env = Path(__file__).resolve().parents[3] / ".env"
             repo_env = Path(".env")
             for candidate in (src_dir_env, repo_env):
                 if candidate.is_file():

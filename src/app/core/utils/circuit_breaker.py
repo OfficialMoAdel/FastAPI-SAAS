@@ -70,6 +70,15 @@ class CircuitBreaker:
     # HALF_OPEN caller is rejected, which for the DB breaker means 503 for all
     # traffic.
     _probe_claimed_at: float = field(default=0.0, init=False)
+    # Ownership token for the lease above. `try_acquire_probe` stamps a fresh
+    # token on every successful claim and returns it; `release_probe` /
+    # `record_success` / `record_failure` / `clear_probe_async` release ONLY
+    # when handed the token that is still current. Without it, a call admitted
+    # while CLOSED that later failed cleared the lease of a DIFFERENT caller
+    # that claimed the probe after the breaker flipped to HALF_OPEN — two
+    # probes were then admitted against a recovering dependency, which is the
+    # single-flight guarantee this whole mechanism exists to provide.
+    _probe_token: int = field(default=0, init=False)
 
     def _get_lock(self) -> asyncio.Lock:
         """Return the internal asyncio.Lock, creating it lazily on first access."""
@@ -100,8 +109,14 @@ class CircuitBreaker:
         """Get the current failure count."""
         return self._failure_count
 
-    async def record_success(self) -> None:
+    async def record_success(self, probe_token: int | None = None) -> None:
         """Record successful call, potentially closing circuit.
+
+        ``probe_token`` is the lease returned by :meth:`try_acquire_probe`.
+        Pass it when this call owns the HALF_OPEN probe so the lease is
+        released on success. Omit it (or pass ``None``) when the call was
+        admitted while CLOSED: it holds no lease, and releasing one it does
+        not own would admit a second probe against a recovering dependency.
 
         P0-4 fast path: a healthy CLOSED breaker with zero failures and no
         probe in flight is a locked-body no-op (the body only clears
@@ -115,12 +130,15 @@ class CircuitBreaker:
         from src.app.core.monitoring.r1_unified_metrics import record_circuit_breaker_transition
 
         async with self._get_lock():
-            # BUG FIX: Always clear the probe flag on success so the next HALF_OPEN
-            # cycle can allow a new probe if the circuit opens again later.
-            self._probe_in_progress = False
-            self._probe_claimed_at = 0.0
+            # Release the lease ONLY when this call owns it (see `_probe_token`).
+            self._release_probe_if_owned(probe_token)
 
-            if self.state == CircuitState.HALF_OPEN:
+            # Capture the state once, BEFORE the probe release above, so a
+            # recovery-window boundary cannot be crossed between two reads of
+            # the computed `state` property.
+            previous_state = self.state
+
+            if previous_state == CircuitState.HALF_OPEN:
                 self._success_count += 1
                 if self._success_count >= self.success_threshold:
                     self._close()
@@ -132,7 +150,7 @@ class CircuitBreaker:
                     # Record state transition for monitoring
                     if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
                         record_circuit_breaker_transition("closed")
-            elif self.state == CircuitState.CLOSED and self._failure_count:
+            elif previous_state == CircuitState.CLOSED and self._failure_count:
                 # W3 FIX: a success in CLOSED proves the dependency is healthy.
                 # Without resetting _failure_count here, failures accumulate
                 # over the breaker's LIFETIME (across tenants/endpoints sharing
@@ -140,22 +158,33 @@ class CircuitBreaker:
                 # dependency currently being healthy.
                 self._failure_count = 0
 
-    async def record_failure(self, error: Exception | None = None) -> None:
-        """Record failed call, potentially opening circuit."""
+    async def record_failure(self, error: Exception | None = None, probe_token: int | None = None) -> None:
+        """Record failed call, potentially opening circuit.
+
+        ``probe_token`` has the same ownership semantics as in
+        :meth:`record_success`: a failed HALF_OPEN probe releases the lease it
+        claimed; a failed call admitted while CLOSED releases nothing.
+
+        The transition is chosen from the state observed BEFORE this failure is
+        recorded, because ``state`` is a COMPUTED property — it reports
+        HALF_OPEN from ``OPEN`` plus an elapsed recovery window. The previous
+        implementation refreshed ``_last_failure_time`` first and only then
+        read ``state``, which made the HALF_OPEN arm unreachable for any
+        ``recovery_timeout > 0``: a failed probe logged ``opened`` instead of
+        ``reopened``, and a straggler from a CLOSED-admitted call re-opened the
+        circuit, resetting the very recovery window it was already waiting on.
+        """
         from src.app.core.config import settings
         from src.app.core.monitoring.r1_unified_metrics import record_circuit_breaker_transition
 
         async with self._get_lock():
-            # BUG FIX: Always clear probe flag on failure so the next HALF_OPEN
-            # cycle allows a fresh probe after recovery_timeout elapses again.
-            self._probe_in_progress = False
-            self._probe_claimed_at = 0.0
-            self._failure_count += 1
-            self._last_failure_time = time.time()
+            previous_state = self.state
 
-            # BUG FIX: same virtual-HALF_OPEN issue as record_success — use the
-            # `state` property (which computes HALF_OPEN) not `_state` (which is OPEN).
-            if self.state == CircuitState.HALF_OPEN:
+            self._release_probe_if_owned(probe_token)
+            self._failure_count += 1
+
+            if previous_state == CircuitState.HALF_OPEN:
+                # The probe failed: reopen and start a fresh recovery window.
                 self._open()
                 logger.warning(
                     "circuit_breaker_reopened",
@@ -165,6 +194,13 @@ class CircuitBreaker:
                 # Record state transition for monitoring
                 if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
                     record_circuit_breaker_transition("open")
+            elif previous_state == CircuitState.OPEN:
+                # A straggler from a call admitted before the circuit opened.
+                # It is already failing closed, and `_last_failure_time` is
+                # left untouched on purpose: refreshing it here extended OPEN
+                # by up to one recovery_timeout per in-flight call, so under
+                # load the breaker could never reach its recovery window.
+                return
             elif self._failure_count >= self.failure_threshold:
                 self._open()
                 logger.warning(
@@ -197,6 +233,10 @@ class CircuitBreaker:
         self._last_failure_time = 0.0
         self._probe_in_progress = False
         self._probe_claimed_at = 0.0
+        # `_probe_token` is deliberately NOT reset: it is a monotonic lease id,
+        # and rewinding it would let a stale holder's token match a lease minted
+        # after the reset (the ABA case). Clearing `_probe_in_progress` above is
+        # what invalidates the outstanding lease.
 
     def reset_lock(self) -> None:
         """Reset the asyncio lock for new event loop (test isolation).
@@ -206,36 +246,44 @@ class CircuitBreaker:
         """
         self._lock = asyncio.Lock()
 
-    def try_acquire_probe(self) -> bool:
+    def try_acquire_probe(self) -> int | None:
         """Try to acquire the HALF_OPEN probe slot (non-blocking, caller must hold lock externally).
 
         The claim is a LEASE (D6). A claim older than ``recovery_timeout``
         belongs to a caller that died without releasing it — a cancelled
         probe, most often — and is reclaimed here, so a lost claim can block
         the breaker for at most one recovery window instead of forever.
+
+        Returns:
+            The lease token on success, ``None`` when another caller holds a
+            fresh claim. The token is what makes the release ownership-checked
+            (see :meth:`release_probe`). It is always a positive int, so the
+            existing ``if not try_acquire_probe():`` idiom keeps meaning
+            "could not claim".
         """
         if self._probe_in_progress:
             if time.time() - self._probe_claimed_at < self.recovery_timeout:
-                return False
+                return None
             logger.warning(
                 "circuit_breaker_stale_probe_reclaimed",
                 breaker=self.name,
                 claimed_for_s=round(time.time() - self._probe_claimed_at, 1),
             )
+        self._probe_token += 1
         self._probe_in_progress = True
         self._probe_claimed_at = time.time()
-        return True
+        return self._probe_token
 
-    async def _admit(self) -> tuple[bool, bool]:
-        """Admit one call and report whether it claimed the HALF_OPEN probe."""
+    async def _admit(self) -> tuple[bool, int | None]:
+        """Admit one call and report the probe lease it claimed (or ``None``)."""
         async with self._get_lock():
             state = self.state
             if state == CircuitState.CLOSED:
-                return True, False
+                return True, None
             if state == CircuitState.OPEN:
-                return False, False
-            claimed = self.try_acquire_probe()
-            return claimed, claimed
+                return False, None
+            token = self.try_acquire_probe()
+            return (token is not None), token
 
     async def allow_single_flight(self) -> bool:
         """Gate for enqueue-style callers during HALF_OPEN recovery.
@@ -257,13 +305,16 @@ class CircuitBreaker:
         allowed, _ = await self._admit()
         return allowed
 
-    async def allow_single_flight_with_claim(self) -> tuple[bool, bool]:
-        """Admit one call and report whether this call owns the probe slot.
+    async def allow_single_flight_with_claim(self) -> tuple[bool, int | None]:
+        """Admit one call and report the probe lease this call owns.
 
         Returns:
-            ``(allowed, probe_claimed)``. ``probe_claimed`` is True only when
-            the HALF_OPEN probe was claimed by THIS call, so the caller knows
-            whether its release is an ownership-checked release or a no-op.
+            ``(allowed, probe_token)``. ``probe_token`` is the lease this call
+            claimed, or ``None`` when it claimed nothing (CLOSED admission, or
+            OPEN rejection). Pass it to :meth:`release_probe` /
+            ``record_success`` / ``record_failure`` so the release is
+            ownership-checked: a CLOSED-admitted call must never clear a lease
+            another caller took after the breaker flipped.
         """
         return await self._admit()
 
@@ -289,30 +340,56 @@ class CircuitBreaker:
         Yields:
             True when the call may proceed.
         """
-        allowed, probe_claimed = await self.allow_single_flight_with_claim()
+        allowed, probe_token = await self.allow_single_flight_with_claim()
         if not allowed:
             yield False
             return
         try:
             yield True
         finally:
-            if probe_claimed:
-                self.release_probe()
+            if probe_token is not None:
+                self.release_probe(probe_token)
 
-    def release_probe(self) -> None:
-        """Release probe slot (idempotent)."""
+    def _release_probe_if_owned(self, probe_token: int | None) -> None:
+        """Drop the lease only when ``probe_token`` is the current one.
+
+        Caller must already hold the lock (``record_success`` /
+        ``record_failure`` do; ``release_probe`` is the lock-free form).
+        """
+        if not probe_token or probe_token != self._probe_token:
+            return
         self._probe_in_progress = False
         self._probe_claimed_at = 0.0
 
-    async def clear_probe_async(self) -> None:
-        """Async-safe probe release for use in exception handlers."""
-        try:
-            async with self._get_lock():
-                self._probe_in_progress = False
-                self._probe_claimed_at = 0.0
-        except Exception:
+    def release_probe(self, probe_token: int | None = None) -> None:
+        """Release probe slot (idempotent).
+
+        Args:
+            probe_token: The lease returned by :meth:`try_acquire_probe`.
+                When given, the release happens ONLY if this call still owns
+                that lease. ``None`` is the unconditional form, reserved for
+                ``reset()`` and administrative paths.
+        """
+        if probe_token is None:
             self._probe_in_progress = False
             self._probe_claimed_at = 0.0
+            return
+        self._release_probe_if_owned(probe_token)
+
+    async def clear_probe_async(self, probe_token: int | None = None) -> None:
+        """Async-safe probe release for use in exception handlers.
+
+        Same ownership semantics as :meth:`release_probe`: pass the lease to
+        release only what this call claimed.
+        """
+        try:
+            async with self._get_lock():
+                self.release_probe(probe_token)
+        except Exception:
+            # Lock acquisition itself failed (a shutdown / loop-teardown
+            # edge): fall back to a direct write so a cancelled probe still
+            # cannot wedge the breaker. Still ownership-checked.
+            self.release_probe(probe_token)
 
 
 class CircuitBreakerOpen(Exception):
@@ -349,7 +426,7 @@ def circuit_breaker(
             from src.app.core.config import settings
 
             state = breaker.state  # Fast path: no lock
-            probe_claimed = False
+            probe_token: int | None = None
 
             # P4-1 Optimization: Double-check pattern for TOCTOU race prevention
             if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
@@ -372,13 +449,13 @@ def circuit_breaker(
                             # allowed to probe simultaneously, defeating the purpose. The dead
                             # code `if breaker._state == OPEN: breaker._state = HALF_OPEN` was
                             # also removed — it could never be True inside the HALF_OPEN guard.
-                            if not breaker.try_acquire_probe():
+                            probe_token = breaker.try_acquire_probe()
+                            if probe_token is None:
                                 # Another request is already probing — reject immediately
                                 recovery_in = breaker.recovery_timeout - (time.time() - breaker.last_failure_time)
                                 raise CircuitBreakerOpen(breaker.name, max(0, recovery_in))
                             # try_acquire_probe stamps the lease, so this claim
                             # cannot be mistaken for a stale one.
-                            probe_claimed = True
                         elif breaker.state == CircuitState.OPEN:
                             # State changed to OPEN while acquiring lock
                             recovery_in = breaker.recovery_timeout - (time.time() - breaker.last_failure_time)
@@ -392,10 +469,10 @@ def circuit_breaker(
 
             try:
                 result = await func(*args, **kwargs)
-                await breaker.record_success()
+                await breaker.record_success(probe_token)
                 return result
             except Exception as e:
-                await breaker.record_failure(e)
+                await breaker.record_failure(e, probe_token)
                 raise
             except BaseException:
                 # D6: a CANCELLED call is a BaseException, so the arm above
@@ -406,8 +483,8 @@ def circuit_breaker(
                 # Only clear a probe THIS call claimed: a CLOSED call that did
                 # not claim one must not clear a probe claimed by another
                 # caller after the state flipped.
-                if probe_claimed:
-                    await breaker.clear_probe_async()
+                if probe_token is not None:
+                    await breaker.clear_probe_async(probe_token)
                 raise
 
         return wrapper

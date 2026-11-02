@@ -243,7 +243,14 @@ import count_broad_excepts as counter  # noqa: E402
 #: with the real cause. It carries ``# noqa: BLE001 - cleanup is best-effort
 #: by contract``; the counter ignores the annotation, so this site contributes
 #: the 383 -> 384 delta. Re-measured with scripts/count_broad_excepts.py.
-BROAD_EXCEPT_BASELINE = 384
+#: 384 -> 385. Raised, deliberately and RE-MEASURED, by the
+#: ``preserved_tenant`` restore guard in ``core/tenancy/lifecycle.py``
+#: (ROUND_2 #3.2). A restore failure must not swallow the body's exception, so
+#: the restore is wrapped in a best-effort ``except Exception`` that logs and
+#: continues. It carries ``# noqa: BLE001 - cleanup is best-effort``; the
+#: counter ignores the annotation, so this site contributes the 384 -> 385
+#: delta. Re-measured with scripts/count_broad_excepts.py.
+BROAD_EXCEPT_BASELINE = 385
 
 #: The files muse 22 triaged. BLE001 is enforced on each (the per-file-ignores
 #: in pyproject.toml no longer blanket-exempt them), so these are also the

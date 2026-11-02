@@ -1,5 +1,7 @@
 """Unit tests for path_utils."""
 
+import pytest
+
 from src.app.core.utils.path_utils import sanitize_path
 
 
@@ -21,3 +23,13 @@ def test_sanitize_path_collapse_integers():
 def test_sanitize_path_basic():
     assert sanitize_path("/health") == "health"
     assert sanitize_path("/") == ""
+
+
+def test_sanitize_path_rejects_too_small_max_len():
+    with pytest.raises(ValueError, match="at least 18"):
+        sanitize_path("/a/very/long/path", max_len=17)
+
+
+def test_sanitize_path_respects_the_boundary_max_len():
+    result = sanitize_path("/" + "a" * 100, max_len=18)
+    assert len(result) == 18

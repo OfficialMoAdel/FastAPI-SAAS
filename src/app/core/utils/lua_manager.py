@@ -24,7 +24,7 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from redis.exceptions import NoScriptError
+from redis.exceptions import NoScriptError, RedisError
 
 from src.app.core.logger import get_logger
 from src.app.core.utils.retry import LuaScriptError
@@ -973,7 +973,13 @@ class LuaScriptManager:
     ) -> Any:
         """Execute a registered Lua script.
 
-        Uses EVALSHA for efficiency, with automatic NOSCRIPT fallback.
+        Uses EVALSHA for efficiency, with a safe NOSCRIPT fallback.
+
+        The fallback distinguishes "the script definitely did not run" from
+        "the call failed after the server may have executed it". Only the
+        former is retried. A transport error on the EVALSHA retry is raised
+        instead of falling back to EVAL, because re-executing a script that
+        already ran is unsafe for non-idempotent scripts.
 
         Args:
             redis: Redis client
@@ -1011,44 +1017,64 @@ class LuaScriptManager:
                 isinstance(e, NoScriptError) or "NOSCRIPT" in str(e).upper() or "NO MATCHING SCRIPT" in str(e).upper()
             )
 
-            # Handle NOSCRIPT error - script not in Redis cache; reload via SCRIPT LOAD
-            if is_noscript:
-                logger.debug("Script not cached in Redis, reloading via SCRIPT LOAD", script_name=script_name)
+            if not is_noscript:
+                raise LuaScriptError(f"Script '{script_name}' execution failed: {e}") from e
+
+            # NOSCRIPT means the script was not executed. Reloading it is
+            # therefore safe. A load failure is NOT safe to paper over with
+            # EVAL: the script still is not cached, so propagate instead.
+            logger.debug("Script not cached in Redis, reloading via SCRIPT LOAD", script_name=script_name)
+            try:
+                loaded_sha = await redis.script_load(script.source)  # type: ignore[misc]
+            except RedisError as load_err:
+                raise LuaScriptError(f"Failed to load script '{script_name}' after NOSCRIPT: {load_err}") from load_err
+
+            if loaded_sha != script.sha1:
+                logger.warning(
+                    "Script SHA1 mismatch on reload; keeping locally computed SHA",
+                    name=script_name,
+                    expected=script.sha1[:8],
+                    got=str(loaded_sha)[:8],
+                )
+            script.loaded = True
+
+            try:
+                return await redis.evalsha(  # type: ignore[misc]
+                    script.sha1,
+                    len(keys),
+                    *keys,
+                    *args,
+                )
+            except Exception as retry_err:
+                retry_is_noscript = (
+                    isinstance(retry_err, NoScriptError)
+                    or "NOSCRIPT" in str(retry_err).upper()
+                    or "NO MATCHING SCRIPT" in str(retry_err).upper()
+                )
+                if not retry_is_noscript:
+                    # Timeout/connection failures may have executed the script
+                    # on the server. Re-running via EVAL would duplicate side
+                    # effects, so surface the failure instead.
+                    raise LuaScriptError(
+                        f"Script '{script_name}' execution failed after reload: {retry_err}"
+                    ) from retry_err
+
+                # The script was evicted again before running, so EVAL is safe.
+                logger.warning(
+                    "Script evicted again after reload, falling back to EVAL",
+                    script_name=script_name,
+                )
                 try:
-                    loaded_sha = await redis.script_load(script.source)  # type: ignore[misc]
-                    if loaded_sha != script.sha1:
-                        logger.warning(
-                            "Script SHA1 mismatch on reload; keeping locally computed SHA",
-                            name=script_name,
-                            expected=script.sha1[:8],
-                            got=str(loaded_sha)[:8],
-                        )
-                    script.loaded = True
-                    return await redis.evalsha(  # type: ignore[misc]
-                        script.sha1,
+                    result = await redis.eval(  # type: ignore[misc]
+                        script.source,
                         len(keys),
                         *keys,
                         *args,
                     )
-                except Exception as load_err:
-                    logger.warning(
-                        "SCRIPT LOAD / EVALSHA reload failed, falling back to EVAL",
-                        script_name=script_name,
-                        error=str(load_err),
-                    )
-                    try:
-                        result = await redis.eval(  # type: ignore[misc]
-                            script.source,
-                            len(keys),
-                            *keys,
-                            *args,
-                        )
-                        script.loaded = False
-                        return result
-                    except Exception as eval_error:
-                        raise LuaScriptError(f"EVAL fallback failed for '{script_name}': {eval_error}") from eval_error
-            # Other Redis errors
-            raise LuaScriptError(f"Script '{script_name}' execution failed: {e}") from e
+                    script.loaded = False
+                    return result
+                except Exception as eval_error:
+                    raise LuaScriptError(f"EVAL fallback failed for '{script_name}': {eval_error}") from eval_error
 
     async def execute_or_fallback(
         self,

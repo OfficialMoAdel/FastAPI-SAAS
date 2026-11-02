@@ -20,7 +20,7 @@ from unittest.mock import patch
 import pytest
 
 from src.app.core.tenancy import lifecycle
-from src.app.core.tenancy.lifecycle import bound_tenant, unbind_tenant
+from src.app.core.tenancy.lifecycle import bound_tenant, preserved_tenant, unbind_tenant
 
 
 def _boom(*_args: object, **_kw: object) -> None:
@@ -55,6 +55,27 @@ def test_bound_tenant_yields_and_restores() -> None:
     """The happy path still works after the logger change."""
     with bound_tenant(None) as tenant:
         assert tenant is None
+
+
+def test_preserved_tenant_restore_failure_does_not_mask_the_body() -> None:
+    """A failing preserved_tenant restore must not replace the body exception."""
+    seen: list[dict] = []
+
+    class _Capture:
+        def warning(self, event: str, **kw: object) -> None:
+            seen.append({"event": event, **kw})
+
+    with pytest.raises(ValueError, match="original failure"):
+        with (
+            patch.object(lifecycle, "set_current_tenant", side_effect=_boom),
+            patch.object(lifecycle, "logger", _Capture()),
+        ):
+            with preserved_tenant():
+                raise ValueError("original failure")
+
+    assert len(seen) == 1, "the restore failure was not reported"
+    assert seen[0]["event"] == "tenant_context_restore_failed"
+    assert "exploded" in str(seen[0]["error"])
 
 
 def test_structured_logging_accepts_extra_keys() -> None:

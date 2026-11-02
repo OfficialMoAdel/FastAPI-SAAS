@@ -31,7 +31,14 @@ def sanitize_path(path: str, max_len: int = 64) -> str:
     R5-MICRO: memoized via lru_cache — the 1024-entry maxsize bounds memory
     even under attacker-minted unique paths (LRU eviction, not the digest
     cap, is what prevents unbounded growth).
+
+    Raises:
+        ValueError: If ``max_len`` is smaller than the 18 characters needed
+            for the truncated prefix, separator, and digest.
     """
+    if max_len < 18:
+        raise ValueError("max_len must be at least 18 to fit the truncation digest")
+
     normalized = path.strip("/")
     # Strip API version prefix (e.g., api/v1/)
     normalized = _SANITIZE_VERSION_RE.sub("", normalized)

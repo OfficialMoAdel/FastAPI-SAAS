@@ -66,6 +66,29 @@ class TestDanglingSlotsAreCaught:
         reason = checker._message_reason("Preloaded script ''")
         assert reason is not None, "empty quotes where a value belongs is a dangling slot"
 
+    def test_empty_equals_slot(self) -> None:
+        checker = _load_checker()
+        reason = checker._message_reason("Warmer= | error=")
+        assert reason is not None, "an empty equals-style slot is a dangling slot"
+
+    def test_a_real_file_with_an_equals_slot_is_reported(self, tmp_path: Path) -> None:
+        checker = _load_checker()
+        target = tmp_path / "broken_equals.py"
+        target.write_text(
+            'from src.app.core.logger import get_logger\n'
+            "\n"
+            "logger = get_logger(__name__)\n"
+            "\n"
+            "\n"
+            "def go(path: str) -> None:\n"
+            '    logger.error("Failed to upload file= | error=", path=path)\n',
+            encoding="utf-8",
+        )
+        offenses = checker.check_file(target)
+        assert len(offenses) == 1, f"expected one offense, got {offenses}"
+        assert offenses[0].line == 7, f"the offending line must be reported: {offenses[0]}"
+        assert "empty value slot after an equals sign" in offenses[0].reason
+
     def test_a_real_file_with_a_defect_is_reported(self, tmp_path: Path) -> None:
         checker = _load_checker()
         target = tmp_path / "broken.py"
@@ -108,6 +131,12 @@ class TestLabelPrefixIsNotFlagged:
         assert checker._message_reason("Deleted file:") is None
         assert checker._message_reason("Blob not found for deletion:") is None
         assert checker._message_reason("Session migration completed") is None
+
+    def test_equals_with_a_value_is_not_a_defect(self) -> None:
+        checker = _load_checker()
+        assert checker._message_reason("Warmer=tenant error=boom") is None
+        assert checker._message_reason("HTTP status=200") is None
+        assert checker._message_reason("key=value") is None
 
     def test_f_string_is_never_flagged(self, tmp_path: Path) -> None:
         """An f-string interpolates at runtime, so it cannot dangle."""

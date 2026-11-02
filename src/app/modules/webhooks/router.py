@@ -336,7 +336,7 @@ async def get_signing_secret(
     return SigningSecretViewResponse(
         webhook_endpoint_id=result["webhook_endpoint_id"],
         signing_secret=masked,
-        created_at=result["created_at"],
+        endpoint_created_at=result["endpoint_created_at"],
         message=(
             "Secret masked for security. The plaintext is shown once at creation "
             "or rotation. If lost, rotate via POST /{endpoint_id}/signing-secret/rotate."
@@ -356,21 +356,21 @@ async def rotate_signing_secret(
 ) -> Any:
     """Rotate the signing secret for a webhook endpoint.
 
-    Generates a new signing secret that takes effect immediately.
-    The old secret is invalidated upon rotation.
-
-    NOTE: The grace_period_seconds parameter is reserved for future
-    grace period support but is not currently implemented.
+    Generates a new signing secret. The previous secret remains valid until
+    ``old_secret_expires_at`` so consumers can roll over without dropping
+    deliveries; both signatures are emitted while the grace window is open.
 
     Parameters
     ----------
     grace_period_seconds : int
-        Reserved for future grace period support (0-86400, default: 300/5min)
+        How long the previous secret stays valid, in seconds (0-86400,
+        default: 300/5min). ``0`` invalidates it immediately.
 
     Returns
     -------
     SigningSecretRotateResponse
-        New signing secret and rotation timestamp
+        New signing secret, rotation timestamp, old-secret expiry, and a
+        message describing the actual grace window.
     """
     service = WebhookService(ctx.db)
     result = await service.rotate_signing_secret(
@@ -385,4 +385,5 @@ async def rotate_signing_secret(
         rotated_at=result.get("rotated_at"),
         old_secret_expires_at=result["old_secret_expires_at"],
         grace_period_seconds=result["grace_period_seconds"],
+        message=result["message"],
     )

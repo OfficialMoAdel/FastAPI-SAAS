@@ -56,6 +56,20 @@ async def test_get_tier_policy_no_redis() -> None:
     with patch("src.app.core.utils.cache.client", None):
         result = await get_tier_policy(1)
         assert result is None
+        assert 1 not in _tier_policy_l1
+
+
+@pytest.mark.asyncio
+async def test_get_tier_policy_recovers_after_redis_returns(mock_redis) -> None:
+    """A missing client is not a negative policy cache entry."""
+    with patch("src.app.core.utils.cache.client", None):
+        assert await get_tier_policy(1) is None
+
+    mock_redis.get.return_value = '[{"limit": 100, "window": 60}]'
+    result = await get_tier_policy(1)
+
+    assert result == [{"limit": 100, "window": 60}]
+    mock_redis.get.assert_awaited_once_with(f"{POLICY_KEY_PREFIX}1")
 
 
 @pytest.mark.asyncio

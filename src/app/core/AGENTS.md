@@ -106,6 +106,30 @@ the decorator and `db_circuit_guard` release the slot on a `BaseException`;
 the claim is a lease (a claim older than the recovery window is stale and is
 reclaimed); and `CircuitBreaker.probe_gate()` releases it on every exit path.
 
+**The lease is OWNED: only the token that claimed it may release it.**
+`try_acquire_probe()` returns an `int` lease token (or `None`), and
+`release_probe(token)` / `record_success(probe_token)` /
+`record_failure(error, probe_token)` / `clear_probe_async(probe_token)` release
+only when the token is still current. A call admitted while CLOSED owns no
+lease and must pass `None`: releasing one it does not own lets a SECOND probe
+into a recovering dependency, which is the single-flight guarantee the whole
+mechanism exists to provide. `release_probe()` with no argument is the
+unconditional form, reserved for `reset()` and admin paths. The counter is
+monotonic and is NOT rewound by `reset()`, so a stale token can never match a
+lease minted after a reset.
+
+**`record_failure` chooses its transition from the state observed BEFORE the
+failure is recorded.** `state` is a computed property (`OPEN` + an elapsed
+recovery window reads as `HALF_OPEN`), so refreshing `_last_failure_time`
+first made the HALF_OPEN arm unreachable for any `recovery_timeout > 0`: a
+failed probe logged `opened` instead of `reopened`, and a straggler from a
+call admitted before the circuit opened restarted the recovery window it was
+already waiting on. A straggler in `OPEN` now records the failure and returns
+without touching `_last_failure_time` or emitting a transition.
+
+Pinned by `tests/unit/core/resilience/test_probe_ownership.py` and
+`test_probe_lease.py`.
+
 **Gate on the single-flight probe, not on `is_closed`.** `is_closed` is True
 during the virtual HALF_OPEN, so every caller that gates on it passes at
 once and floods the dependency that is recovering. `allow_single_flight()`
@@ -114,6 +138,20 @@ exactly ONE while HALF_OPEN. Use it for the SIDE-EFFECTING callers — an
 outbound send or a webhook POST. Do NOT use it for a read-only cache lookup
 whose "unavailable" answer is "revoked" (the token-blacklist path): denying
 a probe there would turn a recovery window into a mass-revocation window.
+Callers that release the probe themselves use
+`allow_single_flight_with_claim()`, which returns `(allowed, probe_token)`.
+
+### Cache warming
+`warmer.warm_all(session)` / `warm_specific(name, session)` run on a session
+the CALLER owns. Each warmer is wrapped in a SAVEPOINT, so one failed warmer
+unwinds only its own statements: a bare `rollback()` would also discard work
+the caller staged outside the warmer, and doing nothing left the session in
+`PendingRollbackError` so the NEXT warmer failed for an unrelated reason (one
+real error reported twice, the second misattributed). Pinned by
+`tests/unit/core/test_cache_warmer_isolation.py`. `CacheWarmingResult.duration_ms`
+records the wall-clock elapsed time of the whole warm call (both `warm_all` and
+`warm_specific`), so callers and perf checks see a real measurement rather than
+the dataclass default.
 
 ### Cache & distributed locks
 The cache is a read-ahead optimisation and a best-effort write, so the seam

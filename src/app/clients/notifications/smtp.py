@@ -263,7 +263,7 @@ class SMTPProvider(EmailProvider):
             await self._pool.release(conn)
 
             # Record success with circuit breaker
-            await email_circuit.record_success()
+            await email_circuit.record_success(probe_claimed)
             return True
 
         except Exception as e:  # noqa: BLE001 - deliberate: a failed email must not fail the request
@@ -281,7 +281,7 @@ class SMTPProvider(EmailProvider):
             # (so a genuinely broken provider opens) and logged, then mapped
             # to False. Broad is the correct width because a bespoke message
             # object can raise essentially anything from its own fields.
-            await email_circuit.record_failure(e)
+            await email_circuit.record_failure(e, probe_claimed)
             logger.error("Failed to send email", error=e)
             return False
         except BaseException:  # noqa: BLE001 - a cancelled send must release its HALF_OPEN probe before propagating
@@ -292,7 +292,7 @@ class SMTPProvider(EmailProvider):
             # delivery. Only release a probe THIS send claimed: a send
             # admitted while CLOSED must not clear another caller's claim.
             if probe_claimed:
-                email_circuit.release_probe()
+                email_circuit.release_probe(probe_claimed)
             raise
 
     async def send_bulk_emails(self, messages: list[EmailMessage]) -> dict:

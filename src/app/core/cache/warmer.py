@@ -87,7 +87,16 @@ class CacheWarmer:
             warmer_start = time.time()
             try:
                 if warmer_session is not None:
-                    cached_count = await asyncio.wait_for(warmer_fn(warmer_session), timeout=timeout)
+                    # The caller owns this session, so a failed warmer must not
+                    # leave it in PendingRollbackError for the NEXT warmer.
+                    # A SAVEPOINT unwinds only this warmer's work and keeps the
+                    # session usable: a bare ``rollback()`` would also discard
+                    # whatever the caller staged outside the warmer, and doing
+                    # nothing let the second warmer fail for an unrelated
+                    # reason — one real error reported twice, the second
+                    # misattributed.
+                    async with warmer_session.begin_nested():
+                        cached_count = await asyncio.wait_for(warmer_fn(warmer_session), timeout=timeout)
                 else:
                     from src.app.core.db.database import async_session_maker
 
@@ -142,6 +151,7 @@ class CacheWarmer:
 
         result.errors = errors if errors else None
         total_duration = time.time() - start_time
+        result.duration_ms = total_duration * 1000
 
         logger.info(
             "cache_warming_finished",
@@ -164,14 +174,18 @@ class CacheWarmer:
 
         if name not in self._warmers:
             error_msg = f"Unknown cache warmer: {name}"
-            logger.error("[UNKNOWN] Warmer= | error=", name=name, error_msg=error_msg)
+            logger.error("cache_warmer_unknown", warmer=name, error=error_msg)
             return CacheWarmingResult(errors=[error_msg])
 
         warmer_fn = self._warmers[name]
         start_time = time.time()
 
         try:
-            cached_count: int = await asyncio.wait_for(warmer_fn(session), timeout=timeout)
+            # Same savepoint contract as ``_run_single_warmer``: the session is
+            # caller-owned, so a failed warmer must not poison it. A savepoint
+            # rolls back only the warmer's own statements.
+            async with session.begin_nested():
+                cached_count: int = await asyncio.wait_for(warmer_fn(session), timeout=timeout)
             duration = time.time() - start_time
             logger.info(
                 "warmer_success",
@@ -206,6 +220,7 @@ class CacheWarmer:
             errors.append(error_msg)
 
         result.errors = errors if errors else None
+        result.duration_ms = duration * 1000
 
         return result
 
@@ -263,7 +278,7 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
                 pipe.setex(cache_key, TENANT_CACHE_TTL, cache_data)
             await pipe.execute()
         cached_count = len(tenants)
-        logger.info("Cache warming completed: tenants", cached_count=cached_count)
+        logger.info("cache_warming_completed", tenants_cached=cached_count)
     except Exception as e:
         logger.error("Cache warming failed", error=e)
         return 0

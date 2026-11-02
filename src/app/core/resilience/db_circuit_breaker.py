@@ -63,32 +63,44 @@ async def db_circuit_guard() -> AsyncIterator[None]:
     Only records failures for actual database infrastructure/connection errors
     (timeouts, operational errors, disconnections), ignoring business logic
     errors (IntegrityError, ModelNotFoundError, validation errors).
-    """
-    current_state = db_circuit.state
-    if current_state == CircuitState.OPEN:
-        logger.warning("Database circuit OPEN, blocking database operation")
-        raise ServiceUnavailableError(
-            "Database service temporarily degraded due to high failure rate. Please retry later."
-        )
 
-    if current_state == CircuitState.HALF_OPEN:
-        async with db_circuit._get_lock():
-            if db_circuit.state == CircuitState.HALF_OPEN:
-                if not db_circuit.try_acquire_probe():
-                    raise ServiceUnavailableError(
-                        "Database service temporarily degraded. Probing recovery."
-                    )
-            elif db_circuit.state == CircuitState.OPEN:
-                raise ServiceUnavailableError(
-                    "Database service temporarily degraded due to high failure rate. Please retry later."
-                )
+    Probe ownership: the HALF_OPEN admission goes through
+    ``allow_single_flight_with_claim``, which returns the LEASE this call
+    claimed (or ``None`` when it claimed nothing). Every exit path releases
+    only that lease. The previous implementation cleared the probe flag
+    unconditionally, so a call admitted while CLOSED that later raised a
+    business error wiped the claim of the caller that actually owned the
+    probe — and a second probe was then admitted against a recovering
+    database.
+    """
+    # Fast path: CLOSED admits without the lock and owns no lease. This guard
+    # wraps every DB operation, so the lock-free CLOSED read matters. Every
+    # other state goes through the gate, which returns the lease.
+    if db_circuit.state == CircuitState.CLOSED:
+        allowed, probe_token = True, None
+    else:
+        allowed, probe_token = await db_circuit.allow_single_flight_with_claim()
+
+    if not allowed:
+        # Distinguish the two rejections for the operator: OPEN is "the
+        # dependency is failing", HALF_OPEN-with-probe-taken is "a recovery
+        # probe is already in flight". The state is re-read here only for the
+        # message; admission was already decided above.
+        if db_circuit.state == CircuitState.OPEN:
+            logger.warning("Database circuit OPEN, blocking database operation")
+            raise ServiceUnavailableError(
+                "Database service temporarily degraded due to high failure rate. Please retry later."
+            )
+        raise ServiceUnavailableError("Database service temporarily degraded. Probing recovery.")
+
+    if probe_token is not None:
         logger.debug("Database circuit HALF_OPEN — allowing test request")
 
     try:
         yield
-        await db_circuit.record_success()
+        await db_circuit.record_success(probe_token)
     except DB_INFRASTRUCTURE_ERRORS as e:
-        await db_circuit.record_failure(e)
+        await db_circuit.record_failure(e, probe_token)
         logger.error(
             "Database infrastructure failure recorded on circuit breaker",
             error=str(e),
@@ -98,9 +110,11 @@ async def db_circuit_guard() -> AsyncIterator[None]:
         raise
     except Exception:
         # Business errors (IntegrityError, 404s, validation) do not trip
-        # the DB circuit breaker, but MUST clear the HALF_OPEN probe flag
+        # the DB circuit breaker, but MUST release the HALF_OPEN probe flag
         # so the next recovery window can actually probe (otherwise wedge).
-        await db_circuit.clear_probe_async()
+        # Only a call that claimed the lease releases it.
+        if probe_token is not None:
+            await db_circuit.clear_probe_async(probe_token)
         raise
     except BaseException:
         # D6: a CANCELLED operation is a BaseException, so the arm above
@@ -109,5 +123,6 @@ async def db_circuit_guard() -> AsyncIterator[None]:
         # rejected with ServiceUnavailableError — 503 for ALL database
         # traffic until the breaker is reset or the process restarts. A
         # client disconnect or a request timeout is enough to trigger it.
-        await db_circuit.clear_probe_async()
+        if probe_token is not None:
+            await db_circuit.clear_probe_async(probe_token)
         raise

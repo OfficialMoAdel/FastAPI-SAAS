@@ -200,17 +200,29 @@ class BaseService(Generic[T, ReadSchemaT]):
             per_page = MAX_PER_PAGE
         offset = max(0, (page - 1) * per_page)
         _SENSITIVE_COLS = {"hashed_password", "password", "secret", "api_key"}
-        if "sort_columns" in kwargs:
-            # Defence in depth: the column list is also validated per-attribute
-            # in the eager-load branch below (hasattr fails closed), but the
-            # plain path hands it straight to FastCRUD. The input may legally
-            # be a bare string (fetch_page_with_total declares
-            # ``str | list[str] | None``); iterating a string yields CHARACTERS,
-            # so a bare "hashed_password" used to slip past this guard entirely.
-            _sc = kwargs.get("sort_columns")
-            _cols = [_sc] if isinstance(_sc, str) else (_sc or [])
-            if any(c in _SENSITIVE_COLS for c in _cols):
-                raise ValidationError(f"Sorting on sensitive column denied: {_sc}")
+        # Normalize BOTH sort kwargs once, before either branch. The input may
+        # legally be a bare string (``str | list[str] | None``), and iterating
+        # a string yields CHARACTERS: a bare "created_at" became "c", and a
+        # bare "desc" silently produced ASC. Normalizing here also makes the
+        # sensitive-column guard and the eager branch see the same shape.
+        sort_columns = kwargs.get("sort_columns")
+        if isinstance(sort_columns, str):
+            sort_columns = [sort_columns]
+        elif sort_columns is not None:
+            sort_columns = list(sort_columns)
+        if sort_columns is not None:
+            kwargs["sort_columns"] = sort_columns
+
+        sort_orders = kwargs.get("sort_orders")
+        if isinstance(sort_orders, str):
+            sort_orders = [sort_orders]
+        elif sort_orders is not None:
+            sort_orders = list(sort_orders)
+        if sort_orders is not None:
+            kwargs["sort_orders"] = sort_orders
+
+        if sort_columns and any(c in _SENSITIVE_COLS for c in sort_columns):
+            raise ValidationError(f"Sorting on sensitive column denied: {sort_columns}")
         # P2-4: FEATURE_EAGER_LOADING flag removed; callers that want eager
         # loading must opt in via eager_loads. Callers that don't pass it
         # get a plain CRUD query (no surprise N+1 prevention, no silent
@@ -231,8 +243,10 @@ class BaseService(Generic[T, ReadSchemaT]):
 
             # Apply sorting via direct SQLAlchemy order_by
             if sort_columns:
+                if sort_orders and len(sort_orders) != len(sort_columns):
+                    raise ValidationError("sort_orders must have the same length as sort_columns")
                 orders = sort_orders if sort_orders else ["asc"] * len(sort_columns)
-                for col, order in zip(sort_columns, orders):
+                for col, order in zip(sort_columns, orders, strict=True):
                     if not hasattr(self.model, col):
                         raise ValidationError(f"Unknown sort column '{col}' on {self.model.__name__}")
                     attr = getattr(self.model, col)

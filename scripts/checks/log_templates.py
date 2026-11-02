@@ -3,8 +3,10 @@
 The defect this gates: a structlog event message that contains a slot
 where a value was meant to be interpolated — a trailing colon with
 nothing after it (``"Failed to upload file :"``), a doubled space where
-a value should be (``"Uploaded file: , size: bytes"``), or empty quotes
-where a value should be (``"Preloaded script ''"``).
+a value should be (``"Uploaded file: , size: bytes"``), empty quotes
+where a value should be (``"Preloaded script ''"``), or a label followed
+by ``=`` and a delimiter/end instead of a value
+(``"Warmer= | error="``).
 
 Why it matters even though the report called it "purely cosmetic":
 the message is the operator's first line of triage. A template that
@@ -34,7 +36,9 @@ that are always defects are:
    (``"Failed to upload file :"``);
 2. a colon followed by a comma, or by a space and then a comma
    (``"Uploaded file: , size: bytes"``);
-3. empty double quotes inside the message (``"Preloaded script ''"``).
+3. empty double quotes inside the message (``"Preloaded script ''"``);
+4. a label immediately followed by ``=`` and then a delimiter or the end
+   of the message (``"Warmer= | error="``).
 
 Rule 1 catches the majority of the reported sites — a space before the
 colon is the fingerprint of a value that was removed from the template
@@ -62,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,6 +83,10 @@ IGNORED_DIRS = frozenset({"__pycache__", ".venv", "node_modules", ".git", "logs"
 #: non-message first argument is not a thing, but ``logger.log`` and
 #: ``logger.msg`` are not in this list because the repo does not use them.
 LOG_METHODS = frozenset({"info", "debug", "warning", "error", "critical", "exception"})
+
+#: A label followed by ``=`` and a delimiter or end: the ``=``-style
+#: equivalent of an emptied value slot. ``key=value`` is left alone.
+_EMPTY_EQUALS_SLOT_RE = re.compile(r"(?<![\w=])\w+=\s*(?:[|,;]|$)")
 
 
 @dataclass(frozen=True)
@@ -108,6 +117,8 @@ def _message_reason(message: str) -> str | None:
     # A colon followed by a comma: the value slot was emptied.
     if ": ," in message or ", :" in message:
         return "empty value slot after a colon"
+    if _EMPTY_EQUALS_SLOT_RE.search(message):
+        return "empty value slot after an equals sign"
     return None
 
 

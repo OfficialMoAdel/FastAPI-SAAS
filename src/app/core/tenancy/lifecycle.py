@@ -169,7 +169,10 @@ def preserved_tenant() -> Iterator[TenantContext | None]:
     try:
         yield previous
     finally:
-        set_current_tenant(previous)
+        try:
+            set_current_tenant(previous)
+        except Exception as e:  # noqa: BLE001 - cleanup is best-effort
+            logger.warning("tenant_context_restore_failed", error=str(e))
 
 
 def fabricate_job_tenant(tenant_id: int | str | UUID) -> TenantContext:
@@ -180,7 +183,12 @@ def fabricate_job_tenant(tenant_id: int | str | UUID) -> TenantContext:
     markers, active by construction; the DB/RLS layer, not this seam,
     decides what the id may touch).
     """
-    parsed_id = tenant_id if isinstance(tenant_id, UUID) else UUID(str(tenant_id))
+    if isinstance(tenant_id, UUID):
+        parsed_id = tenant_id
+    elif isinstance(tenant_id, int) and not isinstance(tenant_id, bool):
+        parsed_id = UUID(int=tenant_id)
+    else:
+        parsed_id = UUID(str(tenant_id))
     return TenantContext(
         tenant_id=parsed_id,
         tenant_slug="job_context",

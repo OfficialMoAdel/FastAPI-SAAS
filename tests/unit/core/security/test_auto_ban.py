@@ -443,6 +443,27 @@ class TestGetAllBannedIPs:
         assert banned == []
 
     @pytest.mark.asyncio
+    async def test_get_all_banned_ips_deduplicates_scan_pages(self, mock_redis):
+        """SCAN can return the same key on more than one page."""
+        mock_redis.scan.side_effect = [
+            (1, [b"security:ban:192.168.1.1"]),
+            (0, [b"security:ban:192.168.1.1", b"security:ban:192.168.1.1", b"security:ban:192.168.1.2"]),
+        ]
+        mock_redis.get.side_effect = [
+            b"Rate limit exceeded",
+            b"1",
+            b"Too many requests",
+            b"2",
+        ]
+        mock_redis.ttl.return_value = 1800
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            banned = await get_all_banned_ips()
+
+        assert [entry["ip"] for entry in banned] == ["192.168.1.1", "192.168.1.2"]
+        assert len(banned) == 2
+
+    @pytest.mark.asyncio
     async def test_get_all_banned_ips_redis_unavailable(self):
         """Test when Redis unavailable."""
         with patch("src.app.core.utils.cache.client", None):
@@ -479,6 +500,22 @@ class TestGetViolationStats:
 
         assert stats["total_ips"] == 2
         assert stats["total_violations"] == 8
+
+    @pytest.mark.asyncio
+    async def test_get_violation_stats_normalizes_and_deduplicates_keys(self, mock_redis):
+        """Bytes and str forms of the same key count once."""
+        mock_redis.scan.side_effect = [
+            (1, [b"security:violations:1.1.1.1"]),
+            (0, ["security:violations:1.1.1.1", b"security:violations:2.2.2.2"]),
+        ]
+        mock_redis.mget = AsyncMock(side_effect=[[b"5"], [b"3"]])
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            stats = await get_violation_stats()
+
+        assert stats["total_ips"] == 2
+        assert stats["total_violations"] == 8
+        assert mock_redis.mget.await_count == 2
 
     @pytest.mark.asyncio
     async def test_get_violation_stats_redis_unavailable(self):

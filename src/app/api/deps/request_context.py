@@ -108,7 +108,7 @@ class RequestContext:
     @property
     def has_tenant(self) -> bool:
         """Whether a real (non-sentinel) tenant context is bound."""
-        return bool(self.tenant) and self.tenant is not NO_TENANT
+        return self.tenant is not NO_TENANT
 
     def require_tenant(self) -> TenantContext:
         """Return the tenant context or raise if this is a tenant-less path.

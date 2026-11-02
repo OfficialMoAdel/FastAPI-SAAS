@@ -96,11 +96,15 @@ async def get_with_stampede_protection(
             )
 
             latency = time.perf_counter() - start_time
-            _state.record_xfetch_latency(latency, is_hit=result[0] is not None)
 
-            # Unpack result: [value, ttl]
+            # Unpack result: [value, ttl]. A miss is ('', -2), not (nil, -2),
+            # so ``is not None`` counted every miss as a hit.
             cached = result[0]
             remaining_ttl = int(result[1]) if result[1] is not None else -2
+            _state.record_xfetch_latency(
+                latency,
+                is_hit=(cached not in (None, "")) or remaining_ttl > 0,
+            )
 
             # Handle bytes → string conversion
             if cached is not None and isinstance(cached, bytes):
