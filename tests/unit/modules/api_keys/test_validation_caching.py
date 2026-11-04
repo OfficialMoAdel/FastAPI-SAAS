@@ -64,6 +64,11 @@ class TestAPIKeyValidationCaching:
 
             mock_redis.get = AsyncMock(side_effect=_redis_get)
 
+            async def _redis_mget(keys):
+                return ['{"is_active": true}' if "tenant" in str(key) else None for key in keys]
+
+            mock_redis.mget = AsyncMock(side_effect=_redis_mget)
+
             result = await api_key_service.validate_api_key("test_api_key_12345")
 
             assert result is not None
@@ -164,6 +169,11 @@ class TestAPIKeyValidationCaching:
                 return cached_data
 
             mock_redis.get = AsyncMock(side_effect=_redis_get)
+
+            async def _redis_mget(keys):
+                return ['{"is_active": true}' if "tenant" in str(key) else None for key in keys]
+
+            mock_redis.mget = AsyncMock(side_effect=_redis_mget)
 
             result = await api_key_service.validate_api_key("test_api_key_12345")
 

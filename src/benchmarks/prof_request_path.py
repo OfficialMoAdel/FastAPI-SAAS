@@ -74,6 +74,22 @@ from src.benchmarks.percentiles import nearest_rank  # noqa: E402
 # be mistaken for a checked-in baseline.
 OUT_DIR = ROOT / "reports"
 
+#: Every budget name `validate_budget_definitions()` requires the shipped
+#: configuration to define. It is a tuple at module level so the regression
+#: test can compare it with `BUDGETS` without running `bootstrap()` (which
+#: mutates the process environment and working directory).
+SECURITY_BUDGET_KEYS: tuple[str, ...] = (
+    "auth",
+    "mfa_verify",
+    "mfa_verify_global",
+    "mfa_mutate",
+    "magic_link_send",
+    "magic_link_verify",
+    "passkey_login",
+    "refresh",
+    "ai_chat",
+)
+
 
 def bootstrap() -> None:
     """Put the process where the profiler needs it, then relax what it trips.
@@ -94,21 +110,7 @@ def bootstrap() -> None:
     # with these in force is NOT a capacity measurement, which is why
     # run_manifest.py's labels mark a relaxed run non-representative.
     os.environ["AUTO_BAN_ENABLED"] = "false"
-    os.environ["SECURITY_BUDGETS"] = json.dumps(
-        {
-            k: [1000000, 60]
-            for k in (
-                "auth",
-                "mfa_verify",
-                "mfa_verify_global",
-                "mfa_mutate",
-                "magic_link_send",
-                "passkey_login",
-                "refresh",
-                "ai_chat",
-            )
-        }
-    )
+    os.environ["SECURITY_BUDGETS"] = json.dumps({k: [1000000, 60] for k in SECURITY_BUDGET_KEYS})
     os.environ["TIER_RATE_LIMITS"] = json.dumps({k: [1000000, 3600] for k in ("free", "basic", "pro", "enterprise")})
     os.environ["DEFAULT_AUTHENTICATED_LIMIT"] = "[1000000, 3600]"
     os.environ["DEFAULT_ANONYMOUS_LIMIT"] = "[1000000, 3600]"

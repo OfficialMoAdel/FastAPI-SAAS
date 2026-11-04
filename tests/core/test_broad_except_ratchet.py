@@ -250,7 +250,11 @@ import count_broad_excepts as counter  # noqa: E402
 #: continues. It carries ``# noqa: BLE001 - cleanup is best-effort``; the
 #: counter ignores the annotation, so this site contributes the 384 -> 385
 #: delta. Re-measured with scripts/count_broad_excepts.py.
-BROAD_EXCEPT_BASELINE = 385
+# Phase 3 (E1) verify_token fused the blacklist check and the token-version read
+# behind one Lua call; any script error must fall back to the two sequential
+# calls rather than fail open, which added 6 broad-except sites:
+# jwt_service.py (+3), token_blacklist_cache.py (+2), auth/service.py (+1).
+BROAD_EXCEPT_BASELINE = 391
 
 #: The files muse 22 triaged. BLE001 is enforced on each (the per-file-ignores
 #: in pyproject.toml no longer blanket-exempt them), so these are also the

@@ -57,6 +57,11 @@ src/
 # `__main__`: a developer `.env` in `src/` is gitignored by design, so a
 # module-level load_dotenv(override=True) would clobber the environment
 # tests/conftest.py sets for the WHOLE session.
+# src/benchmarks/command_count.py, src/benchmarks/route_command_count.py —
+# exact Redis command-count windows (`INFO commandstats`) and the operator route
+# harness that fails a request over its declared command ceiling. See
+# docs/performance/MEASUREMENT_DISCIPLINE.md for how to read m6 and which paths
+# remain unprofiled.
 # src/benchmarks/l12_pool_ratios.py, src/benchmarks/l13_body_offload.py —
 # operator-run harnesses RECOVERED from one machine's home directory into the
 # tree, because the artefacts they produced recorded about themselves that the

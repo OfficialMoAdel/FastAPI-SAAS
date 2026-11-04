@@ -108,6 +108,13 @@ env_file:
   - ./src/.env
 ```
 
+!!! warning "`src/.env` must exist on the target host"
+    The file is gitignored by design, so a clean `git archive`, release tarball,
+    or checkout does not contain it, and `docker compose up` fails if it is
+    missing. Provision it from your secret store before starting the stack.
+    See
+    [Deployment Environment Provisioning](../../DEPLOYMENT_ENV_PROVISIONING.md).
+
 The Docker services use these environment variables:
 
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` for database

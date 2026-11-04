@@ -67,11 +67,15 @@ __all__ = [
     "MIN_WARMUP",
     "NOISE_FLOOR_RATIO",
     "Ceiling",
+    "CommandCountCeiling",
+    "CommandCountResult",
+    "CommandCountVerdict",
     "MicroResult",
     "ProtocolViolation",
     "RelativeComparisonRejected",
     "RunStamp",
     "Verdict",
+    "command_count_verdict",
     "measure",
     "measure_async",
     "measure_request_scale",
@@ -133,6 +137,87 @@ class Ceiling:
             raise ProtocolViolation(f"a ceiling must be finite, got {self.value_us!r}")
         if self.value_us <= 0:
             raise ProtocolViolation(f"a ceiling must be positive, got {self.value_us!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class CommandCountCeiling:
+    """An absolute bound on Redis commands observed for one operation.
+
+    This is deliberately separate from :class:`Ceiling`: a duration and a
+    command count are different quantities, and comparing one against the other
+    is the same category error as quoting a latency without its unit.
+
+    ``expected`` pins the exact per-command delta. When it is present, both an
+    extra command and a missing command fail. When it is empty, only
+    ``max_commands`` is checked.
+    """
+
+    max_commands: int
+    expected: tuple[tuple[str, int], ...] = ()
+    label: str = "redis-command-count"
+
+    def __post_init__(self) -> None:
+        if isinstance(self.max_commands, bool) or not isinstance(self.max_commands, int):
+            raise ProtocolViolation(f"a command-count ceiling must be an integer, got {self.max_commands!r}")
+        if self.max_commands <= 0:
+            raise ProtocolViolation(f"a command-count ceiling must be positive, got {self.max_commands!r}")
+        seen: set[str] = set()
+        total = 0
+        for name, count in self.expected:
+            if not isinstance(name, str) or not name:
+                raise ProtocolViolation(f"an expected command name must be a non-empty string, got {name!r}")
+            if name in seen:
+                raise ProtocolViolation(f"expected command {name!r} is declared more than once")
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise ProtocolViolation(f"expected count for {name!r} must be a non-negative integer, got {count!r}")
+            seen.add(name)
+            total += count
+        if total > self.max_commands:
+            raise ProtocolViolation(
+                f"expected commands total {total} exceeds the command-count ceiling {self.max_commands}"
+            )
+
+    @property
+    def expected_commands(self) -> dict[str, int]:
+        return dict(self.expected)
+
+
+@dataclass(frozen=True, slots=True)
+class CommandCountResult:
+    """The absolute command delta observed for one operation."""
+
+    name: str
+    commands: tuple[tuple[str, int], ...]
+
+    @classmethod
+    def from_counts(cls, name: str, counts: dict[str, int]) -> CommandCountResult:
+        ordered = tuple(sorted((command, count) for command, count in counts.items() if count))
+        return cls(name=name, commands=ordered)
+
+    @property
+    def total(self) -> int:
+        return sum(count for _, count in self.commands)
+
+    def as_dict(self) -> dict[str, int]:
+        return dict(self.commands)
+
+
+@dataclass(frozen=True, slots=True)
+class CommandCountVerdict:
+    """The outcome of comparing an observed command delta against a fixed bound."""
+
+    passed: bool
+    name: str
+    measured_commands: int
+    ceiling_commands: int
+    missing: tuple[tuple[str, int], ...]
+    unexpected: tuple[tuple[str, int], ...]
+    excess: tuple[tuple[str, int], ...]
+    message: str
+
+    def assert_passed(self) -> None:
+        if not self.passed:
+            raise AssertionError(self.message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,6 +545,67 @@ def render(result: MicroResult | RequestResult) -> str:
         f"batch_medians={[round(v, 3) for v in sorted(result.batch_medians_us)]} | "
         f"n={result.iterations}x{result.repetitions} warmup={result.warmup} | "
         f"spread={result.spread_ratio:.2f}x | {run}"
+    )
+
+
+def command_count_verdict(result: CommandCountResult, ceiling: CommandCountCeiling) -> CommandCountVerdict:
+    """Compare an observed Redis command delta against a fixed command-count bound."""
+    if not isinstance(ceiling, CommandCountCeiling):
+        raise RelativeComparisonRejected(
+            f"{ceiling!r} is not a command-count ceiling. A duration cannot bound a command count; "
+            "construct CommandCountCeiling(max_commands=...) instead."
+        )
+
+    observed = result.as_dict()
+    expected = ceiling.expected_commands
+    missing: tuple[tuple[str, int], ...] = ()
+    unexpected: tuple[tuple[str, int], ...] = ()
+    excess: tuple[tuple[str, int], ...] = ()
+    if expected:
+        missing = tuple(
+            sorted(
+                (name, wanted - observed.get(name, 0))
+                for name, wanted in expected.items()
+                if observed.get(name, 0) < wanted
+            )
+        )
+        excess = tuple(
+            sorted(
+                (name, observed[name] - wanted)
+                for name, wanted in expected.items()
+                if observed.get(name, 0) > wanted
+            )
+        )
+        unexpected = tuple(sorted((name, count) for name, count in observed.items() if name not in expected))
+    too_many = result.total > ceiling.max_commands
+    passed = not too_many and not missing and not unexpected and not excess
+
+    problems: list[str] = []
+    if too_many:
+        problems.append(f"{result.total} commands exceed the {ceiling.label} ceiling {ceiling.max_commands}")
+    if missing:
+        problems.append(f"missing commands: {dict(missing)}")
+    if excess:
+        problems.append(f"extra invocations: {dict(excess)}")
+    if unexpected:
+        problems.append(f"unexpected commands: {dict(unexpected)}")
+    if problems:
+        message = f"{result.name} FAILS the {ceiling.label}: " + "; ".join(problems)
+    else:
+        message = (
+            f"{result.name} observed {result.total} commands under the "
+            f"{ceiling.label} ceiling {ceiling.max_commands}"
+        )
+
+    return CommandCountVerdict(
+        passed=passed,
+        name=result.name,
+        measured_commands=result.total,
+        ceiling_commands=ceiling.max_commands,
+        missing=missing,
+        unexpected=unexpected,
+        excess=excess,
+        message=message,
     )
 
 

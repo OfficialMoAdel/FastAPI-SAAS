@@ -1,15 +1,15 @@
 """A-5 oracle: API-key MGET six-row verdict matrix + round-trip baseline.
 
-WHAT THIS PINS: the future A-5 diff collapses 2-3 serial Redis GETs into 1
-MGET. This file proves, on HEAD, (1) the six verdicts the diff must preserve
-(hit, tombstone, expired, legacy-digest, tenant-inactive, REDIS-DOWN) and
-(2) the CURRENT per-row round-trip counts the diff collapses to 1.
+WHAT THIS PINS: the A-5 tenant-liveness diff collapses its candidate
+slug/id GETs into one MGET. This file proves (1) the six verdicts the
+diff must preserve (hit, tombstone, expired, legacy-digest,
+tenant-inactive, REDIS-DOWN) and (2) the exact round-trip counts after
+the diff lands.
 
-WHY TWO CLASSES: ``TestVerdictMatrix`` asserts VERDICTS ONLY and survives the
-MGET diff unchanged — it is the equivalence contract. ``TestRoundTripBaseline``
-asserts today's exact GET counts and is REPLACED (not weakened) with MGET==1
-assertions when the diff lands; its docstring says so explicitly, so a future
-reader cannot mistake the replacement for a relaxation.
+WHY TWO CLASSES: ``TestVerdictMatrix`` asserts VERDICTS ONLY and is the
+equivalence contract. ``TestRoundTripBaseline`` asserts exact operation
+counts (identity GETs stay separate; the tenant-liveness probe is one
+MGET), replaced rather than weakened when the diff landed.
 
 THE REDIS-DOWN ROW IS THE WHOLE POINT (§12 entry 7): the code has no
 try/except around the cache reads — the real adapter is None-safe
@@ -27,6 +27,7 @@ any file). E2E-over-HTTP-on-Linux NOT delivered (needs the Linux target).
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -81,6 +82,22 @@ class _CountingCache:
             return None
         return self.entries.get(key)
 
+    async def get_json_many(self, keys: list[str]) -> list[Any | None]:
+        self.ops.append(("MGET", "\x00".join(keys)))
+        if self.down:
+            return [None] * len(keys)
+        values: list[Any | None] = []
+        for key in keys:
+            raw = self.entries.get(key)
+            if raw is None:
+                values.append(None)
+                continue
+            try:
+                values.append(json.loads(raw))
+            except ValueError:
+                values.append(None)
+        return values
+
     async def set(self, key: str, value: str, ttl: int | None = None) -> None:
         self.ops.append(("SET", key))
         if not self.down:
@@ -94,6 +111,9 @@ class _CountingCache:
 
     def gets(self) -> list[str]:
         return [k for op, k in self.ops if op == "GET"]
+
+    def mgets(self) -> list[list[str]]:
+        return [k.split("\x00") for op, k in self.ops if op == "MGET"]
 
 
 @pytest.fixture
@@ -215,14 +235,13 @@ class TestVerdictMatrix:
 
 
 class TestRoundTripBaseline:
-    """TODAY's exact GET counts (no tenant ctx: probe reads the id key only).
+    """Exact counts after the tenant-probe MGET landed (no tenant ctx).
 
-    The MGET diff collapses every row's GETs to 1. When it lands, THIS class
-    is REPLACED with MGET==1 assertions — replacing a baseline whose premise
-    (serial GETs) no longer exists is not weakening it.
+    Identity reads remain separate GETs. The tenant-liveness probe is one
+    MGET containing the id key when no tenant context slug is available.
     """
 
-    async def test_hit_costs_two_gets(
+    async def test_hit_costs_one_get_and_one_probe_mget(
         self, svc: APIKeyService, digests: tuple[str, str], tenant_entry: tuple[str, str]
     ) -> None:
         current, _ = digests
@@ -234,7 +253,8 @@ class TestRoundTripBaseline:
             patch.object(svc, "_validate_from_db", AsyncMock(return_value=None)),
         ):
             assert await svc.validate_api_key(RAW_KEY) is not None
-        assert fake.gets() == [key, tenant_key]
+        assert fake.gets() == [key]
+        assert fake.mgets() == [[tenant_key]]
 
     async def test_tombstone_costs_one_get_and_one_delete(self, svc: APIKeyService, digests: tuple[str, str]) -> None:
         current, _ = digests
@@ -258,7 +278,7 @@ class TestRoundTripBaseline:
             assert await svc.validate_api_key(RAW_KEY) is None
         assert fake.ops == [("GET", key), ("DELETE", key)]
 
-    async def test_legacy_digest_costs_three_gets(
+    async def test_legacy_digest_costs_two_gets_and_one_probe_mget(
         self, svc: APIKeyService, digests: tuple[str, str], tenant_entry: tuple[str, str]
     ) -> None:
         current, legacy = digests
@@ -271,9 +291,10 @@ class TestRoundTripBaseline:
             patch.object(svc, "_validate_from_db", AsyncMock(return_value=None)),
         ):
             assert await svc.validate_api_key(RAW_KEY) is not None
-        assert fake.gets() == [primary, key, tenant_key]
+        assert fake.gets() == [primary, key]
+        assert fake.mgets() == [[tenant_key]]
 
-    async def test_tenant_inactive_costs_two_gets(
+    async def test_tenant_inactive_costs_one_get_and_one_probe_mget(
         self, svc: APIKeyService, digests: tuple[str, str], tenant_entry: tuple[str, str]
     ) -> None:
         from src.app.core.json_utils import json_dumps
@@ -288,7 +309,8 @@ class TestRoundTripBaseline:
             patch.object(svc, "_validate_from_db", AsyncMock(return_value=None)),
         ):
             assert await svc.validate_api_key(RAW_KEY) is None
-        assert fake.gets() == [key, tenant_key]
+        assert fake.gets() == [key]
+        assert fake.mgets() == [[tenant_key]]
 
 
 class TestFakeIsHonest:
@@ -303,4 +325,6 @@ class TestFakeIsHonest:
     async def test_down_mode_misses_everything(self) -> None:
         fake = _CountingCache({"k": "v"}, down=True)
         assert await fake.get("k") is None
+        assert await fake.get_json_many(["k"]) == [None]
         assert fake.gets() == ["k"]
+        assert fake.mgets() == [["k"]]

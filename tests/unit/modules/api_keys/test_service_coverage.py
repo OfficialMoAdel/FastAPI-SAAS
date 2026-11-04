@@ -121,6 +121,11 @@ async def test_validate_api_key_cache_hit() -> None:
         return '{"user_id": 1, "tenant_id": "t", "scopes": ["read"], "key_id": 1}'
 
     fake_redis.get.side_effect = _redis_get
+
+    async def _redis_mget(keys):
+        return ['{"is_active": true}' if "tenant" in str(key) else None for key in keys]
+
+    fake_redis.mget.side_effect = _redis_mget
     with patch("src.app.core.utils.cache.client", fake_redis):
         result = await service.validate_api_key("rawkey")
     assert result is not None

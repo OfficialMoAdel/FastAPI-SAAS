@@ -134,6 +134,16 @@ Oracle: `tests/unit/modules/api_keys/test_issue_key_for_another_user.py`.
   by `_validate_from_db`'s LEFT JOIN on user → tier — so a mocked key row in a
   test must model `.user` or `json_dumps` will refuse the MagicMock. Oracle:
   `tests/unit/core/security/test_api_key_identity_admission.py`.
+- **The tenant-liveness probe is one batched, fail-open MGET**
+  (FastAPI_saas A-5, separate from the fail-closed identity path):
+  `_get_cached_tenant_active` reads the slug and tenant-id candidate keys with a
+  single `cache_client.get_json_many`. A missing/corrupt/mismatched candidate
+  is skipped; a total miss returns `None` so the caller defers the activation
+  decision to the database. This fail-open "cache is a hint, DB is the answer"
+  contract deliberately does NOT apply to the API-key identity/grant MGET,
+  which stays fail-closed per
+  [ADR-0013](../../../../docs/adr/0013-api-key-mget-fail-direction.md) and
+  [ADR-0023](../../../../docs/adr/0023-admission-owns-api-key-identity.md).
 - **Grace Period**: On rotation the NEW key is valid immediately and the OLD
   key's `expires_at` is moved to `min(now + grace_period_days, the old key's
   own expiry)`, so both work during the overlap window (default 7 days, max

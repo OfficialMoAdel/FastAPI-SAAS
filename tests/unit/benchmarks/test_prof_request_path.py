@@ -40,6 +40,7 @@ from pathlib import Path
 
 import pytest
 
+from src.app.core.security.budgets import BUDGETS
 from src.benchmarks import prof_request_path as mod
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -318,6 +319,18 @@ def test_bootstrap_relaxes_exactly_the_declared_environment():
         assert name in RELAXED_ENV or name in {"ENVIRONMENT"}, f"bootstrap writes undeclared {name}={value}"
     for name, value in RELAXED_ENV.items():
         assert written.get(name) == value, f"expected {name}={value}, found {written.get(name)!r}"
+
+
+def test_bootstrap_budgets_cover_every_declared_leg():
+    """A new security budget must be added to the profiler, not discovered at boot.
+
+    ``validate_budget_definitions()`` rejects any leg whose budget is absent
+    from ``SECURITY_BUDGETS``, regardless of ``Leg.required`` (that flag only
+    tolerates a missing identity fact). The profiler is an operator harness,
+    so the failure otherwise appears only when someone next runs it.
+    """
+    declared = {leg.budget for definition in BUDGETS.values() for leg in definition.legs}
+    assert set(mod.SECURITY_BUDGET_KEYS) == declared
 
 
 def test_the_relaxed_budgets_are_wide_enough_not_to_trip_the_fixture():

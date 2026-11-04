@@ -433,11 +433,8 @@ class APIKeyService(BaseService[APIKey, APIKeyRead]):
             if id_key not in keys:
                 keys.append(id_key)
 
-            for probe_key in keys:
-                raw = await cache_client.get(probe_key)
-                if raw is None:
-                    continue
-                data = json_loads(raw)
+            probes = await cache_client.get_json_many(keys)
+            for probe_key, data in zip(keys, probes, strict=True):
                 if not isinstance(data, dict) or "is_active" not in data:
                     continue
                 cached_id = data.get("id")

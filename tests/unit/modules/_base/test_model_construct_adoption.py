@@ -106,7 +106,11 @@ class TestModelConstructIsRejectedOnMeasurement:
 
         assert validated.scopes == ["read"]
         assert constructed.scopes == '["read"]'
-        assert validated.model_dump() != constructed.model_dump()
+        # warnings=False: the constructed row holds a str where the schema
+        # declares list[str], and pydantic's serializer complains about it.
+        # That complaint is the symptom under test, not something to surface
+        # in the suite's warnings summary.
+        assert validated.model_dump() != constructed.model_dump(warnings=False)
 
     def test_production_code_does_not_call_model_construct(self) -> None:
         """ADR-0012's own factual claim, re-asserted as a gate.

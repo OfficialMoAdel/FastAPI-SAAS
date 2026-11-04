@@ -323,8 +323,18 @@ def parse_commandstats(raw: str) -> dict[str, int]:
 
 
 def commandstats_delta(before: dict[str, int], after: dict[str, int]) -> dict[str, int]:
-    """Per-command call-count increase between two ``commandstats`` snapshots."""
-    return {name: after.get(name, 0) - seen for name, seen in before.items() if after.get(name, 0) - seen > 0}
+    """Per-command call-count increase between two ``commandstats`` snapshots.
+
+    Commands first issued between the snapshots are absent from ``before`` and
+    must still be reported; only iterating the earlier snapshot would silently
+    drop the exact commands a measurement is looking for.
+    """
+    names = set(before) | set(after)
+    return {
+        name: after.get(name, 0) - before.get(name, 0)
+        for name in names
+        if after.get(name, 0) > before.get(name, 0)
+    }
 
 
 def verify_counts_against_server(patched: dict[str, int], delta: dict[str, int]) -> None:

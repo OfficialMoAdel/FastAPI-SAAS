@@ -43,6 +43,7 @@ from src.app.core.security.pending_token_store import PendingTokenStore
 from src.app.core.security.token_blacklist_cache import (
     add_token_to_blacklist,
     add_tokens_to_blacklist,
+    check_blacklist_and_token_version,
     is_token_blacklisted,
 )
 
@@ -426,7 +427,48 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     payload = await decode_verified_token(token)
     if payload is None:
         return None
+    return await _verify_decoded_token(payload, token, expected_token_type, db)
 
+
+async def verify_refresh_token_preflighted(
+    token: str,
+    db: AsyncSession,
+    *,
+    payload: dict[str, Any],
+    prefetched: tuple[bool, str | None] | None,
+) -> TokenData | None:
+    """Refresh-path verification for a payload decoded from ``token``.
+
+    ``payload`` must be the result of ``decode_verified_token(token)``. The
+    refresh path decodes once to compute the prefetched keys, then verifies
+    that exact payload instead of decoding twice.
+    """
+    return await _verify_decoded_token(payload, token, TokenType.REFRESH, db, prefetched=prefetched)
+
+
+def _parse_prefetched_cached_version(
+    prefetched: tuple[bool, str | None], username_or_email: str
+) -> tuple[bool, int | None]:
+    blacklisted, cached_value = prefetched
+    if blacklisted or cached_value is None:
+        return blacklisted, None
+    try:
+        return False, int(cached_value)
+    except Exception as e:
+        _jwt_logger.warning(
+            "token_version_cache_read_error", error=str(e), user_ref=subject_log_ref(username_or_email)
+        )
+        return False, None
+
+
+async def _verify_decoded_token(
+    payload: dict[str, Any],
+    token: str,
+    expected_token_type: TokenType,
+    db: AsyncSession,
+    *,
+    prefetched: tuple[bool, str | None] | None = None,
+) -> TokenData | None:
     username_or_email: str | None = payload.get("sub")
     token_type: str | None = payload.get("token_type")
     tier_id: int | None = payload.get("tier_id")
@@ -435,10 +477,13 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     if username_or_email is None or token_type != expected_token_type:
         return None
 
-    if await is_token_revoked(token, jti, db):
-        return None
-
     token_version: int | None = payload.get("token_version")
+    cached_version: int | None = None
+    if token_version is None and prefetched is not None:
+        if prefetched[0]:
+            return None
+    elif token_version is None and await is_token_revoked(token, jti, db):
+        return None
     if token_version is not None:
         tenant_id = payload.get("tenant_id")
         from src.app.core.cache.client import cache_client
@@ -451,15 +496,40 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
         normalized_subject = username_or_email.lower().strip()
         cache_key = build_tenant_key(f"user:{normalized_subject}:token_version", tenant_id)
 
-        cached_version = None
-        try:
-            cached_value = await cache_client.get_strict(cache_key)
-            if cached_value is not None:
-                cached_version = int(cached_value)
-        except Exception as e:
-            _jwt_logger.warning(
-                "token_version_cache_read_error", error=str(e), user_ref=subject_log_ref(username_or_email)
-            )
+        if prefetched is not None:
+            blacklisted, cached_version = _parse_prefetched_cached_version(prefetched, username_or_email)
+            if blacklisted:
+                return None
+        else:
+            try:
+                fused_result = await check_blacklist_and_token_version(token, jti, cache_key)
+            except Exception as e:
+                _jwt_logger.warning(
+                    "token_version_fused_read_error", error=str(e), user_ref=subject_log_ref(username_or_email)
+                )
+                fused_result = None
+            if fused_result is not None:
+                blacklisted, cached_value = fused_result
+                if blacklisted:
+                    return None
+                if cached_value is not None:
+                    try:
+                        cached_version = int(cached_value)
+                    except Exception as e:
+                        _jwt_logger.warning(
+                            "token_version_cache_read_error", error=str(e), user_ref=subject_log_ref(username_or_email)
+                        )
+            else:
+                if await is_token_revoked(token, jti, db):
+                    return None
+                try:
+                    cached_value = await cache_client.get_strict(cache_key)
+                    if cached_value is not None:
+                        cached_version = int(cached_value)
+                except Exception as e:
+                    _jwt_logger.warning(
+                        "token_version_cache_read_error", error=str(e), user_ref=subject_log_ref(username_or_email)
+                    )
 
         if cached_version is not None:
             if cached_version != token_version:

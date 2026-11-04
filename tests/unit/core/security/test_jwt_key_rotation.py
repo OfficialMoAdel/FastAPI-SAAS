@@ -280,6 +280,7 @@ async def test_bumped_token_version_rejects_an_outstanding_token(rotate_key, jwt
 
     with (
         patch("src.app.core.security.jwt_service.is_token_revoked", AsyncMock(return_value=False)),
+        patch("src.app.core.security.jwt_service.check_blacklist_and_token_version", AsyncMock(return_value=None)),
         patch("src.app.core.cache.client.cache_client", _cache_client(version=7)),
     ):
         jwt_service.register_token_version_lookup(AsyncMock(return_value=7))
@@ -349,7 +350,10 @@ async def test_only_the_version_changed_between_acceptance_and_rejection(rotate_
 
     outstanding = await jwt_service.create_access_token({"sub": SUBJECT, "token_version": 5})
 
-    with patch("src.app.core.security.jwt_service.is_token_revoked", AsyncMock(return_value=False)):
+    with (
+        patch("src.app.core.security.jwt_service.is_token_revoked", AsyncMock(return_value=False)),
+        patch("src.app.core.security.jwt_service.check_blacklist_and_token_version", AsyncMock(return_value=None)),
+    ):
         jwt_service.register_token_version_lookup(AsyncMock(return_value=5))
 
         with patch("src.app.core.cache.client.cache_client", _cache_client(version=5)):

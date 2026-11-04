@@ -3,7 +3,8 @@
 **Bead:** `FastAPI_saas-54ua.2` (P1) · **Written:** 2026-10-01
 **Status:** the ROTATION ITSELF IS NOT DONE. Every step marked 🤚 OPERATOR is
 outstanding. Nothing in this document has been executed against a live
-database.
+database. The code-side guard is tested (see 6.2), but those tests do not and
+cannot rotate the credential.
 
 > **No secret value appears in this runbook, in any commit message, or in any
 > log.** That is deliberate policy, matching the SECRET_KEY rotation runbook.
@@ -134,9 +135,12 @@ tree.** That is the intended trade: a *known-compromised* value sitting in a
 blocklist is inert, while a value nobody tracks is a live credential. Do not
 skip it, and do not add the *new* value — that one is fine.
 
-**Automated:** nothing. A test should assert the blocklist is non-empty and
-that `validate_no_leaked_password` refuses a member in every environment; if
-one does not exist, add it rather than trusting this paragraph.
+**Automated:** `tests/unit/core/test_secret_blocklist.py` now pins the
+blocklist's membership and the environment split: `PostgresSettings` raises
+for a blocklisted value under `staging`/`production`, warns and boots under
+`local`, and accepts a fresh value in every environment. That test protects
+the guard; it does not perform the rotation, so every 🤚 OPERATOR step above
+and below remains outstanding.
 
 ---
 
@@ -248,9 +252,10 @@ completes — but it is a pattern worth being deliberate about:
 - Anyone who reads the source learns every dev password ever used, rotated or
   not. A hash of each value would serve the identical purpose with one
   property this lacks: the source stops being a password oracle.
-- There is no test pinning the blocklist's behaviour across environments. The
-  environment-dependent raise/warn split at `:166-175` is the kind of logic
-  that decays quietly.
+- The blocklist's membership and its environment-dependent raise/warn split
+  are now pinned in `tests/unit/core/test_secret_blocklist.py`, so that logic
+  can no longer decay quietly. The plaintext-in-source concern above is
+  unchanged: pinning it is not the same as deciding it is the right design.
 
 This is **not** in scope for the rotation and I have not changed it. Recording
 it so the decision is visible rather than inherited.

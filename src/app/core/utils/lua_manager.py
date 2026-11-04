@@ -313,6 +313,50 @@ class LuaScriptManager:
             end
             return 1
         """,
+        "token_blacklist_and_version_check": """
+            -- KEYS[1]: negative cache key, KEYS[2]: blacklist zset key,
+            -- KEYS[3]: tenant-scoped token_version key
+            -- ARGV[1]: member (jti:{jti} or token), ARGV[2]: now,
+            -- ARGV[3]: neg-cache TTL
+            -- Returns: {is_blacklisted, stored_version_or_empty}
+            if redis.call('EXISTS', KEYS[1]) == 1 then
+                return {0, redis.call('GET', KEYS[3]) or ''}
+            end
+            local score = redis.call('ZSCORE', KEYS[2], ARGV[1])
+            if not score then
+                redis.call('SETEX', KEYS[1], ARGV[3], '1')
+                return {0, redis.call('GET', KEYS[3]) or ''}
+            end
+            if tonumber(score) < tonumber(ARGV[2]) then
+                redis.call('ZREM', KEYS[2], ARGV[1])
+                redis.call('SETEX', KEYS[1], ARGV[3], '1')
+                return {0, redis.call('GET', KEYS[3]) or ''}
+            end
+            return {1, ''}
+        """,
+        "refresh_preflight_check": """
+            -- KEYS[1]: negative cache key, KEYS[2]: blacklist zset key,
+            -- KEYS[3]: tenant-scoped token_version key,
+            -- KEYS[4]: refresh_rotated:{jti} marker key
+            -- ARGV[1]: member (jti:{jti} or token), ARGV[2]: now,
+            -- ARGV[3]: neg-cache TTL
+            -- Returns: {is_blacklisted, stored_version_or_empty, marker_or_empty}
+            local marker = redis.call('GET', KEYS[4]) or ''
+            if redis.call('EXISTS', KEYS[1]) == 1 then
+                return {0, redis.call('GET', KEYS[3]) or '', marker}
+            end
+            local score = redis.call('ZSCORE', KEYS[2], ARGV[1])
+            if not score then
+                redis.call('SETEX', KEYS[1], ARGV[3], '1')
+                return {0, redis.call('GET', KEYS[3]) or '', marker}
+            end
+            if tonumber(score) < tonumber(ARGV[2]) then
+                redis.call('ZREM', KEYS[2], ARGV[1])
+                redis.call('SETEX', KEYS[1], ARGV[3], '1')
+                return {0, redis.call('GET', KEYS[3]) or '', marker}
+            end
+            return {1, '', marker}
+        """,
         # S-04: compare-and-delete for the webhook in-flight lock.
         # A blind DEL let a slow, later-failing delivery erase the terminal
         # "processed" marker a faster, already-successful delivery had written

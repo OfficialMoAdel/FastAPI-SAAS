@@ -283,6 +283,10 @@ class TestJwtLogSitesCarryNoPII:
                 "src.app.core.security.jwt_service.is_token_blacklisted",
                 new=AsyncMock(return_value=False),
             ),
+            patch(
+                "src.app.core.security.jwt_service.check_blacklist_and_token_version",
+                new=AsyncMock(return_value=None),
+            ),
             patch("src.app.core.cache.client.cache_client", redis),
             _recording_logs(*self.LOGGER.split(".", 1)) as logs,
         ):
@@ -320,6 +324,10 @@ class TestJwtLogSitesCarryNoPII:
                 "src.app.core.security.jwt_service.is_token_blacklisted",
                 new=AsyncMock(return_value=False),
             ),
+            patch(
+                "src.app.core.security.jwt_service.check_blacklist_and_token_version",
+                new=AsyncMock(return_value=None),
+            ),
             patch("src.app.core.cache.client.cache_client", redis),
             patch(
                 "src.app.core.security.jwt_service._load_token_version",
@@ -345,6 +353,10 @@ class TestJwtLogSitesCarryNoPII:
             patch(
                 "src.app.core.security.jwt_service.is_token_blacklisted",
                 new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "src.app.core.security.jwt_service.check_blacklist_and_token_version",
+                new=AsyncMock(return_value=None),
             ),
             patch("src.app.core.cache.client.cache_client", redis),
             _recording_logs(*self.LOGGER.split(".", 1)) as logs,

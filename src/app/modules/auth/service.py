@@ -16,9 +16,11 @@ from src.app.core.config import settings
 from src.app.core.security import (
     TokenType,
     blacklist_tokens,
+    check_refresh_preflight,
     get_password_hash,
     needs_rehash,
     verify_password,
+    verify_refresh_token_preflighted,
     verify_token,
 )
 from src.app.core.utils.ip_utils import get_client_ip
@@ -439,42 +441,15 @@ class AuthService:
 
         return issued.access_response()
 
-    async def _reject_reused_refresh_token(
+    async def _consume_rotated_refresh_marker(
         self,
-        refresh_token: str,
+        old_jti: str,
+        raw: Any,
         *,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> None:
-        """Kill the token family if a rotated refresh token is replayed.
-
-        Every successful rotation stores ``refresh_rotated:{old_jti}``. A
-        token whose jti carries that marker was already rotated once, so
-        presenting it again means the old token was stolen: invalidate the
-        session, blacklist the replacement token, audit, and reject with the
-        same message as an invalid token (no oracle).
-        """
-        from src.app.core.cache.client import cache_client
-        from src.app.core.security.jwt_utils import extract_jti_unverified
-
-        old_jti = extract_jti_unverified(refresh_token)
-        if not old_jti:
-            return  # unverifiable here; verify_token below rejects it
-        try:
-            raw = await cache_client.get_strict(f"refresh_rotated:{old_jti}")
-        except Exception as e:
-            # P2-3: Redis loss previously logged at DEBUG, degrading theft detection
-            # from full session termination to single-token rejection. The stolen token is
-            # blocked by DB revocation, but attacker replacement tokens stay valid until expiry.
-            # Since theft degradation is alertable, this logs at WARNING.
-            logger.warning("refresh reuse-marker lookup failed", error=str(e))
-            return
-        if not raw:
-            # The normal case: this jti was never rotated, so there is no
-            # marker. Returning quietly is correct — and required, because
-            # falling through would treat None as a corrupt marker and warn on
-            # every ordinary refresh.
-            return
+        """Revoke a rotated token family when its marker is replayed."""
         try:
             marker = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
             user_id = marker["user_id"]
@@ -511,6 +486,44 @@ class AuthService:
         )
         raise UnauthorizedError("Invalid refresh token.")
 
+    async def _reject_reused_refresh_token(
+        self,
+        refresh_token: str,
+        *,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        """Kill the token family if a rotated refresh token is replayed.
+
+        Every successful rotation stores ``refresh_rotated:{old_jti}``. A
+        token whose jti carries that marker was already rotated once, so
+        presenting it again means the old token was stolen: invalidate the
+        session, blacklist the replacement token, audit, and reject with the
+        same message as an invalid token (no oracle).
+        """
+        from src.app.core.cache.client import cache_client
+        from src.app.core.security.jwt_utils import extract_jti_unverified
+
+        old_jti = extract_jti_unverified(refresh_token)
+        if not old_jti:
+            return  # unverifiable here; verify_token below rejects it
+        try:
+            raw = await cache_client.get_strict(f"refresh_rotated:{old_jti}")
+        except Exception as e:
+            # P2-3: Redis loss previously logged at DEBUG, degrading theft detection
+            # from full session termination to single-token rejection. The stolen token is
+            # blocked by DB revocation, but attacker replacement tokens stay valid until expiry.
+            # Since theft degradation is alertable, this logs at WARNING.
+            logger.warning("refresh reuse-marker lookup failed", error=str(e))
+            return
+        if not raw:
+            # The normal case: this jti was never rotated, so there is no
+            # marker. Returning quietly is correct — and required, because
+            # falling through would treat None as a corrupt marker and warn on
+            # every ordinary refresh.
+            return
+        await self._consume_rotated_refresh_marker(old_jti, raw, ip_address=ip_address, user_agent=user_agent)
+
     async def refresh_access_token(
         self,
         refresh_token: str | None,
@@ -532,10 +545,45 @@ class AuthService:
             raise UnauthorizedError("Refresh token missing.")
 
         # P2-1: refresh-reuse detection — a rotated token presented again
-        # means theft; revoke the whole family before any other check.
-        await self._reject_reused_refresh_token(refresh_token, ip_address=ip_address, user_agent=user_agent)
+        # means theft; revoke the whole family before any other check. Decode
+        # once so the Redis preflight can fuse the rotation marker, blacklist
+        # and token-version reads into one round trip.
+        from src.app.core.security.jwt_utils import decode_verified_token
+        from src.app.core.utils.cache import build_tenant_key
 
-        user_data = await verify_token(refresh_token, TokenType.REFRESH, db)
+        decoded_payload = await decode_verified_token(refresh_token)
+        preflight: tuple[bool, str | None, str | None] | None = None
+        preflight_payload: dict[str, Any] | None = None
+        if (
+            isinstance(decoded_payload, dict)
+            and decoded_payload.get("token_type") == TokenType.REFRESH.value
+            and isinstance(decoded_payload.get("sub"), str)
+            and isinstance(decoded_payload.get("jti"), str)
+        ):
+            old_jti = decoded_payload["jti"]
+            normalized_subject = decoded_payload["sub"].lower().strip()
+            version_key = build_tenant_key(
+                f"user:{normalized_subject}:token_version", decoded_payload.get("tenant_id")
+            )
+            marker_key = f"refresh_rotated:{old_jti}"
+            preflight_payload = decoded_payload
+            try:
+                preflight = await check_refresh_preflight(old_jti, version_key, marker_key)
+            except Exception as e:
+                logger.warning("refresh preflight failed", error=str(e))
+
+        if preflight is not None and preflight_payload is not None:
+            blacklisted, version_raw, marker_raw = preflight
+            if marker_raw:
+                await self._consume_rotated_refresh_marker(
+                    preflight_payload["jti"], marker_raw, ip_address=ip_address, user_agent=user_agent
+                )
+            user_data = await verify_refresh_token_preflighted(
+                refresh_token, db, payload=preflight_payload, prefetched=(blacklisted, version_raw)
+            )
+        else:
+            await self._reject_reused_refresh_token(refresh_token, ip_address=ip_address, user_agent=user_agent)
+            user_data = await verify_token(refresh_token, TokenType.REFRESH, db)
         if not user_data:
             raise UnauthorizedError("Invalid refresh token.")
 

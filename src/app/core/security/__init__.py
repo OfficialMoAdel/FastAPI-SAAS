@@ -21,6 +21,7 @@ from src.app.core.security.jwt_service import (
     get_mfa_pending_token_manager,
     is_token_revoked,
     oauth2_scheme,
+    verify_refresh_token_preflighted,
     verify_token,
 )
 from src.app.core.security.password import (
@@ -33,6 +34,7 @@ from src.app.core.security.password import (
 from src.app.core.security.token_blacklist_cache import (
     add_token_to_blacklist,
     add_tokens_to_blacklist,
+    check_refresh_preflight,
     is_token_blacklisted,
 )
 from src.app.core.security.tokens import TokenGenerator
@@ -48,6 +50,7 @@ __all__ = [
     "_resolve_tenant_id_for_token",
     "add_token_to_blacklist",
     "add_tokens_to_blacklist",
+    "check_refresh_preflight",
     "api_key_scheme",
     "blacklist_token",
     "blacklist_tokens",
@@ -60,5 +63,6 @@ __all__ = [
     "needs_rehash",
     "oauth2_scheme",
     "verify_password",
+    "verify_refresh_token_preflighted",
     "verify_token",
 ]

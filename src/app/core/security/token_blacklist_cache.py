@@ -20,6 +20,7 @@ blacklist update. Relying on Redis + negative cache instead.
 import time
 from datetime import UTC, datetime
 from functools import lru_cache
+from typing import Any, cast
 
 import xxhash
 from redis.asyncio import Redis
@@ -198,6 +199,130 @@ async def is_token_blacklisted(token: str, jti: str | None = None) -> bool | Non
         if settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed":
             return True
         return None  # Fail open - let DB check handle it
+
+
+async def _validate_blacklist_and_version_result(
+    result: Any,
+    *,
+    allow_marker: bool,
+) -> tuple[bool, str | None] | tuple[bool, str | None, str | None] | None:
+    expected_len = 3 if allow_marker else 2
+    if not isinstance(result, list | tuple) or len(result) != expected_len:
+        return None
+
+    blacklist_raw, version_raw, *marker_rest = result
+    if isinstance(blacklist_raw, bytes):
+        blacklist_raw = blacklist_raw.decode()
+    if isinstance(blacklist_raw, bool):
+        blacklisted = blacklist_raw
+    elif isinstance(blacklist_raw, int | str):
+        normalized = str(blacklist_raw).strip().lower()
+        if normalized in {"0", "false"}:
+            blacklisted = False
+        elif normalized in {"1", "true"}:
+            blacklisted = True
+        else:
+            return None
+    else:
+        return None
+
+    if isinstance(version_raw, bytes):
+        version_raw = version_raw.decode()
+    version = str(version_raw).strip() if version_raw is not None else ""
+    version_value = version or None
+
+    if not allow_marker:
+        return blacklisted, version_value
+
+    marker_raw = marker_rest[0] if marker_rest else None
+    if isinstance(marker_raw, bytes):
+        marker_raw = marker_raw.decode()
+    marker = str(marker_raw).strip() if marker_raw is not None else ""
+    return blacklisted, version_value, marker or None
+
+
+async def check_refresh_preflight(
+    jti: str | None,
+    version_key: str,
+    marker_key: str,
+) -> tuple[bool, str | None, str | None] | None:
+    """Read the rotation marker, blacklist, and cached token_version in one call.
+
+    Returns ``None`` when unavailable or malformed; callers must fall back to
+    the sequential revocation and rotation-marker checks.
+    """
+    if not jti:
+        return None
+
+    redis_client, _fail_closed = _get_available_redis_client_for_blacklist()
+    if redis_client is None:
+        return None
+
+    blacklist_member = _extract_blacklist_member("", jti)
+    negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key('', jti)}"
+    now = int(time.time())
+
+    try:
+        result = await get_lua_manager().execute(
+            redis_client,
+            "refresh_preflight_check",
+            keys=[negative_key, BLACKLIST_KEY, version_key, marker_key],
+            args=[
+                blacklist_member,
+                str(now),
+                str(settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL),
+            ],
+        )
+        validated = await _validate_blacklist_and_version_result(result, allow_marker=True)
+        if validated is None:
+            return None
+        blacklisted, version_value, marker = cast(tuple[bool, str | None, str | None], validated)
+        await token_cache_circuit.record_success()
+        return blacklisted, version_value, marker
+    except Exception as e:
+        logger.debug("Redis refresh preflight unavailable", error=e)
+        return None
+
+
+async def check_blacklist_and_token_version(
+    token: str,
+    jti: str | None,
+    version_key: str,
+) -> tuple[bool, str | None] | None:
+    """Check token revocation and the cached token_version in one Redis call.
+
+    Returns ``None`` when the fused check is unavailable or returns a malformed
+    payload. The caller must fall back to the sequential blacklist and version
+    checks; this helper deliberately does not fail open.
+    """
+    redis_client, _fail_closed = _get_available_redis_client_for_blacklist()
+    if redis_client is None:
+        return None
+
+    blacklist_member = _extract_blacklist_member(token, jti)
+    negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token, jti)}"
+    now = int(time.time())
+
+    try:
+        result = await get_lua_manager().execute(
+            redis_client,
+            "token_blacklist_and_version_check",
+            keys=[negative_key, BLACKLIST_KEY, version_key],
+            args=[
+                blacklist_member,
+                str(now),
+                str(settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL),
+            ],
+        )
+        validated = await _validate_blacklist_and_version_result(result, allow_marker=False)
+        if validated is None:
+            return None
+        blacklisted, version_value = cast(tuple[bool, str | None], validated)
+        await token_cache_circuit.record_success()
+        return blacklisted, version_value
+    except Exception as e:
+        logger.debug("Redis blacklist/version check unavailable", error=e)
+        return None
 
 
 async def _is_token_blacklisted_fallback(token: str, jti: str | None = None) -> bool | None:

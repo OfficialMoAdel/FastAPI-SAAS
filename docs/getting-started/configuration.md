@@ -10,6 +10,14 @@ The fastest way to get started is to copy the example environment file and modif
 cp src/.env.example src/.env
 ```
 
+!!! warning "`src/.env` is untracked and is not loaded by a non-Docker process"
+    `src/.env` is gitignored, so it is absent from a clean archive or release
+    tarball. Docker Compose reads it through `env_file:` and mounts it at
+    `/code/.env`. A non-Docker process loads `.env` from its working directory,
+    not from `src/.env`. See
+    [Deployment Environment Provisioning](../DEPLOYMENT_ENV_PROVISIONING.md)
+    before deploying to a clean host.
+
 ## Essential Configuration
 
 Open `src/.env` and set these required values:
@@ -170,5 +178,10 @@ With these basic settings configured, you can start the application:
 
 - **Docker Compose**: `docker compose up`
 - **Manual**: `uv run uvicorn src.app.main:app --reload`
+
+For the manual command, the application loads `.env` from the directory you
+run it in. Either launch from a directory where the provisioned `.env` exists,
+or export the variables into the process first. See
+[Deployment Environment Provisioning](../DEPLOYMENT_ENV_PROVISIONING.md).
 
 For detailed configuration options, advanced settings, and production deployment, see the [User Guide - Configuration](../user-guide/configuration/index.md).

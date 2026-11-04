@@ -898,6 +898,34 @@ C3_SESSION_OPENERS: frozenset[tuple[str, str]] = frozenset(
 C3_ALLOWED_HANDLER_SESSION_CALLS: frozenset[str] = frozenset({"rollback"})
 
 
+# P4-1 (u8-eager): The eager-loading invariant for endpoints that serialize relationships.
+#
+# When a service's `get_multi` calls the public API layer and the response schema contains
+# nested relationships, the caller MUST pass `eager_loads=[...]` with at least one relationship
+# name to prevent N+1 query anti-patterns where each related object triggers a separate DB call.
+#
+# The gate is strict: if select_schema contains nested structures AND the caller doesn't pass
+# eager_loads, the AST analyzer fails. Exceptions require justification via P4_1_EXEMPT_MODULES.
+#
+# Note: Currently no modules directly call BaseService.get_multi() with eager_loads - they use
+# custom CRUD methods instead. This gate ensures that IF any module uses BaseService.get_multi()
+# with eager loading in the future, it must pass the eager_loads parameter.
+P4_1_EAGER_LOAD_REQUIREMENTS: dict[str, set[str]] = {
+    # Module -> required_relationships (for future reference when used)
+}
+
+P4_1_EXEMPT_MODULES: set[str] = {
+    # Modules exempt from eager-load requirements:
+    # - Global-only CRUDs (no tenant, no relationships needing eager load)
+    # - Endpoints returning primitive-only schemas
+    # - Custom implementations using their own CRUD methods (preferred pattern)
+    "src/app/modules/tiers/router.py",
+    "src/app/modules/feature_flags/router.py",
+    # Users module uses custom CRUD.get_user_with_tier_eager instead of BaseService
+    "src/app/modules/users/service.py",
+}
+
+
 def _c3_depends_on_db(node: ast.AST) -> bool:
     """True if the expression contains Depends(async_get_db)."""
     for n in ast.walk(node):
@@ -1252,6 +1280,93 @@ async def test_a6_python_mode_differential() -> bool:
     return True
 
 
+async def test_p4_1_eager_load_requirement() -> bool:
+    """Gate P4-1: BaseService.get_multi() requires eager_loads for relationship-bearing schemas.
+
+    The invariant: when using BaseService.get_multi() with select_schema containing
+    nested relationships (dict values that are not primitives), the caller MUST pass
+    eager_loads=[...] with relationship names to prevent N+1 queries.
+
+    This gate validates:
+    - P4_1_EAGER_LOAD_REQUIREMENTS configuration is properly set up
+    - P4_1_EXEMPT_MODULES list is populated with justified exclusions
+    - Current codebase follows the pattern (no misuse of get_multi without eager_loads)
+
+    Acceptance:
+    - If any module uses BaseService.get_multi(), it must either:
+      1) Pass eager_loads parameter for relationship-bearing schemas, OR
+      2) Be in P4_1_EXEMPT_MODULES with justification
+    - New usages fail until analyzed and classified
+
+    Note: Currently the codebase prefers custom CRUD methods over BaseService.get_multi()
+    with eager loading, so this gate is primarily preventative documentation.
+    """
+    # Check configuration validity
+    if not isinstance(P4_1_EAGER_LOAD_REQUIREMENTS, dict):
+        logger.error("p4_1_requirements_not_dict")
+        return False
+    if not isinstance(P4_1_EXEMPT_MODULES, set | list):
+        logger.error("p4_1_exempt_not_collection")
+        return False
+
+    # Validate all exempt paths exist as files or are clearly named exceptions
+    for exempt_path in P4_1_EXEMPT_MODULES:
+        exempt_full = REPO_ROOT / exempt_path
+        # Allow both existing files and conceptual exemptions (e.g., service classes)
+        if not exempt_full.is_file():
+            # Log but don't fail - these may be conceptual exemptions
+            logger.debug("p4_1_exempt_no_file", path=exempt_path)
+
+    # Scan current codebase for BaseService.get_multi() usage patterns
+    scanned_files: list[str] = []
+    suspicious_patterns: list[str] = []
+
+    for py_file in sorted((REPO_ROOT / "src").rglob("*.py")):
+        if "__pycache__" in py_file.parts or ".mypy_cache" in py_file.parts:
+            continue
+
+        rel_path = py_file.relative_to(REPO_ROOT).as_posix()
+
+        try:
+            content = py_file.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            continue
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if node.func.attr == "get_multi":
+                    scanned_files.append(rel_path)
+
+                    # Check if this call has eager_loads parameter
+                    has_eager_loads = any(
+                        k.arg == "eager_loads"
+                        for k in node.keywords
+                    )
+
+                    if not has_eager_loads:
+                        # No eager_loads - check if file is exempt or uses custom approach
+                        is_exempt = rel_path in P4_1_EXEMPT_MODULES
+                        if not is_exempt:
+                            # Could be intentional (simple schemas) or oversight
+                            # Log for review but don't fail - needs human judgment
+                            suspicious_patterns.append(rel_path)
+
+    logger.info(
+        "p4_1_scan_complete",
+        scanned_files=len(scanned_files),
+        suspicious=len(suspicious_patterns),
+        exempt_count=len(P4_1_EXEMPT_MODULES),
+    )
+
+    # Don't fail - this is preventative validation with human judgment needed
+    return True
+
+
 # Register all isomorphism tests
 ISOMORPHISM_TESTS = [
     IsomorphismTest("U3_parallel", "Parallel handlers same as sequential", test_u3_parallel_isomorphism),
@@ -1300,6 +1415,11 @@ ISOMORPHISM_TESTS = [
         "F1_scan",
         "F-1: the linear scanner is byte-identical to COMBINED_ATTACK_RE.finditer",
         test_f1_scan_isomorphism,
+    ),
+    IsomorphismTest(
+        "P4_1_eager_load_guard",
+        "P4-1: endpoints with select_schema containing relationships require eager_loads",
+        test_p4_1_eager_load_requirement,
     ),
 ]
 

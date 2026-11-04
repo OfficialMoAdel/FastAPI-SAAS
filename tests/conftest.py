@@ -1359,6 +1359,89 @@ class FakeRedis:
         except Exception:
             pass
 
+        # --- Blacklist and token_version check (E1) ---
+        # KEYS[1]=negative_key, KEYS[2]=blacklist_zset, KEYS[3]=version_key.
+        # ARGV = member, now_sec, neg_ttl. Returns [is_blacklisted, stored_version].
+        try:
+            from src.app.core.utils.lua_manager import get_lua_manager
+
+            if sha == get_lua_manager().get_script("token_blacklist_and_version_check").sha1:
+                negative_key = keys_and_args[0]
+                blacklist_key = keys_and_args[1]
+                version_key = keys_and_args[2]
+                member = keys_and_args[3]
+                now = float(keys_and_args[4])
+
+                def version_or_empty() -> str:
+                    value = self.store.get(version_key, "")
+                    return "" if value is None else str(value)
+
+                if negative_key in self.store:
+                    return [0, version_or_empty()]
+
+                zset = self.store.get(blacklist_key, {})
+                if not isinstance(zset, dict):
+                    zset = {}
+                score = zset.get(member)
+
+                if score is None:
+                    self.store[negative_key] = "1"
+                    return [0, version_or_empty()]
+
+                if float(score) < now:
+                    if member in zset:
+                        del zset[member]
+                    self.store[negative_key] = "1"
+                    return [0, version_or_empty()]
+
+                return [1, ""]
+        except Exception:
+            pass
+
+        # --- Refresh preflight: marker + blacklist + token_version (E3) ---
+        # KEYS[1]=negative_key, KEYS[2]=blacklist_zset, KEYS[3]=version_key,
+        # KEYS[4]=refresh_rotated:{jti}. Returns [is_blacklisted, version, marker].
+        try:
+            from src.app.core.utils.lua_manager import get_lua_manager
+
+            if sha == get_lua_manager().get_script("refresh_preflight_check").sha1:
+                negative_key = keys_and_args[0]
+                blacklist_key = keys_and_args[1]
+                version_key = keys_and_args[2]
+                marker_key = keys_and_args[3]
+                member = keys_and_args[4]
+                now = float(keys_and_args[5])
+
+                def version_or_empty() -> str:
+                    value = self.store.get(version_key, "")
+                    return "" if value is None else str(value)
+
+                def marker_or_empty() -> str:
+                    value = self.store.get(marker_key, "")
+                    return "" if value is None else str(value)
+
+                if negative_key in self.store:
+                    return [0, version_or_empty(), marker_or_empty()]
+
+                zset = self.store.get(blacklist_key, {})
+                if not isinstance(zset, dict):
+                    zset = {}
+                score = zset.get(member)
+
+                if score is None:
+                    self.store[negative_key] = "1"
+                    return [0, version_or_empty(), marker_or_empty()]
+
+                if float(score) < now:
+                    if member in zset:
+                        del zset[member]
+                    self.store[negative_key] = "1"
+                    return [0, version_or_empty(), marker_or_empty()]
+
+                return [1, "", marker_or_empty()]
+        except Exception:
+            pass
+
         # --- Merged ban/blacklist+GCRA script (P0-2) ---
         # KEYS[1]=neg_key, KEYS[2]=blacklist_zset, KEYS[3]=authed_gcra,
         # KEYS[4]=ban_key, KEYS[5]=anon_gcra.

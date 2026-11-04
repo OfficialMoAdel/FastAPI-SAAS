@@ -42,15 +42,20 @@ class _TenantRow:
 
 
 class FakeRedis:
-    """In-memory stand-in recording every key the probe reads."""
+    """In-memory stand-in recording every batch the probe reads."""
 
     def __init__(self) -> None:
         self.store: dict[str, str] = {}
         self.reads: list[str] = []
+        self.mget_calls: list[list[str]] = []
 
     async def get(self, key: str) -> str | None:
         self.reads.append(key)
         return self.store.get(key)
+
+    async def mget(self, keys: list[str]) -> list[str | None]:
+        self.mget_calls.append(list(keys))
+        return [self.store.get(k) for k in keys]
 
     async def set(self, key: str, value: str, ex: int | None = None) -> None:
         self.store[key] = value
@@ -93,8 +98,8 @@ class TestTenantLivenessProbeKeyspace:
             result = await _service()._get_cached_tenant_active(TID)
 
         assert result is True
-        assert redis.reads == [slug_cache_key(SLUG)]
-        assert get_tenant_cache_key(TID) not in redis.reads
+        assert redis.mget_calls == [[slug_cache_key(SLUG), get_tenant_cache_key(TID)]]
+        assert redis.reads == []
 
     async def test_probe_hits_the_key_tenants_service_writes(self) -> None:
         """TenantService._cache_tenant also writes the id key — still hits."""
@@ -110,8 +115,8 @@ class TestTenantLivenessProbeKeyspace:
             result = await _service()._get_cached_tenant_active(TID)
 
         assert result is True
-        # The writer's key is preferred; the id key is never needed.
-        assert redis.reads == [slug_cache_key(SLUG)]
+        # The probe reads both candidate keys in one MGET; the slug entry wins.
+        assert redis.mget_calls == [[slug_cache_key(SLUG), get_tenant_cache_key(TID)]]
 
     async def test_suspended_tenant_returns_false_from_cache(self) -> None:
         """A cached inactive tenant short-circuits the cache hit (T8 purpose)."""
@@ -146,7 +151,7 @@ class TestTenantLivenessProbeKeyspace:
             result = await _service()._get_cached_tenant_active(TID)
 
         assert result is None
-        assert get_tenant_cache_key(TID) in redis.reads
+        assert redis.mget_calls == [[slug_cache_key(SLUG), get_tenant_cache_key(TID)]]
 
     async def test_miss_path_still_validates_via_db(self) -> None:
         """Fail-safe: an empty cache falls through to the DB join, not a rejection."""
@@ -187,7 +192,7 @@ class TestTenantLivenessProbeKeyspace:
             result = await _service()._get_cached_tenant_active(TID)
 
         assert result is True
-        assert redis.reads == [get_tenant_cache_key(TID)]
+        assert redis.mget_calls == [[get_tenant_cache_key(TID)]]
 
     async def test_no_tenant_sentinel_is_not_probed_as_a_slug(self) -> None:
         """The NO_TENANT sentinel's 'no-tenant' slug must not be probed."""
@@ -200,21 +205,23 @@ class TestTenantLivenessProbeKeyspace:
             result = await _service()._get_cached_tenant_active(TID)
 
         assert result is None
-        assert slug_cache_key(NO_TENANT.tenant_slug) not in redis.reads
-        assert redis.reads == [get_tenant_cache_key(TID)]
+        assert slug_cache_key(NO_TENANT.tenant_slug) not in [
+            key for call in redis.mget_calls for key in call
+        ]
+        assert redis.mget_calls == [[get_tenant_cache_key(TID)]]
 
     async def test_empty_tenant_id_short_circuits_without_redis(self) -> None:
         """No tenant id -> None, and no cache read at all."""
         redis = FakeRedis()
         with patch("src.app.core.redis_provider.get_redis", lambda: redis):
             assert await _service()._get_cached_tenant_active(None) is None
-        assert redis.reads == []
+        assert redis.mget_calls == []
 
     async def test_redis_failure_is_swallowed_and_returns_none(self) -> None:
         """The probe must never break validation — an error is a miss."""
 
         class Broken:
-            async def get(self, key):
+            async def mget(self, keys):
                 raise ConnectionError("redis down")
 
         with (

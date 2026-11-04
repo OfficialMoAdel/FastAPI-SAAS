@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from src.app.core.config.auth import KNOWN_LEAKED_ADMIN_PASSWORDS, FirstUserSettings
 from src.app.core.config.crypt import KNOWN_LEAKED_SECRET_KEYS, CryptSettings
-from src.app.core.config.database import KNOWN_LEAKED_POSTGRES_PASSWORDS
+from src.app.core.config.database import KNOWN_LEAKED_POSTGRES_PASSWORDS, PostgresSettings
 
 LEAKED_SECRET_KEY = "de2132a4a3a029d6a93a2aefcb519f0219990f92ca258a7c5ed938a444dbe1c8"
 PUBLISHED_EXAMPLE_KEY_1 = "953843cd400d99a039698e7feb46ca1b3e33c44fee2c24c6d88cf0f0b290fb61"
@@ -61,3 +61,33 @@ def test_admin_password_rejects_leaked_value(monkeypatch):
     monkeypatch.setenv("ADMIN_PASSWORD", "Str1ngst!")
     with pytest.raises(ValidationError):
         FirstUserSettings()
+
+
+@pytest.mark.parametrize("environment", ["production", "staging"])
+def test_postgres_settings_rejects_leaked_password_outside_local(monkeypatch, environment):
+    monkeypatch.setenv("ENVIRONMENT", environment)
+    monkeypatch.setenv("POSTGRES_USER", "postgres")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "mypassword")
+    with pytest.raises(ValidationError, match="leaked into git history"):
+        PostgresSettings()
+
+
+def test_postgres_settings_warns_for_leaked_password_in_local(monkeypatch, caplog):
+    monkeypatch.setenv("ENVIRONMENT", "local")
+    monkeypatch.setenv("POSTGRES_USER", "postgres")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "mypassword")
+    with caplog.at_level("WARNING", logger="src.app.core.config.database"):
+        settings = PostgresSettings()
+    assert settings.POSTGRES_PASSWORD is not None
+    assert settings.POSTGRES_PASSWORD.get_secret_value() == "mypassword"
+    assert "leaked into git history" in caplog.text
+
+
+@pytest.mark.parametrize("environment", ["local", "staging", "production"])
+def test_postgres_settings_accepts_fresh_password(monkeypatch, environment):
+    monkeypatch.setenv("ENVIRONMENT", environment)
+    monkeypatch.setenv("POSTGRES_USER", "postgres")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "fresh-postgres-password")
+    settings = PostgresSettings()
+    assert settings.POSTGRES_PASSWORD is not None
+    assert settings.POSTGRES_PASSWORD.get_secret_value() == "fresh-postgres-password"
